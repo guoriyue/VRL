@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 from vrl.generation.execution.chunks import run_sample_chunks_with_oom_retry
+from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.protocols import ChunkGatherer, ChunkResult
 from vrl.generation.types import (
     GenerationOutput,
@@ -41,7 +41,7 @@ class ChunkExecutorBase:
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        plan: Any,
+        plan: EnginePlan,
     ) -> GenerationOutput:
         chunks = run_sample_chunks_with_oom_retry(
             plan.chunks,

@@ -51,11 +51,11 @@ def _runtime(
 
 
 # --------------------------------------------------------------------------
-# is_colocated
+# requires_driver_model_offload
 # --------------------------------------------------------------------------
-def test_persistent_runtime_is_not_colocated() -> None:
+def test_persistent_runtime_does_not_require_driver_offload() -> None:
     runtime = _runtime()
-    assert runtime.is_colocated() is False
+    assert runtime.requires_driver_model_offload is False
 
 
 @pytest.mark.parametrize(
@@ -65,9 +65,9 @@ def test_persistent_runtime_is_not_colocated() -> None:
         (False, False),
     ],
 )
-def test_deferred_runtime_colocation(colocated, expected) -> None:
+def test_deferred_runtime_driver_offload_requirement(colocated, expected) -> None:
     runtime = _runtime(deferred=True, colocated=colocated)
-    assert runtime.is_colocated() is expected
+    assert runtime.requires_driver_model_offload is expected
 
 
 def test_concrete_runtimes_satisfy_generation_runtime_structurally() -> None:

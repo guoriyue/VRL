@@ -52,9 +52,7 @@ def nextstep_config_from_build(build: ModelBuild) -> dict[str, Any]:
 class NextStep1ARChunkResult:
     """Output of one prompt/sample NextStep-1 AR chunk."""
 
-    prompt_index: int
-    sample_start: int
-    sample_count: int
+    chunk: SampleChunk
     output: torch.Tensor
     tokens: torch.Tensor
     saved_noise: torch.Tensor
@@ -119,7 +117,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         num_steps = int(sampling["num_steps"])
         noise_level = float(sampling["noise_level"])
 
-        repeated_prompts = [chunk.prompt] * chunk.sample_count
+        repeated_prompts = [request.inputs[chunk.prompt_index].prompt] * chunk.sample_count
         prompt_ids, prompt_mask = self._tokenize_prompts(
             repeated_prompts,
             max_text_length=params.max_text_length,
@@ -166,9 +164,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         images = self.model.decode_image_tokens(tokens, image_size=params.image_size)
 
         return NextStep1ARChunkResult(
-            prompt_index=chunk.prompt_index,
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
+            chunk=chunk,
             output=images,
             tokens=tokens,
             saved_noise=saved_noise,
@@ -268,11 +264,8 @@ class NextStep1ChunkGatherer:
         )
 
         return GenerationOutput(
-            request_id=request.request_id,
-            sample_rows=list(sample_rows),
             output=cat["output"],
             trajectory=trajectory,
-            extra={},
         )
 
 

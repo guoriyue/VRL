@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from typing import Any
 
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 from vrl.rewards.models.motion_dynamics import MotionDynamicsModel
 from vrl.rewards.models.target_dino_similarity import TargetDinoSimilarityModel
@@ -78,13 +78,11 @@ class RoboticsVideoRewardModel:
 
     def __call__(
         self,
-        *,
         artifact: RewardInferenceArtifact,
-        request: RewardInferenceRequest,
     ) -> dict[str, float]:
-        kling = dict(self.kling(artifact=artifact, request=request))
-        dino = dict(self.dino(artifact=artifact, request=request))
-        motion = dict(self.motion(artifact=artifact, request=request))
+        kling = dict(self.kling(artifact))
+        dino = dict(self.dino(artifact))
+        motion = dict(self.motion(artifact))
         selected = {
             "target_dino_similarity": float(dino["target_dino_similarity"]),
             "motion_dynamics": float(motion["motion_dynamics"]),

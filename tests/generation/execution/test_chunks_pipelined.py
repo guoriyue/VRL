@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionChunkResult
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.pipeline import (
     _move_tree_to_cpu_async,
     forward_chunks_pipelined,
@@ -273,9 +274,7 @@ def test_async_tree_move_preserves_slots_dataclass_and_records_source_stream(
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     sources = [_CudaTensor(name) for name in ("obs", "actions", "steps", "video", "replay")]
     chunk = DiffusionChunkResult(
-        prompt_index=0,
-        sample_start=0,
-        sample_count=1,
+        chunk=SampleChunk(prompt_index=0, sample_start=0, sample_count=1),
         observations=sources[0],
         actions=sources[1],
         log_probs=None,

@@ -334,9 +334,7 @@ class TestAdvantageAndMetrics:
                         prompt_index=index // group_size,
                         sample_index=index % group_size,
                         prompt=prompts[index // group_size],
-                        group_id=f"group-{index // group_size}",
                         sample_id=f"sample-{index}",
-                        trajectory_id=f"trajectory-{index}",
                     )
                     for index in range(len(prompts) * group_size)
                 ]

@@ -39,7 +39,6 @@ _DEFAULT_THRESHOLD = 0.15
 # First steps always run: they prime the cache and carry the largest step-to-step
 # change (early denoise), where skipping costs the most accuracy.
 _DEFAULT_WARMUP_STEPS = 2
-_SUPPORTED_SIGNALS = ("latent",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,13 +47,8 @@ class TeaCacheConfig:
 
     threshold: float
     warmup_steps: int
-    signal: str
 
     def __post_init__(self) -> None:
-        if self.signal not in _SUPPORTED_SIGNALS:
-            raise ValueError(
-                f"teacache.signal must be one of {_SUPPORTED_SIGNALS}; got {self.signal!r}",
-            )
         if self.threshold <= 0:
             raise ValueError(f"teacache.threshold must be > 0; got {self.threshold}")
         if self.warmup_steps < 0:
@@ -75,7 +69,6 @@ class TeaCacheConfig:
             return TeaCacheConfig(
                 threshold=_DEFAULT_THRESHOLD,
                 warmup_steps=_DEFAULT_WARMUP_STEPS,
-                signal="latent",
             )
         if not isinstance(value, Mapping):
             raise TypeError(
@@ -86,7 +79,6 @@ class TeaCacheConfig:
         return TeaCacheConfig(
             threshold=float(value.get("threshold", _DEFAULT_THRESHOLD)),
             warmup_steps=int(value.get("warmup_steps", _DEFAULT_WARMUP_STEPS)),
-            signal=str(value.get("signal", "latent")),
         )
 
 
@@ -174,16 +166,4 @@ class TeaCacheState:
         return float((cur - prev).abs().sum().div(denom).item())
 
 
-def teacache_signal(latents: torch.Tensor, signal: str) -> torch.Tensor:
-    """Extract the configured TeaCache skip signal from the step input.
-
-    v1 supports ``latent`` (the input latents themselves); per-family
-    timestep-modulated extractors land here later as additional ``signal`` kinds.
-    """
-
-    if signal == "latent":
-        return latents
-    raise ValueError(f"unsupported teacache signal {signal!r}")
-
-
-__all__ = ["TeaCacheConfig", "TeaCacheState", "teacache_signal"]
+__all__ = ["TeaCacheConfig", "TeaCacheState"]

@@ -1,7 +1,7 @@
 """NSFW safety penalty as a batch-capable RewardModel.
 
 Returns a non-positive penalty (high NSFW probability lowers reward; low NSFW
-never adds a bonus). Implements ``score_request`` so the classifier is called
+never adds a bonus). Implements ``score_batch`` so the classifier is called
 once across all artifacts' images, then per-rollout penalties are aggregated —
 identical to the original in-process NSFWSafetyReward behavior.
 """
@@ -34,10 +34,14 @@ class NSFWSafetyRewardModel:
         self._model_name = str(cfg.get("model_name", "Falconsai/nsfw_image_detection"))
         self._threshold = _validate_probability("threshold", cfg.get("threshold", 0.35))
         self._penalty_scale = _validate_lower_bounded(
-            "penalty_scale", cfg.get("penalty_scale", 1.0), inclusive=True,
+            "penalty_scale",
+            cfg.get("penalty_scale", 1.0),
+            inclusive=True,
         )
         self._max_penalty = _validate_lower_bounded(
-            "max_penalty", cfg.get("max_penalty", 1.0), inclusive=False,
+            "max_penalty",
+            cfg.get("max_penalty", 1.0),
+            inclusive=False,
         )
         self._image_sample_count = int(cfg.get("image_sample_count", 1))
         if self._image_sample_count <= 0:
@@ -50,10 +54,10 @@ class NSFWSafetyRewardModel:
         self._scorer: Callable[[list[Any]], Sequence[float]] | None = cfg.get("scorer")
         self._classifier: Any = None
 
-    def score_request(self, request: Any) -> list[dict[str, float]]:
+    def score_batch(self, artifacts: Sequence[Any]) -> list[dict[str, float]]:
         image_groups = [
             _extract_images(artifact.as_media(), self._image_sample_count)
-            for artifact in request.artifacts
+            for artifact in artifacts
         ]
         flat_images = [image for group in image_groups for image in group]
         flat_scores = self._score_images(flat_images)
@@ -66,7 +70,7 @@ class NSFWSafetyRewardModel:
             out.append({"nsfw_safety": self._penalty_from_probs(probs)})
         return out
 
-    def __call__(self, *, artifact: Any, request: Any) -> dict[str, float]:
+    def __call__(self, artifact: Any) -> dict[str, float]:
         images = _extract_images(artifact.as_media(), self._image_sample_count)
         return {"nsfw_safety": self._penalty_from_probs(self._score_images(images))}
 

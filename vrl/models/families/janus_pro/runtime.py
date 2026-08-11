@@ -120,7 +120,7 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
             sampling.get("temperature", self.model.config.temperature),
         )
 
-        repeated_prompts = [chunk.prompt] * chunk.sample_count
+        repeated_prompts = [request.inputs[chunk.prompt_index].prompt] * chunk.sample_count
         prompt_ids, prompt_mask = self._tokenize_prompts(
             repeated_prompts,
             max_text_length=params.max_text_length,
@@ -214,9 +214,7 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
 class JanusProR1ChunkResult:
     """Output of one prompt/sample Janus-Pro-R1 chunk."""
 
-    prompt_index: int
-    sample_start: int
-    sample_count: int
+    chunk: SampleChunk
     initial_image: torch.Tensor
     final_image: torch.Tensor
     selfcheck: torch.Tensor
@@ -252,7 +250,7 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             torch.manual_seed(params.seed + self.layout.chunk_seed_offset(request, chunk))
 
         with profile_range("engine.prefill"):
-            repeated_prompts = [chunk.prompt] * chunk.sample_count
+            repeated_prompts = [request.inputs[chunk.prompt_index].prompt] * chunk.sample_count
             prompt_ids, prompt_mask, uncond_ids, uncond_mask = self._tokenize_r1_prompts(
                 repeated_prompts,
                 max_text_length=params.max_text_length,
@@ -286,9 +284,7 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             )
 
         return JanusProR1ChunkResult(
-            prompt_index=chunk.prompt_index,
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
+            chunk=chunk,
             initial_image=result["initial_image"],
             final_image=result["final_image"],
             selfcheck=result["selfcheck"],
@@ -373,11 +369,8 @@ class JanusProR1ChunkGatherer:
             context=require_matching_chunk_context([chunk.context for chunk in ordered]),
         )
         return GenerationOutput(
-            request_id=request.request_id,
-            sample_rows=list(sample_rows),
             output=cat["final_image"],
             trajectory=trajectory,
-            extra={},
         )
 
 

@@ -654,14 +654,11 @@ resident 都在各自 active phase 拥有这份容量。Backend-specific KV/cach
 新增 `validate_rollout_schedule_topology(orchestration, resolved_resources)` 这类纯 preflight
 边界：在 `resolve_distributed_resources()` 后、trainer bundle/placement/Ray launch 前调用，只读
 resolved plan，不在 schedule/runtime 再用 raw device sets 重推导。`ContinuousRolloutSchedule`
-仍保留 driver/reward offload capability backstop，并把现有 runtime colocation guard 改成无条件；
-删掉的是手动 override，不是 safety check。
-
-保留 `GenerationRuntime.is_colocated()`、`RayGenerationRuntime.is_colocated()` 与
-`RolloutRuntimeCoordinator.runtime_is_colocated()`：移除 escape hatch 后，continuous schedule 无条件
-消费这条协议，作为绕过 online preflight、直接构造 schedule 时的 resident-colocation backstop。
-它不选择 lifecycle，也不重算 device sets；runtime 只携带 resolver/launcher 交下来的 verdict。
-这组 thin methods 提供真实 protocol/adapter boundary，不是 dead wrapper。
+仍保留 driver/reward/generation-offload capability backstops；删掉的是手动 override，不是 safety
+check。`GenerationRuntime.requires_driver_model_offload` 与 collector 的 typed reward handoff
+capabilities 由 `RolloutRuntimeCoordinator` 转发，continuous schedule 无条件拒绝需要 trainer
+parking、reward 借用 trainer GPU 或 generation/reward 中途交接的 topology。它们不选择 lifecycle，
+也不重算 device sets；只消费 resolver、collector 与 runtime 已解析的行为能力。
 
 Keep `ResolvedDistributedResources.colocated` and runtime
 `requires_driver_model_offload`: they drive launcher/runtime placement and
@@ -998,8 +995,8 @@ node/GPU identity 校验 placement。“先启动再由 schedule 猜”不算完
 - `RayLifecyclePlan`：topology -> role lease / phase handoff 的 typed source of truth；
 - `RayGenerationRuntime.activate/offload/update_weights/shutdown`：runtime protocol boundary，并直接
   拥有 executor/sync/actor/monitor/parking/teardown；
-- `GenerationRuntime.is_colocated()` 与 coordinator adapter：continuous 的 unconditional runtime
-  safety backstop；它们不参与 schedule selection；
+- `GenerationRuntime.requires_driver_model_offload` 与 coordinator adapter：continuous 的
+  unconditional runtime safety backstop；它们不参与 schedule selection；
 - desired vs active policy snapshot：sleeping worker 的事务性 coalescing；
 - `generation/ray/lifecycle_fsm.py`：shutdown admission、首个 failure、terminal phase；
 - bounded in-flight/ready/byte budgets、staleness scheduler、versioned slots；
@@ -1008,7 +1005,7 @@ node/GPU identity 校验 placement。“先启动再由 schedule 猜”不算完
 - partial cleanup retry、shutdown single-flight、release/offload 幂等。
 
 这些薄函数/文件有真实协议、lazy launch、framework adapter 或跨 family 一致性价值，不能为了
-少几行 flatten。`runtime_is_colocated()` 的唯一 production caller 是 safety guard，但这是保留
+少几行 flatten。`requires_driver_model_offload()` 的唯一 production caller 是 safety guard，但这是保留
 single-caller helper 的 protocol-boundary 例外。`cap_cuda_memory_fraction()` 不属于该例外：它的
 唯一 production caller 随唯一 producer 一起消失，且它吞异常的“hard cap”没有硬件合同；应与
 launcher field 和 `_rollout_memory_fraction()` 一起删除。新增的 training memory seam 只有在真正
@@ -1094,7 +1091,7 @@ a real runtime consumer's source of truth.
 
 ```bash
 rg -n "require_separate_gpus" vrl tests
-rg -n "runtime_is_colocated|def is_colocated" vrl tests
+rg -n "requires_driver_model_offload" vrl tests
 rg -n "rollout_gpu_memory_fraction|gpu_memory_fraction|memory_fraction" vrl tests
 ```
 

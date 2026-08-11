@@ -22,7 +22,7 @@ from transformers import Qwen2VLForConditionalGeneration
 from vrl.rewards.assets.kling_prompt_templates import (
     build_kling_video_reward_prompt,
 )
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.utils.logging import init_logger, kv
@@ -160,9 +160,7 @@ class KlingVideoRewardModel:
 
     def __call__(
         self,
-        *,
         artifact: RewardInferenceArtifact,
-        request: RewardInferenceRequest,
     ) -> dict[str, float]:
         prompt, artifact_path = require_prompt_and_video_path(
             artifact,

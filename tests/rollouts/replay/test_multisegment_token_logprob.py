@@ -32,17 +32,13 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=0,
             prompt="draw a chart",
-            group_id="g0",
             sample_id="s0",
-            trajectory_id="t0",
         ),
         GenerationSampleRow(
             prompt_index=0,
             sample_index=1,
             prompt="draw a chart",
-            group_id="g0",
             sample_id="s1",
-            trajectory_id="t1",
         ),
     ]
 

@@ -18,7 +18,7 @@ from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import bundled_config_resource
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
-from vrl.generation.execution.types import DistributedWorkerHandle
+from vrl.generation.execution.types import ChunkSizeProbeResult
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
@@ -32,6 +32,7 @@ from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import GlobalRayPlacementOwner, RolePlacement
@@ -75,7 +76,7 @@ def _runtime(
     executor: Any,
     *,
     weight_sync: Any | None = None,
-    workers: list[DistributedWorkerHandle] | None = None,
+    workers: list[RayActorHandle] | None = None,
 ) -> RayGenerationRuntime:
     return RayGenerationRuntime(
         session=RayGenerationSession(
@@ -332,7 +333,7 @@ class _SlotWorker:
 
 
 @contextlib.contextmanager
-def _slot_handles(ray: Any, *supports: bool | None) -> Iterator[list[DistributedWorkerHandle]]:
+def _slot_handles(ray: Any, *supports: bool | None) -> Iterator[list[RayActorHandle]]:
     """Real ``_SlotWorker`` actors, killed on exit.
 
     The cluster is shared across this package, so a fleet left running would keep
@@ -341,7 +342,7 @@ def _slot_handles(ray: Any, *supports: bool | None) -> Iterator[list[Distributed
 
     actor_cls = ray.remote(num_cpus=0)(_SlotWorker)
     handles = [
-        DistributedWorkerHandle(
+        RayActorHandle(
             worker_id=f"w{index}",
             actor=actor_cls.remote(value),
         )
@@ -1309,7 +1310,7 @@ async def test_remote_chunk_size_probe_timeout_is_terminal_and_cancels_refs(
             assert max_samples == 10
             return ref
 
-    worker = DistributedWorkerHandle(
+    worker = RayActorHandle(
         worker_id="w0",
         actor=SimpleNamespace(probe_chunk_size=_RemoteProbe()),
     )
@@ -1351,15 +1352,15 @@ async def test_concurrent_auto_chunk_requests_share_one_probe_before_submission(
     gate = asyncio.Event()
     probe_requests: list[str] = []
     executed_requests: list[GenerationRequest] = []
-    probe_result = {
-        "samples_per_chunk": 3,
-        "budget_bytes": 1,
-        "trials": [],
-    }
+    probe_result = ChunkSizeProbeResult(
+        samples_per_chunk=3,
+        budget_bytes=1,
+        trials=(),
+    )
 
     class _ProbeRef:
         def __await__(self):
-            async def wait() -> dict[str, Any]:
+            async def wait() -> ChunkSizeProbeResult:
                 await gate.wait()
                 return probe_result
 
@@ -1372,7 +1373,7 @@ async def test_concurrent_auto_chunk_requests_share_one_probe_before_submission(
             probe_requests.append(request.request_id)
             return _ProbeRef()
 
-    worker = DistributedWorkerHandle(
+    worker = RayActorHandle(
         worker_id="w0",
         actor=SimpleNamespace(probe_chunk_size=_RemoteProbe()),
     )
@@ -1434,7 +1435,7 @@ class _ProbeWorker:
         self._fleet_size = int(fleet_size)
         self._calls = 0
 
-    def probe_chunk_size(self, request: Any, *, max_samples: int) -> dict[str, Any]:
+    def probe_chunk_size(self, request: Any, *, max_samples: int) -> ChunkSizeProbeResult:
         import time
 
         import ray
@@ -1453,7 +1454,11 @@ class _ProbeWorker:
             if time.monotonic() > deadline:
                 raise TimeoutError("probes were dispatched sequentially, not concurrently")
             time.sleep(0.01)
-        return {"samples_per_chunk": self._answer, "budget_bytes": 32 * 1024**3, "trials": []}
+        return ChunkSizeProbeResult(
+            samples_per_chunk=self._answer,
+            budget_bytes=32 * 1024**3,
+            trials=(),
+        )
 
     def calls(self) -> int:
         return self._calls
@@ -1476,8 +1481,7 @@ def test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet(local_ray) -
     executed: list[Any] = []
 
     workers = [
-        DistributedWorkerHandle(worker_id=f"w{index}", actor=actor)
-        for index, actor in enumerate(actors)
+        RayActorHandle(worker_id=f"w{index}", actor=actor) for index, actor in enumerate(actors)
     ]
     executor = RayGenerationExecutor(
         SimpleNamespace(),

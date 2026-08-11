@@ -750,7 +750,7 @@ end_to_end_s
 Emitted only when runtime debug is requested:
 
 ```text
-GenerationOutput.extra["runtime_debug"]["chunk_schedule"]
+GenerationOutput.runtime_debug["chunk_schedule"]
 ```
 
 There is no unconditional top-level schedule key; the collector did not consume
@@ -846,7 +846,7 @@ Track A acceptance:
 
 ```text
 current round_robin behavior stays available
-chunk scheduling metrics visible in GenerationOutput.extra
+chunk scheduling metrics visible in GenerationOutput.runtime_debug
 dynamic dispatch has deterministic tests (fake actors, controlled completion order)
 existing Ray generation runtime tests pass
 ```

@@ -95,12 +95,12 @@ def _diffusion_rollout_batch(
     group_values = group_ids.detach().cpu().tolist()
     prompt_indices: dict[Any, int] = {}
     sample_counts: dict[Any, int] = {}
-    row_specs: list[tuple[int, int, Any]] = []
+    row_specs: list[tuple[int, int]] = []
     for group_id in group_values:
         prompt_index = prompt_indices.setdefault(group_id, len(prompt_indices))
         sample_index = sample_counts.get(group_id, 0)
         sample_counts[group_id] = sample_index + 1
-        row_specs.append((prompt_index, sample_index, group_id))
+        row_specs.append((prompt_index, sample_index))
     prompts = [f"trainer test prompt {index}" for index in range(len(prompt_indices))]
     request = GenerationRequest(
         request_id="trainer-test",
@@ -114,11 +114,9 @@ def _diffusion_rollout_batch(
             prompt_index=prompt_index,
             sample_index=sample_index,
             prompt=prompts[prompt_index],
-            group_id=str(group_id),
             sample_id=f"trainer-test:sample:{index}",
-            trajectory_id=f"trainer-test:trajectory:{index}",
         )
-        for index, (prompt_index, sample_index, group_id) in enumerate(row_specs)
+        for index, (prompt_index, sample_index) in enumerate(row_specs)
     ]
     batch_context = dict(context or {})
     trajectory = build_diffusion_trajectory(

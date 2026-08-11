@@ -15,9 +15,9 @@
 > startup real-execution probe (`AffinePeakFit` plus confirmation/bisection), not
 > the abandoned steady-state estimator. `build_chunk_memory_shadow` is retained
 > only to format log-only provenance rows; it no longer writes
-> `GenerationOutput.extra["chunk_memory_shadow"]`. `ChunkMemoryReading` has no
-> test-only `to_metrics` bridge: validation derives required names from the
-> dataclass, producers send the raw mapping, and tests use `dataclasses.asdict`.
+> collector output metadata. `ChunkMemoryReading` crosses the worker boundary as
+> a typed field on `ChunkExecutionResult`; the old typed-to-dict-to-typed relay
+> and its unused latent-byte field were removed.
 
 > **当前状态修正（2026-07-25，`003ad92e`）。** VAE memory 的现行值流是：
 > `ModelMemorySection` 校验 YAML → `ModelFamilyEntry.resolve_model_build` 唯一解析为
@@ -144,10 +144,9 @@ lifecycle 删除。要让告警有意义必须用 **soft 阈值**（如 `0.85 ×
 >   points, confirms the candidate, bisects an OOM boundary, and applies the
 >   throughput knee. Recursive per-chunk OOM splitting remains the final safety
 >   net.
-> - Worker chunk metrics carry a compact memory mapping. The driver converts
->   valid readings into one `chunk memory:` INFO row per chunk. Those rows are
->   explicitly log/provenance-only; no normal `GenerationOutput.extra` key
->   carries them to the collector.
+> - `ChunkExecutionResult.memory` carries a typed memory reading. The driver
+>   formats one `chunk memory:` INFO row per chunk. Those rows are explicitly
+>   log/provenance-only and do not travel to the collector.
 > - The older v0 estimator, predicted/admissible fields, and standalone scheduler
 >   cost helper were deleted. Sections below that discuss cross-shape formula
 >   estimation are future design notes, not descriptions of current code.

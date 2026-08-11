@@ -21,9 +21,8 @@ class _FakeRewardModel:
     def __init__(self, worker_config):
         self.worker_config = worker_config
 
-    def __call__(self, *, artifact, request):
+    def __call__(self, artifact):
         assert artifact.prompt == "prompt"
-        assert request.score_key == "overall_reward"
         assert self.worker_config["reward_model_name"] == "KlingTeam/VideoReward@main"
         return {"overall_reward": 3.0, "motion_quality": 1.0}
 
@@ -42,11 +41,7 @@ def test_runtime_requires_model_factory() -> None:
     )
     request = RewardInferenceRequest(
         request_id="req",
-        artifacts=(
-            RewardInferenceArtifact(artifact_id="a0", path="/tmp/a0.mp4", media_type="video"),
-        ),
-        reward_name="reward",
-        score_key="overall_reward",
+        artifacts=(RewardInferenceArtifact(artifact_id="a0", path="/tmp/a0.mp4"),),
     )
     with pytest.raises(ValueError, match="model_factory"):
         asyncio.run(runtime.score_batch(request))
@@ -112,15 +107,12 @@ async def test_runtime_loads_reward_model_via_factory() -> None:
             RewardInferenceArtifact(
                 artifact_id="a0",
                 path="/tmp/a0.mp4",
-                media_type="video",
                 prompt="prompt",
             ),
         ),
-        reward_name="kling_video_reward",
-        score_key="overall_reward",
     )
 
     results = await runtime.score_batch(request)
 
-    assert results[0].selected_score == pytest.approx(3.0)
+    assert results[0].scores["overall_reward"] == pytest.approx(3.0)
     assert results[0].reward_model_version == "KlingTeam/VideoReward@main"

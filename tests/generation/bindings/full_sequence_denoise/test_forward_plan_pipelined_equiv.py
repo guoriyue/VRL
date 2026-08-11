@@ -6,6 +6,8 @@ mechanism's bit-exactness."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -15,64 +17,26 @@ from vrl.generation.bindings.full_sequence_denoise.executor import (  # noqa: E4
 )
 from vrl.generation.execution.ids import build_sample_rows  # noqa: E402
 from vrl.generation.execution.planner import build_engine_plan  # noqa: E402
-from vrl.generation.types import GenerationOutput, GenerationRequest  # noqa: E402
+from vrl.generation.types import GenerationRequest  # noqa: E402
 
 
-class _RealStageExecutor:
-    """Exposes exactly the stage methods + forward_chunk_plan + gather that
-    forward_plan / forward_plan_pipelined call, producing REAL tensors per chunk
-    (deterministic by sample_start) through a real matmul denoise."""
+class _RealChunkExecutor:
+    """Produces deterministic real tensors through one canonical chunk method."""
 
     model = None  # no versioned slots
 
     def __init__(self, device: torch.device) -> None:
         self.device = device
 
-    def build_prompt_stage_input(self, request, chunk):
-        return chunk
-
-    def run_prompt_encode_stage(self, chunk, *, stage_durations, record_function):
+    def forward_chunk_plan(self, request, chunk):
+        del request
         g = torch.Generator(device=self.device).manual_seed(int(chunk.sample_start) + 1)
-        return torch.randn(chunk.sample_count, 8, generator=g, device=self.device)
-
-    def run_prepare_stage(self, x, *, stage_durations):
-        return x + 1.0
-
-    def run_denoise_stage(self, x, *, stage_durations):
+        x = torch.randn(chunk.sample_count, 8, generator=g, device=self.device) + 1.0
         return x @ torch.ones(8, 8, device=self.device)
 
-    def run_decode_stage(self, x):
-        return {"samples": x}
-
-    def apply_wire_storage_policy(self, request, result):
-        return result
-
-    def forward_chunk_plan(self, request, chunk):
-        x = self.run_prompt_encode_stage(
-            self.build_prompt_stage_input(request, chunk),
-            stage_durations={},
-            record_function=lambda *_a, **_k: _Null(),
-        )
-        x = self.run_prepare_stage(x, stage_durations={})
-        x = self.run_denoise_stage(x, stage_durations={})
-        return self.apply_wire_storage_policy(request, self.run_decode_stage(x))
-
     def gather_chunks(self, request, sample_rows, chunks):
-        return GenerationOutput(
-            request_id=request.request_id,
-            sample_rows=list(sample_rows),
-            output=[c["samples"] for c in chunks],
-        )
-
-
-class _Null:
-    """No-op record_function context manager."""
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
+        del request, sample_rows
+        return SimpleNamespace(output=list(chunks))
 
 
 def _request(num_samples: int) -> GenerationRequest:
@@ -101,7 +65,7 @@ def _plan(request, sample_rows):
 )
 def test_forward_plan_pipelined_matches_serial_forward_plan() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ex = _RealStageExecutor(device)
+    ex = _RealChunkExecutor(device)
     request = _request(6)
     sample_rows = build_sample_rows(request)
     plan = _plan(request, sample_rows)

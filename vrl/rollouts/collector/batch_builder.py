@@ -12,7 +12,6 @@ from vrl.rewards import RewardSample
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory import (
     RewardView,
-    TrajectoryBatch,
     TrajectorySegment,
     TrajectoryStoragePolicy,
     apply_trajectory_storage_policy,
@@ -48,7 +47,7 @@ class TrajectoryRolloutBatchBuilder:
         self.output = output
         self.context = context
         self.trajectory = apply_trajectory_storage_policy(
-            self._require_output_trajectory(output),
+            output.trajectory,
             context.trajectory_storage_policy,
         )
         self.output.trajectory = self.trajectory
@@ -65,26 +64,12 @@ class TrajectoryRolloutBatchBuilder:
             )
         samples: list[RewardSample] = []
         for index, row in enumerate(self.output.sample_rows):
-            row_request_id = row.metadata.get("request_id")
-            if row_request_id is not None and row_request_id != self.output.request_id:
-                raise ValueError(
-                    "reward source request/sample-row mismatch: "
-                    f"index={index}, source_request_id={self.output.request_id!r}, "
-                    f"row.request_id={row_request_id!r}",
-                )
-            metadata = dict(self.context.metadata)
-            metadata.update(row.metadata)
-            policy_version = row.metadata.get("policy_version")
             samples.append(
                 RewardSample(
                     prompt=row.prompt,
                     output=reward_outputs[index],
-                    source_request_id=self.output.request_id,
                     sample_id=row.sample_id,
-                    group_id=row.group_id,
-                    trajectory_id=row.trajectory_id,
-                    policy_version=(None if policy_version is None else int(policy_version)),
-                    metadata=metadata,
+                    metadata=dict(self.context.metadata),
                 ),
             )
         return tuple(samples)
@@ -145,7 +130,7 @@ class TrajectoryRolloutBatchBuilder:
         rollout_context = dict(self.trajectory.context)
         if self.context.metadata:
             rollout_context["reward_metadata"] = dict(self.context.metadata)
-        runtime_debug = self.output.extra.get("runtime_debug")
+        runtime_debug = self.output.runtime_debug
         if runtime_debug is not None:
             rollout_context["runtime_debug"] = runtime_debug
 
@@ -258,15 +243,6 @@ class TrajectoryRolloutBatchBuilder:
             return len(value)
         except TypeError as exc:
             raise TypeError("reward outputs must expose shape[0] or len()") from exc
-
-    @staticmethod
-    def _require_output_trajectory(output: GenerationOutput) -> TrajectoryBatch:
-        trajectory = output.trajectory
-        if not isinstance(trajectory, TrajectoryBatch):
-            raise RuntimeError(
-                f"GenerationOutput {output.request_id!r} is missing TrajectoryBatch",
-            )
-        return trajectory
 
 
 __all__ = [

@@ -12,6 +12,7 @@ from vrl.generation.bindings.chunk_autoregressive_denoise import (
     ChunkAutoregressiveDenoiseGatherer,
     ChunkAutoregressiveDenoiseResult,
 )
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.types import GenerationRequest
 from vrl.rollouts.collector.batch_builder import (
@@ -166,9 +167,7 @@ class _FakeChunkModel:
         del request
         self.calls.append((chunk.prompt_index, chunk.sample_start, chunk.sample_count))
         return ChunkAutoregressiveDenoiseResult(
-            prompt_index=chunk.prompt_index,
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
+            chunk=chunk,
             output=torch.full((chunk.sample_count, 1), float(chunk.sample_start)),
             temporal_chunk_count=2,
             context={"model_family": "fake"},
@@ -192,9 +191,7 @@ def _trainable_result(
     sample_start: int,
 ) -> ChunkAutoregressiveDenoiseResult:
     return ChunkAutoregressiveDenoiseResult(
-        prompt_index=0,
-        sample_start=sample_start,
-        sample_count=1,
+        chunk=SampleChunk(prompt_index=0, sample_start=sample_start, sample_count=1),
         output=torch.full((1, 1), value),
         temporal_chunk_count=2,
         denoise_transition_count=3,
@@ -218,9 +215,7 @@ def _generation_only_result(
     sample_start: int,
 ) -> ChunkAutoregressiveDenoiseResult:
     return ChunkAutoregressiveDenoiseResult(
-        prompt_index=0,
-        sample_start=sample_start,
-        sample_count=1,
+        chunk=SampleChunk(prompt_index=0, sample_start=sample_start, sample_count=1),
         output=torch.full((1, 1), value),
         temporal_chunk_count=2,
         denoise_transition_count=3,

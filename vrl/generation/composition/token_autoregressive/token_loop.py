@@ -64,16 +64,23 @@ class TokenAutoregressiveEnvelope:
             raise KeyError(f"unknown AR row lane: {name!r}") from exc
 
 
-@dataclass(slots=True)
 class TokenAutoregressiveLoop:
     """Family-neutral token-autoregressive composition over token policy steps."""
 
-    runner: Any
-    scheduler_batch_size: int | None = None
-    init_args: Sequence[Any] = ()
-    init_kwargs: Mapping[str, Any] | None = None
+    __slots__ = ("init_args", "init_kwargs", "runner", "scheduler_batch_size")
 
-    def __post_init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        runner: Any,
+        scheduler_batch_size: int | None = None,
+        init_args: Sequence[Any] = (),
+        init_kwargs: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.runner = runner
+        self.scheduler_batch_size = scheduler_batch_size
+        self.init_args = init_args
+        self.init_kwargs = init_kwargs
         if self.scheduler_batch_size is None:
             return
         if (

@@ -15,10 +15,7 @@ def _sample(output: object, *, sample_id: str = "sample-0") -> RewardSample:
     return RewardSample(
         prompt="anime portrait",
         output=output,
-        source_request_id="request-0",
         sample_id=sample_id,
-        group_id="group-0",
-        trajectory_id=f"trajectory-{sample_id}",
     )
 
 
@@ -34,13 +31,13 @@ async def test_nsfw_safety_reward_only_penalizes_scores_above_threshold() -> Non
     )
     image = Image.new("RGB", (8, 8), color=(128, 128, 128))
 
-    scores = await reward.score_batch(
+    output = await reward.score_batch(
         [_sample(image), _sample(image, sample_id="sample-1")],
     )
 
-    assert scores[0] == pytest.approx(0.0)
-    assert scores[1] == pytest.approx(-1.3333333333)
-    assert all(score <= 0.0 for score in scores)
+    assert output.scores[0] == pytest.approx(0.0)
+    assert output.scores[1] == pytest.approx(-1.3333333333)
+    assert all(score <= 0.0 for score in output.scores)
 
 
 @pytest.mark.asyncio

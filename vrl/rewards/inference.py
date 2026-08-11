@@ -38,13 +38,7 @@ class RewardInferenceArtifact:
 
     artifact_id: str
     path: str
-    media_type: MediaType
     prompt: str = ""
-    source_request_id: str | None = None
-    sample_id: str | None = None
-    group_id: str | None = None
-    trajectory_id: str | None = None
-    policy_version: int | None = None
     size_bytes: int | None = None
     sha256: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -58,12 +52,6 @@ class RewardInferenceArtifact:
         if not self.path and self.media is None:
             raise ValueError(
                 "RewardInferenceArtifact requires a materialized path or in-memory media",
-            )
-        if self.media_type not in MEDIA_TYPES:
-            allowed = ", ".join(get_args(MediaType))
-            raise ValueError(
-                f"RewardInferenceArtifact.media_type must be one of {allowed}; "
-                f"got {self.media_type!r}",
             )
         if (self.size_bytes is None) != (self.sha256 is None):
             raise ValueError(
@@ -108,112 +96,54 @@ class RewardInferenceArtifact:
         )
 
 
-class _ScoreSelection:
-    score_key: str
-    score_aggregation: str
-
-    def score_keys(self) -> tuple[str, ...]:
-        """Return the scalar score names requested by this inference object."""
-
-        keys = tuple(part.strip() for part in str(self.score_key).split("+") if part.strip())
-        if not keys:
-            raise ValueError(f"invalid reward score_key: {self.score_key!r}")
-        return keys
-
-    def select_score(self, scores: Mapping[str, Any]) -> float:
-        """Select and aggregate the training score from a score dictionary."""
-
-        keys = self.score_keys()
-        missing = [key for key in keys if key not in scores]
-        if missing:
-            raise KeyError(
-                "reward inference result missing score keys: "
-                f"missing={missing}, requested={self.score_key!r}, available={sorted(scores)}",
-            )
-        if self.score_aggregation != "sum":
-            raise ValueError(f"unsupported score_aggregation={self.score_aggregation!r}")
-        value = float(sum(float(scores[key]) for key in keys))
-        if not math.isfinite(value):
-            raise ValueError(
-                f"reward score_key={self.score_key!r} selected non-finite score: {value}",
-            )
-        return value
-
-
 @dataclass(frozen=True, slots=True)
-class RewardInferenceRequest(_ScoreSelection):
+class RewardInferenceRequest:
     """A batch of stable artifacts to score."""
 
     request_id: str
     artifacts: tuple[RewardInferenceArtifact, ...]
-    reward_name: str
-    score_key: str
-    score_aggregation: str = "sum"
-    policy_version: int | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.request_id:
             raise ValueError("RewardInferenceRequest.request_id is required")
-        if not self.reward_name:
-            raise ValueError("RewardInferenceRequest.reward_name is required")
-        self.score_keys()
-        if self.score_aggregation != "sum":
-            raise ValueError("RewardInferenceRequest.score_aggregation only supports 'sum'")
-        artifact_ids = [artifact.artifact_id for artifact in self.artifacts]
+        artifacts = tuple(self.artifacts)
+        if not all(isinstance(artifact, RewardInferenceArtifact) for artifact in artifacts):
+            raise TypeError(
+                "RewardInferenceRequest.artifacts must contain RewardInferenceArtifact values",
+            )
+        artifact_ids = [artifact.artifact_id for artifact in artifacts]
         if len(set(artifact_ids)) != len(artifact_ids):
             raise ValueError(f"duplicate reward artifact ids: {artifact_ids}")
+        object.__setattr__(self, "artifacts", artifacts)
 
 
 @dataclass(frozen=True, slots=True)
-class RewardInferenceResult(_ScoreSelection):
+class RewardInferenceResult:
     """One artifact's scored reward result."""
 
     artifact_id: str
     scores: dict[str, float]
-    selected_score: float
-    reward_name: str
-    score_key: str
-    score_aggregation: str = "sum"
-    policy_version: int | None = None
-    source_request_id: str | None = None
-    sample_id: str | None = None
-    group_id: str | None = None
-    trajectory_id: str | None = None
     # display/provenance-only: which reward model scored this; wire + debug JSONL.
     reward_model_version: str | None = None
-    latency_ms: float | None = None
-    queue_wait_ms: float | None = None
-    inference_ms: float | None = None
-    # display/provenance-only: which worker scored this; wire + debug JSONL.
-    worker_id: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-    error: str | None = None
+    timing_ms: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.artifact_id:
             raise ValueError("RewardInferenceResult.artifact_id is required")
-        if self.error:
-            return
-        expected = self.select_score(self.scores)
-        if not math.isfinite(float(self.selected_score)):
+        scores = {str(name): float(value) for name, value in self.scores.items()}
+        if not all(math.isfinite(value) for value in scores.values()):
             raise ValueError(
-                f"reward result {self.artifact_id!r} selected_score is non-finite",
+                f"reward result {self.artifact_id!r} scores must be finite",
             )
-        if abs(float(self.selected_score) - expected) > 1e-6:
-            raise ValueError(
-                f"reward result {self.artifact_id!r} selected_score mismatch: "
-                f"{self.selected_score} != {expected}",
-            )
-        for field_name in ("latency_ms", "queue_wait_ms", "inference_ms"):
-            value = getattr(self, field_name)
-            if value is None:
-                continue
+        timing_ms = {str(name): float(value) for name, value in self.timing_ms.items()}
+        for field_name, value in timing_ms.items():
             normalized = float(value)
             if not math.isfinite(normalized) or normalized < 0:
                 raise ValueError(
-                    f"RewardInferenceResult.{field_name} must be finite and non-negative",
+                    f"RewardInferenceResult timing {field_name!r} must be finite and non-negative",
                 )
+        object.__setattr__(self, "scores", scores)
+        object.__setattr__(self, "timing_ms", timing_ms)
 
 
 class RewardInferenceRuntime(Protocol):
@@ -237,17 +167,6 @@ class RewardInferenceRuntime(Protocol):
     async def shutdown(self) -> None: ...
 
 
-@dataclass(frozen=True, slots=True)
-class RewardMemoryParkingCapability:
-    """Class-declared support for verifiable reward memory parking."""
-
-    residual_bytes_limit: int = 0
-
-    def __post_init__(self) -> None:
-        if self.residual_bytes_limit < 0:
-            raise ValueError("reward parking residual_bytes_limit must be >= 0")
-
-
 def validate_reward_parking_residual(
     *,
     residual_bytes: int,
@@ -266,34 +185,6 @@ def validate_reward_parking_residual(
         )
 
 
-@dataclass(frozen=True, slots=True)
-class RewardMemoryReleaseProof:
-    """Evidence that one reward request finished with GPU memory parked."""
-
-    request_id: str
-    released: bool
-    baseline_gpu_used_bytes: int = 0
-    residual_gpu_used_bytes: int = 0
-    residual_bytes_limit: int = 0
-
-    def validate(self, *, request_id: str) -> None:
-        if self.request_id != request_id:
-            raise RuntimeError(
-                "reward memory release proof belongs to a different request: "
-                f"expected={request_id!r}, actual={self.request_id!r}",
-            )
-        if not self.released:
-            raise RuntimeError(
-                f"reward GPU memory was not released for request {request_id!r}",
-            )
-        validate_reward_parking_residual(
-            residual_bytes=self.residual_gpu_used_bytes,
-            baseline_bytes=self.baseline_gpu_used_bytes,
-            limit_bytes=self.residual_bytes_limit,
-            context=f"reward memory parking for request {request_id!r}",
-        )
-
-
 @runtime_checkable
 class RewardMemoryParkingRuntime(Protocol):
     """Runtime boundary for retryable, verifiable reward GPU parking."""
@@ -301,7 +192,7 @@ class RewardMemoryParkingRuntime(Protocol):
     @property
     def requires_memory_parking(self) -> bool: ...
 
-    async def park_memory(self) -> RewardMemoryReleaseProof: ...
+    async def park_memory(self) -> None: ...
 
 
 def validate_reward_results(
@@ -313,10 +204,6 @@ def validate_reward_results(
     expected_ids = [artifact.artifact_id for artifact in request.artifacts]
     by_id: dict[str, RewardInferenceResult] = {}
     for result in results:
-        if result.error:
-            raise RuntimeError(
-                f"reward inference failed for artifact {result.artifact_id}: {result.error}",
-            )
         if result.artifact_id in by_id:
             raise RuntimeError(f"duplicate reward result for artifact {result.artifact_id}")
         by_id[result.artifact_id] = result
@@ -326,50 +213,21 @@ def validate_reward_results(
         raise RuntimeError(
             f"reward inference result/artifact mismatch: missing={missing}, extra={extra}",
         )
-    ordered = [by_id[artifact_id] for artifact_id in expected_ids]
-    for artifact, result in zip(request.artifacts, ordered, strict=True):
-        for field_name in (
-            "source_request_id",
-            "sample_id",
-            "group_id",
-            "trajectory_id",
-        ):
-            expected = getattr(artifact, field_name)
-            actual = getattr(result, field_name)
-            if expected != actual:
-                raise RuntimeError(
-                    "reward inference result lineage mismatch: "
-                    f"artifact_id={artifact.artifact_id!r}, field={field_name}, "
-                    f"expected={expected!r}, actual={actual!r}",
-                )
-        expected_policy_version = (
-            artifact.policy_version
-            if artifact.policy_version is not None
-            else request.policy_version
-        )
-        if result.policy_version != expected_policy_version:
-            raise RuntimeError(
-                "reward inference result lineage mismatch: "
-                f"artifact_id={artifact.artifact_id!r}, field=policy_version, "
-                f"expected={expected_policy_version!r}, "
-                f"actual={result.policy_version!r}",
-            )
-    return ordered
+    return [by_id[artifact_id] for artifact_id in expected_ids]
 
 
 def score_artifacts_with_model(
     model: RewardModel,
     request: RewardInferenceRequest,
     *,
-    worker_id: str,
     reward_model_version: str = "",
 ) -> list[RewardInferenceResult]:
     """Run a ``RewardModel`` over a request's artifacts and build result rows.
 
     The in-process runtime's scoring core (the former Ray reward worker shared
     it; that transport is gone). A model may expose a
-    ``score_request(request) -> list[Mapping]`` batch hook (aligned to
-    ``request.artifacts``); otherwise its per-artifact ``__call__`` is looped.
+    ``score_batch(artifacts) -> list[Mapping]`` hook; otherwise its
+    per-artifact ``__call__`` is looped.
     """
 
     def build_result(
@@ -380,34 +238,20 @@ def score_artifacts_with_model(
         if not isinstance(raw_scores, Mapping):
             raise TypeError("reward model must return a mapping of scores")
         scores = {str(key): float(value) for key, value in raw_scores.items()}
-        selected = request.select_score(scores)
         return RewardInferenceResult(
             artifact_id=artifact.artifact_id,
             scores=scores,
-            selected_score=selected,
-            reward_name=request.reward_name,
-            score_key=request.score_key,
-            score_aggregation=request.score_aggregation,
-            policy_version=artifact.policy_version
-            if artifact.policy_version is not None
-            else request.policy_version,
-            source_request_id=artifact.source_request_id,
-            sample_id=artifact.sample_id,
-            group_id=artifact.group_id,
-            trajectory_id=artifact.trajectory_id,
-            reward_model_version=str(reward_model_version),
-            latency_ms=inference_ms,
-            inference_ms=inference_ms,
-            worker_id=worker_id,
+            reward_model_version=str(reward_model_version) or None,
+            timing_ms={"inference_ms": inference_ms},
         )
 
-    batch_score = getattr(model, "score_request", None)
+    batch_score = getattr(model, "score_batch", None)
     if callable(batch_score):
         started = time.perf_counter()
-        score_maps = list(batch_score(request))
+        score_maps = list(batch_score(request.artifacts))
         if len(score_maps) != len(request.artifacts):
             raise ValueError(
-                "RewardModel.score_request returned wrong number of score maps: "
+                "RewardModel.score_batch returned wrong number of score maps: "
                 f"got {len(score_maps)}, expected {len(request.artifacts)}",
             )
         per_artifact_ms = (time.perf_counter() - started) * 1000.0 / max(1, len(score_maps))
@@ -419,7 +263,7 @@ def score_artifacts_with_model(
     results: list[RewardInferenceResult] = []
     for artifact in request.artifacts:
         started = time.perf_counter()
-        raw_scores = model(artifact=artifact, request=request)
+        raw_scores = model(artifact)
         inference_ms = (time.perf_counter() - started) * 1000.0
         results.append(build_result(artifact, raw_scores, inference_ms))
     return results
@@ -432,7 +276,6 @@ __all__ = [
     "RewardInferenceResult",
     "RewardInferenceRuntime",
     "RewardMemoryParkingRuntime",
-    "RewardMemoryReleaseProof",
     "score_artifacts_with_model",
     "sha256_file",
     "validate_reward_parking_residual",

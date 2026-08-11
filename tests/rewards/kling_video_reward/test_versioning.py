@@ -19,20 +19,8 @@ class _VersionedRuntime:
             RewardInferenceResult(
                 artifact_id=artifact.artifact_id,
                 scores={"overall_reward": 4.0},
-                selected_score=4.0,
-                reward_name=request.reward_name,
-                score_key=request.score_key,
-                policy_version=artifact.policy_version,
-                source_request_id=artifact.source_request_id,
-                sample_id=artifact.sample_id,
-                group_id=artifact.group_id,
-                trajectory_id=artifact.trajectory_id,
                 reward_model_version="reward-v2",
-                latency_ms=7.0,
-                queue_wait_ms=2.0,
-                inference_ms=5.0,
-                worker_id="reward-0",
-                metadata={"gpu_ids": [1], "node_ip": "127.0.0.1"},
+                timing_ms={"queue_wait_ms": 2.0, "inference_ms": 5.0},
             )
             for artifact in request.artifacts
         ]
@@ -45,11 +33,7 @@ def _sample() -> RewardSample:
     return RewardSample(
         prompt="prompt",
         output=torch.ones(1, 2, 2, 2),
-        source_request_id="request-v",
         sample_id="sample-v",
-        group_id="group-v",
-        trajectory_id="trajectory-v",
-        policy_version=23,
     )
 
 
@@ -65,7 +49,7 @@ async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -
         inference_runtime=_VersionedRuntime(),
     )
 
-    report = await reward.score_batch_report([_sample()])
+    report = await reward.score_batch([_sample()])
 
     assert report.scores == pytest.approx([4.0])
     request_rows = [
@@ -81,14 +65,10 @@ async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -
         .splitlines()
     ]
 
-    assert request_rows[0]["policy_version"] == 23
     assert request_rows[0]["score_key"] == "overall_reward"
     assert request_rows[0]["artifact_materialization_ms"] >= 0
     assert request_rows[0]["inference_total_ms"] >= 0
     assert request_rows[0]["total_reward_latency_ms"] >= 0
-    assert result_rows[0]["policy_version"] == 23
-    assert result_rows[0]["score_key"] == "overall_reward"
     assert result_rows[0]["reward_model_version"] == "reward-v2"
-    assert result_rows[0]["latency_ms"] == pytest.approx(7.0)
-    assert result_rows[0]["queue_wait_ms"] == pytest.approx(2.0)
-    assert result_rows[0]["inference_ms"] == pytest.approx(5.0)
+    assert result_rows[0]["timing_ms"]["queue_wait_ms"] == pytest.approx(2.0)
+    assert result_rows[0]["timing_ms"]["inference_ms"] == pytest.approx(5.0)

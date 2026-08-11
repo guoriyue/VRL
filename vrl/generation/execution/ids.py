@@ -12,36 +12,14 @@ def build_sample_rows(request: GenerationRequest) -> list[GenerationSampleRow]:
     for prompt_index, request_input in enumerate(request.inputs):
         prompt = request_input.prompt
         prompt_id = f"{request.request_id}:prompt:{prompt_index}"
-        group_id = prompt_id
         for sample_index in range(request.samples_per_prompt):
-            flat_index = len(rows)
             sample_id = f"{prompt_id}:sample:{sample_index}"
-            metadata = dict(request.metadata)
-            metadata.update(request_input.metadata)
-            if request_input.task_type is not None:
-                metadata["task_type"] = request_input.task_type
-            if request_input.reference_image is not None:
-                metadata["reference_image"] = request_input.reference_image
-            if request_input.reference_video is not None:
-                metadata["reference_video"] = request_input.reference_video
-            metadata.update(
-                {
-                    "request_id": request.request_id,
-                    "prompt_index": prompt_index,
-                    "sample_index": sample_index,
-                    "flat_sample_index": flat_index,
-                    "policy_version": request.policy_version,
-                }
-            )
             rows.append(
                 GenerationSampleRow(
                     prompt_index=prompt_index,
                     sample_index=sample_index,
                     prompt=prompt,
-                    group_id=group_id,
                     sample_id=sample_id,
-                    trajectory_id=sample_id,
-                    metadata=metadata,
                 )
             )
     return rows

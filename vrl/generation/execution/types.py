@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, fields
 from typing import Any, Literal, Protocol, TypeAlias, get_args
 
 from vrl.generation.execution.chunks import SampleChunk
@@ -21,34 +21,6 @@ class StaleSlotDiscard(Exception):
     the batch with the fixed-version cause instead of retrying it as a collect
     error. See SPRINT_shadow_model_weight_sync.md §3.1 / §4.
     """
-
-
-@dataclass(frozen=True, slots=True)
-class DistributedWorkerHandle:
-    """Scheduler-visible identity and actor handle for one generation worker."""
-
-    worker_id: str
-    actor: Any | None = None
-
-    def require_installed_policy_version(self, installed: Any, expected: int) -> None:
-        """Require this worker's ACK for the expected installed policy version.
-
-        ``installed`` crosses Ray as whatever the worker returned, so it is
-        validated as an integer before it is compared.
-        """
-
-        try:
-            installed_version = int(installed)
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError(
-                f"worker {self.worker_id!r} returned invalid installed policy "
-                f"version {installed!r}",
-            ) from exc
-        if installed_version != int(expected):
-            raise RuntimeError(
-                f"worker {self.worker_id!r} installed policy version {installed_version}, "
-                f"expected {int(expected)}",
-            )
 
 
 ChunkPlacementStrategy = Literal["round_robin", "dynamic"]
@@ -131,6 +103,108 @@ class WorkerMemoryParkingSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class ChunkMemoryReading:
+    """Measured CUDA memory footprint of one executed generation chunk."""
+
+    # display/provenance-only: identifies the measured chunk width in runtime
+    # debug telemetry; the source chunk is no longer available after aggregation.
+    sample_count: int
+    # display/provenance-only: captures the unrepeatable allocator baseline used
+    # to interpret phase peaks in runtime debug telemetry.
+    baseline_allocated_bytes: int
+    denoise_peak_bytes: int
+    decode_peak_bytes: int
+    reserved_start_bytes: int
+    free_start_bytes: int
+    total_bytes: int
+
+    @property
+    def peak_bytes(self) -> int:
+        return max(self.denoise_peak_bytes, self.decode_peak_bytes)
+
+    @property
+    def non_torch_bytes(self) -> int:
+        """Device bytes torch cannot use: CUDA context plus other processes."""
+
+        return max(0, (self.total_bytes - self.free_start_bytes) - self.reserved_start_bytes)
+
+    @property
+    def budget_bytes(self) -> int:
+        """Bytes torch could occupy on this device."""
+
+        return self.reserved_start_bytes + self.free_start_bytes
+
+    @classmethod
+    def from_metrics(cls, raw: Mapping[str, Any]) -> ChunkMemoryReading | None:
+        """Normalize the binding-owned memory mapping once at the worker boundary."""
+
+        names = tuple(item.name for item in fields(cls))
+        if any(raw.get(name) is None for name in names):
+            return None
+        return cls(**{name: int(raw[name]) for name in names})
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkSizeProbeTrial:
+    """One worker-local probe verdict carried back across Ray."""
+
+    n: int
+    oom: bool
+    # display/provenance-only: names which adaptive-probe branch produced the
+    # trial so startup diagnostics remain interpretable.
+    label: str
+    peak_bytes: int | None = None
+    non_torch_bytes: int | None = None
+    wall_s: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.n < 1:
+            raise ValueError("chunk-size probe trial n must be >= 1")
+        if not self.label:
+            raise ValueError("chunk-size probe trial label must be non-empty")
+        measurements = (self.peak_bytes, self.non_torch_bytes, self.wall_s)
+        if self.oom:
+            if any(value is not None for value in measurements):
+                raise ValueError("OOM chunk-size probe trials cannot carry measurements")
+            return
+        if any(value is None for value in measurements):
+            raise ValueError("successful chunk-size probe trials require all measurements")
+        assert self.peak_bytes is not None
+        assert self.non_torch_bytes is not None
+        assert self.wall_s is not None
+        if self.peak_bytes < 0 or self.non_torch_bytes < 0 or self.wall_s < 0:
+            raise ValueError("chunk-size probe trial measurements must be >= 0")
+
+    @property
+    def per_sample_s(self) -> float | None:
+        """Derive throughput without duplicating it in the wire payload."""
+
+        return None if self.wall_s is None else self.wall_s / self.n
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkSizeProbeResult:
+    """One worker's resolved chunk size and its probe provenance."""
+
+    samples_per_chunk: int
+    # display/provenance-only: the device budget observed during startup sizing.
+    budget_bytes: int
+    # display/provenance-only: the irreproducible measurements behind the chosen
+    # size, retained for startup diagnostics.
+    trials: tuple[ChunkSizeProbeTrial, ...]
+
+    def __post_init__(self) -> None:
+        if self.samples_per_chunk < 1:
+            raise ValueError("probed samples_per_chunk must be >= 1")
+        if self.budget_bytes < 0:
+            raise ValueError("chunk-size probe budget_bytes must be >= 0")
+        trials = tuple(self.trials)
+        if any(not isinstance(trial, ChunkSizeProbeTrial) for trial in trials):
+            raise TypeError("chunk-size probe trials must contain ChunkSizeProbeTrial")
+        object.__setattr__(self, "trials", trials)
+
+
+@dataclass(frozen=True, slots=True)
 class ChunkExecutionEnvelope:
     """Authoritative chunk execution payload sent from the driver to a worker."""
 
@@ -150,6 +224,11 @@ class ChunkExecutionResult:
     worker_id: str
     chunk: SampleChunk
     output: ChunkResult | None
+    # display/provenance-only: worker-local measurements folded into optional
+    # runtime-debug telemetry after chunk execution.
+    memory: ChunkMemoryReading | None = None
+    # display/provenance-only: family/worker diagnostics requested explicitly by
+    # GenerationRequest.runtime_debug.
     metrics: dict[str, Any] = field(default_factory=dict)
     policy_version: int | None = None
     error: str | None = None
@@ -180,9 +259,11 @@ __all__ = [
     "ChunkCompletionCallback",
     "ChunkExecutionEnvelope",
     "ChunkExecutionResult",
+    "ChunkMemoryReading",
     "ChunkPlacementStrategy",
     "ChunkProduceFence",
-    "DistributedWorkerHandle",
+    "ChunkSizeProbeResult",
+    "ChunkSizeProbeTrial",
     "ParkingBackend",
     "PipelinedRequestOutOfMemory",
     "QueryableCompletion",

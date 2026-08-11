@@ -27,7 +27,6 @@ def test_preview_request_uses_real_prompt_overrides_and_one_sample(
         entry=SimpleNamespace(
             family="sana",
             task="t2i",
-            request_metadata_namespace=None,
         ),
         config=RolloutCollectorConfig.from_cfg(
             OmegaConf.create(
@@ -56,7 +55,7 @@ def test_preview_request_uses_real_prompt_overrides_and_one_sample(
         "samples_per_chunk": expected_chunk_size,
         "seed": 101,
     }
-    assert request.inputs[0].metadata == {"source": "fixture"}
+    assert not hasattr(request.inputs[0], "metadata")
 
 
 def test_preview_image_preserves_uint8_and_identity(tmp_path: Path) -> None:
@@ -65,7 +64,7 @@ def test_preview_image_preserves_uint8_and_identity(tmp_path: Path) -> None:
         request_id="request-0",
         output=image,
         sample_rows=[
-            SimpleNamespace(prompt="prompt", metadata={"request_id": "request-0"}),
+            SimpleNamespace(prompt="prompt"),
         ],
     )
     path = tmp_path / "000.png"
@@ -92,7 +91,6 @@ def test_preview_image_preserves_uint8_and_identity(tmp_path: Path) -> None:
                 sample_rows=[
                     SimpleNamespace(
                         prompt="different",
-                        metadata={"request_id": "request-0"},
                     ),
                 ],
             ),

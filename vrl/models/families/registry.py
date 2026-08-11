@@ -170,7 +170,6 @@ class ModelFamilyEntry:
     runtime_capabilities: GenerationRuntimeCapabilities = field(
         default_factory=GenerationRuntimeCapabilities,
     )
-    request_metadata_namespace: str | None = None
 
     def __post_init__(self) -> None:
         denoise_build = isinstance(self.family_build, DenoiseFamilyBuild)
@@ -185,8 +184,6 @@ class ModelFamilyEntry:
             raise ValueError(f"model family {self.family!r} requires a model section class")
         if not self.sampling_section_cls:
             raise ValueError(f"model family {self.family!r} requires a sampling section class")
-        if self.request_metadata_namespace == "":
-            raise ValueError("request_metadata_namespace must be non-empty when set")
 
     @property
     def supports_policy_replay(self) -> bool:
@@ -552,7 +549,6 @@ def _token_autoregressive_entry(
     task: str = "ar_t2i",
     trajectory_layout: TrajectoryLayout = "token",
     gatherer_cls: str = "vrl.generation.bindings.token_autoregressive.executor:ARDiscreteChunkGatherer",
-    request_metadata_namespace: str | None = None,
 ) -> ModelFamilyEntry:
     """Construct common wiring for current token-autoregressive policy variants."""
 
@@ -570,7 +566,6 @@ def _token_autoregressive_entry(
         model_section_cls=model_section_cls,
         sampling_section_cls=sampling_section_cls,
         family_build=build,
-        request_metadata_namespace=request_metadata_namespace,
     )
 
 
@@ -988,7 +983,6 @@ _register_model_family(
             supports_full_parameter_training=True,
             gradient_checkpointing_at_load=True,
         ),
-        request_metadata_namespace="rollout_metadata",
     ),
 )
 

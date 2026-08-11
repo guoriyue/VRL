@@ -16,6 +16,7 @@ from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
+from vrl.trajectory import TrajectoryBatch
 
 # These build real Ray workers on the package cluster — slow by nature, nightly.
 pytestmark = pytest.mark.slow_test
@@ -29,9 +30,15 @@ class _Gatherer:
         chunks: Sequence[ChunkResult],
     ) -> GenerationOutput:
         return GenerationOutput(
-            request_id=request.request_id,
-            sample_rows=list(sample_rows),
             output=list(chunks),
+            trajectory=TrajectoryBatch(
+                request_id=request.request_id,
+                family=request.family,
+                task=request.task,
+                sample_rows=list(sample_rows),
+                axes={},
+                segments={},
+            ),
         )
 
 
@@ -100,14 +107,14 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(local_r
         # Launcher uses the owner's group; it does not own/remove it.
         assert not hasattr(runtime, "_placement_group")
         # Config-selected placement strategy must reach the live planner.
-        assert session.executor.planner.policy.strategy == "dynamic"
+        assert session.executor.planner.strategy == "dynamic"
 
         workers = session.executor.workers
         assert [worker.worker_id for worker in workers] == ["rollout-0"]
         assert workers[0].actor is not None
         metadata = ray.get(workers[0].actor.worker_metadata.remote())
         assert metadata["worker_id"] == "rollout-0"
-        assert metadata["policy_version"] == 7
+        assert "policy_version" not in metadata
     finally:
         # The cluster is shared with the rest of this package: release the
         # workers and the placement group, never the cluster.
@@ -196,7 +203,7 @@ def test_launcher_uses_resolved_colocation_protocol_signal(local_ray) -> None:
             placement=owner.rollout_placement,
         )
 
-        assert runtime.is_colocated() is False
+        assert runtime.requires_driver_model_offload is False
     finally:
         if runtime is not None:
             asyncio.run(runtime.shutdown())

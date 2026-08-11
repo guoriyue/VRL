@@ -374,9 +374,7 @@ def test_replay_forward_returns_typed_replay_result() -> None:
                 prompt_index=index,
                 sample_index=0,
                 prompt=prompt,
-                group_id=f"g{index}",
                 sample_id=f"s{index}",
-                trajectory_id=f"t{index}",
             )
             for index, prompt in enumerate(("a", "b"))
         ],

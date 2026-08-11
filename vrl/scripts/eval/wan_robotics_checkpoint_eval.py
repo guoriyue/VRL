@@ -338,8 +338,6 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
     request = RewardInferenceRequest(
         request_id="wan-robotics-fixed-checkpoint-eval",
         artifacts=tuple(artifacts),
-        reward_name="robotics_video_reward",
-        score_key="robotics_blend",
     )
     device = resolve_eval_device(str(args.device))
     worker_config = _reward_worker_config(cfg, device=device)
@@ -351,10 +349,7 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
         for index, (artifact, row) in enumerate(
             zip(request.artifacts, artifact_rows, strict=True),
         ):
-            scores = {
-                key: float(value)
-                for key, value in model(artifact=artifact, request=request).items()
-            }
+            scores = {key: float(value) for key, value in model(artifact).items()}
             missing = sorted(set(SCORE_KEYS) - set(scores))
             if missing or any(not math.isfinite(scores[key]) for key in SCORE_KEYS):
                 raise ValueError(
@@ -670,9 +665,7 @@ def _build_scoring_artifacts(
                 f"-s{int(row['sample_index']):02d}"
             ),
             path=str(path),
-            media_type="video",
             prompt=str(row["prompt"]),
-            sample_id=f"r{row['row_index']}-s{row['sample_index']}",
             size_bytes=int(row["bytes"]),
             sha256=str(row["sha256"]),
             metadata={
@@ -698,9 +691,7 @@ def _build_scoring_artifacts(
                 RewardInferenceArtifact(
                     artifact_id=f"reference-r{int(selected['row_index']):04d}",
                     path=str(target_path),
-                    media_type="video",
                     prompt=str(selected["prompt"]),
-                    sample_id=f"reference-r{selected['row_index']}",
                     size_bytes=target_path.stat().st_size,
                     sha256=digest,
                     metadata={"target_video": target_video, "checkpoint_label": "reference"},

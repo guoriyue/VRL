@@ -44,7 +44,7 @@ def _request(
     path: str,
     *,
     request_id: str = "req-1",
-    reward_name: str = "unit",
+    prompt: str = "a dancer spins",
 ) -> RewardInferenceRequest:
     artifact_path = Path(path)
     payload = artifact_path.read_bytes()
@@ -54,17 +54,12 @@ def _request(
             RewardInferenceArtifact(
                 artifact_id="a0",
                 path=path,
-                media_type="video",
-                prompt="a dancer spins",
-                sample_id="sample-0",
-                policy_version=3,
+                prompt=prompt,
                 size_bytes=len(payload),
                 sha256=hashlib.sha256(payload).hexdigest(),
                 metadata={"target_text": "HELLO"},
             ),
         ),
-        reward_name=reward_name,
-        score_key="overall",
     )
 
 
@@ -73,16 +68,7 @@ def _results(request: RewardInferenceRequest) -> list[RewardInferenceResult]:
         RewardInferenceResult(
             artifact_id=artifact.artifact_id,
             scores={"overall": 0.75},
-            selected_score=0.75,
-            reward_name=request.reward_name,
-            score_key=request.score_key,
-            policy_version=artifact.policy_version,
-            source_request_id=artifact.source_request_id,
-            sample_id=artifact.sample_id,
-            group_id=artifact.group_id,
-            trajectory_id=artifact.trajectory_id,
             reward_model_version="unit-v1",
-            worker_id="service",
         )
         for artifact in request.artifacts
     ]
@@ -147,9 +133,8 @@ def test_wire_roundtrip_is_versioned_and_preserves_request(tmp_path) -> None:
     assert payload["protocol"] == WIRE_PROTOCOL
     assert payload["version"] == WIRE_VERSION
     assert restored.request_id == request.request_id
-    assert restored.reward_name == request.reward_name
+    assert restored == request
     assert restored.artifacts[0].path == str(artifact_file)
-    assert restored.artifacts[0].policy_version == 3
     assert restored.artifacts[0].size_bytes == 1
     assert restored.artifacts[0].sha256 == hashlib.sha256(b"x").hexdigest()
     assert restored.artifacts[0].metadata == {"target_text": "HELLO"}
@@ -162,12 +147,9 @@ def test_wire_rejects_inmemory_media() -> None:
             RewardInferenceArtifact(
                 artifact_id="a0",
                 path="",
-                media_type="image",
                 media=object(),
             ),
         ),
-        reward_name="unit",
-        score_key="overall",
     )
     with pytest.raises(ValueError, match="disk-materialized"):
         request_to_wire(request)
@@ -215,10 +197,10 @@ async def test_client_scores_through_async_server_and_validates_identity(tmp_pat
     assert info.model_name == "unit-model"
     assert info.model_version == "unit-v1"
     assert set(info.capabilities) == {"cancel", "idempotency", "score_batch"}
-    assert [result.selected_score for result in results] == [0.75]
-    assert results[0].metadata["service_artifact_validation_ms"] >= 0.0
-    assert results[0].metadata["service_inference_wall_ms"] >= 0.0
-    assert results[0].metadata["http_roundtrip_ms"] >= 0.0
+    assert [result.scores["overall"] for result in results] == [0.75]
+    assert results[0].timing_ms["service_artifact_validation_ms"] >= 0.0
+    assert results[0].timing_ms["service_inference_wall_ms"] >= 0.0
+    assert results[0].timing_ms["http_roundtrip_ms"] >= 0.0
     assert runtime.requests[0].artifacts[0].path == str(artifact_file.resolve())
     assert runtime.requests[0].artifacts[0].metadata == {"target_text": "HELLO"}
     assert runtime.shutdown_calls == 1
@@ -254,7 +236,7 @@ async def test_client_preflight_hands_session_to_continuous_owner_loop(tmp_path)
 
         results = await asyncio.to_thread(score_on_owner_loop)
 
-    assert [result.selected_score for result in results] == [0.75]
+    assert [result.scores["overall"] for result in results] == [0.75]
 
 
 @pytest.mark.asyncio
@@ -581,12 +563,8 @@ async def test_service_reports_actual_semaphore_queue_wait(tmp_path) -> None:
 
     first_result = first_results[0]
     second_result = second_results[0]
-    assert first_result.queue_wait_ms is not None
-    assert first_result.queue_wait_ms >= 0
-    assert second_result.queue_wait_ms is not None
-    assert second_result.queue_wait_ms > first_result.queue_wait_ms
-    assert second_result.latency_ms is not None
-    assert second_result.latency_ms >= second_result.queue_wait_ms
+    assert first_result.timing_ms["queue_wait_ms"] >= 0
+    assert second_result.timing_ms["queue_wait_ms"] > first_result.timing_ms["queue_wait_ms"]
 
 
 @pytest.mark.asyncio
@@ -619,7 +597,7 @@ async def test_idempotency_joins_inflight_replays_cache_and_rejects_conflict(tmp
                 _request(
                     str(artifact_file),
                     request_id="stable-id",
-                    reward_name="different",
+                    prompt="different",
                 ),
             )
 
@@ -631,9 +609,9 @@ async def test_idempotency_joins_inflight_replays_cache_and_rejects_conflict(tmp
         return [
             replace(
                 result,
-                metadata={
+                timing_ms={
                     key: value
-                    for key, value in result.metadata.items()
+                    for key, value in result.timing_ms.items()
                     if key != "http_roundtrip_ms"
                 },
             )
@@ -646,7 +624,7 @@ async def test_idempotency_joins_inflight_replays_cache_and_rejects_conflict(tmp
         == semantic_results(replay_results)
     )
     assert all(
-        result.metadata["http_roundtrip_ms"] >= 0.0
+        result.timing_ms["http_roundtrip_ms"] >= 0.0
         for results in (first_results, duplicate_results, replay_results)
         for result in results
     )
@@ -813,7 +791,7 @@ async def test_retryable_scoring_failure_can_retry_same_request_id(tmp_path) -> 
 
     assert first.value.code == RewardServiceErrorCode.SCORING_FAILED.value
     assert first.value.retryable
-    assert [result.selected_score for result in results] == [0.75]
+    assert [result.scores["overall"] for result in results] == [0.75]
     assert len(runtime.requests) == 2
 
 
@@ -823,7 +801,12 @@ async def test_invalid_timing_is_retryable_instead_of_cached_as_success(tmp_path
         async def score_batch(self, request):
             self.requests.append(request)
             if len(self.requests) == 1:
-                return [replace(_results(request)[0], queue_wait_ms=float("nan"))]
+                return [
+                    replace(
+                        _results(request)[0],
+                        timing_ms={"queue_wait_ms": float("nan")},
+                    ),
+                ]
             return _results(request)
 
     artifact_file = tmp_path / "a0.mp4"
@@ -837,7 +820,7 @@ async def test_invalid_timing_is_retryable_instead_of_cached_as_success(tmp_path
 
     assert first.value.code == RewardServiceErrorCode.SCORING_FAILED.value
     assert first.value.retryable
-    assert [result.selected_score for result in results] == [0.75]
+    assert [result.scores["overall"] for result in results] == [0.75]
     assert len(runtime.requests) == 2
 
 

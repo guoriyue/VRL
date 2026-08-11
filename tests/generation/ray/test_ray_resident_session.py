@@ -22,6 +22,7 @@ from vrl.models.interfaces import (
     RolloutBuildOptions,
     RuntimeBundle,
 )
+from vrl.trajectory import TrajectoryBatch
 
 
 class _TinyRuntimeModel:
@@ -45,9 +46,15 @@ class _TinyGatherer:
         chunks: Sequence[ChunkResult],
     ) -> GenerationOutput:
         return GenerationOutput(
-            request_id=request.request_id,
-            sample_rows=list(sample_rows),
             output=list(chunks),
+            trajectory=TrajectoryBatch(
+                request_id=request.request_id,
+                family=request.family,
+                task=request.task,
+                sample_rows=list(sample_rows),
+                axes={},
+                segments={},
+            ),
         )
 
 

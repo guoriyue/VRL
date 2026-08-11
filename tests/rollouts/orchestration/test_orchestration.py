@@ -80,11 +80,6 @@ class _Runtime:
         self.current_policy_version = 0
         self.requires_driver_model_offload = False
 
-    def is_colocated(self) -> bool:
-        # Fakes implement the GenerationRuntime protocol method directly
-        # instead of mimicking the runtime's internal config layout.
-        return False
-
 
 class _Syncer:
     def __init__(self, runtime: _Runtime) -> None:

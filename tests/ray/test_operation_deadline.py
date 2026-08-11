@@ -8,9 +8,8 @@ from typing import Any
 import pytest
 
 import vrl.ray.actor_group as actor_group_module
-from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.ray.launcher import _all_workers_support_versioned_slots
-from vrl.ray.actor_group import RayActorGroup
+from vrl.ray.actor_group import RayActorGroup, RayActorHandle
 from vrl.ray.operation_deadline import (
     RayCallDeadline,
     RayOperationTimeout,
@@ -218,8 +217,7 @@ def test_capability_timeout_is_not_downgraded_to_safe_false() -> None:
         for ref in refs
     ]
     workers = [
-        DistributedWorkerHandle(worker_id=f"w{index}", actor=actor)
-        for index, actor in enumerate(actors)
+        RayActorHandle(worker_id=f"w{index}", actor=actor) for index, actor in enumerate(actors)
     ]
     ray = _SyncTimeoutRay()
 

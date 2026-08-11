@@ -10,7 +10,6 @@ from typing import Any, ClassVar
 import pytest
 
 import vrl.generation.ray.session as session_module
-from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.lifecycle_fsm import (
     RuntimeLifecycle,
@@ -20,6 +19,7 @@ from vrl.generation.ray.lifecycle_fsm import (
 from vrl.generation.ray.pipeline_protocol import PipelinedProgressError
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.runtime_errors import failure_identity_cause
@@ -29,7 +29,7 @@ def _runtime(
     executor: Any | None = None,
     *,
     weight_sync: Any | None = None,
-    owned_workers: list[DistributedWorkerHandle] | None = None,
+    owned_workers: list[RayActorHandle] | None = None,
 ) -> RayGenerationRuntime:
     return RayGenerationRuntime(
         session=RayGenerationSession(
@@ -366,7 +366,7 @@ async def test_generation_timeout_force_kills_without_release_rpc(monkeypatch) -
     actor = _Actor()
     runtime = _runtime(
         _Executor(),
-        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+        owned_workers=[RayActorHandle(worker_id="w0", actor=actor)],
     )
     monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
 
@@ -417,7 +417,7 @@ async def test_submitted_generation_cancellation_force_kills_and_stays_cancelled
     actor = _Actor()
     runtime = _runtime(
         _Executor(),
-        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+        owned_workers=[RayActorHandle(worker_id="w0", actor=actor)],
     )
     monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
 
@@ -613,7 +613,7 @@ async def test_weight_ack_timeout_keeps_previous_version_and_force_kills(
     runtime = _runtime(
         SimpleNamespace(),
         weight_sync=_WeightSync(),
-        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+        owned_workers=[RayActorHandle(worker_id="w0", actor=actor)],
     )
     runtime.current_policy_version = 6
     monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
@@ -684,7 +684,7 @@ async def test_later_timeout_upgrades_ordinary_failure_to_force_cleanup(monkeypa
     actor = _Actor()
     runtime = _runtime(
         SimpleNamespace(),
-        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+        owned_workers=[RayActorHandle(worker_id="w0", actor=actor)],
     )
     ordinary = RuntimeError("health failed first")
     runtime.lifecycle.fail(ordinary)
@@ -733,7 +733,7 @@ async def test_timeout_interrupts_an_already_waiting_release_barrier(monkeypatch
     actor = _Actor()
     runtime = _runtime(
         SimpleNamespace(),
-        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+        owned_workers=[RayActorHandle(worker_id="w0", actor=actor)],
     )
     session = runtime._session
     assert session is not None
@@ -844,7 +844,7 @@ async def test_actor_cleanup_failure_retains_owned_handle_for_retry(monkeypatch)
 
     monkeypatch.setattr(session_module, "require_ray", lambda: _RayApi)
     actor = _Actor()
-    worker = DistributedWorkerHandle(worker_id="w0", actor=actor)
+    worker = RayActorHandle(worker_id="w0", actor=actor)
     runtime = _runtime(
         SimpleNamespace(),
         owned_workers=[worker],
@@ -915,7 +915,7 @@ def test_shutdown_kills_only_owned_actor(local_ray) -> None:
     actor_cls = local_ray.remote(num_cpus=0)(_ReleaseWorker)
     actor = actor_cls.remote()
     bystander = actor_cls.remote()
-    worker = DistributedWorkerHandle(worker_id="w0", actor=actor)
+    worker = RayActorHandle(worker_id="w0", actor=actor)
     runtime = _runtime(
         SimpleNamespace(),
         owned_workers=[worker],

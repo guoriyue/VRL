@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from vrl.rewards.inference import RewardMemoryReleaseProof
-from vrl.rewards.types import RewardOutput, RewardRequest
+from vrl.rewards.types import RewardOutput, RewardSample
 
 
 @runtime_checkable
@@ -28,19 +28,19 @@ class RewardRuntime(Protocol):
 
     async def score(
         self,
-        request: RewardRequest,
+        samples: Sequence[RewardSample],
         *,
         require_memory_release: bool = False,
     ) -> RewardOutput:
-        """Score one request and return sample-aligned results."""
+        """Score one ordered sample collection and return aligned results."""
         ...
 
     async def park_memory(
         self,
         *,
         required: bool,
-    ) -> tuple[RewardMemoryReleaseProof, ...]:
-        """Release reward-owned accelerator memory and validate fresh proofs."""
+    ) -> None:
+        """Release reward-owned accelerator memory and enforce the parking gate."""
         ...
 
     async def shutdown(self) -> None:

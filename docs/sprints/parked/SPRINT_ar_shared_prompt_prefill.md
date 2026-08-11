@@ -31,7 +31,8 @@ profiling-gated。
 `vrl/models/families/janus_pro/runtime.py`（chunk 路径，nextstep_1 同形）：
 
 ```python
-repeated_prompts = [chunk.prompt] * chunk.sample_count   # 同一个 prompt 复制 K 份
+prompt = request.inputs[chunk.prompt_index].prompt
+repeated_prompts = [prompt] * chunk.sample_count        # 同一个 prompt 复制 K 份
 cond_embeds, ... = encode(repeated_prompts, ...)         # 编成 [K, seq, dim]
 init_ar(cond_embeds, uncond_embeds, ...)                 # K 行一起 prefill
 ```
@@ -79,7 +80,7 @@ prompt**。当前 prefill 仍执行 cond+uncond 两次 branch forward，**每次
 - 把这份 KV **复制**到 K 个 decode lane（K 份 KV 内存，但 prefill 只算一次）。
 - decode 照旧 K-batched。
 - 改动点：`runner.init_ar` 接收 `num_samples`，prefill 单行后 fan-out KV 到 K lane；runtime 不再
-  `[chunk.prompt] * sample_count`，只传 1 行 prompt + `sample_count`。
+  `[request.inputs[chunk.prompt_index].prompt] * sample_count`，只传 1 行 prompt + `sample_count`。
 
 **B. 共享 KV 页（高级，省 compute 也省显存）**
 - prefill 单行 → K 个 decode lane **共享只读** prompt KV 页（copy-on-write 仅对 decode 段），即 vLLM
@@ -98,7 +99,8 @@ prompt**。当前 prefill 仍执行 cond+uncond 两次 branch forward，**每次
 - 验收：占比 < 15% → **不做**（记录结论，关闭）；≥ 15% → 进 P1。
 
 ### P1 — 共享前缀 prefill（方案 A，compute-once）
-- `runtime`：chunk 路径不再 `[chunk.prompt] * sample_count`；传单 prompt + `sample_count`。
+- `runtime`：chunk 路径不再
+  `[request.inputs[chunk.prompt_index].prompt] * sample_count`；传单 prompt + `sample_count`。
 - `runner.init_ar`：prefill 单行 cond/uncond，KV fan-out 到 K decode lane；cond/uncond 两次
   branch forward 不变，但**前向的 batch 维从 K 降到 1**，验收直接比较 `engine.prefill` 墙钟。
 - 正确性红线：K 个 lane 的 decode 结果**逐位等于**现状（同 noise/seed/temperature），logprob 不变

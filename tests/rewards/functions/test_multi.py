@@ -5,21 +5,16 @@ from __future__ import annotations
 import pytest
 
 from vrl.config.reward_inference import RewardInferenceConfig
-from vrl.rewards.base import (
-    InferenceRewardFunction,
-    RewardBatchReport,
-    RewardCleanupError,
-    RewardFunction,
-)
+from vrl.rewards.base import InferenceRewardFunction, RewardCleanupError, RewardFunction
 from vrl.rewards.functions.registry import (
     MultiReward,
     validate_reward_memory_parking_components,
 )
 from vrl.rewards.functions.videoscore2 import VideoScore2Reward
-from vrl.rewards.runtime import InProcessRewardInferenceRuntime
+from vrl.rewards.runtime import InProcessRewardInferenceRuntime, RewardFunctionRuntime
 from vrl.rewards.service.client import HttpRewardInferenceRuntime
 from vrl.rewards.service.server import RewardService
-from vrl.rewards.types import RewardSample
+from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 
 
@@ -27,10 +22,8 @@ def _make_sample(prompt: str) -> RewardSample:
     return RewardSample(
         prompt=prompt,
         output=None,
-        source_request_id="request-0",
         sample_id=f"sample-{prompt}",
-        group_id="group-0",
-        trajectory_id=f"trajectory-{prompt}",
+        metadata={"prompt_key": prompt},
     )
 
 
@@ -42,10 +35,10 @@ class _QueuedBatchReward(RewardFunction):
     async def score(self, sample: RewardSample) -> float:
         return self.batches.pop(0)[0]
 
-    async def score_batch(self, samples: list[RewardSample]) -> list[float]:
+    async def score_batch(self, samples: list[RewardSample]) -> RewardOutput:
         scores = self.batches.pop(0)
         assert len(scores) == len(samples)
-        return scores
+        return RewardOutput(scores=tuple(scores))
 
 
 class _TimedBatchReward(RewardFunction):
@@ -54,37 +47,31 @@ class _TimedBatchReward(RewardFunction):
         self.scores = list(scores)
         self.timing_ms = dict(timing_ms)
 
-    async def score_batch_report(self, samples: list[RewardSample]) -> RewardBatchReport:
+    async def score_batch(self, samples: list[RewardSample]) -> RewardOutput:
         assert len(samples) == len(self.scores)
-        return RewardBatchReport(
-            scores=list(self.scores),
+        return RewardOutput(
+            scores=tuple(self.scores),
             timing_ms=dict(self.timing_ms),
         )
 
 
 @pytest.mark.asyncio
-async def test_multi_reward_preserves_typed_sample_lineage_for_every_component() -> None:
-    seen: dict[str, list[tuple[str, str, str, str]]] = {}
+async def test_multi_reward_preserves_samples_for_every_component() -> None:
+    seen: dict[str, list[tuple[str, str]]] = {}
 
     class _CaptureReward(RewardFunction):
         def __init__(self, name: str) -> None:
             super().__init__()
             self.name = name
 
-        async def score_batch_report(
+        async def score_batch(
             self,
             samples: list[RewardSample],
-        ) -> RewardBatchReport:
+        ) -> RewardOutput:
             seen[self.name] = [
-                (
-                    sample.source_request_id,
-                    sample.sample_id,
-                    sample.group_id,
-                    sample.trajectory_id,
-                )
-                for sample in samples
+                (sample.sample_id, str(sample.metadata["prompt_key"])) for sample in samples
             ]
-            return RewardBatchReport(scores=[1.0] * len(samples))
+            return RewardOutput(scores=(1.0,) * len(samples))
 
     reward = MultiReward(
         [
@@ -94,11 +81,11 @@ async def test_multi_reward_preserves_typed_sample_lineage_for_every_component()
     )
     samples = [_make_sample("a"), _make_sample("b")]
 
-    await reward.score_batch_report(samples)
+    await reward.score_batch(samples)
 
     expected = [
-        ("request-0", "sample-a", "group-0", "trajectory-a"),
-        ("request-0", "sample-b", "group-0", "trajectory-b"),
+        ("sample-a", "a"),
+        ("sample-b", "b"),
     ]
     assert seen == {"first": expected, "second": expected}
 
@@ -113,21 +100,19 @@ async def test_multi_reward_returns_components_for_each_scoring_call() -> None:
         ]
     )
 
-    first = await reward.score_batch_report(
+    first = await reward.score_batch(
         [_make_sample("a"), _make_sample("b")],
     )
-    second = await reward.score_batch_report(
+    second = await reward.score_batch(
         [_make_sample("c")],
     )
 
     assert first.scores == pytest.approx([0.6, 1.2])
     assert second.scores == pytest.approx([1.8])
-    assert first.components == pytest.approx(
-        {"ocr": [0.1, 0.2], "aesthetic": [1.0, 2.0]},
-    )
-    assert second.components == pytest.approx(
-        {"ocr": [0.3], "aesthetic": [3.0]},
-    )
+    assert first.components["ocr"] == pytest.approx([0.1, 0.2])
+    assert first.components["aesthetic"] == pytest.approx([1.0, 2.0])
+    assert second.components["ocr"] == pytest.approx([0.3])
+    assert second.components["aesthetic"] == pytest.approx([3.0])
 
 
 @pytest.mark.asyncio
@@ -140,14 +125,13 @@ async def test_zero_weight_component_is_scored_without_changing_total() -> None:
         ],
     )
 
-    report = await reward.score_batch_report(
+    report = await reward.score_batch(
         [_make_sample("a"), _make_sample("b")],
     )
 
     assert report.scores == pytest.approx([2.0, 3.0])
-    assert report.components == pytest.approx(
-        {"train": [2.0, 3.0], "observe": [0.7, 0.8]},
-    )
+    assert report.components["train"] == pytest.approx([2.0, 3.0])
+    assert report.components["observe"] == pytest.approx([0.7, 0.8])
 
 
 @pytest.mark.asyncio
@@ -182,7 +166,7 @@ async def test_multi_reward_aggregates_inference_observations() -> None:
         ],
     )
 
-    report = await reward.score_batch_report([_make_sample("a"), _make_sample("b")])
+    report = await reward.score_batch([_make_sample("a"), _make_sample("b")])
 
     assert report.scores == pytest.approx([2.1, 4.2])
     assert report.timing_ms == pytest.approx(
@@ -206,15 +190,15 @@ async def test_multi_reward_parks_every_child_after_score_failure() -> None:
             self.name = name
             self.fail_score = fail_score
 
-        async def score_batch(self, samples: list[RewardSample]) -> list[float]:
+        async def score_batch(self, samples: list[RewardSample]) -> RewardOutput:
             events.append(f"score:{self.name}")
             if self.fail_score:
                 raise RuntimeError(f"score failed:{self.name}")
-            return [1.0] * len(samples)
+            return RewardOutput(scores=(1.0,) * len(samples))
 
         async def park_memory(self):
             events.append(f"park:{self.name}")
-            return ()
+            return True
 
     reward = MultiReward(
         [
@@ -224,7 +208,10 @@ async def test_multi_reward_parks_every_child_after_score_failure() -> None:
     )
 
     with pytest.raises(RuntimeError, match="score failed:first"):
-        await reward.score_batch([_make_sample("a")])
+        await RewardFunctionRuntime(reward).score(
+            [_make_sample("a")],
+            require_memory_release=True,
+        )
 
     assert events == ["score:first", "park:first", "park:second"]
 
@@ -511,7 +498,7 @@ class _NeverScoredRuntime:
 
 
 class _NeverScoredModel:
-    def __call__(self, *, artifact, request):
+    def __call__(self, artifact):
         raise AssertionError("preflight must not score")
 
 

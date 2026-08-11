@@ -308,14 +308,14 @@ def test_reward_scoring_is_in_process() -> None:
 
 
 def test_reward_models_live_under_models() -> None:
-    """Checks reward models live under models."""
+    """Model-backed rewards own model modules; pure functions do not."""
     models_root = VRL_ROOT / "rewards" / "models"
     present = _module_filenames(models_root)
-    # Every registered reward has a model module here (registry is the source).
-    assert _registered_reward_modules() <= present
+    model_modules = _registered_model_reward_modules()
+    assert model_modules <= present
     # Only scaffolding may live alongside the per-reward modules.
     scaffolding = {"__init__.py", "base.py", "hub.py", "media.py"}
-    extras = present - _registered_reward_modules() - scaffolding
+    extras = present - model_modules - scaffolding
     assert not extras, f"unexpected modules under rewards/models/: {extras}"
     assert not (VRL_ROOT / "rewards" / "kling_video_reward.py").exists()
     assert not (VRL_ROOT / "rewards" / "ray" / "kling_video_reward.py").exists()
@@ -538,6 +538,19 @@ def _registered_reward_modules() -> set[str]:
 
     MultiReward.from_dict({}, device="cpu")  # populate _REWARD_REGISTRY
     return {f"{name}.py" for name in _REWARD_REGISTRY}
+
+
+def _registered_model_reward_modules() -> set[str]:
+    """Derive model-module owners from the registered reward class hierarchy."""
+    from vrl.rewards.base import InferenceRewardFunction
+    from vrl.rewards.functions.registry import _REWARD_REGISTRY, MultiReward
+
+    MultiReward.from_dict({}, device="cpu")  # populate _REWARD_REGISTRY
+    return {
+        f"{name}.py"
+        for name, reward_cls in _REWARD_REGISTRY.items()
+        if issubclass(reward_cls, InferenceRewardFunction)
+    }
 
 
 def _is_relative_to(path: Path, prefix: Path) -> bool:

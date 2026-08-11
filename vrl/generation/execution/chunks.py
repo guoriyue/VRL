@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from vrl.utils.cuda_memory import empty_cuda_cache, is_cuda_out_of_memory
 
@@ -186,7 +186,13 @@ def _values_match(left: Any, right: Any) -> bool:
         return False
 
 
-def ordered_covering_chunks[TChunk](
+class ChunkResultWithIdentity(Protocol):
+    """Chunk result carrying the authoritative source chunk."""
+
+    chunk: SampleChunk
+
+
+def ordered_covering_chunks[TChunk: ChunkResultWithIdentity](
     request: GenerationRequest,
     sample_rows: Sequence[GenerationSampleRow],
     chunks: Sequence[TChunk],
@@ -205,11 +211,15 @@ def ordered_covering_chunks[TChunk](
         raise ValueError("chunks must be non-empty")
     ordered = sorted(
         chunks,
-        key=lambda chunk: (int(chunk.prompt_index), int(chunk.sample_start)),
+        key=lambda result: (
+            int(result.chunk.prompt_index),
+            int(result.chunk.sample_start),
+        ),
     )
     expected = [(row.prompt_index, row.sample_index) for row in sample_rows]
     actual: list[tuple[int, int]] = []
-    for chunk in ordered:
+    for result in ordered:
+        chunk = result.chunk
         prompt_index = int(chunk.prompt_index)
         sample_start = int(chunk.sample_start)
         sample_count = int(chunk.sample_count)
@@ -220,7 +230,7 @@ def ordered_covering_chunks[TChunk](
             sample_count=sample_count,
         )
         for field_name in row_fields:
-            _require_rows(field_name, getattr(chunk, field_name), sample_count)
+            _require_rows(field_name, getattr(result, field_name), sample_count)
         actual.extend(
             (prompt_index, sample_index)
             for sample_index in range(sample_start, sample_start + sample_count)
@@ -237,7 +247,6 @@ class SampleChunk:
     """One prompt-major sample chunk for a generation request."""
 
     prompt_index: int
-    prompt: str
     sample_start: int
     sample_count: int
 
@@ -268,13 +277,11 @@ class SampleChunk:
         right_count = self.sample_count - left_count
         left = SampleChunk(
             prompt_index=self.prompt_index,
-            prompt=self.prompt,
             sample_start=self.sample_start,
             sample_count=left_count,
         )
         right = SampleChunk(
             prompt_index=self.prompt_index,
-            prompt=self.prompt,
             sample_start=self.sample_start + left_count,
             sample_count=right_count,
         )
@@ -282,21 +289,21 @@ class SampleChunk:
 
 
 def build_prompt_chunks(
-    prompts: Sequence[str],
+    prompt_count: int,
     samples_per_prompt: int,
     max_samples_per_chunk: int,
 ) -> tuple[SampleChunk, ...]:
     """Plan prompt-major sample chunks without changing RL group semantics."""
 
-    if not prompts:
-        raise ValueError("prompts must be non-empty")
+    if prompt_count < 1:
+        raise ValueError("prompt_count must be >= 1")
     if samples_per_prompt < 1:
         raise ValueError("samples_per_prompt must be >= 1")
     if max_samples_per_chunk < 1:
         raise ValueError("max_samples_per_chunk must be >= 1")
 
     chunks: list[SampleChunk] = []
-    for prompt_index, prompt in enumerate(prompts):
+    for prompt_index in range(prompt_count):
         sample_start = 0
         remaining = samples_per_prompt
         while remaining > 0:
@@ -304,7 +311,6 @@ def build_prompt_chunks(
             chunks.append(
                 SampleChunk(
                     prompt_index=prompt_index,
-                    prompt=prompt,
                     sample_start=sample_start,
                     sample_count=sample_count,
                 )

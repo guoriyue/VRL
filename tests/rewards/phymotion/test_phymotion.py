@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.phymotion import PhyMotionModel, _read_phymotion_scores
 
 
@@ -64,11 +64,10 @@ def test_full_call_runs_external_command(tmp_path: Path) -> None:
         {"phymotion_cmd": f"{sys.executable} {scorer} {{output}} {{video}}"},
     )
     artifact = RewardInferenceArtifact(
-        artifact_id="clip", path=str(video), media_type="video", prompt="dance",
+        artifact_id="clip",
+        path=str(video),
+        prompt="dance",
     )
-    request = RewardInferenceRequest(
-        request_id="t", artifacts=(artifact,), reward_name="phymotion", score_key="overall",
-    )
-    scores = model(artifact=artifact, request=request)
+    scores = model(artifact)
     assert scores["kinematic"] == pytest.approx(0.7)
     assert scores["overall"] == pytest.approx((0.7 + 0.8 + 0.6) / 3.0)

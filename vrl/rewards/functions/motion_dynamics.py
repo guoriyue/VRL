@@ -33,7 +33,6 @@ class MotionDynamicsReward(InferenceRewardFunction):
             inference_runtime=InProcessRewardInferenceRuntime(model=model),
             artifact_builder=lambda samples: InferenceRewardFunction.build_inmemory_artifacts(
                 samples,
-                media_type="video",
             ),
         )
 

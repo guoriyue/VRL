@@ -30,7 +30,7 @@ from typing import Any
 
 import torch
 
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import LazyTorchModule
 from vrl.rewards.models.media import decode_artifact_frames
 from vrl.utils.artifacts import default_data_root, resolve_artifact_path
@@ -81,11 +81,8 @@ class TargetDinoSimilarityModel(LazyTorchModule):
 
     def __call__(
         self,
-        *,
         artifact: RewardInferenceArtifact,
-        request: RewardInferenceRequest,
     ) -> Mapping[str, float]:
-        del request
         metadata = dict(artifact.metadata)
         target_video = str(metadata.get("target_video", "") or "").strip()
         target_image = str(metadata.get("target_image", "") or "").strip()

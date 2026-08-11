@@ -56,7 +56,7 @@ class GenerationRequestBuilder:
         if "fps" in sampling:
             group_metadata.setdefault("video_fps", sampling["fps"])
 
-        resolved_inputs = [self._resolve_input(item, group_metadata) for item in inputs]
+        resolved_inputs = [self._resolve_input(item) for item in inputs]
         default_task_type = task_type_for(self.entry.task)
         if default_task_type is not None and resolved_inputs:
             first = resolved_inputs[0]
@@ -65,10 +65,6 @@ class GenerationRequestBuilder:
                 group_metadata["reference_image"] = first.reference_image
             if first.reference_video is not None:
                 group_metadata["reference_video"] = first.reference_video
-
-        request_metadata: dict[str, Any] = {}
-        if runtime_debug:
-            request_metadata["_runtime_debug"] = True
 
         request = GenerationRequest(
             request_id=f"{self.entry.family}-{uuid.uuid4()}",
@@ -82,7 +78,7 @@ class GenerationRequestBuilder:
             # its layer; distinct from any external evaluation sampling policy.
             samples_per_prompt=group_size,
             sampling=sampling,
-            metadata=request_metadata,
+            runtime_debug=runtime_debug,
             policy_version=policy_version,
         )
         return CollectorRequest(
@@ -93,27 +89,16 @@ class GenerationRequestBuilder:
     def _resolve_input(
         self,
         item: GenerationInput | str,
-        group_metadata: Mapping[str, Any],
     ) -> GenerationInput:
         """Apply family defaults to one conditioning input."""
 
         if isinstance(item, str):
             item = GenerationInput(prompt=item)
-        input_metadata = dict(item.metadata)
-        if "video_fps" in group_metadata:
-            input_metadata.setdefault("video_fps", group_metadata["video_fps"])
-        # Some engines bind per-sample metadata under a family-specific request
-        # namespace. This is an adapter contract, not a consequence of the
-        # generation regime or action distribution.
-        namespace = self.entry.request_metadata_namespace
-        if namespace is not None:
-            input_metadata = {namespace: input_metadata}
         return GenerationInput(
             prompt=item.prompt,
             task_type=item.task_type or task_type_for(self.entry.task),
             reference_image=item.reference_image,
             reference_video=item.reference_video,
-            metadata=input_metadata,
         )
 
 

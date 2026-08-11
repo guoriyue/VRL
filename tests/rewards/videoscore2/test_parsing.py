@@ -13,10 +13,12 @@ from typing import ClassVar
 import pytest
 import torch
 
+from vrl.rewards.assets.video_judge_prompts import (
+    VIDEOSCORE2_SYSTEM_PROMPT,
+    VIDEOSCORE2_USER_TEMPLATE,
+)
 from vrl.rewards.models.videoscore2 import (
     _DIMENSION_MARKERS,
-    _SYSTEM_PROMPT,
-    _USER_TEMPLATE,
     _merge_soft_with_hard,
     _normalize_scores,
     _parse_integer_scores,
@@ -36,7 +38,7 @@ def test_parser_reads_the_exact_format_the_prompt_asks_for() -> None:
     regex follows.
     """
 
-    declared = _USER_TEMPLATE.format(prompt="a cat").split(_FORMAT_HEADER, 1)[1]
+    declared = VIDEOSCORE2_USER_TEMPLATE.format(prompt="a cat").split(_FORMAT_HEADER, 1)[1]
     digits = iter("345")
     filled = re.sub(r"<[^>]+>", lambda _: next(digits), declared)
 
@@ -46,9 +48,9 @@ def test_parser_reads_the_exact_format_the_prompt_asks_for() -> None:
 def test_system_and_user_prompts_declare_one_output_format() -> None:
     """Both prompts spell the format out; they must spell the same one."""
 
-    declared = _USER_TEMPLATE.format(prompt="a cat").split(_FORMAT_HEADER, 1)[1]
+    declared = VIDEOSCORE2_USER_TEMPLATE.format(prompt="a cat").split(_FORMAT_HEADER, 1)[1]
 
-    assert declared in _SYSTEM_PROMPT
+    assert declared in VIDEOSCORE2_SYSTEM_PROMPT
 
 
 def test_soft_score_markers_appear_in_the_prompt() -> None:
@@ -59,7 +61,7 @@ def test_soft_score_markers_appear_in_the_prompt() -> None:
     """
 
     for key, marker in _DIMENSION_MARKERS:
-        assert marker in _SYSTEM_PROMPT, key
+        assert marker in VIDEOSCORE2_SYSTEM_PROMPT, key
 
 
 def test_parse_integer_scores_reads_three_axes() -> None:

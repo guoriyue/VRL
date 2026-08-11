@@ -29,23 +29,12 @@ class _FakeRuntime:
         self.requests.append(request)
         out = []
         for artifact in request.artifacts:
-            # select_score raises KeyError here when score_key names a key
-            # the model never returns — the fail-fast under test.
             out.append(
                 RewardInferenceResult(
                     artifact_id=artifact.artifact_id,
                     scores=dict(_FAKE_SCORES),
-                    selected_score=request.select_score(_FAKE_SCORES),
-                    reward_name=request.reward_name,
-                    score_key=request.score_key,
-                    policy_version=artifact.policy_version,
-                    source_request_id=artifact.source_request_id,
-                    sample_id=artifact.sample_id,
-                    group_id=artifact.group_id,
-                    trajectory_id=artifact.trajectory_id,
                     reward_model_version="fake-test",
-                    latency_ms=1.0,
-                    worker_id="fake",
+                    timing_ms={"inference_ms": 1.0},
                 ),
             )
         return out
@@ -58,11 +47,8 @@ def _sample(output: torch.Tensor, *, policy_version: int = 7) -> RewardSample:
     return RewardSample(
         prompt="a dancer spins, skirt billowing",
         output=output,
-        source_request_id="request-a",
         sample_id="sample-a",
-        group_id="group-a",
-        trajectory_id="trajectory-a",
-        policy_version=policy_version,
+        metadata={"policy_version": policy_version},
     )
 
 
@@ -85,13 +71,11 @@ def _build_reward(tmp_path: Path, *, score_key: str = "physical_common_sense", *
 async def test_materializes_artifacts_and_selects_score_key(tmp_path: Path) -> None:
     """Default score_key picks physical_common_sense and debug logs the public keys."""
     reward = _build_reward(tmp_path)
-    scores = await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])
+    output = await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])
 
-    assert scores == pytest.approx([3.25])
+    assert output.scores == pytest.approx([3.25])
     request = reward.inference_runtime.requests[0]
-    assert request.reward_name == "videoscore2"
-    assert request.score_key == "physical_common_sense"
-    assert request.artifacts[0].policy_version == 7
+    assert len(request.artifacts) == 1
     assert Path(request.artifacts[0].path).exists()
     results_file = tmp_path / "debug" / "videoscore2_results.jsonl"
     assert (tmp_path / "debug" / "videoscore2_requests.jsonl").exists()
@@ -104,8 +88,8 @@ async def test_materializes_artifacts_and_selects_score_key(tmp_path: Path) -> N
 async def test_alternate_score_key_selects_visual_quality(tmp_path: Path) -> None:
     """A different score_key selects the matching public axis."""
     reward = _build_reward(tmp_path, score_key="visual_quality")
-    scores = await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])
-    assert scores == pytest.approx([4.0])
+    output = await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])
+    assert output.scores == pytest.approx([4.0])
 
 
 @pytest.mark.asyncio

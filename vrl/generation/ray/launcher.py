@@ -4,16 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from collections.abc import Sequence
+from dataclasses import replace
 from functools import partial
 from typing import Any
 
-from vrl.generation.execution import (
-    ChunkPlacementPolicy,
-    DistributedExecutionPlanner,
-    DistributedWorkerHandle,
-)
+from vrl.generation.execution import DistributedExecutionPlanner
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
@@ -21,7 +17,7 @@ from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import HEALTH_CONCURRENCY_GROUP, RayGenerationWorker
-from vrl.ray.actor_group import RayActorGroup
+from vrl.ray.actor_group import RayActorGroup, RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.dependencies import current_node_ip, require_ray
 from vrl.ray.operation_deadline import get_ray_refs
@@ -30,16 +26,21 @@ from vrl.ray.placement import RolePlacement, validate_actor_gpu_ids
 logger = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
 class RayGenerationLauncher:
     """Create Ray generation actors and return a ``RayGenerationRuntime``."""
 
-    init_ray: bool = True
-    # Standalone launcher use must be ownership-safe too. Online recipes already
-    # initialize explicitly; callers that intend to attach can override address.
-    ray_init_kwargs: dict[str, Any] = field(
-        default_factory=lambda: {"address": "local"},
-    )
+    def __init__(
+        self,
+        *,
+        init_ray: bool = True,
+        ray_init_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        self.init_ray = bool(init_ray)
+        # Standalone launcher use must be ownership-safe too. Online recipes
+        # initialize explicitly; callers that intend to attach can override it.
+        self.ray_init_kwargs = (
+            {"address": "local"} if ray_init_kwargs is None else dict(ray_init_kwargs)
+        )
 
     def _launch_session(
         self,
@@ -56,9 +57,7 @@ class RayGenerationLauncher:
         the group; the owner does that once at run shutdown.
         """
 
-        rollout_config = config
-        worker = rollout_config.worker
-        chunk_gatherer = launch_inputs.gatherer
+        worker = config.worker
 
         bundle_indices = list(placement.bundle_indices)
         if worker.pipelined and len(bundle_indices) != 1:
@@ -85,7 +84,7 @@ class RayGenerationLauncher:
                 worker_configs=worker_configs,
                 worker_ids=worker_ids,
                 num_cpus=worker.cpus_per_worker,
-                num_gpus=rollout_config.resources.rollout_gpus_per_worker,
+                num_gpus=config.resources.rollout_gpus_per_worker,
                 rpc_timeout_s=worker.worker_rpc_timeout_s,
                 operation_prefix="rollout",
                 placement_group=placement_group,
@@ -95,38 +94,22 @@ class RayGenerationLauncher:
                 # generation; the default group keeps its serialization.
                 concurrency_groups={HEALTH_CONCURRENCY_GROUP: 1},
             )
-            metadata = [
-                {
-                    "worker_id": handle.worker_id,
-                    "node_ip": handle.node_ip,
-                    "gpu_ids": handle.gpu_ids,
-                }
-                for handle in actor_group.handles
-            ]
             _validate_worker_gpu_ids(
-                rollout_config,
-                metadata,
+                config,
+                actor_group.handles,
                 expected_gpu_ids=expected_gpu_ids,
             )
-            workers = [
-                DistributedWorkerHandle(
-                    worker_id=handle.worker_id,
-                    actor=handle.actor,
-                )
-                for handle in actor_group.handles
-            ]
+            workers = actor_group.handles
             actor_dispatcher = RayActorDispatcher(
                 tuple(worker.worker_id for worker in workers),
             )
 
             executor = RayGenerationExecutor(
                 DistributedExecutionPlanner(
-                    policy=ChunkPlacementPolicy(
-                        strategy=worker.chunk_placement_strategy,
-                    ),
+                    strategy=worker.chunk_placement_strategy,
                 ),
                 workers,
-                chunk_gatherer,
+                launch_inputs.gatherer,
                 actor_dispatcher=actor_dispatcher,
                 generation_stall_timeout_s=worker.generation_stall_timeout_s,
                 pipelined=worker.pipelined,
@@ -262,7 +245,7 @@ class RayGenerationLauncher:
 
 def _validate_worker_gpu_ids(
     config: RayGenerationConfig,
-    metadata: list[Mapping[str, Any]],
+    metadata: Sequence[RayActorHandle],
     *,
     expected_gpu_ids: tuple[int, ...] | None = None,
 ) -> None:
@@ -293,7 +276,7 @@ def _validate_worker_gpu_ids(
 
 def _all_workers_support_versioned_slots(
     ray: Any,
-    workers: list[DistributedWorkerHandle],
+    workers: Sequence[RayActorHandle],
     *,
     weight_sync: Any | None,
     worker_rpc_timeout_s: float,
@@ -309,8 +292,8 @@ def _all_workers_support_versioned_slots(
 
     if weight_sync is None:
         return False
-    actors = [worker.actor for worker in workers if worker.actor is not None]
-    if not actors or len(actors) != len(workers):
+    actors = [worker.actor for worker in workers]
+    if not actors:
         return False
     results = get_ray_refs(
         ray,
@@ -323,6 +306,5 @@ def _all_workers_support_versioned_slots(
 
 
 __all__ = [
-    "RayGenerationLaunchInputs",
     "RayGenerationLauncher",
 ]

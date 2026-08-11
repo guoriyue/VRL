@@ -421,7 +421,8 @@ class WorkerMemoryParking:
                 )
                 raise
             release_cuda_memory(ipc_collect=True)
-        self._parking = self._next_plan(state)
+        if isinstance(state, _ParkingSession):
+            self._parking = _ParkingPlan(required=state.required, profile=state.profile)
         self._phase = _ParkingPhase.ACTIVE
         self._failure_reason = None
 
@@ -511,12 +512,6 @@ class WorkerMemoryParking:
         )
         self._parking = session
         return session
-
-    @staticmethod
-    def _next_plan(state: _ParkingPlan | _ParkingSession) -> _ParkingPlan:
-        if isinstance(state, _ParkingPlan):
-            return state
-        return _ParkingPlan(required=state.required, profile=state.profile)
 
     def _park_model_on_cpu(
         self,

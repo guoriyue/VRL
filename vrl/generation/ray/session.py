@@ -6,12 +6,10 @@ import asyncio
 import logging
 from typing import Any
 
-from vrl.generation.execution.types import (
-    DistributedWorkerHandle,
-    WorkerMemoryParkingSnapshot,
-)
+from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.weight_sync import GenerationWeightSync
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.dependencies import require_ray
 from vrl.ray.resource_cleanup import kill_and_retain
 
@@ -30,7 +28,7 @@ class RayGenerationSession:
         self,
         executor: RayGenerationExecutor,
         weight_sync: GenerationWeightSync | None,
-        owned_workers: list[DistributedWorkerHandle],
+        owned_workers: list[RayActorHandle],
         supports_non_draining_weight_sync: bool = False,
     ) -> None:
         if executor is None:
@@ -48,13 +46,6 @@ class RayGenerationSession:
                 "Ray generation and weight sync must share one actor dispatcher",
             )
         self.workers = list(owned_workers)
-        missing_actor_ids = tuple(
-            worker.worker_id for worker in self.workers if worker.actor is None
-        )
-        if missing_actor_ids:
-            raise RuntimeError(
-                f"generation workers have no actor: {missing_actor_ids}",
-            )
         worker_ids = tuple(worker.worker_id for worker in self.workers)
         if len(set(worker_ids)) != len(worker_ids):
             raise RuntimeError(f"duplicate generation worker ids: {worker_ids}")
@@ -116,8 +107,6 @@ class RayGenerationSession:
         if not self._force_close:
             for worker in self.workers:
                 actor = worker.actor
-                if actor is None:
-                    continue
                 remote = getattr(getattr(actor, "release_policy", None), "remote", None)
                 if not callable(remote):
                     continue

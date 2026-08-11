@@ -1083,7 +1083,7 @@ def _score_images(
 ) -> list[dict[str, Any]]:
     from PIL import Image
 
-    from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+    from vrl.rewards.inference import RewardInferenceArtifact
     from vrl.utils.config import import_from_path
 
     rows = [
@@ -1116,23 +1116,18 @@ def _score_images(
                         f"-s{image.sample_index:02d}"
                     ),
                     path=str(image.path),
-                    media_type="image",
                     prompt=image.prompt,
-                    sample_id=f"p{image.prompt_index}-s{image.sample_index}",
                     metadata={
                         "checkpoint_label": image.checkpoint_label,
                         "group_seed": image.group_seed,
                     },
                     media=media,
                 )
-                request = RewardInferenceRequest(
-                    request_id=(f"sana-aesthetic-eval-{artifact.artifact_id}-{reward_model.name}"),
-                    artifacts=(artifact,),
-                    reward_name=reward_model.name,
-                    score_key=reward_model.score_key,
+                scores = model(artifact)
+                selected_keys = tuple(
+                    key.strip() for key in reward_model.score_key.split("+") if key.strip()
                 )
-                scores = model(artifact=artifact, request=request)
-                row[f"r_{reward_model.name}"] = request.select_score(scores)
+                row[f"r_{reward_model.name}"] = sum(float(scores[key]) for key in selected_keys)
         finally:
             del model
             release_cuda_memory()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import fields, is_dataclass
 from typing import Any
 
 import pytest
@@ -226,9 +226,10 @@ def test_envelope_rejects_unknown_row_update() -> None:
 
 def test_loop_structs_do_not_mirror_request_or_family_state() -> None:
     assert [field.name for field in fields(TokenAutoregressiveEnvelope)] == ["row_lanes"]
-    assert [field.name for field in fields(TokenAutoregressiveLoop)] == [
+    assert not is_dataclass(TokenAutoregressiveLoop)
+    assert set(TokenAutoregressiveLoop.__slots__) == {
         "runner",
         "scheduler_batch_size",
         "init_args",
         "init_kwargs",
-    ]
+    }

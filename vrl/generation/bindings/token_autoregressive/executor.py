@@ -11,6 +11,7 @@ import torch
 from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout, right_pad
 from vrl.generation.execution.chunks import SampleChunk, require_matching_chunk_context
 from vrl.generation.execution.executor_base import ChunkExecutorBase
+from vrl.generation.execution.planner import EnginePlan, build_engine_plan
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.types import (
     GenerationOutput,
@@ -86,9 +87,7 @@ class ARChunkExecutorBase(ChunkExecutorBase):
     def plan(
         self,
         request: GenerationRequest,
-    ) -> Any:
-        from vrl.generation.execution.planner import build_engine_plan
-
+    ) -> EnginePlan:
         return build_engine_plan(request)
 
     def _ar_runner(self, request: GenerationRequest) -> Any:
@@ -194,9 +193,7 @@ class ARDiscreteChunkResult:
     families — the field set janus_pro/emu3/glm_image/llamagen previously
     declared verbatim per family)."""
 
-    prompt_index: int
-    sample_start: int
-    sample_count: int
+    chunk: SampleChunk
     output: torch.Tensor
     token_ids: torch.Tensor
     token_log_probs: torch.Tensor
@@ -289,9 +286,7 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
         token_mask = self.chunk_token_mask(inputs, token_ids, token_log_probs)
 
         return ARDiscreteChunkResult(
-            prompt_index=chunk.prompt_index,
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
+            chunk=chunk,
             output=images,
             token_ids=token_ids,
             token_log_probs=token_log_probs,
@@ -305,7 +300,6 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
         )
 
 
-@dataclass(frozen=True, slots=True)
 class ARDiscreteChunkGatherer:
     """Pure driver-side gatherer for discrete AR chunk payloads.
 
@@ -359,11 +353,8 @@ class ARDiscreteChunkGatherer:
         )
 
         return GenerationOutput(
-            request_id=request.request_id,
-            sample_rows=list(sample_rows),
             output=cat["output"],
             trajectory=trajectory,
-            extra={},
         )
 
 

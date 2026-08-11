@@ -10,7 +10,7 @@ from vrl.generation.execution.chunks import (
     validate_chunk_range,
 )
 from vrl.generation.execution.executor_base import ChunkExecutorBase
-from vrl.generation.execution.planner import build_engine_plan
+from vrl.generation.execution.planner import EnginePlan, build_engine_plan
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.types import GenerationRequest
 
@@ -24,9 +24,7 @@ class ChunkAutoregressiveDenoiseResult:
     model's actual generation organization inside each sample.
     """
 
-    prompt_index: int
-    sample_start: int
-    sample_count: int
+    chunk: SampleChunk
     output: Any
     temporal_chunk_count: int
     denoise_transition_count: int | None = None
@@ -39,15 +37,8 @@ class ChunkAutoregressiveDenoiseResult:
     finalized_chunk_latents: Any | None = None
     replay_tensors: dict[str, Any] = field(default_factory=dict)
     context: dict[str, Any] = field(default_factory=dict)
-    peak_memory_mb: float | None = None
 
     def __post_init__(self) -> None:
-        if self.prompt_index < 0:
-            raise ValueError("prompt_index must be >= 0")
-        if self.sample_start < 0:
-            raise ValueError("sample_start must be >= 0")
-        if self.sample_count < 1:
-            raise ValueError("sample_count must be >= 1")
         if self.temporal_chunk_count < 1:
             raise ValueError("temporal_chunk_count must be >= 1")
         if self.denoise_transition_count is not None and self.denoise_transition_count < 0:
@@ -115,7 +106,7 @@ class ChunkAutoregressiveDenoiseExecutorBase(ChunkExecutorBase):
     def plan(
         self,
         request: GenerationRequest,
-    ) -> Any:
+    ) -> EnginePlan:
         return build_engine_plan(
             request,
             max_samples_per_chunk=self.default_samples_per_chunk,
@@ -132,10 +123,6 @@ class ChunkAutoregressiveDenoiseExecutorBase(ChunkExecutorBase):
             sample_start=chunk.sample_start,
             sample_count=chunk.sample_count,
         )
-        if chunk.prompt != request.prompts[chunk.prompt_index]:
-            raise ValueError(
-                "chunk.prompt does not match request.prompts[chunk.prompt_index]",
-            )
         result = self.model.generate_chunk_autoregressive(
             request=request,
             chunk=chunk,
@@ -144,11 +131,7 @@ class ChunkAutoregressiveDenoiseExecutorBase(ChunkExecutorBase):
             raise TypeError(
                 "model.generate_chunk_autoregressive must return ChunkAutoregressiveDenoiseResult",
             )
-        if (
-            result.prompt_index != chunk.prompt_index
-            or result.sample_start != chunk.sample_start
-            or result.sample_count != chunk.sample_count
-        ):
+        if result.chunk != chunk:
             raise ValueError(
                 "model.generate_chunk_autoregressive returned a result for a "
                 "different prompt/sample chunk",

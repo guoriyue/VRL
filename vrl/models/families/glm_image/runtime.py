@@ -102,7 +102,7 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
         decode_steps = sampling.get("decode_num_inference_steps")
         decode_guidance = sampling.get("decode_guidance_scale")
 
-        repeated_prompts = [chunk.prompt] * chunk.sample_count
+        repeated_prompts = [request.inputs[chunk.prompt_index].prompt] * chunk.sample_count
         prompt_ids, prompt_mask, (token_h, token_w, prev_h, prev_w) = (
             self.model.encode_generation_prompts(
                 repeated_prompts,

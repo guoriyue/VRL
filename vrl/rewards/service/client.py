@@ -124,8 +124,8 @@ class HttpRewardInferenceRuntime:
             return [
                 replace(
                     result,
-                    metadata={
-                        **result.metadata,
+                    timing_ms={
+                        **result.timing_ms,
                         "http_roundtrip_ms": roundtrip_ms,
                     },
                 )

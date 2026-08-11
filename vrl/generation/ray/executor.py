@@ -12,10 +12,11 @@ from vrl.generation.execution.chunk_placement import (
     build_chunk_memory_shadow,
 )
 from vrl.generation.execution.ids import build_sample_rows
+from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
-    DistributedWorkerHandle,
+    ChunkSizeProbeResult,
     PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
 )
@@ -24,7 +25,8 @@ from vrl.generation.ray.pipeline_protocol import (
     PipelinedProgressError,
     PipelinedRequestProgress,
 )
-from vrl.generation.types import GenerationOutput, GenerationRequest
+from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.operation_deadline import (
     RayCallDeadline,
@@ -45,7 +47,7 @@ class RayGenerationExecutor:
     def __init__(
         self,
         planner: DistributedExecutionPlanner,
-        workers: list[DistributedWorkerHandle],
+        workers: list[RayActorHandle],
         gatherer: ChunkGatherer,
         *,
         actor_dispatcher: RayActorDispatcher,
@@ -96,7 +98,7 @@ class RayGenerationExecutor:
         request: GenerationRequest,
         *,
         max_samples: int,
-    ) -> list[dict[str, Any]]:
+    ) -> list[ChunkSizeProbeResult]:
         """Probe every worker through the same actor admission as generation."""
 
         lock = self._pipelined_request_lock
@@ -110,13 +112,11 @@ class RayGenerationExecutor:
         request: GenerationRequest,
         *,
         max_samples: int,
-    ) -> list[dict[str, Any]]:
-        result_pairs: list[tuple[int, dict[str, Any]]] = []
+    ) -> list[ChunkSizeProbeResult]:
+        result_pairs: list[tuple[int, Any]] = []
         remote_jobs: list[RayActorJob] = []
         for job_index, worker in enumerate(self.workers):
             actor = worker.actor
-            if actor is None:
-                raise RuntimeError(f"worker {worker.worker_id!r} has no actor")
             probe = getattr(actor, "probe_chunk_size", None)
             if probe is None:
                 raise RuntimeError(
@@ -146,7 +146,14 @@ class RayGenerationExecutor:
                     call_timeout_s=self.generation_stall_timeout_s,
                 ),
             )
-        return [result for _, result in sorted(result_pairs, key=lambda pair: pair[0])]
+        results = [result for _, result in sorted(result_pairs, key=lambda pair: pair[0])]
+        for worker, result in zip(self.workers, results, strict=True):
+            if not isinstance(result, ChunkSizeProbeResult):
+                raise TypeError(
+                    f"worker {worker.worker_id!r} returned invalid chunk-size probe "
+                    f"result {type(result).__name__}",
+                )
+        return results
 
     async def _execute(self, request: GenerationRequest) -> GenerationOutput:
         import time
@@ -158,7 +165,7 @@ class RayGenerationExecutor:
         with profile_range("engine.plan"):
             generation_plan = self.planner.plan_with_engine(
                 request,
-                self.workers,
+                tuple(worker.worker_id for worker in self.workers),
             )
         assignments = list(generation_plan.assignments)
         engine_plan = generation_plan.engine_plan
@@ -185,8 +192,8 @@ class RayGenerationExecutor:
                 pipelined_oom.error,
             )
         worker_by_id = {worker.worker_id: worker for worker in self.workers}
-        strategy = self.planner.policy.strategy
-        runtime_debug_on = bool(request.metadata.get("_runtime_debug"))
+        strategy = self.planner.strategy
+        runtime_debug_on = request.runtime_debug
         remote_jobs: list[RayActorJob] = []
         result_pairs: list[tuple[int, ChunkExecutionResult]] = []
         schedule_rows: list[dict[str, Any]] = []
@@ -207,8 +214,6 @@ class RayGenerationExecutor:
                 continue
             worker = worker_by_id[assignment.worker_id]
             actor = worker.actor
-            if actor is None:
-                raise RuntimeError(f"worker {worker.worker_id!r} has no actor")
             execute_chunk = actor.execute_chunk
             remote = getattr(execute_chunk, "remote", None)
             if callable(remote):
@@ -301,7 +306,7 @@ class RayGenerationExecutor:
         # Raw per-chunk memory readings (drift monitor for the startup
         # chunk-size probe). Log-only provenance; nothing here changes chunk sizing.
         memory_shadow = build_chunk_memory_shadow(
-            [result.metrics for result in results],
+            results,
         )
         if memory_shadow:
             for row in memory_shadow:
@@ -347,9 +352,20 @@ class RayGenerationExecutor:
                     row["queue_wait_s"],
                     row["execution_s"],
                 )
-        worker_debug_rows = [
-            result.metrics for result in results if result.metrics.get("runtime_debug")
-        ]
+        worker_debug_rows: list[dict[str, Any]] = []
+        if runtime_debug_on:
+            for result in results:
+                worker = worker_by_id[result.worker_id]
+                worker_debug_rows.append(
+                    {
+                        "worker_id": result.worker_id,
+                        "node_ip": worker.node_ip,
+                        "gpu_ids": list(worker.gpu_ids),
+                        "policy_version": result.policy_version,
+                        "chunk_key": result.chunk.chunk_key,
+                        **result.metrics,
+                    },
+                )
         debug_payload: dict[str, Any] = {}
         if worker_debug_rows:
             debug_payload["ray_chunks"] = worker_debug_rows
@@ -358,7 +374,7 @@ class RayGenerationExecutor:
         if runtime_debug_on and oom_splits:
             debug_payload["chunk_oom_splits"] = oom_splits
         if debug_payload:
-            output.extra["runtime_debug"] = debug_payload
+            output.runtime_debug = debug_payload
         logger.info(
             "generation wall: path=%s chunks=%d wall_s=%.3f",
             (
@@ -374,8 +390,8 @@ class RayGenerationExecutor:
     async def _execute_request_pipelined(
         self,
         request: GenerationRequest,
-        engine_plan: Any,
-        sample_rows: Any,
+        engine_plan: EnginePlan,
+        sample_rows: list[GenerationSampleRow],
     ) -> GenerationOutput | PipelinedRequestOutOfMemory:
         """Single-worker stage-overlap path (opt-in, ``pipelined=True``):
         the whole request's chunks run software-pipelined on one worker
@@ -388,8 +404,6 @@ class RayGenerationExecutor:
 
         worker = self.workers[0]
         actor = worker.actor
-        if actor is None:
-            raise RuntimeError(f"worker {worker.worker_id!r} has no actor")
         call = actor.execute_request_pipelined
         remote = getattr(call, "remote", None)
         if callable(remote):
@@ -567,7 +581,7 @@ class RayGenerationExecutor:
         results: list[ChunkExecutionResult],
         *,
         envelope_by_chunk_key: dict[str, Any],
-        worker_by_id: dict[str, DistributedWorkerHandle],
+        worker_by_id: dict[str, RayActorHandle],
     ) -> tuple[list[ChunkExecutionResult], list[dict[str, Any]]]:
         """Split OOM chunks in half and re-run until success or single sample.
 
@@ -598,7 +612,7 @@ class RayGenerationExecutor:
                         f"{result.error}",
                     )
                 worker = worker_by_id.get(result.worker_id)
-                if worker is None or worker.actor is None:
+                if worker is None:
                     raise RuntimeError(
                         "distributed rollout chunk OOMed on unknown worker "
                         f"{result.worker_id!r}: {result.error}",

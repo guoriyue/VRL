@@ -8,10 +8,6 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from vrl.generation.bindings.full_sequence_denoise.executor import (
         DiffusionChunkResult,
-        DiffusionDenoisedStageOutput,
-        DiffusionPreparedStageOutput,
-        DiffusionPromptStageInput,
-        DiffusionPromptStageOutput,
     )
     from vrl.generation.execution.chunks import SampleChunk
     from vrl.generation.types import (
@@ -73,14 +69,6 @@ class GenerationRuntime(Protocol):
         """Close admission and release every runtime-owned worker/resource."""
         ...
 
-    def is_colocated(self) -> bool:
-        """Whether the trainer and rollout share a GPU.
-
-        Still owned by the runtime: this drives whether the driver model is
-        offloaded to CPU during rollout, a different axis from worker residency.
-        """
-        ...
-
 
 @runtime_checkable
 class GenerationChunkExecutor(Protocol):
@@ -104,54 +92,22 @@ class GenerationChunkExecutor(Protocol):
 
 
 @runtime_checkable
-class DiffusionStagedChunkExecutor(Protocol):
-    """Executor that exposes the five fused diffusion chunk stages.
+class DiffusionChunkProbeExecutor(Protocol):
+    """Diffusion executor capability used by automatic chunk-size sizing."""
 
-    ``GenerationWorkerCore.probe_chunk_size`` drives these stage methods directly
-    (truncated to a couple of denoise steps) to size ``samples_per_chunk``. The
-    Protocol is the ``samples_per_chunk: auto`` diffusion-only gate: a
-    non-diffusion executor that lacks the stages fails the ``isinstance`` check
-    with a typed error instead of an ``AttributeError`` mid-probe.
-    """
-
-    def build_prompt_stage_input(
+    def forward_probe_chunk(
         self,
         request: GenerationRequest,
         chunk: SampleChunk,
-    ) -> DiffusionPromptStageInput: ...
-
-    def run_prompt_encode_stage(
-        self,
-        payload: DiffusionPromptStageInput,
         *,
-        stage_durations: dict[str, float],
-        record_function: Any,
-    ) -> DiffusionPromptStageOutput: ...
-
-    def run_prepare_stage(
-        self,
-        payload: DiffusionPromptStageOutput,
-        *,
-        stage_durations: dict[str, float],
-    ) -> DiffusionPreparedStageOutput: ...
-
-    def run_denoise_stage(
-        self,
-        payload: DiffusionPreparedStageOutput,
-        *,
-        stage_durations: dict[str, float],
-    ) -> DiffusionDenoisedStageOutput: ...
-
-    def run_decode_stage(
-        self,
-        payload: DiffusionDenoisedStageOutput,
+        execute_steps: int,
     ) -> DiffusionChunkResult: ...
 
 
 __all__ = [
     "ChunkGatherer",
     "ChunkResult",
-    "DiffusionStagedChunkExecutor",
+    "DiffusionChunkProbeExecutor",
     "GenerationChunkExecutor",
     "GenerationRuntime",
 ]

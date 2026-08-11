@@ -42,15 +42,9 @@ class _Runtime:
     def __init__(self) -> None:
         self.current_policy_version = 0
         self.requires_driver_model_offload = False
-        self.colocated = False
         # Default False keeps every existing test on the draining barrier; the
         # non-draining tests flip it True to exercise the slot-backed path.
         self.supports_non_draining_weight_sync = False
-
-    def is_colocated(self) -> bool:
-        # Fakes implement the GenerationRuntime protocol method directly
-        # instead of mimicking the runtime's internal config layout.
-        return self.colocated
 
 
 class _Syncer:
@@ -490,11 +484,10 @@ async def test_queue_capacity_fits_the_finite_prompt_batch() -> None:
         await schedule.shutdown()
 
 
-def test_rejects_colocated_runtime() -> None:
-    """Checks that rejects colocated runtime."""
+def test_rejects_runtime_that_requires_driver_model_offload() -> None:
     runtime = _Runtime()
-    runtime.colocated = True
-    with pytest.raises(RuntimeError, match="separate trainer and rollout GPU"):
+    runtime.requires_driver_model_offload = True
+    with pytest.raises(RuntimeError, match="requires driver model offload"):
         _build(_continuous_config(), _Collector(runtime), None)
 
 

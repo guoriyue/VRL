@@ -1,6 +1,6 @@
 # INFO：Ray generation engine 当前 ownership 与调用链
 
-状态：**verified against source（2026-07-30）**。
+状态：**verified against source（2026-08-09）**。
 
 本文只描述当前生产路径。已删除的 `_RuntimeLease`、`RayGenerationWorkerFleet`、
 physical-stage adapter、release-per-collect 和带 `stage` 参数的旧调用链不再作为 dormant
@@ -46,7 +46,6 @@ activate()
 generate(request)
 offload()
 shutdown()
-is_colocated()
 ```
 
 weight sync 不是所有 runtime 的公共必选方法。训练侧通过
@@ -104,7 +103,7 @@ RayGenerationLauncher.create_runtime(...)
        worker_rpc_timeout_s=...,
      )
      -> validate worker metadata / GPU assignment
-     -> DistributedWorkerHandle[]
+     -> RayActorHandle[]
      -> one fleet-owned RayActorDispatcher(workers)
      -> RayGenerationExecutor(
        planner,

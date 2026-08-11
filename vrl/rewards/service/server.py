@@ -404,16 +404,12 @@ class RewardService:
                 results = [
                     replace(
                         result,
-                        queue_wait_ms=(float(result.queue_wait_ms or 0.0) + service_queue_wait_ms),
-                        latency_ms=(
-                            float(result.latency_ms)
-                            if result.latency_ms is not None
-                            else float(result.queue_wait_ms or 0.0)
-                            + float(result.inference_ms or 0.0)
-                        )
-                        + service_queue_wait_ms,
-                        metadata={
-                            **result.metadata,
+                        timing_ms={
+                            **result.timing_ms,
+                            "queue_wait_ms": (
+                                float(result.timing_ms.get("queue_wait_ms", 0.0))
+                                + service_queue_wait_ms
+                            ),
                             "service_artifact_validation_ms": artifact_validation_ms,
                             "service_inference_wall_ms": service_inference_wall_ms,
                         },

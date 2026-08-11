@@ -188,7 +188,7 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
         top_k = int(sampling.get("top_k", self.model.config.top_k))
         top_p = float(sampling.get("top_p", self.model.config.top_p))
 
-        repeated_prompts = [chunk.prompt] * chunk.sample_count
+        repeated_prompts = [request.inputs[chunk.prompt_index].prompt] * chunk.sample_count
         prompt_ids, prompt_mask = self._tokenize_prompts(
             repeated_prompts,
             max_text_length=params.max_text_length,

@@ -86,7 +86,6 @@ def _request(batch_size: object = _MISSING) -> GenerationRequest:
 def _chunk() -> SampleChunk:
     return SampleChunk(
         prompt_index=0,
-        prompt="prompt",
         sample_start=0,
         sample_count=3,
     )
@@ -134,7 +133,7 @@ def test_shared_discrete_executor_passes_scheduler_policy_to_loop(
     result = executor.forward_chunk_plan(_request(batch_size), _chunk())
 
     assert seen == [batch_size]
-    assert result.sample_count == 3
+    assert result.chunk.sample_count == 3
     assert executor.prepare_calls == 1
 
 

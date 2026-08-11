@@ -17,9 +17,15 @@ class RayActorHandle:
     """Driver-visible metadata for one Ray actor."""
 
     worker_id: str
-    node_ip: str
+    actor: Any
+    node_ip: str = "unknown"
     gpu_ids: tuple[int, ...] = ()
-    actor: Any | None = None
+
+    def __post_init__(self) -> None:
+        if not self.worker_id:
+            raise ValueError("Ray actor handle worker_id must be non-empty")
+        if self.actor is None:
+            raise ValueError(f"Ray actor handle {self.worker_id!r} requires an actor")
 
 
 @dataclass(slots=True)
@@ -102,9 +108,9 @@ class RayActorGroup:
             handles = [
                 RayActorHandle(
                     worker_id=worker_id,
+                    actor=actor,
                     node_ip=str(_meta_get(meta, "node_ip", "unknown")),
                     gpu_ids=tuple(int(gpu_id) for gpu_id in _meta_get(meta, "gpu_ids", ())),
-                    actor=actor,
                 )
                 for worker_id, actor, meta in zip(
                     worker_ids,

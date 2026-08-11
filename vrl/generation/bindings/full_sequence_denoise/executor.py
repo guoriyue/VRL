@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import torch
@@ -14,7 +14,7 @@ from vrl.generation.bindings.full_sequence_denoise.layout import (
 )
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.executor_base import ChunkExecutorBase
-from vrl.generation.execution.planner import build_engine_plan
+from vrl.generation.execution.planner import EnginePlan, build_engine_plan
 from vrl.generation.execution.types import ChunkCompletionCallback
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
@@ -43,50 +43,10 @@ from vrl.utils.media import load_reference_image, to_uint8
 
 
 @dataclass(slots=True)
-class DiffusionPromptStageInput:
-    """Prompt-encode stage input for one diffusion sample chunk."""
-
-    generation_request: GenerationRequest
-    chunk: SampleChunk
-    params: DiffusionSamplingParams
-    video_request: VideoGenerationRequest
-
-
-@dataclass(slots=True)
-class DiffusionPromptStageOutput:
-    """Prompt-encode stage output for downstream prepare/denoise stages."""
-
-    generation_request: GenerationRequest
-    chunk: SampleChunk
-    params: DiffusionSamplingParams
-    video_request: VideoGenerationRequest
-    encoded: dict[str, Any]
-
-
-@dataclass(slots=True)
-class DiffusionPreparedStageOutput:
-    """Prepared latent state and denoise config for the denoise stage."""
-
-    config: DenoiseLoopConfig
-    state: Any
-
-
-@dataclass(slots=True)
-class DiffusionDenoisedStageOutput:
-    """Denoise stage output before VAE decode."""
-
-    config: DenoiseLoopConfig
-    denoise_result: DenoiseLoopResult
-    stage_durations: dict[str, float] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
 class DiffusionChunkResult:
     """Output of one fused diffusion sample chunk."""
 
-    prompt_index: int
-    sample_start: int
-    sample_count: int
+    chunk: SampleChunk
     observations: Any
     actions: Any
     log_probs: Any
@@ -97,8 +57,8 @@ class DiffusionChunkResult:
     context: dict[str, Any]
     # Display/provenance-only: emitted through per-chunk runtime debug metrics.
     peak_memory_mb: float | None = None
-    # Completed ChunkMemoryReading fields for byte-admission shadow telemetry
-    # (see vrl/generation/execution/chunk_placement.py). None off-CUDA.
+    # Binding-local memory reading consumed and cleared at the worker boundary.
+    # None off-CUDA.
     memory: dict[str, int] | None = None
     # Display/provenance-only: emitted through per-chunk runtime debug metrics.
     stage_durations: dict[str, float] = field(default_factory=dict)
@@ -130,9 +90,9 @@ class ReferenceConditionedChunks:
 
         reference_image = self._reference_image_for_chunk(generation_request, chunk)
         return self.model.encode_prompt(
-            chunk.prompt,
+            generation_request.inputs[chunk.prompt_index].prompt,
             video_request.negative_prompt or None,
-            **params.base.text_encode_kwargs(),
+            **params.text_encode_kwargs(),
             reference_image=reference_image,
         )
 
@@ -211,38 +171,15 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
     def plan(
         self,
         request: GenerationRequest,
-    ) -> Any:
+    ) -> EnginePlan:
         params = self.parse_sampling_params(request)
         return build_engine_plan(
             request,
-            max_samples_per_chunk=params.base.samples_per_chunk,
+            max_samples_per_chunk=params.samples_per_chunk,
         )
 
     def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
         return self.layout.parse_sampling_params(request)
-
-    def build_video_request(
-        self,
-        params: DiffusionSamplingParams,
-    ) -> VideoGenerationRequest:
-        """Build the backend-agnostic model request for one prompt chunk."""
-
-        base = params.base
-        req_kwargs: dict[str, Any] = {
-            "num_steps": base.num_steps,
-            "guidance_scale": base.guidance_scale,
-            "height": base.height,
-            "width": base.width,
-            "frame_count": base.num_frames,
-        }
-        if base.fps is not None:
-            req_kwargs["fps"] = base.fps
-        if base.negative_prompt is not None:
-            req_kwargs["negative_prompt"] = base.negative_prompt
-        if base.seed is not None:
-            req_kwargs["seed"] = base.seed
-
-        return VideoGenerationRequest(**req_kwargs)
 
     def build_denoise_config(
         self,
@@ -253,10 +190,9 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
 
         layout = self.layout
         return DenoiseLoopConfig(
-            prompt_index=chunk.prompt_index,
             sample_start=chunk.sample_start,
             sample_count=chunk.sample_count,
-            seed=params.base.seed,
+            seed=params.model_request.seed,
             sde=params.sde,
             sde_window=layout.select_sde_window(params),
             denoise_mode=params.denoise_mode,
@@ -267,7 +203,7 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
         self,
         request: GenerationRequest,
         sample_rows: list[GenerationSampleRow],
-        plan: Any,
+        plan: EnginePlan,
         *,
         completion_callback: ChunkCompletionCallback | None = None,
     ) -> GenerationOutput:
@@ -300,27 +236,101 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
         request: GenerationRequest,
         chunk: SampleChunk,
     ) -> DiffusionChunkResult:
+        """Run the canonical diffusion chunk flow and prepare its wire payload."""
+
+        return self._forward_chunk(
+            request,
+            chunk,
+            execute_steps=None,
+            apply_wire_storage=True,
+        )
+
+    def forward_probe_chunk(
+        self,
+        request: GenerationRequest,
+        chunk: SampleChunk,
+        *,
+        execute_steps: int,
+    ) -> DiffusionChunkResult:
+        """Run a truncated canonical chunk for startup memory sizing."""
+
+        if execute_steps < 1:
+            raise ValueError("execute_steps must be >= 1")
+        return self._forward_chunk(
+            request,
+            chunk,
+            execute_steps=execute_steps,
+            apply_wire_storage=False,
+        )
+
+    def _forward_chunk(
+        self,
+        request: GenerationRequest,
+        chunk: SampleChunk,
+        *,
+        execute_steps: int | None,
+        apply_wire_storage: bool,
+    ) -> DiffusionChunkResult:
         from vrl.utils.profiling import profile_range
 
         stage_durations: dict[str, float] = {}
-        prompt_input = self.build_prompt_stage_input(request, chunk)
-        prompt_output = self.run_prompt_encode_stage(
-            prompt_input,
+        params = self.parse_sampling_params(request)
+        video_request = params.model_request
+
+        started = time.perf_counter()
+        with profile_range("generation.prompt_encode"):
+            encoded = self.encode_prompt_for_chunk(
+                generation_request=request,
+                video_request=video_request,
+                params=params,
+                chunk=chunk,
+            )
+        stage_durations["encode"] = time.perf_counter() - started
+
+        started = time.perf_counter()
+        chunk_encoded = self.build_chunk_encoded(
+            encoded=encoded,
+            generation_request=request,
+            video_request=video_request,
+            params=params,
+            chunk=chunk,
+        )
+        prepare_kwargs = self.build_prepare_kwargs(
+            encoded=encoded,
+            generation_request=request,
+            video_request=video_request,
+            params=params,
+            chunk=chunk,
+        )
+        config = self.build_denoise_config(params, chunk)
+        if execute_steps is not None:
+            config = replace(config, execute_steps=execute_steps)
+        state = self.prepare_denoise_state(
+            request=video_request,
+            encoded=chunk_encoded,
+            config=config,
+            prepare_kwargs=prepare_kwargs,
+        )
+        stage_durations["prepare_latent"] = time.perf_counter() - started
+
+        started = time.perf_counter()
+        denoise_result = self.run_denoise_steps(
+            state=state,
+            config=config,
+        )
+        stage_durations["denoise"] = time.perf_counter() - started
+
+        started = time.perf_counter()
+        chunk_result = self.decode_denoise_result(
+            chunk=chunk,
+            config=config,
+            denoise_result=denoise_result,
             stage_durations=stage_durations,
-            record_function=profile_range,
         )
-        prepared = self.run_prepare_stage(
-            prompt_output,
-            stage_durations=stage_durations,
-        )
-        denoised = self.run_denoise_stage(
-            prepared,
-            stage_durations=stage_durations,
-        )
-        return self.apply_wire_storage_policy(
-            request,
-            self.run_decode_stage(denoised),
-        )
+        chunk_result.stage_durations["decode"] = time.perf_counter() - started
+        if apply_wire_storage:
+            return self.apply_wire_storage_policy(request, chunk_result)
+        return chunk_result
 
     def apply_wire_storage_policy(
         self,
@@ -353,119 +363,6 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
             chunk_result.replay_tensors,
             policy,
         )
-        return chunk_result
-
-    def build_prompt_stage_input(
-        self,
-        request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> DiffusionPromptStageInput:
-        """Build the prompt-encode payload for one chunk."""
-
-        params = self.parse_sampling_params(request)
-        video_request = self.build_video_request(params)
-        return DiffusionPromptStageInput(
-            generation_request=request,
-            chunk=chunk,
-            params=params,
-            video_request=video_request,
-        )
-
-    def run_prompt_encode_stage(
-        self,
-        payload: DiffusionPromptStageInput,
-        *,
-        stage_durations: dict[str, float],
-        record_function: Any,
-    ) -> DiffusionPromptStageOutput:
-        """Run prompt encoding and return the typed stage payload."""
-
-        started = time.perf_counter()
-        with record_function("generation.prompt_encode"):
-            encoded = self.encode_prompt_for_chunk(
-                generation_request=payload.generation_request,
-                video_request=payload.video_request,
-                params=payload.params,
-                chunk=payload.chunk,
-            )
-        stage_durations["encode"] = time.perf_counter() - started
-        return DiffusionPromptStageOutput(
-            generation_request=payload.generation_request,
-            chunk=payload.chunk,
-            params=payload.params,
-            video_request=payload.video_request,
-            encoded=encoded,
-        )
-
-    def run_prepare_stage(
-        self,
-        payload: DiffusionPromptStageOutput,
-        *,
-        stage_durations: dict[str, float],
-    ) -> DiffusionPreparedStageOutput:
-        """Prepare latent state and denoise config for one chunk."""
-
-        started = time.perf_counter()
-        chunk_encoded = self.build_chunk_encoded(
-            encoded=payload.encoded,
-            generation_request=payload.generation_request,
-            video_request=payload.video_request,
-            params=payload.params,
-            chunk=payload.chunk,
-        )
-        prepare_kwargs = self.build_prepare_kwargs(
-            encoded=payload.encoded,
-            generation_request=payload.generation_request,
-            video_request=payload.video_request,
-            params=payload.params,
-            chunk=payload.chunk,
-        )
-        config = self.build_denoise_config(payload.params, payload.chunk)
-        state = self.prepare_denoise_state(
-            request=payload.video_request,
-            encoded=chunk_encoded,
-            config=config,
-            prepare_kwargs=prepare_kwargs,
-        )
-        stage_durations["prepare_latent"] = time.perf_counter() - started
-        return DiffusionPreparedStageOutput(
-            config=config,
-            state=state,
-        )
-
-    def run_denoise_stage(
-        self,
-        payload: DiffusionPreparedStageOutput,
-        *,
-        stage_durations: dict[str, float],
-    ) -> DiffusionDenoisedStageOutput:
-        """Run the trainable denoise stage for one chunk."""
-
-        started = time.perf_counter()
-        denoise_result = self.run_denoise_steps(
-            state=payload.state,
-            config=payload.config,
-        )
-        stage_durations["denoise"] = time.perf_counter() - started
-        return DiffusionDenoisedStageOutput(
-            config=payload.config,
-            denoise_result=denoise_result,
-            stage_durations=dict(stage_durations),
-        )
-
-    def run_decode_stage(
-        self,
-        payload: DiffusionDenoisedStageOutput,
-    ) -> DiffusionChunkResult:
-        """Run VAE decode and pack the final chunk result."""
-
-        started = time.perf_counter()
-        chunk_result = self.decode_denoise_result(
-            config=payload.config,
-            denoise_result=payload.denoise_result,
-            stage_durations=payload.stage_durations,
-        )
-        chunk_result.stage_durations["decode"] = time.perf_counter() - started
         return chunk_result
 
     def prepare_denoise_state(
@@ -508,6 +405,7 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
     def decode_denoise_result(
         self,
         *,
+        chunk: SampleChunk,
         config: DenoiseLoopConfig,
         denoise_result: DenoiseLoopResult,
         stage_durations: dict[str, float] | None = None,
@@ -561,9 +459,7 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
         ]
 
         return DiffusionChunkResult(
-            prompt_index=config.prompt_index,
-            sample_start=config.sample_start,
-            sample_count=config.sample_count,
+            chunk=chunk,
             observations=denoise_result.observations,
             actions=denoise_result.actions,
             log_probs=denoise_result.log_probs,
@@ -594,11 +490,10 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
     ) -> dict[str, Any]:
         """Encode prompt conditioning for a single prompt chunk."""
 
-        del generation_request
         return self.model.encode_prompt(
-            chunk.prompt,
+            generation_request.inputs[chunk.prompt_index].prompt,
             video_request.negative_prompt or None,
-            **params.base.text_encode_kwargs(),
+            **params.text_encode_kwargs(),
             request=video_request,
         )
 
@@ -651,10 +546,6 @@ __all__ = [
     "DiffusionChunkExecutor",
     "DiffusionChunkExecutorBase",
     "DiffusionChunkResult",
-    "DiffusionDenoisedStageOutput",
-    "DiffusionPreparedStageOutput",
-    "DiffusionPromptStageInput",
-    "DiffusionPromptStageOutput",
     "DiffusionRequestLayout",
     "DiffusionSamplingParams",
     "ReferenceConditionedChunks",

@@ -25,7 +25,7 @@ from typing import Any
 
 import torch
 
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import LazyTorchModule
 from vrl.rewards.models.media import decode_artifact_frames
 
@@ -69,11 +69,8 @@ class MotionDynamicsModel(LazyTorchModule):
 
     def __call__(
         self,
-        *,
         artifact: RewardInferenceArtifact,
-        request: RewardInferenceRequest,
     ) -> Mapping[str, float]:
-        del request
         frames = decode_artifact_frames(artifact, self.num_frames)
         if frames.shape[0] < 2:
             return {"motion_dynamics": 0.0}

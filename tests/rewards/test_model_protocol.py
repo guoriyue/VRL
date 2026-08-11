@@ -34,5 +34,5 @@ def test_concrete_reward_model_owns_the_structural_call_shape(model_class: type)
     call = model_class.__dict__["__call__"]
     parameters = inspect.signature(call).parameters
 
-    assert parameters["artifact"].kind is inspect.Parameter.KEYWORD_ONLY
-    assert parameters["request"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameters["artifact"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    assert "request" not in parameters

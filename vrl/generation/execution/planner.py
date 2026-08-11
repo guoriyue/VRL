@@ -43,7 +43,7 @@ def build_engine_plan(
     with profile_range("engine.plan"):
         return EnginePlan(
             chunks=build_prompt_chunks(
-                request.prompts,
+                len(request.inputs),
                 samples_per_prompt=request.samples_per_prompt,
                 max_samples_per_chunk=chunk_size,
             ),

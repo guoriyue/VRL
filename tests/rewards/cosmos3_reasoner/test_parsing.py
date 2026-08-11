@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import re
 
-from vrl.rewards.models.cosmos3_reasoner import (
-    _SYSTEM_PROMPT,
-    _USER_TEMPLATE,
-    _normalize_scores,
-    _parse_integer_scores,
+from vrl.rewards.assets.video_judge_prompts import (
+    COSMOS3_SYSTEM_PROMPT,
+    COSMOS3_USER_TEMPLATE,
 )
+from vrl.rewards.models.cosmos3_reasoner import _normalize_scores, _parse_integer_scores
 
 _FORMAT_HEADER = "Please output in this format:\n"
 
@@ -28,7 +27,10 @@ def test_parser_reads_the_exact_format_the_prompt_asks_for() -> None:
     this fails until the regex follows.
     """
 
-    declared = _USER_TEMPLATE.format(prompt="pick up the block").split(_FORMAT_HEADER, 1)[1]
+    declared = COSMOS3_USER_TEMPLATE.format(prompt="pick up the block").split(
+        _FORMAT_HEADER,
+        1,
+    )[1]
     digits = iter("2345")
     filled = re.sub(r"<[^>]+>", lambda _: next(digits), declared)
 
@@ -38,9 +40,12 @@ def test_parser_reads_the_exact_format_the_prompt_asks_for() -> None:
 def test_system_and_user_prompts_declare_one_output_format() -> None:
     """Both prompts spell the format out; they must spell the same one."""
 
-    declared = _USER_TEMPLATE.format(prompt="pick up the block").split(_FORMAT_HEADER, 1)[1]
+    declared = COSMOS3_USER_TEMPLATE.format(prompt="pick up the block").split(
+        _FORMAT_HEADER,
+        1,
+    )[1]
 
-    assert declared in _SYSTEM_PROMPT
+    assert declared in COSMOS3_SYSTEM_PROMPT
 
 
 def test_parse_integer_scores_reads_four_axes() -> None:

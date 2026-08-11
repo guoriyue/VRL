@@ -42,7 +42,6 @@ _PRECISION = RolePrecision(
 
 def _config(*, cache_ref_noise_pred: bool) -> DenoiseLoopConfig:
     return DenoiseLoopConfig(
-        prompt_index=0,
         sample_start=0,
         sample_count=2,
         seed=None,
@@ -139,9 +138,7 @@ def _batch(*, ref_noise_pred: torch.Tensor | None) -> RolloutBatch:
             prompt_index=index,
             sample_index=0,
             prompt=f"p{index}",
-            group_id=f"g{index}",
             sample_id=f"s{index}",
-            trajectory_id=f"t{index}",
         )
         for index in range(2)
     ]

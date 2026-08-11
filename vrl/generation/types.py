@@ -17,7 +17,6 @@ class GenerationInput:
     task_type: str | None = None
     reference_image: str | None = None
     reference_video: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.prompt:
@@ -51,7 +50,7 @@ class GenerationRequest:
     inputs: list[GenerationInput]
     samples_per_prompt: int
     sampling: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    runtime_debug: bool = False
     policy_version: int | None = None
 
     def __init__(
@@ -62,7 +61,7 @@ class GenerationRequest:
         inputs: list[GenerationInput | str],
         samples_per_prompt: int,
         sampling: dict[str, Any] | None = None,
-        metadata: dict[str, Any] | None = None,
+        runtime_debug: bool = False,
         policy_version: int | None = None,
     ) -> None:
         normalized_inputs: list[GenerationInput] = []
@@ -81,7 +80,7 @@ class GenerationRequest:
         self.inputs = normalized_inputs
         self.samples_per_prompt = samples_per_prompt
         self.sampling = dict(sampling or {})
-        self.metadata = dict(metadata or {})
+        self.runtime_debug = runtime_debug
         self.policy_version = policy_version
         self.__post_init__()
 
@@ -102,6 +101,8 @@ class GenerationRequest:
             raise ValueError("GenerationRequest.inputs must be non-empty")
         if self.samples_per_prompt < 1:
             raise ValueError("GenerationRequest.samples_per_prompt must be >= 1")
+        if not isinstance(self.runtime_debug, bool):
+            raise TypeError("GenerationRequest.runtime_debug must be a bool")
         if self.policy_version is not None and self.policy_version < 0:
             raise ValueError("GenerationRequest.policy_version must be >= 0")
 
@@ -113,10 +114,7 @@ class GenerationSampleRow:
     prompt_index: int
     sample_index: int
     prompt: str
-    group_id: str
     sample_id: str
-    trajectory_id: str
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -127,11 +125,29 @@ class GenerationOutput:
     Reward, advantage, and GRPO group semantics stay outside this type.
     """
 
-    request_id: str
-    sample_rows: list[GenerationSampleRow]
     output: Any
-    trajectory: TrajectoryBatch | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
+    trajectory: TrajectoryBatch
+    # Display/provenance-only: optional scheduler/worker diagnostics requested
+    # explicitly by GenerationRequest.runtime_debug.
+    runtime_debug: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        from vrl.trajectory import TrajectoryBatch
+
+        if not isinstance(self.trajectory, TrajectoryBatch):
+            raise TypeError("GenerationOutput.trajectory must be a TrajectoryBatch")
+
+    @property
+    def request_id(self) -> str:
+        """Return the request identity owned by the trajectory record."""
+
+        return self.trajectory.request_id
+
+    @property
+    def sample_rows(self) -> list[GenerationSampleRow]:
+        """Return the sample identities owned by the trajectory record."""
+
+        return self.trajectory.sample_rows
 
 
 __all__ = [

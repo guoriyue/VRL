@@ -5,17 +5,16 @@ Ported from the multi_score() pattern in flow_grpo/rewards.py.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from vrl.config.reward_inference import (
     RewardInferenceConfig,
     parse_reward_inference_config,
 )
-from vrl.rewards.base import RewardBatchReport, RewardCleanupError, RewardFunction
-from vrl.rewards.inference import RewardMemoryReleaseProof
+from vrl.rewards.base import RewardCleanupError, RewardFunction
 from vrl.rewards.runtime import build_reward_inference_runtime
-from vrl.rewards.types import RewardSample
+from vrl.rewards.types import RewardOutput, RewardSample
 
 # Registry of reward function factories.
 # Each factory takes (device,) and returns a RewardFunction instance.
@@ -78,9 +77,9 @@ class MultiReward(RewardFunction):
             {"ocr": 1.0, "aesthetic": 0.3},
             device="cuda",
         )
-        report = await reward_fn.score_batch_report([sample])
-        # report.scores     -> weighted totals
-        # report.components -> {"ocr": [0.87], "aesthetic": [5.2]}
+        output = await reward_fn.score_batch([sample])
+        # output.scores     -> weighted totals
+        # output.components -> {"ocr": (0.87,), "aesthetic": (5.2,)}
     """
 
     def __init__(
@@ -232,15 +231,13 @@ class MultiReward(RewardFunction):
             if memory_parking_required is True and component_device.startswith("cuda"):
                 # GPU ownership comes from topology. A shared reward cannot rely
                 # on every preset remembering an independent parking knob.
-                parking = reward_cls.memory_parking
-                if parking is None:
+                residual_limit = reward_cls.memory_parking_residual_bytes_limit
+                if residual_limit is None:
                     raise ValueError(
                         f"reward {name!r} has no complete memory-parking contract",
                     )
                 extra["sleep_offload"] = True
-                extra["memory_parking_residual_bytes_limit"] = int(
-                    parking.residual_bytes_limit,
-                )
+                extra["memory_parking_residual_bytes_limit"] = int(residual_limit)
             elif memory_parking_required is not None:
                 # A dedicated reward owns its GPU and remains resident even if
                 # an inherited reward preset carried the old shared-phase knob.
@@ -256,66 +253,46 @@ class MultiReward(RewardFunction):
         return cls(triples)
 
     async def score(self, sample: RewardSample) -> float:
-        return (await self.score_batch_report([sample])).scores[0]
+        return (await self.score_batch((sample,))).scores[0]
 
-    async def score_batch(self, samples: list[RewardSample]) -> list[float]:
-        return (await self.score_batch_report(samples)).scores
-
-    async def score_batch_report(self, samples: list[RewardSample]) -> RewardBatchReport:
+    async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
         """Return weighted totals plus per-component observations from one call."""
 
         totals = [0.0] * len(samples)
-        components: dict[str, list[float]] = {}
+        components: dict[str, tuple[float, ...]] = {}
         timing_ms: dict[str, float] = {}
-        operation_error: BaseException | None = None
-        try:
-            for name, weight, fn in self.rewards:
-                report = await fn.score_batch_report(samples)
-                components[name] = list(report.scores)
-                for key, value in report.timing_ms.items():
-                    timing_ms[str(key)] = timing_ms.get(str(key), 0.0) + float(value)
-                for i, s in enumerate(report.scores):
-                    totals[i] += weight * s
-        except BaseException as error:
-            operation_error = error
-        _, cleanup_error = await self._park_all_memory()
-        if operation_error is not None and cleanup_error is not None:
-            raise RewardCleanupError(
-                "reward operation and memory parking both failed",
-                [operation_error, cleanup_error],
-            )
-        if operation_error is not None:
-            raise operation_error
-        if cleanup_error is not None:
-            raise cleanup_error
-        return RewardBatchReport(
-            scores=totals,
+        for name, weight, fn in self.rewards:
+            output = await fn.score_batch(samples)
+            if len(output.scores) != len(samples):
+                raise ValueError(
+                    f"reward component {name!r} returned wrong number of scores: "
+                    f"scores={len(output.scores)}, samples={len(samples)}",
+                )
+            components[name] = output.scores
+            for key, value in output.timing_ms.items():
+                timing_ms[str(key)] = timing_ms.get(str(key), 0.0) + float(value)
+            for index, score in enumerate(output.scores):
+                totals[index] += weight * score
+        return RewardOutput(
+            scores=tuple(totals),
             components=components,
             timing_ms=timing_ms,
         )
 
-    async def park_memory(self) -> tuple[RewardMemoryReleaseProof, ...]:
-        """Actively park every component; never infer release from cached state."""
+    async def park_memory(self) -> bool:
+        """Actively park every component and report whether any owner parked."""
 
-        proofs, error = await self._park_all_memory()
-        if error is not None:
-            raise error
-        return proofs
-
-    async def _park_all_memory(
-        self,
-    ) -> tuple[tuple[RewardMemoryReleaseProof, ...], BaseException | None]:
-        proofs: list[RewardMemoryReleaseProof] = []
+        parked = False
         errors: list[BaseException] = []
         for name, _, fn in self.rewards:
             try:
-                proofs.extend(await fn.park_memory())
+                parked = await fn.park_memory() or parked
             except BaseException as error:
                 errors.append(RuntimeError(f"reward component {name!r} failed to park"))
                 errors[-1].__cause__ = error
         if errors:
-            return tuple(proofs), RewardCleanupError("reward memory parking failures", errors)
-        return tuple(proofs), None
+            raise RewardCleanupError("reward memory parking failures", errors)
+        return parked
 
 
 def validate_reward_memory_parking_components(
@@ -375,7 +352,11 @@ def validate_reward_memory_parking_components(
             "is process-wide: tags select which pages are backed up, not which pages "
             "are unmapped. Keep CPU reward siblings or use a dedicated/remote reward.",
         )
-    unsupported = [name for name in gpu_components if get_reward(name).memory_parking is None]
+    unsupported = [
+        name
+        for name in gpu_components
+        if get_reward(name).memory_parking_residual_bytes_limit is None
+    ]
     if unsupported:
         raise ValueError(
             "shared reward GPU requires complete topology-driven memory parking, "

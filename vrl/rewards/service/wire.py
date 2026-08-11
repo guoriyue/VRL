@@ -145,21 +145,9 @@ def request_from_wire(payload: Any) -> RewardInferenceRequest:
                 context=f"reward artifact at index {index}",
             )
             artifacts.append(RewardInferenceArtifact(**dict(artifact)))
-        metadata = body.get("metadata") or {}
-        if not isinstance(metadata, Mapping):
-            raise RewardServiceProtocolError(
-                RewardServiceErrorCode.BAD_REQUEST,
-                "reward request metadata must be a JSON object",
-                request_id=request_id,
-            )
         return RewardInferenceRequest(
             request_id=request_id,
             artifacts=tuple(artifacts),
-            reward_name=body.get("reward_name"),
-            score_key=body.get("score_key"),
-            score_aggregation=body.get("score_aggregation", "sum"),
-            policy_version=body.get("policy_version"),
-            metadata=dict(metadata),
         )
     except RewardServiceProtocolError:
         raise
@@ -280,12 +268,7 @@ def info_from_wire(payload: Any) -> RewardServiceInfo:
     try:
         values = dict(body)
         values["capabilities"] = tuple(values.get("capabilities") or ())
-        info = RewardServiceInfo(**values)
-        if info.protocol != WIRE_PROTOCOL or info.wire_version != WIRE_VERSION:
-            raise ValueError(
-                "reward service info protocol/version does not match its envelope",
-            )
-        return info
+        return RewardServiceInfo(**values)
     except (TypeError, ValueError) as error:
         raise RewardServiceProtocolError(
             RewardServiceErrorCode.BAD_REQUEST,

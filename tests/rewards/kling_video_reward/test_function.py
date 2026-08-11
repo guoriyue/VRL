@@ -28,17 +28,8 @@ class _FakeRuntime:
                 RewardInferenceResult(
                     artifact_id=artifact.artifact_id,
                     scores=scores,
-                    selected_score=request.select_score(scores),
-                    reward_name=request.reward_name,
-                    score_key=request.score_key,
-                    policy_version=artifact.policy_version,
-                    source_request_id=artifact.source_request_id,
-                    sample_id=artifact.sample_id,
-                    group_id=artifact.group_id,
-                    trajectory_id=artifact.trajectory_id,
                     reward_model_version="fake-test",
-                    latency_ms=1.0,
-                    worker_id="fake",
+                    timing_ms={"inference_ms": 1.0},
                 ),
             )
         return out
@@ -59,11 +50,8 @@ def _sample(output: torch.Tensor, *, policy_version: int = 3) -> RewardSample:
     return RewardSample(
         prompt="prompt",
         output=output,
-        source_request_id="request-a",
         sample_id="sample-a",
-        group_id="group-a",
-        trajectory_id="trajectory-a",
-        policy_version=policy_version,
+        metadata={"policy_version": policy_version},
     )
 
 
@@ -105,15 +93,12 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
         inference_runtime=runtime,
     )
 
-    report = await reward.score_batch_report([_sample(torch.ones(1, 2, 2, 2))])
+    report = await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])
 
     assert report.scores == pytest.approx([1.5])
     assert len(runtime.requests) == 1
     request = runtime.requests[0]
-    assert request.reward_name == "kling_video_reward"
-    assert request.artifacts[0].policy_version == 3
-    assert request.artifacts[0].source_request_id == "request-a"
-    assert request.artifacts[0].sample_id == "sample-a"
+    assert len(request.artifacts) == 1
     assert Path(request.artifacts[0].path).exists()
     assert (tmp_path / "artifacts" / "manifest.jsonl").exists()
     assert (tmp_path / "debug" / "kling_video_reward_requests.jsonl").exists()

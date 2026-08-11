@@ -71,13 +71,7 @@ class ContinuousRolloutSchedule:
 
     def _validate_runtime_isolation(self) -> None:
         # No config escape hatch exists: shared physical capacity cannot support
-        # rollout kernels and trainer backward concurrently.  Check both the
-        # runtime topology and the on-demand/offload capability so an incomplete
-        # runtime protocol cannot accidentally bypass the guard.
-        if self.lifecycle.runtime_is_colocated():
-            raise RuntimeError(
-                "continuous rollout requires separate trainer and rollout GPU ownership",
-            )
+        # rollout kernels and trainer backward concurrently.
         if self.lifecycle.requires_driver_model_offload():
             raise RuntimeError(
                 "continuous rollout is disabled when rollout runtime requires "

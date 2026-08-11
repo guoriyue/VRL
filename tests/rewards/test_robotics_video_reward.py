@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.inference import RewardInferenceArtifact
 
 
 class _FakeKling:
@@ -17,8 +17,8 @@ class _FakeKling:
     def prepare_for_inference(self):
         self.prepared = True
 
-    def __call__(self, *, artifact, request):
-        del artifact, request
+    def __call__(self, artifact):
+        del artifact
         return {
             "text_alignment": -1.0,
             "visual_quality": -2.0,
@@ -35,8 +35,8 @@ class _FakeDino:
     def prepare_for_inference(self):
         self.prepared = True
 
-    def __call__(self, *, artifact, request):
-        del artifact, request
+    def __call__(self, artifact):
+        del artifact
         return {"target_dino_similarity": 0.8}
 
 
@@ -48,8 +48,8 @@ class _FakeMotion:
     def prepare_for_inference(self):
         self.prepared = True
 
-    def __call__(self, *, artifact, request):
-        del artifact, request
+    def __call__(self, artifact):
+        del artifact
         return {"motion_dynamics": 0.5}
 
 
@@ -77,18 +77,10 @@ def test_robotics_reward_uses_only_audited_kling_alignment(
     artifact = RewardInferenceArtifact(
         artifact_id="a0",
         path=str(tmp_path / "a0.mp4"),
-        media_type="video",
         prompt="Move the object into the tray",
         metadata={"target_video": "targets/a0.mp4"},
     )
-    request = RewardInferenceRequest(
-        request_id="req",
-        artifacts=(artifact,),
-        reward_name="robotics_video_reward",
-        score_key="robotics_blend",
-    )
-
-    scores = model(artifact=artifact, request=request)
+    scores = model(artifact)
 
     assert scores["robotics_blend"] == pytest.approx(0.8 + 0.2 * 0.5 + 0.3 * -1.0)
     assert scores["kling_motion_quality"] == 3.0

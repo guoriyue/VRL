@@ -198,7 +198,8 @@ episode。
 ### 应保持
 
 - one-shot `RolloutCollector` 与 `OnlineTrainer` fast path。
-- `GenerationRuntime` 的 `generate/release/is_colocated` transport contract。
+- `GenerationRuntime` 的
+  `activate/generate/offload/shutdown/requires_driver_model_offload` transport contract。
 - The absence of a physical-stage contract. If profiling later justifies one,
   its per-call DAG remains separate from the episode loop.
 - family-specific 薄 adapters：它们是统一 protocol 与不同 request schema 之间的必要 framework boundary。
@@ -208,7 +209,7 @@ episode。
 - 通用 agent SDK、任意 MCP/web/browser tools。
 - 跨请求 token/denoise-step batching；没有 profile 证据前只做 request queue。
 - 多策略训练、GAE/value model、reward model training。
-- 把 episode 历史全部复制进每个 `GenerationRequest.metadata`。
+- 为携带 episode 历史重新引入 opaque `GenerationRequest.metadata`。
 
 ## 8. 验收
 

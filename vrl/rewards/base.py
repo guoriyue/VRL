@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import time
 import uuid
-from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, field, replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -17,11 +18,9 @@ from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
     RewardInferenceRuntime,
-    RewardMemoryParkingCapability,
     RewardMemoryParkingRuntime,
-    RewardMemoryReleaseProof,
 )
-from vrl.rewards.types import RewardSample
+from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 from vrl.utils.logging import init_logger
 
@@ -69,21 +68,6 @@ def resolve_reward_component_device(
     return effective
 
 
-@dataclass(frozen=True, slots=True)
-class RewardBatchReport:
-    """One scoring call's scores plus the observations produced by that call.
-
-    Observations travel with the return value instead of mutable ``last_*``
-    attributes: continuous rollout can score future groups while the trainer
-    consumes an older group, so cached instance state would attach metrics to
-    whichever call finished last instead of to the batch being trained.
-    """
-
-    scores: list[float]
-    components: dict[str, list[float]] = field(default_factory=dict)
-    timing_ms: dict[str, float] = field(default_factory=dict)
-
-
 class RewardCleanupError(RuntimeError):
     """One reward operation accumulated multiple release/teardown failures."""
 
@@ -98,7 +82,7 @@ class RewardFunction:
 
     # None is fail-closed. A specialized base class declares this capability only
     # when all model-owned CUDA state is built in the tagged runtime pool.
-    memory_parking: ClassVar[RewardMemoryParkingCapability | None] = None
+    memory_parking_residual_bytes_limit: ClassVar[int | None] = None
     # Most reward constructors expose the selected device as ``device``;
     # exceptional schemas (for example NSFW's classifier_device) override it.
     device_config_key: ClassVar[str] = "device"
@@ -144,25 +128,20 @@ class RewardFunction:
 
         return None
 
-    async def park_memory(self) -> tuple[RewardMemoryReleaseProof, ...]:
-        """Release reward-owned accelerator memory, when applicable."""
+    async def park_memory(self) -> bool:
+        """Release reward-owned accelerator memory and report whether an owner parked."""
 
-        return ()
+        return False
 
     async def score(self, sample: RewardSample) -> float:
-        """Score a single generated sample."""
+        """Score one generated sample; family-specific scalar extension hook."""
 
         raise NotImplementedError(f"{type(self).__name__}.score is not implemented")
 
-    async def score_batch(self, samples: list[RewardSample]) -> list[float]:
-        """Score a batch of generated samples sequentially by default."""
+    async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
+        """Score ordered samples through the batch/runtime hook."""
 
-        return [await self.score(sample) for sample in samples]
-
-    async def score_batch_report(self, samples: list[RewardSample]) -> RewardBatchReport:
-        """Score a batch and return the observations from this exact call."""
-
-        return RewardBatchReport(scores=await self.score_batch(samples))
+        return RewardOutput(scores=tuple([await self.score(sample) for sample in samples]))
 
     async def shutdown(self) -> None:
         """Release reward-owned resources, when applicable."""
@@ -176,8 +155,6 @@ class InferenceRewardFunction(RewardFunction):
     @staticmethod
     def build_inmemory_artifacts(
         samples: list[RewardSample],
-        *,
-        media_type: MediaType = "image",
     ) -> list[RewardInferenceArtifact]:
         """Build reward artifacts that carry media in-memory (no disk write)."""
 
@@ -186,16 +163,10 @@ class InferenceRewardFunction(RewardFunction):
             metadata = dict(sample.metadata or {})
             artifacts.append(
                 RewardInferenceArtifact(
-                    artifact_id=(f"{sample.source_request_id}:{sample.sample_id}:in-memory"),
+                    artifact_id=f"{sample.sample_id}:in-memory",
                     path="",
-                    media_type=media_type,
                     media=sample.output,
                     prompt=str(sample.prompt),
-                    source_request_id=sample.source_request_id,
-                    sample_id=sample.sample_id,
-                    group_id=sample.group_id,
-                    trajectory_id=sample.trajectory_id,
-                    policy_version=sample.policy_version,
                     metadata=metadata,
                 ),
             )
@@ -210,7 +181,6 @@ class InferenceRewardFunction(RewardFunction):
         artifact_builder: ArtifactBuilder,
         artifact_finalizer: ArtifactFinalizer | None = None,
         artifact_retainer: ArtifactFinalizer | None = None,
-        request_metadata: Mapping[str, Any] | None = None,
         debug_dir: str = "",
         request_prefix: str = "reward",
         debug_basename: str = "reward",
@@ -232,15 +202,17 @@ class InferenceRewardFunction(RewardFunction):
             raise TypeError("artifact_builder must be callable")
         self.reward_name = normalized_reward_name
         self.score_key = normalized_score_key
+        self._selected_score_keys = tuple(
+            part.strip() for part in normalized_score_key.split("+") if part.strip()
+        )
         self.inference_runtime = inference_runtime
         self._artifact_builder = artifact_builder
         self._artifact_finalizer = artifact_finalizer
         self._artifact_retainer = artifact_retainer
-        self._request_metadata = dict(request_metadata or {})
         self.debug_dir = str(debug_dir)
         self._request_prefix = request_prefix
         self._debug_basename = debug_basename
-        self._last_reward_request_id: str | None = None
+        self._inference_started = False
 
     @property
     def scoring_is_nonblocking(self) -> bool:
@@ -273,37 +245,45 @@ class InferenceRewardFunction(RewardFunction):
         if callable(ensure_ready):
             await ensure_ready()
 
-    async def park_memory(self) -> tuple[RewardMemoryReleaseProof, ...]:
-        """Park this reward runtime, retrying the runtime's current request."""
+    async def park_memory(self) -> bool:
+        """Park this reward runtime when its model has been activated."""
 
         inference_runtime = self.inference_runtime
         if not isinstance(inference_runtime, RewardMemoryParkingRuntime):
-            return ()
+            return False
         if not inference_runtime.requires_memory_parking:
-            return ()
-        request_id = self._last_reward_request_id
-        if request_id is None:
+            return False
+        if not self._inference_started:
             # This component never activated its model (for example an earlier
             # sibling failed). There is no GPU lease to release.
-            return ()
-        proof = await inference_runtime.park_memory()
-        proof.validate(request_id=request_id)
-        return (proof,)
+            return False
+        await inference_runtime.park_memory()
+        return True
 
     async def score(self, sample: RewardSample) -> float:
-        """Score a single generated sample."""
+        """Score one sample through the batch inference path."""
 
-        return (await self.score_batch([sample]))[0]
+        return (await self.score_batch((sample,))).scores[0]
 
-    async def score_batch(self, samples: list[RewardSample]) -> list[float]:
-        """Score a batch through the configured inference runtime."""
+    async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
+        """Score ordered samples through the configured inference runtime."""
 
-        return (await self._score_with_inference_runtime(samples)).scores
+        return await self._score_with_inference_runtime(list(samples))
 
-    async def score_batch_report(self, samples: list[RewardSample]) -> RewardBatchReport:
-        """Score a batch and return the observations from this exact call."""
-
-        return await self._score_with_inference_runtime(samples)
+    def _select_score(self, scores: Mapping[str, Any]) -> float:
+        missing = [key for key in self._selected_score_keys if key not in scores]
+        if missing:
+            raise KeyError(
+                "reward inference result missing score keys: "
+                f"missing={missing}, requested={self.score_key!r}, "
+                f"available={sorted(scores)}",
+            )
+        value = float(sum(float(scores[key]) for key in self._selected_score_keys))
+        if not math.isfinite(value):
+            raise ValueError(
+                f"reward score_key={self.score_key!r} selected non-finite score: {value}",
+            )
+        return value
 
     async def shutdown(self) -> None:
         await self.inference_runtime.shutdown()
@@ -329,7 +309,6 @@ class InferenceRewardFunction(RewardFunction):
             ),
             artifact_builder=lambda samples: InferenceRewardFunction.build_inmemory_artifacts(
                 samples,
-                media_type="image",
             ),
         )
 
@@ -437,7 +416,6 @@ class InferenceRewardFunction(RewardFunction):
                 self.artifact_store.retain if retain_artifacts else self.artifact_store.release
             ),
             artifact_retainer=self.artifact_store.retain,
-            request_metadata={"media_type": self.media_type},
             debug_dir=debug_dir,
             request_prefix=request_prefix,
             debug_basename=debug_basename,
@@ -446,9 +424,9 @@ class InferenceRewardFunction(RewardFunction):
     async def _score_with_inference_runtime(
         self,
         samples: list[RewardSample],
-    ) -> RewardBatchReport:
+    ) -> RewardOutput:
         if not samples:
-            return RewardBatchReport(scores=[])
+            return RewardOutput(scores=())
 
         inference_runtime = self.inference_runtime
         artifact_builder = self._artifact_builder
@@ -458,75 +436,27 @@ class InferenceRewardFunction(RewardFunction):
         artifacts = artifact_builder(samples)
         materialization_ms = (time.perf_counter() - materialize_started) * 1000.0
         operation_error: BaseException | None = None
-        report: RewardBatchReport | None = None
+        output: RewardOutput | None = None
+        request_id: str | None = None
         try:
             if len(artifacts) != len(samples):
                 raise ValueError(
                     "reward artifact builder returned wrong number of artifacts: "
                     f"artifacts={len(artifacts)}, samples={len(samples)}",
                 )
-            correlated_artifacts: list[RewardInferenceArtifact] = []
-            for artifact, sample in zip(artifacts, samples, strict=True):
-                expected_lineage = {
-                    "source_request_id": sample.source_request_id,
-                    "sample_id": sample.sample_id,
-                    "group_id": sample.group_id,
-                    "trajectory_id": sample.trajectory_id,
-                    "policy_version": sample.policy_version,
-                }
-                for field_name, expected in expected_lineage.items():
-                    actual = getattr(artifact, field_name)
-                    if actual is not None and actual != expected:
-                        raise ValueError(
-                            "reward artifact lineage mismatch: "
-                            f"artifact_id={artifact.artifact_id!r}, "
-                            f"field={field_name}, expected={expected!r}, "
-                            f"actual={actual!r}",
-                        )
-                correlated_artifacts.append(replace(artifact, **expected_lineage))
-            artifacts = correlated_artifacts
-
-            policy_versions = {artifact.policy_version for artifact in artifacts}
-            policy_version = next(iter(policy_versions)) if len(policy_versions) == 1 else None
+            request_id = f"{self._request_prefix}-{uuid.uuid4().hex}"
             request = RewardInferenceRequest(
-                request_id=f"{self._request_prefix}-{uuid.uuid4().hex}",
+                request_id=request_id,
                 artifacts=tuple(artifacts),
-                reward_name=self.reward_name,
-                score_key=self.score_key,
-                policy_version=policy_version,
-                metadata={
-                    **self._request_metadata,
-                    "artifact_materialization_ms": materialization_ms,
-                },
             )
-            self._last_reward_request_id = request.request_id
             inference_started = time.perf_counter()
             # Contract enforcement lives at this seam, not inside each runtime,
             # so every runtime (including injected fakes) gets the same result
             # identity guard and request-order re-sort.
             from vrl.rewards.inference import validate_reward_results
 
-            score_error: BaseException | None = None
-            raw_results: list[RewardInferenceResult] | None = None
-            try:
-                raw_results = await inference_runtime.score_batch(request)
-            except BaseException as error:
-                score_error = error
-            park_error: BaseException | None = None
-            try:
-                await self.park_memory()
-            except BaseException as error:
-                park_error = error
-            if score_error is not None and park_error is not None:
-                raise RewardCleanupError(
-                    "reward scoring and memory parking both failed",
-                    [score_error, park_error],
-                )
-            if score_error is not None:
-                raise score_error
-            if park_error is not None:
-                raise park_error
-            assert raw_results is not None
+            self._inference_started = True
+            raw_results = await inference_runtime.score_batch(request)
             results = validate_reward_results(request, raw_results)
             inference_total_ms = (time.perf_counter() - inference_started) * 1000.0
             total_latency_ms = (time.perf_counter() - total_started) * 1000.0
@@ -537,37 +467,26 @@ class InferenceRewardFunction(RewardFunction):
                 inference_total_ms=inference_total_ms,
                 total_reward_latency_ms=total_latency_ms,
             )
-            report = RewardBatchReport(
-                scores=[float(result.selected_score) for result in results],
+            output = RewardOutput(
+                scores=tuple(self._select_score(result.scores) for result in results),
                 timing_ms={
                     "latency_ms": total_latency_ms,
-                    "queue_wait_ms": max(
-                        (
-                            float(result.queue_wait_ms)
-                            for result in results
-                            if result.queue_wait_ms is not None
-                        ),
-                        default=0.0,
-                    ),
-                    "inference_ms": (
-                        sum(
-                            float(result.inference_ms)
-                            for result in results
-                            if result.inference_ms is not None
-                        )
-                        if results
-                        else inference_total_ms
+                    "queue_wait_ms": _max_result_timing(results, "queue_wait_ms"),
+                    "inference_ms": _sum_result_timing(
+                        results,
+                        "inference_ms",
+                        default=inference_total_ms,
                     ),
                     "artifact_materialization_ms": materialization_ms,
-                    "artifact_validation_ms": _max_result_metadata_timing(
+                    "artifact_validation_ms": _max_result_timing(
                         results,
                         "service_artifact_validation_ms",
                     ),
-                    "service_inference_wall_ms": _max_result_metadata_timing(
+                    "service_inference_wall_ms": _max_result_timing(
                         results,
                         "service_inference_wall_ms",
                     ),
-                    "transport_roundtrip_ms": _max_result_metadata_timing(
+                    "transport_roundtrip_ms": _max_result_timing(
                         results,
                         "http_roundtrip_ms",
                     ),
@@ -588,7 +507,7 @@ class InferenceRewardFunction(RewardFunction):
                 "reward inference did not confirm terminal state; retaining %d "
                 "artifact(s) for request_id=%s",
                 len(artifacts),
-                self._last_reward_request_id,
+                request_id,
             )
         if artifact_finalizer is not None:
             try:
@@ -604,8 +523,8 @@ class InferenceRewardFunction(RewardFunction):
             raise operation_error
         if cleanup_error is not None:
             raise cleanup_error
-        assert report is not None
-        return report
+        assert output is not None
+        return output
 
     def _write_debug(
         self,
@@ -623,13 +542,8 @@ class InferenceRewardFunction(RewardFunction):
         request_row = {
             "request_id": request.request_id,
             "artifact_ids": [artifact.artifact_id for artifact in request.artifacts],
-            "source_request_ids": [artifact.source_request_id for artifact in request.artifacts],
-            "sample_ids": [artifact.sample_id for artifact in request.artifacts],
-            "group_ids": [artifact.group_id for artifact in request.artifacts],
-            "trajectory_ids": [artifact.trajectory_id for artifact in request.artifacts],
-            "reward_name": request.reward_name,
-            "score_key": request.score_key,
-            "policy_version": request.policy_version,
+            "reward_name": self.reward_name,
+            "score_key": self.score_key,
             "artifact_materialization_ms": artifact_materialization_ms,
             "inference_total_ms": inference_total_ms,
             "total_reward_latency_ms": total_reward_latency_ms,
@@ -646,9 +560,7 @@ class InferenceRewardFunction(RewardFunction):
 class CumemRewardFunction(InferenceRewardFunction):
     """Reward whose model allocations support verified tagged-pool parking."""
 
-    memory_parking: ClassVar[RewardMemoryParkingCapability] = RewardMemoryParkingCapability(
-        residual_bytes_limit=CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
-    )
+    memory_parking_residual_bytes_limit: ClassVar[int] = CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 
 
 class DiskArtifactRewardFunction(CumemRewardFunction):
@@ -657,14 +569,24 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
     artifact_transport: ClassVar[ArtifactTransport] = "disk"
 
 
-def _max_result_metadata_timing(
+def _max_result_timing(
     results: list[RewardInferenceResult],
     key: str,
 ) -> float:
     return max(
-        (float(result.metadata[key]) for result in results if key in result.metadata),
+        (float(result.timing_ms[key]) for result in results if key in result.timing_ms),
         default=0.0,
     )
+
+
+def _sum_result_timing(
+    results: list[RewardInferenceResult],
+    key: str,
+    *,
+    default: float,
+) -> float:
+    values = [float(result.timing_ms[key]) for result in results if key in result.timing_ms]
+    return sum(values) if values else float(default)
 
 
 __all__ = [
@@ -674,7 +596,6 @@ __all__ = [
     "CumemRewardFunction",
     "DiskArtifactRewardFunction",
     "InferenceRewardFunction",
-    "RewardBatchReport",
     "RewardCleanupError",
     "RewardFunction",
     "resolve_reward_component_device",

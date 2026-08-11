@@ -17,13 +17,14 @@ from vrl.generation.execution.planner import build_engine_plan
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
-    DistributedWorkerHandle,
     PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
 )
 from vrl.generation.ray.executor import RayGenerationExecutor, _is_oom_error
 from vrl.generation.types import GenerationOutput, GenerationRequest
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
+from vrl.trajectory import TrajectoryBatch
 
 # torch's allocator wire format, pinned against the real allocator by
 # test_oom_matcher_accepts_the_real_torch_allocator_message below.
@@ -47,9 +48,7 @@ _OOM_WIRE_FORMAT = pytest.mark.real_cover(
 def _key(start: int, count: int) -> str:
     """Derive a chunk_key from the source template, not a hand-copied f-string."""
 
-    return SampleChunk(
-        prompt_index=0, prompt="p", sample_start=start, sample_count=count
-    ).chunk_key
+    return SampleChunk(prompt_index=0, sample_start=start, sample_count=count).chunk_key
 
 
 @dataclass
@@ -91,23 +90,16 @@ class _StaticPlanner:
     """Plan one static assignment per provided chunk."""
 
     chunks: list[SampleChunk]
-
-    @property
-    def policy(self) -> Any:
-        @dataclass
-        class _Policy:
-            strategy: str = "static"
-
-        return _Policy()
+    strategy: str = "static"
 
     def plan_with_engine(
         self,
         request: GenerationRequest,
-        workers: list[DistributedWorkerHandle],
+        worker_ids: list[str],
     ) -> DistributedGenerationPlan:
         assignments = tuple(
             DeviceAssignment(
-                worker_id=workers[index % len(workers)].worker_id,
+                worker_id=worker_ids[index % len(worker_ids)],
                 envelope=ChunkExecutionEnvelope(
                     request=request,
                     chunk=chunk,
@@ -129,9 +121,15 @@ class _CoverageGatherer:
         chunks: list[dict[str, Any]],
     ) -> GenerationOutput:
         return GenerationOutput(
-            request_id=request.request_id,
-            sample_rows=list(sample_rows),
             output=list(chunks),
+            trajectory=TrajectoryBatch(
+                request_id=request.request_id,
+                family=request.family,
+                task=request.task,
+                sample_rows=list(sample_rows),
+                axes={},
+                segments={},
+            ),
         )
 
 
@@ -148,17 +146,15 @@ def _request(
         inputs=["p"],
         samples_per_prompt=num_samples,
         sampling=({} if samples_per_chunk is None else {"samples_per_chunk": samples_per_chunk}),
-        metadata={"_runtime_debug": True} if runtime_debug else None,
+        runtime_debug=runtime_debug,
     )
 
 
 def _executor(
     chunks: list[SampleChunk],
     workers: list[_CapacityWorker],
-) -> tuple[RayGenerationExecutor, list[DistributedWorkerHandle]]:
-    handles = [
-        DistributedWorkerHandle(worker_id=worker.worker_id, actor=worker) for worker in workers
-    ]
+) -> tuple[RayGenerationExecutor, list[RayActorHandle]]:
+    handles = [RayActorHandle(worker_id=worker.worker_id, actor=worker) for worker in workers]
     executor = RayGenerationExecutor(
         planner=_StaticPlanner(chunks=chunks),
         workers=handles,
@@ -191,7 +187,7 @@ def test_oom_matcher_accepts_the_real_torch_allocator_message() -> None:
 async def test_oom_chunk_splits_until_it_fits() -> None:
     """An 8-sample chunk on a 2-sample worker degrades to four 2-sample chunks."""
 
-    chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=8)
+    chunk = SampleChunk(prompt_index=0, sample_start=0, sample_count=8)
     worker = _CapacityWorker(worker_id="w0", max_samples=2)
     executor, _ = _executor([chunk], [worker])
 
@@ -204,7 +200,8 @@ async def test_oom_chunk_splits_until_it_fits() -> None:
         (_key(4, 2), 2),
         (_key(6, 2), 2),
     ]
-    splits = output.extra["runtime_debug"]["chunk_oom_splits"]
+    assert output.runtime_debug is not None
+    splits = output.runtime_debug["chunk_oom_splits"]
     # Recursion order: 8 -> [0:4] + [4:8] -> 2-sample leaves.
     assert [row["chunk_key"] for row in splits] == [_key(0, 8), _key(0, 4), _key(4, 4)]
     assert all(row["worker_id"] == "w0" for row in splits)
@@ -215,7 +212,7 @@ async def test_oom_chunk_splits_until_it_fits() -> None:
 async def test_single_sample_oom_still_raises() -> None:
     """A chunk that OOMs at one sample is a hard failure, not an infinite loop."""
 
-    chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=4)
+    chunk = SampleChunk(prompt_index=0, sample_start=0, sample_count=4)
     worker = _CapacityWorker(worker_id="w0", max_samples=0)
     executor, _ = _executor([chunk], [worker])
 
@@ -227,7 +224,7 @@ async def test_single_sample_oom_still_raises() -> None:
 async def test_non_oom_error_is_not_retried() -> None:
     """Only allocator failures degrade; other worker errors fail fast."""
 
-    chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=4)
+    chunk = SampleChunk(prompt_index=0, sample_start=0, sample_count=4)
     worker = _CapacityWorker(
         worker_id="w0",
         max_samples=2,
@@ -245,8 +242,8 @@ async def test_healthy_chunks_skip_degradation_path() -> None:
     """No OOM: results and telemetry are exactly the pre-split behavior."""
 
     chunks = [
-        SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=2),
-        SampleChunk(prompt_index=0, prompt="p", sample_start=2, sample_count=2),
+        SampleChunk(prompt_index=0, sample_start=0, sample_count=2),
+        SampleChunk(prompt_index=0, sample_start=2, sample_count=2),
     ]
     worker = _CapacityWorker(worker_id="w0", max_samples=2)
     executor, _ = _executor(chunks, [worker])
@@ -254,12 +251,12 @@ async def test_healthy_chunks_skip_degradation_path() -> None:
     output = await executor.execute(_request(4))
 
     assert len(output.output) == 2
-    assert "runtime_debug" not in output.extra
+    assert output.runtime_debug is None
 
 
 @pytest.mark.asyncio
 async def test_result_request_id_must_match_submitted_envelope() -> None:
-    chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=2)
+    chunk = SampleChunk(prompt_index=0, sample_start=0, sample_count=2)
     worker = _CapacityWorker(
         worker_id="w0",
         max_samples=2,
@@ -314,10 +311,10 @@ async def test_stale_slot_routes_to_graceful_discard_not_failure() -> None:
     RuntimeError, so the producer counts it as a stale discard, not a collect error.
     It must also skip OOM-split retries entirely (no second execute on the chunk)."""
 
-    chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=2)
+    chunk = SampleChunk(prompt_index=0, sample_start=0, sample_count=2)
     worker = _StaleSlotWorker(worker_id="w0")
     handles = [
-        DistributedWorkerHandle(worker_id=worker.worker_id, actor=worker),
+        RayActorHandle(worker_id=worker.worker_id, actor=worker),
     ]
     executor = RayGenerationExecutor(
         planner=_StaticPlanner(chunks=[chunk]),
@@ -393,14 +390,20 @@ class _RoutingWorker:
                 error=_OOM_MESSAGE,
             )
         return GenerationOutput(
-            request_id=request_id,
-            sample_rows=list(sample_rows),
             output=[{"pipelined": True}],
+            trajectory=TrajectoryBatch(
+                request_id=request_id,
+                family=request.family,
+                task=request.task,
+                sample_rows=list(sample_rows),
+                axes={},
+                segments={},
+            ),
         )
 
 
 def _routing_executor(chunks, workers, *, pipelined):
-    handles = [DistributedWorkerHandle(worker_id=w.worker_id, actor=w) for w in workers]
+    handles = [RayActorHandle(worker_id=w.worker_id, actor=w) for w in workers]
     return RayGenerationExecutor(
         planner=_StaticPlanner(chunks=chunks),
         workers=handles,
@@ -418,10 +421,7 @@ async def test_pipelined_routes_single_worker_to_per_request_path() -> None:
     """pipelined=True + one worker => the whole request runs via the per-request
     pipelined path (execute_request_pipelined), NOT per-chunk dispatch."""
 
-    chunks = [
-        SampleChunk(prompt_index=0, prompt="p", sample_start=i * 2, sample_count=2)
-        for i in range(2)
-    ]
+    chunks = [SampleChunk(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(2)]
     worker = _RoutingWorker(worker_id="w0")
     executor = _routing_executor(chunks, [worker], pipelined=True)
 
@@ -435,10 +435,7 @@ async def test_pipelined_routes_single_worker_to_per_request_path() -> None:
 def test_pipelined_rejects_multiple_workers_at_executor_construction() -> None:
     """Direct executor callers get the same fail-fast guard as config users."""
 
-    chunks = [
-        SampleChunk(prompt_index=0, prompt="p", sample_start=i * 2, sample_count=2)
-        for i in range(2)
-    ]
+    chunks = [SampleChunk(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(2)]
     workers = [_RoutingWorker(worker_id=f"w{i}") for i in range(2)]
     with pytest.raises(ValueError, match="requires exactly one rollout worker"):
         _routing_executor(chunks, workers, pipelined=True)
@@ -450,7 +447,7 @@ def test_pipelined_rejects_multiple_workers_at_executor_construction() -> None:
 async def test_pipelined_uses_per_chunk_path_for_one_chunk() -> None:
     """A one-chunk request has nothing to overlap and keeps OOM admission."""
 
-    chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=4)
+    chunk = SampleChunk(prompt_index=0, sample_start=0, sample_count=4)
     worker = _RoutingWorker(worker_id="w0", max_samples=2)
     executor = _routing_executor([chunk], [worker], pipelined=True)
 
@@ -466,10 +463,7 @@ async def test_pipelined_uses_per_chunk_path_for_one_chunk() -> None:
 
 @pytest.mark.asyncio
 async def test_pipelined_oom_retries_through_per_chunk_split_admission() -> None:
-    chunks = [
-        SampleChunk(prompt_index=0, prompt="p", sample_start=i * 4, sample_count=4)
-        for i in range(2)
-    ]
+    chunks = [SampleChunk(prompt_index=0, sample_start=i * 4, sample_count=4) for i in range(2)]
     worker = _RoutingWorker(
         worker_id="w0",
         max_samples=2,
@@ -498,10 +492,7 @@ async def test_pipelined_oom_retries_through_per_chunk_split_admission() -> None
 
 @pytest.mark.asyncio
 async def test_pipelined_result_request_id_must_match_request() -> None:
-    chunks = [
-        SampleChunk(prompt_index=0, prompt="p", sample_start=i * 2, sample_count=2)
-        for i in range(2)
-    ]
+    chunks = [SampleChunk(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(2)]
     worker = _RoutingWorker(
         worker_id="w0",
         pipeline_request_id_override="wrong-request",
@@ -517,10 +508,7 @@ async def test_pipelined_result_request_id_must_match_request() -> None:
 
 @pytest.mark.asyncio
 async def test_pipelined_oom_worker_id_must_match_actor() -> None:
-    chunks = [
-        SampleChunk(prompt_index=0, prompt="p", sample_start=i * 2, sample_count=2)
-        for i in range(2)
-    ]
+    chunks = [SampleChunk(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(2)]
     worker = _RoutingWorker(
         worker_id="w0",
         pipeline_oom=True,
@@ -539,7 +527,7 @@ async def test_pipelined_oom_worker_id_must_match_actor() -> None:
 async def test_default_uses_per_chunk_path() -> None:
     """Default (pipelined=False) is the unchanged per-chunk dispatch."""
 
-    chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=4)
+    chunk = SampleChunk(prompt_index=0, sample_start=0, sample_count=4)
     worker = _RoutingWorker(worker_id="w0")
     executor = _routing_executor([chunk], [worker], pipelined=False)
 

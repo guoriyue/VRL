@@ -105,7 +105,7 @@ class EchoChunkExecutor(DiffusionChunkExecutorBase):
         """Require requests to use the wrapper's fixed latent-grid dimensions."""
 
         params = super().parse_sampling_params(request)
-        dimensions = (params.base.height, params.base.width)
+        dimensions = (params.model_request.height, params.model_request.width)
         expected = (self.model.video_height, self.model.video_width)
         if dimensions != expected:
             raise ValueError(
@@ -122,9 +122,9 @@ class EchoChunkExecutor(DiffusionChunkExecutorBase):
         params: DiffusionSamplingParams,
         chunk: SampleChunk,
     ) -> dict[str, Any]:
-        del generation_request, params
+        del params
         return self.model.encode_prompt(
-            chunk.prompt,
+            generation_request.inputs[chunk.prompt_index].prompt,
             video_request.negative_prompt or None,
         )
 

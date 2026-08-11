@@ -420,7 +420,6 @@ def test_executor_calls_generation_model_one_sample_at_a_time(
         request,
         SampleChunk(
             prompt_index=0,
-            prompt="a river",
             sample_start=0,
             sample_count=2,
         ),
@@ -462,12 +461,11 @@ def test_executor_uses_prompt_major_flat_seed_indices(
         sampling={"seed": 100},
     )
 
-    for prompt_index, prompt in enumerate(request.prompts):
+    for prompt_index in range(len(request.inputs)):
         executor.forward_chunk_plan(
             request,
             SampleChunk(
                 prompt_index=prompt_index,
-                prompt=prompt,
                 sample_start=0,
                 sample_count=2,
             ),

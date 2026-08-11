@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from vrl.generation.execution.types import DistributedWorkerHandle
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.dependencies import require_ray
 from vrl.ray.operation_deadline import validate_ray_timeout
@@ -25,7 +25,7 @@ class RayGenerationWeightSync:
 
     def __init__(
         self,
-        workers: list[DistributedWorkerHandle],
+        workers: list[RayActorHandle],
         *,
         actor_dispatcher: RayActorDispatcher,
         worker_rpc_timeout_s: float,
@@ -48,18 +48,16 @@ class RayGenerationWeightSync:
         state_ref: Any,
         policy_version: int,
     ) -> None:
-        remote_workers: list[tuple[DistributedWorkerHandle, Any]] = []
+        remote_workers: list[tuple[RayActorHandle, Any]] = []
         for worker in self.workers:
             actor = worker.actor
-            if actor is None:
-                raise RuntimeError(f"worker {worker.worker_id!r} has no actor")
             update_weights = actor.update_weights
             remote = getattr(update_weights, "remote", None)
             if callable(remote):
                 remote_workers.append((worker, remote))
             else:
                 installed = update_weights(state_ref, policy_version)
-                worker.require_installed_policy_version(installed, policy_version)
+                _require_installed_policy_version(worker, installed, policy_version)
 
         if not remote_workers:
             return
@@ -92,7 +90,27 @@ class RayGenerationWeightSync:
             installed_pairs,
             strict=True,
         ):
-            worker.require_installed_policy_version(installed, policy_version)
+            _require_installed_policy_version(worker, installed, policy_version)
+
+
+def _require_installed_policy_version(
+    worker: RayActorHandle,
+    installed: Any,
+    expected: int,
+) -> None:
+    """Validate one untyped worker ACK at the Ray weight-sync boundary."""
+
+    try:
+        installed_version = int(installed)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"worker {worker.worker_id!r} returned invalid installed policy version {installed!r}",
+        ) from exc
+    if installed_version != int(expected):
+        raise RuntimeError(
+            f"worker {worker.worker_id!r} installed policy version {installed_version}, "
+            f"expected {int(expected)}",
+        )
 
 
 __all__ = [

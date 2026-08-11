@@ -21,17 +21,13 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=0,
             prompt="draw text",
-            group_id="g0",
             sample_id="s0",
-            trajectory_id="t0",
         ),
         GenerationSampleRow(
             prompt_index=0,
             sample_index=1,
             prompt="draw text",
-            group_id="g0",
             sample_id="s1",
-            trajectory_id="t1",
         ),
     ]
 
@@ -121,11 +117,8 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
         context={"mode": "r1"},
     )
     output = GenerationOutput(
-        request_id=request.request_id,
-        sample_rows=_sample_rows(),
         output=final_images,
         trajectory=trajectory,
-        extra={},
     )
 
     packed = TrajectoryRolloutBatchBuilder(

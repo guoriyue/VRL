@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.inference import RewardInferenceArtifact
 
 
 def _video_reward_root(tmp_path: Path) -> Path:
@@ -59,19 +59,12 @@ def test_kling_video_reward_requires_materialized_artifact_path() -> None:
     artifact = RewardInferenceArtifact(
         artifact_id="a0",
         path="",
-        media_type="video",
         media=object(),
         prompt="prompt",
     )
-    request = RewardInferenceRequest(
-        request_id="req",
-        artifacts=(artifact,),
-        reward_name="kling_video_reward",
-        score_key="overall_reward",
-    )
 
     with pytest.raises(ValueError, match="no materialized path"):
-        model(artifact=artifact, request=request)
+        model(artifact)
 
 
 def test_kling_video_reward_builds_repo_owned_model(
@@ -115,7 +108,9 @@ def test_kling_video_reward_builds_repo_owned_model(
         return model, "final"
 
     root = _video_reward_root(tmp_path)
-    monkeypatch.setattr(kling_reward, "_create_model_and_processor", _fake_create_model_and_processor)
+    monkeypatch.setattr(
+        kling_reward, "_create_model_and_processor", _fake_create_model_and_processor
+    )
     monkeypatch.setattr(kling_reward, "load_kling_video_reward_checkpoint", _fake_load_checkpoint)
 
     KlingVideoRewardModel(
@@ -280,21 +275,27 @@ def test_kling_video_reward_remaps_qwen2vl_checkpoint_keys() -> None:
     """Checks Kling video reward remaps Qwen2vl checkpoint keys."""
     from vrl.rewards.models.kling_video_reward import _remap_qwen2vl_key
 
-    assert _remap_qwen2vl_key(
-        "base_model.model.visual.patch_embed.proj.weight",
-    ) == "base_model.model.model.visual.patch_embed.proj.weight"
-    assert _remap_qwen2vl_key(
-        "base_model.model.model.layers.0.self_attn.q_proj.base_layer.weight",
-    ) == (
-        "base_model.model.model.language_model.layers.0.self_attn.q_proj."
-        "base_layer.weight"
+    assert (
+        _remap_qwen2vl_key(
+            "base_model.model.visual.patch_embed.proj.weight",
+        )
+        == "base_model.model.model.visual.patch_embed.proj.weight"
     )
     assert _remap_qwen2vl_key(
-        "base_model.model.model.embed_tokens.weight",
-    ) == "base_model.model.model.language_model.embed_tokens.weight"
-    assert _remap_qwen2vl_key(
-        "base_model.model.lm_head.weight",
-    ) == "base_model.model.lm_head.weight"
+        "base_model.model.model.layers.0.self_attn.q_proj.base_layer.weight",
+    ) == ("base_model.model.model.language_model.layers.0.self_attn.q_proj.base_layer.weight")
+    assert (
+        _remap_qwen2vl_key(
+            "base_model.model.model.embed_tokens.weight",
+        )
+        == "base_model.model.model.language_model.embed_tokens.weight"
+    )
+    assert (
+        _remap_qwen2vl_key(
+            "base_model.model.lm_head.weight",
+        )
+        == "base_model.model.lm_head.weight"
+    )
 
 
 def test_kling_normalize_scores_renames_drops_missing_and_never_leaks() -> None:

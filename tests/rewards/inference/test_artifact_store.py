@@ -17,11 +17,7 @@ def _sample(output: torch.Tensor) -> RewardSample:
     return RewardSample(
         prompt="prompt",
         output=output,
-        source_request_id="request-x",
         sample_id="sample-x",
-        group_id="group-x",
-        trajectory_id="trajectory-x",
-        policy_version=4,
         metadata={
             "policy_version": 4,
             "fps": 8,
@@ -41,12 +37,7 @@ def test_video_artifact_store_writes_tensor_and_manifest(tmp_path: Path) -> None
 
     assert len(artifacts) == 1
     artifact = artifacts[0]
-    assert artifact.artifact_id.startswith("request-x:sample-x:")
-    assert artifact.source_request_id == "request-x"
-    assert artifact.sample_id == "sample-x"
-    assert artifact.group_id == "group-x"
-    assert artifact.trajectory_id == "trajectory-x"
-    assert artifact.policy_version == 4
+    assert artifact.artifact_id.startswith("sample-x:")
     assert Path(artifact.path).is_absolute()
     assert Path(artifact.path).exists()
     assert artifact.size_bytes == Path(artifact.path).stat().st_size

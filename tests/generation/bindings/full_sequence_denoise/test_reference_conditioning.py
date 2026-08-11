@@ -9,10 +9,9 @@ from vrl.generation.bindings.full_sequence_denoise.executor import ReferenceCond
 from vrl.generation.execution.chunks import SampleChunk
 
 
-def _chunk(prompt_index: int, prompt: str) -> SampleChunk:
+def _chunk(prompt_index: int) -> SampleChunk:
     return SampleChunk(
         prompt_index=prompt_index,
-        prompt=prompt,
         sample_start=0,
         sample_count=1,
     )
@@ -35,7 +34,7 @@ def test_reference_conditioning_selects_the_chunk_prompt_input(monkeypatch) -> N
     )
     executor = ReferenceConditionedChunks()
 
-    assert executor._reference_image_for_chunk(request, _chunk(1, "second")) == "second.png"
+    assert executor._reference_image_for_chunk(request, _chunk(1)) == "second.png"
 
 
 def test_reference_conditioning_rejects_missing_prompt_reference() -> None:
@@ -50,5 +49,5 @@ def test_reference_conditioning_rejects_missing_prompt_reference() -> None:
     with pytest.raises(ValueError, match="requires reference_image for prompt index 0"):
         ReferenceConditionedChunks()._reference_image_for_chunk(
             request,
-            _chunk(0, "prompt"),
+            _chunk(0),
         )

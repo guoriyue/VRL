@@ -17,6 +17,7 @@ import torch.nn as nn
 from diffusers import FlowMatchEulerDiscreteScheduler
 
 from tests.models.steps.denoise.fixtures import stamp_model_precision
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest, VideoGenerationRequest
 from vrl.models.families.echo.model import (
     EchoModel,
@@ -167,10 +168,16 @@ def test_echo_executor_forwards_negative_prompt_to_model_contract() -> None:
 
     with pytest.raises(ValueError, match="does not support negative prompts"):
         executor.encode_prompt_for_chunk(
-            generation_request=object(),
+            generation_request=GenerationRequest(
+                request_id="echo",
+                family="echo",
+                task="t2v",
+                inputs=["a dog"],
+                samples_per_prompt=1,
+            ),
             video_request=SimpleNamespace(negative_prompt="low quality"),
             params=object(),
-            chunk=SimpleNamespace(prompt="a dog"),
+            chunk=SampleChunk(prompt_index=0, sample_start=0, sample_count=1),
         )
 
 

@@ -474,9 +474,6 @@ class _DirectExecutorGenerationRuntime:
     async def shutdown(self) -> None:
         return None
 
-    def is_colocated(self) -> bool:
-        return False
-
 
 class _SyntheticDiffusionReplayCollector:
     """Collector that exercises replay training without full generation assets."""
@@ -526,9 +523,6 @@ class _SyntheticDiffusionReplayCollector:
 class _StaticPolicyRuntime:
     current_policy_version = 0
     requires_driver_model_offload = False
-
-    def is_colocated(self) -> bool:
-        return False
 
 
 @pytest.mark.e2e

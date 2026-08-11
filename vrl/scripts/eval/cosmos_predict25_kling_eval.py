@@ -431,9 +431,7 @@ def _score_generated_videos(
             RewardInferenceArtifact(
                 artifact_id=_artifact_id(video),
                 path=str(video.path),
-                media_type="video",
                 prompt=video.prompt,
-                sample_id=f"p{video.prompt_index}-s{video.sample_index}",
                 metadata={
                     "checkpoint_label": video.checkpoint_label,
                     "seed": video.seed,
@@ -441,19 +439,12 @@ def _score_generated_videos(
             )
             for video in generated
         ),
-        reward_name=str(
-            OmegaConf.select(
-                cfg,
-                "reward.kwargs.kling_video_reward.reward_name",
-                default="KlingTeam/VideoReward@main",
-            ),
-        ),
-        score_key=score_key,
     )
     rows: list[dict[str, Any]] = []
     try:
         for artifact, video in zip(request.artifacts, generated, strict=True):
-            scores = model(artifact=artifact, request=request)
+            scores = model(artifact)
+            selected_keys = tuple(key.strip() for key in score_key.split("+") if key.strip())
             rows.append(
                 {
                     "checkpoint_label": video.checkpoint_label,
@@ -462,7 +453,7 @@ def _score_generated_videos(
                     "seed": video.seed,
                     "prompt": video.prompt,
                     "video_path": str(video.path),
-                    "selected_score": request.select_score(scores),
+                    "selected_score": sum(float(scores[key]) for key in selected_keys),
                     **{f"score_{key}": value for key, value in scores.items()},
                 },
             )

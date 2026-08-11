@@ -33,7 +33,6 @@ are obtained:
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -41,7 +40,12 @@ from typing import Any
 import torch
 
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.assets.video_judge_prompts import (
+    COSMOS3_SCORE_REGEX,
+    COSMOS3_SYSTEM_PROMPT,
+    COSMOS3_USER_TEMPLATE,
+)
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.utils.logging import init_logger, kv
 
@@ -49,38 +53,6 @@ logger = init_logger(__name__)
 
 _DEFAULT_FPS = 2.0
 _DEFAULT_MAX_NEW_TOKENS = 1024
-
-# Fixes the judge task AND the output grammar we parse below. Kept here (not a
-# YAML rubric asset) because it is a short model-specific decode contract; a
-# tunable rubric layer, if needed, belongs in worker_config.rubric_path.
-_SYSTEM_PROMPT = (
-    "You are an expert evaluator of robot-manipulation and physical-interaction "
-    "videos. Judge the video on four axes, each an integer from 1 to 5: "
-    "(1) task success - does the action complete the instructed goal; "
-    "(2) contact realism - grasps, contacts and forces are physically believable; "
-    "(3) temporal consistency - object identity and motion are stable across frames; "
-    "(4) physical plausibility - no clipping, teleporting, or physics violations. "
-    "Reason briefly, then output the final line exactly as: "
-    "task success: <s>; contact realism: <c>, temporal consistency: <t>, "
-    "physical plausibility: <p>"
-)
-_USER_TEMPLATE = (
-    "Task instruction: {prompt}\n"
-    "Please output in this format:\n"
-    "task success: <s>; contact realism: <c>, temporal consistency: <t>, "
-    "physical plausibility: <p>"
-)
-
-# Must match the wording in the prompts above; '.*?' tolerates any separator the
-# model emits between axes. Hard integer parse only — Cosmos3 uses the Qwen3-VL
-# tokenizer, so VideoScore2's single-digit-token soft path is not assumed here.
-_SCORE_REGEX = re.compile(
-    r"task success:\s*(\d+).*?"
-    r"contact realism:\s*(\d+).*?"
-    r"temporal consistency:\s*(\d+).*?"
-    r"physical plausibility:\s*(\d+)",
-    re.IGNORECASE | re.DOTALL,
-)
 
 
 class Cosmos3ReasonerRewardModel:
@@ -181,11 +153,8 @@ class Cosmos3ReasonerRewardModel:
 
     def __call__(
         self,
-        *,
         artifact: RewardInferenceArtifact,
-        request: RewardInferenceRequest,
     ) -> dict[str, float]:
-        del request
         prompt, video_path = require_prompt_and_video_path(
             artifact,
             family="Cosmos3 reasoner judge",
@@ -203,12 +172,15 @@ class Cosmos3ReasonerRewardModel:
         if self.max_frame_pixels is not None:
             video_content["max_pixels"] = self.max_frame_pixels
         messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": COSMOS3_SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": [
                     video_content,
-                    {"type": "text", "text": _USER_TEMPLATE.format(prompt=prompt)},
+                    {
+                        "type": "text",
+                        "text": COSMOS3_USER_TEMPLATE.format(prompt=prompt),
+                    },
                 ],
             },
         ]
@@ -249,7 +221,7 @@ class Cosmos3ReasonerRewardModel:
 def _parse_integer_scores(text: str) -> tuple[int, int, int, int] | None:
     """Extract the four 1-5 integer axes from the judge's generated text."""
 
-    match = _SCORE_REGEX.search(text)
+    match = COSMOS3_SCORE_REGEX.search(text)
     if match is None:
         return None
     scores = tuple(int(match.group(i)) for i in (1, 2, 3, 4))

@@ -21,18 +21,16 @@ from typing import Any
 
 import pytest
 
-from vrl.generation.execution.chunk_placement import (
-    ChunkPlacementPolicy,
-    DistributedExecutionPlanner,
-)
+from vrl.generation.execution.chunk_placement import DistributedExecutionPlanner
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
-    DistributedWorkerHandle,
 )
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
+from vrl.trajectory import TrajectoryBatch
 
 pytestmark = pytest.mark.slow_test
 
@@ -65,9 +63,15 @@ class _ListGatherer:
         chunks: list[Any],
     ) -> GenerationOutput:
         return GenerationOutput(
-            request_id=request.request_id,
-            sample_rows=list(sample_rows),
             output=list(chunks),
+            trajectory=TrajectoryBatch(
+                request_id=request.request_id,
+                family=request.family,
+                task=request.task,
+                sample_rows=list(sample_rows),
+                axes={},
+                segments={},
+            ),
         )
 
 
@@ -79,7 +83,7 @@ def _request() -> GenerationRequest:
         inputs=["a test prompt"],
         samples_per_prompt=8,
         sampling={"height": 64, "width": 64, "num_steps": 10, "samples_per_chunk": 2},
-        metadata={"dataset": "unit", "_runtime_debug": True},
+        runtime_debug=True,
     )
 
 
@@ -87,11 +91,11 @@ def _executor(ray: Any, strategy: str) -> tuple[RayGenerationExecutor, list[Any]
     actor_cls = ray.remote(num_cpus=0)(_ChunkWorker)
     actors = [actor_cls.remote(worker_id) for worker_id in ("w0", "w1")]
     workers = [
-        DistributedWorkerHandle(worker_id=worker_id, actor=actor)
+        RayActorHandle(worker_id=worker_id, actor=actor)
         for worker_id, actor in zip(("w0", "w1"), actors, strict=True)
     ]
     executor = RayGenerationExecutor(
-        DistributedExecutionPlanner(policy=ChunkPlacementPolicy(strategy=strategy)),
+        DistributedExecutionPlanner(strategy=strategy),  # type: ignore[arg-type]
         workers,
         _ListGatherer(),
         actor_dispatcher=RayActorDispatcher(("w0", "w1")),
@@ -117,7 +121,8 @@ def test_real_ray_executor_round_robin_gathers_every_chunk_in_order(local_ray) -
         output = asyncio.run(executor.execute(_request()))
 
         assert [entry["chunk_key"] for entry in output.output] == _EXPECTED_CHUNK_KEYS
-        schedule = output.extra["runtime_debug"]["chunk_schedule"]
+        assert output.runtime_debug is not None
+        schedule = output.runtime_debug["chunk_schedule"]
         # Round-robin binds before dispatch, so real scheduling cannot move these.
         assert [row["assigned_worker"] for row in schedule] == ["w0", "w1", "w0", "w1"]
         assert [row["chunk_key"] for row in schedule] == _EXPECTED_CHUNK_KEYS
@@ -136,7 +141,8 @@ def test_real_ray_executor_dynamic_gathers_every_chunk_in_order(local_ray) -> No
         output = asyncio.run(executor.execute(_request()))
 
         assert [entry["chunk_key"] for entry in output.output] == _EXPECTED_CHUNK_KEYS
-        schedule = output.extra["runtime_debug"]["chunk_schedule"]
+        assert output.runtime_debug is not None
+        schedule = output.runtime_debug["chunk_schedule"]
         assert sorted(row["chunk_key"] for row in schedule) == _EXPECTED_CHUNK_KEYS
         assert all(row["assignment_strategy"] == "dynamic" for row in schedule)
         # Every chunk landed on a real worker of this fleet -- no unbound rows.

@@ -21,7 +21,6 @@ Public score keys: ``alignment`` / ``physics`` / ``style`` / ``overall`` (mean).
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -29,7 +28,11 @@ from typing import Any
 import torch
 
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.assets.video_judge_prompts import (
+    UNIFIED_REWARD_VIDEO_AXIS_PATTERNS,
+    UNIFIED_REWARD_VIDEO_PROBLEM_TEMPLATE,
+)
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.rewards.models.hub import resolve_model_root
 from vrl.utils.logging import init_logger, kv
@@ -39,44 +42,6 @@ logger = init_logger(__name__)
 _DEFAULT_REWARD_MODEL = "CodeGoat24/UnifiedReward-2.0-qwen-7b"
 _DEFAULT_NUM_FRAMES = 16
 _DEFAULT_MAX_NEW_TOKENS = 256
-
-# The default decode contract, verbatim from upstream
-# inference_qwen/UnifiedReward-2.0-inference/point_score_APS_video_generation.py.
-# Kept in-module (not a rubric YAML) because it IS the model's trained output
-# grammar; a task-specific rubric overrides it via worker_config.rubric_path but
-# must still elicit the same three-axis format the parser below expects.
-_DEFAULT_PROBLEM_TEMPLATE = (
-    "You are presented with a generated video and its associated text caption. "
-    "Your task is to analyze the video across multiple dimensions in relation to "
-    "the caption. Specifically:\n"
-    "Provide overall assessments for the video along the following axes "
-    "(each rated from 1 to 5):\n"
-    "- Alignment Score: How well the video matches the caption in terms of content.\n"
-    "- Physics Score: How well the gravity, movements, collisions, and interactions "
-    "make physical sense.\n"
-    "- Style Score: How visually appealing the video looks, regardless of caption "
-    "accuracy.\n\n"
-    "Output your evaluation using the format below:\n\n"
-    "Alignment Score (1-5): X\n"
-    "Physics Score (1-5): Y\n"
-    "Style Score (1-5): Z\n\n"
-    "Your task is provided as follows:\n"
-    "Text Caption: [{prompt}]"
-)
-
-_NUMBER_PATTERN = r"([0-9]+(?:\.[0-9]+)?)"
-_AXIS_PATTERNS = {
-    axis: re.compile(
-        rf"{label} Score\s*\(\s*{_NUMBER_PATTERN}\s*-\s*{_NUMBER_PATTERN}\s*\)"
-        rf"\s*:\s*{_NUMBER_PATTERN}",
-        re.IGNORECASE,
-    )
-    for axis, label in (
-        ("alignment", "Alignment"),
-        ("physics", "Physics"),
-        ("style", "Style"),
-    )
-}
 
 
 class UnifiedRewardVideoModel:
@@ -123,11 +88,8 @@ class UnifiedRewardVideoModel:
 
     def __call__(
         self,
-        *,
         artifact: RewardInferenceArtifact,
-        request: RewardInferenceRequest,
     ) -> dict[str, float]:
-        del request
         # The rubric is caption-conditioned, so an empty prompt must fail fast
         # (drift fix: this raise was silently missing here).
         prompt, video_path = require_prompt_and_video_path(
@@ -178,7 +140,7 @@ def _parse_axis_scores(text: str) -> dict[str, float]:
     """Parse declared score ranges and normalize every axis to the public 1-5 scale."""
 
     scores: dict[str, float] = {}
-    for axis, pattern in _AXIS_PATTERNS.items():
+    for axis, pattern in UNIFIED_REWARD_VIDEO_AXIS_PATTERNS.items():
         match = pattern.search(text)
         if match is None:
             raise ValueError(
@@ -207,7 +169,7 @@ def _load_rubric(rubric_path: str) -> str:
     """Return the problem template: a YAML ``problem_template`` override or the default."""
 
     if not rubric_path:
-        return _DEFAULT_PROBLEM_TEMPLATE
+        return UNIFIED_REWARD_VIDEO_PROBLEM_TEMPLATE
     from omegaconf import OmegaConf
 
     rubric = OmegaConf.load(Path(rubric_path).expanduser().resolve())

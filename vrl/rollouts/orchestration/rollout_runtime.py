@@ -138,14 +138,6 @@ class RolloutRuntimeCoordinator:
             self.requires_driver_model_offload() or self.requires_driver_model_offload_for_reward()
         )
 
-    def runtime_is_colocated(self) -> bool:
-        # Ask the runtime (GenerationRuntime protocol) instead of probing its
-        # config internals.
-        runtime = self._collector_generation_runtime()
-        if runtime is None:
-            return False
-        return bool(runtime.is_colocated())
-
     def supports_non_draining_weight_sync(self) -> bool:
         # True only when every rollout worker retains versioned trainable-state
         # slots, so the weight-sync barrier can skip draining in-flight generation

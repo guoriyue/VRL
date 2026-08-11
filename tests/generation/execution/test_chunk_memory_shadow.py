@@ -9,7 +9,7 @@ resolves ``samples_per_chunk: auto`` once and rewrites requests).
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,13 +18,14 @@ import torch
 
 from vrl.generation.execution.chunk_placement import (
     AffinePeakFit,
-    ChunkMemoryReading,
     build_chunk_memory_shadow,
 )
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
-    DistributedWorkerHandle,
+    ChunkExecutionResult,
+    ChunkMemoryReading,
+    ChunkSizeProbeResult,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
@@ -32,6 +33,7 @@ from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationRequest
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
 
 GB = 1024**3
@@ -68,7 +70,6 @@ def _reading(
 ) -> ChunkMemoryReading:
     return ChunkMemoryReading(
         sample_count=sample_count,
-        latent_bytes=64 * 1024,
         baseline_allocated_bytes=baseline,
         denoise_peak_bytes=denoise_peak,
         decode_peak_bytes=decode_peak,
@@ -104,7 +105,7 @@ def test_affine_fit_rejects_degenerate_points() -> None:
 # -- reading + shadow rows ----------------------------------------------------
 
 
-def test_reading_metrics_roundtrip_and_partial_rejection() -> None:
+def test_reading_normalizes_binding_mapping_and_rejects_partial_data() -> None:
     reading = _reading()
 
     assert ChunkMemoryReading.from_metrics(asdict(reading)) == reading
@@ -117,27 +118,34 @@ def test_reading_metrics_roundtrip_and_partial_rejection() -> None:
 
 
 def test_shadow_rows_are_raw_readings_without_estimation() -> None:
+    chunk = SampleChunk(prompt_index=0, sample_start=0, sample_count=4)
     rows = build_chunk_memory_shadow(
         [
-            {"chunk_key": "p0:s0:4", "chunk_memory": asdict(_reading())},
-            {"chunk_key": "ar-chunk"},  # no reading (AR / CPU) -> skipped
+            ChunkExecutionResult(
+                request_id="req",
+                worker_id="w0",
+                chunk=chunk,
+                output=None,
+                memory=_reading(),
+            ),
+            ChunkExecutionResult(
+                request_id="req",
+                worker_id="w0",
+                chunk=chunk,
+                output=None,
+            ),
         ],
     )
 
-    assert [row["chunk_key"] for row in rows] == ["p0:s0:4"]
+    assert [row["chunk_key"] for row in rows] == [chunk.chunk_key]
     assert rows[0]["peak_bytes"] == 18 * GB
     assert rows[0]["non_torch_bytes"] == 3 * GB
     assert "estimated_chunk_bytes" not in rows[0]
     assert "admissible_chunk_samples" not in rows[0]
-    assert build_chunk_memory_shadow([{"chunk_key": "a"}, {}]) == []
+    assert build_chunk_memory_shadow([]) == []
 
 
 # -- worker probe -------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class _ProbeDenoiseCfg:
-    execute_steps: int | None = None
 
 
 class _ProbeExecutor:
@@ -151,23 +159,18 @@ class _ProbeExecutor:
         self.oom_limit = oom_limit
         self.executed_steps: list[int | None] = []
 
-    def build_prompt_stage_input(self, request: Any, chunk: Any) -> Any:
-        return SimpleNamespace(n=chunk.sample_count)
-
-    def run_prompt_encode_stage(self, payload: Any, **_: Any) -> Any:
-        return payload
-
-    def run_prepare_stage(self, payload: Any, **_: Any) -> Any:
-        return SimpleNamespace(n=payload.n, config=_ProbeDenoiseCfg())
-
-    def run_denoise_stage(self, prepared: Any, **_: Any) -> Any:
-        if self.oom_limit is not None and prepared.n > self.oom_limit:
+    def forward_probe_chunk(
+        self,
+        request: Any,
+        chunk: SampleChunk,
+        *,
+        execute_steps: int,
+    ) -> Any:
+        del request
+        n = chunk.sample_count
+        if self.oom_limit is not None and n > self.oom_limit:
             raise RuntimeError("CUDA out of memory. Tried to allocate ...")
-        self.executed_steps.append(prepared.config.execute_steps)
-        return SimpleNamespace(n=prepared.n)
-
-    def run_decode_stage(self, denoised: Any) -> Any:
-        n = denoised.n
+        self.executed_steps.append(execute_steps)
         return SimpleNamespace(
             memory=asdict(
                 _reading(
@@ -233,14 +236,14 @@ def test_probe_fits_confirms_and_truncates_steps(fake_cuda: None) -> None:
         knee_threshold=-1.0,  # disable the knee: this test pins the fit path
     )
 
-    assert result["samples_per_chunk"] == 10
-    assert [t["label"] for t in result["trials"]] == [
+    assert result.samples_per_chunk == 10
+    assert [trial.label for trial in result.trials] == [
         "warmup",
         "fit-low",
         "fit-high",
         "confirm",
     ]
-    assert not any(t["oom"] for t in result["trials"])
+    assert not any(trial.oom for trial in result.trials)
     # Every executed trial ran truncated (2 steps), never the full schedule.
     assert set(executor.executed_steps) == {2}
 
@@ -257,7 +260,7 @@ def test_probe_knee_refuses_growth_without_throughput_gain(fake_cuda: None) -> N
         knee_threshold=2.0,
     )
 
-    assert result["samples_per_chunk"] == 4
+    assert result.samples_per_chunk == 4
 
 
 @_EXACT_BYTES_NEED_A_FIXED_CARD
@@ -272,8 +275,8 @@ def test_probe_bisects_when_confirm_ooms(fake_cuda: None) -> None:
     )
 
     # candidate 10 OOMs; bisection between known-good 4 and 10 lands on 6.
-    assert result["samples_per_chunk"] == 6
-    assert any(t["oom"] for t in result["trials"])
+    assert result.samples_per_chunk == 6
+    assert any(trial.oom for trial in result.trials)
 
 
 @_EXACT_BYTES_NEED_A_FIXED_CARD
@@ -289,8 +292,8 @@ def test_probe_budgets_against_whole_phase_gpu(fake_cuda: None) -> None:
         knee_threshold=-1.0,
     )
 
-    assert result["samples_per_chunk"] == 10
-    assert result["budget_bytes"] == 32 * GB
+    assert result.samples_per_chunk == 10
+    assert result.budget_bytes == 32 * GB
 
 
 def test_probe_requires_cuda_and_single_sample_fit(
@@ -316,22 +319,22 @@ def _probe_worker(
     worker_id: str,
     answer: int,
     calls: list[str],
-) -> DistributedWorkerHandle:
+) -> RayActorHandle:
     """Build the executor's supported local-callable worker shape.
 
     This covers result ordering and cache reuse without pretending to exercise
     Ray serialization or ObjectRef deadlines.
     """
 
-    def probe(request: Any, *, max_samples: int) -> dict[str, Any]:
+    def probe(request: Any, *, max_samples: int) -> ChunkSizeProbeResult:
         calls.append(worker_id)
-        return {
-            "samples_per_chunk": answer,
-            "budget_bytes": 32 * GB,
-            "trials": [],
-        }
+        return ChunkSizeProbeResult(
+            samples_per_chunk=answer,
+            budget_bytes=32 * GB,
+            trials=(),
+        )
 
-    return DistributedWorkerHandle(
+    return RayActorHandle(
         worker_id=worker_id,
         actor=SimpleNamespace(probe_chunk_size=probe),
     )
@@ -390,7 +393,7 @@ def test_planner_rejects_unresolved_auto() -> None:
     with pytest.raises(ValueError, match="samples_per_chunk: auto requires"):
         planner.plan_with_engine(
             _request(),
-            [SimpleNamespace(worker_id="w0", actor=None)],
+            ["w0"],
         )
 
 
@@ -431,11 +434,13 @@ def test_worker_forwards_chunk_memory_without_runtime_debug() -> None:
     )
     envelope = ChunkExecutionEnvelope(
         request=request,
-        chunk=SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=1),
+        chunk=SampleChunk(prompt_index=0, sample_start=0, sample_count=1),
     )
 
     result = core.execute_chunk(envelope)
 
     assert result.error is None
-    assert result.metrics["chunk_memory"] == asdict(_reading())
+    assert result.memory == _reading()
+    assert result.output.memory is None
+    assert "chunk_memory" not in result.metrics
     assert "engine_counters" not in result.metrics

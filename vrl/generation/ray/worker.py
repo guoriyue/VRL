@@ -4,21 +4,24 @@ from __future__ import annotations
 
 import threading
 from collections import deque
+from collections.abc import Sequence
 from typing import Any
 
 import ray
 
+from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
     ChunkProduceFence,
+    ChunkSizeProbeResult,
     PipelinedRequestOutOfMemory,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.pipeline_protocol import PipelinedRequestProgress
-from vrl.generation.types import GenerationOutput
+from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.ray.dependencies import current_gpu_ids, current_node_ip
 
 # Ray binds methods to a concurrency group by name across two separate APIs --
@@ -45,7 +48,6 @@ class RayGenerationWorker:
             worker_id,
             launch_inputs.launch_contract,
             launch_inputs.gatherer,
-            metadata_provider=self._ray_metadata,
         )
         self._pipelined_progress_lock = threading.Lock()
         self._pipelined_progress: PipelinedRequestProgress | None = None
@@ -82,18 +84,30 @@ class RayGenerationWorker:
     def supports_versioned_trainable_state(self) -> bool:
         return self.core.supports_versioned_trainable_state()
 
-    def worker_metadata(self, *, runtime_debug: bool = False) -> dict[str, Any]:
-        return self.core.worker_metadata(runtime_debug=runtime_debug)
+    def worker_metadata(self) -> dict[str, Any]:
+        """Return Ray placement metadata used during actor-group startup."""
+
+        try:
+            node_ip = current_node_ip()
+            gpu_ids = current_gpu_ids()
+        except Exception:
+            node_ip = "unknown"
+            gpu_ids = []
+        return {
+            "worker_id": self.core.worker_id,
+            "node_ip": node_ip,
+            "gpu_ids": gpu_ids,
+        }
 
     def execute_chunk(self, envelope: ChunkExecutionEnvelope) -> ChunkExecutionResult:
         return self.core.execute_chunk(envelope)
 
     def probe_chunk_size(
         self,
-        request: Any,
+        request: GenerationRequest,
         *,
         max_samples: int,
-    ) -> dict[str, Any]:
+    ) -> ChunkSizeProbeResult:
         """Startup chunk-size probe; see GenerationWorkerCore.probe_chunk_size."""
         return self.core.probe_chunk_size(
             request,
@@ -102,9 +116,9 @@ class RayGenerationWorker:
 
     def execute_request_pipelined(
         self,
-        request: Any,
-        engine_plan: Any,
-        sample_rows: Any,
+        request: GenerationRequest,
+        engine_plan: EnginePlan,
+        sample_rows: Sequence[GenerationSampleRow],
     ) -> GenerationOutput | PipelinedRequestOutOfMemory:
         """Per-request software-pipelined execution (single-worker stage-overlap
         path); returns a gathered output or typed OOM retry. See
@@ -185,15 +199,6 @@ class RayGenerationWorker:
                 )
                 self._pipelined_progress = progress
             return progress
-
-    def _ray_metadata(self) -> dict[str, Any]:
-        try:
-            node_ip = current_node_ip()
-            gpu_ids = current_gpu_ids()
-        except Exception:
-            node_ip = "unknown"
-            gpu_ids = []
-        return {"worker_id": self.core.worker_id, "node_ip": node_ip, "gpu_ids": gpu_ids}
 
 
 __all__ = ["RayGenerationWorker"]

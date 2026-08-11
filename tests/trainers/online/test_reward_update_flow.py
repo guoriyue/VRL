@@ -1130,9 +1130,7 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
             prompt_index=index // 2,
             sample_index=index % 2,
             prompt=request.prompts[index // 2],
-            group_id=f"g{index // 2}",
             sample_id=f"s{index}",
-            trajectory_id=f"t{index}",
         )
         for index in range(4)
     ]
@@ -1160,7 +1158,7 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
     assert selected.trajectory is not None
     assert selected.trajectory.primary_segment == "image_tokens"
     assert selected.trajectory.axes["sample"].length == 2
-    assert [row.group_id for row in selected.trajectory.sample_rows] == ["g0", "g1"]
+    assert [row.prompt_index for row in selected.trajectory.sample_rows] == [0, 1]
     assert torch.equal(
         selected.trajectory.segments["image_tokens"].tensors["token_ids"].value,
         torch.tensor([[0, 1], [4, 5]]),
@@ -1172,4 +1170,4 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
     remap_group_ids_(moved, [10, 11])
     assert torch.equal(moved.group_ids, torch.tensor([10, 11]))
     assert moved.trajectory is not None
-    assert [row.group_id for row in moved.trajectory.sample_rows] == ["g0", "g1"]
+    assert [row.prompt_index for row in moved.trajectory.sample_rows] == [0, 1]

@@ -15,7 +15,6 @@ import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
 from vrl.generation.execution.types import (
     ChunkProduceFence,
-    DistributedWorkerHandle,
     PipelinedRequestOutOfMemory,
 )
 from vrl.generation.ray.executor import RayGenerationExecutor
@@ -24,6 +23,7 @@ from vrl.generation.ray.pipeline_protocol import (
     PipelinedRequestProgress,
 )
 from vrl.generation.ray.worker import RayGenerationWorker
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.operation_deadline import (
     RayCallDeadline,
@@ -59,7 +59,7 @@ class _GatedRef:
 def _executor(*, timeout_s: float = 1.0) -> RayGenerationExecutor:
     return RayGenerationExecutor(
         planner=object(),
-        workers=[DistributedWorkerHandle(worker_id="w0", actor=object())],
+        workers=[RayActorHandle(worker_id="w0", actor=object())],
         gatherer=object(),
         actor_dispatcher=RayActorDispatcher(("w0",)),
         generation_stall_timeout_s=timeout_s,
@@ -241,7 +241,7 @@ async def test_remote_pipelined_worker_requires_progress_endpoint() -> None:
         def remote(*_args: Any) -> None:
             raise AssertionError("request must not start without progress endpoint")
 
-    executor.workers[0] = DistributedWorkerHandle(
+    executor.workers[0] = RayActorHandle(
         worker_id="w0",
         actor=SimpleNamespace(execute_request_pipelined=_RemoteMethod()),
     )
@@ -291,7 +291,7 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
             raise AssertionError("an immediately resolved pipeline needs no progress RPC")
 
     monkeypatch.setattr(actor_pool_module, "RayCallDeadline", recording_deadline)
-    executor.workers[0] = DistributedWorkerHandle(
+    executor.workers[0] = RayActorHandle(
         worker_id="w0",
         actor=SimpleNamespace(
             execute_request_pipelined=_PipelineMethod(),

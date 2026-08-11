@@ -57,10 +57,7 @@ def _make_ocr_sample(
     return RewardSample(
         prompt="test",
         output=video_tensor,
-        source_request_id="request-0",
         sample_id=sample_id,
-        group_id="group-0",
-        trajectory_id=f"trajectory-{sample_id}",
         metadata={"target_text": target_text},
     )
 
@@ -77,10 +74,10 @@ async def test_ocr_reward_paddleocr_core_scoring_behaviors() -> None:
     assert await reward.score(_make_ocr_sample("")) == pytest.approx(0.0)
     assert await reward.score(_make_ocr_sample("HELLO")) <= 0.5
 
-    scores = await reward.score_batch(
+    output = await reward.score_batch(
         [_make_ocr_sample("A"), _make_ocr_sample("B", sample_id="sample-1")],
     )
-    assert len(scores) == 2
+    assert len(output.scores) == 2
 
 
 @pytest.mark.asyncio

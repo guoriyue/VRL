@@ -21,7 +21,6 @@ from vrl.generation.steps.denoise import (
 
 def _config(*, return_prev_sample_mean: bool) -> DenoiseLoopConfig:
     return DenoiseLoopConfig(
-        prompt_index=0,
         sample_start=0,
         sample_count=2,
         seed=None,

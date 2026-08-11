@@ -87,7 +87,7 @@ output.reward_score = result["reward_score"]
 
 Overlap is only enabled when reward has its own GPU pool (`ray_diffusion_trainer.py:670` `enable_agent_reward_loop = not use_rm or reward_model.enable_resource_pool`); the trainer then skips its colocated reward path because `rm_scores` already arrived (`ray_diffusion_trainer.py:1000`). Policy update still waits for the full scored batch (`docs/algo/async_reward.md:51`).
 
-**vrl today (post-reading update)** — the old Ray reward pool described by the original note was deleted. Rollout collectors now call the public `RewardRuntime.score(RewardRequest) -> RewardOutput` boundary. Model-backed components use either `InProcessRewardInferenceRuntime` or `HttpRewardInferenceRuntime`; overlap is admitted only when the runtime reports nonblocking execution and verified accelerator isolation. Shared-GPU in-process rewards deliberately remain serial.
+**vrl today (post-reading update)** — the old Ray reward pool described by the original note was deleted. Rollout collectors now call the public `RewardRuntime.score(Sequence[RewardSample]) -> RewardOutput` boundary. The lower HTTP boundary alone uses `RewardInferenceRequest`. Model-backed components use either `InProcessRewardInferenceRuntime` or `HttpRewardInferenceRuntime`; overlap is admitted only when the runtime reports nonblocking execution and verified accelerator isolation. Shared-GPU in-process rewards deliberately remain serial.
 
 **Borrow verdict updated.** The useful idea is the capability-gated overlap, not restoring a `RayRewardRuntime` pool. The current runtime boundary carries those capabilities without coupling rollout orchestration to a particular transport.
 

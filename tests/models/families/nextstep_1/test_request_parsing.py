@@ -270,9 +270,7 @@ def test_nextstep_gather_uses_canonical_output_as_reward_source() -> None:
     sample_rows = build_sample_rows(request)
     images = torch.arange(24, dtype=torch.float32).reshape(2, 3, 2, 2)
     chunk = NextStep1ARChunkResult(
-        prompt_index=0,
-        sample_start=0,
-        sample_count=2,
+        chunk=SampleChunk(prompt_index=0, sample_start=0, sample_count=2),
         output=images,
         tokens=torch.zeros(2, 2, 4),
         saved_noise=torch.zeros(2, 2, 4),
@@ -354,7 +352,6 @@ def test_chunk_context_keeps_only_flow_replay_parameters(
         request,
         SampleChunk(
             prompt_index=0,
-            prompt="draw text",
             sample_start=0,
             sample_count=1,
         ),

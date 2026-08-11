@@ -20,7 +20,7 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
-from vrl.generation.execution.types import DistributedWorkerHandle
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.dependencies import require_ray
 from vrl.ray.resource_cleanup import kill_actors
 from vrl.runtime_errors import TerminalRuntimeError
@@ -131,10 +131,10 @@ class RolloutWorkerHealthMonitor:
             self._run_probes(resume_epoch=resume_epoch)
             self._stop.wait(timeout=self._interval_s)
 
-    def _owned_workers(self) -> list[DistributedWorkerHandle]:
+    def _owned_workers(self) -> list[RayActorHandle]:
         """Read the active session fleet through the runtime adapter."""
 
-        return [worker for worker in self._runtime._owned_workers if worker.actor is not None]
+        return list(self._runtime._owned_workers)
 
     def _run_probes(self, *, resume_epoch: int) -> None:
         workers = self._owned_workers()

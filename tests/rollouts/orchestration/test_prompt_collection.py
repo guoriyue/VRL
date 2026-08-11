@@ -42,9 +42,7 @@ def _batch_with_trajectory(prompts: list[str], group_size: int) -> RolloutBatch:
             prompt_index=prompt_index,
             sample_index=sample_index,
             prompt=prompt,
-            group_id=f"group-{prompt_index}",
             sample_id=f"sample-{prompt_index}-{sample_index}",
-            trajectory_id=f"trajectory-{prompt_index}-{sample_index}",
         )
         for prompt_index, prompt in enumerate(prompts)
         for sample_index in range(group_size)
@@ -180,10 +178,7 @@ async def test_prompt_example_scalar_remap_updates_trainer_group_ids() -> None:
         assert torch.equal(batch.group_ids, expected)
         assert batch.trajectory is not None
         assert torch.equal(TrajectorySignalBuilder(batch).group_ids, expected)
-        assert [row.group_id for row in batch.trajectory.sample_rows] == [
-            "group-0",
-            "group-0",
-        ]
+        assert [row.prompt_index for row in batch.trajectory.sample_rows] == [0, 0]
 
 
 @pytest.mark.asyncio

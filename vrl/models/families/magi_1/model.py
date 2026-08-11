@@ -280,7 +280,7 @@ class Magi1SubprocessModel(torch.nn.Module):
             sample_index = chunk.sample_start + sample_offset
             flat_sample_index = chunk.prompt_index * request.samples_per_prompt + sample_index
             video, temporal_chunk_count = self._generate_one(
-                prompt=chunk.prompt,
+                prompt=input_value.prompt,
                 mode=mode,
                 conditioning_path=conditioning_path,
                 sampling=request.sampling,
@@ -294,9 +294,7 @@ class Magi1SubprocessModel(torch.nn.Module):
                 "MAGI-1 returned inconsistent temporal chunk counts within one sample chunk",
             )
         return ChunkAutoregressiveDenoiseResult(
-            prompt_index=chunk.prompt_index,
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
+            chunk=chunk,
             output=torch.cat(videos, dim=0),
             temporal_chunk_count=temporal_chunk_counts[0],
             context={

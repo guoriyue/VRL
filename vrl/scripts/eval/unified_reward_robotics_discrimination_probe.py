@@ -326,7 +326,6 @@ async def _score_anchor(
         artifact = RewardInferenceArtifact(
             artifact_id=artifact_id,
             path=str(path),
-            media_type="video",
             prompt=prompt,
             size_bytes=path.stat().st_size,
             sha256=sha256_file(path),
@@ -337,8 +336,6 @@ async def _score_anchor(
     request = RewardInferenceRequest(
         request_id=f"robotics-gate:{anchor_index}:{uuid.uuid4().hex}",
         artifacts=tuple(artifacts),
-        reward_name="unified_reward_video",
-        score_key="alignment+physics",
     )
     results = await scorer.score_batch(request)
     scores: dict[str, dict[str, float]] = {}
@@ -346,20 +343,7 @@ async def _score_anchor(
         candidate = candidate_by_artifact.get(result.artifact_id)
         if candidate is None:
             raise ValueError(f"UnifiedReward returned unknown artifact {result.artifact_id!r}")
-        if result.error:
-            raise RuntimeError(
-                f"UnifiedReward failed for {result.artifact_id!r}: {result.error}",
-            )
         candidate_scores = _validated_scores(result.scores)
-        if not math.isclose(
-            candidate_scores["alignment+physics"],
-            result.selected_score,
-            abs_tol=1e-6,
-        ):
-            raise ValueError(
-                "UnifiedReward compound differs from the training score selection: "
-                f"{candidate_scores['alignment+physics']} != {result.selected_score}",
-            )
         scores[candidate] = candidate_scores
     missing = sorted(set(candidates) - set(scores))
     if missing:

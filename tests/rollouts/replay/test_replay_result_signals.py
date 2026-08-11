@@ -29,9 +29,7 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=index,
             prompt=request.prompts[0],
-            group_id="g0",
             sample_id=f"s{index}",
-            trajectory_id=f"t{index}",
         )
         for index in range(2)
     ]

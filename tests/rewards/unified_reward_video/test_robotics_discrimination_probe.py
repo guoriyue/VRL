@@ -156,9 +156,6 @@ async def test_anchor_is_materialized_as_one_integrity_checked_batch(tmp_path: P
                 RewardInferenceResult(
                     artifact_id=artifact.artifact_id,
                     scores=raw,
-                    selected_score=request.select_score(raw),
-                    reward_name=request.reward_name,
-                    score_key=request.score_key,
                 )
                 for artifact in request.artifacts
             ]
@@ -177,7 +174,6 @@ async def test_anchor_is_materialized_as_one_integrity_checked_batch(tmp_path: P
         candidate_root=tmp_path,
     )
 
-    assert scorer.request.score_key == "alignment+physics"
     assert len(scorer.request.artifacts) == 2
     assert set(scores) == set(candidates)
     for artifact in scorer.request.artifacts:

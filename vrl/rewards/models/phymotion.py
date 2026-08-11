@@ -33,7 +33,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -65,11 +65,8 @@ class PhyMotionModel:
 
     def __call__(
         self,
-        *,
         artifact: RewardInferenceArtifact,
-        request: RewardInferenceRequest,
     ) -> dict[str, float]:
-        del request
         video_path = str(Path(artifact.as_path()).expanduser().resolve())
         with tempfile.TemporaryDirectory(prefix="phymotion-") as tmp:
             output_path = str(Path(tmp) / "scores.json")

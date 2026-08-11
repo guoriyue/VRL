@@ -468,7 +468,6 @@ def test_executor_rejects_partial_scheduler_before_static_kv_preparation(
     )
     chunk = SampleChunk(
         prompt_index=0,
-        prompt="draw text",
         sample_start=0,
         sample_count=2,
     )
@@ -536,7 +535,6 @@ def test_chunk_sampling_uses_request_overrides_then_model_defaults(
         request,
         SampleChunk(
             prompt_index=0,
-            prompt="draw text",
             sample_start=0,
             sample_count=1,
         ),
@@ -573,7 +571,6 @@ def test_executor_rejects_request_grid_different_from_model_topology() -> None:
             request,
             SampleChunk(
                 prompt_index=0,
-                prompt="draw text",
                 sample_start=0,
                 sample_count=1,
             ),
@@ -603,7 +600,6 @@ def test_executor_rejects_decode_size_different_from_model_topology() -> None:
             request,
             SampleChunk(
                 prompt_index=0,
-                prompt="draw text",
                 sample_start=0,
                 sample_count=1,
             ),
@@ -633,7 +629,6 @@ def test_executor_rejects_caption_length_different_from_model_topology() -> None
             request,
             SampleChunk(
                 prompt_index=0,
-                prompt="draw text",
                 sample_start=0,
                 sample_count=1,
             ),

@@ -734,7 +734,7 @@ class RolloutWorkerSection(ConfigBase):
     chunk_placement_strategy is a user-facing allow-list
     Literal: RayGenerationConfig is a plain dataclass whose annotations do not
     enforce, so this typed boundary is where a bad value is rejected (the runtime
-    ChunkPlacementPolicy guard stays the wire-boundary check). sync_trainable_state
+    DistributedExecutionPlanner guard covers direct construction). sync_trainable_state
     is a plain on/off: True keeps rollout workers resynced to the trained policy
     (the syncer flattens whatever is trainable — lora or full-param), False
     disables the weight syncer.

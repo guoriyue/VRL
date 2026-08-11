@@ -12,48 +12,39 @@ import torch
 from vrl.generation.execution.chunks import ordered_covering_chunks
 from vrl.generation.steps.denoise.config import DenoiseSDEParams
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
+from vrl.generation.types import (
+    GenerationRequest,
+    GenerationSampleRow,
+    VideoGenerationRequest,
+)
 
 TChunk = TypeVar("TChunk")
-
-
-@dataclass(frozen=True, slots=True)
-class DiffusionBaseParams:
-    """Common parsed sampling fields every diffusion executor needs."""
-
-    num_steps: int
-    guidance_scale: float
-    height: int
-    width: int
-    num_frames: int
-    fps: int | None
-    samples_per_chunk: int
-    max_sequence_length: int | None
-    seed: int | None
-    negative_prompt: str | None
-
-    def text_encode_kwargs(self) -> dict[str, Any]:
-        """Build shared prompt-encoder knobs without inventing a text length."""
-
-        kwargs: dict[str, Any] = {"guidance_scale": self.guidance_scale}
-        if self.max_sequence_length is not None:
-            kwargs["max_sequence_length"] = self.max_sequence_length
-        return kwargs
 
 
 @dataclass(frozen=True, slots=True)
 class DiffusionSamplingParams:
     """Parsed diffusion sampling fields for one generation request."""
 
-    base: DiffusionBaseParams
+    model_request: VideoGenerationRequest
+    samples_per_chunk: int
+    max_sequence_length: int | None
     sde: DenoiseSDEParams
     sde_window_size: int
     sde_window_range: tuple[int, int]
     denoise_mode: str
     teacache: TeaCacheConfig | None = None
 
+    def text_encode_kwargs(self) -> dict[str, Any]:
+        """Build shared prompt-encoder knobs without inventing a text length."""
 
-@dataclass(frozen=True, slots=True)
+        kwargs: dict[str, Any] = {
+            "guidance_scale": self.model_request.guidance_scale,
+        }
+        if self.max_sequence_length is not None:
+            kwargs["max_sequence_length"] = self.max_sequence_length
+        return kwargs
+
+
 class DiffusionRequestLayout:
     """Prompt-major request parser owned by a diffusion executor.
 
@@ -64,11 +55,28 @@ class DiffusionRequestLayout:
     would be a silent second source that drifts from the executor.
     """
 
-    default_samples_per_chunk: int
-    default_num_frames: int
-    default_fps: int | None
-    default_max_sequence_length: int | None
-    sde_type: str
+    __slots__ = (
+        "default_fps",
+        "default_max_sequence_length",
+        "default_num_frames",
+        "default_samples_per_chunk",
+        "sde_type",
+    )
+
+    def __init__(
+        self,
+        *,
+        default_samples_per_chunk: int,
+        default_num_frames: int,
+        default_fps: int | None,
+        default_max_sequence_length: int | None,
+        sde_type: str,
+    ) -> None:
+        self.default_samples_per_chunk = default_samples_per_chunk
+        self.default_num_frames = default_num_frames
+        self.default_fps = default_fps
+        self.default_max_sequence_length = default_max_sequence_length
+        self.sde_type = sde_type
 
     def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
         """Parse shared diffusion sampling fields from GenerationRequest."""
@@ -81,33 +89,24 @@ class DiffusionRequestLayout:
             self.default_max_sequence_length,
         )
         seed = sampling.get("seed")
-        base = DiffusionBaseParams(
-            num_steps=num_steps,
-            guidance_scale=float(sampling["guidance_scale"]),
-            height=int(sampling["height"]),
-            width=int(sampling["width"]),
-            num_frames=int(
+        model_request_kwargs: dict[str, Any] = {
+            "num_steps": num_steps,
+            "guidance_scale": float(sampling["guidance_scale"]),
+            "height": int(sampling["height"]),
+            "width": int(sampling["width"]),
+            "frame_count": int(
                 sampling.get(
                     "num_frames",
                     sampling.get("frame_count", self.default_num_frames),
                 )
             ),
-            fps=None if fps_value is None else int(fps_value),
-            samples_per_chunk=max(
-                1,
-                int(
-                    sampling.get(
-                        "samples_per_chunk",
-                        self.default_samples_per_chunk,
-                    )
-                ),
-            ),
-            max_sequence_length=(
-                None if max_sequence_length is None else int(max_sequence_length)
-            ),
-            seed=None if seed is None else int(seed),
-            negative_prompt=sampling.get("negative_prompt"),
-        )
+        }
+        if fps_value is not None:
+            model_request_kwargs["fps"] = int(fps_value)
+        if sampling.get("negative_prompt") is not None:
+            model_request_kwargs["negative_prompt"] = sampling["negative_prompt"]
+        if seed is not None:
+            model_request_kwargs["seed"] = int(seed)
         denoise_mode = self._parse_denoise_mode(sampling.get("denoise_mode", "sde"))
         sde_window_range = self._parse_sde_window_range(
             sampling.get("sde_window_range", (0, num_steps)),
@@ -127,7 +126,19 @@ class DiffusionRequestLayout:
             ),
         )
         return DiffusionSamplingParams(
-            base=base,
+            model_request=VideoGenerationRequest(**model_request_kwargs),
+            samples_per_chunk=max(
+                1,
+                int(
+                    sampling.get(
+                        "samples_per_chunk",
+                        self.default_samples_per_chunk,
+                    )
+                ),
+            ),
+            max_sequence_length=(
+                None if max_sequence_length is None else int(max_sequence_length)
+            ),
             sde=sde,
             sde_window_size=sde_window_size,
             sde_window_range=sde_window_range,
@@ -236,7 +247,6 @@ class DiffusionRequestLayout:
 
 
 __all__ = [
-    "DiffusionBaseParams",
     "DiffusionRequestLayout",
     "DiffusionSamplingParams",
 ]

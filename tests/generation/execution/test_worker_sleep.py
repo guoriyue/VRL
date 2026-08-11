@@ -455,7 +455,6 @@ def test_failed_forward_resets_pipeline_offload_before_returning_error() -> None
         request=request,
         chunk=SampleChunk(
             prompt_index=0,
-            prompt="prompt",
             sample_start=0,
             sample_count=1,
         ),
@@ -493,7 +492,6 @@ def test_failed_forward_and_hook_reset_quarantine_without_retry() -> None:
         request=request,
         chunk=SampleChunk(
             prompt_index=0,
-            prompt="prompt",
             sample_start=0,
             sample_count=1,
         ),
@@ -542,7 +540,6 @@ def test_partial_slot_activation_failure_is_not_returned_as_retryable_result() -
         request=request,
         chunk=SampleChunk(
             prompt_index=0,
-            prompt="prompt",
             sample_start=0,
             sample_count=1,
         ),

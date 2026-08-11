@@ -41,9 +41,8 @@ class PromptExample:
     def generation_input(self) -> GenerationInput:
         """Engine-facing conditioning for this example.
 
-        Typed conditioning (task_type / reference media) rides the
-        ``GenerationInput`` fields; everything else — including the reward-only
-        targets — rides its metadata so engine sample rows can carry it.
+        Reward-only targets travel separately through ``reward_metadata()``;
+        generation receives only functional conditioning.
         """
 
         return GenerationInput(
@@ -51,7 +50,6 @@ class PromptExample:
             task_type=self.task_type or None,
             reference_image=self.reference_image or None,
             reference_video=self.reference_video or None,
-            metadata=self.reward_metadata(),
         )
 
     def reward_metadata(self) -> dict[str, Any]:

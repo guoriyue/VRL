@@ -115,7 +115,7 @@ def _envelope(version: int) -> ChunkExecutionEnvelope:
         samples_per_prompt=1,
         policy_version=version,
     )
-    chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=1)
+    chunk = SampleChunk(prompt_index=0, sample_start=0, sample_count=1)
     return ChunkExecutionEnvelope(
         request=request,
         chunk=chunk,
@@ -136,9 +136,7 @@ def test_update_weights_installs_versioned_slots_without_overwrite() -> None:
     assert model.has_trainable_state(1) and model.has_trainable_state(2)
     # Slot mode installs; it must NOT overwrite the live model in place.
     assert model.load_calls == []
-    # The latest install (what the producer stamps onto NEW requests) surfaces via
-    # the update_weights ACK (asserted above) and worker_metadata's policy_version.
-    assert core.worker_metadata()["policy_version"] == 2
+    # The update ACK is the producer's authoritative policy-version source.
 
 
 def test_update_weights_plain_model_loads_in_place() -> None:
@@ -149,7 +147,6 @@ def test_update_weights_plain_model_loads_in_place() -> None:
 
     assert core._uses_versioned_slots is False
     assert model.load_calls == [{"transformer.w": "v1"}]
-    assert core.worker_metadata()["policy_version"] == 1
 
 
 def test_strict_sync_overwrites_slot_capable_model_without_retaining_payloads() -> None:

@@ -13,12 +13,12 @@ import torch
 import vrl.generation.ray.weight_sync as weight_sync_module
 import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
-from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.ray.lifecycle_fsm import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 
@@ -131,7 +131,7 @@ def test_ray_worker_returns_core_install_ack() -> None:
 async def test_local_update_return_is_the_commit_ack() -> None:
     actor = _LocalWorker(installed_version=3)
     sync = RayGenerationWeightSync(
-        [DistributedWorkerHandle(worker_id="rollout-0", actor=actor)],
+        [RayActorHandle(worker_id="rollout-0", actor=actor)],
         actor_dispatcher=RayActorDispatcher(("rollout-0",)),
         worker_rpc_timeout_s=30.0,
     )
@@ -172,7 +172,7 @@ async def test_invalid_policy_version_does_not_terminalize_resident_runtime() ->
 async def test_local_update_rejects_wrong_installed_version() -> None:
     sync = RayGenerationWeightSync(
         [
-            DistributedWorkerHandle(
+            RayActorHandle(
                 worker_id="rollout-0",
                 actor=_LocalWorker(installed_version=2),
             ),
@@ -196,8 +196,8 @@ async def test_remote_update_results_are_verified_without_second_ack_rpc(
     monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
     sync = RayGenerationWeightSync(
         [
-            DistributedWorkerHandle(worker_id="rollout-0", actor=first),
-            DistributedWorkerHandle(worker_id="rollout-1", actor=second),
+            RayActorHandle(worker_id="rollout-0", actor=first),
+            RayActorHandle(worker_id="rollout-1", actor=second),
         ],
         actor_dispatcher=RayActorDispatcher(("rollout-0", "rollout-1")),
         worker_rpc_timeout_s=30.0,
@@ -220,11 +220,11 @@ async def test_remote_update_rejects_partial_wrong_version(
     monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
     sync = RayGenerationWeightSync(
         [
-            DistributedWorkerHandle(
+            RayActorHandle(
                 worker_id="rollout-0",
                 actor=_RemoteWorker(installed_version=5),
             ),
-            DistributedWorkerHandle(
+            RayActorHandle(
                 worker_id="rollout-1",
                 actor=_RemoteWorker(installed_version=4),
             ),
@@ -266,11 +266,11 @@ async def test_remote_update_timeout_rejects_partial_ack_and_cancels_every_ref(
     monkeypatch.setattr(deadline_module, "require_ray", lambda: ray)
     sync = RayGenerationWeightSync(
         [
-            DistributedWorkerHandle(
+            RayActorHandle(
                 worker_id="rollout-0",
                 actor=type("_Worker", (), {"update_weights": _Method(completed_ref)})(),
             ),
-            DistributedWorkerHandle(
+            RayActorHandle(
                 worker_id="rollout-1",
                 actor=type("_Worker", (), {"update_weights": _Method(stalled_ref)})(),
             ),
@@ -327,7 +327,7 @@ async def test_weight_sync_gets_a_full_deadline_after_shared_worker_admission(
 
     actor = _RemoteWorker(installed_version=3)
     sync = RayGenerationWeightSync(
-        [DistributedWorkerHandle(worker_id="rollout-0", actor=actor)],
+        [RayActorHandle(worker_id="rollout-0", actor=actor)],
         actor_dispatcher=dispatcher,
         worker_rpc_timeout_s=0.01,
     )
@@ -393,7 +393,7 @@ async def test_waiting_weight_sync_gets_fair_handoff_before_pending_chunks(
 
     actor = SimpleNamespace(update_weights=_UpdateMethod())
     sync = RayGenerationWeightSync(
-        [DistributedWorkerHandle(worker_id="rollout-0", actor=actor)],
+        [RayActorHandle(worker_id="rollout-0", actor=actor)],
         actor_dispatcher=dispatcher,
         worker_rpc_timeout_s=30.0,
     )
@@ -442,7 +442,7 @@ async def test_cancelling_weight_sync_before_submission_keeps_runtime_running(
 
     actor = _RemoteWorker(installed_version=4)
     sync = RayGenerationWeightSync(
-        [DistributedWorkerHandle(worker_id="rollout-0", actor=actor)],
+        [RayActorHandle(worker_id="rollout-0", actor=actor)],
         actor_dispatcher=dispatcher,
         worker_rpc_timeout_s=30.0,
     )
@@ -485,7 +485,7 @@ async def test_completed_weight_sync_wins_cancellation_and_publishes_version(
     dispatcher = RayActorDispatcher(("rollout-0",))
     sync = RayGenerationWeightSync(
         [
-            DistributedWorkerHandle(
+            RayActorHandle(
                 worker_id="rollout-0",
                 actor=SimpleNamespace(update_weights=_GatedUpdateMethod()),
             ),
@@ -530,7 +530,7 @@ async def test_completed_weight_sync_cancellation_still_validates_wrong_ack(
     dispatcher = RayActorDispatcher(("rollout-0",))
     sync = RayGenerationWeightSync(
         [
-            DistributedWorkerHandle(
+            RayActorHandle(
                 worker_id="rollout-0",
                 actor=SimpleNamespace(update_weights=_WrongAckMethod()),
             ),
@@ -616,11 +616,11 @@ async def test_cancelling_partially_completed_weight_sync_terminalizes_runtime(
     w1_update = _UpdateMethod(_FakeObjectRef(2))
     sync = RayGenerationWeightSync(
         [
-            DistributedWorkerHandle(
+            RayActorHandle(
                 worker_id="w0",
                 actor=SimpleNamespace(update_weights=w0_update),
             ),
-            DistributedWorkerHandle(
+            RayActorHandle(
                 worker_id="w1",
                 actor=SimpleNamespace(update_weights=w1_update),
             ),
@@ -691,12 +691,12 @@ class _InstallWorker:
 def _install_fleet(
     ray: Any,
     *scripts: tuple[int, float],
-) -> list[DistributedWorkerHandle]:
+) -> list[RayActorHandle]:
     """One real ``_InstallWorker`` actor per ``(ack_offset, stall_s)`` script."""
 
     actor_cls = ray.remote(num_cpus=0)(_InstallWorker)
     return [
-        DistributedWorkerHandle(
+        RayActorHandle(
             worker_id=f"rollout-{index}",
             actor=actor_cls.remote(ack_offset, stall_s),
         )

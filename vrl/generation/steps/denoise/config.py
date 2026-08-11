@@ -22,7 +22,6 @@ class DenoiseSDEParams:
 class DenoiseLoopConfig:
     """Runtime inputs for one sample chunk's denoise loop."""
 
-    prompt_index: int
     sample_start: int
     sample_count: int
     seed: int | None

@@ -89,7 +89,7 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
         image_area = sampling.get("image_area")
         ratio = sampling.get("ratio")
 
-        repeated_prompts = [chunk.prompt] * chunk.sample_count
+        repeated_prompts = [request.inputs[chunk.prompt_index].prompt] * chunk.sample_count
         prompt_ids, prompt_mask, (height, width) = self.model.encode_generation_prompts(
             repeated_prompts,
             max_text_length=max_text_length,

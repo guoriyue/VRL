@@ -56,8 +56,7 @@ class OCRRewardModel:
             return
         self._engine = _build_paddle_ocr()
 
-    def __call__(self, *, artifact: Any, request: Any) -> dict[str, float]:
-        del request
+    def __call__(self, artifact: Any) -> dict[str, float]:
         import numpy as np
         import torch
 

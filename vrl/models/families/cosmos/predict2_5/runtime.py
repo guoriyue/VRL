@@ -35,11 +35,10 @@ class CosmosPredict25ChunkExecutor(DiffusionChunkExecutorBase):
         params: DiffusionSamplingParams,
         chunk: SampleChunk,
     ) -> dict[str, Any]:
-        del generation_request
         return self.model.encode_prompt(
-            chunk.prompt,
+            generation_request.inputs[chunk.prompt_index].prompt,
             video_request.negative_prompt or None,
-            **params.base.text_encode_kwargs(),
+            **params.text_encode_kwargs(),
         )
 
 

@@ -273,7 +273,6 @@ def test_janus_chunk_sampling_uses_request_overrides_then_model_defaults(
         request,
         SampleChunk(
             prompt_index=0,
-            prompt="draw text",
             sample_start=0,
             sample_count=1,
         ),

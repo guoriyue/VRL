@@ -35,7 +35,7 @@ class RolloutWorkerConfig:
     # Chunk->worker binding: "round_robin" binds at plan time (baseline);
     # "dynamic" binds at dispatch time (pull + LPT). Equivalent for 1 worker.
     # Allowed-set rejection is at the typed schema boundary (RolloutWorkerSection);
-    # the runtime ChunkPlacementPolicy guard is the wire-boundary backstop.
+    # DistributedExecutionPlanner repeats it for direct runtime construction.
     chunk_placement_strategy: ChunkPlacementStrategy
     # Plain on/off. True keeps rollout workers resynced to the trained policy (the
     # syncer flattens whatever is trainable — lora or full-param); False disables it.

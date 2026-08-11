@@ -635,7 +635,8 @@ class CausVidModel(_CausVidPolicyModel):
 
         self._validate_generation_request(request)
         batch_size = int(chunk.sample_count)
-        encoded = self.encode_prompt([chunk.prompt] * batch_size)
+        prompt = request.inputs[chunk.prompt_index].prompt
+        encoded = self.encode_prompt([prompt] * batch_size)
         generators = self._sample_generators(request, chunk)
         noise_rows = [
             torch.randn(
@@ -663,9 +664,7 @@ class CausVidModel(_CausVidPolicyModel):
             video = to_uint8(video)
         mapping = run.trajectory_mapping(context={})
         return ChunkAutoregressiveDenoiseResult(
-            prompt_index=int(chunk.prompt_index),
-            sample_start=int(chunk.sample_start),
-            sample_count=batch_size,
+            chunk=chunk,
             output=video,
             **mapping,
         )

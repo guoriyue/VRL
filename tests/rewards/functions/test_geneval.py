@@ -11,10 +11,7 @@ def _sample(metadata: dict) -> RewardSample:
     return RewardSample(
         prompt="a photo of a yellow bus",
         output=None,
-        source_request_id="request-0",
         sample_id="sample-0",
-        group_id="group-0",
-        trajectory_id="trajectory-0",
         metadata=metadata,
     )
 
@@ -81,7 +78,7 @@ async def test_geneval_reward_registered_in_multi_reward() -> None:
         reward_kwargs={"geneval": {"scorer": scorer}},
     )
 
-    scores = await reward.score_batch(
+    output = await reward.score_batch(
         [
             _sample(
                 {
@@ -94,4 +91,4 @@ async def test_geneval_reward_registered_in_multi_reward() -> None:
         ],
     )
 
-    assert scores == pytest.approx([0.25])
+    assert output.scores == pytest.approx([0.25])

@@ -368,18 +368,18 @@ actor lifecycle per epoch with its original semantics, no lifecycle flagging
 anywhere.
 
 ```text
-vrl/rewards/runtime.py                  RewardFunctionRuntime.score(request) —
-                                        one function-level score_batch_report
-                                        call over ordered RewardSamples
+vrl/rewards/runtime.py                  RewardFunctionRuntime.score(samples) —
+                                        one function-level score_batch call
+                                        over ordered RewardSamples
 vrl/rollouts/collector/core.py          collect_unscored() (generate only) +
                                         score_rollouts() (release rollout once,
-                                        score all groups via one RewardRequest,
+                                        score all groups via one ordered sample call,
                                         batches); UnscoredRollout carries groups
 vrl/rollouts/orchestration/prompt_collection.py
                                         generate all groups first, then one
                                         collector.score_rollouts(...) call
 tests/rollouts/orchestration/test_prompt_collection.py  order + remap pins
-tests/rollouts/collector/test_runtime.py                RewardRequest merge pin
+tests/rollouts/collector/test_runtime.py                merged-sample-call pin
 ```
 
 Side benefits over the keep_alive variant: MultiReward components each load
@@ -396,18 +396,15 @@ baseline.
 P1 needs a second GPU. On the current 1×5090 box the cheapest large win is to
 stop scoring per prompt group: collect all groups' trajectories first (rollout
 stays resident the whole time — nothing else needs the GPU between groups),
-then release rollout once, score all 72 artifacts in ONE reward request, split
+then release rollout once, score all 72 artifacts in ONE reward call, split
 rewards back per group, and build the batches.
 
 The seam already exists — scoring and batch building are separate steps inside
 `collect()` (`vrl/rollouts/collector/core.py:146-155`):
 
 ```python
-reward_request = RewardRequest(
-    request_id=reward_request_id,
-    samples=tuple(sample for builder in builders for sample in builder.reward_samples()),
-)
-reward_output = await self.reward_runtime.score(reward_request)
+samples = tuple(sample for builder in builders for sample in builder.reward_samples())
+reward_output = await self.reward_runtime.score(samples)
 batch = builder.build(group_rewards)
 ```
 
@@ -417,7 +414,7 @@ Change shape:
 1. Split RolloutCollector.collect() into collect_trajectories() (generate, no
    release, no score; returns the batch builder) and score+build.
 2. collect_prompt_batches() accumulates builders for all groups, then does:
-   release rollout once -> one reward request over all artifacts -> split
+   release rollout once -> one reward call over all artifacts -> split
    rewards by group sizes -> build() each batch.
 3. release_before_reward_model moves from per-collect to per-epoch.
 ```

@@ -23,17 +23,15 @@ import pytest
 
 import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
-from vrl.generation.execution.chunk_placement import (
-    ChunkPlacementPolicy,
-    DistributedExecutionPlanner,
-)
+from vrl.generation.execution.chunk_placement import DistributedExecutionPlanner
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
-    DistributedWorkerHandle,
+    ChunkSizeProbeResult,
 )
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import (
     RayActorCallError,
     RayActorDispatcher,
@@ -41,6 +39,7 @@ from vrl.ray.actor_pool import (
     run_actor_jobs,
 )
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
+from vrl.trajectory import TrajectoryBatch
 
 # Carried by the tests that actually drive `_FakeRef`/`_FakeWorker`; the planner
 # and argument-validation tests below use no double, so a module-level pytestmark
@@ -128,18 +127,12 @@ def _request(num_steps: int = 10, samples: int = 8, sbs: int = 2) -> GenerationR
         inputs=["a test prompt"],
         samples_per_prompt=samples,
         sampling={"height": 64, "width": 64, "num_steps": num_steps, "samples_per_chunk": sbs},
-        metadata={"dataset": "unit", "_runtime_debug": True},
+        runtime_debug=True,
     )
 
 
-def _workers(count: int) -> list[DistributedWorkerHandle]:
-    return [
-        DistributedWorkerHandle(
-            worker_id=f"w{idx}",
-            actor=None,
-        )
-        for idx in range(count)
-    ]
+def _worker_ids(count: int) -> list[str]:
+    return [f"w{idx}" for idx in range(count)]
 
 
 # ---------------------------------------------------------------- actor pool
@@ -1178,7 +1171,7 @@ async def test_run_one_waiter_factory_failure_cancels_ref_and_closes_dispatcher(
 def test_round_robin_planner_binds_workers_at_plan_time() -> None:
     """Checks the default strategy keeps the historical binding."""
     planner = DistributedExecutionPlanner()
-    plan = planner.plan_with_engine(_request(), _workers(2))
+    plan = planner.plan_with_engine(_request(), _worker_ids(2))
 
     worker_ids = [assignment.worker_id for assignment in plan.assignments]
     assert worker_ids == ["w0", "w1", "w0", "w1"]
@@ -1187,11 +1180,9 @@ def test_round_robin_planner_binds_workers_at_plan_time() -> None:
 
 def test_dynamic_planner_leaves_chunks_unbound_with_costs() -> None:
     """Checks dynamic strategy defers binding and carries cost estimates."""
-    planner = DistributedExecutionPlanner(
-        policy=ChunkPlacementPolicy(strategy="dynamic"),
-    )
+    planner = DistributedExecutionPlanner(strategy="dynamic")
     request = _request(num_steps=10, samples=8, sbs=2)
-    plan = planner.plan_with_engine(request, _workers(2))
+    plan = planner.plan_with_engine(request, _worker_ids(2))
 
     assert all(a.worker_id is None for a in plan.assignments)
     assert len(plan.assignments) == 4
@@ -1206,16 +1197,16 @@ def test_dynamic_planner_leaves_chunks_unbound_with_costs() -> None:
 def test_planner_cost_uses_steps_axis() -> None:
     """Checks the cost hint scales with samples x steps."""
     request = _request(num_steps=35, samples=4, sbs=4)
-    plan = DistributedExecutionPlanner().plan_with_engine(request, _workers(1))
+    plan = DistributedExecutionPlanner().plan_with_engine(request, _worker_ids(1))
 
     assignment = plan.assignments[0]
     assert assignment.estimated_cost == assignment.chunk.sample_count * 35
 
 
-def test_placement_policy_rejects_unknown_strategy() -> None:
+def test_planner_rejects_unknown_strategy() -> None:
     """Checks the strategy vocabulary is closed."""
     with pytest.raises(ValueError, match="round_robin"):
-        ChunkPlacementPolicy(strategy="work_stealing")
+        DistributedExecutionPlanner(strategy="work_stealing")  # type: ignore[arg-type]
 
 
 # ----------------------------------------------------- executor end to end
@@ -1272,24 +1263,28 @@ class _ListGatherer:
         chunks: list[Any],
     ) -> GenerationOutput:
         return GenerationOutput(
-            request_id=request.request_id,
-            sample_rows=list(sample_rows),
             output=list(chunks),
+            trajectory=TrajectoryBatch(
+                request_id=request.request_id,
+                family=request.family,
+                task=request.task,
+                sample_rows=list(sample_rows),
+                axes={},
+                segments={},
+            ),
         )
 
 
 def _executor(strategy: str, actors: list[_FakeActor]) -> RayGenerationExecutor:
     workers = [
-        DistributedWorkerHandle(
+        RayActorHandle(
             worker_id=actor.worker_id,
             actor=actor,
         )
         for actor in actors
     ]
     return RayGenerationExecutor(
-        DistributedExecutionPlanner(
-            policy=ChunkPlacementPolicy(strategy=strategy),
-        ),
+        DistributedExecutionPlanner(strategy=strategy),  # type: ignore[arg-type]
         workers,
         _ListGatherer(),
         actor_dispatcher=RayActorDispatcher(
@@ -1324,11 +1319,11 @@ async def test_chunk_size_probe_shares_actor_admission_with_explicit_generation(
             probe_requests.append(request.request_id)
             return _GatedRef(
                 gate,
-                {
-                    "samples_per_chunk": 2,
-                    "budget_bytes": 1,
-                    "trials": [],
-                },
+                ChunkSizeProbeResult(
+                    samples_per_chunk=2,
+                    budget_bytes=1,
+                    trials=(),
+                ),
             )
 
     actor.probe_chunk_size = _Probe()
@@ -1346,11 +1341,11 @@ async def test_chunk_size_probe_shares_actor_admission_with_explicit_generation(
 
     gate.set()
     assert await probe == [
-        {
-            "samples_per_chunk": 2,
-            "budget_bytes": 1,
-            "trials": [],
-        },
+        ChunkSizeProbeResult(
+            samples_per_chunk=2,
+            budget_bytes=1,
+            trials=(),
+        ),
     ]
     output = await generation
     assert len(output.output) == 2
@@ -1373,7 +1368,8 @@ async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
     # 4 chunks alternate w0/w1 even though w1 is much slower: plan-time binding.
     assert actors[0].executed == ["prompt:0:samples:0:2", "prompt:0:samples:4:6"]
     assert actors[1].executed == ["prompt:0:samples:2:4", "prompt:0:samples:6:8"]
-    schedule = output.extra["runtime_debug"]["chunk_schedule"]
+    assert output.runtime_debug is not None
+    schedule = output.runtime_debug["chunk_schedule"]
     assert [row["assigned_worker"] for row in schedule] == ["w0", "w1", "w0", "w1"]
     for row in schedule:
         assert row["assignment_strategy"] == "round_robin"
@@ -1394,7 +1390,8 @@ async def test_executor_dynamic_dispatches_by_pull() -> None:
     # The fast worker pulls every queued chunk once the slow one is busy.
     assert len(actors[0].executed) == 3
     assert len(actors[1].executed) == 1
-    schedule = output.extra["runtime_debug"]["chunk_schedule"]
+    assert output.runtime_debug is not None
+    schedule = output.runtime_debug["chunk_schedule"]
     assert all(row["assignment_strategy"] == "dynamic" for row in schedule)
     by_worker = {
         worker: sum(1 for row in schedule if row["assigned_worker"] == worker)
@@ -1417,11 +1414,12 @@ async def test_executor_runtime_debug_exposes_chunk_schedule() -> None:
     actors = [_FakeActor("w0", 0), _FakeActor("w1", 100)]
     executor = _executor("round_robin", actors)
     request = _request(num_steps=10, samples=8, sbs=2)
-    request.metadata["_runtime_debug"] = True
+    request.runtime_debug = True
 
     output = await executor.execute(request)
 
-    debug_schedule = output.extra["runtime_debug"]["chunk_schedule"]
+    assert output.runtime_debug is not None
+    debug_schedule = output.runtime_debug["chunk_schedule"]
     assert len(debug_schedule) == 4
     for row in debug_schedule:
         assert {

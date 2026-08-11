@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from vrl.generation.execution.chunks import (
@@ -29,7 +28,6 @@ if TYPE_CHECKING:
     )
 
 
-@dataclass(frozen=True, slots=True)
 class ChunkAutoregressiveDenoiseGatherer:
     """Order and concatenate prompt/sample chunks without owning a model."""
 
@@ -64,7 +62,7 @@ class ChunkAutoregressiveDenoiseGatherer:
                 ),
                 replay_tensors=gather_replay_tensors(
                     [chunk.replay_tensors for chunk in ordered],
-                    sample_counts=[chunk.sample_count for chunk in ordered],
+                    sample_counts=[chunk.chunk.sample_count for chunk in ordered],
                 ),
                 context=context,
             )
@@ -78,11 +76,8 @@ class ChunkAutoregressiveDenoiseGatherer:
             )
 
         return GenerationOutput(
-            request_id=request.request_id,
-            sample_rows=rows,
             output=output,
             trajectory=trajectory,
-            extra={},
         )
 
 
@@ -117,7 +112,7 @@ def _validate_trainable_chunk(chunk: ChunkAutoregressiveDenoiseResult) -> None:
     if transition_count is None:
         raise ValueError("trainable result is missing denoise_transition_count")
     transition_prefix = (
-        chunk.sample_count,
+        chunk.chunk.sample_count,
         chunk.temporal_chunk_count,
         transition_count,
     )
@@ -128,7 +123,7 @@ def _validate_trainable_chunk(chunk: ChunkAutoregressiveDenoiseResult) -> None:
     _require_shape_prefix(
         "finalized_chunk_latents",
         chunk.finalized_chunk_latents,
-        (chunk.sample_count, chunk.temporal_chunk_count),
+        (chunk.chunk.sample_count, chunk.temporal_chunk_count),
     )
 
 

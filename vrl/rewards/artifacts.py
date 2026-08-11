@@ -118,7 +118,7 @@ class VideoRewardArtifactStore:
 
         metadata = dict(sample.metadata or {})
         materialization_id = uuid.uuid4().hex
-        artifact_id = f"{sample.source_request_id}:{sample.sample_id}:{materialization_id}"
+        artifact_id = f"{sample.sample_id}:{materialization_id}"
         fps = _fps(metadata)
         suffix = "mp4" if self.artifact_format == "mp4" else "pt"
         path = (self.root / f"{materialization_id}.{suffix}").resolve()
@@ -132,13 +132,7 @@ class VideoRewardArtifactStore:
             artifact = RewardInferenceArtifact(
                 artifact_id=artifact_id,
                 path=str(path),
-                media_type=self.media_type,
                 prompt=str(sample.prompt),
-                source_request_id=sample.source_request_id,
-                sample_id=sample.sample_id,
-                group_id=sample.group_id,
-                trajectory_id=sample.trajectory_id,
-                policy_version=sample.policy_version,
                 size_bytes=size_bytes,
                 sha256=sha256_file(path),
                 metadata={

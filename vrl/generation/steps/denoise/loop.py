@@ -9,10 +9,7 @@ import torch
 
 from vrl.generation.execution.chunk_placement import cuda_occupancy_snapshot
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
-from vrl.generation.steps.denoise.teacache import (
-    TeaCacheState,
-    teacache_signal,
-)
+from vrl.generation.steps.denoise.teacache import TeaCacheState
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.trajectory.storage import trajectory_tensor_bytes
 from vrl.utils.cuda_memory import (
@@ -35,8 +32,12 @@ class DenoiseLoopResult:
     kl: Any
     prev_sample_means: Any | None = None
     ref_noise_preds: Any | None = None
+    # display/provenance-only: measured peak forwarded to optional runtime-debug
+    # telemetry after decode completes.
     peak_memory_mb: float | None = None
     memory: dict[str, int] | None = None
+    # display/provenance-only: denoise-engine counters forwarded to optional
+    # runtime-debug telemetry.
     engine_counters: dict[str, Any] = field(default_factory=dict)
 
 
@@ -124,7 +125,6 @@ def run_denoise_loop(
     device = state.latents.device
     reset_cuda_peak()
     occupancy = cuda_occupancy_snapshot()
-    latent_bytes = int(state.latents.numel() * state.latents.element_size())
     if config.seed is not None:
         generator = torch.Generator(device=device)
         generator.manual_seed(config.seed + config.sample_start)
@@ -149,7 +149,7 @@ def run_denoise_loop(
                     timestep = state.timesteps[step_idx]
 
                 if teacache is not None and not teacache.should_run(
-                    teacache_signal(latents_ori, config.teacache.signal),
+                    latents_ori,
                     step_idx,
                 ):
                     noise_pred = teacache.cached_noise_pred
@@ -248,7 +248,6 @@ def run_denoise_loop(
     if occupancy is not None and denoise_peak_bytes is not None:
         memory = {
             "sample_count": int(chunk_batch),
-            "latent_bytes": latent_bytes,
             **occupancy,
             "denoise_peak_bytes": denoise_peak_bytes,
         }

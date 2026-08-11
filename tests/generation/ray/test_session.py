@@ -9,11 +9,11 @@ from typing import Any
 import pytest
 
 from vrl.generation.execution.types import (
-    DistributedWorkerHandle,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
+from vrl.ray.actor_group import RayActorHandle
 
 
 class _ResolvedRef:
@@ -54,7 +54,7 @@ class _Executor:
         self.calls.append(("generate", request))
         return "generated"
 
-    async def probe_chunk_sizes(self, request: Any, *, max_samples: int) -> list[dict[str, int]]:
+    async def probe_chunk_sizes(self, request: Any, *, max_samples: int) -> list[Any]:
         self.calls.append(("probe", request, max_samples))
         return [{"samples_per_chunk": max_samples}]
 
@@ -103,7 +103,7 @@ def _session(
         _Executor(),
         weight_sync,
         [
-            DistributedWorkerHandle(worker_id=f"rollout-{index}", actor=actor)
+            RayActorHandle(worker_id=f"rollout-{index}", actor=actor)
             for index, actor in enumerate(actors)
         ],
         supports_non_draining_weight_sync,
@@ -177,23 +177,18 @@ async def test_session_parking_failure_does_not_translate_or_close_resources() -
     assert actor.release_policy.calls == 0
 
 
-@pytest.mark.parametrize(
-    ("actors", "match"),
-    [
-        ((None,), "generation workers have no actor"),
-        (
-            (_Actor("rollout-0"), _Actor("rollout-0")),
-            "duplicate generation worker ids",
-        ),
-    ],
-)
-def test_session_rejects_invalid_worker_fleet_at_construction(
-    actors: tuple[_Actor | None, ...],
-    match: str,
-) -> None:
-    workers = [DistributedWorkerHandle(worker_id="rollout-0", actor=actor) for actor in actors]
+def test_actor_handle_rejects_missing_actor() -> None:
+    with pytest.raises(ValueError, match="requires an actor"):
+        RayActorHandle(worker_id="rollout-0", actor=None)
 
-    with pytest.raises(RuntimeError, match=match):
+
+def test_session_rejects_duplicate_worker_ids() -> None:
+    workers = [
+        RayActorHandle(worker_id="rollout-0", actor=_Actor("rollout-0")),
+        RayActorHandle(worker_id="rollout-0", actor=_Actor("rollout-0")),
+    ]
+
+    with pytest.raises(RuntimeError, match="duplicate generation worker ids"):
         RayGenerationSession(_Executor(), None, workers)
 
 
@@ -236,7 +231,7 @@ async def test_close_retains_only_actor_handles_that_failed_to_die(
     assert isinstance(caught.value.__cause__, RuntimeError)
     assert ray.killed == [first]
     assert session.workers == [
-        DistributedWorkerHandle(worker_id="rollout-1", actor=failed),
+        RayActorHandle(worker_id="rollout-1", actor=failed),
     ]
 
 

@@ -15,6 +15,7 @@ from vrl.generation.bindings.full_sequence_denoise import (
 )
 from vrl.generation.execution.chunks import (
     SampleAlignedValues,
+    SampleChunk,
     gather_replay_tensors,
     require_matching_chunk_context,
 )
@@ -23,7 +24,7 @@ from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkGatherer
-from vrl.generation.types import GenerationOutput, GenerationRequest
+from vrl.generation.types import GenerationRequest
 from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
 
 
@@ -33,12 +34,9 @@ class _PureGatherer:
         request: GenerationRequest,
         sample_rows: Sequence[Any],
         chunks: Sequence[Any],
-    ) -> GenerationOutput:
-        return GenerationOutput(
-            request_id=request.request_id,
-            sample_rows=list(sample_rows),
-            output=list(chunks),
-        )
+    ) -> Any:
+        del request, sample_rows
+        return SimpleNamespace(output=list(chunks))
 
 
 class _Executor(ChunkExecutorBase):
@@ -124,7 +122,7 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
 
     assert output.output.device.type == "cpu"
     assert output.trajectory is not None
-    assert "trajectory" not in output.extra
+    assert output.runtime_debug is None
     assert output.trajectory.segments["denoise"].distribution == "flow_matching"
     assert output.trajectory.axes["sample"].length == 2
     assert output.trajectory.axes["denoise"].length == 2
@@ -348,9 +346,11 @@ def _diffusion_chunk(
     peak_memory_mb: float,
 ) -> DiffusionChunkResult:
     return DiffusionChunkResult(
-        prompt_index=0,
-        sample_start=sample_start,
-        sample_count=1,
+        chunk=SampleChunk(
+            prompt_index=0,
+            sample_start=sample_start,
+            sample_count=1,
+        ),
         observations=torch.full((1, 2, 1), value),
         actions=torch.full((1, 2, 1), value + 1),
         log_probs=torch.full((1, 2), value + 2),

@@ -27,17 +27,8 @@ class _FakeRuntime:
             RewardInferenceResult(
                 artifact_id=artifact.artifact_id,
                 scores=dict(_FAKE_SCORES),
-                selected_score=request.select_score(_FAKE_SCORES),
-                reward_name=request.reward_name,
-                score_key=request.score_key,
-                policy_version=artifact.policy_version,
-                source_request_id=artifact.source_request_id,
-                sample_id=artifact.sample_id,
-                group_id=artifact.group_id,
-                trajectory_id=artifact.trajectory_id,
                 reward_model_version="fake",
-                latency_ms=1.0,
-                worker_id="fake",
+                timing_ms={"inference_ms": 1.0},
             )
             for artifact in request.artifacts
         ]
@@ -50,11 +41,7 @@ def _sample() -> RewardSample:
     return RewardSample(
         prompt="a spinning dancer",
         output=torch.ones(1, 2, 2, 2),
-        source_request_id="request-0",
         sample_id="sample-0",
-        group_id="group-0",
-        trajectory_id="trajectory-0",
-        policy_version=1,
     )
 
 
@@ -125,7 +112,7 @@ async def test_facade_selects_physics_and_fails_fast(tmp_path: Path) -> None:
         artifact_dir=str(tmp_path / "a"),
         inference_runtime=_FakeRuntime(),
     )
-    assert await reward.score_batch([_sample()]) == pytest.approx([2.0])
+    assert (await reward.score_batch([_sample()])).scores == pytest.approx([2.0])
 
     bad = UnifiedRewardVideoReward(
         reward_name="unified_reward_video",

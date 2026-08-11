@@ -58,16 +58,11 @@ def write_preview_image(
             f"production executor returned {len(output.sample_rows)} sample rows; expected 1",
         )
     row = output.sample_rows[0]
-    row_request_id = row.metadata.get("request_id")
-    if (
-        output.request_id != expected_request_id
-        or row_request_id != expected_request_id
-        or row.prompt != expected_prompt
-    ):
+    if output.request_id != expected_request_id or row.prompt != expected_prompt:
         raise RuntimeError(
             "production output changed request/prompt identity: "
             f"expected=({expected_request_id!r}, {expected_prompt!r}) "
-            f"actual=({output.request_id!r}, {row_request_id!r}, {row.prompt!r})",
+            f"actual=({output.request_id!r}, {row.prompt!r})",
         )
     if len(output.output) != 1:
         raise RuntimeError(

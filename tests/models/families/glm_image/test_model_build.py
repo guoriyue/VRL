@@ -199,7 +199,6 @@ def test_chunk_context_keeps_replay_shape_and_sampling_provenance_only(
         request,
         SampleChunk(
             prompt_index=0,
-            prompt="draw text",
             sample_start=0,
             sample_count=1,
         ),

@@ -1,7 +1,7 @@
 """Reward model contract and shared base for in-process torch reward models.
 
 ``RewardModel`` is the scoring contract: given one already-materialized
-artifact plus the request, return named scores. ``TorchRewardModel``
+artifact, return named scores. ``TorchRewardModel``
 implements it and absorbs the device/dtype/lazy-load boilerplate that every
 torch-nn reward used to hand-roll. Subclasses implement ``_load_module``
 (build the model once) and ``score_media`` (score one media payload +
@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.inference import RewardInferenceArtifact
 
 
 def require_prompt_and_video_path(
@@ -65,12 +65,7 @@ class RewardModel(Protocol):
     live under ``vrl.rewards.models``.
     """
 
-    def __call__(
-        self,
-        *,
-        artifact: RewardInferenceArtifact,
-        request: RewardInferenceRequest,
-    ) -> Mapping[str, float]: ...
+    def __call__(self, artifact: RewardInferenceArtifact) -> Mapping[str, float]: ...
 
 
 class LazyTorchModule(ABC):
@@ -111,17 +106,16 @@ class TorchRewardModel(LazyTorchModule):
         return resolve_torch_dtype(self.dtype_str)
 
     @abstractmethod
-    def score_media(self, *, media: Any, prompt: str, request: Any) -> Mapping[str, float]:
+    def score_media(self, *, media: Any, prompt: str) -> Mapping[str, float]:
         """Return named scores for one artifact's media payload."""
 
         raise NotImplementedError
 
-    def __call__(self, *, artifact: Any, request: Any) -> Mapping[str, float]:
+    def __call__(self, artifact: RewardInferenceArtifact) -> Mapping[str, float]:
         self.prepare_for_inference()
         return self.score_media(
             media=artifact.as_media(),
             prompt=artifact.prompt,
-            request=request,
         )
 
 

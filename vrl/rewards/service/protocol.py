@@ -13,7 +13,7 @@ from typing import Any
 
 # These constants are protocol identifiers, not duplicated application data.
 WIRE_PROTOCOL = "vrl.reward"
-WIRE_VERSION = 1
+WIRE_VERSION = 2
 SHARED_FILESYSTEM_ARTIFACT_TRANSPORT = "shared_filesystem_paths"
 GENERATION_OVERLAP_SAFE_CAPABILITY = "generation_overlap_safe"
 
@@ -52,14 +52,10 @@ class RewardServiceInfo:
     max_concurrency: int
     max_pending_requests: int
     artifact_transport: str = SHARED_FILESYSTEM_ARTIFACT_TRANSPORT
-    protocol: str = WIRE_PROTOCOL
-    wire_version: int = WIRE_VERSION
 
     def __post_init__(self) -> None:
         if not self.model_name:
             raise ValueError("reward service model_name is required")
-        if self.protocol != WIRE_PROTOCOL or self.wire_version != WIRE_VERSION:
-            raise ValueError("reward service info protocol/version is inconsistent")
         if not self.capabilities or any(not capability for capability in self.capabilities):
             raise ValueError("reward service capabilities must be non-empty strings")
         if len(set(self.capabilities)) != len(self.capabilities):

@@ -24,7 +24,7 @@ class _FakeTorchReward(TorchRewardModel):
         self.loaded_marker = True
         return torch.nn.Identity()
 
-    def score_media(self, *, media, prompt, request):
+    def score_media(self, *, media, prompt):
         return {"fake": float(media.float().mean().item())}
 
 
@@ -37,11 +37,8 @@ def _sample(
     return RewardSample(
         prompt="p",
         output=output,
-        source_request_id="request-0",
         sample_id=sample_id,
-        group_id="group-0",
-        trajectory_id=f"trajectory-{sample_id}",
-        policy_version=policy_version,
+        metadata={"policy_version": policy_version},
     )
 
 
@@ -54,7 +51,6 @@ def _reward_function_in_process() -> InferenceRewardFunction:
         ),
         artifact_builder=lambda samples: InferenceRewardFunction.build_inmemory_artifacts(
             samples,
-            media_type="image",
         ),
     )
 
@@ -63,7 +59,7 @@ def _reward_function_in_process() -> InferenceRewardFunction:
 async def test_reward_function_in_process_scores_without_disk() -> None:
     """Checks reward function scoring in-process without disk artifacts."""
     reward = _reward_function_in_process()
-    report = await reward.score_batch_report(
+    report = await reward.score_batch(
         [
             _sample(torch.full((1, 3, 2, 2), 0.5)),
             _sample(torch.ones(1, 3, 2, 2), sample_id="sample-1"),

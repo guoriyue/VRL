@@ -77,7 +77,7 @@ class AestheticRewardModel(TorchRewardModel):
 
         return _AestheticScorer(self.dtype).to(self.device)
 
-    def score_media(self, *, media: Any, prompt: str, request: Any) -> Mapping[str, float]:
+    def score_media(self, *, media: Any, prompt: str) -> Mapping[str, float]:
         import torch
 
         output = media

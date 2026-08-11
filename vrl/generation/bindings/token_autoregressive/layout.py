@@ -8,16 +8,18 @@ from typing import Any, Protocol, TypeVar
 
 import torch
 
-from vrl.generation.execution.chunks import SampleChunk, ordered_covering_chunks
+from vrl.generation.execution.chunks import (
+    SampleChunk,
+    ordered_covering_chunks,
+    validate_chunk_range,
+)
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 
 
 class ARChunkResult(Protocol):
     """Common metadata every prompt-major AR chunk result carries."""
 
-    prompt_index: int
-    sample_start: int
-    sample_count: int
+    chunk: SampleChunk
     peak_memory_mb: float | None
 
 
@@ -69,13 +71,25 @@ def right_pad(
     )
 
 
-@dataclass(frozen=True, slots=True)
 class ARRequestLayout:
     """Prompt-major request layout shared by AR executors and gatherers."""
 
-    default_image_token_num: int | None = None
-    default_image_size: int | None = None
-    default_max_text_length: int | None = None
+    __slots__ = (
+        "default_image_size",
+        "default_image_token_num",
+        "default_max_text_length",
+    )
+
+    def __init__(
+        self,
+        *,
+        default_image_token_num: int | None = None,
+        default_image_size: int | None = None,
+        default_max_text_length: int | None = None,
+    ) -> None:
+        self.default_image_token_num = default_image_token_num
+        self.default_image_size = default_image_size
+        self.default_max_text_length = default_max_text_length
 
     def parse_sampling_params(self, request: GenerationRequest) -> ARSamplingParams:
         """Parse family-neutral AR fields from ``GenerationRequest.sampling``."""
@@ -115,20 +129,12 @@ class ARRequestLayout:
     def validate_chunk(self, request: GenerationRequest, chunk: SampleChunk) -> None:
         """Validate one prompt/sample AR chunk against its request."""
 
-        if chunk.prompt_index >= len(request.prompts):
-            raise ValueError(
-                f"chunk.prompt_index={chunk.prompt_index} is out of range",
-            )
-        if chunk.prompt != request.prompts[chunk.prompt_index]:
-            raise ValueError(
-                "chunk.prompt does not match request.prompts[chunk.prompt_index]",
-            )
-        if chunk.sample_end > request.samples_per_prompt:
-            raise ValueError(
-                "chunk sample range exceeds request.samples_per_prompt: "
-                f"{chunk.sample_start}:{chunk.sample_end} > "
-                f"{request.samples_per_prompt}",
-            )
+        validate_chunk_range(
+            request,
+            prompt_index=chunk.prompt_index,
+            sample_start=chunk.sample_start,
+            sample_count=chunk.sample_count,
+        )
 
     def ordered_chunks(
         self,

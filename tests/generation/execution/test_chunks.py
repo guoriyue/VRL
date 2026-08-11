@@ -8,22 +8,19 @@ def test_build_prompt_chunks_prompt_major() -> None:
     from vrl.generation.execution.chunks import build_prompt_chunks
 
     chunks = build_prompt_chunks(
-        ["a", "b"],
+        2,
         samples_per_prompt=5,
         max_samples_per_chunk=2,
     )
 
-    got = [
-        (chunk.prompt_index, chunk.prompt, chunk.sample_start, chunk.sample_count)
-        for chunk in chunks
-    ]
+    got = [(chunk.prompt_index, chunk.sample_start, chunk.sample_count) for chunk in chunks]
     assert got == [
-        (0, "a", 0, 2),
-        (0, "a", 2, 2),
-        (0, "a", 4, 1),
-        (1, "b", 0, 2),
-        (1, "b", 2, 2),
-        (1, "b", 4, 1),
+        (0, 0, 2),
+        (0, 2, 2),
+        (0, 4, 1),
+        (1, 0, 2),
+        (1, 2, 2),
+        (1, 4, 1),
     ]
 
 
@@ -46,7 +43,6 @@ def test_run_sample_chunks_with_oom_retry_splits_until_success() -> None:
         [
             SampleChunk(
                 prompt_index=0,
-                prompt="a",
                 sample_start=0,
                 sample_count=5,
             )

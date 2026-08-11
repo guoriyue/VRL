@@ -7,9 +7,6 @@ class _RuntimeControl:
     current_policy_version = None
     requires_driver_model_offload = False
 
-    def is_colocated(self) -> bool:
-        return False
-
 
 class CollectorControlFake:
     """Supply the lifecycle protocol while tests specialize collection only."""

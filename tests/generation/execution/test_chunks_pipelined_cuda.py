@@ -16,6 +16,7 @@ torch = pytest.importorskip("torch")
 from vrl.generation.bindings.full_sequence_denoise.executor import (  # noqa: E402
     DiffusionChunkResult,
 )
+from vrl.generation.execution.chunks import SampleChunk  # noqa: E402
 from vrl.generation.execution.pipeline import (  # noqa: E402
     _move_tree_to_cpu_async,
     forward_chunks_pipelined,
@@ -80,9 +81,7 @@ def test_pipelined_moves_real_slots_chunk_result_to_cpu() -> None:
     def _produce_chunk(chunk: int) -> DiffusionChunkResult:
         tensors = _produce(chunk)
         return DiffusionChunkResult(
-            prompt_index=0,
-            sample_start=chunk,
-            sample_count=1,
+            chunk=SampleChunk(prompt_index=0, sample_start=chunk, sample_count=1),
             observations=tensors["obs"],
             actions=None,
             log_probs=None,

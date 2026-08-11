@@ -44,6 +44,15 @@ from vrl.ray.resources import (
 
 logger = logging.getLogger(__name__)
 
+
+class _ActorPlacementMetadata(Protocol):
+    worker_id: str
+    node_ip: str
+    gpu_ids: Sequence[int]
+
+
+_ActorPlacementInput = Mapping[str, Any] | _ActorPlacementMetadata
+
 # Seconds to wait for the run-level placement group to become ready before the
 # owner declares the cluster unable to satisfy its bundles.
 _PLACEMENT_READY_TIMEOUT_S = 600.0
@@ -116,7 +125,7 @@ def cross_node_preflight(ray: Any, resources: ResolvedDistributedResources) -> N
 
 
 def validate_actor_gpu_ids(
-    metadata: Sequence[Mapping[str, Any]],
+    metadata: Sequence[_ActorPlacementInput],
     *,
     expected_gpu_ids: Sequence[int],
     role: str,
@@ -146,8 +155,8 @@ def validate_actor_gpu_ids(
 
     actual: set[int] = set()
     for meta in metadata:
-        worker_id = str(meta.get("worker_id", "unknown"))
-        worker_gpu_ids = tuple(int(gpu_id) for gpu_id in meta.get("gpu_ids", ()))
+        worker_id = str(_placement_meta_get(meta, "worker_id", "unknown"))
+        worker_gpu_ids = tuple(int(gpu_id) for gpu_id in _placement_meta_get(meta, "gpu_ids", ()))
         if not worker_gpu_ids:
             raise RuntimeError(f"Ray {role} worker {worker_id} has no assigned GPU ids")
         outside = set(worker_gpu_ids) - expected
@@ -168,7 +177,7 @@ def validate_actor_gpu_ids(
 
 
 def _validate_cross_node_actor_gpu_ids(
-    metadata: Sequence[Mapping[str, Any]],
+    metadata: Sequence[_ActorPlacementInput],
     *,
     role: str,
     driver_node_ip: str | None,
@@ -178,9 +187,9 @@ def _validate_cross_node_actor_gpu_ids(
     seen_pairs: set[tuple[str, int]] = set()
     gpu_ids: list[int] = []
     for meta in metadata:
-        worker_id = str(meta.get("worker_id", "unknown"))
-        node_ip = str(meta.get("node_ip", ""))
-        worker_gpu_ids = tuple(int(gpu_id) for gpu_id in meta.get("gpu_ids", ()))
+        worker_id = str(_placement_meta_get(meta, "worker_id", "unknown"))
+        node_ip = str(_placement_meta_get(meta, "node_ip", ""))
+        worker_gpu_ids = tuple(int(gpu_id) for gpu_id in _placement_meta_get(meta, "gpu_ids", ()))
         if not worker_gpu_ids:
             raise RuntimeError(f"Ray {role} worker {worker_id} has no assigned GPU ids")
         if driver_node_ip is not None and node_ip == str(driver_node_ip):
@@ -200,6 +209,12 @@ def _validate_cross_node_actor_gpu_ids(
             seen_pairs.add(pair)
             gpu_ids.append(gpu_id)
     return tuple(sorted(gpu_ids))
+
+
+def _placement_meta_get(meta: _ActorPlacementInput, key: str, default: Any) -> Any:
+    if isinstance(meta, Mapping):
+        return meta.get(key, default)
+    return getattr(meta, key, default)
 
 
 @dataclass(frozen=True, slots=True)

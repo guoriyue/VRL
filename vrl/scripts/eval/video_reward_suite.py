@@ -42,7 +42,7 @@ from typing import Any
 import torch
 
 from vrl.config.loading import load_config
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval._kling_reward import resolve_kling_worker_config
 from vrl.trainers.data.prompts import load_prompt_manifest
@@ -218,16 +218,9 @@ def _score_kling(
             artifact = RewardInferenceArtifact(
                 artifact_id=video.stem,
                 path=str(video),
-                media_type="video",
                 prompt=prompts[video],
             )
-            request = RewardInferenceRequest(
-                request_id="video-reward-suite",
-                artifacts=(artifact,),
-                reward_name="kling_video_reward",
-                score_key="overall_reward",
-            )
-            scores[str(video)] = dict(model(artifact=artifact, request=request))
+            scores[str(video)] = dict(model(artifact))
     finally:
         del model
         if torch.cuda.is_available():
@@ -346,19 +339,9 @@ def _score_reward_model(
             artifact = RewardInferenceArtifact(
                 artifact_id=video.stem,
                 path=str(video),
-                media_type="video",
                 prompt=prompts[video],
             )
-            request = RewardInferenceRequest(
-                request_id="video-reward-suite",
-                artifacts=(artifact,),
-                reward_name="video_reward_suite",
-                score_key="overall",
-            )
-            scores[str(video)] = {
-                str(key): float(value)
-                for key, value in model(artifact=artifact, request=request).items()
-            }
+            scores[str(video)] = {str(key): float(value) for key, value in model(artifact).items()}
     finally:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

@@ -37,7 +37,6 @@ def _request(
         inputs=["a test prompt"],
         samples_per_prompt=2,
         sampling=sampling,
-        metadata={"dataset": "unit"},
     )
 
 
@@ -112,4 +111,4 @@ def test_build_sample_rows_is_deterministic() -> None:
         "req-1:prompt:0:sample:0",
         "req-1:prompt:0:sample:1",
     ]
-    assert {row.group_id for row in rows} == {"req-1:prompt:0"}
+    assert [(row.prompt_index, row.sample_index) for row in rows] == [(0, 0), (0, 1)]

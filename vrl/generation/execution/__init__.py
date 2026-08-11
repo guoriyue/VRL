@@ -1,7 +1,6 @@
 """Engine execution planning and request batches."""
 
 from vrl.generation.execution.chunk_placement import (
-    ChunkPlacementPolicy,
     DeviceAssignment,
     DistributedExecutionPlanner,
     DistributedGenerationPlan,
@@ -19,8 +18,10 @@ from vrl.generation.execution.planner import (
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
+    ChunkMemoryReading,
     ChunkPlacementStrategy,
-    DistributedWorkerHandle,
+    ChunkSizeProbeResult,
+    ChunkSizeProbeTrial,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
@@ -28,12 +29,13 @@ from vrl.generation.execution.worker import GenerationWorkerCore
 __all__ = [
     "ChunkExecutionEnvelope",
     "ChunkExecutionResult",
-    "ChunkPlacementPolicy",
+    "ChunkMemoryReading",
     "ChunkPlacementStrategy",
+    "ChunkSizeProbeResult",
+    "ChunkSizeProbeTrial",
     "DeviceAssignment",
     "DistributedExecutionPlanner",
     "DistributedGenerationPlan",
-    "DistributedWorkerHandle",
     "EnginePlan",
     "GenerationWorkerCore",
     "SampleChunk",

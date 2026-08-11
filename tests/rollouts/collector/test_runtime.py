@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -17,9 +18,8 @@ from vrl.generation import (
 )
 from vrl.models.families.registry import get_model_family_entry
 from vrl.ray.resources import ActorLeasePolicy, PhaseHandoffPolicy, RayLifecyclePlan
-from vrl.rewards import RewardOutput, RewardRequest
+from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.base import RewardCleanupError
-from vrl.rewards.inference import RewardMemoryReleaseProof
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
@@ -61,7 +61,7 @@ class _RequestBuilder:
             inputs=list(inputs),
             samples_per_prompt=group_size,
             sampling=dict(request_overrides or {}),
-            metadata={"source": "collector-test"},
+            runtime_debug=runtime_debug,
             policy_version=policy_version,
         )
         return CollectorRequest(
@@ -107,8 +107,6 @@ class _Runtime:
             context={"collector": "test"},
         )
         return GenerationOutput(
-            request_id=request.request_id,
-            sample_rows=sample_rows,
             output=output,
             trajectory=trajectory,
         )
@@ -122,9 +120,6 @@ class _Runtime:
         self.shutdown_calls += 1
         if self.shutdown_calls <= self.shutdown_failures:
             raise RuntimeError("runtime shutdown failed")
-
-    def is_colocated(self) -> bool:
-        return False
 
 
 class _RewardRuntime:
@@ -143,7 +138,7 @@ class _RewardRuntime:
         self.external_accelerator_isolation_verified = external_accelerator_isolation_verified
         self.shutdown_failures = 0
         self.shutdown_calls = 0
-        self.last_memory_release_proofs: tuple[RewardMemoryReleaseProof, ...] = ()
+        self.memory_parked = False
 
     async def preflight(self) -> None:
         return None
@@ -155,7 +150,7 @@ class _RewardRuntime:
 
     async def score(
         self,
-        request: RewardRequest,
+        samples: Sequence[RewardSample],
         *,
         require_memory_release: bool = False,
     ) -> RewardOutput:
@@ -163,36 +158,28 @@ class _RewardRuntime:
             self.generation_runtime.events.append("score")
         self.calls.append(
             {
-                "request_id": request.request_id,
-                "outputs": [sample.output for sample in request.samples],
-                "prompts": [sample.prompt for sample in request.samples],
-                "metadata": [sample.metadata for sample in request.samples],
-                "sample_ids": [sample.sample_id for sample in request.samples],
+                "outputs": [sample.output for sample in samples],
+                "prompts": [sample.prompt for sample in samples],
+                "metadata": [sample.metadata for sample in samples],
+                "sample_ids": [sample.sample_id for sample in samples],
             },
         )
-        self.last_memory_release_proofs = ()
+        self.memory_parked = False
         if require_memory_release:
             await self.park_memory(required=True)
-        return RewardOutput(
-            request_id=request.request_id,
-            sample_ids=tuple(sample.sample_id for sample in request.samples),
-            scores=tuple(float(index) for index in range(len(request.samples))),
-        )
+        return RewardOutput(scores=tuple(float(index) for index in range(len(samples))))
 
     async def park_memory(
         self,
         *,
         required: bool,
-    ) -> tuple[RewardMemoryReleaseProof, ...]:
+    ) -> None:
         assert required is True
         if self.generation_runtime is not None:
             self.generation_runtime.events.append("reward_park")
         if self.fail_park:
             raise RuntimeError("reward park failed")
-        self.last_memory_release_proofs = (
-            RewardMemoryReleaseProof(request_id="collector-score", released=True),
-        )
-        return self.last_memory_release_proofs
+        self.memory_parked = True
 
 
 def _collector(
@@ -231,7 +218,7 @@ def test_collector_rejects_incomplete_runtime_control_protocol() -> None:
 
 def test_collector_rejects_incomplete_reward_runtime_protocol() -> None:
     class _ScoreOnlyRewardRuntime:
-        async def score(self, request: RewardRequest) -> RewardOutput:
+        async def score(self, samples: Sequence[RewardSample]) -> RewardOutput:
             raise NotImplementedError
 
     with pytest.raises(TypeError, match="complete RewardRuntime protocol"):
@@ -313,12 +300,7 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert batch.trajectory is not None
     assert batch.group_ids.tolist() == [0, 0, 1, 1]
     assert not hasattr(batch.trajectory, "group_ids")
-    assert [row.group_id for row in batch.trajectory.sample_rows] == [
-        "g0",
-        "g0",
-        "g1",
-        "g1",
-    ]
+    assert [row.prompt_index for row in batch.trajectory.sample_rows] == [0, 0, 1, 1]
     assert not hasattr(batch, "training_view")
     assert not hasattr(batch, "dones")
     assert not hasattr(batch, "videos")
@@ -504,19 +486,19 @@ def test_dedicated_local_reward_allows_concurrent_collects_without_streaming() -
     assert collector.supports_continuous_reward_execution is True
 
 
-def test_collector_blocks_trainer_handoff_when_reward_release_proof_fails() -> None:
+def test_collector_blocks_trainer_handoff_when_reward_parking_fails() -> None:
     """A failed reward park remains terminal even after rollout itself parks."""
     import asyncio
 
     class _FailingRewardRuntime(_RewardRuntime):
         async def score(
             self,
-            request: RewardRequest,
+            samples: Sequence[RewardSample],
             *,
             require_memory_release: bool = False,
         ) -> RewardOutput:
             await super().score(
-                request,
+                samples,
                 require_memory_release=False,
             )
             assert require_memory_release is True
@@ -566,7 +548,7 @@ def test_collector_phase_final_gate_retries_reward_parking() -> None:
             self,
             *,
             required: bool,
-        ) -> tuple[RewardMemoryReleaseProof, ...]:
+        ) -> None:
             self.park_attempts += 1
             if self.generation_runtime is not None:
                 self.generation_runtime.events.append("reward_park")
@@ -598,7 +580,7 @@ def test_collector_phase_final_gate_retries_reward_parking() -> None:
     asyncio.run(collector.offload_generation_runtime_memory())
 
     assert reward_runtime.park_attempts == 2
-    assert reward_runtime.last_memory_release_proofs[0].released is True
+    assert reward_runtime.memory_parked is True
 
 
 @pytest.mark.parametrize("reward_park_fails", [False, True])
@@ -641,18 +623,13 @@ def test_collector_attempts_reward_park_after_rollout_offload_failure(
 def _reward_sample_rows(
     request_id: str,
     prompts: list[str],
-    *,
-    policy_version: int = 4,
 ) -> list[GenerationSampleRow]:
     return [
         GenerationSampleRow(
             prompt_index=index,
             sample_index=0,
             prompt=prompt,
-            group_id=f"{request_id}:group:{index}",
             sample_id=f"{request_id}:sample:{index}",
-            trajectory_id=f"{request_id}:trajectory:{index}",
-            metadata={"policy_version": policy_version},
         )
         for index, prompt in enumerate(prompts)
     ]
@@ -675,7 +652,7 @@ def _reward_sample_builder(
         samples_per_prompt=1,
     )
     output = asyncio.run(_Runtime().generate(request))
-    output.sample_rows = _reward_sample_rows(request_id, prompts)
+    output.trajectory.sample_rows = _reward_sample_rows(request_id, prompts)
     if outputs is not None:
         output.output = outputs
     return TrajectoryRolloutBatchBuilder(
@@ -695,7 +672,7 @@ def test_reward_samples_reject_sample_row_output_mismatch() -> None:
         builder.reward_samples()
 
 
-def test_reward_samples_preserve_prompt_lineage_and_metadata() -> None:
+def test_reward_samples_preserve_prompt_identity_and_metadata() -> None:
     samples = _reward_sample_builder(
         "request-0",
         ["p0", "p1"],
@@ -704,10 +681,6 @@ def test_reward_samples_preserve_prompt_lineage_and_metadata() -> None:
     ).reward_samples()
 
     assert [sample.prompt for sample in samples] == ["p0", "p1"]
-    assert [sample.source_request_id for sample in samples] == [
-        "request-0",
-        "request-0",
-    ]
     assert [sample.sample_id for sample in samples] == [
         "request-0:sample:0",
         "request-0:sample:1",
@@ -720,15 +693,8 @@ def test_reward_samples_preserve_prompt_lineage_and_metadata() -> None:
     )
 
 
-def test_reward_samples_reject_mismatched_row_request_id() -> None:
-    builder = _reward_sample_builder("request-0", ["p0"])
-    builder.output.sample_rows[0].metadata["request_id"] = "different-request"
-    with pytest.raises(ValueError, match="source request/sample-row mismatch"):
-        builder.reward_samples()
-
-
-def test_collector_uses_one_reward_request_and_splits_scores_per_group() -> None:
-    """One reward request preserves every group's metadata and lineage."""
+def test_collector_uses_one_reward_call_and_splits_scores_per_group() -> None:
+    """One reward call preserves every group's metadata and sample identity."""
     import asyncio
 
     reward_runtime = _RewardRuntime()
@@ -776,17 +742,15 @@ def test_collector_attaches_components_to_their_exact_rollout_groups() -> None:
     class _ComponentRewardRuntime(_RewardRuntime):
         async def score(
             self,
-            request: RewardRequest,
+            samples: Sequence[RewardSample],
             *,
             require_memory_release: bool = False,
         ) -> RewardOutput:
             output = await super().score(
-                request,
+                samples,
                 require_memory_release=require_memory_release,
             )
             return RewardOutput(
-                request_id=output.request_id,
-                sample_ids=output.sample_ids,
                 scores=output.scores,
                 components={
                     "observer": tuple(value + 10.0 for value in output.scores),
@@ -824,16 +788,14 @@ def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
 
         async def score(
             self,
-            request: RewardRequest,
+            samples: Sequence[RewardSample],
             *,
             require_memory_release: bool = False,
         ) -> RewardOutput:
             del require_memory_release
-            self.batch_sizes.append(len(request.samples))
+            self.batch_sizes.append(len(samples))
             return RewardOutput(
-                request_id=request.request_id,
-                sample_ids=tuple(sample.sample_id for sample in request.samples),
-                scores=tuple(float(index + 1) for index in range(len(request.samples))),
+                scores=tuple(float(index + 1) for index in range(len(samples))),
                 timing_ms={
                     "latency_ms": 12.0,
                     "queue_wait_ms": 3.0,
@@ -996,8 +958,6 @@ def test_chunk_denoise_kl_reward_sums_chunk_and_transition_axes() -> None:
         ),
     )
     output = GenerationOutput(
-        request_id=request.request_id,
-        sample_rows=sample_rows,
         output=torch.zeros(batch_size, 3, 2, 2),
         trajectory=trajectory,
     )
@@ -1080,15 +1040,12 @@ def test_collector_forwards_target_metadata_to_request() -> None:
             GenerationInput(
                 prompt="prompt",
                 reference_image="/tmp/reference.png",
-                metadata=dict(targets),
             ),
         ],
         1,
         metadata=dict(targets),
     )
 
-    assert collector_request.request.inputs[0].metadata["target_image"] == "/tmp/target.png"
-    assert collector_request.request.inputs[0].metadata["target_video"] == "/tmp/target.mp4"
     assert collector_request.metadata["target_image"] == "/tmp/target.png"
     assert collector_request.metadata["target_video"] == "/tmp/target.mp4"
 
@@ -1103,13 +1060,7 @@ def _sample_rows(request: GenerationRequest) -> list[GenerationSampleRow]:
                     prompt_index=prompt_index,
                     sample_index=sample_index,
                     prompt=prompt,
-                    group_id=f"g{prompt_index}",
                     sample_id=sample_id,
-                    trajectory_id=f"t_{sample_id}",
-                    metadata={
-                        "request_id": request.request_id,
-                        "policy_version": request.policy_version,
-                    },
                 ),
             )
     return rows

@@ -8,6 +8,7 @@ from vrl.generation.bindings.full_sequence_denoise import (
     DiffusionChunkGatherer,
     DiffusionChunkResult,
 )
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.types import GenerationRequest
 from vrl.rollouts.collector.batch_builder import (
@@ -52,9 +53,7 @@ def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
 
 def _chunk() -> DiffusionChunkResult:
     return DiffusionChunkResult(
-        prompt_index=0,
-        sample_start=0,
-        sample_count=1,
+        chunk=SampleChunk(prompt_index=0, sample_start=0, sample_count=1),
         observations=torch.ones(1, 2, 3, dtype=torch.float32),
         actions=torch.ones(1, 2, 3, dtype=torch.float32) * 2,
         log_probs=torch.ones(1, 2, dtype=torch.float32) * 3,

@@ -11,7 +11,6 @@ from typing import Any, ClassVar
 import pytest
 
 from vrl.generation.execution.types import (
-    DistributedWorkerHandle,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.ray.executor import RayGenerationExecutor
@@ -20,6 +19,7 @@ from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycleError, RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationRequest
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorCallError, RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.runtime_errors import failure_identity_cause
@@ -134,7 +134,7 @@ def _timeout_session(
     session = RayGenerationSession(
         SimpleNamespace(),
         _TimeoutWeightSync(error),
-        [DistributedWorkerHandle(worker_id="w0", actor=actor)],
+        [RayActorHandle(worker_id="w0", actor=actor)],
     )
     return session, actor
 
@@ -264,7 +264,7 @@ def cleanup_ray(monkeypatch: pytest.MonkeyPatch) -> _CleanupRay:
 
 def _parking_runtime(*reports: Any) -> RayGenerationRuntime:
     workers = [
-        DistributedWorkerHandle(
+        RayActorHandle(
             worker_id=f"rollout-{index}",
             actor=_ParkingActor(report),
         )
@@ -281,7 +281,7 @@ def _failed_parking_session() -> tuple[RayGenerationSession, _ParkingActor]:
         SimpleNamespace(),
         None,
         [
-            DistributedWorkerHandle(
+            RayActorHandle(
                 worker_id="rollout-0",
                 actor=actor,
             ),
@@ -929,7 +929,7 @@ async def test_auto_probe_timeout_force_kills_the_session_owner(
             )
 
     actor = _ProbeActor()
-    worker = DistributedWorkerHandle(worker_id="w0", actor=actor)
+    worker = RayActorHandle(worker_id="w0", actor=actor)
     executor = RayGenerationExecutor(
         SimpleNamespace(),
         [worker],
@@ -1000,7 +1000,7 @@ async def test_submitted_cancellation_force_kills_the_session_owner(
     session = RayGenerationSession(
         _Executor(),
         None,
-        [DistributedWorkerHandle(worker_id="w0", actor=actor)],
+        [RayActorHandle(worker_id="w0", actor=actor)],
     )
     runtime._session = session
     runtime.current_policy_version = None

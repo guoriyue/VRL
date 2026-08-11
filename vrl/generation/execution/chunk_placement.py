@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, fields
 from typing import Any, get_args
 
@@ -10,32 +10,11 @@ from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.planner import EnginePlan, build_engine_plan
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
+    ChunkExecutionResult,
+    ChunkMemoryReading,
     ChunkPlacementStrategy,
-    DistributedWorkerHandle,
 )
 from vrl.generation.types import GenerationRequest
-
-
-@dataclass(frozen=True, slots=True)
-class ChunkPlacementPolicy:
-    """How chunks bind to generation workers.
-
-    ``round_robin`` binds at plan time (the historical baseline).
-    ``dynamic`` leaves chunks unbound: the dispatch loop pulls the next
-    pending chunk onto the first worker with a free slot, submitting by
-    ``estimated_cost`` descending (LPT) so a large chunk never anchors the
-    tail. With one worker the two strategies are equivalent.
-    """
-
-    strategy: ChunkPlacementStrategy = "round_robin"
-
-    def __post_init__(self) -> None:
-        allowed = get_args(ChunkPlacementStrategy)
-        if self.strategy not in allowed:
-            raise ValueError(
-                "chunk placement strategy must be one of "
-                f"{', '.join(allowed)}; got {self.strategy!r}",
-            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,65 +45,12 @@ class DistributedGenerationPlan:
     assignments: tuple[DeviceAssignment, ...]
 
 
-@dataclass(frozen=True, slots=True)
-class ChunkMemoryReading:
-    """Measured CUDA memory footprint of one executed chunk (byte admission L2).
-
-    Produced worker-side around the two memory phases of a diffusion chunk
-    (denoise = sustained plateau, decode = short spike) with per-phase
-    ``reset_peak_memory_stats``, so peaks are chunk-scoped, not process-lifetime
-    high-water marks. Shadow mode only records these next to the estimator's
-    prediction; nothing here gates admission yet.
-    """
-
-    sample_count: int
-    # Whole-chunk latent tensor bytes. Calibration provenance only: the
-    # cross-shape fit (peak ~ f(latent bytes)) consumes it offline; the v0
-    # same-shape estimator does not read it.
-    latent_bytes: int
-    # torch.cuda.memory_allocated() right before the denoise loop: weights +
-    # encoder outputs + initial latents resident on the worker.
-    baseline_allocated_bytes: int
-    # Absolute allocated peaks per phase (baseline included, since resident
-    # tensors stay allocated through both phases).
-    denoise_peak_bytes: int
-    decode_peak_bytes: int
-    # Device-level occupancy at denoise start, for the budget split
-    # total = usable-by-torch + non-torch (CUDA context + other processes).
-    reserved_start_bytes: int
-    free_start_bytes: int
-    total_bytes: int
-
-    @property
-    def peak_bytes(self) -> int:
-        return max(self.denoise_peak_bytes, self.decode_peak_bytes)
-
-    @property
-    def non_torch_bytes(self) -> int:
-        """Device bytes torch cannot use: CUDA context + other processes."""
-
-        return max(0, (self.total_bytes - self.free_start_bytes) - self.reserved_start_bytes)
-
-    @property
-    def budget_bytes(self) -> int:
-        """Bytes torch could occupy on this device: current reservation + free."""
-
-        return self.reserved_start_bytes + self.free_start_bytes
-
-    @classmethod
-    def from_metrics(cls, raw: Mapping[str, Any]) -> ChunkMemoryReading | None:
-        names = [f.name for f in fields(cls)]
-        if any(raw.get(name) is None for name in names):
-            return None
-        return cls(**{name: int(raw[name]) for name in names})
-
-
 def cuda_occupancy_snapshot() -> dict[str, int] | None:
     """Device occupancy at chunk start, or None off CUDA.
 
     This is the half of a :class:`ChunkMemoryReading` that can only be measured
     before the denoise loop starts; the executor completes the record with the
-    two per-phase peaks and the sample/latent sizes, and ``from_metrics``
+    two per-phase peaks and the sample count, and ``from_metrics``
     reassembles it. It lives beside that dataclass rather than in the denoise
     loop because the key names are the byte-admission telemetry contract, not
     general CUDA semantics — and they are checked against the dataclass so a
@@ -204,11 +130,11 @@ _FLAT_FIT_UNBOUNDED = 1 << 20
 
 
 def build_chunk_memory_shadow(
-    chunk_metrics: Sequence[Mapping[str, Any]],
+    chunk_results: Sequence[ChunkExecutionResult],
 ) -> list[dict[str, Any]]:
     """Raw per-chunk memory readings for drift monitoring (no estimation).
 
-    One row per executed chunk that carried a ``chunk_memory`` reading; rows
+    One row per executed chunk that carried a typed memory reading; rows
     without one (AR chunks, CPU runs) are skipped, and no reading at all ->
     empty list so callers emit nothing. These rows are the calibration record
     the startup chunk-size probe is checked against: a steady-state peak that
@@ -217,22 +143,18 @@ def build_chunk_memory_shadow(
     """
 
     rows: list[dict[str, Any]] = []
-    for metrics in chunk_metrics:
-        raw = metrics.get("chunk_memory")
-        if not isinstance(raw, Mapping):
-            continue
-        reading = ChunkMemoryReading.from_metrics(raw)
+    for result in chunk_results:
+        reading = result.memory
         if reading is None:
             continue
         rows.append(
             {
-                "chunk_key": metrics.get("chunk_key"),
+                "chunk_key": result.chunk.chunk_key,
                 "sample_count": reading.sample_count,
                 "peak_bytes": reading.peak_bytes,
                 "baseline_allocated_bytes": reading.baseline_allocated_bytes,
                 "denoise_peak_bytes": reading.denoise_peak_bytes,
                 "decode_peak_bytes": reading.decode_peak_bytes,
-                "latent_bytes": reading.latent_bytes,
                 "non_torch_bytes": reading.non_torch_bytes,
                 "budget_bytes": reading.budget_bytes,
             },
@@ -241,22 +163,36 @@ def build_chunk_memory_shadow(
 
 
 class DistributedExecutionPlanner:
-    """Plan chunk placement across generation workers."""
+    """Plan chunk placement across generation workers.
+
+    ``round_robin`` binds at plan time. ``dynamic`` leaves chunks unbound so
+    the dispatch loop can pull the highest-cost pending chunk onto a free worker.
+    """
 
     def __init__(
         self,
         *,
-        policy: ChunkPlacementPolicy | None = None,
+        strategy: ChunkPlacementStrategy = "round_robin",
     ) -> None:
-        self.policy = policy or ChunkPlacementPolicy()
+        allowed = get_args(ChunkPlacementStrategy)
+        if strategy not in allowed:
+            raise ValueError(
+                f"chunk placement strategy must be one of {', '.join(allowed)}; got {strategy!r}",
+            )
+        self.strategy = strategy
 
     def plan_with_engine(
         self,
         request: GenerationRequest,
-        workers: list[DistributedWorkerHandle],
+        worker_ids: Sequence[str],
     ) -> DistributedGenerationPlan:
-        if not workers:
+        worker_ids = tuple(worker_ids)
+        if not worker_ids:
             raise ValueError("DistributedExecutionPlanner requires at least one worker")
+        if any(not worker_id for worker_id in worker_ids):
+            raise ValueError("DistributedExecutionPlanner worker IDs must be non-empty")
+        if len(set(worker_ids)) != len(worker_ids):
+            raise ValueError("DistributedExecutionPlanner worker IDs must be unique")
         raw_samples = request.sampling.get("samples_per_chunk", request.samples_per_prompt)
         if raw_samples == "auto":
             # "auto" is resolved to an int by the Ray runtime's startup probe
@@ -271,21 +207,21 @@ class DistributedExecutionPlanner:
             request,
             max_samples_per_chunk=max(1, max_samples),
         )
-        bind_at_plan_time = self.policy.strategy == "round_robin"
+        bind_at_plan_time = self.strategy == "round_robin"
         steps = request.sampling.get("num_steps") or request.sampling.get(
             "max_new_tokens",
         )
         cost_per_sample = max(1, int(steps or 1))
         assignments: list[DeviceAssignment] = []
         for idx, chunk in enumerate(engine_plan.chunks):
-            worker = workers[idx % len(workers)] if bind_at_plan_time else None
+            worker_id = worker_ids[idx % len(worker_ids)] if bind_at_plan_time else None
             envelope = ChunkExecutionEnvelope(
                 request=request,
                 chunk=chunk,
             )
             assignments.append(
                 DeviceAssignment(
-                    worker_id=worker.worker_id if worker else None,
+                    worker_id=worker_id,
                     envelope=envelope,
                     estimated_cost=float(chunk.sample_count * cost_per_sample),
                 ),
@@ -298,8 +234,6 @@ class DistributedExecutionPlanner:
 
 __all__ = [
     "AffinePeakFit",
-    "ChunkMemoryReading",
-    "ChunkPlacementPolicy",
     "DeviceAssignment",
     "DistributedExecutionPlanner",
     "DistributedGenerationPlan",

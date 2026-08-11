@@ -32,14 +32,18 @@ upstream free-text wording never leaks into the training config as a score key.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 import torch
 
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.assets.video_judge_prompts import (
+    VIDEOSCORE2_SCORE_REGEX,
+    VIDEOSCORE2_SYSTEM_PROMPT,
+    VIDEOSCORE2_USER_TEMPLATE,
+)
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.rewards.models.hub import resolve_model_root
 from vrl.utils.logging import init_logger, kv
@@ -51,35 +55,6 @@ _DEFAULT_FPS = 2.0
 _DEFAULT_MAX_NEW_TOKENS = 1024
 _SCORE_SCALE = (1, 2, 3, 4, 5)
 
-# The system prompt fixes the judge's task and, crucially, the output grammar we
-# parse below. Kept here (not in a YAML rubric asset) because it is a short,
-# model-specific decode contract — not a tunable business rubric. A free-text
-# rubric layer, if VideoScore2 ever grows one, belongs in worker_config.rubric_path.
-_SYSTEM_PROMPT = (
-    "You are an expert for evaluating AI-generated videos from three dimensions: "
-    "(1) visual quality - clarity, smoothness, artifacts; "
-    "(2) text-to-video alignment - fidelity to the prompt; "
-    "(3) physical/common-sense consistency - naturalness and physics plausibility. "
-    "Reason briefly, then output the final line exactly as: "
-    "visual quality: <v_score>; text-to-video alignment: <t_score>, "
-    "physical/common-sense consistency: <p_score>, "
-    "where each score is an integer from 1 to 5."
-)
-_USER_TEMPLATE = (
-    "Video prompt: {prompt}\n"
-    "Please output in this format:\n"
-    "visual quality: <v_score>; text-to-video alignment: <t_score>, "
-    "physical/common-sense consistency: <p_score>"
-)
-
-# Upstream vs2_inference.py parsing. Anchors are also reused (as marker phrases)
-# to locate each score's generation step for the soft expected-value path.
-_SCORE_REGEX = re.compile(
-    r"visual quality:\s*(\d+).*?"
-    r"text-to-video alignment:\s*(\d+).*?"
-    r"physical/common-sense consistency:\s*(\d+)",
-    re.IGNORECASE | re.DOTALL,
-)
 _DIMENSION_MARKERS: tuple[tuple[str, str], ...] = (
     ("visual_quality", "quality"),
     ("text_alignment", "alignment"),
@@ -146,11 +121,8 @@ class VideoScore2Model:
 
     def __call__(
         self,
-        *,
         artifact: RewardInferenceArtifact,
-        request: RewardInferenceRequest,
     ) -> dict[str, float]:
-        del request
         prompt, video_path = require_prompt_and_video_path(artifact, family="VideoScore2")
         return self._score_video(video_path, prompt)
 
@@ -165,12 +137,15 @@ class VideoScore2Model:
         if self.max_frame_pixels is not None:
             video_content["max_pixels"] = self.max_frame_pixels
         messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": VIDEOSCORE2_SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": [
                     video_content,
-                    {"type": "text", "text": _USER_TEMPLATE.format(prompt=prompt)},
+                    {
+                        "type": "text",
+                        "text": VIDEOSCORE2_USER_TEMPLATE.format(prompt=prompt),
+                    },
                 ],
             },
         ]
@@ -234,7 +209,7 @@ class VideoScore2Model:
 def _parse_integer_scores(text: str) -> tuple[int, int, int] | None:
     """Extract the three 1-5 integer scores from generated text (upstream regex)."""
 
-    match = _SCORE_REGEX.search(text)
+    match = VIDEOSCORE2_SCORE_REGEX.search(text)
     if match is None:
         return None
     scores = tuple(int(match.group(i)) for i in (1, 2, 3))

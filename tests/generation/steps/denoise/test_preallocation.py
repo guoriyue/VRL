@@ -84,6 +84,7 @@ def test_decode_denoise_result_does_not_serialize_model_precision() -> None:
     )
 
     chunk = executor.decode_denoise_result(
+        chunk=_chunk(),
         config=_config(sample_count=2),
         denoise_result=result,
     )
@@ -140,6 +141,7 @@ def test_decode_denoise_result_uses_only_model_exported_context() -> None:
     )
 
     chunk = executor.decode_denoise_result(
+        chunk=_chunk(),
         config=_config(sample_count=2),
         denoise_result=denoise,
     )
@@ -147,8 +149,8 @@ def test_decode_denoise_result_uses_only_model_exported_context() -> None:
     assert chunk.context == {"model_family": "test"}
 
 
-def test_forward_chunk_plan_routes_through_stage_boundary_methods() -> None:
-    """Checks fused chunk execution runs through the typed stage boundary."""
+def test_forward_probe_chunk_uses_canonical_flow_with_truncated_steps() -> None:
+    """The probe reuses the production chunk flow with an explicit step bound."""
     executor = _StageTrackingExecutor()
     request = GenerationRequest(
         request_id="req-1",
@@ -156,32 +158,27 @@ def test_forward_chunk_plan_routes_through_stage_boundary_methods() -> None:
         task="t2i",
         inputs=["prompt"],
         samples_per_prompt=2,
+        sampling={
+            "num_steps": 2,
+            "guidance_scale": 1.0,
+            "height": 8,
+            "width": 8,
+        },
     )
-    chunk = SampleChunk(
-        prompt_index=0,
-        prompt="prompt",
-        sample_start=0,
-        sample_count=2,
-    )
+    chunk = _chunk()
 
-    result = executor.forward_chunk_plan(
+    result = executor.forward_probe_chunk(
         request,
         chunk,
+        execute_steps=1,
     )
 
-    assert result == {"decoded": True, "stage_durations": {"encode": 1.0, "denoise": 2.0}}
-    assert executor.calls == [
-        "build_prompt_stage_input",
-        "run_prompt_encode_stage",
-        "run_prepare_stage",
-        "run_denoise_stage",
-        "run_decode_stage",
-    ]
+    assert result.chunk is chunk
+    assert executor.calls == ["encode", "prepare", "denoise:1", "decode"]
 
 
 def _config(*, sample_count: int = 2, return_kl: bool = False) -> DenoiseLoopConfig:
     return DenoiseLoopConfig(
-        prompt_index=0,
         sample_start=0,
         sample_count=sample_count,
         seed=None,
@@ -192,6 +189,10 @@ def _config(*, sample_count: int = 2, return_kl: bool = False) -> DenoiseLoopCon
         ),
         sde_window=(0, 0),
     )
+
+
+def _chunk(*, sample_count: int = 2) -> SampleChunk:
+    return SampleChunk(prompt_index=0, sample_start=0, sample_count=sample_count)
 
 
 def _state(
@@ -220,6 +221,22 @@ class _Scheduler:
 
 
 class _Model:
+    def encode_prompt(self, *args: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
+        del args, kwargs
+        return {"prompt_embeds": torch.ones(1, 1)}
+
+    def prepare_sampling(
+        self,
+        request: Any,
+        encoded: dict[str, torch.Tensor],
+        **kwargs: Any,
+    ) -> SimpleNamespace:
+        del kwargs
+        return _state(
+            batch=int(encoded["prompt_embeds"].shape[0]),
+            steps=request.num_steps,
+        )
+
     def forward_step(self, state: SimpleNamespace, step_idx: int) -> dict[str, torch.Tensor]:
         del step_idx
         return {"noise_pred": torch.full_like(state.latents, 0.25)}
@@ -251,55 +268,50 @@ class _StageTrackingExecutor(DiffusionChunkExecutorBase):
         super().__init__(_Model())
         self.calls: list[str] = []
 
-    def build_prompt_stage_input(
+    def encode_prompt_for_chunk(
         self,
-        request: GenerationRequest,
+        *,
+        generation_request: GenerationRequest,
+        video_request: Any,
+        params: Any,
         chunk: SampleChunk,
-    ) -> SimpleNamespace:
-        assert request.request_id == "req-1"
-        assert chunk.chunk_key == "prompt:0:samples:0:2"
-        self.calls.append("build_prompt_stage_input")
-        return SimpleNamespace(stage="prompt")
+    ) -> dict[str, Any]:
+        self.calls.append("encode")
+        return super().encode_prompt_for_chunk(
+            generation_request=generation_request,
+            video_request=video_request,
+            params=params,
+            chunk=chunk,
+        )
 
-    def run_prompt_encode_stage(
+    def prepare_denoise_state(
         self,
-        payload: Any,
         *,
-        stage_durations: dict[str, float],
-        record_function: Any,
-    ) -> SimpleNamespace:
-        assert payload.stage == "prompt"
-        assert callable(record_function)
-        self.calls.append("run_prompt_encode_stage")
-        stage_durations["encode"] = 1.0
-        return SimpleNamespace(stage="encoded")
+        request: Any,
+        encoded: dict[str, Any],
+        config: DenoiseLoopConfig,
+        prepare_kwargs: dict[str, Any] | None = None,
+    ) -> Any:
+        self.calls.append("prepare")
+        return super().prepare_denoise_state(
+            request=request,
+            encoded=encoded,
+            config=config,
+            prepare_kwargs=prepare_kwargs,
+        )
 
-    def run_prepare_stage(
+    def run_denoise_steps(
         self,
-        payload: Any,
         *,
-        stage_durations: dict[str, float],
-    ) -> SimpleNamespace:
-        assert payload.stage == "encoded"
-        assert stage_durations == {"encode": 1.0}
-        self.calls.append("run_prepare_stage")
-        return SimpleNamespace(stage="prepared")
+        state: Any,
+        config: DenoiseLoopConfig,
+    ) -> Any:
+        self.calls.append(f"denoise:{config.execute_steps}")
+        return super().run_denoise_steps(state=state, config=config)
 
-    def run_denoise_stage(
-        self,
-        payload: Any,
-        *,
-        stage_durations: dict[str, float],
-    ) -> SimpleNamespace:
-        assert payload.stage == "prepared"
-        self.calls.append("run_denoise_stage")
-        stage_durations["denoise"] = 2.0
-        return SimpleNamespace(stage="denoised", stage_durations=dict(stage_durations))
-
-    def run_decode_stage(self, payload: Any) -> dict[str, Any]:
-        assert payload.stage == "denoised"
-        self.calls.append("run_decode_stage")
-        return {"decoded": True, "stage_durations": payload.stage_durations}
+    def decode_denoise_result(self, **kwargs: Any) -> Any:
+        self.calls.append("decode")
+        return super().decode_denoise_result(**kwargs)
 
 
 def test_decode_denoise_result_packs_video_as_uint8() -> None:
@@ -328,6 +340,7 @@ def test_decode_denoise_result_packs_video_as_uint8() -> None:
     )
 
     chunk = executor.decode_denoise_result(
+        chunk=_chunk(),
         config=_config(sample_count=2),
         denoise_result=denoise,
     )
@@ -357,6 +370,7 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
         config=_config(sample_count=2),
     )
     chunk = executor.decode_denoise_result(
+        chunk=_chunk(),
         config=_config(sample_count=2),
         denoise_result=denoise,
     )
@@ -377,6 +391,7 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
 
     # Default policy is a strict identity: same tensor objects, no copies.
     chunk2 = executor.decode_denoise_result(
+        chunk=_chunk(),
         config=_config(sample_count=2),
         denoise_result=executor.run_denoise_steps(
             state=_state(batch=2, steps=1),

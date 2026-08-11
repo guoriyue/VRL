@@ -116,9 +116,7 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=index,
             prompt="draw text",
-            group_id="g0",
             sample_id=f"s{index}",
-            trajectory_id=f"t{index}",
         )
         for index in range(2)
     ]
@@ -424,7 +422,6 @@ def test_r1_executor_uses_request_overrides_then_model_defaults(
         request,
         SampleChunk(
             prompt_index=0,
-            prompt="draw text",
             sample_start=0,
             sample_count=1,
         ),
@@ -470,8 +467,7 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema(
 
     assert out.output.shape == (2, 3, 2, 2)
     assert scheduler_batch_sizes == [1]
-    assert "segments" not in out.extra
-    assert "selfcheck_text" not in out.extra
+    assert out.runtime_debug is None
     assert out.trajectory is not None
     assert "decoded" not in out.trajectory.segments
     assert out.trajectory.reward_views["image"].tensor_refs == ()

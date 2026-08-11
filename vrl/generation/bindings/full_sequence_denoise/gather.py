@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 import torch
@@ -25,7 +24,6 @@ if TYPE_CHECKING:
     from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionChunkResult
 
 
-@dataclass(frozen=True, slots=True)
 class DiffusionChunkGatherer:
     """Pure gatherer for shared diffusion chunk payloads."""
 
@@ -49,7 +47,7 @@ class DiffusionChunkGatherer:
         video = torch.cat([chunk.video for chunk in ordered_chunks], dim=0)
         replay_tensors = gather_replay_tensors(
             [chunk.replay_tensors for chunk in ordered_chunks],
-            sample_counts=[chunk.sample_count for chunk in ordered_chunks],
+            sample_counts=[chunk.chunk.sample_count for chunk in ordered_chunks],
         )
         rollout_context = require_matching_chunk_context(
             [chunk.context for chunk in ordered_chunks],
@@ -71,11 +69,8 @@ class DiffusionChunkGatherer:
         )
 
         return GenerationOutput(
-            request_id=request.request_id,
-            sample_rows=rows,
             output=video,
             trajectory=trajectory,
-            extra={},
         )
 
 

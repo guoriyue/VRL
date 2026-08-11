@@ -53,7 +53,7 @@ class PickScoreRewardModel(TorchRewardModel):
             .to(self.device, dtype=self.dtype)
         )
 
-    def score_media(self, *, media: Any, prompt: str, request: Any) -> Mapping[str, float]:
+    def score_media(self, *, media: Any, prompt: str) -> Mapping[str, float]:
         import numpy as np
         import torch
         from PIL import Image

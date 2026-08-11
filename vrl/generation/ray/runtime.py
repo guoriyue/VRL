@@ -8,7 +8,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.ray.health_monitor import RolloutWorkerHealthMonitor
 from vrl.generation.ray.lifecycle_fsm import (
     RuntimeLifecycle,
@@ -17,6 +16,7 @@ from vrl.generation.ray.lifecycle_fsm import (
 )
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationOutput, GenerationRequest
+from vrl.ray.actor_group import RayActorHandle
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 
 logger = logging.getLogger(__name__)
@@ -108,7 +108,7 @@ class RayGenerationRuntime:
         )
 
     @property
-    def _owned_workers(self) -> list[DistributedWorkerHandle]:
+    def _owned_workers(self) -> list[RayActorHandle]:
         """Fleet view consumed by the health-monitor framework adapter."""
 
         session = self._session
@@ -135,9 +135,6 @@ class RayGenerationRuntime:
         self._health_monitor.start()
         if self._session is not None and not self._session_parked:
             self._health_monitor.resume()
-
-    def is_colocated(self) -> bool:
-        return self._colocated
 
     async def _admit_operation(self, operation: str) -> None:
         """Reject closed admission and finish cleanup after monitor failures."""
@@ -266,21 +263,21 @@ class RayGenerationRuntime:
                 raise RuntimeError(
                     "samples_per_chunk: auto found no generation workers to probe",
                 )
-            resolved = min(int(result["samples_per_chunk"]) for result in local_results)
+            resolved = min(result.samples_per_chunk for result in local_results)
             for result in local_results:
                 logger.info(
                     "chunk-size probe: n=%d (budget=%.0fMB trials=%s)",
-                    int(result["samples_per_chunk"]),
-                    result["budget_bytes"] / 2**20,
+                    result.samples_per_chunk,
+                    result.budget_bytes / 2**20,
                     [
                         (
-                            trial["label"],
-                            trial["n"],
+                            trial.label,
+                            trial.n,
                             "OOM"
-                            if trial["oom"]
-                            else f"{trial['peak_bytes'] / 2**20:.0f}MB/{trial['wall_s']:.1f}s",
+                            if trial.oom
+                            else f"{trial.peak_bytes / 2**20:.0f}MB/{trial.wall_s:.1f}s",
                         )
-                        for trial in result["trials"]
+                        for trial in result.trials
                     ],
                 )
             self._probed_samples_per_chunk = resolved

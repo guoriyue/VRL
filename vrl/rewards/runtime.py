@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import traceback
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from vrl.config.reward_inference import (
@@ -16,11 +16,10 @@ from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
     RewardInferenceRuntime,
-    RewardMemoryReleaseProof,
     score_artifacts_with_model,
     validate_reward_parking_residual,
 )
-from vrl.rewards.types import RewardOutput, RewardRequest
+from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import (
     CumemPool,
@@ -67,36 +66,37 @@ class RewardFunctionRuntime:
 
     async def score(
         self,
-        request: RewardRequest,
+        samples: Sequence[RewardSample],
         *,
         require_memory_release: bool = False,
     ) -> RewardOutput:
-        """Score one request while serializing function and memory ownership."""
+        """Score ordered samples while serializing function and memory ownership."""
 
         async with self._operation_lock:
             self._require_active()
+            normalized = tuple(samples)
+            if not normalized:
+                raise ValueError("reward runtime requires at least one sample")
+            if not all(isinstance(sample, RewardSample) for sample in normalized):
+                raise TypeError("reward runtime samples must contain RewardSample values")
+            sample_ids = [sample.sample_id for sample in normalized]
+            if len(set(sample_ids)) != len(sample_ids):
+                raise ValueError("reward runtime sample_id values must be unique")
             reward_function = self._reward_function
             output: RewardOutput | None = None
             operation_error: BaseException | None = None
             try:
                 if reward_function is None:
-                    output = RewardOutput(
-                        request_id=request.request_id,
-                        sample_ids=tuple(sample.sample_id for sample in request.samples),
-                        scores=(0.0,) * len(request.samples),
-                    )
+                    output = RewardOutput(scores=(0.0,) * len(normalized))
                 else:
-                    report = await reward_function.score_batch_report(list(request.samples))
-                    output = RewardOutput(
-                        request_id=request.request_id,
-                        sample_ids=tuple(sample.sample_id for sample in request.samples),
-                        scores=tuple(report.scores),
-                        components={
-                            str(name): tuple(values) for name, values in report.components.items()
-                        },
-                        timing_ms=dict(report.timing_ms),
+                    output = await reward_function.score_batch(normalized)
+                if not isinstance(output, RewardOutput):
+                    raise TypeError("reward function score_batch() must return RewardOutput")
+                if len(output.scores) != len(normalized):
+                    raise ValueError(
+                        "reward function returned wrong number of scores: "
+                        f"scores={len(output.scores)}, samples={len(normalized)}",
                     )
-                output.validate(request)
             except BaseException as error:
                 operation_error = error
 
@@ -122,43 +122,31 @@ class RewardFunctionRuntime:
         self,
         *,
         required: bool,
-    ) -> tuple[RewardMemoryReleaseProof, ...]:
-        """Actively park reward owners and validate their fresh proofs."""
+    ) -> None:
+        """Actively park reward owners and enforce the configured gate."""
 
         async with self._operation_lock:
             self._require_active()
-            return await self._park_memory_locked(required=required)
+            await self._park_memory_locked(required=required)
 
     async def _park_memory_locked(
         self,
         *,
         required: bool,
-    ) -> tuple[RewardMemoryReleaseProof, ...]:
+    ) -> None:
         reward_function = self._reward_function
         if reward_function is None:
             if required:
                 raise RuntimeError(
-                    "shared reward topology requires a reward memory release proof, "
+                    "shared reward topology requires an active memory-parking owner, "
                     "but no reward function is configured",
                 )
-            return ()
-        proofs = tuple(await reward_function.park_memory())
-        if required and not proofs:
-            raise RuntimeError("reward function returned an empty memory release proof")
-        for proof in proofs:
-            if not isinstance(proof, RewardMemoryReleaseProof):
-                raise TypeError(
-                    "reward function park_memory() must return RewardMemoryReleaseProof values",
-                )
-            if not isinstance(proof.request_id, str):
-                raise TypeError("reward memory release proof request_id must be a str")
-            if not proof.request_id:
-                raise ValueError("reward memory release proof request_id must be non-empty")
-            # Component-owned inference request IDs are intentionally distinct
-            # from the outer RewardRequest ID. Validate proof integrity here;
-            # RewardFunction validates component/request correlation at its seam.
-            proof.validate(request_id=proof.request_id)
-        return proofs
+            return
+        parked = await reward_function.park_memory()
+        if not isinstance(parked, bool):
+            raise TypeError("reward function park_memory() must return bool")
+        if required and not parked:
+            raise RuntimeError("reward function has no active memory-parking owner")
 
     async def shutdown(self) -> None:
         """Release the wrapped function exactly once after successful teardown."""
@@ -237,7 +225,6 @@ class InProcessRewardInferenceRuntime:
             )
         self._model = model
         self._pool: CumemPool | None = None
-        self._last_request_id: str | None = None
         self._preload_gpu_used_bytes: int | None = None
         self._parking_residual_bytes_limit = int(
             self._worker_config.get("memory_parking_residual_bytes_limit", 0),
@@ -251,17 +238,12 @@ class InProcessRewardInferenceRuntime:
 
         return self._sleep_offload
 
-    async def park_memory(self) -> RewardMemoryReleaseProof:
-        """Park reward pages and return request-bound proof; safe to retry."""
+    async def park_memory(self) -> None:
+        """Park reward pages and validate the residual-memory gate; safe to retry."""
 
         if not self._sleep_offload:
             raise RuntimeError(
                 "reward runtime was not configured for complete memory parking",
-            )
-        request_id = self._last_request_id
-        if request_id is None:
-            raise RuntimeError(
-                "reward runtime cannot park before a score request has started",
             )
         pool = self._pool
         if pool is None:
@@ -277,15 +259,12 @@ class InProcessRewardInferenceRuntime:
         baseline_bytes = self._preload_gpu_used_bytes
         if baseline_bytes is None:
             raise RuntimeError("reward runtime has no pre-load GPU parking baseline")
-        proof = RewardMemoryReleaseProof(
-            request_id=request_id,
-            released=True,
-            baseline_gpu_used_bytes=baseline_bytes,
-            residual_gpu_used_bytes=self._gpu_used_bytes(),
-            residual_bytes_limit=self._parking_residual_bytes_limit,
+        validate_reward_parking_residual(
+            residual_bytes=self._gpu_used_bytes(),
+            baseline_bytes=baseline_bytes,
+            limit_bytes=self._parking_residual_bytes_limit,
+            context="reward memory parking",
         )
-        proof.validate(request_id=request_id)
-        return proof
 
     def _ensure_model(self) -> Any:
         if self._model is None:
@@ -338,7 +317,6 @@ class InProcessRewardInferenceRuntime:
         self,
         request: RewardInferenceRequest,
     ) -> list[RewardInferenceResult]:
-        self._last_request_id = request.request_id
         if not request.artifacts:
             return []
         model = self._ensure_model()
@@ -350,7 +328,6 @@ class InProcessRewardInferenceRuntime:
         return score_artifacts_with_model(
             model,
             request,
-            worker_id="local",
             reward_model_version=str(
                 self._worker_config.get("reward_model_version", ""),
             ),
@@ -383,7 +360,6 @@ class InProcessRewardInferenceRuntime:
                 context="reward memory release during shutdown",
             )
         self._pool = None
-        self._last_request_id = None
         self._preload_gpu_used_bytes = None
 
     # Instance-assignable test seams over the shared parking bookkeeping in

@@ -78,11 +78,10 @@ class Cosmos3ChunkExecutor(DiffusionChunkExecutorBase):
         params: DiffusionSamplingParams,
         chunk: SampleChunk,
     ) -> dict[str, Any]:
-        del generation_request
         return self.model.encode_prompt(
-            chunk.prompt,
+            generation_request.inputs[chunk.prompt_index].prompt,
             video_request.negative_prompt or None,
-            guidance_scale=params.base.guidance_scale,
+            guidance_scale=params.model_request.guidance_scale,
             num_frames=video_request.frame_count,
             height=video_request.height,
             width=video_request.width,

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from vrl.generation.steps.denoise.teacache import TeaCacheState, teacache_signal
+from vrl.generation.steps.denoise.teacache import TeaCacheState
 from vrl.generation.types import VideoGenerationRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.interfaces import RuntimeBundle
@@ -88,7 +88,7 @@ def make_step_fn(runtime: RuntimeBundle, cfg, teacache=None):
         step_idx = idx % int(sampling.num_steps)
         with torch.no_grad():
             if cache_state is not None and not cache_state.should_run(
-                teacache_signal(state.latents, teacache.signal),
+                state.latents,
                 step_idx,
             ):
                 noise_pred = cache_state.cached_noise_pred

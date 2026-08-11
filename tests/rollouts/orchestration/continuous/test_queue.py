@@ -119,9 +119,7 @@ def test_batch_byte_estimate_counts_trajectory_without_flat_aliases_twice() -> N
                 prompt_index=0,
                 sample_index=0,
                 prompt="p",
-                group_id="g0",
                 sample_id="s0",
-                trajectory_id="t0",
             )
         ],
         token_ids=token_ids,

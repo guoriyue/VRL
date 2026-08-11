@@ -9,12 +9,12 @@ from typing import Any
 
 import pytest
 
-from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.ray.health_monitor import (
     RolloutWorkerHealthMonitor,
     RolloutWorkerUnreachable,
 )
 from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
+from vrl.ray.actor_group import RayActorHandle
 from vrl.runtime_errors import (
     TerminalRuntimeError,
     failure_identity_cause,
@@ -133,8 +133,7 @@ class _ControlledStopEvent:
 def _runtime(*actors: _Actor) -> Any:
     return SimpleNamespace(
         _owned_workers=[
-            DistributedWorkerHandle(worker_id=f"rollout-{i}", actor=actor)
-            for i, actor in enumerate(actors)
+            RayActorHandle(worker_id=f"rollout-{i}", actor=actor) for i, actor in enumerate(actors)
         ],
         lifecycle=RuntimeLifecycle(),
     )
@@ -413,7 +412,7 @@ def test_workers_without_a_health_method_are_skipped(
     """Local (non-Ray) worker fakes have no remote probe and must not fail closed."""
 
     runtime = SimpleNamespace(
-        _owned_workers=[DistributedWorkerHandle(worker_id="local-0", actor=object())],
+        _owned_workers=[RayActorHandle(worker_id="local-0", actor=object())],
         lifecycle=RuntimeLifecycle(),
     )
     ray = _FakeRay([])
@@ -478,8 +477,8 @@ def test_real_wedged_worker_times_out_and_the_fleet_really_dies(local_ray) -> No
         timeout=5,
     ) == ["ok", "ready"]
     handles = [
-        DistributedWorkerHandle(worker_id="rollout-0", actor=healthy),
-        DistributedWorkerHandle(
+        RayActorHandle(worker_id="rollout-0", actor=healthy),
+        RayActorHandle(
             worker_id="rollout-1",
             actor=wedged,
         ),

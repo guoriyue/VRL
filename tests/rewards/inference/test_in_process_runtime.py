@@ -18,30 +18,26 @@ from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 class _SumMediaModel:
     """Toy RewardModel: scores = sum of the in-memory media values."""
 
-    def __call__(self, *, artifact, request):
+    def __call__(self, artifact):
         total = float(sum(artifact.as_media()))
         return {"overall": total, "extra": 1.0}
 
 
-def _make_request(score_key: str = "overall") -> RewardInferenceRequest:
+def _make_request() -> RewardInferenceRequest:
     return RewardInferenceRequest(
         request_id="req-1",
         artifacts=(
             RewardInferenceArtifact(
                 artifact_id="a",
                 path="",
-                media_type="image",
                 media=[1.0, 2.0],
             ),
             RewardInferenceArtifact(
                 artifact_id="b",
                 path="",
-                media_type="image",
                 media=[3.0],
             ),
         ),
-        reward_name="fake",
-        score_key=score_key,
     )
 
 
@@ -54,19 +50,17 @@ async def test_in_process_runtime_scores_without_disk_or_ray() -> None:
     assert runtime.scoring_is_nonblocking is False
     assert runtime.external_accelerator_isolation_verified is True
     assert [r.artifact_id for r in results] == ["a", "b"]  # original order preserved
-    assert results[0].selected_score == pytest.approx(3.0)
-    assert results[1].selected_score == pytest.approx(3.0)
-    assert all(r.worker_id == "local" for r in results)
+    assert results[0].scores == {"overall": 3.0, "extra": 1.0}
+    assert results[1].scores == {"overall": 3.0, "extra": 1.0}
     await runtime.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_in_process_runtime_composite_score_key_sums_components() -> None:
-    """Checks that in-process scoring sums composite score components."""
+async def test_in_process_runtime_returns_raw_score_components() -> None:
     runtime = InProcessRewardInferenceRuntime(model=_SumMediaModel())
-    results = await runtime.score_batch(_make_request(score_key="overall+extra"))
+    results = await runtime.score_batch(_make_request())
 
-    assert results[0].selected_score == pytest.approx(4.0)  # 3.0 + 1.0
+    assert results[0].scores == {"overall": 3.0, "extra": 1.0}
     await runtime.shutdown()
 
 
@@ -77,8 +71,6 @@ async def test_in_process_runtime_empty_request_returns_empty() -> None:
     request = RewardInferenceRequest(
         request_id="req-empty",
         artifacts=(),
-        reward_name="fake",
-        score_key="overall",
     )
     assert await runtime.score_batch(request) == []
 
@@ -120,7 +112,7 @@ def _immovable_factory(worker_config):
     """Build a reward model without ``to``; CuMem parking does not need it."""
 
     class _Immovable:
-        def __call__(self, *, artifact, request):
+        def __call__(self, artifact):
             return {"overall": 2.0}
 
     return _Immovable()
@@ -140,8 +132,8 @@ class _LazyTorchModel(TorchRewardModel):
         self.load_scopes.append(bool(allocator and getattr(allocator, "building", False)))
         return torch.nn.Identity()
 
-    def score_media(self, *, media, prompt, request):
-        del prompt, request
+    def score_media(self, *, media, prompt):
+        del prompt
         return {"overall": float(sum(media))}
 
 
@@ -163,7 +155,7 @@ class _FailingPrepareModel(TorchRewardModel):
         _PARTIAL_PREPARE_REF = weakref.ref(self.partial_state)
         raise RuntimeError("prepare failed")
 
-    def score_media(self, *, media, prompt, request):  # pragma: no cover
+    def score_media(self, *, media, prompt):  # pragma: no cover
         raise AssertionError("a failed preparation must never reach scoring")
 
 
@@ -178,12 +170,9 @@ def _parking_request() -> RewardInferenceRequest:
             RewardInferenceArtifact(
                 artifact_id="a0",
                 path="/tmp/a0.mp4",
-                media_type="video",
                 prompt="p",
             ),
         ),
-        reward_name="fake",
-        score_key="overall",
     )
 
 
@@ -202,13 +191,11 @@ async def test_sleep_offload_uses_cumem_pool(monkeypatch) -> None:
     )
 
     await runtime.score_batch(_parking_request())
-    first_proof = await runtime.park_memory()
+    await runtime.park_memory()
     await runtime.score_batch(_parking_request())
     await runtime.park_memory()
 
     assert len(allocator.pool_tags) == 1
-    assert first_proof.request_id == "req"
-    assert first_proof.released is True
     tag = allocator.pool_tags[0]
     assert allocator.sleeps == [(tag,), (tag,)]
     assert allocator.wakes == [[tag]]
@@ -234,7 +221,7 @@ async def test_sleep_offload_materializes_lazy_model_inside_cumem_pool(monkeypat
 
     results = await runtime.score_batch(_make_request())
 
-    assert [result.selected_score for result in results] == [3.0, 3.0]
+    assert [result.scores["overall"] for result in results] == [3.0, 3.0]
     assert runtime._model.load_scopes == [True]
     await runtime.park_memory()
     await runtime.shutdown()
@@ -285,7 +272,7 @@ async def test_failed_pooled_preparation_rolls_back_before_retry(monkeypatch) ->
 
     runtime._worker_config["model_factory"] = f"{__name__}:_lazy_torch_factory"
     results = await runtime.score_batch(_make_request())
-    assert [result.selected_score for result in results] == [3.0, 3.0]
+    assert [result.scores["overall"] for result in results] == [3.0, 3.0]
     await runtime.park_memory()
     await runtime.shutdown()
 
@@ -311,7 +298,7 @@ async def test_reward_parking_bounds_cuda_runtime_residual(
     )
     baseline = 1024
     residual = baseline + CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT + extra_residual_bytes
-    # load baseline, park proof, terminal shutdown proof
+    # Load baseline, parking residual gate, terminal shutdown gate.
     readings = iter((baseline, residual, baseline))
     runtime._gpu_used_bytes = lambda: next(readings)  # type: ignore[method-assign]
     runtime._release_cuda_memory_for_parking = lambda: None  # type: ignore[method-assign]
@@ -319,8 +306,7 @@ async def test_reward_parking_bounds_cuda_runtime_residual(
     await runtime.score_batch(_parking_request())
 
     if should_pass:
-        proof = await runtime.park_memory()
-        assert proof.residual_gpu_used_bytes == residual
+        await runtime.park_memory()
     else:
         with pytest.raises(RuntimeError, match="incomplete reward memory parking"):
             await runtime.park_memory()
@@ -329,7 +315,7 @@ async def test_reward_parking_bounds_cuda_runtime_residual(
 
 @pytest.mark.asyncio
 async def test_reward_memory_parking_retries_after_sleep_failure(monkeypatch) -> None:
-    """A failed allocator sleep does not publish proof or poison a retry."""
+    """A failed allocator sleep does not poison a retry."""
     import vrl.utils.cuda_memory as cuda_memory_mod
 
     class _FlakyAllocator(_FakeCumemAllocator):
@@ -358,10 +344,9 @@ async def test_reward_memory_parking_retries_after_sleep_failure(monkeypatch) ->
     assert runtime._pool is not None
     assert runtime._pool.asleep is False
 
-    proof = await runtime.park_memory()
+    await runtime.park_memory()
 
     assert allocator.sleep_attempts == 2
-    assert proof.released is True
     assert runtime._pool.asleep is True
 
 
@@ -457,25 +442,27 @@ async def test_real_aesthetic_score_parks_stably_across_two_cycles() -> None:
             RewardInferenceArtifact(
                 artifact_id="image-0",
                 path="",
-                media_type="image",
                 media=torch.zeros(3, 512, 512),
             ),
         ),
-        reward_name="aesthetic",
-        score_key="aesthetic",
     )
     try:
         first_result = await runtime.score_batch(request)
-        first_proof = await runtime.park_memory()
+        await runtime.park_memory()
+        first_baseline = runtime._preload_gpu_used_bytes
+        first_residual = runtime._gpu_used_bytes()
         second_result = await runtime.score_batch(request)
-        second_proof = await runtime.park_memory()
+        await runtime.park_memory()
+        second_baseline = runtime._preload_gpu_used_bytes
+        second_residual = runtime._gpu_used_bytes()
 
-        assert math.isfinite(first_result[0].selected_score)
-        assert second_result[0].selected_score == pytest.approx(
-            first_result[0].selected_score,
+        assert math.isfinite(first_result[0].scores["aesthetic"])
+        assert second_result[0].scores["aesthetic"] == pytest.approx(
+            first_result[0].scores["aesthetic"],
         )
-        first_delta = first_proof.residual_gpu_used_bytes - first_proof.baseline_gpu_used_bytes
-        second_delta = second_proof.residual_gpu_used_bytes - second_proof.baseline_gpu_used_bytes
+        assert first_baseline is not None and second_baseline is not None
+        first_delta = first_residual - first_baseline
+        second_delta = second_residual - second_baseline
         assert 0 <= first_delta <= CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
         # A second score may reuse the same process-lifetime CUDA code; it must
         # not accumulate another model-sized or steadily growing residual.

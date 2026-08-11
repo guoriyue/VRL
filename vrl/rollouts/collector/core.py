@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import time
-import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -16,7 +15,7 @@ if TYPE_CHECKING:
 
 from vrl.generation import GenerationOutput, GenerationRuntime
 from vrl.models.families.registry import ModelFamilyEntry
-from vrl.rewards import RewardRequest, RewardRuntime
+from vrl.rewards import RewardRuntime
 from vrl.rewards.base import RewardCleanupError
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.batch_builder import (
@@ -130,8 +129,8 @@ class RolloutCollector:
             errors.append(error)
         if self._requires_reward_memory_release() and self._reward_phase_started:
             # Phase-final gate: actively invoke the idempotent park operation.
-            # This retries a first sleep failure from score() and never lets
-            # a cached proof from an earlier request authorize trainer restore.
+            # This retries a first sleep failure from score(); successful return
+            # is the phase-final gate before trainer restore.
             try:
                 await self.reward_runtime.park_memory(
                     required=True,
@@ -174,7 +173,7 @@ class RolloutCollector:
             policy_version=policy_version,
         )
         # A new generation phase has not activated reward memory yet. This also
-        # prevents a previous iteration's proof from authorizing a later handoff.
+        # prevents a previous iteration's state from authorizing a later handoff.
         self._reward_phase_started = False
 
         profile = os.environ.get("VRL_PROFILE") == "1"
@@ -230,16 +229,12 @@ class RolloutCollector:
         require_reward_release = self._requires_reward_memory_release()
         self._reward_phase_started = require_reward_release
         reward_samples = [builder.reward_samples() for builder in builders]
-        reward_request = RewardRequest(
-            request_id=f"reward-{uuid.uuid4().hex}",
-            samples=tuple(sample for group_samples in reward_samples for sample in group_samples),
-        )
+        samples = tuple(sample for group_samples in reward_samples for sample in group_samples)
         with profile_range("collector.reward_score"):
             score_result = await self.reward_runtime.score(
-                reward_request,
+                samples,
                 require_memory_release=require_reward_release,
             )
-        score_result.validate(reward_request)
         reward_timing_ms = dict(score_result.timing_ms)
         if reward_timing_ms:
             unscored[0].reward_timing_ms.update(reward_timing_ms)

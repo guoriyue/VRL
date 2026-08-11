@@ -24,7 +24,11 @@ import torch
 import torch.nn as nn
 
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.assets.video_judge_prompts import (
+    VIDEOCON_PHYSICS_TEMPLATE,
+    VIDEOCON_SEMANTIC_TEMPLATE,
+)
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.rewards.models.hub import resolve_model_root
 from vrl.utils.logging import init_logger
@@ -34,14 +38,6 @@ logger = init_logger(__name__)
 _DEFAULT_REWARD_MODEL = "videophysics/videocon_physics"
 _DEFAULT_NUM_FRAMES = 32
 _DEFAULT_VIDEO_TOKEN = "<|video|>"
-
-# Templates use the videophy paper conversational format. The {caption} slot is
-# filled with the rollout prompt. {video} expands to the special media token
-# (``<|video|>``) that the MplugOwlProcessor maps to a vision-feature block.
-_DEFAULT_PHYSICS_TEMPLATE = "\nHuman: {video}\nDoes the video follow physical commonsense?\nAI: "
-_DEFAULT_SEMANTIC_TEMPLATE = (
-    '\nHuman: {video}\nDoes the video entail the caption: "{caption}"?\nAI: '
-)
 
 
 class VideoConPhysicsModel:
@@ -60,10 +56,10 @@ class VideoConPhysicsModel:
         self.device = str(self.worker_config.get("device", "cuda:0"))
         self.num_frames = int(self.worker_config.get("num_frames", _DEFAULT_NUM_FRAMES))
         self.physics_template = str(
-            self.worker_config.get("physics_template", _DEFAULT_PHYSICS_TEMPLATE),
+            self.worker_config.get("physics_template", VIDEOCON_PHYSICS_TEMPLATE),
         )
         self.semantic_template = str(
-            self.worker_config.get("semantic_template", _DEFAULT_SEMANTIC_TEMPLATE),
+            self.worker_config.get("semantic_template", VIDEOCON_SEMANTIC_TEMPLATE),
         )
 
         logger.info(
@@ -108,11 +104,8 @@ class VideoConPhysicsModel:
 
     def __call__(
         self,
-        *,
         artifact: RewardInferenceArtifact,
-        request: RewardInferenceRequest,
     ) -> dict[str, float]:
-        del request
         prompt, video_path = require_prompt_and_video_path(
             artifact,
             family="VideoCon-Physics",

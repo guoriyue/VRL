@@ -1,30 +1,18 @@
-"""GenEval reward (model-backed over the in-process transport).
-
-Scores samples against structured GenEval prompt metadata. The actual
-image/object scoring is delegated to an import-path callable (or an injected
-``scorer``), keeping the training stack independent from the GenEval repo
-layout while preserving the exact prompt metadata the evaluator needs.
-"""
+"""GenEval reward over structured prompt metadata."""
 
 from __future__ import annotations
 
+import importlib
+import inspect
 from collections.abc import Callable
 from typing import Any
 
-from vrl.rewards.base import InferenceRewardFunction
-from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.geneval import GenEvalRewardModel, _OutputBox
-from vrl.rewards.runtime import InProcessRewardInferenceRuntime
+from vrl.rewards.base import RewardFunction
 from vrl.rewards.types import RewardSample
 
 
-class GenEvalReward(InferenceRewardFunction):
-    """Score samples against GenEval prompt metadata.
-
-    The built-in mode delegates actual image/object scoring to an import-path
-    callable. This keeps the training stack independent from the GenEval repo
-    layout while preserving the exact prompt metadata needed by the evaluator.
-    """
+class GenEvalReward(RewardFunction):
+    """Delegate one sample to an injected or import-path GenEval scorer."""
 
     def __init__(
         self,
@@ -34,67 +22,59 @@ class GenEvalReward(InferenceRewardFunction):
         artifact_dir: str = "",
         scorer: Callable[..., Any] | None = None,
     ) -> None:
-        # No backend knob: the model uses the injected ``scorer`` if given,
-        # otherwise resolves the ``import_path`` callable. An unknown reward.kwargs
-        # key is a typo and fails loud here (the __init__ is the per-reward
-        # validation boundary), same as ocr.py's explicit signature.
-        # Build eagerly so an injected scorer and the import_path are wired
-        # before the first score call.
-        model = GenEvalRewardModel(
-            {
-                "device": device,
-                "import_path": import_path,
-                "debug_dir": debug_dir,
-                "artifact_dir": artifact_dir,
-                "scorer": scorer,
-            },
-        )
-        super().__init__(
-            reward_name="geneval",
-            score_key="geneval",
-            inference_runtime=InProcessRewardInferenceRuntime(model=model),
-            artifact_builder=self._build_artifacts,
-            debug_dir=debug_dir,
-            request_prefix="geneval",
-            debug_basename="geneval",
-        )
+        self.device = str(device)
+        self.import_path = str(import_path)
+        self.debug_dir = str(debug_dir)
+        self.artifact_dir = str(artifact_dir)
+        self._scorer = scorer
 
-    def _build_artifacts(
-        self,
-        samples: list[RewardSample],
-    ) -> list[RewardInferenceArtifact]:
-        artifacts: list[RewardInferenceArtifact] = []
-        for sample in samples:
-            sample_metadata = dict(sample.metadata or {})
-            geneval = self._extract_geneval_metadata(sample)
-            artifacts.append(
-                RewardInferenceArtifact(
-                    artifact_id=(f"{sample.source_request_id}:{sample.sample_id}:geneval"),
-                    path="",
-                    media_type="image",
-                    media=_OutputBox(sample.output),
-                    prompt=str(sample.prompt),
-                    source_request_id=sample.source_request_id,
-                    sample_id=sample.sample_id,
-                    group_id=sample.group_id,
-                    trajectory_id=sample.trajectory_id,
-                    policy_version=sample.policy_version,
-                    metadata={
-                        "geneval": geneval,
-                        "rollout_metadata": sample_metadata,
-                    },
-                ),
-            )
-        return artifacts
+    async def score(self, sample: RewardSample) -> float:
+        """Score one generated sample without an artificial artifact transport."""
+
+        metadata = dict(sample.metadata)
+        result = (self._scorer or self._load_import_path())(
+            prompt=sample.prompt,
+            output=sample.output,
+            geneval=self._extract_geneval_metadata(sample),
+            metadata=metadata,
+            device=self.device,
+            artifact_dir=self.artifact_dir,
+            debug_dir=self.debug_dir,
+        )
+        if inspect.isawaitable(result):
+            result = await result
+        return _normalize_result(result)
 
     @staticmethod
     def _extract_geneval_metadata(sample: RewardSample) -> dict[str, Any]:
-        metadata = dict(sample.metadata)
-        geneval = metadata.get("geneval")
+        geneval = sample.metadata.get("geneval")
         if isinstance(geneval, dict):
-            return geneval
-
+            return dict(geneval)
         raise ValueError("GenEvalReward requires metadata.geneval on each sample")
+
+    def _load_import_path(self) -> Callable[..., Any]:
+        if not self.import_path:
+            raise RuntimeError(
+                "GenEvalReward requires an injected scorer or reward.kwargs.geneval.import_path",
+            )
+        module_name, separator, attribute_name = self.import_path.partition(":")
+        if not separator or not module_name or not attribute_name:
+            raise ValueError(
+                "GenEval import_path must have the form 'module.submodule:function'",
+            )
+        scorer = getattr(importlib.import_module(module_name), attribute_name)
+        if not callable(scorer):
+            raise TypeError(f"GenEval import_path target is not callable: {self.import_path}")
+        self._scorer = scorer
+        return scorer
+
+
+def _normalize_result(result: Any) -> float:
+    if isinstance(result, dict):
+        if "score" not in result:
+            raise ValueError("GenEval scorer dict result must contain a 'score' key")
+        result = result["score"]
+    return float(result)
 
 
 __all__ = ["GenEvalReward"]

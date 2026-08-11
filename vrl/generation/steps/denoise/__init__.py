@@ -10,7 +10,6 @@ from vrl.generation.steps.denoise.loop import (
 from vrl.generation.steps.denoise.teacache import (
     TeaCacheConfig,
     TeaCacheState,
-    teacache_signal,
 )
 
 __all__ = [
@@ -22,5 +21,4 @@ __all__ = [
     "TeaCacheState",
     "preallocate_denoise_buffers",
     "run_denoise_loop",
-    "teacache_signal",
 ]
