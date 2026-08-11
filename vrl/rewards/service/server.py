@@ -1,4 +1,16 @@
-"""Async standalone reward scoring service and CLI lifecycle."""
+"""Async standalone reward scoring service and CLI lifecycle.
+
+The server half of the HTTP ``RewardScorer`` transport (client half:
+service/client.py). It runs as an operator-owned process that keeps one model
+identity and its device for its whole lifetime — the opposite deal from the
+colocated in-process scorer, which is why ``_load_service`` rejects
+``sleep_offload``. ``RewardService`` owns HTTP-side policy only — admission
+limits, request-id idempotency, cancellation, and artifact path/integrity
+validation against the configured roots — while the model runs on
+``RewardScorerOwner``'s dedicated thread (service/owner.py) so liveness and
+cancel endpoints stay responsive during synchronous GPU work. The generation
+engine has no service twin: its workers are Ray actors inside the job.
+"""
 
 from __future__ import annotations
 
