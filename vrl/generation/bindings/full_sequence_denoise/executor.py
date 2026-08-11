@@ -1,4 +1,12 @@
-"""Shared executor scaffolding for full-sequence denoise generation families."""
+"""Shared executor scaffolding for full-sequence denoise generation families.
+
+Worker-side half of the full-sequence binding: everything here runs in the
+process that owns the model (encode -> prepare -> denoise -> decode per sample
+chunk), adapting the regime-independent denoise loop
+(``vrl/generation/steps/denoise``) to ``execution``'s chunk-executor contract.
+The driver-side half lives in ``gather.py`` (model-free reassembly), with
+``layout.py`` holding the request parsing both halves share.
+"""
 
 from __future__ import annotations
 
