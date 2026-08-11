@@ -1,4 +1,12 @@
-"""RAFT motion-dynamics quality-guard reward (local, CPU/GPU)."""
+"""RAFT motion-dynamics quality-guard reward (local, CPU/GPU).
+
+Thin function-layer binding registered as ``motion_dynamics`` (Future Reward
+suite, SPRINT_future_reward): the registry builds it from YAML; the model is
+constructed eagerly here and driven through the in-process scorer. The scoring
+rationale — VBench "Dynamic Degree" via RAFT-small optical flow as an
+anti-static-collapse floor — is documented in
+``vrl.rewards.models.motion_dynamics``.
+"""
 
 from __future__ import annotations
 
