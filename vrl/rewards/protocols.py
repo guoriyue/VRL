@@ -1,4 +1,14 @@
-"""Public runtime contract for reward scoring."""
+"""Public runtime contract for reward scoring.
+
+``RewardRuntime`` is the reward engine's only face toward vrl/rollouts — the
+dual of ``GenerationRuntime`` in vrl/generation/protocols.py. The collector
+isinstance-checks it (vrl/rollouts/collector/core.py), so this module and
+types.py must stay importable without torch, CUDA utilities, or aiohttp; the
+implementation (``RewardFunctionRuntime`` in runtime.py) carries those
+dependencies. ``activate``/``park_memory`` mirror the generation runtime's
+activate/offload pair so both engines hand the GPU back and forth through the
+same lease vocabulary.
+"""
 
 from __future__ import annotations
 
