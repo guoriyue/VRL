@@ -1,4 +1,12 @@
-"""Ray-backed generation executor that gathers chunk results."""
+"""Ray-backed generation executor that gathers chunk results.
+
+The per-request slice of the Ray adapter: split one ``EnginePlan`` across the
+worker fleet, await the chunk RPCs (with stall deadlines and pipelined
+progress probing), and reassemble outputs through the model-free gatherer.
+It deliberately owns no lifecycle — admission, terminal failure, and shutdown
+belong to ``RayGenerationRuntime``, while the live actors and this executor
+are held together by ``RayGenerationSession``.
+"""
 
 from __future__ import annotations
 
