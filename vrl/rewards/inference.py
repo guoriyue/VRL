@@ -1,4 +1,16 @@
-"""Reward inference contract."""
+"""Reward inference contract.
+
+The transport seam below ``RewardFunction``: ``RewardScorer`` is the reward
+dual of the generation engine's Ray executor layer, with two implementations —
+``InProcessRewardScorer`` (runtime.py) and ``HttpRewardScorer``
+(service/client.py). This module owns the request/result dataclasses both
+transports exchange; the service wire format derives its field sets from them,
+so these dataclasses are the single schema source. It stays importable without
+torch or aiohttp (torch loads lazily inside ``as_media``) because the wire
+module, the artifact store, and the standalone service's launch parsing all
+need it. ``MemoryParkingScorer`` is an isinstance-probed optional capability,
+the reward twin of ``ChunkSizeProbeExecutor``.
+"""
 
 from __future__ import annotations
 
