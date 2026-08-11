@@ -1,4 +1,13 @@
-"""GenEval reward over structured prompt metadata."""
+"""GenEval reward over structured prompt metadata.
+
+Registered as ``geneval``. Unlike its siblings, this reward has no companion
+module under ``vrl.rewards.models``: the GenEval evaluator (its object-detection
+stack) is not a VRL dependency, so the scoring callable must be supplied — either
+injected as ``score_fn`` or named by ``reward.kwargs.geneval.import_path``
+(``module:function``, see ``vrl/config/presets/reward/geneval.yaml``). This file
+only adapts ``RewardSample`` (prompt, output, ``metadata.geneval``) to that
+external callable's signature and normalizes its result to a float.
+"""
 
 from __future__ import annotations
 
