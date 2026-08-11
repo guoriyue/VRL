@@ -1,4 +1,13 @@
-"""Runtime coordination shared by RL rollout schedules."""
+"""Runtime coordination shared by RL rollout schedules.
+
+``RolloutRuntimeCoordinator`` gives the strict and continuous schedules one
+implementation of the trainer-side lease operations: parking/restoring
+training state around a shared-GPU phase, preparing weight snapshots on the
+trainer thread (strategy export may run DDP/FSDP collectives) and pushing
+them from any loop, and tracking the policy version across syncs. Schedules
+talk to the collector only through the ``RolloutCollectorControl`` protocol,
+so the scheduling layer never imports a concrete collector or strategy type.
+"""
 
 from __future__ import annotations
 
