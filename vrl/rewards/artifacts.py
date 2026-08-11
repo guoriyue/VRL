@@ -27,9 +27,6 @@ from vrl.rewards.inference import (
     sha256_file,
 )
 from vrl.rewards.types import RewardSample
-from vrl.utils.artifacts import (
-    SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
-)
 from vrl.utils.media import write_mp4
 
 # On-disk artifact container. ``ArtifactFormat`` is the single source of truth;
@@ -37,19 +34,6 @@ from vrl.utils.media import write_mp4
 # tensor = torch.save .pt). media_type (image/video) is a separate axis.
 ArtifactFormat = Literal["tensor", "mp4"]
 ARTIFACT_FORMATS = frozenset(get_args(ArtifactFormat))
-
-# Reward-inference artifact wire allow-list. This is intentionally not derived
-# from PromptExample: list-valued manifest references do not cross this scalar
-# boundary, while rollout task/source provenance does. Each schema therefore
-# keeps its own explicit contract instead of coupling rewards to trainer data.
-_REWARD_ARTIFACT_PROVENANCE_FIELDS = (
-    "task_type",
-    "reference_image",
-    "reference_video",
-    "target_image",
-    "target_video",
-    *SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
-)
 
 
 class VideoRewardArtifactStore:
@@ -176,10 +160,19 @@ def _fps(metadata: dict[str, Any]) -> float:
 
 
 def _artifact_provenance(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Scalar metadata crosses the artifact wire; rich values stay driver-side.
+
+    The rule replaces a hand-curated key list: the disk artifact rides a JSON
+    wire to the reward service, so only JSON-scalar provenance (task type,
+    reference/target paths, source ids) can cross — tensors, PIL images, and
+    nested payloads (e.g. geneval dicts) are in-memory-transport data by
+    nature. A predicate cannot forget a newly added provenance key.
+    """
+
     return {
-        key: metadata[key]
-        for key in _REWARD_ARTIFACT_PROVENANCE_FIELDS
-        if key in metadata and metadata[key] is not None and str(metadata[key]).strip()
+        key: value
+        for key, value in metadata.items()
+        if isinstance(value, (str, int, float, bool)) and str(value).strip()
     }
 
 
