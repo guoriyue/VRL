@@ -28,7 +28,6 @@ import aiohttp
 from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
-    validate_reward_results,
 )
 from vrl.rewards.service.protocol import (
     GENERATION_OVERLAP_SAFE_CAPABILITY,
@@ -139,7 +138,7 @@ class HttpRewardScorer:
                 body,
                 expected_request_id=request.request_id,
             )
-            validated = validate_reward_results(request, results)
+            validated = request.validate_and_order_results(results)
             roundtrip_ms = (time.perf_counter() - roundtrip_started) * 1000.0
             return [
                 replace(

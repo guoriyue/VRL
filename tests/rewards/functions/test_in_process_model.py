@@ -194,6 +194,26 @@ def test_inference_reward_rejects_invalid_runtime(scorer: object) -> None:
         )
 
 
+@pytest.mark.parametrize("score_key", ["+", "a+", "+b", "a++b", " + "])
+def test_inference_reward_rejects_empty_score_key_component(score_key: str) -> None:
+    class _Runtime:
+        scoring_is_nonblocking = False
+        external_accelerator_isolation_verified = False
+
+        async def score_batch(self, request):
+            return []
+
+        async def shutdown(self) -> None:
+            return None
+
+    with pytest.raises(ValueError, match="empty component"):
+        InferenceRewardFunction(
+            reward_name="fake",
+            score_key=score_key,
+            scorer=_Runtime(),
+        )
+
+
 def test_inference_runtime_has_an_explicit_layer_name() -> None:
     reward = _reward_function_in_process()
 

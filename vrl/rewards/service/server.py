@@ -32,7 +32,6 @@ from aiohttp import web
 from vrl.rewards.inference import (
     RewardWorkerLaunchContract,
     sha256_file,
-    validate_reward_results,
 )
 from vrl.rewards.service.owner import RewardScorerOwner
 from vrl.rewards.service.protocol import (
@@ -416,7 +415,7 @@ class RewardService:
                 inference_started = time.perf_counter()
                 results = list(await self._owner.score_batch(request))
                 service_inference_wall_ms = (time.perf_counter() - inference_started) * 1000.0
-                results = validate_reward_results(request, results)
+                results = request.validate_and_order_results(results)
                 results = [
                     replace(
                         result,

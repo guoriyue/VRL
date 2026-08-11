@@ -167,6 +167,33 @@ class RewardInferenceRequest:
             raise ValueError(f"duplicate reward artifact ids: {artifact_ids}")
         object.__setattr__(self, "artifacts", artifacts)
 
+    def validate_and_order_results(
+        self,
+        results: list[RewardInferenceResult],
+    ) -> list[RewardInferenceResult]:
+        """Validate one finite result per artifact and restore request order.
+
+        Every transport (in-process, HTTP client, HTTP server) runs scored
+        results through this before handing them back, so a scorer that drops,
+        duplicates, or invents an artifact fails at the boundary it crossed.
+        The request owns the check because the request defines the expected
+        identity set and order.
+        """
+
+        expected_ids = [artifact.artifact_id for artifact in self.artifacts]
+        by_id: dict[str, RewardInferenceResult] = {}
+        for result in results:
+            if result.artifact_id in by_id:
+                raise RuntimeError(f"duplicate reward result for artifact {result.artifact_id}")
+            by_id[result.artifact_id] = result
+        missing = [artifact_id for artifact_id in expected_ids if artifact_id not in by_id]
+        extra = sorted(set(by_id) - set(expected_ids))
+        if missing or extra:
+            raise RuntimeError(
+                f"reward inference result/artifact mismatch: missing={missing}, extra={extra}",
+            )
+        return [by_id[artifact_id] for artifact_id in expected_ids]
+
 
 @dataclass(frozen=True, slots=True)
 class RewardInferenceResult:
@@ -262,27 +289,6 @@ class MemoryParkingScorer(Protocol):
     async def park_memory(self) -> None: ...
 
 
-def validate_reward_results(
-    request: RewardInferenceRequest,
-    results: list[RewardInferenceResult],
-) -> list[RewardInferenceResult]:
-    """Validate one finite result per request artifact in original order."""
-
-    expected_ids = [artifact.artifact_id for artifact in request.artifacts]
-    by_id: dict[str, RewardInferenceResult] = {}
-    for result in results:
-        if result.artifact_id in by_id:
-            raise RuntimeError(f"duplicate reward result for artifact {result.artifact_id}")
-        by_id[result.artifact_id] = result
-    missing = [artifact_id for artifact_id in expected_ids if artifact_id not in by_id]
-    extra = sorted(set(by_id) - set(expected_ids))
-    if missing or extra:
-        raise RuntimeError(
-            f"reward inference result/artifact mismatch: missing={missing}, extra={extra}",
-        )
-    return [by_id[artifact_id] for artifact_id in expected_ids]
-
-
 def score_artifacts_with_model(
     model: RewardModel,
     request: RewardInferenceRequest,
@@ -348,5 +354,4 @@ __all__ = [
     "RewardWorkerLaunchContract",
     "score_artifacts_with_model",
     "sha256_file",
-    "validate_reward_results",
 ]

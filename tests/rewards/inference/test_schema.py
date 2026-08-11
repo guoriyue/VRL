@@ -8,7 +8,6 @@ from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
     RewardInferenceResult,
-    validate_reward_results,
 )
 
 
@@ -60,7 +59,7 @@ def test_inmemory_artifact_rejects_file_integrity() -> None:
         )
 
 
-def test_validate_reward_results_orders_by_request_artifacts() -> None:
+def test_request_validates_and_orders_results_by_its_artifacts() -> None:
     request = RewardInferenceRequest(
         request_id="req",
         artifacts=(_artifact("a"), _artifact("b")),
@@ -70,7 +69,7 @@ def test_validate_reward_results_orders_by_request_artifacts() -> None:
         RewardInferenceResult(artifact_id="a", scores={"overall_reward": 1.0}),
     ]
 
-    ordered = validate_reward_results(request, results)
+    ordered = request.validate_and_order_results(results)
 
     assert [result.artifact_id for result in ordered] == ["a", "b"]
 

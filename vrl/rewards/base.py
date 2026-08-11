@@ -33,7 +33,6 @@ from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
     RewardScorer,
-    validate_reward_results,
 )
 from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
@@ -241,9 +240,13 @@ class InferenceRewardFunction(RewardFunction):
             raise TypeError("artifact_builder must be callable")
         self.reward_name = normalized_reward_name
         self.score_key = normalized_score_key
-        self._selected_score_keys = tuple(
-            part.strip() for part in normalized_score_key.split("+") if part.strip()
-        )
+        selected_score_keys = tuple(part.strip() for part in normalized_score_key.split("+"))
+        if not all(selected_score_keys):
+            raise ValueError(
+                f"score_key {normalized_score_key!r} contains an empty component; "
+                'use "a+b" to sum score keys',
+            )
+        self._selected_score_keys = selected_score_keys
         self.scorer = scorer
         self._artifact_builder = artifact_builder
         self._artifact_finalizer = artifact_finalizer
@@ -498,7 +501,7 @@ class InferenceRewardFunction(RewardFunction):
             # identity guard and request-order re-sort.
             self._inference_started = True
             raw_results = await scorer.score_batch(request)
-            results = validate_reward_results(request, raw_results)
+            results = request.validate_and_order_results(raw_results)
             inference_total_ms = (time.perf_counter() - inference_started) * 1000.0
             total_latency_ms = (time.perf_counter() - total_started) * 1000.0
             self._write_debug(
