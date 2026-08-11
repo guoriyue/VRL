@@ -1,4 +1,11 @@
-"""Build trajectory-native evaluator signals from rollout batches."""
+"""Build trajectory-native evaluator signals from rollout batches.
+
+Shared by every concrete evaluator (denoise and token): resolving recorded
+``old_log_prob``/mask facts from the trajectory, slicing per-step values when
+the replay is step-granular, moving them to the replay device, and validating
+signal shapes all happen once here instead of per evaluator. Evaluators
+compute only the fresh forward-pass values and hand them to this builder.
+"""
 
 from __future__ import annotations
 
