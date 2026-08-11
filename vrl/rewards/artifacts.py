@@ -1,4 +1,16 @@
-"""Materialize video/image reward artifacts for worker-side scoring."""
+"""Materialize video/image reward artifacts for worker-side scoring.
+
+Exists because the reward service's only artifact transport is shared
+filesystem paths: the wire format rejects in-memory media, so disk rewards
+must write stable files (with the size/sha256 integrity fields the server
+re-verifies) before scoring. Split from inference.py to keep the contract
+layer torch-free — the tensor encode/write dependency lives here. The store
+tracks which paths it owns so the finalizer seam in base.py can either delete
+a call's materializations at a terminal state or transfer them out of store
+ownership (``retain``) when a remote request's fate is unknown — a file a
+live remote scorer might still read is never deleted. No generation-side
+dual: generation results travel in-process through the Ray layer.
+"""
 
 from __future__ import annotations
 
