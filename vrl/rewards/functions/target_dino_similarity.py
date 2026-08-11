@@ -1,4 +1,12 @@
-"""DINOv2 perceptual Video2World target-similarity reward (local, CPU/GPU)."""
+"""DINOv2 perceptual Video2World target-similarity reward (local, CPU/GPU).
+
+Thin function-layer binding registered as ``target_dino_similarity`` (Future
+Reward suite, SPRINT_future_reward): the registry builds it from YAML; the
+model is constructed eagerly here and driven through the in-process scorer.
+The scoring design — frozen DINOv2 cosine as the reward-hack-resistant
+successor to the retired pixel-L1 ``target_video_similarity`` — is documented
+in ``vrl.rewards.models.target_dino_similarity``.
+"""
 
 from __future__ import annotations
 
