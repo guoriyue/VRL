@@ -16,6 +16,9 @@ from vrl.rewards.functions.videoscore2 import VideoScore2Reward
 
 
 class _Runtime:
+    scoring_is_nonblocking = False
+    external_accelerator_isolation_verified = False
+
     async def score_batch(self, request):
         return []
 

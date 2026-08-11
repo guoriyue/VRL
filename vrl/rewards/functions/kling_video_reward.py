@@ -28,7 +28,7 @@ class KlingVideoReward(DiskArtifactRewardFunction):
     ) -> None:
         # mp4, not .pt: decord can't read torch.save tensors, so a video
         # reward that omits artifact_format must still get a real container.
-        self._init_disk_artifact_reward(
+        super().__init__(
             model_factory=_KLING_VIDEO_REWARD_MODEL,
             request_prefix="kling-video-reward",
             debug_basename="kling_video_reward",

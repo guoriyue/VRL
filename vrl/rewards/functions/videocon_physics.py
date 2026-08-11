@@ -1,7 +1,6 @@
 """VideoCon-Physics reward function (disk artifacts + in-process runtime).
 
-A ``DiskArtifactRewardFunction`` configured for the disk-artifact path (see
-``_init_disk_artifact_reward``) whose runtime loads the vendored mPLUG-Owl-Video
+A ``DiskArtifactRewardFunction`` configured for the disk-artifact path whose runtime loads the vendored mPLUG-Owl-Video
 backbone with the VideoCon-Physics checkpoint and returns ``physical_commonsense``,
 ``semantic_adherence``, and ``overall`` sub-scores per artifact. This file only
 pins the model factory and the physics-reward defaults.
@@ -31,7 +30,7 @@ class VideoConPhysicsReward(DiskArtifactRewardFunction):
         artifact_format: str = "mp4",
         **kwargs: Any,
     ) -> None:
-        self._init_disk_artifact_reward(
+        super().__init__(
             model_factory=_VIDEOCON_PHYSICS_MODEL,
             request_prefix="videocon-physics",
             debug_basename="videocon_physics",

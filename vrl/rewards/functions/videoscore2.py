@@ -1,7 +1,6 @@
 """VideoScore2 reward function (disk artifacts + in-process runtime).
 
-A ``DiskArtifactRewardFunction`` on the disk-artifact path (see
-``_init_disk_artifact_reward``) whose runtime loads ``TIGER-Lab/VideoScore2`` and
+A ``DiskArtifactRewardFunction`` on the disk-artifact path whose runtime loads ``TIGER-Lab/VideoScore2`` and
 returns ``visual_quality`` / ``text_alignment`` / ``physical_common_sense`` /
 ``overall`` per artifact. This file only pins the model factory and the
 VideoScore2 defaults; transport and disk-vs-in-memory wiring are shared.
@@ -31,7 +30,7 @@ class VideoScore2Reward(DiskArtifactRewardFunction):
         artifact_format: str = "mp4",
         **kwargs: Any,
     ) -> None:
-        self._init_disk_artifact_reward(
+        super().__init__(
             model_factory=_VIDEOSCORE2_MODEL,
             request_prefix="videoscore2",
             debug_basename="videoscore2",

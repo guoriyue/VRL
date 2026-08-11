@@ -1,7 +1,6 @@
 """Cosmos3 reasoner reward function (disk artifacts + in-process runtime).
 
-A ``DiskArtifactRewardFunction`` on the disk-artifact path (see
-``_init_disk_artifact_reward``) whose runtime loads the Cosmos3 reasoner (Qwen3-VL
+A ``DiskArtifactRewardFunction`` on the disk-artifact path whose runtime loads the Cosmos3 reasoner (Qwen3-VL
 understanding tower) and returns ``task_success`` / ``contact_realism`` /
 ``temporal_consistency`` / ``physical_plausibility`` / ``overall`` per artifact.
 This file only pins the model factory and the Cosmos3-reasoner defaults;
@@ -33,7 +32,7 @@ class Cosmos3ReasonerReward(DiskArtifactRewardFunction):
         artifact_format: str = "mp4",
         **kwargs: Any,
     ) -> None:
-        self._init_disk_artifact_reward(
+        super().__init__(
             model_factory=_COSMOS3_REASONER_MODEL,
             request_prefix="cosmos3_reasoner",
             debug_basename="cosmos3_reasoner",

@@ -30,7 +30,7 @@ class UnifiedRewardVideoReward(DiskArtifactRewardFunction):
         artifact_format: str = "mp4",
         **kwargs: Any,
     ) -> None:
-        self._init_disk_artifact_reward(
+        super().__init__(
             model_factory=_UNIFIED_REWARD_VIDEO_MODEL,
             request_prefix="unified-reward-video",
             debug_basename="unified_reward_video",

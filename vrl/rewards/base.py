@@ -4,12 +4,12 @@ The plugin layer between ``RewardFunctionRuntime`` above (runtime.py) and the
 ``RewardScorer`` transports below (inference.py): concrete rewards in
 vrl/rewards/functions subclass one of the bases here. The class ladder encodes
 capabilities the registry and runtime probe, not taxonomy:
-``InferenceRewardFunction`` owns the artifact-build / score / validate /
-finalize seam so every transport (including injected fakes) passes the same
-result-identity guard; ``CumemRewardFunction`` declares that all model CUDA
-state is built in the tagged pool, enabling verified memory parking;
-``DiskArtifactRewardFunction`` tells registry preflight that media must be
-materialized to disk before scoring.
+``InferenceRewardFunction`` owns the materialize / score / validate /
+release-or-retain seam so every transport (including injected fakes) passes
+the same result-identity guard; ``CumemRewardFunction`` declares that all
+model CUDA state is built in the tagged pool, enabling verified memory
+parking; ``DiskArtifactRewardFunction`` materializes media to disk before
+scoring (registry preflight selects it by subclass).
 """
 
 from __future__ import annotations
@@ -19,17 +19,18 @@ import json
 import math
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar
 
 from vrl.rewards.inference import (
     ArtifactRetainingError,
+    InMemoryRewardArtifactStore,
     MediaType,
     MemoryParkingScorer,
     RemoteReadyScorer,
-    RewardInferenceArtifact,
+    RewardArtifactStore,
     RewardInferenceRequest,
     RewardInferenceResult,
     RewardScorer,
@@ -39,12 +40,6 @@ from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
-
-ArtifactBuilder = Callable[[list[RewardSample]], list[RewardInferenceArtifact]]
-# Runs once after scoring reaches a terminal state: either deletes the call's
-# materializations or transfers their ownership to the debug/output dir.
-ArtifactFinalizer = Callable[[list[RewardInferenceArtifact]], None]
-ArtifactTransport = Literal["in_memory", "disk"]
 
 
 def resolve_reward_component_device(
@@ -117,8 +112,6 @@ class RewardFunction:
     # Most reward constructors expose the selected device as ``device``;
     # exceptional schemas (for example NSFW's classifier_device) override it.
     device_config_key: ClassVar[str] = "device"
-    # Registry preflight reads this before constructing heavyweight models.
-    artifact_transport: ClassVar[ArtifactTransport] = "in_memory"
 
     @classmethod
     def resolve_execution_device(
@@ -186,27 +179,7 @@ class RewardFunction:
 
 
 class InferenceRewardFunction(RewardFunction):
-    """Reward function backed by one inference runtime and artifact builder."""
-
-    @staticmethod
-    def build_inmemory_artifacts(
-        samples: list[RewardSample],
-    ) -> list[RewardInferenceArtifact]:
-        """Build reward artifacts that carry media in-memory (no disk write)."""
-
-        artifacts: list[RewardInferenceArtifact] = []
-        for sample in samples:
-            metadata = dict(sample.metadata or {})
-            artifacts.append(
-                RewardInferenceArtifact(
-                    artifact_id=f"{sample.sample_id}:in-memory",
-                    path="",
-                    media=sample.output,
-                    prompt=str(sample.prompt),
-                    metadata=metadata,
-                ),
-            )
-        return artifacts
+    """Reward function backed by one scorer transport and one artifact store."""
 
     def __init__(
         self,
@@ -214,9 +187,8 @@ class InferenceRewardFunction(RewardFunction):
         reward_name: str,
         score_key: str,
         scorer: RewardScorer,
-        artifact_builder: ArtifactBuilder | None = None,
-        artifact_finalizer: ArtifactFinalizer | None = None,
-        artifact_retainer: ArtifactFinalizer | None = None,
+        artifact_store: RewardArtifactStore | None = None,
+        retain_artifacts: bool = False,
         debug_dir: str = "",
         request_prefix: str = "reward",
         debug_basename: str = "reward",
@@ -232,12 +204,14 @@ class InferenceRewardFunction(RewardFunction):
                 "scorer must implement the complete RewardScorer protocol "
                 "(score_batch/shutdown plus the two capability flags)",
             )
-        if artifact_builder is None:
-            # In-memory media is the default transport; disk rewards inject the
-            # artifact-store builder explicitly.
-            artifact_builder = InferenceRewardFunction.build_inmemory_artifacts
-        if not callable(artifact_builder):
-            raise TypeError("artifact_builder must be callable")
+        if artifact_store is None:
+            # In-memory media is the default transport; the disk base injects
+            # the file-backed store.
+            artifact_store = InMemoryRewardArtifactStore()
+        if not isinstance(artifact_store, RewardArtifactStore):
+            raise TypeError(
+                "artifact_store must implement materialize/release/retain",
+            )
         self.reward_name = normalized_reward_name
         self.score_key = normalized_score_key
         selected_score_keys = tuple(part.strip() for part in normalized_score_key.split("+"))
@@ -248,9 +222,8 @@ class InferenceRewardFunction(RewardFunction):
             )
         self._selected_score_keys = selected_score_keys
         self.scorer = scorer
-        self._artifact_builder = artifact_builder
-        self._artifact_finalizer = artifact_finalizer
-        self._artifact_retainer = artifact_retainer
+        self.artifact_store = artifact_store
+        self._retain_artifacts = bool(retain_artifacts)
         self.debug_dir = str(debug_dir)
         self._request_prefix = request_prefix
         self._debug_basename = debug_basename
@@ -315,171 +288,16 @@ class InferenceRewardFunction(RewardFunction):
         return (await self.score_batch((sample,))).scores[0]
 
     async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
-        """Score ordered samples through the configured inference runtime."""
+        """Materialize, score, validate, and finalize one ordered sample batch."""
 
-        return await self._score_with_scorer(list(samples))
-
-    def _select_score(self, scores: Mapping[str, Any]) -> float:
-        missing = [key for key in self._selected_score_keys if key not in scores]
-        if missing:
-            raise KeyError(
-                "reward inference result missing score keys: "
-                f"missing={missing}, requested={self.score_key!r}, "
-                f"available={sorted(scores)}",
-            )
-        value = float(sum(float(scores[key]) for key in self._selected_score_keys))
-        if not math.isfinite(value):
-            raise ValueError(
-                f"reward score_key={self.score_key!r} selected non-finite score: {value}",
-            )
-        return value
-
-    async def shutdown(self) -> None:
-        await self.scorer.shutdown()
-
-    def _init_reward_model(
-        self,
-        *,
-        reward_name: str,
-        score_key: str,
-        model_factory: str,
-        worker_config: Mapping[str, Any],
-    ) -> None:
-        """Initialize a RewardFunction backed by a RewardModel factory."""
-
-        from vrl.rewards.runtime import build_reward_scorer
-
-        InferenceRewardFunction.__init__(
-            self,
-            reward_name=reward_name,
-            score_key=score_key,
-            scorer=build_reward_scorer(
-                {**dict(worker_config), "model_factory": str(model_factory)},
-            ),
-        )
-
-    def _init_disk_artifact_reward(
-        self,
-        *,
-        model_factory: str,
-        request_prefix: str,
-        debug_basename: str,
-        artifact_format: str,
-        reward_name: str,
-        score_key: str,
-        media_type: MediaType = "video",
-        artifact_dir: str = "outputs/reward_artifacts",
-        debug_dir: str = "",
-        device: str | None = None,
-        sleep_offload: bool = False,
-        memory_parking_residual_bytes_limit: int = 0,
-        retain_artifacts: bool = False,
-        worker_config: Mapping[str, Any] | None = None,
-        scorer: RewardScorer | None = None,
-    ) -> None:
-        """Initialize a reward whose media is materialized to disk before scoring.
-
-        Sibling to :meth:`_init_reward_model`: same idea (configure ``self`` as a
-        ``RewardFunction``), but the heavyweight path — media is written to disk
-        via ``VideoRewardArtifactStore`` and scored through the selected inference runtime,
-        instead of passed in-memory. ``sleep_offload`` releases an in-process
-        model's physical GPU pages between scores while its contents stay in
-        pinned host RAM (the rollout/trainer own the GPU then), mirroring the
-        rollout lease's sleep/wake.
-        ``model_factory`` / ``request_prefix`` / ``debug_basename``
-        are the only per-reward differences (concrete rewards set their own
-        ``reward_name`` / ``score_key`` / ``artifact_format`` defaults before
-        delegating); everything else is shared wiring, so no concrete reward
-        copies this body. ``scorer`` injects a ready
-        ``RewardScorer`` (tests); it wins over the factory-built one.
-        Disk files belong to this reward call and are deleted after terminal success or failure; explicit
-        ``retain_artifacts`` or an ambiguous remote state transfers them to the
-        debug/output owner instead.
-        """
-
-        from vrl.rewards.artifacts import VideoRewardArtifactStore
-        from vrl.rewards.runtime import build_reward_scorer
-
-        self.media_type = str(media_type)
-        self.artifact_store = VideoRewardArtifactStore(
-            artifact_dir,
-            media_type=self.media_type,
-            artifact_format=str(artifact_format),
-        )
-
-        if scorer is None:
-            worker_cfg = dict(worker_config or {})
-            has_model_factory = bool(
-                str(worker_cfg.get("model_factory", "")).strip(),
-            )
-            # Normalize the model-id key ONCE here so the disk loaders
-            # (kling/videocon) read only worker_config["reward_model_name"].
-            # Precedence: an explicit worker_config.reward_model_name wins;
-            # otherwise fold a top-level reward_name that looks like a HF repo
-            # (contains "/") — a bare reward_name stays a logical tag, not a
-            # model id.
-            reward_name_repo = reward_name if "/" in reward_name else ""
-            reward_model_name = str(
-                worker_cfg.get("reward_model_name") or reward_name_repo or "",
-            ).strip()
-            model_path = str(worker_cfg.get("model_path", "")).strip()
-            # YAML names the public model; the loader needs the private factory.
-            if not has_model_factory:
-                # A missing injected inference runtime is the in-process path:
-                # HTTP components inject their ready client in MultiReward before they
-                # reach this constructor. Every local disk reward therefore
-                # needs its concrete factory even when it is a composite model
-                # rather than one Hugging Face repository.
-                worker_cfg["model_factory"] = model_factory
-            if reward_model_name or model_path:
-                if reward_model_name:
-                    worker_cfg["reward_model_name"] = reward_model_name
-                if not str(worker_cfg.get("reward_model_version", "")).strip():
-                    worker_cfg["reward_model_version"] = reward_model_name or model_path
-            # Resource resolution is the device source of truth. A nested model
-            # override would split lifecycle ownership from real CUDA execution,
-            # so reject it even when this helper is called outside MultiReward.
-            if device is not None:
-                configured_device = str(worker_cfg.get("device", "")).strip()
-                worker_cfg["device"] = resolve_reward_component_device(
-                    resolved_device=str(device),
-                    overrides=[("worker_config.device", configured_device)],
-                )
-            if sleep_offload:
-                worker_cfg["sleep_offload"] = True
-                worker_cfg["memory_parking_residual_bytes_limit"] = int(
-                    memory_parking_residual_bytes_limit,
-                )
-            scorer = build_reward_scorer(worker_cfg)
-
-        InferenceRewardFunction.__init__(
-            self,
-            reward_name=str(reward_name),
-            score_key=str(score_key),
-            scorer=scorer,
-            artifact_builder=self.artifact_store.materialize,
-            artifact_finalizer=(
-                self.artifact_store.retain if retain_artifacts else self.artifact_store.release
-            ),
-            artifact_retainer=self.artifact_store.retain,
-            debug_dir=debug_dir,
-            request_prefix=request_prefix,
-            debug_basename=debug_basename,
-        )
-
-    async def _score_with_scorer(
-        self,
-        samples: list[RewardSample],
-    ) -> RewardOutput:
+        samples = list(samples)
         if not samples:
             return RewardOutput(scores=())
 
         scorer = self.scorer
-        artifact_builder = self._artifact_builder
-
         total_started = time.perf_counter()
         materialize_started = time.perf_counter()
-        artifacts = artifact_builder(samples)
+        artifacts = self.artifact_store.materialize(samples)
         materialization_ms = (time.perf_counter() - materialize_started) * 1000.0
         operation_error: BaseException | None = None
         output: RewardOutput | None = None
@@ -487,7 +305,7 @@ class InferenceRewardFunction(RewardFunction):
         try:
             if len(artifacts) != len(samples):
                 raise ValueError(
-                    "reward artifact builder returned wrong number of artifacts: "
+                    "reward artifact store returned wrong number of artifacts: "
                     f"artifacts={len(artifacts)}, samples={len(samples)}",
                 )
             request_id = f"{self._request_prefix}-{uuid.uuid4().hex}"
@@ -540,7 +358,6 @@ class InferenceRewardFunction(RewardFunction):
             operation_error = error
 
         cleanup_error: BaseException | None = None
-        artifact_finalizer = self._artifact_finalizer
         retain_for_remote = operation_error is not None and (
             isinstance(operation_error, asyncio.CancelledError)
             or (
@@ -549,18 +366,21 @@ class InferenceRewardFunction(RewardFunction):
             )
         )
         if retain_for_remote:
-            artifact_finalizer = self._artifact_retainer
             logger.warning(
                 "reward inference did not confirm terminal state; retaining %d "
                 "artifact(s) for request_id=%s",
                 len(artifacts),
                 request_id,
             )
-        if artifact_finalizer is not None:
-            try:
-                artifact_finalizer(artifacts)
-            except BaseException as error:
-                cleanup_error = error
+        finalize = (
+            self.artifact_store.retain
+            if retain_for_remote or self._retain_artifacts
+            else self.artifact_store.release
+        )
+        try:
+            finalize(artifacts)
+        except BaseException as error:
+            cleanup_error = error
         if operation_error is not None and cleanup_error is not None:
             raise RewardCleanupError(
                 "reward operation and artifact cleanup both failed",
@@ -572,6 +392,24 @@ class InferenceRewardFunction(RewardFunction):
             raise cleanup_error
         assert output is not None
         return output
+
+    def _select_score(self, scores: Mapping[str, Any]) -> float:
+        missing = [key for key in self._selected_score_keys if key not in scores]
+        if missing:
+            raise KeyError(
+                "reward inference result missing score keys: "
+                f"missing={missing}, requested={self.score_key!r}, "
+                f"available={sorted(scores)}",
+            )
+        value = float(sum(float(scores[key]) for key in self._selected_score_keys))
+        if not math.isfinite(value):
+            raise ValueError(
+                f"reward score_key={self.score_key!r} selected non-finite score: {value}",
+            )
+        return value
+
+    async def shutdown(self) -> None:
+        await self.scorer.shutdown()
 
     def _write_debug(
         self,
@@ -611,9 +449,108 @@ class CumemRewardFunction(InferenceRewardFunction):
 
 
 class DiskArtifactRewardFunction(CumemRewardFunction):
-    """Registry-visible base for rewards that require disk materialization."""
+    """Base for rewards whose media is materialized to disk before scoring.
 
-    artifact_transport: ClassVar[ArtifactTransport] = "disk"
+    The heavyweight sibling of the in-memory default: media is written to
+    disk via ``DiskRewardArtifactStore`` and scored through the selected
+    inference transport instead of riding the request in-memory (registry
+    preflight selects HTTP-capable rewards by this subclass).
+    ``model_factory`` / ``request_prefix`` / ``debug_basename`` are the only
+    per-reward differences — concrete rewards pin their own ``reward_name`` /
+    ``score_key`` / ``artifact_format`` defaults before delegating here, so no
+    concrete reward copies this wiring. ``sleep_offload`` releases an
+    in-process model's physical GPU pages between scores while its contents
+    stay in pinned host RAM (the rollout/trainer own the GPU then), mirroring
+    the rollout lease's sleep/wake. ``scorer`` injects a ready
+    ``RewardScorer`` (HTTP components, tests); it wins over the factory-built
+    one. Disk files belong to this reward call and are deleted after terminal
+    success or failure; explicit ``retain_artifacts`` or an ambiguous remote
+    state transfers them to the debug/output owner instead.
+    """
+
+    def __init__(
+        self,
+        *,
+        model_factory: str,
+        request_prefix: str,
+        debug_basename: str,
+        artifact_format: str,
+        reward_name: str,
+        score_key: str,
+        media_type: MediaType = "video",
+        artifact_dir: str = "outputs/reward_artifacts",
+        debug_dir: str = "",
+        device: str | None = None,
+        sleep_offload: bool = False,
+        memory_parking_residual_bytes_limit: int = 0,
+        retain_artifacts: bool = False,
+        worker_config: Mapping[str, Any] | None = None,
+        scorer: RewardScorer | None = None,
+    ) -> None:
+        from vrl.rewards.artifacts import DiskRewardArtifactStore
+        from vrl.rewards.runtime import build_reward_scorer
+
+        artifact_store = DiskRewardArtifactStore(
+            artifact_dir,
+            media_type=str(media_type),
+            artifact_format=str(artifact_format),
+        )
+
+        if scorer is None:
+            worker_cfg = dict(worker_config or {})
+            has_model_factory = bool(
+                str(worker_cfg.get("model_factory", "")).strip(),
+            )
+            # Normalize the model-id key ONCE here so the disk loaders
+            # (kling/videocon) read only worker_config["reward_model_name"].
+            # Precedence: an explicit worker_config.reward_model_name wins;
+            # otherwise fold a top-level reward_name that looks like a HF repo
+            # (contains "/") — a bare reward_name stays a logical tag, not a
+            # model id.
+            reward_name_repo = reward_name if "/" in reward_name else ""
+            reward_model_name = str(
+                worker_cfg.get("reward_model_name") or reward_name_repo or "",
+            ).strip()
+            model_path = str(worker_cfg.get("model_path", "")).strip()
+            # YAML names the public model; the loader needs the private factory.
+            if not has_model_factory:
+                # A missing injected scorer is the in-process path: HTTP
+                # components inject their ready client in MultiReward before
+                # they reach this constructor. Every local disk reward
+                # therefore needs its concrete factory even when it is a
+                # composite model rather than one Hugging Face repository.
+                worker_cfg["model_factory"] = model_factory
+            if reward_model_name or model_path:
+                if reward_model_name:
+                    worker_cfg["reward_model_name"] = reward_model_name
+                if not str(worker_cfg.get("reward_model_version", "")).strip():
+                    worker_cfg["reward_model_version"] = reward_model_name or model_path
+            # Resource resolution is the device source of truth. A nested model
+            # override would split lifecycle ownership from real CUDA execution,
+            # so reject it even when this constructor runs outside MultiReward.
+            if device is not None:
+                configured_device = str(worker_cfg.get("device", "")).strip()
+                worker_cfg["device"] = resolve_reward_component_device(
+                    resolved_device=str(device),
+                    overrides=[("worker_config.device", configured_device)],
+                )
+            if sleep_offload:
+                worker_cfg["sleep_offload"] = True
+                worker_cfg["memory_parking_residual_bytes_limit"] = int(
+                    memory_parking_residual_bytes_limit,
+                )
+            scorer = build_reward_scorer(worker_cfg)
+
+        super().__init__(
+            reward_name=str(reward_name),
+            score_key=str(score_key),
+            scorer=scorer,
+            artifact_store=artifact_store,
+            retain_artifacts=retain_artifacts,
+            debug_dir=debug_dir,
+            request_prefix=request_prefix,
+            debug_basename=debug_basename,
+        )
 
 
 def _max_result_timing(
@@ -637,13 +574,10 @@ def _sum_result_timing(
 
 
 __all__ = [
-    "ArtifactBuilder",
-    "ArtifactFinalizer",
-    "ArtifactTransport",
     "CumemRewardFunction",
     "DiskArtifactRewardFunction",
     "InferenceRewardFunction",
     "RewardCleanupError",
     "RewardFunction",
-    "resolve_reward_component_device",
+    "reward_worker_config_with_device",
 ]

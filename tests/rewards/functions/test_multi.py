@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from vrl.config.reward_inference import RewardInferenceConfig
-from vrl.rewards.base import InferenceRewardFunction, RewardCleanupError, RewardFunction
+from vrl.rewards.base import (
+    DiskArtifactRewardFunction,
+    InferenceRewardFunction,
+    RewardCleanupError,
+    RewardFunction,
+)
 from vrl.rewards.functions.registry import (
     MultiReward,
     validate_reward_memory_parking_components,
@@ -448,7 +453,7 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
     )
 
     component = reward.rewards[0][2]
-    assert component.artifact_transport == "disk"
+    assert isinstance(component, DiskArtifactRewardFunction)
     assert isinstance(component.scorer, HttpRewardScorer)
     assert component.scoring_is_nonblocking is True
     assert component.external_accelerator_isolation_verified is False
@@ -561,12 +566,11 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
         artifact_dir=str(tmp_path / "remote-b"),
     )
     # A real in-process runtime is the "skips local ones" half: it has no
-    # ensure_ready at all, so preflight's duck-type dispatch must step over it.
+    # ensure_ready at all, so preflight's capability dispatch must step over it.
     local = InferenceRewardFunction(
         reward_name="c",
         score_key="c",
         scorer=InProcessRewardScorer(model=_NeverScoredModel()),
-        artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
     )
     assert not hasattr(InProcessRewardScorer, "ensure_ready")
     reward = MultiReward([("a", 1.0, remote_a), ("b", 1.0, remote_b), ("c", 1.0, local)])

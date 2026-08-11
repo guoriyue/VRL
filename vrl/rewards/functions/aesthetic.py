@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.rewards.base import CumemRewardFunction
+from vrl.rewards.runtime import build_reward_scorer
 
 
 class AestheticReward(CumemRewardFunction):
@@ -31,11 +32,15 @@ class AestheticReward(CumemRewardFunction):
             "model_name": model_name,
             **kwargs,
         }
-        self._init_reward_model(
+        super().__init__(
             reward_name="aesthetic",
             score_key="aesthetic",
-            model_factory="vrl.rewards.models.aesthetic:AestheticRewardModel",
-            worker_config=worker_config,
+            scorer=build_reward_scorer(
+                {
+                    **worker_config,
+                    "model_factory": "vrl.rewards.models.aesthetic:AestheticRewardModel",
+                },
+            ),
         )
 
 

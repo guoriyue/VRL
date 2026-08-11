@@ -6,11 +6,10 @@ import pytest
 import torch
 
 from vrl.rewards.base import (
-    DiskArtifactRewardFunction,
     InferenceRewardFunction,
     RewardCleanupError,
-    RewardFunction,
 )
+from vrl.rewards.inference import InMemoryRewardArtifactStore
 from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import InProcessRewardScorer
 from vrl.rewards.types import RewardSample
@@ -48,9 +47,6 @@ def _reward_function_in_process() -> InferenceRewardFunction:
         score_key="fake",
         scorer=InProcessRewardScorer(
             model=_FakeTorchReward({"device": "cpu"}),
-        ),
-        artifact_builder=lambda samples: InferenceRewardFunction.build_inmemory_artifacts(
-            samples,
         ),
     )
 
@@ -146,12 +142,7 @@ def test_lazy_reward_models_defer_module_construction(
         assert built_on == ["cuda:7"]  # one build per runtime lifetime
 
 
-def test_reward_artifact_transport_is_registry_visible() -> None:
-    assert RewardFunction.artifact_transport == "in_memory"
-    assert DiskArtifactRewardFunction.artifact_transport == "disk"
-
-
-def test_inference_reward_defaults_to_inmemory_artifact_builder() -> None:
+def test_inference_reward_defaults_to_inmemory_artifact_store() -> None:
     class _Runtime:
         scoring_is_nonblocking = False
         external_accelerator_isolation_verified = False
@@ -166,20 +157,19 @@ def test_inference_reward_defaults_to_inmemory_artifact_builder() -> None:
         InferenceRewardFunction(
             reward_name="fake",
             score_key="fake",
-            artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
         )
     reward = InferenceRewardFunction(
         reward_name="fake",
         score_key="fake",
         scorer=_Runtime(),
     )
-    assert reward._artifact_builder is InferenceRewardFunction.build_inmemory_artifacts
-    with pytest.raises(TypeError, match="artifact_builder"):
+    assert isinstance(reward.artifact_store, InMemoryRewardArtifactStore)
+    with pytest.raises(TypeError, match="artifact_store"):
         InferenceRewardFunction(
             reward_name="fake",
             score_key="fake",
             scorer=_Runtime(),
-            artifact_builder="not-callable",  # type: ignore[arg-type]
+            artifact_store="not-a-store",  # type: ignore[arg-type]
         )
 
 
@@ -190,7 +180,6 @@ def test_inference_reward_rejects_invalid_runtime(scorer: object) -> None:
             reward_name="fake",
             score_key="fake",
             scorer=scorer,  # type: ignore[arg-type]
-            artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
         )
 
 
@@ -233,16 +222,16 @@ async def test_reward_reports_operation_and_artifact_cleanup_failures() -> None:
         async def shutdown(self) -> None:
             return None
 
-    def fail_cleanup(artifacts) -> None:
-        assert artifacts
-        raise OSError("cleanup failed")
+    class _FailingCleanupStore(InMemoryRewardArtifactStore):
+        def release(self, artifacts) -> None:
+            assert artifacts
+            raise OSError("cleanup failed")
 
     reward = InferenceRewardFunction(
         reward_name="fake",
         score_key="fake",
         scorer=_FailingRuntime(),
-        artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
-        artifact_finalizer=fail_cleanup,
+        artifact_store=_FailingCleanupStore(),
     )
 
     with pytest.raises(RewardCleanupError) as error:
@@ -268,29 +257,27 @@ async def test_reward_retains_artifacts_when_remote_state_is_ambiguous() -> None
         async def shutdown(self) -> None:
             return None
 
-    finalized = False
-    retained = False
+    class _RecordingStore(InMemoryRewardArtifactStore):
+        released = False
+        retained = False
 
-    def finalize(artifacts) -> None:
-        nonlocal finalized
-        finalized = True
+        def release(self, artifacts) -> None:
+            self.released = True
 
-    def retain(artifacts) -> None:
-        nonlocal retained
-        assert artifacts
-        retained = True
+        def retain(self, artifacts) -> None:
+            assert artifacts
+            self.retained = True
 
+    store = _RecordingStore()
     reward = InferenceRewardFunction(
         reward_name="fake",
         score_key="fake",
         scorer=_AmbiguousRuntime(),
-        artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
-        artifact_finalizer=finalize,
-        artifact_retainer=retain,
+        artifact_store=store,
     )
 
     with pytest.raises(RuntimeError, match="remote state unknown"):
         await reward.score(_sample(torch.zeros(1, 3, 2, 2)))
 
-    assert retained is True
-    assert finalized is False
+    assert store.retained is True
+    assert store.released is False

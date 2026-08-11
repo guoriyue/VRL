@@ -21,7 +21,11 @@ from vrl.config.reward_inference import (
     RewardInferenceConfig,
     parse_reward_inference_config,
 )
-from vrl.rewards.base import RewardCleanupError, RewardFunction
+from vrl.rewards.base import (
+    DiskArtifactRewardFunction,
+    RewardCleanupError,
+    RewardFunction,
+)
 from vrl.rewards.runtime import build_reward_scorer
 from vrl.rewards.types import RewardOutput, RewardSample
 
@@ -213,7 +217,7 @@ class MultiReward(RewardFunction):
                     "resource topology.",
                 )
             if inference.kind == "http":
-                if getattr(reward_cls, "artifact_transport", "in_memory") != "disk":
+                if not issubclass(reward_cls, DiskArtifactRewardFunction):
                     raise ValueError(
                         f"reward {name!r} uses in-memory artifacts and cannot use HTTP inference",
                     )

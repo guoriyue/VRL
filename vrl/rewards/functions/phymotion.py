@@ -31,7 +31,7 @@ class PhyMotionReward(DiskArtifactRewardFunction):
         artifact_format: str = "mp4",
         **kwargs: Any,
     ) -> None:
-        self._init_disk_artifact_reward(
+        super().__init__(
             model_factory=_PHYMOTION_MODEL,
             request_prefix="phymotion",
             debug_basename="phymotion",

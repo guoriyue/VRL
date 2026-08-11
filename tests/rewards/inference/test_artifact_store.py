@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from vrl.rewards.artifacts import VideoRewardArtifactStore
+from vrl.rewards.artifacts import DiskRewardArtifactStore
 from vrl.rewards.types import RewardSample
 
 
@@ -30,7 +30,7 @@ def _sample(output: torch.Tensor) -> RewardSample:
 
 def test_video_artifact_store_writes_tensor_with_provenance(tmp_path: Path) -> None:
     """Checks video artifact store writes the tensor and provenance metadata."""
-    store = VideoRewardArtifactStore(tmp_path, media_type="video")
+    store = DiskRewardArtifactStore(tmp_path, media_type="video")
 
     artifacts = store.materialize([_sample(torch.ones(1, 2, 2, 2))])
 
@@ -48,7 +48,7 @@ def test_video_artifact_store_writes_tensor_with_provenance(tmp_path: Path) -> N
 
 def test_video_artifact_store_writes_mp4_for_reward_models(tmp_path: Path) -> None:
     """Checks video artifact store writes mp4 for reward models."""
-    store = VideoRewardArtifactStore(tmp_path, media_type="video", artifact_format="mp4")
+    store = DiskRewardArtifactStore(tmp_path, media_type="video", artifact_format="mp4")
 
     artifacts = store.materialize([_sample(torch.ones(3, 2, 4, 4))])
 
@@ -62,12 +62,12 @@ def test_video_artifact_store_rejects_mp4_for_non_video_media_type(tmp_path: Pat
     """Checks mp4 artifacts require explicit video media type."""
 
     with pytest.raises(ValueError, match="artifact_format=mp4 requires media_type=video"):
-        VideoRewardArtifactStore(tmp_path, media_type="image", artifact_format="mp4")
+        DiskRewardArtifactStore(tmp_path, media_type="image", artifact_format="mp4")
 
 
 def test_video_artifact_store_rejects_bad_shape(tmp_path: Path) -> None:
     """Checks video artifact store rejects bad shape."""
-    store = VideoRewardArtifactStore(tmp_path, media_type="video")
+    store = DiskRewardArtifactStore(tmp_path, media_type="video")
 
     with pytest.raises(ValueError, match="video reward artifact expects"):
         store.materialize([_sample(torch.ones(2, 2))])
@@ -77,13 +77,13 @@ def test_video_artifact_store_rejects_unknown_artifact_format(tmp_path: Path) ->
     """An unknown artifact_format is rejected against the Literal-derived allow-list."""
 
     with pytest.raises(ValueError, match="artifact_format must be one of"):
-        VideoRewardArtifactStore(tmp_path, media_type="video", artifact_format="webm")
+        DiskRewardArtifactStore(tmp_path, media_type="video", artifact_format="webm")
 
 
 def test_video_artifact_store_never_overwrites_and_releases_owned_paths(
     tmp_path: Path,
 ) -> None:
-    store = VideoRewardArtifactStore(tmp_path, media_type="video")
+    store = DiskRewardArtifactStore(tmp_path, media_type="video")
     first = store.materialize([_sample(torch.zeros(1, 2, 2, 2))])
     second = store.materialize([_sample(torch.ones(1, 2, 2, 2))])
 

@@ -29,7 +29,7 @@ class RoboticsVideoReward(DiskArtifactRewardFunction):
         artifact_format: str = "mp4",
         **kwargs: Any,
     ) -> None:
-        self._init_disk_artifact_reward(
+        super().__init__(
             model_factory=_ROBOTICS_VIDEO_REWARD_MODEL,
             request_prefix="robotics-video-reward",
             debug_basename="robotics_video_reward",

@@ -5,10 +5,11 @@ filesystem paths: the wire format rejects in-memory media, so disk rewards
 must write stable files (with the size/sha256 integrity fields the server
 re-verifies) before scoring. Split from inference.py to keep the contract
 layer torch-free — the tensor encode/write dependency lives here. The store
-tracks which paths it owns so the finalizer seam in base.py can either delete
-a call's materializations at a terminal state or transfer them out of store
-ownership (``retain``) when a remote request's fate is unknown — a file a
-live remote scorer might still read is never deleted. No generation-side
+tracks which paths it owns so the terminal-state seam in base.py can either
+delete a call's materializations (``release``) or transfer them out of store
+ownership (``retain``) when they are explicitly kept or a remote request's
+fate is unknown — a file a live remote scorer might still read is never
+deleted. No generation-side
 dual: generation results travel in-process through the Ray layer.
 """
 
@@ -29,14 +30,12 @@ from vrl.rewards.inference import (
 from vrl.rewards.types import RewardSample
 from vrl.utils.media import write_mp4
 
-# On-disk artifact container. ``ArtifactFormat`` is the single source of truth;
-# ARTIFACT_FORMATS derives from it (mp4 = real video container decord can read,
-# tensor = torch.save .pt). media_type (image/video) is a separate axis.
+# On-disk artifact container: mp4 = real video container decord can read,
+# tensor = torch.save .pt. media_type (image/video) is a separate axis.
 ArtifactFormat = Literal["tensor", "mp4"]
-ARTIFACT_FORMATS = frozenset(get_args(ArtifactFormat))
 
 
-class VideoRewardArtifactStore:
+class DiskRewardArtifactStore:
     """Driver-side writer for stable reward media artifacts."""
 
     def __init__(
@@ -50,7 +49,7 @@ class VideoRewardArtifactStore:
             raise ValueError(
                 f"media_type must be one of {', '.join(get_args(MediaType))}",
             )
-        if artifact_format not in ARTIFACT_FORMATS:
+        if artifact_format not in get_args(ArtifactFormat):
             raise ValueError(
                 f"artifact_format must be one of {', '.join(get_args(ArtifactFormat))}",
             )
@@ -112,13 +111,14 @@ class VideoRewardArtifactStore:
         metadata = dict(sample.metadata or {})
         materialization_id = uuid.uuid4().hex
         artifact_id = f"{sample.sample_id}:{materialization_id}"
-        fps = _fps(metadata)
         suffix = "mp4" if self.artifact_format == "mp4" else "pt"
         path = (self.root / f"{materialization_id}.{suffix}").resolve()
         self._owned_paths.add(path)
         try:
             if self.artifact_format == "mp4":
-                write_mp4(tensor, path, fps=fps)
+                # fps is an mp4 encoding parameter only; reading it up front
+                # would let junk fps metadata break tensor materialization.
+                write_mp4(tensor, path, fps=_fps(metadata))
             else:
                 torch.save(tensor, path)
             size_bytes = path.stat().st_size
@@ -176,4 +176,4 @@ def _artifact_provenance(metadata: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-__all__ = ["VideoRewardArtifactStore"]
+__all__ = ["DiskRewardArtifactStore"]

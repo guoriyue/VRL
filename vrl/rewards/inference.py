@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, get_args, runtime_checkable
 
+from vrl.rewards.types import RewardSample
+
 if TYPE_CHECKING:
     from vrl.rewards.models.base import RewardModel
 
@@ -289,6 +291,54 @@ class MemoryParkingScorer(Protocol):
     async def park_memory(self) -> None: ...
 
 
+@runtime_checkable
+class RewardArtifactStore(Protocol):
+    """Owner of one scoring call's media artifacts, from build to terminal state.
+
+    ``materialize`` turns samples into scoreable artifacts. Exactly one of
+    ``release`` (delete the call's materializations) or ``retain`` (transfer
+    them to the debug/output owner) runs after scoring reaches a terminal
+    state. The in-memory store no-ops the terminal half; the disk store
+    (vrl.rewards.artifacts) deletes or keeps real files.
+    """
+
+    def materialize(
+        self,
+        samples: list[RewardSample],
+    ) -> list[RewardInferenceArtifact]: ...
+
+    def release(self, artifacts: list[RewardInferenceArtifact]) -> None: ...
+
+    def retain(self, artifacts: list[RewardInferenceArtifact]) -> None: ...
+
+
+class InMemoryRewardArtifactStore:
+    """Default store: media rides the request in-memory, nothing to clean up."""
+
+    def materialize(
+        self,
+        samples: list[RewardSample],
+    ) -> list[RewardInferenceArtifact]:
+        artifacts: list[RewardInferenceArtifact] = []
+        for sample in samples:
+            artifacts.append(
+                RewardInferenceArtifact(
+                    artifact_id=f"{sample.sample_id}:in-memory",
+                    path="",
+                    media=sample.output,
+                    prompt=str(sample.prompt),
+                    metadata=dict(sample.metadata or {}),
+                ),
+            )
+        return artifacts
+
+    def release(self, artifacts: list[RewardInferenceArtifact]) -> None:
+        return None
+
+    def retain(self, artifacts: list[RewardInferenceArtifact]) -> None:
+        return None
+
+
 def score_artifacts_with_model(
     model: RewardModel,
     request: RewardInferenceRequest,
@@ -345,8 +395,10 @@ def score_artifacts_with_model(
 __all__ = [
     "MEDIA_TYPES",
     "ArtifactRetainingError",
+    "InMemoryRewardArtifactStore",
     "MemoryParkingScorer",
     "RemoteReadyScorer",
+    "RewardArtifactStore",
     "RewardInferenceArtifact",
     "RewardInferenceRequest",
     "RewardInferenceResult",
