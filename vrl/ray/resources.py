@@ -1,4 +1,16 @@
-"""Role-level resource resolution for distributed VRL runs."""
+"""Role-level resource resolution for distributed VRL runs.
+
+Resolves the ``distributed.resources`` config into concrete per-role CUDA
+ordinals (``ResolvedDistributedResources``), the topology-derived release plan
+(``RayLifecyclePlan``), and the run-level bundle plan (``BundleLayout``).
+Deliberately Ray-free: resolution runs before ``ray.init()`` (see
+``vrl/scripts/common/online.py``), so everything here is static arithmetic
+over config and visible GPUs; live-cluster checks belong to
+``vrl.ray.placement.cross_node_preflight``. Consumers: the online launcher and
+trainer read the resolved plan, ``GlobalRayPlacementOwner`` builds the
+placement group from the bundle layout, and the rollout collector reads only
+``lifecycle`` to schedule GPU handoffs.
+"""
 
 from __future__ import annotations
 
