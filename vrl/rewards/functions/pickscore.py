@@ -1,4 +1,12 @@
-"""PickScore preference reward (model-backed, scored in-process)."""
+"""PickScore preference reward (model-backed, scored in-process).
+
+Thin function-layer binding registered as ``pickscore``: the registry builds it
+from YAML, and this file only pins the model factory plus the checkpoint
+defaults (``yuvalkirstain/PickScore_v1``, a CLIP ViT-H/14 human-preference
+model, with its matching LAION processor). The scoring logic lives in
+``vrl.rewards.models.pickscore`` and is built lazily by the scorer from the
+``model_factory`` dotted path.
+"""
 
 from __future__ import annotations
 
