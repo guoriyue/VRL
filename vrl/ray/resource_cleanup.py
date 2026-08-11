@@ -1,4 +1,11 @@
-"""Generic Ray actor and placement-group lifecycle helpers."""
+"""Generic Ray actor and placement-group lifecycle helpers.
+
+The shared cleanup contract for every Ray resource owner (actor group,
+placement owner, generation session, health monitor): cleanup is best-effort
+and never raises mid-sweep — failures are returned so the owner can retain the
+failed handles and refuse to report cleanup as complete. Separated from the
+owners so they agree on that contract instead of each re-inventing kill loops.
+"""
 
 from __future__ import annotations
 
