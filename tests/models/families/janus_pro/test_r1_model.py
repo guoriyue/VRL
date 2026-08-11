@@ -11,6 +11,7 @@ import torch.nn as nn
 from tests.models.steps.token.fixtures import StubVQ, build_stub_janus_model
 from vrl.generation import GenerationRequest, GenerationSampleRow, build_sample_rows
 from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.planner import build_engine_plan
 from vrl.models.families.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.families.janus_pro.model import (
     JanusProModel,
@@ -463,7 +464,7 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema(
     )
     specs = build_sample_rows(request)
 
-    out = executor.forward_plan(request, specs, executor.plan(request))
+    out = executor.forward_plan(request, specs, build_engine_plan(request))
 
     assert out.output.shape == (2, 3, 2, 2)
     assert scheduler_batch_sizes == [1]

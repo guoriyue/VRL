@@ -82,7 +82,6 @@ def test_ref_buffer_is_none_by_default() -> None:
 
 def test_layout_parses_cache_ref_noise_pred_flag() -> None:
     layout = DiffusionRequestLayout(
-        default_samples_per_chunk=1,
         default_num_frames=1,
         default_fps=None,
         default_max_sequence_length=512,

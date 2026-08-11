@@ -26,7 +26,6 @@ class DiffusionSamplingParams:
     """Parsed diffusion sampling fields for one generation request."""
 
     model_request: VideoGenerationRequest
-    samples_per_chunk: int
     max_sequence_length: int | None
     sde: DenoiseSDEParams
     sde_window_size: int
@@ -48,31 +47,28 @@ class DiffusionSamplingParams:
 class DiffusionRequestLayout:
     """Prompt-major request parser owned by a diffusion executor.
 
-    The five fallback values have NO defaults: the executor is their single
-    source and always supplies its resolved values (generic execution starts at
-    eight samples per chunk, several custom families require one — these are
-    behaviorally meaningful, not a repository-wide constant). A default here
-    would be a silent second source that drifts from the executor.
+    The fallback values have NO defaults: the executor is their single source
+    and always supplies its resolved values. A default here would be a silent
+    second source that drifts from the executor. Chunk width is deliberately
+    absent — it belongs to planning (``build_engine_plan``'s single fallback),
+    not to request parsing.
     """
 
     __slots__ = (
         "default_fps",
         "default_max_sequence_length",
         "default_num_frames",
-        "default_samples_per_chunk",
         "sde_type",
     )
 
     def __init__(
         self,
         *,
-        default_samples_per_chunk: int,
         default_num_frames: int,
         default_fps: int | None,
         default_max_sequence_length: int | None,
         sde_type: str,
     ) -> None:
-        self.default_samples_per_chunk = default_samples_per_chunk
         self.default_num_frames = default_num_frames
         self.default_fps = default_fps
         self.default_max_sequence_length = default_max_sequence_length
@@ -127,15 +123,6 @@ class DiffusionRequestLayout:
         )
         return DiffusionSamplingParams(
             model_request=VideoGenerationRequest(**model_request_kwargs),
-            samples_per_chunk=max(
-                1,
-                int(
-                    sampling.get(
-                        "samples_per_chunk",
-                        self.default_samples_per_chunk,
-                    )
-                ),
-            ),
             max_sequence_length=(
                 None if max_sequence_length is None else int(max_sequence_length)
             ),

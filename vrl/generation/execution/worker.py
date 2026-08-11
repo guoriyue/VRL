@@ -342,13 +342,12 @@ class GenerationWorkerCore:
         budget_bytes = int(total_bytes)
 
         def run_trial(n: int, *, timed_label: str) -> ChunkSizeProbeTrial:
-            probe_sampling = {**dict(request.sampling), "samples_per_chunk": n}
             probe_request = dataclass_replace(
                 request,
                 request_id=f"chunk-probe-{self.worker_id}-n{n}",
                 inputs=[request.inputs[0]],
                 samples_per_prompt=n,
-                sampling=probe_sampling,
+                sampling=dict(request.sampling),
             )
             chunk = SampleChunk(
                 prompt_index=0,

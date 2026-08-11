@@ -235,10 +235,8 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     # wiring comes from the registry, while this nested payload is per-run data.
     assert "family" not in restored.launch_contract.model_build
     assert restored.launch_contract.policy_version == 0
-    if entry.runtime_capabilities.accepts_samples_per_chunk:
-        assert restored.launch_contract.executor_kwargs["samples_per_chunk"] == 2
-    else:
-        assert "samples_per_chunk" not in restored.launch_contract.executor_kwargs
+    # Chunk width is per-request data (request.sampling), never executor wiring.
+    assert "samples_per_chunk" not in restored.launch_contract.executor_kwargs
     assert isinstance(restored.gatherer, expected_gatherer)
     assert not isinstance(restored.gatherer, GenerationChunkExecutor)
 
@@ -467,7 +465,8 @@ def test_executor_kwargs_use_configured_chunk_size() -> None:
     )
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
-    assert inputs.launch_contract.executor_kwargs["samples_per_chunk"] == 8
+    assert "samples_per_chunk" not in inputs.launch_contract.executor_kwargs
+    assert RolloutCollectorConfig.from_cfg(cfg).request_sampling["samples_per_chunk"] == 8
 
 
 def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
@@ -490,7 +489,6 @@ def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
     )
 
     assert get_model_family_entry("flux").executor_kwargs(cfg) == {
-        "samples_per_chunk": 3,
         "num_frames": 17,
         "max_sequence_length": 256,
         "fps": 24,
@@ -562,6 +560,4 @@ def test_custom_executor_keeps_independent_supported_memory_config() -> None:
         ),
     )
 
-    assert get_model_family_entry("wan_2_1_i2v").executor_kwargs(cfg) == {
-        "samples_per_chunk": 2,
-    }
+    assert get_model_family_entry("wan_2_1_i2v").executor_kwargs(cfg) == {}

@@ -21,9 +21,11 @@ class ChunkExecutorBase:
     denoise, token-autoregressive) differ in how ONE chunk is produced, never
     in how a request's chunks are driven or assembled, so that half lives here:
 
-    - ``forward_plan`` is the in-process twin of the Ray dispatch — the same
-      ``forward_chunk_plan`` calls with the same OOM-split retry, then the same
-      gather — so a local run cannot drift from production.
+    - ``forward_plan`` is the in-process request entry (local tools, family
+      tests, single-process e2e): the same ``forward_chunk_plan`` chunk step
+      and the same gather as the Ray dispatch, with a local OOM-split retry.
+      Production drives chunks through the Ray dispatcher instead; planning is
+      shared via ``build_engine_plan``'s single width fallback.
     - ``gather_chunks`` delegates to the gatherer injected by the composition
       root that already owns the family registry entry. The neutral execution
       layer never looks family identity up again.

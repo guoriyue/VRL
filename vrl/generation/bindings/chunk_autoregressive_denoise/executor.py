@@ -10,7 +10,6 @@ from vrl.generation.execution.chunks import (
     validate_chunk_range,
 )
 from vrl.generation.execution.executor_base import ChunkExecutorBase
-from vrl.generation.execution.planner import EnginePlan, build_engine_plan
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.types import GenerationRequest
 
@@ -85,32 +84,15 @@ class ChunkAutoregressiveDenoiseExecutorBase(ChunkExecutorBase):
     family: str
     task: str
     model: Any
-    default_samples_per_chunk: int = 1
 
     def __init__(
         self,
         model: Any,
         *,
         gatherer: ChunkGatherer | None = None,
-        samples_per_chunk: int | None = None,
     ) -> None:
-        # Keyword-only and optional: the worker constructs executors by dotted
-        # string (``executor_cls(model, **executor_kwargs)``) and only injects
-        # samples_per_chunk for families whose registry entry declares
-        # ``accepts_samples_per_chunk``. Unset keeps the class default.
         super().__init__(gatherer=gatherer)
         self.model = model
-        if samples_per_chunk is not None:
-            self.default_samples_per_chunk = max(1, int(samples_per_chunk))
-
-    def plan(
-        self,
-        request: GenerationRequest,
-    ) -> EnginePlan:
-        return build_engine_plan(
-            request,
-            max_samples_per_chunk=self.default_samples_per_chunk,
-        )
 
     def forward_chunk_plan(
         self,

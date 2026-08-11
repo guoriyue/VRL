@@ -83,20 +83,7 @@ class DistributedExecutionPlanner:
             raise ValueError("DistributedExecutionPlanner worker IDs must be non-empty")
         if len(set(worker_ids)) != len(worker_ids):
             raise ValueError("DistributedExecutionPlanner worker IDs must be unique")
-        raw_samples = request.sampling.get("samples_per_chunk", request.samples_per_prompt)
-        if raw_samples == "auto":
-            # "auto" is resolved to an int by the Ray runtime's startup probe
-            # before the request reaches planning; seeing it here means the
-            # request bypassed that runtime (e.g. a local/direct executor).
-            raise ValueError(
-                "sampling.samples_per_chunk: auto requires the Ray generation "
-                "runtime (startup chunk-size probe); set an explicit int here",
-            )
-        max_samples = int(raw_samples)
-        engine_plan = build_engine_plan(
-            request,
-            max_samples_per_chunk=max(1, max_samples),
-        )
+        engine_plan = build_engine_plan(request)
         bind_at_plan_time = self.strategy == "round_robin"
         steps = request.sampling.get("num_steps") or request.sampling.get(
             "max_new_tokens",

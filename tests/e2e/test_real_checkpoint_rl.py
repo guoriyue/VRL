@@ -464,9 +464,7 @@ class _DirectExecutorGenerationRuntime:
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         rows = build_sample_rows(request)
         with torch.no_grad():
-            plan_fn = getattr(self.executor, "plan", None)
-            plan = plan_fn(request) if callable(plan_fn) else build_engine_plan(request)
-            return self.executor.forward_plan(request, rows, plan)
+            return self.executor.forward_plan(request, rows, build_engine_plan(request))
 
     async def offload(self) -> None:
         if torch.cuda.is_available():

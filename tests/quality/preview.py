@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from vrl.generation.execution.planner import build_engine_plan
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
 # Stable test-fixture values make repeated config previews directly comparable.
@@ -156,7 +157,7 @@ def generate_rollout_preview(
         request = build_preview_request(request_builder, example, seed=seed)
         request.request_id = f"{entry.family}-rollout-preview-{index}"
         rows = build_sample_rows(request)
-        plan = executor.plan(request)
+        plan = build_engine_plan(request)
         with torch.inference_mode():
             output = executor.forward_plan(request, rows, plan)
 

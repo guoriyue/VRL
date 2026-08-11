@@ -474,11 +474,6 @@ def test_executor_uses_prompt_major_flat_seed_indices(
     assert sample_indices == [0, 1, 2, 3]
 
 
-def test_executor_rejects_subprocess_sample_batching() -> None:
-    with pytest.raises(ValueError, match="samples_per_chunk=1"):
-        Magi1ChunkExecutor(object(), samples_per_chunk=2)
-
-
 def test_source_revision_mismatch_fails_before_generation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -61,7 +61,6 @@ class GenerationRuntimeCapabilities:
     """Concrete executor/runtime behaviors, separate from model semantics."""
 
     supports_torch_compile: bool = False
-    accepts_samples_per_chunk: bool = False
     memory_parking: GenerationParkingProfile = GenerationParkingProfile.MODEL
     supported_model_memory_sections: frozenset[str] = field(default_factory=frozenset)
 
@@ -247,12 +246,6 @@ class ModelFamilyEntry:
         executor_config = root.model.executor
 
         kwargs: dict[str, Any] = {}
-        if self.runtime_capabilities.accepts_samples_per_chunk:
-            samples_per_chunk = None if root.rollout is None else root.rollout.samples_per_chunk
-            # ``auto`` belongs to the request and is resolved by the Ray runtime
-            # before dispatch, not by a fixed executor constructor.
-            if samples_per_chunk is not None and samples_per_chunk != "auto":
-                kwargs["samples_per_chunk"] = int(samples_per_chunk)
         if (
             self.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
             and executor_config is not None
@@ -516,7 +509,6 @@ def _full_sequence_denoise_entry(
             )
         runtime_capabilities = GenerationRuntimeCapabilities(
             supports_torch_compile=True,
-            accepts_samples_per_chunk=True,
             memory_parking=GenerationParkingProfile.CUMEM,
             supported_model_memory_sections=supported_model_memory_sections,
         )
@@ -634,7 +626,6 @@ _register_model_family(
         ),
         runtime_capabilities=GenerationRuntimeCapabilities(
             supports_torch_compile=True,
-            accepts_samples_per_chunk=True,
             memory_parking=GenerationParkingProfile.CUMEM,
         ),
     ),

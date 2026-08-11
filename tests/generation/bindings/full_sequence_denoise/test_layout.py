@@ -163,7 +163,6 @@ def test_custom_family_text_length_defaults_match_encoder_capability(
 def _layout() -> DiffusionRequestLayout:
     """A layout with explicit fallbacks (the executor is the real source)."""
     return DiffusionRequestLayout(
-        default_samples_per_chunk=1,
         default_num_frames=1,
         default_fps=None,
         default_max_sequence_length=512,

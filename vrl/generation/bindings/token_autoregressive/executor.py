@@ -11,7 +11,6 @@ import torch
 from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout, right_pad
 from vrl.generation.execution.chunks import SampleChunk, require_matching_chunk_context
 from vrl.generation.execution.executor_base import ChunkExecutorBase
-from vrl.generation.execution.planner import EnginePlan, build_engine_plan
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.types import (
     GenerationOutput,
@@ -24,10 +23,10 @@ from vrl.utils.cuda_memory import cuda_peak_allocated_mb
 class ARChunkExecutorBase(ChunkExecutorBase):
     """Base helpers for AR family executors.
 
-    Owns the request-level plumbing (``plan`` plus the inherited
-    ``forward_plan``), mirroring ``DiffusionChunkExecutorBase``: the
-    full-request path IS the production chunk path plus the family gatherer, so
-    there is a single trajectory/metrics assembly line. Subclasses still own
+    Owns the request-level plumbing (the inherited ``forward_plan``),
+    mirroring ``DiffusionChunkExecutorBase``: the full-request path IS the
+    production chunk path plus the family gatherer, so there is a single
+    trajectory/metrics assembly line. Subclasses still own
     tokenization details, sampling math, decoding, and family-specific output
     packing (``forward_chunk_plan`` + their registered chunk gatherer).
     """
@@ -83,12 +82,6 @@ class ARChunkExecutorBase(ChunkExecutorBase):
         return self.layout.resolve_scheduler_batch_size(request)
 
     # -- request-level plumbing (shared; families own the chunk step) ----
-
-    def plan(
-        self,
-        request: GenerationRequest,
-    ) -> EnginePlan:
-        return build_engine_plan(request)
 
     def _ar_runner(self, request: GenerationRequest) -> Any:
         """Build the family AR runner with the attention backend wired."""

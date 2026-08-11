@@ -14,6 +14,7 @@ from vrl.generation.bindings.chunk_autoregressive_denoise import (
 )
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.ids import build_sample_rows
+from vrl.generation.execution.planner import build_engine_plan
 from vrl.generation.types import GenerationRequest
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
@@ -129,11 +130,10 @@ def test_gatherer_rejects_mismatched_chunk_context() -> None:
 
 
 class _GenericChunkExecutor(ChunkAutoregressiveDenoiseExecutorBase):
-    """Minimal Base subclass exercising plan/forward_plan delegation."""
+    """Minimal Base subclass exercising forward_plan delegation."""
 
     family = "causvid"
     task = "t2v"
-    default_samples_per_chunk = 1
 
 
 def test_generic_executor_delegates_temporal_generation_to_model() -> None:
@@ -145,7 +145,7 @@ def test_generic_executor_delegates_temporal_generation_to_model() -> None:
         gatherer=ChunkAutoregressiveDenoiseGatherer(),
     )
 
-    plan = executor.plan(request)
+    plan = build_engine_plan(request, max_samples_per_chunk=1)
     output = executor.forward_plan(request, sample_rows, plan)
 
     assert model.calls == [(0, 0, 1), (0, 1, 1)]

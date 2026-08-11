@@ -22,7 +22,7 @@ from vrl.generation.bindings.full_sequence_denoise.layout import (
 )
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.executor_base import ChunkExecutorBase
-from vrl.generation.execution.planner import EnginePlan, build_engine_plan
+from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import ChunkCompletionCallback
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
@@ -142,7 +142,6 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
     family: str
     task: str
     model: Any
-    default_samples_per_chunk: int = 1
     default_num_frames: int = 1
     default_fps: int | None = None
     default_max_sequence_length: int | None = None
@@ -153,37 +152,19 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
         model: Any,
         *,
         gatherer: ChunkGatherer | None = None,
-        samples_per_chunk: int | None = None,
     ) -> None:
-        # Keyword-only and optional: the worker constructs executors by dotted
-        # string (``executor_cls(model, **executor_kwargs)``) and only injects
-        # samples_per_chunk for families whose registry entry declares
-        # ``accepts_samples_per_chunk``. Unset keeps the class default.
         super().__init__(gatherer=gatherer)
         self.model = model
-        if samples_per_chunk is not None:
-            self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
     # -- protocol ------------------------------------------------------
 
     @property
     def layout(self) -> DiffusionRequestLayout:
         return DiffusionRequestLayout(
-            default_samples_per_chunk=self.default_samples_per_chunk,
             default_num_frames=self.default_num_frames,
             default_fps=self.default_fps,
             default_max_sequence_length=self.default_max_sequence_length,
             sde_type=self.sde_type,
-        )
-
-    def plan(
-        self,
-        request: GenerationRequest,
-    ) -> EnginePlan:
-        params = self.parse_sampling_params(request)
-        return build_engine_plan(
-            request,
-            max_samples_per_chunk=params.samples_per_chunk,
         )
 
     def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
@@ -585,13 +566,8 @@ class GenericDiffusionChunkExecutor(DiffusionChunkExecutorBase):
         max_sequence_length: int | None = None,
         fps: int | None = None,
         chunk_passthrough_keys: tuple[str, ...] = (),
-        samples_per_chunk: int = 8,
     ) -> None:
-        super().__init__(
-            model,
-            gatherer=gatherer,
-            samples_per_chunk=samples_per_chunk,
-        )
+        super().__init__(model, gatherer=gatherer)
         self.family = family
         self.task = task
         self.default_num_frames = int(num_frames)
