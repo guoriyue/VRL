@@ -59,7 +59,7 @@ def test_online_batch_plan_fields_declare_public_owners() -> None:
         "prompts_per_batch": "rollout",
         "n_samples_per_prompt": "rollout",
         "gradient_accumulation_steps": "actor",
-        "replay_samples_per_batch": "actor",
+        "samples_per_replay_batch": "actor",
         "host_memory_budget_fraction": "actor",
     }
 
@@ -130,8 +130,8 @@ def test_unsplit_batch_plan_derives_the_full_batch_size() -> None:
         ),
         ({"microbatch_size": -1}, "non-negative integer"),
         ({"gradient_accumulation_steps": -1}, "non-negative integer"),
-        ({"replay_samples_per_batch": -1}, "replay_samples_per_batch"),
-        ({"replay_samples_per_batch": "auto"}, "replay_samples_per_batch"),
+        ({"samples_per_replay_batch": -1}, "samples_per_replay_batch"),
+        ({"samples_per_replay_batch": "auto"}, "samples_per_replay_batch"),
     ],
 )
 def test_batch_plan_rejects_invalid_public_geometry(

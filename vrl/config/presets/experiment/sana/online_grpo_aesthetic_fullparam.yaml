@@ -39,7 +39,7 @@ actor:
   # samples x 4 PPO epochs and is not evidence for a 1.6B full-model update.
   ppo_epochs: 1
   gradient_accumulation_steps: 1
-  replay_samples_per_batch: 1
+  samples_per_replay_batch: 1
 
 rollout:
   prompts_per_batch: 1

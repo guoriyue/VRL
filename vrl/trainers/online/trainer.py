@@ -468,7 +468,7 @@ class _TrainingGenerationSampleBatch:
 def _training_sample_batches(
     batch: RolloutBatch,
     advantages: torch.Tensor,
-    replay_samples_per_batch: int,
+    samples_per_replay_batch: int,
 ) -> list[_TrainingGenerationSampleBatch]:
     """Split one prompt group for replay without changing full-group loss math."""
 
@@ -480,7 +480,7 @@ def _training_sample_batches(
         )
     if batch_size <= 0:
         return []
-    slice_size = int(replay_samples_per_batch)
+    slice_size = int(samples_per_replay_batch)
     if slice_size <= 0 or slice_size >= batch_size:
         return [
             _TrainingGenerationSampleBatch(batch=batch, advantages=advantages, loss_weight=1.0)
@@ -626,7 +626,7 @@ def _distributed_initial_replay_stats(
 def _balanced_training_sample_batches(
     batches: list[RolloutBatch],
     advantages: list[torch.Tensor],
-    replay_samples_per_batch: int,
+    samples_per_replay_batch: int,
     device: torch.device,
 ) -> list[_TrainingGenerationSampleBatch]:
     """Plan replay execution slots with equal slot counts across ranks.
@@ -639,7 +639,7 @@ def _balanced_training_sample_batches(
 
     sample_batches: list[_TrainingGenerationSampleBatch] = []
     for batch, adv in zip(batches, advantages, strict=True):
-        sample_batches.extend(_training_sample_batches(batch, adv, replay_samples_per_batch))
+        sample_batches.extend(_training_sample_batches(batch, adv, samples_per_replay_batch))
 
     target_count = _distributed_max_int(len(sample_batches), device)
     if target_count == len(sample_batches):
@@ -1295,12 +1295,12 @@ class OnlineTrainer:
             cfg.timestep_selection,
         )
         loss_scale = int(total_groups) * len(train_indices)
-        replay_samples_per_batch = cfg.batch_plan.replay_samples_per_batch
+        samples_per_replay_batch = cfg.batch_plan.samples_per_replay_batch
         agg = self._update_agg_metrics
         for sample_batch in _balanced_training_sample_batches(
             batch.batches,
             batch.advantages,
-            replay_samples_per_batch,
+            samples_per_replay_batch,
             self.device,
         ):
             group_batch = move_training_batch_to_device(
@@ -1476,7 +1476,7 @@ class OnlineTrainer:
             cfg.timestep_selection,
         )
 
-        replay_samples_per_batch = cfg.batch_plan.replay_samples_per_batch
+        samples_per_replay_batch = cfg.batch_plan.samples_per_replay_batch
 
         # Debug first step: compare old vs fresh log-probs on first timestep
         # (using first filtered batch so memory footprint is bounded).
@@ -1489,7 +1489,7 @@ class OnlineTrainer:
         first_debug_batch = _training_sample_batches(
             filtered_batches[0],
             filtered_advs[0],
-            replay_samples_per_batch,
+            samples_per_replay_batch,
         )[0]
         if cfg.debug.first_step and self.state.step == 0 and uses_evaluator:
             _dbg_batch = move_training_batch_to_device(
@@ -1717,7 +1717,7 @@ class OnlineTrainer:
             for sample_batch in _balanced_training_sample_batches(
                 filtered_batches,
                 filtered_advs,
-                replay_samples_per_batch,
+                samples_per_replay_batch,
                 self.device,
             ):
                 group_batch = move_training_batch_to_device(

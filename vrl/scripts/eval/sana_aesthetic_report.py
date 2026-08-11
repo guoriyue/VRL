@@ -50,7 +50,7 @@ _RETIRED_ENTRYPOINT = "vrl.scripts.diffusion.train:train_diffusion_grpo"
 _LIVE_ENTRYPOINT = "vrl.scripts.train:train_online"
 # Digest of the bundled canonical preset after the 2026-08 batch-vocabulary
 # key renames (samples_per_generation_batch etc.).
-CANONICAL_PROTOCOL_SHA256 = "3160a12adbaa9b8184f82dca0bf36370160a6b5c3e7263cfe661e20f2bfa90bc"
+CANONICAL_PROTOCOL_SHA256 = "2fbc6195c185f427f7e397b218d603f70d0bf0d1a5b573ef6ea8141be5f2db1c"
 TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"
 EVAL_MANIFEST_SHA256 = "10c70e8af2ae16b0d76eb9da0f53801485ab0a3bae83e605d310faa9b16bfcdd"
 TRAIN_PROMPT_COUNT = 192
@@ -567,7 +567,7 @@ def _erase_meaningless_spelling(
     for path, old, new in (
         (("rollout",), "samples_per_chunk", "samples_per_generation_batch"),
         (("distributed", "rollout"), "chunk_placement_strategy", "batch_placement_strategy"),
-        (("actor",), "replay_samples_per_chunk", "replay_samples_per_batch"),
+        (("actor",), "replay_samples_per_chunk", "samples_per_replay_batch"),
     ):
         renamed_section = _section(actual, *path)
         if isinstance(renamed_section, dict) and old in renamed_section:

@@ -247,13 +247,13 @@ def test_replay_planner_pads_to_global_slot_count(monkeypatch: pytest.MonkeyPatc
     rank0_chunks = _balanced_training_sample_batches(
         [_rollout_batch(8)],
         [torch.ones(8)],
-        replay_samples_per_batch=1,
+        samples_per_replay_batch=1,
         device=torch.device("cpu"),
     )
     rank1_chunks = _balanced_training_sample_batches(
         [_rollout_batch(3)],
         [torch.ones(3)],
-        replay_samples_per_batch=1,
+        samples_per_replay_batch=1,
         device=torch.device("cpu"),
     )
 
@@ -282,7 +282,7 @@ def _run_replay_planner_rank(
         batches = _balanced_training_sample_batches(
             [_rollout_batch(sample_count)],
             [torch.ones(sample_count)],
-            replay_samples_per_batch=1,
+            samples_per_replay_batch=1,
             device=torch.device("cpu"),
         )
         q.put(

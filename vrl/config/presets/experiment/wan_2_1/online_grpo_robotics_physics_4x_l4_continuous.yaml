@@ -35,7 +35,7 @@ actor:
   ppo_epochs: 1
   timestep_fraction: 0.25
   timestep_selection: strided
-  replay_samples_per_batch: 1
+  samples_per_replay_batch: 1
   # One continuous batch contains all four prompt groups. The producer submits
   # them independently, allowing GPU 3 to score a completed group while GPUs
   # 1/2 generate the remaining groups. The next full batch is prefetched beside

@@ -78,7 +78,7 @@ actor:
   # Explicit training floor from the 2026-07-10 93f backward probe. Replay does
   # not inherit generation's larger batch because full-checkpointed backward has
   # a separate, lower memory ceiling.
-  replay_samples_per_batch: 1
+  samples_per_replay_batch: 1
 
 
 rollout:
@@ -88,7 +88,7 @@ rollout:
   # (2026-06-29 A/B: 139.6->99.5 s/batch, gen peak 25.3GB fits, old==fresh
   # logprob bit-exact). The old memory-floor=1 applied when this knob also
   # drove the replay backward; that side is now resolved independently via
-  # actor.replay_samples_per_batch above.
+  # actor.samples_per_replay_batch above.
   samples_per_generation_batch: 4
   trajectory_storage:
     device: cpu                       # 93f trajectories on the GPU wire OOM the collect handoff

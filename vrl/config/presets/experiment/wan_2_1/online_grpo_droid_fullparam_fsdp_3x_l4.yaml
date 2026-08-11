@@ -53,7 +53,7 @@ actor:
   ppo_epochs: 2
   timestep_fraction: 0.25
   timestep_selection: strided
-  replay_samples_per_batch: 1
+  samples_per_replay_batch: 1
   ema:
     enable: false
 

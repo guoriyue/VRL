@@ -21,7 +21,7 @@ actor:
   gradient_accumulation_steps: 4
   # Symmetric 8/8 batch shape keeps rollout and replay on the same batched-CFG
   # execution shape before the first optimizer step.
-  replay_samples_per_batch: 8
+  samples_per_replay_batch: 8
 
 rollout:
   n_samples_per_prompt: 16

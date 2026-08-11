@@ -60,7 +60,7 @@ actor:
   # same. This gate validates scheduling overlap, not reward quality.
   drop_zero_advantage: false
   gradient_accumulation_steps: 2
-  replay_samples_per_batch: 2
+  samples_per_replay_batch: 2
 
 model:
   torch_compile:

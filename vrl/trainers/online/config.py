@@ -24,7 +24,7 @@ class OnlineBatchPlan:
     prompts_per_batch: int = field(metadata={"yaml": "rollout"})
     n_samples_per_prompt: int = field(metadata={"yaml": "rollout"})
     gradient_accumulation_steps: int = field(default=0, metadata={"yaml": "actor"})
-    replay_samples_per_batch: int = field(default=1, metadata={"yaml": "actor"})
+    samples_per_replay_batch: int = field(default=1, metadata={"yaml": "actor"})
     host_memory_budget_fraction: float = field(default=0.0, metadata={"yaml": "actor"})
 
     def __post_init__(self) -> None:
@@ -44,8 +44,8 @@ class OnlineBatchPlan:
             minimum=0,
         )
         require_exact_int(
-            self.replay_samples_per_batch,
-            path="actor.replay_samples_per_batch",
+            self.samples_per_replay_batch,
+            path="actor.samples_per_replay_batch",
             minimum=0,
         )
         if accumulation_steps > 0 and prompts % accumulation_steps != 0:

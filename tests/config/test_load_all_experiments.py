@@ -479,7 +479,7 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
     assert cfg.actor.drop_zero_advantage is False
     assert cfg.rollout.n_samples_per_prompt == 6
     assert cfg.rollout.samples_per_generation_batch == 2
-    assert cfg.actor.replay_samples_per_batch == 2
+    assert cfg.actor.samples_per_replay_batch == 2
 
 
 def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
@@ -640,7 +640,7 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     assert orchestration.continuous.max_inflight_groups == 4
     assert cfg.actor.ppo_epochs == 1
     assert cfg.actor.timestep_fraction == 0.25
-    assert cfg.actor.replay_samples_per_batch == 1
+    assert cfg.actor.samples_per_replay_batch == 1
     assert cfg.actor.microbatch_size == cfg.rollout.prompts_per_batch == 4
     assert built.trainer.timestep_selection == "strided"
     assert built.trainer.batch_plan.gradient_accumulation_steps == 1
@@ -1184,7 +1184,7 @@ def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
 
     assert built.root.rollout is not None
     assert built.root.rollout.samples_per_generation_batch == "auto"
-    assert built.trainer.batch_plan.replay_samples_per_batch == 1
+    assert built.trainer.batch_plan.samples_per_replay_batch == 1
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "largest", "true"])

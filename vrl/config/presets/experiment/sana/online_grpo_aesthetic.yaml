@@ -28,7 +28,7 @@ actor:
   optim:
     lr: 3.0e-4
   # Match the rollout batch shape so batched CFG is identical on replay.
-  replay_samples_per_batch: 8
+  samples_per_replay_batch: 8
   gradient_checkpointing: true
   # One inner step leaves ratio-based learning nearly inert; four is the
   # repository's measured diffusion-GRPO setting for a real policy movement.

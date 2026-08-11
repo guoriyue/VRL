@@ -143,7 +143,7 @@ def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(streaming: boo
         prompts_per_batch=1,
         n_samples_per_prompt=2,
         gradient_accumulation_steps=1 if streaming else 0,
-        replay_samples_per_batch=0,
+        samples_per_replay_batch=0,
     )
     trainer = OnlineTrainer(
         algorithm=_Algorithm(),

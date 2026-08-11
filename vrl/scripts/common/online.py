@@ -380,7 +380,7 @@ def _log_rollout_memory_plan(
     prompts_per_batch = batch_plan.prompts_per_batch
     samples_per_prompt = batch_plan.n_samples_per_prompt
     target_samples = prompts_per_batch * samples_per_prompt
-    replay_width = batch_plan.replay_samples_per_batch
+    replay_width = batch_plan.samples_per_replay_batch
 
     def describe_batch_width(value: Any) -> str:
         if value == "auto":
@@ -398,7 +398,7 @@ def _log_rollout_memory_plan(
             "Rollout memory plan: streaming accumulation enabled "
             "(prompts_per_batch=%d, gradient_accumulation_steps=%d, "
             "microbatch_prompts=%d, microbatch_samples=%d, "
-            "samples_per_generation_batch=%s, replay_samples_per_batch=%s, "
+            "samples_per_generation_batch=%s, samples_per_replay_batch=%s, "
             "target_samples_per_update=%d)",
             prompts_per_batch,
             gas,
@@ -413,7 +413,7 @@ def _log_rollout_memory_plan(
     logger.info(
         "Rollout memory plan: legacy full-batch accumulation "
         "(prompts_per_batch=%d, samples_per_generation_batch=%s, "
-        "replay_samples_per_batch=%s, "
+        "samples_per_replay_batch=%s, "
         "target_samples_per_update=%d)",
         prompts_per_batch,
         generation_batch_text,

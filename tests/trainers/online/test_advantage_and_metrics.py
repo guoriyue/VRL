@@ -234,7 +234,7 @@ class TestAdvantageAndMetrics:
             group_ids=torch.zeros(10, dtype=torch.long),
             num_steps=1,
         )
-        batches = _training_sample_batches(batch, torch.ones(10), replay_samples_per_batch=8)
+        batches = _training_sample_batches(batch, torch.ones(10), samples_per_replay_batch=8)
         assert [batch.loss_weight for batch in batches] == pytest.approx([0.8, 0.2])
 
         aggregate = _ReplayMetrics()

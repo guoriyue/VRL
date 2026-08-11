@@ -95,7 +95,7 @@ actor:
   timestep_fraction: 0.5
   # Replay capacity is independent from rollout generation chunking. Full-param
   # 480p_93f backward reached 29.9 GiB at 2, so keep the safe floor explicit.
-  replay_samples_per_batch: 1
+  samples_per_replay_batch: 1
   ema:
     enable: false                     # validation: no averaging lag on top of the raw policy
 
