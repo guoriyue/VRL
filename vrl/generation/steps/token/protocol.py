@@ -1,4 +1,13 @@
-"""Model-facing inputs and outputs for one scheduled token step."""
+"""Model-facing inputs and outputs for one scheduled token step.
+
+The seam that keeps the token-autoregressive composition loop family-neutral:
+family runners implement ``init_token`` / ``step_token`` / ``finalize_token``
+around these types, and the loop
+(``vrl/generation/composition/token_autoregressive``) schedules them without
+knowing any family. Living under ``steps`` rather than next to the loop keeps
+the dependency one-way: runners import only the one-step contract, and the
+loop imports nothing from any family.
+"""
 
 from __future__ import annotations
 
