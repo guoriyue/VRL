@@ -1,4 +1,13 @@
-"""Chunk placement planning for distributed generation."""
+"""Chunk placement planning for distributed generation.
+
+The fleet-only layer above planner.py: planner builds the runtime-neutral
+chunk list every executor consumes, while this module decides which worker
+runs each chunk — a question that only exists for the Ray runtime
+(vrl/generation/ray), never for the direct in-process path. The chunk
+memory-sizing evidence (affine peak fit, occupancy keys, drift shadow) lives
+beside placement because its consumers are the startup chunk-size probe and
+driver telemetry, not the denoise loop that takes the measurements.
+"""
 
 from __future__ import annotations
 
