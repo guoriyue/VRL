@@ -1,6 +1,15 @@
 """Multi-reward registry — weighted combination of named reward functions.
 
 Ported from the multi_score() pattern in flow_grpo/rewards.py.
+
+This module is the construction boundary between YAML config and reward code:
+``_REWARD_REGISTRY`` maps each config-facing component name to its thin
+``RewardFunction`` class under ``vrl.rewards.functions``, and
+``MultiReward.from_dict`` (called from ``vrl/scripts/common/factory.py`` with
+the resolved ``reward.components`` / ``reward.kwargs``) instantiates them.
+The heavyweight scoring networks are never built here — each function only
+pins a ``model_factory`` dotted path that the scorer resolves later, on the
+resolved device inside its own memory frame.
 """
 
 from __future__ import annotations
