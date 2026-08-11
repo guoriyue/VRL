@@ -77,10 +77,6 @@ def test_metrics_values_keep_provenance_validation_without_structural_ownership(
     trajectory.metrics.values = {"source": "unit-test"}
     assert TrajectoryValidator(trajectory).validate_batch() is trajectory
 
-    trajectory.metrics.values = {"queue_wait_s": 0.1}
-    with pytest.raises(TrajectoryValidationError, match="engine runtime metrics"):
-        TrajectoryValidator(trajectory).validate_batch()
-
     trajectory.metrics.values = {"runtime": object()}
     with pytest.raises(TrajectoryValidationError, match="runtime-only state"):
         TrajectoryValidator(trajectory).validate_batch()

@@ -15,20 +15,6 @@ from vrl.trajectory.types import (
 )
 from vrl.trajectory.views import RewardView
 
-# Curated denylist: engine-execution telemetry keys (batch timing / memory
-# counters) that must NOT leak into serialized trajectory metrics.
-# num_prompts/num_samples stay allowed.
-FORBIDDEN_TRAJECTORY_METRICS = frozenset(
-    {
-        "queue_wait_s",
-        "execution_s",
-        "peak_memory_mb",
-        # Both spellings: pre-rename serialized trajectories carry "chunks",
-        # the batch-vocabulary engine would carry "batches".
-        "chunks",
-        "batches",
-    }
-)
 # The core role triple a trainable segment must have exactly one of each.
 # Single ordered source of truth: the uniqueness check (below) and the
 # completeness check (TrajectoryValidator) both derive from it.
@@ -78,13 +64,6 @@ class TrajectoryValidator:
                 "sample axis length does not match sample_rows: "
                 f"{sample_axis.length} != {len(batch.sample_rows)}",
             )
-        forbidden_metrics = FORBIDDEN_TRAJECTORY_METRICS.intersection(batch.metrics.values)
-        if forbidden_metrics:
-            self._fail(
-                "TrajectoryMetrics.values contains engine runtime metrics: "
-                + ", ".join(sorted(forbidden_metrics)),
-            )
-
         self.tensor_refs.clear()
         for segment_key, segment in batch.segments.items():
             self._validate_segment(segment_key, segment)
