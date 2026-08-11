@@ -1,4 +1,17 @@
-"""Typed generation runtime payloads."""
+"""Typed generation runtime payloads.
+
+The data half of the collector <-> engine contract in protocols.py. These
+dataclasses cross two boundaries at once — the collector-facing runtime API
+and the driver -> Ray-worker wire (a ``GenerationRequest`` rides inside every
+``ChunkExecutionEnvelope``) — so they live apart from any runtime and
+validate themselves at construction. The module is torch-free at import and
+imports ``TrajectoryBatch`` lazily, because config parsing reaches this
+package long before any model exists.
+
+The reward-side dual is vrl/rewards/types.py (``RewardSample`` /
+``RewardOutput``); trainer-side batch semantics stay outside (see
+``GenerationOutput``).
+"""
 
 from __future__ import annotations
 
