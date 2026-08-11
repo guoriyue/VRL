@@ -1,4 +1,13 @@
-"""Aesthetic reward as a model-backed TorchRewardModel."""
+"""Aesthetic reward as a model-backed TorchRewardModel.
+
+The scorer is the LAION aesthetic predictor: a small MLP head trained on
+SAC/LAION-Logos/AVA ratings over CLIP ViT-L/14 image embeddings. The ``_MLP``
+class below deliberately re-declares that head's layer stack — the packaged
+``sac+logos+ava1-l14-linearMSE.pth`` state dict (shipped in
+``vrl.rewards.assets`` so scoring needs no external download) only loads into
+this exact architecture. Returns ``{"aesthetic": score}``, the mean over up to
+three sampled frames.
+"""
 
 from __future__ import annotations
 
