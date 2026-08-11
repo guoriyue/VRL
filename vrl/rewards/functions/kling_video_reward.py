@@ -39,4 +39,21 @@ class KlingVideoReward(DiskArtifactRewardFunction):
         )
 
 
-__all__ = ["KlingVideoReward"]
+# Production configs must name the reward model directly; these loader keys
+# select alternate backends/factories and are locked out by the production
+# contract gate (vrl/config/validation.py consumes this — the key names live
+# here, next to the code that reads them, so a new loader knob cannot be
+# forgotten in a far-away config module).
+PRODUCTION_LOCKED_WORKER_CONFIG_KEYS = frozenset(
+    {
+        "backend",
+        "backend_import_path",
+        "backend_code_dir",
+        "import_path",
+        "model_subdir",
+        "score_key_map",
+        "model_factory",
+    }
+)
+
+__all__ = ["PRODUCTION_LOCKED_WORKER_CONFIG_KEYS", "KlingVideoReward"]

@@ -127,19 +127,11 @@ def validate_production_reward_contract(cfg: DictConfig) -> None:
             "production.kling_video_reward requires reward.kwargs.kling_video_reward.reward_name"
         )
     worker_config = vr_kwargs.get("worker_config") or {}
-    forbidden = sorted(
-        k
-        for k in (
-            "backend",
-            "backend_import_path",
-            "backend_code_dir",
-            "import_path",
-            "model_subdir",
-            "score_key_map",
-            "model_factory",
-        )
-        if k in worker_config
+    from vrl.rewards.functions.kling_video_reward import (
+        PRODUCTION_LOCKED_WORKER_CONFIG_KEYS,
     )
+
+    forbidden = sorted(k for k in PRODUCTION_LOCKED_WORKER_CONFIG_KEYS if k in worker_config)
     if forbidden:
         raise ValueError(
             "production.kling_video_reward worker_config should name the reward "
