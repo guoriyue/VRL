@@ -1,4 +1,37 @@
-"""Generation runtime and chunk executor protocols."""
+"""Generation runtime and chunk executor protocols.
+
+Each protocol here corresponds to one physical or ownership boundary of the
+engine — none exists for taste. One request flows as::
+
+    driver process                        |  Ray worker process (GPU + model)
+                                          |
+    collector -> GenerationRuntime        |
+                 split into chunks,       |
+                 dispatch to workers -----|-> GenerationChunkExecutor
+                                          |     .forward_chunk_plan(chunk)
+                 chunk results return <---|--- ChunkResult (family-owned shape)
+                 ChunkGatherer            |
+                 .gather_chunks()         |
+                 reassemble full output   |
+
+- ``GenerationRuntime``: the engine's only face toward vrl/rollouts (the dual
+  of ``RewardRuntime``); the collector isinstance-checks it so orchestration
+  never imports Ray code.
+- ``GenerationChunkExecutor``: the model-family plugin contract (wan, sana,
+  cosmos, ...); keeps ``if family == ...`` branches out of neutral execution.
+- ``ChunkGatherer``: the model-free slice of the executor, split out because
+  reassembly runs driver-side where no model is loaded; it ships across the
+  Ray launch contract as a serializable object.
+- ``ChunkSizeProbeExecutor``: an optional capability flag ("can you execute a
+  truncated chunk so the worker can measure peak memory for automatic
+  samples_per_chunk sizing"), probed by isinstance like the reward side's
+  ``MemoryParkingScorer``. Only diffusion families can truncate meaningfully:
+  their memory peaks in the first denoise steps, while AR peaks at the last
+  token, so a truncated AR run would measure a lie.
+- ``ChunkResult``: deliberately ``Any`` — the chunk payload's shape is owned by
+  the binding that produced it (diffusion latents vs AR token results share no
+  useful common structure); the alias documents that ownership in signatures.
+"""
 
 from __future__ import annotations
 
@@ -98,8 +131,14 @@ class GenerationChunkExecutor(Protocol):
 
 
 @runtime_checkable
-class DiffusionChunkProbeExecutor(Protocol):
-    """Diffusion executor capability used by automatic chunk-size sizing."""
+class ChunkSizeProbeExecutor(Protocol):
+    """Optional capability: truncated-chunk execution for automatic sizing.
+
+    ``samples_per_chunk: auto`` makes the worker trial-run a few denoise steps
+    per candidate width to measure peak memory. Only executors whose memory
+    peaks early under truncation (diffusion) implement this; the worker
+    isinstance-probes it and requires an explicit width otherwise.
+    """
 
     def forward_probe_chunk(
         self,
@@ -113,7 +152,7 @@ class DiffusionChunkProbeExecutor(Protocol):
 __all__ = [
     "ChunkGatherer",
     "ChunkResult",
-    "DiffusionChunkProbeExecutor",
+    "ChunkSizeProbeExecutor",
     "GenerationChunkExecutor",
     "GenerationRuntime",
 ]

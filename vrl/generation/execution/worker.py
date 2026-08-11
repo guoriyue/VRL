@@ -21,7 +21,7 @@ from vrl.generation.execution.types import (
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import (
     ChunkGatherer,
-    DiffusionChunkProbeExecutor,
+    ChunkSizeProbeExecutor,
     GenerationChunkExecutor,
 )
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
@@ -332,7 +332,7 @@ class GenerationWorkerCore:
         self.load_policy()
         executor = self.executor
         model = getattr(executor, "model", None)
-        if not isinstance(executor, DiffusionChunkProbeExecutor):
+        if not isinstance(executor, ChunkSizeProbeExecutor):
             raise TypeError(
                 f"{type(executor).__name__} does not expose the diffusion "
                 "chunk probe capability; samples_per_chunk: auto is diffusion-only",

@@ -7,15 +7,15 @@ from dataclasses import dataclass
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionChunkExecutorBase
-from vrl.generation.protocols import DiffusionChunkProbeExecutor
+from vrl.generation.protocols import ChunkSizeProbeExecutor
 from vrl.generation.steps.denoise import DenoiseLoopConfig, DenoiseSDEParams
 
 
 def test_diffusion_executor_base_satisfies_probe_protocol() -> None:
     """The probe's ``samples_per_chunk: auto`` diffusion-only gate keys off this."""
-    assert issubclass(DiffusionChunkExecutorBase, DiffusionChunkProbeExecutor)
-    assert isinstance(_Executor(_Model()), DiffusionChunkProbeExecutor)
-    assert not isinstance(object(), DiffusionChunkProbeExecutor)
+    assert issubclass(DiffusionChunkExecutorBase, ChunkSizeProbeExecutor)
+    assert isinstance(_Executor(_Model()), ChunkSizeProbeExecutor)
+    assert not isinstance(object(), ChunkSizeProbeExecutor)
 
 
 def test_native_denoise_mode_uses_scheduler_step() -> None:
