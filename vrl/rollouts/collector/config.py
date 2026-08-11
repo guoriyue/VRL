@@ -1,4 +1,13 @@
-"""Rollout config projection from user YAML configs."""
+"""Rollout config projection from user YAML configs.
+
+The one place validated public config becomes generation-request wire state:
+``RolloutCollectorConfig`` splits the ``rollout``/``sampling`` sections into
+the per-request sampling payload and the collector-local knobs (KL reward
+coefficient, trajectory storage policy). Projection is fail-closed — accepted
+keys are derived from the schema types (``generation_request_rollout_fields``,
+per-family ``SamplingSection``), never from a hand-maintained list, so a new
+schema field flows through without a second vocabulary to update.
+"""
 
 from __future__ import annotations
 
