@@ -32,8 +32,6 @@ from aiohttp import web
 from vrl.rewards.launch_contract import RewardWorkerLaunchContract
 from vrl.rewards.service.owner import RewardScorerOwner
 from vrl.rewards.service.protocol import (
-    GENERATION_OVERLAP_SAFE_CAPABILITY,
-    SCORE_BATCH_CAPABILITY,
     RewardServiceErrorCode,
     RewardServiceInfo,
     RewardServiceProtocolError,
@@ -163,15 +161,10 @@ class RewardService:
         self._host = host
         self._port = int(port)
         self._artifact_roots = tuple(roots)
-        # Cancellation and idempotency are fixed WIRE_VERSION behaviors, not
-        # optional capabilities; only genuinely optional facts are advertised.
-        capabilities = [SCORE_BATCH_CAPABILITY]
-        if generation_overlap_safe:
-            capabilities.append(GENERATION_OVERLAP_SAFE_CAPABILITY)
         self._info = RewardServiceInfo(
             model_name=str(model_name).strip() or type(runtime).__name__,
             model_version=str(model_version).strip(),
-            capabilities=tuple(capabilities),
+            generation_overlap_safe=bool(generation_overlap_safe),
             max_concurrency=max_concurrency,
             max_pending_requests=max_pending_requests,
         )

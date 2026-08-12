@@ -5,9 +5,9 @@ both import only these functions, so the two endpoints cannot drift apart.
 Field sets derive from the inference.py dataclasses via ``fields(...)``, which
 keeps those dataclasses the one schema source — adding a field changes the
 wire, and unknown keys are rejected rather than ignored. The envelope pins
-``WIRE_PROTOCOL``/``WIRE_VERSION`` so a mismatched peer fails before any
-scoring, and ``request_fingerprint`` canonicalizes a request for the server's
-idempotency check. In-memory media never crosses this boundary: remote
+``WIRE_VERSION`` so a mismatched peer fails before any scoring, and
+``request_fingerprint`` canonicalizes a request for the server's idempotency
+check. In-memory media never crosses this boundary: remote
 scoring requires disk-materialized artifacts.
 """
 
@@ -25,7 +25,6 @@ from vrl.rewards.inference import (
     RewardInferenceResult,
 )
 from vrl.rewards.service.protocol import (
-    WIRE_PROTOCOL,
     WIRE_VERSION,
     RemoteRewardServiceError,
     RewardServiceErrorCode,
@@ -36,7 +35,6 @@ from vrl.rewards.service.protocol import (
 
 def _wire_envelope(**payload: Any) -> dict[str, Any]:
     return {
-        "protocol": WIRE_PROTOCOL,
         "version": WIRE_VERSION,
         **payload,
     }
@@ -53,17 +51,8 @@ def _require_mapping(value: Any, *, context: str) -> Mapping[str, Any]:
 
 def _validate_envelope(payload: Any, *, expected_keys: set[str]) -> Mapping[str, Any]:
     envelope = _require_mapping(payload, context="reward service payload")
-    _reject_unknown_keys(
-        envelope,
-        {"protocol", "version", *expected_keys},
-        context="reward envelope",
-    )
-    protocol = envelope.get("protocol")
-    if protocol != WIRE_PROTOCOL:
-        raise RewardServiceProtocolError(
-            RewardServiceErrorCode.BAD_REQUEST,
-            f"unsupported reward protocol {protocol!r}; expected {WIRE_PROTOCOL!r}",
-        )
+    # Version first: a cross-version peer must get the explicit 426, not a
+    # confusing unknown-field complaint about an envelope key that moved.
     version = envelope.get("version")
     if isinstance(version, bool) or not isinstance(version, int):
         raise RewardServiceProtocolError(
@@ -77,6 +66,11 @@ def _validate_envelope(payload: Any, *, expected_keys: set[str]) -> Mapping[str,
             status_code=426,
             details={"supported_versions": [WIRE_VERSION]},
         )
+    _reject_unknown_keys(
+        envelope,
+        {"version", *expected_keys},
+        context="reward envelope",
+    )
     return envelope
 
 
@@ -297,15 +291,7 @@ def info_from_wire(payload: Any) -> RewardServiceInfo:
     envelope = _validate_envelope(payload, expected_keys={"info"})
     body = _require_mapping(envelope.get("info"), context="reward service info")
     try:
-        values = dict(body)
-        raw_capabilities = values.get("capabilities") or ()
-        if isinstance(raw_capabilities, str) or not isinstance(raw_capabilities, Sequence):
-            # tuple("score_batch") would explode a string into characters.
-            raise ValueError("reward service capabilities must be an array of strings")
-        if not all(isinstance(capability, str) for capability in raw_capabilities):
-            raise ValueError("reward service capabilities must be an array of strings")
-        values["capabilities"] = tuple(raw_capabilities)
-        return RewardServiceInfo(**values)
+        return RewardServiceInfo(**dict(body))
     except (TypeError, ValueError) as error:
         raise RewardServiceProtocolError(
             RewardServiceErrorCode.BAD_REQUEST,

@@ -5,7 +5,7 @@ the in-process ``InProcessRewardScorer`` (vrl/rewards/runtime.py). It exists
 so the trainer process holds no reward model weights: scoring crosses to an
 operator-owned service, which is why ``scoring_is_nonblocking`` is True and
 why accelerator isolation is *verified* against the service's advertised
-capabilities rather than assumed. Sessions are loop-affine (aiohttp binds a
+``generation_overlap_safe`` fact rather than assumed. Sessions are loop-affine (aiohttp binds a
 pool to its creation loop), so preflight on the trainer loop hands off only
 validated identity state and the scoring owner builds its own pool. An
 ambiguous POST outcome is settled via explicit request-id cancellation; when
@@ -30,9 +30,6 @@ from vrl.rewards.inference import (
     RewardInferenceResult,
 )
 from vrl.rewards.service.protocol import (
-    GENERATION_OVERLAP_SAFE_CAPABILITY,
-    SCORE_BATCH_CAPABILITY,
-    SHARED_FILESYSTEM_ARTIFACT_TRANSPORT,
     RemoteRewardServiceError,
     RewardServiceErrorCode,
     RewardServiceInfo,
@@ -242,23 +239,6 @@ class HttpRewardScorer:
             if self._identity_checked:
                 return
             info = await self.info()
-            if SCORE_BATCH_CAPABILITY not in info.capabilities:
-                raise RemoteRewardServiceError(
-                    RewardServiceErrorCode.BAD_REQUEST.value,
-                    "reward service does not advertise score_batch capability",
-                    retryable=False,
-                )
-            if info.artifact_transport != SHARED_FILESYSTEM_ARTIFACT_TRANSPORT:
-                raise RemoteRewardServiceError(
-                    RewardServiceErrorCode.BAD_REQUEST.value,
-                    "reward service artifact transport is unsupported: "
-                    f"{info.artifact_transport!r}",
-                    retryable=False,
-                    details={
-                        "supported_artifact_transport": (SHARED_FILESYSTEM_ARTIFACT_TRANSPORT),
-                        "actual_artifact_transport": info.artifact_transport,
-                    },
-                )
             if self._expected_model and info.model_name != self._expected_model:
                 raise RemoteRewardServiceError(
                     RewardServiceErrorCode.BAD_REQUEST.value,
@@ -271,9 +251,7 @@ class HttpRewardScorer:
                         "actual_version": info.model_version,
                     },
                 )
-            self._external_accelerator_isolation_verified = (
-                GENERATION_OVERLAP_SAFE_CAPABILITY in info.capabilities
-            )
+            self._external_accelerator_isolation_verified = info.generation_overlap_safe
             self._identity_checked = True
 
     async def _get_session(self) -> aiohttp.ClientSession:

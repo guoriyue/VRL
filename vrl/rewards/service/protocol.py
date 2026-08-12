@@ -11,12 +11,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-# These constants are protocol identifiers, not duplicated application data.
-WIRE_PROTOCOL = "vrl.reward"
-WIRE_VERSION = 2
-SHARED_FILESYSTEM_ARTIFACT_TRANSPORT = "shared_filesystem_paths"
-GENERATION_OVERLAP_SAFE_CAPABILITY = "generation_overlap_safe"
-SCORE_BATCH_CAPABILITY = "score_batch"
+# The one protocol identifier: trainer client and standalone service can be
+# deployed at different versions, so a mismatched peer must fail loudly (426)
+# instead of silently misreading fields. v3 dropped the protocol string, the
+# capability array, and the artifact-transport field — fixed facts of the
+# service are guaranteed by this version, not advertised per request.
+WIRE_VERSION = 3
 
 
 # Keep the exported enum's historical ``str(member)`` representation; the wire
@@ -43,24 +43,25 @@ class RewardServiceErrorCode(str, Enum):  # noqa: UP042
 
 @dataclass(frozen=True, slots=True)
 class RewardServiceInfo:
-    """Discoverable service identity and scheduling capabilities."""
+    """Discoverable service identity and scheduling facts."""
 
     model_name: str
     # Display/provenance-only until the typed client config gains a separate
     # expected_model_version field; expected_model currently gates model_name.
     model_version: str
-    capabilities: tuple[str, ...]
+    # The one genuinely deployment-dependent fact: whether the operator proved
+    # this service's accelerators are isolated from the training topology, so
+    # the collector may overlap reward N with generation N+1.
+    generation_overlap_safe: bool
     max_concurrency: int
     max_pending_requests: int
-    artifact_transport: str = SHARED_FILESYSTEM_ARTIFACT_TRANSPORT
 
     def __post_init__(self) -> None:
         if not self.model_name:
             raise ValueError("reward service model_name is required")
-        if not self.capabilities or any(not capability for capability in self.capabilities):
-            raise ValueError("reward service capabilities must be non-empty strings")
-        if len(set(self.capabilities)) != len(self.capabilities):
-            raise ValueError("reward service capabilities must not contain duplicates")
+        if not isinstance(self.generation_overlap_safe, bool):
+            # bool("false") is True; a stringly wire value must fail, not flip.
+            raise ValueError("reward service generation_overlap_safe must be a boolean")
         if self.max_concurrency < 1:
             raise ValueError("reward service max_concurrency must be >= 1")
         if self.max_pending_requests < self.max_concurrency:
@@ -117,9 +118,6 @@ class RemoteRewardServiceError(RuntimeError):
 
 
 __all__ = [
-    "GENERATION_OVERLAP_SAFE_CAPABILITY",
-    "SHARED_FILESYSTEM_ARTIFACT_TRANSPORT",
-    "WIRE_PROTOCOL",
     "WIRE_VERSION",
     "RemoteRewardServiceError",
     "RewardServiceErrorCode",

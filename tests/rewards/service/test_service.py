@@ -28,13 +28,9 @@ from vrl.rewards.inference import (
 from vrl.rewards.runtime import build_reward_scorer
 from vrl.rewards.service.client import HttpRewardScorer
 from vrl.rewards.service.protocol import (
-    GENERATION_OVERLAP_SAFE_CAPABILITY,
-    SHARED_FILESYSTEM_ARTIFACT_TRANSPORT,
-    WIRE_PROTOCOL,
     WIRE_VERSION,
     RemoteRewardServiceError,
     RewardServiceErrorCode,
-    RewardServiceInfo,
 )
 from vrl.rewards.service.server import RewardService, RewardServiceConfig
 from vrl.rewards.service.wire import request_from_wire, request_to_wire
@@ -130,7 +126,6 @@ def test_wire_roundtrip_is_versioned_and_preserves_request(tmp_path) -> None:
     payload = request_to_wire(request)
     restored = request_from_wire(payload)
 
-    assert payload["protocol"] == WIRE_PROTOCOL
     assert payload["version"] == WIRE_VERSION
     assert restored.request_id == request.request_id
     assert restored == request
@@ -178,28 +173,26 @@ def test_wire_decodes_only_typed_scalars() -> None:
     from vrl.rewards.service.wire import error_from_wire, info_from_wire
 
     info_envelope = {
-        "protocol": WIRE_PROTOCOL,
         "version": WIRE_VERSION,
         "info": {
             "model_name": "m",
             "model_version": "v",
-            # A bare string would explode into per-character capabilities
-            # under tuple(); it must be rejected, not reinterpreted.
-            "capabilities": "score_batch",
+            # bool("false") is True; a stringly flag must be rejected, not
+            # silently flipped into a scheduling permission.
+            "generation_overlap_safe": "false",
             "max_concurrency": 1,
             "max_pending_requests": 1,
         },
     }
-    with pytest.raises(ValueError, match="array of strings"):
+    with pytest.raises(ValueError, match="must be a boolean"):
         info_from_wire(info_envelope)
 
     error_envelope = {
-        "protocol": WIRE_PROTOCOL,
         "version": WIRE_VERSION,
         "error": {
             "code": "scoring_failed",
             "message": "boom",
-            # bool("false") is True; a stringly flag must not flip retryable.
+            # Same trap on the error side: reject, never bool("false").
             "retryable": "false",
         },
     }
@@ -235,7 +228,7 @@ async def test_client_scores_through_async_server_and_validates_identity(tmp_pat
 
     assert info.model_name == "unit-model"
     assert info.model_version == "unit-v1"
-    assert set(info.capabilities) == {"score_batch"}
+    assert info.generation_overlap_safe is False
     assert [result.scores["overall"] for result in results] == [0.75]
     assert results[0].timing_ms["service_artifact_validation_ms"] >= 0.0
     assert results[0].timing_ms["service_inference_wall_ms"] >= 0.0
@@ -293,7 +286,7 @@ async def test_client_verifies_isolation_only_after_safe_service_preflight(tmp_p
         await client.ensure_ready()
         info = await client.info()
 
-        assert GENERATION_OVERLAP_SAFE_CAPABILITY in info.capabilities
+        assert info.generation_overlap_safe is True
         assert client.external_accelerator_isolation_verified is True
 
 
@@ -376,38 +369,6 @@ async def test_ensure_ready_fails_fast_on_identity_mismatch(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_client_rejects_unknown_artifact_transport_before_scoring(tmp_path) -> None:
-    artifact_file = tmp_path / "a0.mp4"
-    artifact_file.write_bytes(b"x")
-    client = HttpRewardScorer(
-        "http://127.0.0.1:1",
-        expected_model="unit-model",
-    )
-
-    async def incompatible_info() -> RewardServiceInfo:
-        return RewardServiceInfo(
-            model_name="unit-model",
-            model_version="unit-v1",
-            capabilities=("score_batch",),
-            max_concurrency=1,
-            max_pending_requests=1,
-            artifact_transport="object_store_blobs",
-        )
-
-    client.info = incompatible_info
-    try:
-        with pytest.raises(RemoteRewardServiceError, match="transport is unsupported") as caught:
-            await client.score_batch(_request(str(artifact_file)))
-    finally:
-        await client.shutdown()
-
-    assert caught.value.code == RewardServiceErrorCode.BAD_REQUEST.value
-    assert caught.value.details["supported_artifact_transport"] == (
-        SHARED_FILESYSTEM_ARTIFACT_TRANSPORT
-    )
-
-
-@pytest.mark.asyncio
 async def test_service_scoring_error_is_typed(tmp_path) -> None:
     class _FailingRuntime(_FakeRuntime):
         async def score_batch(self, request):
@@ -433,7 +394,7 @@ async def test_server_rejects_unsupported_wire_version_with_typed_error(tmp_path
             aiohttp.ClientSession() as session,
             session.post(
                 f"http://{host}:{port}/score",
-                json={"protocol": WIRE_PROTOCOL, "version": 999, "request": {}},
+                json={"version": 999, "request": {}},
             ) as response,
         ):
             body = await response.json()
@@ -1003,7 +964,7 @@ def test_module_cli_handles_sigterm_without_eager_import_warning(tmp_path) -> No
             timeout=1.0,
         ) as response:
             info = json.load(response)["info"]
-        assert GENERATION_OVERLAP_SAFE_CAPABILITY in info["capabilities"]
+        assert info["generation_overlap_safe"] is True
         process.send_signal(signal.SIGTERM)
         stdout, stderr = process.communicate(timeout=15)
     finally:
