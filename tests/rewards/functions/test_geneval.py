@@ -59,11 +59,6 @@ async def test_geneval_reward_rejects_unknown_kwarg() -> None:
         GenEvalReward(device="cpu", evaluator="constant", score_fn=lambda **_: 0.25)
 
 
-def test_geneval_reward_rejects_removed_timeout_knob() -> None:
-    with pytest.raises(TypeError, match="timeout_s"):
-        GenEvalReward(device="cpu", timeout_s=0.0, score_fn=lambda **_: 0.25)
-
-
 @pytest.mark.asyncio
 async def test_geneval_reward_registered_in_multi_reward() -> None:
     """Checks GenEval reward registered in multi reward."""

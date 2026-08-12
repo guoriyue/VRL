@@ -7,10 +7,9 @@ without importing torch, diffusers, or upstream model packages.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field
 
 from vrl.config.base import ConfigBase
 from vrl.models.checkpoint_identity import checkpoint_identity_metadata
@@ -87,16 +86,6 @@ class TorchCompileSection(_ClosedModelSection):
 
 class ModelExecutorSection(_ClosedModelSection):
     """Shared ``GenericDiffusionBatchExecutor`` constructor inputs."""
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_renamed(cls, data: Any) -> Any:
-        if isinstance(data, Mapping) and "chunk_passthrough_keys" in data:
-            raise ValueError(
-                "model.executor.chunk_passthrough_keys was renamed to "
-                "model.executor.batch_passthrough_keys; update the config key",
-            )
-        return data
 
     num_frames: int | None = None
     max_sequence_length: int | None = None

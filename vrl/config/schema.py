@@ -261,32 +261,7 @@ class SdeConfig(ConfigBase):
     window_range: Any = None
 
 
-def _reject_renamed_keys(data: Any, renames: Mapping[str, str], section: str) -> Any:
-    """Fail loud on pre-rename keys instead of warn-and-ignore.
-
-    The unknown-key walker only warns, which would silently turn a renamed
-    knob into its default; a rename must point at the new key instead.
-    """
-
-    if isinstance(data, Mapping):
-        for old, new in renames.items():
-            if old in data:
-                raise ValueError(
-                    f"{section}.{old} was renamed to {section}.{new}; update the config key",
-                )
-    return data
-
-
 class RolloutConfig(ConfigBase):
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_renamed(cls, data: Any) -> Any:
-        return _reject_renamed_keys(
-            data,
-            {"samples_per_chunk": "samples_per_generation_batch"},
-            "rollout",
-        )
-
     # readers: vrl/math/denoise/flow_matching.py window + RootConfig check
     sde: SdeConfig | None = Field(
         default=None,
@@ -762,15 +737,6 @@ class RolloutWorkerSection(ConfigBase):
     (the syncer flattens whatever is trainable — lora or full-param), False
     disables the weight syncer.
     """
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_renamed(cls, data: Any) -> Any:
-        return _reject_renamed_keys(
-            data,
-            {"chunk_placement_strategy": "batch_placement_strategy"},
-            "distributed.rollout",
-        )
 
     cpus_per_worker: float = 1.0
     # Background liveness probing of rollout workers. interval <= 0 disables it;

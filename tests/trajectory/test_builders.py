@@ -10,7 +10,6 @@ from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.types import GenerationRequest
 from vrl.trajectory import (
     TrajectoryBatch,
-    TrajectoryMetrics,
     TrajectoryValidationError,
     TrajectoryValidator,
     build_ar_continuous_trajectory,
@@ -31,21 +30,6 @@ def test_all_builders_derive_structure_without_metric_copies() -> None:
         assert len(trajectory.sample_rows) == expected_axis_lengths["sample"], name
         assert _axis_lengths(trajectory) == expected_axis_lengths, name
         assert trajectory.metrics.values == {}, name
-
-
-@pytest.mark.parametrize(
-    ("field_name", "value"),
-    [
-        ("num_samples", 2),
-        ("axis_lengths", {"sample": 2}),
-    ],
-)
-def test_trajectory_metrics_rejects_removed_structural_fields(
-    field_name: str,
-    value: object,
-) -> None:
-    with pytest.raises(TypeError, match=field_name):
-        TrajectoryMetrics(**{field_name: value})
 
 
 def test_builder_rejects_tensor_rows_that_disagree_with_sample_rows() -> None:

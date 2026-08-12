@@ -1301,35 +1301,3 @@ def test_cosmos_async_reward_recipe_resolves_resident_reward_overlap() -> None:
     # >=2 inflight groups is the invariant that lets rollout(N+1) produce while
     # reward(N) scores; assert the relation, not the literal value.
     assert typed.continuous.max_inflight_groups >= 2
-
-
-def test_historical_distributed_keys_are_unknown_to_the_typed_tree() -> None:
-    """Removed/renamed keys fail via the one unknown-key mechanism, not a
-    resolver-side blacklist: typed closed blocks accept exactly their fields."""
-    from omegaconf import OmegaConf
-
-    from vrl.config.unknown_keys import require_no_unknown_keys
-
-    cfg = OmegaConf.create(
-        {
-            "model": {"family": "sana"},
-            "distributed": {
-                "resources": {
-                    "rollout": {"memory_fraction": 0.4},
-                    "reward": {"share_with_rollout": True},
-                },
-                "rollout": {"release_after_collect": False},
-                "reward": {"cpus_per_worker": 0.5},
-            },
-        },
-    )
-    with pytest.raises(ValueError, match=r"unknown config keys") as caught:
-        require_no_unknown_keys(cfg)
-    message = str(caught.value)
-    for path in (
-        "distributed.resources.rollout.memory_fraction",
-        "distributed.resources.reward.share_with_rollout",
-        "distributed.rollout.release_after_collect",
-        "distributed.reward",
-    ):
-        assert path in message

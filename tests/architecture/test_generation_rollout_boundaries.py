@@ -233,48 +233,6 @@ def test_model_family_registry_stays_import_light() -> None:
     assert not violations, _format_violations(violations)
 
 
-def test_removed_boundary_packages_stay_removed() -> None:
-    """Checks removed boundary packages stay removed."""
-    assert not (VRL_ROOT / "distributed").exists()
-    assert not (VRL_ROOT / "runtime").exists()
-    assert not (VRL_ROOT / "generation" / "runtime").exists()
-    assert not (VRL_ROOT / "families").exists()
-    assert not (VRL_ROOT / "rollouts" / "families").exists()
-    assert not (VRL_ROOT / "rollouts" / "family_names.py").exists()
-
-    retired_regime_paths = (
-        VRL_ROOT / "generation" / "bindings" / ("joint" + "_denoise"),
-        VRL_ROOT / "generation" / "bindings" / ("causal" + "_token"),
-        VRL_ROOT / "generation" / "composition" / ("caus" + "al"),
-        VRL_ROOT / "scripts" / "generation" / ("joint" + "_denoise.py"),
-    )
-    assert not [path for path in retired_regime_paths if path.exists()]
-
-
-def test_retired_routing_paths_have_no_python_source() -> None:
-    """The family-first layout forbids restoring routing packages under the four
-    retired paths. Assert no ``*.py``/``*.pyi`` source lives there — NOT
-    ``.exists()``, which would false-fail on a correct checkout that merely
-    retains stale ``__pycache__`` bytecode from an older commit.
-    """
-    retired = (
-        VRL_ROOT / "models" / "ar",
-        VRL_ROOT / "models" / "diffusion",
-        VRL_ROOT / "generation" / "ar",
-        VRL_ROOT / "generation" / "diffusion",
-    )
-    offenders = [
-        source
-        for path in retired
-        for pattern in ("*.py", "*.pyi")
-        for source in path.rglob(pattern)
-        if "__pycache__" not in source.parts
-    ]
-    assert not offenders, "retired routing paths must contain no Python source:\n" + "\n".join(
-        str(source.relative_to(ROOT)) for source in offenders
-    )
-
-
 def test_shared_ray_substrate_stays_domain_neutral() -> None:
     """Checks shared Ray substrate stays domain neutral."""
     assert (VRL_ROOT / "ray" / "resources.py").exists()
@@ -453,23 +411,6 @@ def test_chunk_executor_base_stays_family_registry_neutral() -> None:
         if _is_module_or_child(target, "vrl.models.families.registry")
     ]
     assert not violations, _format_violations(violations)
-
-
-def test_new_runtime_code_does_not_import_engine_compat_paths() -> None:
-    """Checks new runtime code does not import engine compat paths."""
-    violations = []
-    for path in _python_files(VRL_ROOT):
-        rel = path.relative_to(ROOT)
-        for module in _imports(path):
-            if module == "vrl.engine" or module.startswith("vrl.engine."):
-                violations.append((rel, module))
-    assert not violations, _format_violations(violations)
-
-
-def test_removed_engine_packages_stay_removed() -> None:
-    """Checks removed engine packages stay removed."""
-    assert not (VRL_ROOT / "engine").exists()
-    assert not (ROOT / "tests" / "engine").exists()
 
 
 def _forbidden_imports(

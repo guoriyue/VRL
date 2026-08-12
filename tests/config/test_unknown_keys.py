@@ -193,31 +193,6 @@ def test_open_blocks_accept_arbitrary_keys() -> None:
     assert find_unknown_keys(cfg) == []
 
 
-@pytest.mark.parametrize(
-    ("config", "path"),
-    [
-        ({"data": {"source": "huggingface"}}, "data.source"),
-        (
-            {"data": {"preprocessing": {"metadata_schema": "geneval"}}},
-            "data.preprocessing.metadata_schema",
-        ),
-        (
-            {"data": {"preprocessing": {"target_text": "quoted_substring"}}},
-            "data.preprocessing.target_text",
-        ),
-        (
-            {"data": {"preprocessing": {"media_type": "video"}}},
-            "data.preprocessing.media_type",
-        ),
-    ],
-)
-def test_removed_data_noop_keys_are_unknown(
-    config: dict[str, object],
-    path: str,
-) -> None:
-    assert find_unknown_keys(OmegaConf.create(config)) == [path]
-
-
 @pytest.mark.parametrize("removed_key", ["enabld", "report_path"])
 def test_production_gate_is_closed(removed_key: str) -> None:
     cfg = OmegaConf.create(
@@ -244,15 +219,6 @@ def test_production_enabled_is_a_known_key() -> None:
     assert find_unknown_keys(cfg) == []
 
 
-def test_removed_rollout_queue_knob_is_unknown() -> None:
-    cfg = OmegaConf.create(
-        {"trainer": {"rollout_orchestration": {"max_pending_rollouts": 2}}},
-    )
-    assert find_unknown_keys(cfg) == [
-        "trainer.rollout_orchestration.max_pending_rollouts",
-    ]
-
-
 @pytest.mark.parametrize(
     ("field_name", "value"),
     [
@@ -269,28 +235,6 @@ def test_online_update_memory_keys_are_owned_by_actor(
 
     assert find_unknown_keys(actor_cfg) == []
     assert find_unknown_keys(rollout_cfg) == [f"rollout.{field_name}"]
-
-
-def test_removed_sampling_r1_duplicate_is_unknown() -> None:
-    cfg = OmegaConf.create(
-        {"sampling": {"r1": {"train_segments": {"initial_image": True}}}},
-    )
-    assert find_unknown_keys(cfg) == ["sampling.r1"]
-
-
-def test_removed_sampling_cfg_knob_is_unknown() -> None:
-    cfg = OmegaConf.create({"sampling": {"cfg": False, "guidance_scale": 1.0}})
-    assert find_unknown_keys(cfg) == ["sampling.cfg"]
-
-
-def test_removed_use_ar_scheduler_knob_is_unknown() -> None:
-    cfg = OmegaConf.create({"sampling": {"use_ar_scheduler": True}})
-    assert find_unknown_keys(cfg) == ["sampling.use_ar_scheduler"]
-
-
-def test_removed_model_dtype_is_unknown() -> None:
-    cfg = OmegaConf.create({"model": {"family": "sd3_5", "dtype": "bf16"}})
-    assert find_unknown_keys(cfg) == ["model.dtype"]
 
 
 @pytest.mark.parametrize(

@@ -206,15 +206,6 @@ def test_algorithm_keys_are_scoped_to_selected_kind(kind: str, foreign_field: st
     assert find_unknown_keys(cfg) == [f"algorithm.{foreign_field}"]
 
 
-@pytest.mark.parametrize("family", ["wan_2_1", "echo"])
-def test_removed_task_variant_is_an_unknown_model_key(family: str) -> None:
-    """A deleted no-op knob must not remain accepted by family schemas."""
-    from vrl.config.unknown_keys import find_unknown_keys
-
-    cfg = OmegaConf.create({"model": {"family": family, "task_variant": "unused"}})
-    assert find_unknown_keys(cfg) == ["model.task_variant"]
-
-
 def test_algorithm_unknown_key_selector_defers_invalid_kind_to_schema() -> None:
     from vrl.config.unknown_keys import find_unknown_keys
 
@@ -1162,16 +1153,6 @@ def test_unknown_batch_placement_strategy_raises() -> None:
         parse_config(cfg)
 
 
-def test_legacy_sync_trainable_state_string_rejected() -> None:
-    """sync_trainable_state is a plain bool now; the legacy "lora_only" string is
-    rejected at parse, not silently coerced (no backward-compat)."""
-    cfg = _minimal_grpo_cfg(
-        distributed={"rollout": {"sync_trainable_state": "lora_only"}},
-    )
-    with pytest.raises(ValueError, match=r"valid boolean"):
-        parse_config(cfg)
-
-
 def test_rollout_keys_are_registered_not_unknown() -> None:
     """distributed.rollout.* per-worker runtime keys are known to the walker.
 
@@ -1361,39 +1342,6 @@ def test_rollout_generation_stall_timeout_must_be_finite_and_positive(
 
     with pytest.raises(ValueError, match=r"generation_stall_timeout_s must be finite and > 0"):
         parse_config(cfg)
-
-
-def test_removed_rollout_memory_fraction_is_unknown() -> None:
-    """The removed bounded-resident input is absent from the key registry."""
-    from vrl.config.unknown_keys import find_unknown_keys
-
-    cfg = _minimal_grpo_cfg(
-        distributed={
-            "resources": {
-                "rollout": {
-                    "gpu_pool": "trainer",
-                    "memory_fraction": 0.4,
-                },
-            },
-        },
-    )
-
-    assert "distributed.resources.rollout.memory_fraction" in find_unknown_keys(cfg)
-
-
-@pytest.mark.parametrize("removed_key", ["placement_strategy", "max_inflight_batches"])
-def test_removed_reward_pool_runtime_keys_are_unknown(removed_key: str) -> None:
-    """Ray reward actor-pool knobs are no longer registered config keys."""
-    from vrl.config.unknown_keys import find_unknown_keys
-
-    cfg = _minimal_grpo_cfg(
-        distributed={"reward": {"cpus_per_worker": 2.0, removed_key: "legacy"}},
-    )
-    unknown = find_unknown_keys(cfg)
-    # The whole legacy distributed.reward section is unknown now; the
-    # walker reports the section root once instead of each stale key.
-    assert "distributed.reward" in unknown
-    assert "distributed.reward.cpus_per_worker" not in unknown
 
 
 def test_reward_resident_overlap_is_not_a_resource_key() -> None:

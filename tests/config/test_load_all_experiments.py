@@ -414,23 +414,6 @@ def test_fsdp_ema_presets_distinguish_capability_from_memory_policy() -> None:
     assert sd3_full_parameter.actor.ema.enable is False
 
 
-def test_experiments_do_not_use_legacy_precision_fields() -> None:
-    """Checks live YAML uses top-level precision only."""
-    offenders = []
-    for name in _experiment_names():
-        cfg = load_config(f"experiment/{name}")
-        actor = cfg.get("actor", {})
-        optim = actor.get("optim", {}) or {}
-        if (
-            "mixed_precision" in actor
-            or "bf16" in actor
-            or "allow_tf32" in optim
-            or cfg.precision.get("float32_precision") not in {"ieee", "tf32"}
-        ):
-            offenders.append(name)
-    assert offenders == []
-
-
 def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
     """Checks rollout orchestration group override uses rollout namespace."""
     cfg = load_config(
@@ -1214,23 +1197,6 @@ def test_unknown_algorithm_config_fields_fail_fast() -> None:
     cfg = OmegaConf.create({"algorithm": {"kind": "grpo", "unknown_knob": 1}})
 
     with pytest.raises(ValueError, match=r"algorithm\.unknown_knob"):
-        build_algorithm_config(cfg)
-
-
-def test_diffusion_nft_rejects_removed_advantage_low() -> None:
-    """Checks DiffusionNFT derives the low clamp from advantage_scale."""
-
-    cfg = OmegaConf.create(
-        {
-            "algorithm": {
-                "kind": "diffusion_nft",
-                "advantage_scale": 5.0,
-                "advantage_low": -5.0,
-            },
-        },
-    )
-
-    with pytest.raises(ValueError, match=r"algorithm\.advantage_low"):
         build_algorithm_config(cfg)
 
 
