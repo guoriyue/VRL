@@ -31,6 +31,7 @@ from vrl.rewards.inference import (
 )
 from vrl.rewards.service.protocol import (
     GENERATION_OVERLAP_SAFE_CAPABILITY,
+    SCORE_BATCH_CAPABILITY,
     SHARED_FILESYSTEM_ARTIFACT_TRANSPORT,
     RemoteRewardServiceError,
     RewardServiceErrorCode,
@@ -241,7 +242,7 @@ class HttpRewardScorer:
             if self._identity_checked:
                 return
             info = await self.info()
-            if "score_batch" not in info.capabilities:
+            if SCORE_BATCH_CAPABILITY not in info.capabilities:
                 raise RemoteRewardServiceError(
                     RewardServiceErrorCode.BAD_REQUEST.value,
                     "reward service does not advertise score_batch capability",

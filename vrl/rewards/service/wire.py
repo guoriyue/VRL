@@ -51,8 +51,13 @@ def _require_mapping(value: Any, *, context: str) -> Mapping[str, Any]:
     return value
 
 
-def _validate_envelope(payload: Any) -> Mapping[str, Any]:
+def _validate_envelope(payload: Any, *, expected_keys: set[str]) -> Mapping[str, Any]:
     envelope = _require_mapping(payload, context="reward service payload")
+    _reject_unknown_keys(
+        envelope,
+        {"protocol", "version", *expected_keys},
+        context="reward envelope",
+    )
     protocol = envelope.get("protocol")
     if protocol != WIRE_PROTOCOL:
         raise RewardServiceProtocolError(
@@ -89,12 +94,16 @@ def _reject_unknown_keys(
         )
 
 
+# Artifact wire schema: every dataclass field except the in-memory payload,
+# which never crosses the HTTP boundary (remote scoring reads disk files).
+_ARTIFACT_WIRE_FIELDS = tuple(
+    field.name for field in fields(RewardInferenceArtifact) if field.name != "media"
+)
+
+
 def request_to_wire(request: RewardInferenceRequest) -> dict[str, Any]:
     """Serialize a disk-artifact request into the current protocol envelope."""
 
-    artifact_field_names = tuple(
-        field.name for field in fields(RewardInferenceArtifact) if field.name != "media"
-    )
     artifacts: list[dict[str, Any]] = []
     for artifact in request.artifacts:
         if not artifact.path:
@@ -104,7 +113,7 @@ def request_to_wire(request: RewardInferenceRequest) -> dict[str, Any]:
                 "disk-artifact reward or score inline.",
             )
         artifacts.append(
-            {name: getattr(artifact, name) for name in artifact_field_names},
+            {name: getattr(artifact, name) for name in _ARTIFACT_WIRE_FIELDS},
         )
     body = {
         field.name: getattr(request, field.name)
@@ -121,7 +130,7 @@ def request_to_wire(request: RewardInferenceRequest) -> dict[str, Any]:
 def request_from_wire(payload: Any) -> RewardInferenceRequest:
     """Parse and validate one current-version request envelope."""
 
-    envelope = _validate_envelope(payload)
+    envelope = _validate_envelope(payload, expected_keys={"request"})
     body = _require_mapping(envelope.get("request"), context="reward request")
     request_fields = {field.name for field in fields(RewardInferenceRequest)}
     _reject_unknown_keys(body, request_fields, context="reward request")
@@ -140,9 +149,6 @@ def request_from_wire(payload: Any) -> RewardInferenceRequest:
             request_id=request_id,
         )
 
-    artifact_fields = {
-        field.name for field in fields(RewardInferenceArtifact) if field.name != "media"
-    }
     artifacts: list[RewardInferenceArtifact] = []
     try:
         for index, value in enumerate(raw_artifacts):
@@ -152,14 +158,16 @@ def request_from_wire(payload: Any) -> RewardInferenceRequest:
             )
             _reject_unknown_keys(
                 artifact,
-                artifact_fields,
+                set(_ARTIFACT_WIRE_FIELDS),
                 context=f"reward artifact at index {index}",
             )
             artifacts.append(RewardInferenceArtifact(**dict(artifact)))
-        return RewardInferenceRequest(
-            request_id=request_id,
-            artifacts=tuple(artifacts),
-        )
+        # Construct from the full validated body (unknown keys were rejected
+        # above) so a future request field crosses the wire instead of being
+        # silently dropped by a hand-written constructor call.
+        request_kwargs = dict(body)
+        request_kwargs["artifacts"] = tuple(artifacts)
+        return RewardInferenceRequest(**request_kwargs)
     except RewardServiceProtocolError:
         raise
     except (KeyError, TypeError, ValueError) as error:
@@ -197,7 +205,7 @@ def score_response_from_wire(
     *,
     expected_request_id: str | None = None,
 ) -> list[RewardInferenceResult]:
-    envelope = _validate_envelope(payload)
+    envelope = _validate_envelope(payload, expected_keys={"request_id", "results"})
     response_request_id = envelope.get("request_id")
     if not isinstance(response_request_id, str) or not response_request_id:
         raise RewardServiceProtocolError(
@@ -243,12 +251,24 @@ def error_to_wire(error: RewardServiceProtocolError) -> dict[str, Any]:
 
 def error_from_wire(payload: Any, *, status_code: int) -> RemoteRewardServiceError:
     try:
-        envelope = _validate_envelope(payload)
+        envelope = _validate_envelope(payload, expected_keys={"error"})
         body = _require_mapping(envelope.get("error"), context="reward error")
+        _reject_unknown_keys(
+            body,
+            {"code", "message", "retryable", "request_id", "details"},
+            context="reward error",
+        )
         code = body.get("code")
         message = body.get("message")
         if not isinstance(code, str) or not isinstance(message, str):
             raise ValueError("reward error requires string code and message")
+        retryable = body.get("retryable", False)
+        if not isinstance(retryable, bool):
+            # bool("false") is True; a stringly flag must fail, not flip.
+            raise ValueError("reward error retryable must be a JSON boolean")
+        request_id = body.get("request_id")
+        if request_id is not None and not isinstance(request_id, str):
+            raise ValueError("reward error request_id must be a string")
         details = body.get("details") or {}
         if not isinstance(details, Mapping):
             raise ValueError("reward error details must be an object")
@@ -256,8 +276,8 @@ def error_from_wire(payload: Any, *, status_code: int) -> RemoteRewardServiceErr
             code,
             message,
             status_code=status_code,
-            retryable=bool(body.get("retryable", False)),
-            request_id=body.get("request_id"),
+            retryable=retryable,
+            request_id=request_id,
             details=dict(details),
         )
     except (RewardServiceProtocolError, TypeError, ValueError) as error:
@@ -274,11 +294,17 @@ def info_to_wire(info: RewardServiceInfo) -> dict[str, Any]:
 
 
 def info_from_wire(payload: Any) -> RewardServiceInfo:
-    envelope = _validate_envelope(payload)
+    envelope = _validate_envelope(payload, expected_keys={"info"})
     body = _require_mapping(envelope.get("info"), context="reward service info")
     try:
         values = dict(body)
-        values["capabilities"] = tuple(values.get("capabilities") or ())
+        raw_capabilities = values.get("capabilities") or ()
+        if isinstance(raw_capabilities, str) or not isinstance(raw_capabilities, Sequence):
+            # tuple("score_batch") would explode a string into characters.
+            raise ValueError("reward service capabilities must be an array of strings")
+        if not all(isinstance(capability, str) for capability in raw_capabilities):
+            raise ValueError("reward service capabilities must be an array of strings")
+        values["capabilities"] = tuple(raw_capabilities)
         return RewardServiceInfo(**values)
     except (TypeError, ValueError) as error:
         raise RewardServiceProtocolError(
@@ -292,7 +318,7 @@ def status_to_wire(status: str) -> dict[str, Any]:
 
 
 def status_from_wire(payload: Any) -> str:
-    envelope = _validate_envelope(payload)
+    envelope = _validate_envelope(payload, expected_keys={"status"})
     status = envelope.get("status")
     if not isinstance(status, str):
         raise RewardServiceProtocolError(

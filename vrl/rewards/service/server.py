@@ -33,6 +33,7 @@ from vrl.rewards.launch_contract import RewardWorkerLaunchContract
 from vrl.rewards.service.owner import RewardScorerOwner
 from vrl.rewards.service.protocol import (
     GENERATION_OVERLAP_SAFE_CAPABILITY,
+    SCORE_BATCH_CAPABILITY,
     RewardServiceErrorCode,
     RewardServiceInfo,
     RewardServiceProtocolError,
@@ -162,7 +163,9 @@ class RewardService:
         self._host = host
         self._port = int(port)
         self._artifact_roots = tuple(roots)
-        capabilities = ["cancel", "idempotency", "score_batch"]
+        # Cancellation and idempotency are fixed WIRE_VERSION behaviors, not
+        # optional capabilities; only genuinely optional facts are advertised.
+        capabilities = [SCORE_BATCH_CAPABILITY]
         if generation_overlap_safe:
             capabilities.append(GENERATION_OVERLAP_SAFE_CAPABILITY)
         self._info = RewardServiceInfo(
@@ -334,44 +337,47 @@ class RewardService:
         inference_request = request_from_wire(payload)
         fingerprint = request_fingerprint(inference_request)
 
+        request_id = inference_request.request_id
         async with self._records_lock:
-            record = self._records.get(inference_request.request_id)
+            record = self._records.get(request_id)
             if record is not None:
                 if record.fingerprint != fingerprint:
                     raise RewardServiceProtocolError(
                         RewardServiceErrorCode.IDEMPOTENCY_CONFLICT,
                         "reward request_id was reused with a different payload",
                         status_code=409,
-                        request_id=inference_request.request_id,
+                        request_id=request_id,
                     )
-                self._records.move_to_end(inference_request.request_id)
-                if record.task.done() and record.task.result().status == 200:
-                    if self._active_requests >= self._info.max_pending_requests:
-                        raise self._overloaded_error(inference_request.request_id)
-                    self._active_requests += 1
-                    cached_reply = record.task.result()
-                    record.task = asyncio.create_task(
-                        self._revalidate_cached(inference_request, cached_reply),
-                        name=f"reward-revalidate:{inference_request.request_id}",
-                    )
-                elif record.task.done() and record.task.result().status >= 500:
-                    if self._active_requests >= self._info.max_pending_requests:
-                        raise self._overloaded_error(inference_request.request_id)
-                    self._active_requests += 1
-                    record.task = asyncio.create_task(
-                        self._execute(inference_request),
-                        name=f"reward-score:{inference_request.request_id}",
-                    )
-            else:
+                self._records.move_to_end(request_id)
+            # Decide first what this request must spawn, then admit exactly
+            # once: a new execution, a cached-success revalidation, a retry
+            # after a 5xx reply — or nothing (join an in-flight task, or
+            # replay a terminal 4xx reply as-is).
+            replay_success = (
+                record is not None and record.task.done() and record.task.result().status == 200
+            )
+            retry_failure = (
+                record is not None and record.task.done() and record.task.result().status >= 500
+            )
+            if record is None or replay_success or retry_failure:
                 if self._active_requests >= self._info.max_pending_requests:
-                    raise self._overloaded_error(inference_request.request_id)
+                    raise self._overloaded_error(request_id)
                 self._active_requests += 1
-                task = asyncio.create_task(
-                    self._execute(inference_request),
-                    name=f"reward-score:{inference_request.request_id}",
-                )
-                record = _RequestRecord(fingerprint=fingerprint, task=task)
-                self._records[inference_request.request_id] = record
+                if replay_success:
+                    task = asyncio.create_task(
+                        self._revalidate_cached(inference_request, record.task.result()),
+                        name=f"reward-revalidate:{request_id}",
+                    )
+                else:
+                    task = asyncio.create_task(
+                        self._execute(inference_request),
+                        name=f"reward-score:{request_id}",
+                    )
+                if record is None:
+                    record = _RequestRecord(fingerprint=fingerprint, task=task)
+                    self._records[request_id] = record
+                else:
+                    record.task = task
 
         reply = await asyncio.shield(record.task)
         return self._json_response(reply.status, reply.body)

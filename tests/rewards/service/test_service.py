@@ -168,6 +168,45 @@ def test_wire_rejects_unknown_fields_and_versions(tmp_path) -> None:
     with pytest.raises(ValueError, match="unsupported reward wire version"):
         request_from_wire(payload)
 
+    payload = request_to_wire(_request(str(artifact_file)))
+    payload["surprise"] = True
+    with pytest.raises(ValueError, match="unsupported reward envelope fields"):
+        request_from_wire(payload)
+
+
+def test_wire_decodes_only_typed_scalars() -> None:
+    from vrl.rewards.service.wire import error_from_wire, info_from_wire
+
+    info_envelope = {
+        "protocol": WIRE_PROTOCOL,
+        "version": WIRE_VERSION,
+        "info": {
+            "model_name": "m",
+            "model_version": "v",
+            # A bare string would explode into per-character capabilities
+            # under tuple(); it must be rejected, not reinterpreted.
+            "capabilities": "score_batch",
+            "max_concurrency": 1,
+            "max_pending_requests": 1,
+        },
+    }
+    with pytest.raises(ValueError, match="array of strings"):
+        info_from_wire(info_envelope)
+
+    error_envelope = {
+        "protocol": WIRE_PROTOCOL,
+        "version": WIRE_VERSION,
+        "error": {
+            "code": "scoring_failed",
+            "message": "boom",
+            # bool("false") is True; a stringly flag must not flip retryable.
+            "retryable": "false",
+        },
+    }
+    decoded = error_from_wire(error_envelope, status_code=500)
+    assert decoded.code == "transport_error"
+    assert "retryable must be a JSON boolean" in str(decoded)
+
 
 @pytest.mark.asyncio
 async def test_client_scores_through_async_server_and_validates_identity(tmp_path) -> None:
@@ -196,7 +235,7 @@ async def test_client_scores_through_async_server_and_validates_identity(tmp_pat
 
     assert info.model_name == "unit-model"
     assert info.model_version == "unit-v1"
-    assert set(info.capabilities) == {"cancel", "idempotency", "score_batch"}
+    assert set(info.capabilities) == {"score_batch"}
     assert [result.scores["overall"] for result in results] == [0.75]
     assert results[0].timing_ms["service_artifact_validation_ms"] >= 0.0
     assert results[0].timing_ms["service_inference_wall_ms"] >= 0.0

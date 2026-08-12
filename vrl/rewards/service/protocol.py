@@ -16,6 +16,7 @@ WIRE_PROTOCOL = "vrl.reward"
 WIRE_VERSION = 2
 SHARED_FILESYSTEM_ARTIFACT_TRANSPORT = "shared_filesystem_paths"
 GENERATION_OVERLAP_SAFE_CAPABILITY = "generation_overlap_safe"
+SCORE_BATCH_CAPABILITY = "score_batch"
 
 
 # Keep the exported enum's historical ``str(member)`` representation; the wire
