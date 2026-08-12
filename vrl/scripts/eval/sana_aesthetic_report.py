@@ -25,7 +25,6 @@ from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
-from vrl.rewards.inference import sha256_file
 from vrl.scripts.eval.sana_inference import OFFICIAL_SAMPLING_PROTOCOL, SCHEDULER_PROTOCOL
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
@@ -33,6 +32,7 @@ from vrl.trainers.checkpointing import (
     read_checkpoint_meta,
 )
 from vrl.trainers.data import load_prompt_manifest
+from vrl.utils.artifacts import sha256_file
 
 # Persisted protocol and asset identities. These constants are real schema
 # boundaries, not tunable experiment defaults or duplicated typed structures.

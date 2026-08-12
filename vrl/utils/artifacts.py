@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
 DATA_ROOT_ENV = "VRL_DATA_ROOT"
+
+
+def sha256_file(path: str | Path) -> str:
+    """Canonical SHA-256 hex digest of one file's bytes.
+
+    The single file-integrity implementation shared across domains: reward
+    artifact writer and service validator (which must hash identically or
+    shared-filesystem integrity checks fail), checkpoint/manifest identity in
+    eval reports, and dataset derivation manifests.
+    """
+
+    with Path(path).open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
 
 # Media file extensions used only to classify a path as image-vs-video (reward
 # frame decode, manifest readability probe). This is plain extension taxonomy —

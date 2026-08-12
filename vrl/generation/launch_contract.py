@@ -9,7 +9,7 @@ content so a live driver object (callable, model, tensor) fails fast on the
 driver instead of inside actor deserialization.
 
 The reward-side twin is ``RewardWorkerLaunchContract``
-(vrl/rewards/inference.py).
+(vrl/rewards/launch_contract.py).
 """
 
 from __future__ import annotations

@@ -24,15 +24,20 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, ClassVar
 
-from vrl.rewards.inference import (
-    ArtifactRetainingError,
+from vrl.rewards.artifacts import (
+    DiskRewardArtifactStore,
     InMemoryRewardArtifactStore,
     MediaType,
-    MemoryParkingScorer,
-    RemoteReadyScorer,
     RewardArtifactStore,
+)
+from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
+)
+from vrl.rewards.protocols import (
+    ArtifactRetainingError,
+    MemoryParkingScorer,
+    RemoteReadyScorer,
     RewardScorer,
 )
 from vrl.rewards.types import RewardOutput, RewardSample
@@ -478,7 +483,7 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
         worker_config: Mapping[str, Any] | None = None,
         scorer: RewardScorer | None = None,
     ) -> None:
-        from vrl.rewards.artifacts import DiskRewardArtifactStore
+        # Deferred: runtime.py imports this module (cycle guard).
         from vrl.rewards.runtime import build_reward_scorer
 
         artifact_store = DiskRewardArtifactStore(

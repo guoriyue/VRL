@@ -14,7 +14,6 @@ not prove that an action-conditioned policy changes the generated continuation.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import traceback
 from pathlib import Path
@@ -30,6 +29,7 @@ from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval._device import resolve_eval_device
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.media import read_video_frames
 
@@ -173,7 +173,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             "model_identity": resolved.identity,
             "prefix_video": {
                 "path": str(prefix_path),
-                "sha256": _sha256_file(prefix_path),
+                "sha256": sha256_file(prefix_path),
                 "conditioned_pixel_frames": int(args.prefix_frames),
             },
             "sampling": {"height": height, "width": width, "num_frames": num_frames},
@@ -196,11 +196,6 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     finally:
         del bundle
         release_cuda_memory()
-
-
-def _sha256_file(path: Path) -> str:
-    with path.open("rb") as handle:
-        return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
 def _write_report(path: Path, report: dict[str, Any]) -> None:

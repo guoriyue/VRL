@@ -31,7 +31,6 @@ from vrl.config.schema import parse_config
 from vrl.models import checkpoint_identity
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.models.precision import float32_precision_state, model_precision
-from vrl.rewards.inference import sha256_file
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval.sana_inference import (
     SCHEDULER_PROTOCOL,
@@ -44,6 +43,7 @@ from vrl.trainers.checkpointing import (
     restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.media import to_pil_image, write_png
 
 logger = logging.getLogger(__name__)

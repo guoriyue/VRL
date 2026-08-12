@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 import torch
 
+from vrl.rewards.artifacts import InMemoryRewardArtifactStore
 from vrl.rewards.base import (
     InferenceRewardFunction,
     RewardCleanupError,
 )
-from vrl.rewards.inference import InMemoryRewardArtifactStore
 from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import InProcessRewardScorer
 from vrl.rewards.types import RewardSample

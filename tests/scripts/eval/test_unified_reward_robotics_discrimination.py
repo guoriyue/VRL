@@ -5,11 +5,12 @@ from pathlib import Path
 import pytest
 import torch
 
-from vrl.rewards.inference import RewardInferenceResult, sha256_file
+from vrl.rewards.inference import RewardInferenceResult
 from vrl.scripts.eval.unified_reward_robotics_discrimination_probe import (
     _score_anchor,
     build_parser,
 )
+from vrl.utils.artifacts import sha256_file
 
 
 def test_http_service_is_the_default_deployment() -> None:

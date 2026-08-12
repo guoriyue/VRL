@@ -14,8 +14,8 @@ if TYPE_CHECKING:
     from vrl.rewards.inference import (
         RewardInferenceRequest,
         RewardInferenceResult,
-        RewardScorer,
     )
+    from vrl.rewards.protocols import RewardScorer
 
 
 class RewardScorerOwner:

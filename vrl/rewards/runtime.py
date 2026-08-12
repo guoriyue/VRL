@@ -18,6 +18,7 @@ This module imports the CUDA parking utilities; the contract modules
 from __future__ import annotations
 
 import asyncio
+import time
 import traceback
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -28,12 +29,12 @@ from vrl.config.reward_inference import (
 )
 from vrl.rewards.base import RewardCleanupError, RewardFunction
 from vrl.rewards.inference import (
+    RewardInferenceArtifact,
     RewardInferenceRequest,
     RewardInferenceResult,
-    RewardScorer,
-    RewardWorkerLaunchContract,
-    score_artifacts_with_model,
 )
+from vrl.rewards.launch_contract import RewardWorkerLaunchContract
+from vrl.rewards.protocols import RewardScorer
 from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import (
@@ -395,11 +396,59 @@ class InProcessRewardScorer:
         # CuMem's model-building scope is one-shot. Execution uses the normal
         # allocator; park_memory's physical baseline gate rejects any lazy
         # long-lived CUDA allocation that survives scoring.
-        return score_artifacts_with_model(
-            model,
-            request,
-            reward_model_version=self._launch.reward_model_version,
-        )
+        return self._score_artifacts(model, request)
+
+    def _score_artifacts(
+        self,
+        model: Any,
+        request: RewardInferenceRequest,
+    ) -> list[RewardInferenceResult]:
+        """Run the reward model over the request's artifacts and build results.
+
+        A model may expose a ``score_batch(artifacts) -> list[Mapping]`` hook;
+        otherwise its per-artifact ``__call__`` is looped. ``model`` stays
+        ``Any`` because the factory path is genuinely unvalidated plugin input.
+        """
+
+        reward_model_version = self._launch.reward_model_version
+
+        def build_result(
+            artifact: RewardInferenceArtifact,
+            raw_scores: Mapping[str, Any],
+            inference_ms: float,
+        ) -> RewardInferenceResult:
+            if not isinstance(raw_scores, Mapping):
+                raise TypeError("reward model must return a mapping of scores")
+            scores = {str(key): float(value) for key, value in raw_scores.items()}
+            return RewardInferenceResult(
+                artifact_id=artifact.artifact_id,
+                scores=scores,
+                reward_model_version=str(reward_model_version) or None,
+                timing_ms={"inference_ms": inference_ms},
+            )
+
+        batch_score = getattr(model, "score_batch", None)
+        if callable(batch_score):
+            started = time.perf_counter()
+            score_maps = list(batch_score(request.artifacts))
+            if len(score_maps) != len(request.artifacts):
+                raise ValueError(
+                    "RewardModel.score_batch returned wrong number of score maps: "
+                    f"got {len(score_maps)}, expected {len(request.artifacts)}",
+                )
+            per_artifact_ms = (time.perf_counter() - started) * 1000.0 / max(1, len(score_maps))
+            return [
+                build_result(artifact, raw_scores, inference_ms=per_artifact_ms)
+                for artifact, raw_scores in zip(request.artifacts, score_maps, strict=True)
+            ]
+
+        results: list[RewardInferenceResult] = []
+        for artifact in request.artifacts:
+            started = time.perf_counter()
+            raw_scores = model(artifact)
+            inference_ms = (time.perf_counter() - started) * 1000.0
+            results.append(build_result(artifact, raw_scores, inference_ms))
+        return results
 
     async def shutdown(self) -> None:
         # A slept pool holds pinned host buffers for its pages; wake before

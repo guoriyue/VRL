@@ -8,7 +8,6 @@ ordinary registry/config/test imports must never transitively import it.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import importlib
 import importlib.machinery
 import importlib.util
@@ -49,6 +48,7 @@ from vrl.models.precision import model_autocast
 from vrl.models.source_integrity import runtime_source_tree_sha256
 from vrl.models.steps.denoise.base import DiffusionModelBase
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
+from vrl.utils.artifacts import sha256_file
 
 # Immutable upstream/checkpoint identifiers are genuine external boundaries.
 CAUSVID_CHECKPOINT_REPOSITORY = "tianweiy/CausVid"
@@ -944,7 +944,7 @@ def _resolve_checkpoint(build: ModelBuild) -> Path:
     ):
         expected_sha = CAUSVID_CHECKPOINT_SHA256
     if expected_sha is not None:
-        actual_sha = _sha256(checkpoint)
+        actual_sha = sha256_file(checkpoint)
         if actual_sha != str(expected_sha).lower():
             raise ValueError(
                 f"CausVid checkpoint SHA256 mismatch for {checkpoint}: "
@@ -1114,14 +1114,6 @@ def _require_causvid_flash_attention() -> None:
         "Install a CUDA-compatible build before resolving weights, for example "
         "`uv pip install --no-build-isolation flash-attn`." + detail,
     )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 __all__ = [

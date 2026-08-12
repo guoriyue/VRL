@@ -30,10 +30,7 @@ from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
-from vrl.rewards.inference import (
-    RewardInferenceArtifact,
-    sha256_file,
-)
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.robotics_video_reward import RoboticsVideoRewardModel
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval._sampling import resolve_eval_sampling
@@ -46,7 +43,7 @@ from vrl.trainers.checkpointing import (
     read_checkpoint_meta,
 )
 from vrl.trainers.data import PromptExample, load_prompt_manifest
-from vrl.utils.artifacts import resolve_artifact_path
+from vrl.utils.artifacts import resolve_artifact_path, sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.media import write_mp4
 

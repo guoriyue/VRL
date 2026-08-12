@@ -44,10 +44,9 @@ from vrl.rewards.evaluation.robotics_discrimination import (
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
-    sha256_file,
 )
 from vrl.trainers.data.prompts import PromptExample, load_prompt_manifest
-from vrl.utils.artifacts import default_data_root, resolve_artifact_path
+from vrl.utils.artifacts import default_data_root, resolve_artifact_path, sha256_file
 from vrl.utils.media import read_video_frames, write_mp4
 
 

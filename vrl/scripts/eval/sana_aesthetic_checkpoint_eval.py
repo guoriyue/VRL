@@ -27,7 +27,6 @@ from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
 from vrl.config.schema import RootConfig, parse_config
 from vrl.models import checkpoint_identity
-from vrl.rewards.inference import sha256_file
 from vrl.scripts.eval import sana_aesthetic_report as sana_report
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval.sana_inference import (
@@ -44,6 +43,7 @@ from vrl.trainers.checkpointing import (
     validate_checkpoint_meta_compatibility,
 )
 from vrl.trainers.data import load_prompt_manifest
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
 
 logger = logging.getLogger(__name__)

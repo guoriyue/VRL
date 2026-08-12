@@ -29,10 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from vrl.rewards.inference import (
-    RewardWorkerLaunchContract,
-    sha256_file,
-)
+from vrl.rewards.launch_contract import RewardWorkerLaunchContract
 from vrl.rewards.service.owner import RewardScorerOwner
 from vrl.rewards.service.protocol import (
     GENERATION_OVERLAP_SAFE_CAPABILITY,
@@ -48,10 +45,12 @@ from vrl.rewards.service.wire import (
     score_response_to_wire,
     status_to_wire,
 )
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.logging import init_logger
 
 if TYPE_CHECKING:
-    from vrl.rewards.inference import RewardInferenceRequest, RewardScorer
+    from vrl.rewards.inference import RewardInferenceRequest
+    from vrl.rewards.protocols import RewardScorer
 
 logger = init_logger(__name__)
 

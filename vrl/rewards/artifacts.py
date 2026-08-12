@@ -1,38 +1,90 @@
-"""Materialize video/image reward artifacts for worker-side scoring.
+"""Reward artifact stores: media ownership from build to terminal state.
 
-Exists because the reward service's only artifact transport is shared
-filesystem paths: the wire format rejects in-memory media, so disk rewards
-must write stable files (with the size/sha256 integrity fields the server
-re-verifies) before scoring. Split from inference.py to keep the contract
-layer torch-free — the tensor encode/write dependency lives here. The store
-tracks which paths it owns so the terminal-state seam in base.py can either
-delete a call's materializations (``release``) or transfer them out of store
-ownership (``retain``) when they are explicitly kept or a remote request's
-fate is unknown — a file a live remote scorer might still read is never
-deleted. No generation-side
-dual: generation results travel in-process through the Ray layer.
+Owns the artifact vocabulary (``MediaType``, ``ArtifactFormat``) and the
+store seam ``RewardFunction`` scores through: ``RewardArtifactStore`` is the
+protocol, ``InMemoryRewardArtifactStore`` the default transport, and
+``DiskRewardArtifactStore`` the file-backed one. Disk materialization exists
+because the reward service's only artifact transport is shared filesystem
+paths: the wire format rejects in-memory media, so disk rewards must write
+stable files (with the size/sha256 integrity fields the server re-verifies)
+before scoring. The disk store tracks which paths it owns so the
+terminal-state seam in base.py can either delete a call's materializations
+(``release``) or transfer them out of store ownership (``retain``) when they
+are explicitly kept or a remote request's fate is unknown — a file a live
+remote scorer might still read is never deleted. torch loads lazily inside
+the disk writer so this module stays importable in torch-free processes. No
+generation-side dual: generation results travel in-process through the Ray
+layer.
 """
 
 from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, Protocol, get_args, runtime_checkable
 
-import torch
-
-from vrl.rewards.inference import (
-    MEDIA_TYPES,
-    MediaType,
-    RewardInferenceArtifact,
-    sha256_file,
-)
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.types import RewardSample
-from vrl.utils.media import write_mp4
+from vrl.utils.artifacts import sha256_file
+
+if TYPE_CHECKING:
+    import torch
+
+# Valid artifact media kinds. The Literal is the single source of truth; the
+# store constructor derives its validation set from it.
+MediaType = Literal["image", "video"]
 
 # On-disk artifact container: mp4 = real video container decord can read,
 # tensor = torch.save .pt. media_type (image/video) is a separate axis.
 ArtifactFormat = Literal["tensor", "mp4"]
+
+
+@runtime_checkable
+class RewardArtifactStore(Protocol):
+    """Owner of one scoring call's media artifacts, from build to terminal state.
+
+    ``materialize`` turns samples into scoreable artifacts. Exactly one of
+    ``release`` (delete the call's materializations) or ``retain`` (transfer
+    them to the debug/output owner) runs after scoring reaches a terminal
+    state. The in-memory store no-ops the terminal half; the disk store
+    deletes or keeps real files.
+    """
+
+    def materialize(
+        self,
+        samples: list[RewardSample],
+    ) -> list[RewardInferenceArtifact]: ...
+
+    def release(self, artifacts: list[RewardInferenceArtifact]) -> None: ...
+
+    def retain(self, artifacts: list[RewardInferenceArtifact]) -> None: ...
+
+
+class InMemoryRewardArtifactStore:
+    """Default store: media rides the request in-memory, nothing to clean up."""
+
+    def materialize(
+        self,
+        samples: list[RewardSample],
+    ) -> list[RewardInferenceArtifact]:
+        artifacts: list[RewardInferenceArtifact] = []
+        for sample in samples:
+            artifacts.append(
+                RewardInferenceArtifact(
+                    artifact_id=f"{sample.sample_id}:in-memory",
+                    path="",
+                    media=sample.output,
+                    prompt=str(sample.prompt),
+                    metadata=dict(sample.metadata or {}),
+                ),
+            )
+        return artifacts
+
+    def release(self, artifacts: list[RewardInferenceArtifact]) -> None:
+        return None
+
+    def retain(self, artifacts: list[RewardInferenceArtifact]) -> None:
+        return None
 
 
 class DiskRewardArtifactStore:
@@ -45,7 +97,7 @@ class DiskRewardArtifactStore:
         media_type: MediaType = "video",
         artifact_format: ArtifactFormat = "tensor",
     ) -> None:
-        if media_type not in MEDIA_TYPES:
+        if media_type not in get_args(MediaType):
             raise ValueError(
                 f"media_type must be one of {', '.join(get_args(MediaType))}",
             )
@@ -100,6 +152,8 @@ class DiskRewardArtifactStore:
                 self._owned_paths.discard(Path(artifact.path))
 
     def _write_one(self, sample: RewardSample) -> RewardInferenceArtifact:
+        import torch
+
         output = sample.output
         if not isinstance(output, torch.Tensor):
             raise TypeError(
@@ -116,6 +170,8 @@ class DiskRewardArtifactStore:
         self._owned_paths.add(path)
         try:
             if self.artifact_format == "mp4":
+                from vrl.utils.media import write_mp4
+
                 # fps is an mp4 encoding parameter only; reading it up front
                 # would let junk fps metadata break tensor materialization.
                 write_mp4(tensor, path, fps=_fps(metadata))
@@ -176,4 +232,10 @@ def _artifact_provenance(metadata: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-__all__ = ["DiskRewardArtifactStore"]
+__all__ = [
+    "ArtifactFormat",
+    "DiskRewardArtifactStore",
+    "InMemoryRewardArtifactStore",
+    "MediaType",
+    "RewardArtifactStore",
+]

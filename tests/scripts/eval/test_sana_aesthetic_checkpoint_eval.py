@@ -14,10 +14,10 @@ from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
 from vrl.models import checkpoint_identity
 from vrl.models.interfaces.runtime import ModelBuild
-from vrl.rewards.inference import sha256_file
 from vrl.scripts.eval import sana_aesthetic_checkpoint_eval as checkpoint_eval
 from vrl.scripts.eval import sana_aesthetic_report as sana_report
 from vrl.scripts.eval import sana_inference
+from vrl.utils.artifacts import sha256_file
 
 SANA_PRECISION = RolePrecision(
     dtype="fp16",

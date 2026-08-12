@@ -14,10 +14,9 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from vrl.rewards.inference import sha256_file
 from vrl.scripts.data.common import emit, write_jsonl, write_report
 from vrl.trainers.data.artifacts import validate_artifact_manifest_pair
-from vrl.utils.artifacts import SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS
+from vrl.utils.artifacts import SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS, sha256_file
 
 COMMAND_NAME = "derive-text-video-targets"
 
