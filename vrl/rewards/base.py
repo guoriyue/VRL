@@ -42,7 +42,7 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 
-def resolve_reward_component_device(
+def _resolve_reward_component_device(
     *,
     resolved_device: str,
     overrides: list[tuple[str, Any]],
@@ -87,7 +87,7 @@ def reward_worker_config_with_device(
     cfg = dict(worker_config or {})
     if device:
         configured_device = str(cfg.get("device", "")).strip()
-        cfg["device"] = resolve_reward_component_device(
+        cfg["device"] = _resolve_reward_component_device(
             resolved_device=str(device),
             overrides=[("worker_config.device", configured_device)],
         )
@@ -130,7 +130,7 @@ class RewardFunction:
             configured_devices.append(
                 ("worker_config.device", worker_config.get("device")),
             )
-        return resolve_reward_component_device(
+        return _resolve_reward_component_device(
             resolved_device=device,
             overrides=configured_devices,
         )
@@ -331,28 +331,12 @@ class InferenceRewardFunction(RewardFunction):
             )
             output = RewardOutput(
                 scores=tuple(self._select_score(result.scores) for result in results),
-                timing_ms={
-                    "latency_ms": total_latency_ms,
-                    "queue_wait_ms": _max_result_timing(results, "queue_wait_ms"),
-                    "inference_ms": _sum_result_timing(
-                        results,
-                        "inference_ms",
-                        default=inference_total_ms,
-                    ),
-                    "artifact_materialization_ms": materialization_ms,
-                    "artifact_validation_ms": _max_result_timing(
-                        results,
-                        "service_artifact_validation_ms",
-                    ),
-                    "service_inference_wall_ms": _max_result_timing(
-                        results,
-                        "service_inference_wall_ms",
-                    ),
-                    "transport_roundtrip_ms": _max_result_timing(
-                        results,
-                        "http_roundtrip_ms",
-                    ),
-                },
+                timing_ms=_result_timing_summary(
+                    results,
+                    materialization_ms=materialization_ms,
+                    inference_total_ms=inference_total_ms,
+                    total_latency_ms=total_latency_ms,
+                ),
             )
         except BaseException as error:
             operation_error = error
@@ -527,12 +511,12 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
                     worker_cfg["reward_model_version"] = reward_model_name or model_path
             # Resource resolution is the device source of truth. A nested model
             # override would split lifecycle ownership from real CUDA execution,
-            # so reject it even when this constructor runs outside MultiReward.
+            # so apply the shared ceiling even when this constructor runs
+            # outside MultiReward.
             if device is not None:
-                configured_device = str(worker_cfg.get("device", "")).strip()
-                worker_cfg["device"] = resolve_reward_component_device(
-                    resolved_device=str(device),
-                    overrides=[("worker_config.device", configured_device)],
+                worker_cfg = reward_worker_config_with_device(
+                    worker_cfg,
+                    device=str(device),
                 )
             if sleep_offload:
                 worker_cfg["sleep_offload"] = True
@@ -553,24 +537,41 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
         )
 
 
-def _max_result_timing(
+def _result_timing_summary(
     results: list[RewardInferenceResult],
-    key: str,
-) -> float:
-    return max(
-        (float(result.timing_ms[key]) for result in results if key in result.timing_ms),
-        default=0.0,
-    )
-
-
-def _sum_result_timing(
-    results: list[RewardInferenceResult],
-    key: str,
     *,
-    default: float,
-) -> float:
-    values = [float(result.timing_ms[key]) for result in results if key in result.timing_ms]
-    return sum(values) if values else float(default)
+    materialization_ms: float,
+    inference_total_ms: float,
+    total_latency_ms: float,
+) -> dict[str, float]:
+    """Aggregate per-result transport timings into one reward-call summary.
+
+    Stage-parallel phases report their slowest member (max over results);
+    per-artifact inference cost is additive (sum), falling back to this
+    call's measured inference wall time when a transport reports no
+    per-result values.
+    """
+
+    def stage_max(key: str) -> float:
+        return max(
+            (float(result.timing_ms[key]) for result in results if key in result.timing_ms),
+            default=0.0,
+        )
+
+    inference_values = [
+        float(result.timing_ms["inference_ms"])
+        for result in results
+        if "inference_ms" in result.timing_ms
+    ]
+    return {
+        "latency_ms": total_latency_ms,
+        "queue_wait_ms": stage_max("queue_wait_ms"),
+        "inference_ms": (sum(inference_values) if inference_values else float(inference_total_ms)),
+        "artifact_materialization_ms": materialization_ms,
+        "artifact_validation_ms": stage_max("service_artifact_validation_ms"),
+        "service_inference_wall_ms": stage_max("service_inference_wall_ms"),
+        "transport_roundtrip_ms": stage_max("http_roundtrip_ms"),
+    }
 
 
 __all__ = [
