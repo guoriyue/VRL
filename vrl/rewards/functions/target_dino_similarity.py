@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rewards.base import InferenceRewardFunction, reward_worker_config_with_device
+from vrl.rewards.base import InferenceRewardFunction
 from vrl.rewards.models.target_dino_similarity import TargetDinoSimilarityModel
 from vrl.rewards.runtime import InProcessRewardScorer
 
@@ -27,7 +27,7 @@ class TargetDinoSimilarityReward(InferenceRewardFunction):
         score_key: str = "target_dino_similarity",
         worker_config: dict[str, Any] | None = None,
     ) -> None:
-        cfg = reward_worker_config_with_device(worker_config, device=str(device))
+        cfg = self.worker_config_with_device(worker_config, device=str(device))
         model = TargetDinoSimilarityModel(cfg)
         super().__init__(
             reward_name=reward_name,

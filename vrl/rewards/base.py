@@ -42,58 +42,6 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 
-def _resolve_reward_component_device(
-    *,
-    resolved_device: str,
-    overrides: list[tuple[str, Any]],
-) -> str:
-    """Apply a component CPU downgrade without weakening GPU ownership."""
-
-    resolved = str(resolved_device or "").strip().lower()
-    configured = [
-        (key, str(value).strip().lower()) for key, value in overrides if str(value or "").strip()
-    ]
-    distinct = {value for _, value in configured}
-    if len(distinct) > 1:
-        raise ValueError(
-            f"reward component device overrides disagree: {configured}",
-        )
-    effective = configured[0][1] if configured else resolved
-    key = configured[0][0] if configured else "resolved device"
-    if resolved.startswith("cuda"):
-        if effective.startswith("cuda") and effective != resolved:
-            raise ValueError(
-                f"reward {key}={effective!r} conflicts with the distributed-resources "
-                f"CUDA device {resolved_device!r}. Remove the component override; "
-                "distributed.resources owns the CUDA ordinal.",
-            )
-        # A component may explicitly downgrade from its GPU ownership ceiling to
-        # CPU. It then creates no CuMem owner and can coexist with one GPU reward.
-    elif effective.startswith("cuda"):
-        raise ValueError(
-            f"reward {key}={effective!r} requests CUDA, but distributed resources "
-            f"resolved {resolved_device!r}. CPU resources cannot launch a CUDA reward.",
-        )
-    return effective
-
-
-def reward_worker_config_with_device(
-    worker_config: Mapping[str, Any] | None,
-    *,
-    device: str,
-) -> dict[str, Any]:
-    """Copy ``worker_config``, applying the resolved role device as a ceiling."""
-
-    cfg = dict(worker_config or {})
-    if device:
-        configured_device = str(cfg.get("device", "")).strip()
-        cfg["device"] = _resolve_reward_component_device(
-            resolved_device=str(device),
-            overrides=[("worker_config.device", configured_device)],
-        )
-    return cfg
-
-
 class RewardCleanupError(RuntimeError):
     """One reward operation accumulated multiple release/teardown failures."""
 
@@ -120,20 +68,79 @@ class RewardFunction:
         device: str,
         kwargs: Mapping[str, Any],
     ) -> str:
-        """Return the concrete child device under the resource ownership ceiling."""
+        """Return the concrete execution device under the resource ceiling.
 
-        configured_devices: list[tuple[str, Any]] = [
+        The device policy in one place: distributed resources own placement,
+        so a component override (``cls.device_config_key`` or
+        ``worker_config.device``) may only downgrade from the resolved GPU to
+        CPU — never pick a different CUDA ordinal, and never request CUDA on
+        a CPU resource plan. A CPU downgrade creates no CuMem owner and can
+        coexist with the one GPU reward. Reward classes with a fixed device
+        override this hook (OCR forces CPU for its CPU-only engine).
+        """
+
+        candidates: list[tuple[str, Any]] = [
             (cls.device_config_key, kwargs.get(cls.device_config_key)),
         ]
         worker_config = kwargs.get("worker_config")
         if isinstance(worker_config, Mapping):
-            configured_devices.append(
+            candidates.append(
                 ("worker_config.device", worker_config.get("device")),
             )
-        return _resolve_reward_component_device(
-            resolved_device=device,
-            overrides=configured_devices,
-        )
+        resolved = str(device or "").strip().lower()
+        configured = [
+            (key, str(value).strip().lower())
+            for key, value in candidates
+            if str(value or "").strip()
+        ]
+        distinct = {value for _, value in configured}
+        if len(distinct) > 1:
+            raise ValueError(
+                f"reward component device overrides disagree: {configured}",
+            )
+        effective = configured[0][1] if configured else resolved
+        key = configured[0][0] if configured else "resolved device"
+        if resolved.startswith("cuda"):
+            if effective.startswith("cuda") and effective != resolved:
+                raise ValueError(
+                    f"reward {key}={effective!r} conflicts with the "
+                    f"distributed-resources CUDA device {device!r}. Remove the "
+                    "component override; distributed.resources owns the CUDA "
+                    "ordinal.",
+                )
+            # A component may explicitly downgrade from its GPU ownership
+            # ceiling to CPU. It then creates no CuMem owner and can coexist
+            # with one GPU reward.
+        elif effective.startswith("cuda"):
+            raise ValueError(
+                f"reward {key}={effective!r} requests CUDA, but distributed "
+                f"resources resolved {device!r}. CPU resources cannot launch "
+                "a CUDA reward.",
+            )
+        return effective
+
+    @classmethod
+    def worker_config_with_device(
+        cls,
+        worker_config: Mapping[str, Any] | None,
+        *,
+        device: str,
+    ) -> dict[str, Any]:
+        """Copy ``worker_config``, stamping the resolved device as a ceiling.
+
+        The same policy as :meth:`resolve_execution_device`, applied at the
+        config-bag boundary: constructors that feed a ``worker_config`` dict
+        to a model must stamp the device through the ceiling check, not
+        assign it directly.
+        """
+
+        cfg = dict(worker_config or {})
+        if device:
+            cfg["device"] = cls.resolve_execution_device(
+                device=str(device),
+                kwargs={"worker_config": cfg},
+            )
+        return cfg
 
     @property
     def scoring_is_nonblocking(self) -> bool:
@@ -514,7 +521,7 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
             # so apply the shared ceiling even when this constructor runs
             # outside MultiReward.
             if device is not None:
-                worker_cfg = reward_worker_config_with_device(
+                worker_cfg = self.worker_config_with_device(
                     worker_cfg,
                     device=str(device),
                 )
@@ -580,5 +587,4 @@ __all__ = [
     "InferenceRewardFunction",
     "RewardCleanupError",
     "RewardFunction",
-    "reward_worker_config_with_device",
 ]
