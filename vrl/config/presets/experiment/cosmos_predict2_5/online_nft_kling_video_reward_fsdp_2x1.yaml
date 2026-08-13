@@ -80,6 +80,7 @@ distributed:
       # 2 GPUs total (1 per rank), no spare card: the Kling reward time-shares the
       # same card as rollout/trainer. Explicit `rollout` is fail-loud (see the DDP
       # variant's note).
+      device: gpu
       gpu_pool: rollout
 
 model:

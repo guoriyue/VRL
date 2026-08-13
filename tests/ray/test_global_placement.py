@@ -60,7 +60,7 @@ def test_bundle_plan_dedicated_trainer_rollout_reward_distinct_bundles() -> None
             "visible_devices": [0, 1, 2],
             "trainer": {"devices": [0]},
             "rollout": {"devices": [1], "gpus_per_worker": 1},
-            "reward": {"devices": [2], "gpus_per_worker": 1, "num_workers": 1},
+            "reward": {"device": "gpu", "devices": [2]},
         },
     )
     plan = build_bundle_layout(resolved)
@@ -97,12 +97,7 @@ def test_bundle_plan_shared_reward_reuses_rollout_bundle() -> None:
             "visible_devices": [0, 1],
             "trainer": {"devices": [0]},
             "rollout": {"devices": [1], "gpus_per_worker": 1},
-            "reward": {
-                "num_gpus": 1,
-                "gpus_per_worker": 1,
-                "num_workers": 1,
-                "gpu_pool": "rollout",
-            },
+            "reward": {"device": "gpu", "gpu_pool": "rollout"},
         },
     )
     plan = build_bundle_layout(resolved)
@@ -171,7 +166,7 @@ def test_bundle_plan_dedicated_reward_appends_fresh_bundle() -> None:
             "visible_devices": [0, 1, 2],
             "trainer": {"devices": [0]},
             "rollout": {"devices": [1], "gpus_per_worker": 1},
-            "reward": {"num_gpus": 1, "gpus_per_worker": 1, "num_workers": 1},
+            "reward": {"device": "gpu"},
         },
     )
     plan = build_bundle_layout(resolved)
@@ -211,7 +206,7 @@ def test_assign_roles_matches_requested_ordinals_under_permuted_probe() -> None:
             "visible_devices": [0, 1, 2],
             "trainer": {"devices": [0]},
             "rollout": {"devices": [1], "gpus_per_worker": 1},
-            "reward": {"devices": [2], "gpus_per_worker": 1, "num_workers": 1},
+            "reward": {"device": "gpu", "devices": [2]},
         },
     )
     # Plan bundles are [gpu0(trainer), gpu1(rollout), gpu2(reward)] but Ray put
@@ -231,12 +226,7 @@ def test_assign_roles_shared_reward_binds_same_bundle_as_rollout() -> None:
             "visible_devices": [0, 1],
             "trainer": {"devices": [0]},
             "rollout": {"devices": [1], "gpus_per_worker": 1},
-            "reward": {
-                "num_gpus": 1,
-                "gpus_per_worker": 1,
-                "num_workers": 1,
-                "gpu_pool": "rollout",
-            },
+            "reward": {"device": "gpu", "gpu_pool": "rollout"},
         },
     )
     probed = {0: 0, 1: 1}
@@ -294,12 +284,7 @@ def test_bundle_requirements_size_shared_bundle_to_max_role_cpu() -> None:
             "visible_devices": [0, 1],
             "trainer": {"devices": [0]},
             "rollout": {"devices": [1], "gpus_per_worker": 1},
-            "reward": {
-                "num_gpus": 1,
-                "gpus_per_worker": 1,
-                "num_workers": 1,
-                "gpu_pool": "rollout",
-            },
+            "reward": {"device": "gpu", "gpu_pool": "rollout"},
         },
         worker=_worker(cpus_per_worker=2.0),
     )
@@ -325,11 +310,7 @@ def test_required_local_cluster_cpus_uses_placement_bundle_sum() -> None:
                 "gpus_per_worker": 1,
                 "num_workers": 1,
             },
-            "reward": {
-                "num_gpus": 0,
-                "gpus_per_worker": 0,
-                "num_workers": 1,
-            },
+            "reward": {"device": "cpu"},
         },
         worker=_worker(cpus_per_worker=4.0),
     )
@@ -677,7 +658,7 @@ def test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus(local_ray)
                 "visible_devices": [0, 1, 2],
                 "trainer": {"devices": [0]},
                 "rollout": {"devices": [1], "gpus_per_worker": 1},
-                "reward": {"devices": [2], "gpus_per_worker": 1, "num_workers": 1},
+                "reward": {"device": "gpu", "devices": [2]},
             },
         ),
         _worker(),
@@ -710,12 +691,7 @@ def test_owner_shares_one_bundle_for_rollout_and_reward_on_simulated_gpus(local_
                 "visible_devices": [0, 1],
                 "trainer": {"devices": [0]},
                 "rollout": {"devices": [1], "gpus_per_worker": 1},
-                "reward": {
-                    "num_gpus": 1,
-                    "gpus_per_worker": 1,
-                    "num_workers": 1,
-                    "gpu_pool": "rollout",
-                },
+                "reward": {"device": "gpu", "gpu_pool": "rollout"},
             },
         ),
         _worker(),

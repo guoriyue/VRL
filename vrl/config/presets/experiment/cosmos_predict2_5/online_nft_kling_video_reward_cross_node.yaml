@@ -47,6 +47,4 @@ distributed:
       # mode non-trainer ordinals are remote Ray budget tokens, while Kling runs
       # inside the driver; an empty reservation makes the factory use node A's
       # rank-local trainer device instead.
-      devices: []
-      num_gpus: 0
-      num_workers: auto
+      device: trainer

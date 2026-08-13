@@ -48,10 +48,7 @@ distributed:
       num_workers: 1
     reward:
       # DINOv2 and RAFT remain CPU-only so all four L4s can be FSDP ranks.
-      num_gpus: 0
-      devices: []
-      gpus_per_worker: 0.0
-      num_workers: 1
+      device: cpu
 
 model:
   # FSDP2 reshard hooks are not compatible with the compiled transformer path.

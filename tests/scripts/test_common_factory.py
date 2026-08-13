@@ -809,12 +809,7 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
                     "visible_devices": [0, 1],
                     "trainer": {"devices": [0]},
                     "rollout": {"devices": [1], "gpus_per_worker": 1},
-                    "reward": {
-                        "devices": [],
-                        "num_gpus": 0,
-                        "gpus_per_worker": 0,
-                        "num_workers": 1,
-                    },
+                    "reward": {"device": "cpu"},
                 },
             },
             "reward": {"components": {"ocr": 1.0}, "kwargs": {"ocr": {}}},

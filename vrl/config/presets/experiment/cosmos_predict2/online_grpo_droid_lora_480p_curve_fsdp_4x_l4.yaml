@@ -40,10 +40,7 @@ distributed:
       gpus_per_worker: 1.0
       num_workers: 1
     reward:
-      num_gpus: 0
-      devices: []
-      gpus_per_worker: 0.0
-      num_workers: 1
+      device: cpu
 
 model:
   # FSDP2 reshard hooks are not compatible with the compiled transformer path.

@@ -45,10 +45,7 @@ distributed:
     # DINOv2 and RAFT both support CPU execution but do not provide complete
     # GPU parking. Keep this single-card recipe honest by reserving no reward GPU.
     reward:
-      num_gpus: 0
-      devices: []
-      gpus_per_worker: 0.0
-      num_workers: 1
+      device: cpu
   rollout:
     pipelined: true
 

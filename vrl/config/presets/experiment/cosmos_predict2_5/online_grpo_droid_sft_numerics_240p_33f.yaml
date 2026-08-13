@@ -42,10 +42,7 @@ distributed:
     # This numerics gate values deterministic mechanics over reward throughput.
     # DINOv2 supports CPU execution and does not provide complete GPU parking.
     reward:
-      num_gpus: 0
-      devices: []
-      gpus_per_worker: 0.0
-      num_workers: 1
+      device: cpu
 
 trainer:
   output_dir: outputs/cosmos_predict25_sft_numerics_240p_33f

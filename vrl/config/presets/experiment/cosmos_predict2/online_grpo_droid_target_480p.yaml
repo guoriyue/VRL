@@ -41,10 +41,7 @@ distributed:
     # Both local rewards support CPU execution but cannot completely park GPU
     # state. Reserve no reward GPU in this single-card baseline.
     reward:
-      num_gpus: 0
-      devices: []
-      gpus_per_worker: 0.0
-      num_workers: 1
+      device: cpu
 
 trainer:
   output_dir: outputs/cosmos_pred2_droid_target_480p

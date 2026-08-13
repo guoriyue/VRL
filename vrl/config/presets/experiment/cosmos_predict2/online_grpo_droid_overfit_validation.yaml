@@ -123,10 +123,7 @@ distributed:
     reward:
       # DINOv2 and RAFT support CPU execution but cannot prove complete GPU
       # parking. Explicit CPU ownership keeps the single-GPU handoff sound.
-      num_gpus: 0
-      devices: []
-      gpus_per_worker: 0.0
-      num_workers: 1
+      device: cpu
   rollout:
     pipelined: true
 

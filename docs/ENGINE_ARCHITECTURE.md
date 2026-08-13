@@ -45,7 +45,7 @@ flowchart LR
 | `RayActorHandle`, `RayActorGroup` | Typed handles for launched actors; a group owns launch + id uniqueness. |
 | `RayActorDispatcher`, `RayActorJob`, `RayActorCallError(TerminalRuntimeError)` | Admission-controlled async dispatch of actor calls. |
 | `RolePlacement`, `GlobalRayPlacementOwner` | Placement-group lifecycle per role (create/probe/assign/remove). |
-| `RoleResourceConfig` → `WorkerRoleResourceConfig` → `RolloutResourceConfig` \| `RewardResourceConfig` | Typed per-role resource schema ladder. |
+| `RoleResourceConfig` → `RolloutResourceConfig`; `RewardResourceConfig` | Typed per-role resource schema: rollout is the only worker-replica role; reward is an in-process compute request (`device: trainer\|cpu\|gpu` + `gpu_pool`), not worker arithmetic. |
 | `DistributedResourceConfig`, `ResolvedDistributedResources`, `BundleLayout` | User schema → resolved topology → placement bundles. |
 | `ActorLeasePolicy`, `PhaseHandoffPolicy`, `RayLifecyclePlan` | Derived once from GPU topology: who owns the GPU in which phase, and whether generation/reward must park at a handoff. The collector reads this plan; the runtimes never decide it themselves. |
 

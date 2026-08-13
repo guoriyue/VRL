@@ -2,9 +2,7 @@
 distributed:
   resources:
     reward:
-      num_gpus: 1
-      gpus_per_worker: 1.0
-      num_workers: 1
+      device: gpu
 
 reward:
   components:

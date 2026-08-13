@@ -98,10 +98,7 @@ distributed:
     reward:
       # DINOv2 and RAFT support CPU execution but cannot prove complete GPU
       # parking. CPU scoring preserves the single-GPU phase lease contract.
-      num_gpus: 0
-      devices: []
-      gpus_per_worker: 0.0
-      num_workers: 1
+      device: cpu
   rollout:
     pipelined: true
 

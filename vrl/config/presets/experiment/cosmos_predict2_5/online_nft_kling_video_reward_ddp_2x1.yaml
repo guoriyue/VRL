@@ -69,4 +69,5 @@ distributed:
       # silently topology-dependent. Explicit `rollout` is fail-loud: if the box
       # ever gains a spare GPU, this stays shared by intent rather than auto
       # quietly grabbing the spare and changing throughput characteristics.
+      device: gpu
       gpu_pool: rollout

@@ -44,10 +44,7 @@ distributed:
       gpus_per_worker: 1.0
       num_workers: 1
     reward:
-      devices: []
-      num_gpus: 0
-      gpus_per_worker: 0.0
-      num_workers: 1
+      device: cpu
 
 model:
   # Sequential layer offload is required for a complete rollout replica on L4.

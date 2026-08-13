@@ -60,10 +60,8 @@ distributed:
       num_gpus: 1
       gpu_pool: dedicated             # rollout on its own GPU (GPU1), disjoint from trainer
     reward:
-      num_gpus: 1
+      device: gpu
       gpu_pool: dedicated             # reward on a DISJOINT spare GPU (GPU2) -> async overlap
-      gpus_per_worker: 1.0
-      num_workers: 1
 
 actor:
   optim:

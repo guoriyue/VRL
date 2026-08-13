@@ -128,13 +128,13 @@ def build_bundle_layout(resolved: ResolvedDistributedResources) -> BundleLayout:
     else:
         rollout = _cpu_bundles(resolved.rollout_num_workers)
 
-    if resolved.reward_gpus_per_worker > 0:
+    if resolved.reward_devices:
         # Shared reward reuses the rollout GPU's existing bundle index; a
         # dedicated reward GPU appends a fresh bundle.
         reward = tuple(_gpu_bundle(gpu_id) for gpu_id in resolved.reward_devices)
     else:
-        # In-process CPU rewards run in the driver; a bundle would reserve
-        # cluster capacity no actor ever enters.
+        # In-process CPU/trainer-follow rewards run in the driver; a bundle
+        # would reserve cluster capacity no actor ever enters.
         reward = ()
 
     return BundleLayout(
@@ -464,11 +464,7 @@ class GlobalRayPlacementOwner:
         """
 
         bundles = self._role_bundles.get("reward", ())
-        if (
-            not bundles
-            or self._placement_group is None
-            or self.resources.reward_gpus_per_worker <= 0
-        ):
+        if not bundles or self._placement_group is None or not self.resources.reward_devices:
             return None
         return RolePlacement(
             placement_group=self._placement_group,
@@ -517,7 +513,7 @@ class GlobalRayPlacementOwner:
             "reward": self._match_gpu_bundles(
                 "reward",
                 self.resources.reward_devices,
-                self.resources.reward_gpus_per_worker,
+                1.0 if self.resources.reward_devices else 0.0,
                 self.layout.reward_bundle_indices,
                 gpu_to_bundle,
             ),

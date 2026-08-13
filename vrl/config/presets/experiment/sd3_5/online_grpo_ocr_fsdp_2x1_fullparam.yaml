@@ -57,8 +57,7 @@ distributed:
   resources:
     rollout:
       gpu_pool: trainer           # each rank colocates its rollout on its own GPU
-    reward:
-      gpu_pool: rollout           # paddleocr reward time-shares the same card
+    # reward stays device: cpu from the parent recipe — paddleocr is CPU-only.
 
 actor:
   ema:

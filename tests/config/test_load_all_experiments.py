@@ -318,7 +318,8 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
                 trainer_gpus = requested_gpus(resources_cfg.trainer, default=1)
                 rollout_gpus = requested_gpus(resources_cfg.rollout, default=1)
                 reward_cfg = resources_cfg.get("reward", {})
-                reward_gpus = requested_gpus(reward_cfg, default=0)
+                # Reward is in-process: device=gpu reserves exactly one GPU.
+                reward_gpus = 1 if str(reward_cfg.get("device", "trainer")) == "gpu" else 0
                 required = trainer_gpus
                 if rollout_pool != "trainer":
                     required += rollout_gpus
@@ -492,7 +493,7 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_workers == 1
     assert resources.reward_devices == ()
-    assert resources.reward_gpus_per_worker == 0
+    assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
     assert resources.lifecycle.handoff.release_rollout_before_train is True
 
@@ -539,7 +540,7 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_workers == 1
     assert resources.reward_devices == ()
-    assert resources.reward_gpus_per_worker == 0
+    assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
     assert resources.lifecycle.handoff.release_rollout_before_train is True
 

@@ -152,7 +152,7 @@ def test_unknown_keys_are_found_at_every_depth() -> None:
             "sampling": {"num_stps": 5},
             "rollout": {"sde": {"type": "flow_grpo", "window_sze": 3}},
             "distributed": {
-                "resources": {"reward": {"num_gpus": 1, "share_with_rolout": True}},
+                "resources": {"reward": {"device": "gpu", "share_with_rolout": True}},
             },
             "actor": {
                 "mixed_precision": "bf16",
