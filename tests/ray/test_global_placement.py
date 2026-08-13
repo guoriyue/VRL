@@ -15,11 +15,8 @@ from omegaconf import OmegaConf
 
 from vrl.ray import dependencies as ray_dependencies
 from vrl.ray.operation_deadline import RayOperationTimeout
-from vrl.ray.placement import GlobalRayPlacementOwner
-from vrl.ray.resources import (
-    build_bundle_layout,
-    resolve_distributed_resources,
-)
+from vrl.ray.placement import GlobalRayPlacementOwner, build_bundle_layout
+from vrl.ray.resources import resolve_distributed_resources
 
 # The retry tests below all inject the same class of Ray failure for the same
 # reason, so the label is a module constant rather than the same string three

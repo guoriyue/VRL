@@ -7,8 +7,8 @@ from dataclasses import fields
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.ray.placement import build_bundle_layout
 from vrl.ray.resources import (
-    build_bundle_layout,
     format_distributed_resource_plan,
     resolve_distributed_resources,
 )
