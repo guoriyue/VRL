@@ -31,7 +31,7 @@ from vrl.trainers.core.types import (
     RolloutOrchestrationConfig,
 )
 from vrl.trainers.metrics_io import (
-    build_online_metric_row,
+    OnlineMetricRow,
     format_online_metric_row,
     online_metric_columns,
 )
@@ -751,7 +751,7 @@ def test_health_required_columns_must_exist_in_online_metric_protocol(
 def test_health_gate_reads_a_complete_online_metric_row(tmp_path) -> None:
     out = tmp_path / "run"
     out.mkdir()
-    row = build_online_metric_row(
+    row = OnlineMetricRow.from_step_metrics(
         0,
         TrainStepMetrics(
             loss=1.0,

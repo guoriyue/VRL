@@ -119,6 +119,34 @@ class GenerationRequest:
         if self.policy_version is not None and self.policy_version < 0:
             raise ValueError("GenerationRequest.policy_version must be >= 0")
 
+    def sample_rows(self) -> list[GenerationSampleRow]:
+        """Mint the deterministic per-sample identity rows for this request.
+
+        Sample identity is minted exactly once, here: the driver derives the
+        rows before dispatching batches, and everything downstream joins on
+        them — batch gatherers check exact coverage against these rows,
+        ``TrajectoryBatch.sample_rows`` records them, and reward scoring keys
+        ``RewardSample.sample_id`` off them. That cross-package join is why
+        the derivation is request-owned and must stay deterministic
+        (tests/generation/execution/test_generation_contracts.py pins this).
+        """
+
+        rows: list[GenerationSampleRow] = []
+        for prompt_index, request_input in enumerate(self.inputs):
+            prompt = request_input.prompt
+            prompt_id = f"{self.request_id}:prompt:{prompt_index}"
+            for sample_index in range(self.samples_per_prompt):
+                sample_id = f"{prompt_id}:sample:{sample_index}"
+                rows.append(
+                    GenerationSampleRow(
+                        prompt_index=prompt_index,
+                        sample_index=sample_index,
+                        prompt=prompt,
+                        sample_id=sample_id,
+                    )
+                )
+        return rows
+
 
 @dataclass(slots=True)
 class GenerationSampleRow:

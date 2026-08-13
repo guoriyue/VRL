@@ -17,8 +17,7 @@ import torch
 from vrl.generation.bindings.chunk_autoregressive_denoise import (
     ChunkAutoregressiveDenoiseGatherer,
 )
-from vrl.generation.execution.ids import build_sample_rows
-from vrl.generation.execution.planner import build_engine_plan
+from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.causvid.model import (
     CAUSVID_SOURCE_REVISION,
@@ -664,9 +663,9 @@ def test_generation_executor_builds_trainable_chunk_trajectory() -> None:
             "seed": 123,
         },
     )
-    rows = build_sample_rows(request)
+    rows = request.sample_rows()
 
-    output = executor.forward_plan(request, rows, build_engine_plan(request))
+    output = executor.forward_plan(request, rows, EnginePlan.from_request(request))
 
     assert output.output.shape == (
         1,

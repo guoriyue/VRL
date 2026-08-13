@@ -369,7 +369,7 @@ def test_generation_ray_adapter_stays_lean() -> None:
     )
     for path in ray_adapter_files:
         text = path.read_text(encoding="utf-8")
-        assert "vrl.generation.execution.planner import build_engine_plan" not in text
+        assert "EnginePlan.from_request(" not in text
         assert "vrl.generation.execution.sample_batches import" not in text
 
 

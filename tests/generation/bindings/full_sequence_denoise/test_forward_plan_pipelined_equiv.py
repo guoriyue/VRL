@@ -15,8 +15,7 @@ torch = pytest.importorskip("torch")
 from vrl.generation.bindings.full_sequence_denoise.executor import (  # noqa: E402
     DiffusionBatchExecutorBase,
 )
-from vrl.generation.execution.ids import build_sample_rows  # noqa: E402
-from vrl.generation.execution.planner import build_engine_plan  # noqa: E402
+from vrl.generation.execution.planner import EnginePlan  # noqa: E402
 from vrl.generation.types import GenerationRequest  # noqa: E402
 
 
@@ -52,7 +51,7 @@ def _request(num_samples: int) -> GenerationRequest:
 
 def _plan(request, sample_rows):
     del sample_rows
-    return build_engine_plan(request)
+    return EnginePlan.from_request(request)
 
 
 @pytest.mark.real_cover(
@@ -67,7 +66,7 @@ def test_forward_plan_pipelined_matches_serial_forward_plan() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ex = _RealChunkExecutor(device)
     request = _request(6)
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     plan = _plan(request, sample_rows)
     assert len(plan.sample_batches) >= 2
 

@@ -6,7 +6,6 @@ import pytest
 
 from vrl.generation import (
     GenerationRequest,
-    build_sample_rows,
 )
 
 
@@ -66,10 +65,10 @@ def test_generation_request_validation() -> None:
         )
 
 
-def test_build_sample_rows_is_deterministic() -> None:
+def test_sample_rows_are_deterministic() -> None:
     """Checks build sample rows is deterministic."""
     request = _request()
-    rows = build_sample_rows(request)
+    rows = request.sample_rows()
 
     assert [row.sample_id for row in rows] == [
         "req-1:prompt:0:sample:0",

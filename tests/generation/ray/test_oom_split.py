@@ -12,7 +12,7 @@ from vrl.generation.execution.batch_placement import (
     DeviceAssignment,
     DistributedGenerationPlan,
 )
-from vrl.generation.execution.planner import build_engine_plan
+from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
     GenerationBatchEnvelope,
@@ -107,7 +107,7 @@ class _StaticPlanner:
             )
             for index, batch in enumerate(self.batches)
         )
-        engine_plan = build_engine_plan(request)
+        engine_plan = EnginePlan.from_request(request)
         return DistributedGenerationPlan(engine_plan=engine_plan, assignments=assignments)
 
 

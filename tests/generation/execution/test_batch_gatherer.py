@@ -14,7 +14,6 @@ from vrl.generation.bindings.full_sequence_denoise import (
     DiffusionBatchResult,
 )
 from vrl.generation.execution.executor_base import BatchExecutorBase
-from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
     SampleAlignedValues,
@@ -49,7 +48,7 @@ class _Executor(BatchExecutorBase):
 
 def test_chunk_executor_uses_injected_gatherer() -> None:
     request = _request()
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     gatherer = _PureGatherer()
     executor = _Executor(gatherer=gatherer)
 
@@ -63,13 +62,13 @@ def test_chunk_executor_rejects_request_execution_without_gatherer() -> None:
     request = _request()
 
     with pytest.raises(RuntimeError, match="requires an injected batch gatherer"):
-        _Executor().gather_batches(request, build_sample_rows(request), ["batch"])
+        _Executor().gather_batches(request, request.sample_rows(), ["batch"])
 
 
 def test_chunk_gatherer_accepts_pure_object_without_forward_batch() -> None:
     """Checks batch gatherer accepts pure object without forward batch plan."""
     request = _request()
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     gatherer = _PureGatherer()
 
     assert isinstance(gatherer, GenerationBatchGatherer)
@@ -110,7 +109,7 @@ def test_worker_core_rejects_invalid_gatherer_at_process_boundary(
 def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
     """Checks diffusion batch gatherer gathers without model object."""
     request = _request(cfg=False)
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     gatherer = DiffusionBatchGatherer()
     context = {
         "guidance_scale": 4.5,
@@ -132,7 +131,7 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
 def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
     """Checks diffusion batch gatherer orders prompt major batches."""
     request = _request(cfg=False)
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     gatherer = DiffusionBatchGatherer()
     context = {
         "guidance_scale": 4.5,
@@ -152,7 +151,7 @@ def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
 def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
     """Checks diffusion batch gatherer keeps rollout context."""
     request = _request(family="cosmos", task="v2w", cfg=False)
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     gatherer = DiffusionBatchGatherer()
     context = {
         "guidance_scale": 4.5,
@@ -189,7 +188,7 @@ def test_diffusion_chunk_gatherer_strictly_merges_replay_values() -> None:
 
     output = DiffusionBatchGatherer().gather_batches(
         request,
-        build_sample_rows(request),
+        request.sample_rows(),
         batches,
     )
 
@@ -264,7 +263,7 @@ def test_diffusion_chunk_gatherer_rejects_mixed_none_replay_values() -> None:
     with pytest.raises(ValueError, match="must be present on all results"):
         DiffusionBatchGatherer().gather_batches(
             request,
-            build_sample_rows(request),
+            request.sample_rows(),
             batches,
         )
 
@@ -278,7 +277,7 @@ def test_diffusion_chunk_gatherer_rejects_mismatched_static_replay_values() -> N
     with pytest.raises(ValueError, match="non-batched replay value 'scheduler' must match"):
         DiffusionBatchGatherer().gather_batches(
             request,
-            build_sample_rows(request),
+            request.sample_rows(),
             batches,
         )
 
@@ -292,7 +291,7 @@ def test_diffusion_chunk_gatherer_rejects_mismatched_replay_keys() -> None:
     with pytest.raises(ValueError, match="replay_tensors keys must match"):
         DiffusionBatchGatherer().gather_batches(
             request,
-            build_sample_rows(request),
+            request.sample_rows(),
             batches,
         )
 
@@ -305,7 +304,7 @@ def test_diffusion_chunk_gatherer_rejects_mismatched_context() -> None:
     with pytest.raises(ValueError, match="batch context at ordered index 1 does not match"):
         DiffusionBatchGatherer().gather_batches(
             request,
-            build_sample_rows(request),
+            request.sample_rows(),
             batches,
         )
 

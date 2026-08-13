@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.types import GenerationRequest
 from vrl.trajectory import TrajectoryBatch, build_ar_discrete_trajectory
 from vrl.trajectory.ops import move_trajectory_batch, select_trajectory_batch
@@ -63,7 +62,7 @@ def _trajectory(
         inputs=["draw"],
         samples_per_prompt=samples,
     )
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     token_ids = torch.arange(samples * token_count, dtype=torch.long).reshape(
         samples,
         token_count,

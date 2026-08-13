@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from vrl.generation.execution.planner import build_engine_plan
+from vrl.generation.execution.planner import EnginePlan
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
 # Stable test-fixture values make repeated config previews directly comparable.
@@ -86,7 +86,6 @@ def generate_rollout_preview(
         raise RuntimeError("rollout preview requires a CUDA GPU")
 
     from vrl.config.validation import validate_training_config
-    from vrl.generation.execution.ids import build_sample_rows
     from vrl.models.dtypes import dtype_to_wire_name
     from vrl.models.families.registry import (
         GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
@@ -156,8 +155,8 @@ def generate_rollout_preview(
         seed = _PREVIEW_BASE_SEED + index
         request = build_preview_request(request_builder, example, seed=seed)
         request.request_id = f"{entry.family}-rollout-preview-{index}"
-        rows = build_sample_rows(request)
-        plan = build_engine_plan(request)
+        rows = request.sample_rows()
+        plan = EnginePlan.from_request(request)
         with torch.inference_mode():
             output = executor.forward_plan(request, rows, plan)
 

@@ -50,7 +50,7 @@ class DiffusionRequestLayout:
     The fallback values have NO defaults: the executor is their single source
     and always supplies its resolved values. A default here would be a silent
     second source that drifts from the executor. Batch width is deliberately
-    absent — it belongs to planning (``build_engine_plan``'s single fallback),
+    absent — it belongs to planning (``EnginePlan.from_request``'s single fallback),
     not to request parsing.
     """
 

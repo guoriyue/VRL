@@ -6,7 +6,6 @@ import pytest
 import torch
 
 import vrl.trajectory as trajectory_api
-from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.types import GenerationRequest
 from vrl.trajectory import (
     TrajectoryBatch,
@@ -34,7 +33,7 @@ def test_all_builders_derive_structure_without_metric_copies() -> None:
 
 def test_builder_rejects_tensor_rows_that_disagree_with_sample_rows() -> None:
     request = _request()
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     token_ids = torch.ones(1, 2, dtype=torch.long)
 
     with pytest.raises(
@@ -74,7 +73,7 @@ def test_diffusion_replay_extras_only_declare_sample_axis_when_sample_aligned() 
         inputs=["draw"],
         samples_per_prompt=2,
     )
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     old_log_prob = torch.zeros(2, 2)
 
     trajectory = build_diffusion_trajectory(
@@ -110,7 +109,7 @@ def test_multisegment_primary_is_typed_and_not_mirrored_in_context() -> None:
 
     trajectory = build_ar_multisegment_trajectory(
         request=request,
-        sample_rows=build_sample_rows(request),
+        sample_rows=request.sample_rows(),
         segments={
             "initial_image": _segment_payload(),
             "final_image": _segment_payload(),
@@ -153,7 +152,7 @@ def test_multisegment_primary_rejects_unknown_or_nontrainable_segment(
     with pytest.raises(TrajectoryValidationError, match=message):
         build_ar_multisegment_trajectory(
             request=request,
-            sample_rows=build_sample_rows(request),
+            sample_rows=request.sample_rows(),
             segments={
                 "initial_image": _segment_payload(),
                 "final_image": _segment_payload(),
@@ -206,7 +205,7 @@ def _request() -> GenerationRequest:
 
 def _structural_trajectories() -> list[tuple[str, TrajectoryBatch, dict[str, int]]]:
     request = _request()
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     batch_size = len(sample_rows)
 
     diffusion_steps = 3

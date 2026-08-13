@@ -17,7 +17,6 @@ from typing import Any
 
 from vrl.generation.execution.batch_memory import build_batch_memory_shadow
 from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
-from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import (
     BatchSizeProbeResult,
@@ -167,7 +166,7 @@ class RayGenerationExecutor:
         from vrl.utils.profiling import profile_range
 
         _gen_start = time.perf_counter()
-        sample_rows = build_sample_rows(request)
+        sample_rows = request.sample_rows()
         with profile_range("engine.plan"):
             generation_plan = self.planner.plan_with_engine(
                 request,

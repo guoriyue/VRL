@@ -13,7 +13,7 @@ from vrl.algorithms.types import (
     TrainStepMetrics,
 )
 from vrl.trainers.metrics_io import (
-    build_online_metric_row,
+    OnlineMetricRow,
     format_online_metric_row,
     online_metric_columns,
     prepare_metrics_csv,
@@ -118,7 +118,7 @@ def test_online_metric_row_uses_the_same_order_and_formats_as_header() -> None:
             "continuous.weight_sync_barrier_mode": 39.1,
         },
     )
-    row = build_online_metric_row(
+    row = OnlineMetricRow.from_step_metrics(
         0,
         metrics,
         ("aesthetic", "pickscore"),
@@ -181,7 +181,7 @@ def test_continuous_phase_metrics_are_mapped_at_the_io_boundary() -> None:
         },
     )
 
-    row = build_online_metric_row(0, metrics)
+    row = OnlineMetricRow.from_step_metrics(0, metrics)
 
     assert row.continuous_ready_groups_at_demand == pytest.approx(3.0)
     assert row.continuous_lookahead_requested == pytest.approx(1.0)
@@ -190,7 +190,7 @@ def test_continuous_phase_metrics_are_mapped_at_the_io_boundary() -> None:
 
 
 def test_strict_online_metric_row_defaults_all_continuous_columns_to_zero() -> None:
-    row = build_online_metric_row(0, TrainStepMetrics())
+    row = OnlineMetricRow.from_step_metrics(0, TrainStepMetrics())
     values = dict(
         zip(
             online_metric_columns(),
@@ -207,7 +207,7 @@ def test_strict_online_metric_row_defaults_all_continuous_columns_to_zero() -> N
 
 
 def test_online_metric_row_preserves_non_finite_values_for_health_consumers() -> None:
-    row = build_online_metric_row(
+    row = OnlineMetricRow.from_step_metrics(
         0,
         TrainStepMetrics(loss=float("nan"), reward_mean=float("inf")),
     )
@@ -259,7 +259,7 @@ def test_online_metric_row_rejects_invalid_integer_fields(
     metrics.trained_prompt_num = trained_prompt_num  # type: ignore[assignment]
 
     with pytest.raises(ValueError, match=field_name):
-        build_online_metric_row(epoch, metrics)  # type: ignore[arg-type]
+        OnlineMetricRow.from_step_metrics(epoch, metrics)  # type: ignore[arg-type]
 
 
 def test_prepare_metrics_csv_rejects_resume_across_schema_change(tmp_path) -> None:

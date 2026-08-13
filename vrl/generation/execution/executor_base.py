@@ -25,7 +25,7 @@ class BatchExecutorBase:
       tests, single-process e2e): the same ``forward_batch`` batch step
       and the same gather as the Ray dispatch, with a local OOM-split retry.
       Production drives batches through the Ray dispatcher instead; planning is
-      shared via ``build_engine_plan``'s single width fallback.
+      shared via ``EnginePlan.from_request``'s single width fallback.
     - ``gather_batches`` delegates to the gatherer injected by the composition
       root that already owns the family registry entry. The neutral execution
       layer never looks family identity up again.

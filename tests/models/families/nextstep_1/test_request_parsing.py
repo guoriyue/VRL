@@ -13,7 +13,6 @@ from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.generation import GenerationRequest
 from vrl.generation.bindings.token_autoregressive import ARRequestLayout
-from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.models.families.nextstep_1 import runtime as nextstep_runtime
 from vrl.models.families.nextstep_1.config import (
@@ -267,7 +266,7 @@ def test_nextstep_gather_uses_canonical_output_as_reward_source() -> None:
         samples_per_prompt=2,
         sampling={"image_token_num": 2},
     )
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     images = torch.arange(24, dtype=torch.float32).reshape(2, 3, 2, 2)
     batch = NextStep1ARBatchResult(
         batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=2),

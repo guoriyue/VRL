@@ -8,7 +8,6 @@ from vrl.generation.bindings.full_sequence_denoise import (
     DiffusionBatchGatherer,
     DiffusionBatchResult,
 )
-from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
 from vrl.rollouts.collector.batch_builder import (
@@ -30,7 +29,7 @@ def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
     )
     output = DiffusionBatchGatherer().gather_batches(
         request,
-        build_sample_rows(request),
+        request.sample_rows(),
         [_chunk()],
     )
 

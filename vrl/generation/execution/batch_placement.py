@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import get_args
 
-from vrl.generation.execution.planner import EnginePlan, build_engine_plan
+from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
     BatchPlacementStrategy,
@@ -83,7 +83,7 @@ class DistributedExecutionPlanner:
             raise ValueError("DistributedExecutionPlanner worker IDs must be non-empty")
         if len(set(worker_ids)) != len(worker_ids):
             raise ValueError("DistributedExecutionPlanner worker IDs must be unique")
-        engine_plan = build_engine_plan(request)
+        engine_plan = EnginePlan.from_request(request)
         bind_at_plan_time = self.strategy == "round_robin"
         steps = request.sampling.get("num_steps") or request.sampling.get(
             "max_new_tokens",

@@ -61,7 +61,7 @@ from vrl.trainers.data import (
 )
 from vrl.trainers.distributed import DistributedTrainingContext, resolve_training_context
 from vrl.trainers.metrics_io import (
-    build_online_metric_row,
+    OnlineMetricRow,
     format_online_metric_row,
     online_metric_columns,
     prepare_metrics_csv,
@@ -706,7 +706,7 @@ class OnlineRecipeRun:
             raise RuntimeError(f"metrics CSV preflight failed on rank 0: {payload[0]}")
 
     def write_metric_row(self, epoch: int, metrics: Any) -> None:
-        row = build_online_metric_row(epoch, metrics, self.component_names)
+        row = OnlineMetricRow.from_step_metrics(epoch, metrics, self.component_names)
         with self.csv_path.open("a", encoding="utf-8") as handle:
             handle.write(format_online_metric_row(row))
 

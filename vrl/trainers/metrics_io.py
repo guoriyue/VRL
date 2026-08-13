@@ -87,91 +87,92 @@ class OnlineMetricRow:
                 "online metric component names/values length mismatch",
             )
 
+    @classmethod
+    def from_step_metrics(
+        cls,
+        epoch: int,
+        metrics: TrainStepMetrics,
+        component_names: Sequence[str] = (),
+    ) -> OnlineMetricRow:
+        """Flatten one nested trainer metric result exactly once at the IO boundary."""
 
-def build_online_metric_row(
-    epoch: int,
-    metrics: TrainStepMetrics,
-    component_names: Sequence[str] = (),
-) -> OnlineMetricRow:
-    """Flatten one nested trainer metric result exactly once at the IO boundary."""
-
-    phases = getattr(metrics, "phase_times", None) or {}
-    names = tuple(component_names)
-    _component_columns(names)
-    current = getattr(metrics, "reward_components", None) or {}
-    component_values = tuple(
-        float(current[name]) if name in current else float("nan") for name in names
-    )
-    return OnlineMetricRow(
-        epoch=epoch,
-        loss=metrics.loss,
-        policy_loss=metrics.policy_loss,
-        sft_loss=metrics.sft_loss,
-        kl_penalty=metrics.kl_penalty,
-        weighted_kl_loss=metrics.weighted_kl_loss,
-        reward_mean=metrics.reward_mean,
-        reward_std=metrics.reward_std,
-        clip_fraction=metrics.update.clip_fraction,
-        active_clip_fraction=metrics.update.active_clip_fraction,
-        pre_update_clip_fraction=metrics.initial_replay.clip_fraction,
-        pre_update_active_clip_fraction=metrics.initial_replay.active_clip_fraction,
-        pre_update_logprob_abs_diff_max=metrics.initial_replay.logprob_abs_diff_max,
-        tis_clip_fraction=metrics.update.tis_clip_fraction,
-        rs_seq_masked_fraction=metrics.update.rs_seq_masked_fraction,
-        approx_kl=metrics.update.approx_kl,
-        logprob_abs_diff_mean=metrics.logprob_mismatch.logprob_abs_diff_mean,
-        logprob_abs_diff_max=metrics.logprob_mismatch.logprob_abs_diff_max,
-        ratio_abs_dev_mean=metrics.logprob_mismatch.ratio_abs_dev_mean,
-        ratio_abs_dev_max=metrics.logprob_mismatch.ratio_abs_dev_max,
-        mismatch_kl=metrics.logprob_mismatch.mismatch_kl,
-        mismatch_k3_kl=metrics.logprob_mismatch.mismatch_k3_kl,
-        advantage_mean=metrics.advantage_mean,
-        grad_norm=metrics.grad_norm,
-        adv_saturation=metrics.adv_saturation,
-        adv_zero_rate=metrics.adv_zero_rate,
-        group_size=metrics.group_size,
-        trained_prompt_num=metrics.trained_prompt_num,
-        continuous_stale_versions=phases.get(
-            "continuous.stale_policy_versions",
-            0.0,
-        ),
-        continuous_ready_groups_at_demand=phases.get(
-            "continuous.ready_groups_at_demand",
-            0.0,
-        ),
-        continuous_queue_wait_s=phases.get("continuous.queue_wait_s", 0.0),
-        continuous_item_age_s=phases.get("continuous.item_age_s", 0.0),
-        continuous_lookahead_requested=phases.get(
-            "continuous.lookahead_requested",
-            0.0,
-        ),
-        continuous_weight_sync_pause_s=phases.get(
-            "continuous.weight_sync_pause_s",
-            0.0,
-        ),
-        continuous_producer_max_gap_s=phases.get(
-            "continuous.producer_max_tick_gap_s",
-            0.0,
-        ),
-        continuous_producer_submitted=phases.get(
-            "continuous.producer_submitted",
-            0.0,
-        ),
-        continuous_producer_completed=phases.get(
-            "continuous.producer_completed",
-            0.0,
-        ),
-        continuous_producer_errors=phases.get(
-            "continuous.producer_errors",
-            0.0,
-        ),
-        continuous_weight_sync_barrier_mode=phases.get(
-            "continuous.weight_sync_barrier_mode",
-            0.0,
-        ),
-        component_names=names,
-        component_values=component_values,
-    )
+        phases = getattr(metrics, "phase_times", None) or {}
+        names = tuple(component_names)
+        _component_columns(names)
+        current = getattr(metrics, "reward_components", None) or {}
+        component_values = tuple(
+            float(current[name]) if name in current else float("nan") for name in names
+        )
+        return cls(
+            epoch=epoch,
+            loss=metrics.loss,
+            policy_loss=metrics.policy_loss,
+            sft_loss=metrics.sft_loss,
+            kl_penalty=metrics.kl_penalty,
+            weighted_kl_loss=metrics.weighted_kl_loss,
+            reward_mean=metrics.reward_mean,
+            reward_std=metrics.reward_std,
+            clip_fraction=metrics.update.clip_fraction,
+            active_clip_fraction=metrics.update.active_clip_fraction,
+            pre_update_clip_fraction=metrics.initial_replay.clip_fraction,
+            pre_update_active_clip_fraction=metrics.initial_replay.active_clip_fraction,
+            pre_update_logprob_abs_diff_max=metrics.initial_replay.logprob_abs_diff_max,
+            tis_clip_fraction=metrics.update.tis_clip_fraction,
+            rs_seq_masked_fraction=metrics.update.rs_seq_masked_fraction,
+            approx_kl=metrics.update.approx_kl,
+            logprob_abs_diff_mean=metrics.logprob_mismatch.logprob_abs_diff_mean,
+            logprob_abs_diff_max=metrics.logprob_mismatch.logprob_abs_diff_max,
+            ratio_abs_dev_mean=metrics.logprob_mismatch.ratio_abs_dev_mean,
+            ratio_abs_dev_max=metrics.logprob_mismatch.ratio_abs_dev_max,
+            mismatch_kl=metrics.logprob_mismatch.mismatch_kl,
+            mismatch_k3_kl=metrics.logprob_mismatch.mismatch_k3_kl,
+            advantage_mean=metrics.advantage_mean,
+            grad_norm=metrics.grad_norm,
+            adv_saturation=metrics.adv_saturation,
+            adv_zero_rate=metrics.adv_zero_rate,
+            group_size=metrics.group_size,
+            trained_prompt_num=metrics.trained_prompt_num,
+            continuous_stale_versions=phases.get(
+                "continuous.stale_policy_versions",
+                0.0,
+            ),
+            continuous_ready_groups_at_demand=phases.get(
+                "continuous.ready_groups_at_demand",
+                0.0,
+            ),
+            continuous_queue_wait_s=phases.get("continuous.queue_wait_s", 0.0),
+            continuous_item_age_s=phases.get("continuous.item_age_s", 0.0),
+            continuous_lookahead_requested=phases.get(
+                "continuous.lookahead_requested",
+                0.0,
+            ),
+            continuous_weight_sync_pause_s=phases.get(
+                "continuous.weight_sync_pause_s",
+                0.0,
+            ),
+            continuous_producer_max_gap_s=phases.get(
+                "continuous.producer_max_tick_gap_s",
+                0.0,
+            ),
+            continuous_producer_submitted=phases.get(
+                "continuous.producer_submitted",
+                0.0,
+            ),
+            continuous_producer_completed=phases.get(
+                "continuous.producer_completed",
+                0.0,
+            ),
+            continuous_producer_errors=phases.get(
+                "continuous.producer_errors",
+                0.0,
+            ),
+            continuous_weight_sync_barrier_mode=phases.get(
+                "continuous.weight_sync_barrier_mode",
+                0.0,
+            ),
+            component_names=names,
+            component_values=component_values,
+        )
 
 
 def _fixed_fields() -> tuple[Any, ...]:
@@ -332,7 +333,6 @@ def prepare_metrics_csv(
 
 __all__ = [
     "OnlineMetricRow",
-    "build_online_metric_row",
     "format_online_metric_row",
     "online_metric_columns",
     "prepare_metrics_csv",

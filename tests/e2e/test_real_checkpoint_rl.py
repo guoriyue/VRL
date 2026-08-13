@@ -23,8 +23,8 @@ from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig
-from vrl.generation import GenerationOutput, GenerationRequest, build_sample_rows
-from vrl.generation.execution.planner import build_engine_plan
+from vrl.generation import GenerationOutput, GenerationRequest
+from vrl.generation.execution.planner import EnginePlan
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.ray.resources import resolve_distributed_resources
@@ -462,9 +462,9 @@ class _DirectExecutorGenerationRuntime:
         return None
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
-        rows = build_sample_rows(request)
+        rows = request.sample_rows()
         with torch.no_grad():
-            return self.executor.forward_plan(request, rows, build_engine_plan(request))
+            return self.executor.forward_plan(request, rows, EnginePlan.from_request(request))
 
     async def offload(self) -> None:
         if torch.cuda.is_available():
@@ -794,7 +794,7 @@ def _synthetic_diffusion_replay_batch(
         },
         policy_version=None if policy_version is None else int(policy_version),
     )
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     batch_size = len(sample_rows)
     generator = torch.Generator(device=device)
     generator.manual_seed(1729)

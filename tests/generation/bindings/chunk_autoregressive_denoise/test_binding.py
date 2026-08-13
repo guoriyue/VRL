@@ -12,8 +12,7 @@ from vrl.generation.bindings.chunk_autoregressive_denoise import (
     ChunkAutoregressiveDenoiseGatherer,
     ChunkAutoregressiveDenoiseResult,
 )
-from vrl.generation.execution.ids import build_sample_rows
-from vrl.generation.execution.planner import build_engine_plan
+from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
 from vrl.rollouts.collector.batch_builder import (
@@ -24,7 +23,7 @@ from vrl.rollouts.collector.batch_builder import (
 
 def test_trainable_trajectory_declares_temporal_chunk_and_transition_axes() -> None:
     request = _request()
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
 
     output = ChunkAutoregressiveDenoiseGatherer().gather_batches(
         request,
@@ -60,7 +59,7 @@ def test_trainable_trajectory_declares_temporal_chunk_and_transition_axes() -> N
 
 def test_gatherer_orders_transport_chunks_and_concatenates_sample_rows() -> None:
     request = _request()
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
 
     output = ChunkAutoregressiveDenoiseGatherer().gather_batches(
         request,
@@ -80,7 +79,7 @@ def test_gatherer_orders_transport_chunks_and_concatenates_sample_rows() -> None
 
 def test_generation_only_result_has_no_fabricated_policy_facts() -> None:
     request = _request()
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     batches = [
         _generation_only_result(20.0, sample_start=1),
         _generation_only_result(10.0, sample_start=0),
@@ -124,7 +123,7 @@ def test_gatherer_rejects_mismatched_batch_context() -> None:
     with pytest.raises(ValueError, match="batch context at ordered index 1 does not match"):
         ChunkAutoregressiveDenoiseGatherer().gather_batches(
             request,
-            build_sample_rows(request),
+            request.sample_rows(),
             batches,
         )
 
@@ -138,14 +137,14 @@ class _GenericChunkExecutor(ChunkAutoregressiveDenoiseExecutorBase):
 
 def test_generic_executor_delegates_temporal_generation_to_model() -> None:
     request = _request()
-    sample_rows = build_sample_rows(request)
+    sample_rows = request.sample_rows()
     model = _FakeChunkModel()
     executor = _GenericChunkExecutor(
         model,
         gatherer=ChunkAutoregressiveDenoiseGatherer(),
     )
 
-    plan = build_engine_plan(request, max_samples_per_batch=1)
+    plan = EnginePlan.from_request(request, max_samples_per_batch=1)
     output = executor.forward_plan(request, sample_rows, plan)
 
     assert model.calls == [(0, 0, 1), (0, 1, 1)]

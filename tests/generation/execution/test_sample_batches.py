@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 
-def test_build_prompt_sample_batches_prompt_major() -> None:
+def test_sample_batch_plan_prompt_major() -> None:
     """Checks build prompt batches prompt major."""
-    from vrl.generation.execution.sample_batches import build_prompt_sample_batches
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
 
-    batches = build_prompt_sample_batches(
+    batches = GenerationSampleBatch.plan(
         2,
         samples_per_prompt=5,
         max_samples_per_batch=2,

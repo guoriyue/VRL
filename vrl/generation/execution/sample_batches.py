@@ -295,38 +295,40 @@ class GenerationSampleBatch:
         )
         return left, right
 
+    @classmethod
+    def plan(
+        cls,
+        prompt_count: int,
+        *,
+        samples_per_prompt: int,
+        max_samples_per_batch: int,
+    ) -> tuple[GenerationSampleBatch, ...]:
+        """Plan prompt-major sample batches without changing RL group semantics."""
 
-def build_prompt_sample_batches(
-    prompt_count: int,
-    samples_per_prompt: int,
-    max_samples_per_batch: int,
-) -> tuple[GenerationSampleBatch, ...]:
-    """Plan prompt-major sample batches without changing RL group semantics."""
+        if prompt_count < 1:
+            raise ValueError("prompt_count must be >= 1")
+        if samples_per_prompt < 1:
+            raise ValueError("samples_per_prompt must be >= 1")
+        if max_samples_per_batch < 1:
+            raise ValueError("max_samples_per_batch must be >= 1")
 
-    if prompt_count < 1:
-        raise ValueError("prompt_count must be >= 1")
-    if samples_per_prompt < 1:
-        raise ValueError("samples_per_prompt must be >= 1")
-    if max_samples_per_batch < 1:
-        raise ValueError("max_samples_per_batch must be >= 1")
-
-    batches: list[GenerationSampleBatch] = []
-    for prompt_index in range(prompt_count):
-        sample_start = 0
-        remaining = samples_per_prompt
-        while remaining > 0:
-            sample_count = min(max_samples_per_batch, remaining)
-            batches.append(
-                GenerationSampleBatch(
-                    prompt_index=prompt_index,
-                    sample_start=sample_start,
-                    sample_count=sample_count,
+        batches: list[GenerationSampleBatch] = []
+        for prompt_index in range(prompt_count):
+            sample_start = 0
+            remaining = samples_per_prompt
+            while remaining > 0:
+                sample_count = min(max_samples_per_batch, remaining)
+                batches.append(
+                    GenerationSampleBatch(
+                        prompt_index=prompt_index,
+                        sample_start=sample_start,
+                        sample_count=sample_count,
+                    )
                 )
-            )
-            sample_start += sample_count
-            remaining -= sample_count
+                sample_start += sample_count
+                remaining -= sample_count
 
-    return tuple(batches)
+        return tuple(batches)
 
 
 def run_sample_batches_with_oom_retry[T](
@@ -356,7 +358,6 @@ def run_sample_batches_with_oom_retry[T](
 __all__ = [
     "GenerationSampleBatch",
     "SampleAlignedValues",
-    "build_prompt_sample_batches",
     "concatenate_sample_values",
     "gather_replay_tensors",
     "ordered_covering_batches",
