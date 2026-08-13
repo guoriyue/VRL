@@ -27,7 +27,7 @@ from vrl.rollouts.collector.batch_builder import (
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import CollectorRequest, GenerationRequestBuilder
-from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
+from vrl.rollouts.orchestration.prompt_collection import collect_prompt_groups
 from vrl.rollouts.stats import RolloutStats
 from vrl.trajectory import (
     RewardView,
@@ -783,7 +783,7 @@ def test_collector_attaches_components_to_their_exact_rollout_groups() -> None:
     assert second.extras["reward_components"]["observer"].tolist() == [12.0, 13.0, 14.0]
 
 
-def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
+def test_collect_prompt_groups_folds_reward_timing_into_stats() -> None:
     """Checks reward runtime timing reaches RolloutStats."""
     import asyncio
 
@@ -820,7 +820,7 @@ def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
     stats = RolloutStats()
 
     batches = asyncio.run(
-        collect_prompt_batches(
+        collect_prompt_groups(
             collector=collector,
             prompts=["p0"],
             group_size=2,

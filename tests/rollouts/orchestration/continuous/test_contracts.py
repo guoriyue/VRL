@@ -181,13 +181,13 @@ async def test_collect_group_uses_one_batched_serial_reward_call(
 ) -> None:
     captured: dict[str, Any] = {}
 
-    async def _collect_prompt_batches(**kwargs: Any) -> list[RolloutBatch]:
+    async def _collect_prompt_groups(**kwargs: Any) -> list[RolloutBatch]:
         captured.update(kwargs)
         return [_batch("p0")]
 
     monkeypatch.setattr(
-        "vrl.rollouts.orchestration.continuous.producer.collect_prompt_batches",
-        _collect_prompt_batches,
+        "vrl.rollouts.orchestration.continuous.producer.collect_prompt_groups",
+        _collect_prompt_groups,
     )
     producer = _producer(
         _FiniteCollector(),

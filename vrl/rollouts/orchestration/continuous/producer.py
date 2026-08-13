@@ -33,7 +33,7 @@ from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutProducerState,
     estimate_batch_bytes,
 )
-from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
+from vrl.rollouts.orchestration.prompt_collection import collect_prompt_groups
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import RewardCollectionMode
 from vrl.rollouts.stats import RolloutStats
@@ -350,7 +350,7 @@ class ContinuousRolloutProducer:
         slot: int,
     ) -> tuple[list[RolloutBatch], RolloutStats]:
         stats = RolloutStats()
-        batches = await collect_prompt_batches(
+        batches = await collect_prompt_groups(
             collector=self.lifecycle.collector,
             prompts=[prompt_batch.prompts[slot]],
             group_size=prompt_batch.group_size,

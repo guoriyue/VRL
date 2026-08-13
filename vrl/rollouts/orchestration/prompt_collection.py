@@ -1,6 +1,6 @@
 """Prompt collection helpers for rollout schedules.
 
-``collect_prompt_batches`` is the single collection loop shared by the strict
+``collect_prompt_groups`` is the single collection loop shared by the strict
 schedule and the continuous producer, so per-group streaming, reward-task
 cleanup, group-id remapping, and collect-phase stats accounting exist once
 rather than per schedule. It drives a ``RolloutCollector`` but stays below the
@@ -37,7 +37,7 @@ class PromptCollectionCleanupError(RuntimeError):
         )
 
 
-async def collect_prompt_batches(
+async def collect_prompt_groups(
     *,
     collector: Any,
     prompts: list[Any],
@@ -47,7 +47,7 @@ async def collect_prompt_batches(
     stats: RolloutStats | None = None,
     reward_mode: RewardCollectionMode | None = None,
 ) -> list[RolloutBatch]:
-    """Collect trainer prompts through ``RolloutCollector`` and split by group.
+    """Collect every trainer prompt's sample group and return per-group batches.
 
     Collectors without an explicit overlap capability keep two strict phases:
     generate every prompt group, then score all groups through one reward call.
@@ -298,5 +298,5 @@ def _interval_overlap_seconds(
 
 __all__ = [
     "PromptCollectionCleanupError",
-    "collect_prompt_batches",
+    "collect_prompt_groups",
 ]

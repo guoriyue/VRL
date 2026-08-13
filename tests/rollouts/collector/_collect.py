@@ -1,7 +1,7 @@
 """Test-side one-shot collect helper.
 
 Production drives ``collect_unscored`` + ``score_rollouts`` separately
-(``collect_prompt_batches``); this convenience wrapper exists only for tests
+(``collect_prompt_groups``); this convenience wrapper exists only for tests
 that want a single scored batch.
 """
 

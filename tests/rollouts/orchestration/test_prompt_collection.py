@@ -14,7 +14,7 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.orchestration.prompt_collection import (
     PromptCollectionCleanupError,
-    collect_prompt_batches,
+    collect_prompt_groups,
 )
 from vrl.rollouts.orchestration.types import RewardCollectionMode
 from vrl.trainers.data import PromptExample
@@ -116,7 +116,7 @@ async def test_prompt_examples_generate_all_groups_before_one_scoring_call() -> 
     collector = _DeferredCollector()
     prompts = [PromptExample(prompt=f"p{i}") for i in range(3)]
 
-    batches = await collect_prompt_batches(
+    batches = await collect_prompt_groups(
         collector=collector,
         prompts=prompts,
         group_size=2,
@@ -143,7 +143,7 @@ async def test_mixed_prompts_preserve_group_id_remap() -> None:
     collector = _DeferredCollector()
     prompts: list[Any] = ["s0", PromptExample(prompt="e1"), "s2"]
 
-    batches = await collect_prompt_batches(
+    batches = await collect_prompt_groups(
         collector=collector,
         prompts=prompts,
         group_size=1,
@@ -165,7 +165,7 @@ async def test_mixed_prompts_preserve_group_id_remap() -> None:
 async def test_prompt_example_scalar_remap_updates_trainer_group_ids() -> None:
     """Checks remaps update trainer grouping without rewriting stable identity."""
 
-    batches = await collect_prompt_batches(
+    batches = await collect_prompt_groups(
         collector=_TrajectoryDeferredCollector(),
         prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
         group_size=2,
@@ -185,7 +185,7 @@ async def test_prompt_example_scalar_remap_updates_trainer_group_ids() -> None:
 async def test_plain_string_list_remap_updates_signal_group_ids() -> None:
     """Checks evaluator signals consume the remapped trainer-owned groups."""
 
-    batches = await collect_prompt_batches(
+    batches = await collect_prompt_groups(
         collector=_TrajectoryDeferredCollector(),
         prompts=["p0", "p1"],
         group_size=1,
@@ -231,7 +231,7 @@ async def test_phase_times_accumulate_per_call() -> None:
 
     stats = RolloutStats()
 
-    await collect_prompt_batches(
+    await collect_prompt_groups(
         collector=_PhasedCollector(),
         prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
         group_size=1,
@@ -340,7 +340,7 @@ class _TimedCollector(_DeferredCollector):
 async def test_capable_collector_overlaps_reward_with_next_generation() -> None:
     collector = _StreamingCollector()
 
-    batches = await collect_prompt_batches(
+    batches = await collect_prompt_groups(
         collector=collector,
         prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
         group_size=1,
@@ -367,7 +367,7 @@ async def test_overlap_stats_support_batched_serial_vs_streaming_wall_ab() -> No
     serial_stats = RolloutStats()
     overlap_stats = RolloutStats()
 
-    await collect_prompt_batches(
+    await collect_prompt_groups(
         collector=_TimedCollector(supports_overlap=False),
         prompts=prompts,
         group_size=1,
@@ -375,7 +375,7 @@ async def test_overlap_stats_support_batched_serial_vs_streaming_wall_ab() -> No
         policy_version=3,
         stats=serial_stats,
     )
-    await collect_prompt_batches(
+    await collect_prompt_groups(
         collector=_TimedCollector(supports_overlap=True),
         prompts=prompts,
         group_size=1,
@@ -409,7 +409,7 @@ async def test_reward_handoff_collector_keeps_generation_and_scoring_serial(
         trainer_reward_handoff=trainer_handoff,
     )
 
-    await collect_prompt_batches(
+    await collect_prompt_groups(
         collector=collector,
         prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
         group_size=1,
@@ -432,7 +432,7 @@ async def test_safe_topology_without_runtime_capability_stays_batched_and_serial
         supports_overlap=False,
     )
 
-    await collect_prompt_batches(
+    await collect_prompt_groups(
         collector=collector,
         prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
         group_size=1,
@@ -458,7 +458,7 @@ async def test_missing_overlap_capability_fails_loud() -> None:
     del collector.supports_reward_generation_overlap
 
     with pytest.raises(AttributeError, match="supports_reward_generation_overlap"):
-        await collect_prompt_batches(
+        await collect_prompt_groups(
             collector=collector,
             prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
             group_size=1,
@@ -472,7 +472,7 @@ async def test_score_failure_is_drained_without_task_leak() -> None:
     collector = _StreamingCollector(fail_score=True)
 
     with pytest.raises(RuntimeError, match="score failed"):
-        await collect_prompt_batches(
+        await collect_prompt_groups(
             collector=collector,
             prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
             group_size=1,
@@ -490,7 +490,7 @@ async def test_score_failure_is_drained_without_task_leak() -> None:
 async def test_collection_cancellation_does_not_detach_score_task() -> None:
     collector = _StreamingCollector()
     collection = asyncio.create_task(
-        collect_prompt_batches(
+        collect_prompt_groups(
             collector=collector,
             prompts=[PromptExample(prompt="p0")],
             group_size=1,
@@ -523,7 +523,7 @@ async def test_generation_failure_cancels_and_settles_inflight_score(
 
     if cleanup_fails:
         with pytest.raises(PromptCollectionCleanupError) as raised:
-            await collect_prompt_batches(
+            await collect_prompt_groups(
                 collector=collector,
                 prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
                 group_size=1,
@@ -536,7 +536,7 @@ async def test_generation_failure_cancels_and_settles_inflight_score(
         ]
     else:
         with pytest.raises(RuntimeError, match="generation failed"):
-            await collect_prompt_batches(
+            await collect_prompt_groups(
                 collector=collector,
                 prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
                 group_size=1,
@@ -557,7 +557,7 @@ async def test_per_group_serial_scores_each_group_before_the_next_generation() -
     )
     prompts = [PromptExample(prompt=f"p{i}") for i in range(3)]
 
-    batches = await collect_prompt_batches(
+    batches = await collect_prompt_groups(
         collector=collector,
         prompts=prompts,
         group_size=1,
@@ -593,7 +593,7 @@ async def test_forcing_per_group_mode_without_capability_raises(
     collector = _DeferredCollector(supports_overlap=False)
 
     with pytest.raises(ValueError, match="cannot be forced on"):
-        await collect_prompt_batches(
+        await collect_prompt_groups(
             collector=collector,
             prompts=[PromptExample(prompt="p0")],
             group_size=1,
@@ -613,7 +613,7 @@ async def test_capable_collector_can_be_restricted_to_the_batched_serial_arm() -
         supports_overlap=True,
     )
 
-    await collect_prompt_batches(
+    await collect_prompt_groups(
         collector=collector,
         prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
         group_size=1,
@@ -649,7 +649,7 @@ async def test_three_acceptance_arms_isolate_overlap_from_per_group_call_tax() -
     rewards: dict[RewardCollectionMode, list[list[float]]] = {}
 
     for mode, stats in arms.items():
-        batches = await collect_prompt_batches(
+        batches = await collect_prompt_groups(
             # Every arm runs on a capable collector so the only difference is
             # the requested mode, not the collector fake.
             collector=_TimedCollector(supports_overlap=True),
