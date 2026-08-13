@@ -86,62 +86,63 @@ class BundleLayout:
     def total_bundles(self) -> int:
         return len(self.bundle_gpu_ids)
 
+    @classmethod
+    def from_resources(cls, resolved: ResolvedDistributedResources) -> BundleLayout:
+        """Derive the run-level role->bundle plan from a resolved resource plan.
 
-def build_bundle_layout(resolved: ResolvedDistributedResources) -> BundleLayout:
-    """Derive a run-level role->bundle plan from a resolved resource plan.
+        GPU roles share one bundle per physical device: a trainer-reserved GPU,
+        a rollout GPU, and a reward GPU that lands on the same device all
+        collapse to a single bundle. CPU-only rollout workers get one bundle
+        per worker. The owner probes the live placement group to learn which
+        bundle index maps to which GPU, so the ordinals here are the
+        *requested* devices the probe is validated against.
+        """
 
-    GPU roles share one bundle per physical device: a trainer-reserved GPU, a
-    rollout GPU, and a reward GPU that lands on the same device all collapse to
-    a single bundle. CPU-only roles (``gpus_per_worker == 0``) get one bundle
-    per worker. The owner probes the live placement group to learn which bundle
-    index maps to which GPU, so the ordinals here are the *requested* devices
-    the probe is validated against.
-    """
+        bundle_gpu_ids: list[int | None] = []
+        gpu_bundle_by_id: dict[int, int] = {}
 
-    bundle_gpu_ids: list[int | None] = []
-    gpu_bundle_by_id: dict[int, int] = {}
+        def gpu_bundle(gpu_id: int) -> int:
+            index = gpu_bundle_by_id.get(gpu_id)
+            if index is None:
+                index = len(bundle_gpu_ids)
+                bundle_gpu_ids.append(gpu_id)
+                gpu_bundle_by_id[gpu_id] = index
+            return index
 
-    def _gpu_bundle(gpu_id: int) -> int:
-        index = gpu_bundle_by_id.get(gpu_id)
-        if index is None:
-            index = len(bundle_gpu_ids)
-            bundle_gpu_ids.append(gpu_id)
-            gpu_bundle_by_id[gpu_id] = index
-        return index
+        def cpu_bundles(count: int) -> tuple[int, ...]:
+            indices: list[int] = []
+            for _ in range(count):
+                indices.append(len(bundle_gpu_ids))
+                bundle_gpu_ids.append(None)
+            return tuple(indices)
 
-    def _cpu_bundles(count: int) -> tuple[int, ...]:
-        indices: list[int] = []
-        for _ in range(count):
-            indices.append(len(bundle_gpu_ids))
-            bundle_gpu_ids.append(None)
-        return tuple(indices)
+        # Trainer reserved bundles first so the driver GPU is protected before
+        # any actor role can claim a bundle (single-node dedicated-trainer
+        # plans only; colocated and cross-node set
+        # requires_trainer_reservation=False).
+        if resolved.requires_trainer_reservation:
+            for gpu_id in resolved.trainer_devices:
+                gpu_bundle(gpu_id)
 
-    # Trainer reserved bundles first so the driver GPU is protected before any
-    # actor role can claim a bundle (single-node dedicated-trainer plans only;
-    # colocated and cross-node set requires_trainer_reservation=False).
-    if resolved.requires_trainer_reservation:
-        for gpu_id in resolved.trainer_devices:
-            _gpu_bundle(gpu_id)
+        if resolved.rollout_gpus_per_worker > 0:
+            rollout = tuple(gpu_bundle(gpu_id) for gpu_id in resolved.rollout_devices)
+        else:
+            rollout = cpu_bundles(resolved.rollout_num_workers)
 
-    if resolved.rollout_gpus_per_worker > 0:
-        rollout = tuple(_gpu_bundle(gpu_id) for gpu_id in resolved.rollout_devices)
-    else:
-        rollout = _cpu_bundles(resolved.rollout_num_workers)
+        if resolved.reward_devices:
+            # Shared reward reuses the rollout GPU's existing bundle index; a
+            # dedicated reward GPU appends a fresh bundle.
+            reward = tuple(gpu_bundle(gpu_id) for gpu_id in resolved.reward_devices)
+        else:
+            # In-process CPU/trainer-follow rewards run in the driver; a bundle
+            # would reserve cluster capacity no actor ever enters.
+            reward = ()
 
-    if resolved.reward_devices:
-        # Shared reward reuses the rollout GPU's existing bundle index; a
-        # dedicated reward GPU appends a fresh bundle.
-        reward = tuple(_gpu_bundle(gpu_id) for gpu_id in resolved.reward_devices)
-    else:
-        # In-process CPU/trainer-follow rewards run in the driver; a bundle
-        # would reserve cluster capacity no actor ever enters.
-        reward = ()
-
-    return BundleLayout(
-        bundle_gpu_ids=tuple(bundle_gpu_ids),
-        rollout_bundle_indices=rollout,
-        reward_bundle_indices=reward,
-    )
+        return cls(
+            bundle_gpu_ids=tuple(bundle_gpu_ids),
+            rollout_bundle_indices=rollout,
+            reward_bundle_indices=reward,
+        )
 
 
 class _ActorPlacementMetadata(Protocol):
@@ -350,7 +351,7 @@ class GlobalRayPlacementOwner:
     _role_bundles: dict[str, tuple[int, ...]] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self.layout = build_bundle_layout(self.resources)
+        self.layout = BundleLayout.from_resources(self.resources)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -618,6 +619,7 @@ class GlobalRayPlacementOwner:
 
 
 __all__ = [
+    "BundleLayout",
     "GlobalRayPlacementOwner",
     "RolePlacement",
     "actor_scheduling_strategy",

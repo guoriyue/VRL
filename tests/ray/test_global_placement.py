@@ -15,7 +15,7 @@ from omegaconf import OmegaConf
 
 from vrl.ray import dependencies as ray_dependencies
 from vrl.ray.operation_deadline import RayOperationTimeout
-from vrl.ray.placement import GlobalRayPlacementOwner, build_bundle_layout
+from vrl.ray.placement import BundleLayout, GlobalRayPlacementOwner
 from vrl.ray.resources import resolve_distributed_resources
 
 # The retry tests below all inject the same class of Ray failure for the same
@@ -63,7 +63,7 @@ def test_bundle_plan_dedicated_trainer_rollout_reward_distinct_bundles() -> None
             "reward": {"device": "gpu", "devices": [2]},
         },
     )
-    plan = build_bundle_layout(resolved)
+    plan = BundleLayout.from_resources(resolved)
 
     assert plan.bundle_gpu_ids == (0, 1, 2)
     assert plan.rollout_bundle_indices == (1,)
@@ -82,7 +82,7 @@ def test_bundle_plan_multi_rollout_worker_one_bundle_per_gpu() -> None:
             "allow_overlap": False,
         },
     )
-    plan = build_bundle_layout(resolved)
+    plan = BundleLayout.from_resources(resolved)
 
     assert plan.bundle_gpu_ids == (0, 1, 2, 3)
     assert plan.rollout_bundle_indices == (1, 2, 3)
@@ -100,7 +100,7 @@ def test_bundle_plan_shared_reward_reuses_rollout_bundle() -> None:
             "reward": {"device": "gpu", "gpu_pool": "rollout"},
         },
     )
-    plan = build_bundle_layout(resolved)
+    plan = BundleLayout.from_resources(resolved)
 
     # Reward bundle index == rollout bundle index (same physical GPU 1): that
     # overlap IS the "shared GPU" fact, read off the indices, no stored flag.
@@ -119,7 +119,7 @@ def test_bundle_plan_colocated_debug_single_bundle_no_trainer_reservation() -> N
             "allow_overlap": True,
         },
     )
-    plan = build_bundle_layout(resolved)
+    plan = BundleLayout.from_resources(resolved)
 
     assert plan.rollout_bundle_indices == (0,)
     assert plan.bundle_gpu_ids == (0,)
@@ -136,7 +136,7 @@ def test_bundle_plan_cross_node_skips_trainer_reservation() -> None:
             "rollout": {"num_gpus": 2, "gpus_per_worker": 1, "num_workers": 2},
         },
     )
-    plan = build_bundle_layout(resolved)
+    plan = BundleLayout.from_resources(resolved)
 
     # Rollout ordinals are budget tokens (1, 2) under cross_node.
     assert plan.rollout_bundle_indices == (0, 1)
@@ -152,7 +152,7 @@ def test_bundle_plan_cpu_only_rollout_uses_cpu_bundles() -> None:
             "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 2},
         },
     )
-    plan = build_bundle_layout(resolved)
+    plan = BundleLayout.from_resources(resolved)
 
     assert plan.bundle_gpu_ids == (None, None)
     assert plan.rollout_bundle_indices == (0, 1)
@@ -169,7 +169,7 @@ def test_bundle_plan_dedicated_reward_appends_fresh_bundle() -> None:
             "reward": {"device": "gpu"},
         },
     )
-    plan = build_bundle_layout(resolved)
+    plan = BundleLayout.from_resources(resolved)
 
     assert plan.reward_bundle_indices == (2,)
     assert plan.rollout_bundle_indices == (1,)

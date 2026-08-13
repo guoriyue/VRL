@@ -1060,9 +1060,6 @@ __all__ = [
     "PhaseHandoffPolicy",
     "RayLifecyclePlan",
     "ResolvedDistributedResources",
-    "RewardResourceConfig",
-    "RoleResourceConfig",
-    "RolloutResourceConfig",
     "format_distributed_resource_plan",
     "resolve_distributed_resources",
 ]

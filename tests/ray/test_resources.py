@@ -7,7 +7,7 @@ from dataclasses import fields
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.ray.placement import build_bundle_layout
+from vrl.ray.placement import BundleLayout
 from vrl.ray.resources import (
     format_distributed_resource_plan,
     resolve_distributed_resources,
@@ -92,7 +92,7 @@ def test_resolved_resource_summaries_are_derived_from_topology() -> None:
         },
     )
 
-    layout = build_bundle_layout(resolved)
+    layout = BundleLayout.from_resources(resolved)
     assert "trainer_bundle_indices" not in {field.name for field in fields(layout)}
     assert layout.bundle_gpu_ids == (0, 1)
 
@@ -751,7 +751,7 @@ def test_http_only_reward_owns_no_local_resource_or_handoff() -> None:
     assert resolved.lifecycle.handoff.release_trainer_before_reward is False
     assert resolved.lifecycle.handoff.release_rollout_before_reward is False
     assert resolved.lifecycle.handoff.release_reward_after_score is False
-    assert build_bundle_layout(resolved).reward_bundle_indices == ()
+    assert BundleLayout.from_resources(resolved).reward_bundle_indices == ()
 
 
 def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> None:
@@ -783,7 +783,7 @@ def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> N
     assert resolved.reward_runs_on_cpu is True
     assert resolved.reward_torch_device() == "cpu"
     # CPU rewards get no bundle: they execute in the driver process.
-    assert build_bundle_layout(resolved).reward_bundle_indices == ()
+    assert BundleLayout.from_resources(resolved).reward_bundle_indices == ()
 
 
 def test_resource_plan_formatter_includes_lifecycle() -> None:
@@ -918,7 +918,7 @@ def test_colocated_reward_on_dedicated_gpu_owns_its_own_bundle() -> None:
     assert resolved.colocated is True
     assert resolved.lifecycle.rollout_mode == "on_demand"
 
-    layout = build_bundle_layout(resolved)
+    layout = BundleLayout.from_resources(resolved)
     # Colocated trainer+rollout -> no reserved trainer bundle; reward owns a
     # bundle distinct from rollout (its own GPU 1).
     assert layout.bundle_gpu_ids == (0, 1)
@@ -942,7 +942,7 @@ def test_shared_single_gpu_reward_reuses_rollout_bundle() -> None:
         ),
     )
 
-    layout = build_bundle_layout(resolved)
+    layout = BundleLayout.from_resources(resolved)
     assert layout.rollout_bundle_indices == layout.reward_bundle_indices
     assert layout.total_bundles == 1
 
