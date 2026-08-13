@@ -165,7 +165,7 @@ def test_colocate_implies_overlap_without_allow_overlap() -> None:
     )
 
     assert resolved.colocated is True
-    assert resolved.lifecycle.rollout.mode == "on_demand"
+    assert resolved.lifecycle.rollout_mode == "on_demand"
 
 
 def test_colocate_auto_pins_rollout_to_trainer_gpu() -> None:
@@ -629,7 +629,7 @@ def test_reward_shared_pool_derives_release_lifecycle_when_unset() -> None:
     )
 
     assert set(resolved.reward_devices) & set(resolved.rollout_devices)
-    assert resolved.lifecycle.rollout.mode == "on_demand"
+    assert resolved.lifecycle.rollout_mode == "on_demand"
     assert resolved.lifecycle.handoff.release_rollout_before_reward is True
     assert resolved.lifecycle.handoff.release_reward_after_score is True
 
@@ -648,7 +648,7 @@ def test_dedicated_reward_gpu_derives_resident_lifecycle_when_unset() -> None:
     )
 
     assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
-    assert resolved.lifecycle.rollout.mode == "resident"
+    assert resolved.lifecycle.rollout_mode == "resident"
     assert resolved.lifecycle.handoff.release_rollout_before_reward is False
     assert resolved.lifecycle.handoff.release_reward_after_score is False
 
@@ -667,13 +667,13 @@ def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
     )
 
     plan = resolved.lifecycle
-    assert plan.rollout.mode == "resident"
-    assert plan.reward.mode == "resident"
+    assert plan.rollout_mode == "resident"
+    assert plan.handoff.release_reward_after_score is False
     assert plan.handoff.release_rollout_before_train is False
     assert plan.handoff.release_rollout_before_reward is False
     assert plan.handoff.release_reward_after_score is False
     # Flat flags mirror the plan (one derivation, no divergence).
-    assert resolved.lifecycle.rollout.mode == "resident"
+    assert resolved.lifecycle.rollout_mode == "resident"
     assert resolved.lifecycle.handoff.release_reward_after_score is False
 
 
@@ -696,15 +696,10 @@ def test_lifecycle_plan_on_demand_for_shared_reward() -> None:
     )
 
     plan = resolved.lifecycle
-    assert plan.rollout.mode == "on_demand"
-    assert plan.reward.mode == "on_demand"
+    assert plan.rollout_mode == "on_demand"
     assert plan.handoff.release_rollout_before_train is False
     assert plan.handoff.release_rollout_before_reward is True
     assert plan.handoff.release_reward_after_score is True
-    # Flat compatibility flags still request an on-demand rollout lease.
-    assert resolved.lifecycle.rollout.mode == "on_demand"
-    assert resolved.lifecycle.handoff.release_rollout_before_reward is True
-    assert resolved.lifecycle.handoff.release_reward_after_score is True
 
 
 def test_lifecycle_plan_colocated_rollout_is_on_demand_before_train() -> None:
@@ -722,10 +717,10 @@ def test_lifecycle_plan_colocated_rollout_is_on_demand_before_train() -> None:
 
     plan = resolved.lifecycle
     assert resolved.colocated is True
-    assert plan.rollout.mode == "on_demand"
+    assert plan.rollout_mode == "on_demand"
     assert plan.handoff.release_rollout_before_train is True
-    # No reward role shares the rollout GPU, so reward stays resident.
-    assert plan.reward.mode == "resident"
+    # No reward role shares the rollout GPU, so no reward release is needed.
+    assert plan.handoff.release_reward_after_score is False
     assert plan.handoff.release_rollout_before_reward is False
 
 
@@ -884,8 +879,9 @@ def test_resource_plan_formatter_includes_lifecycle() -> None:
     # Lifecycle modes/flags are structured fields; build the expected substring
     # from them so a separator/keyword reword in the formatter does not break
     # this acceptance check.
-    assert f"lifecycle=rollout:{plan.rollout.mode}/reward:{plan.reward.mode}" in text
+    assert f"lifecycle=rollout:{plan.rollout_mode}" in text
     assert f"before_reward:{plan.handoff.release_rollout_before_reward}" in text
+    assert f"reward_after_score:{plan.handoff.release_reward_after_score}" in text
 
 
 def test_reward_auto_placement_prefers_dedicated_spare_gpu() -> None:
@@ -1004,7 +1000,7 @@ def test_colocated_reward_on_dedicated_gpu_owns_its_own_bundle() -> None:
         ),
     )
     assert resolved.colocated is True
-    assert resolved.lifecycle.rollout.mode == "on_demand"
+    assert resolved.lifecycle.rollout_mode == "on_demand"
 
     layout = build_bundle_layout(resolved)
     # Colocated trainer+rollout -> no reserved trainer bundle; reward owns a
@@ -1200,7 +1196,7 @@ def test_ddp_colocate_resolves_per_rank_local_single_gpu() -> None:
     assert resolved.trainer_devices == (0,)
     assert resolved.rollout_devices == (0,)  # colocated on the local GPU
     assert resolved.colocated is True
-    assert resolved.lifecycle.rollout.mode == "on_demand"
+    assert resolved.lifecycle.rollout_mode == "on_demand"
     assert resolved.cross_node is False  # per-rank-local: no shared Ray cluster
 
 
@@ -1227,7 +1223,7 @@ def test_fsdp_colocate_resolves_per_rank_local_single_gpu() -> None:
     assert resolved.trainer_devices == (0,)
     assert resolved.rollout_devices == (0,)  # colocated on the local GPU
     assert resolved.colocated is True
-    assert resolved.lifecycle.rollout.mode == "on_demand"
+    assert resolved.lifecycle.rollout_mode == "on_demand"
     assert resolved.cross_node is False  # per-rank-local: no shared Ray cluster
 
 
@@ -1286,7 +1282,7 @@ def test_cosmos_async_reward_recipe_resolves_resident_reward_overlap() -> None:
     # Disjoint reward -> no pre-reward rollout release -> reward overlaps rollout(N+1).
     assert resolved.lifecycle.handoff.release_rollout_before_reward is False
     # A resident reward lease is what keeps reward on its own card across iterations.
-    assert resolved.lifecycle.reward.mode == "resident"
+    assert resolved.lifecycle.handoff.release_reward_after_score is False
 
     # Continuous orchestration must be composed in (the producer keeps rollout(N+1)
     # in flight while reward(N) scores). Assert the parsed schedule mode + inflight

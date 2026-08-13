@@ -179,7 +179,7 @@ class RayGenerationConfig:
 
         # Keep a runtime-boundary backstop in addition to resource resolution: an
         # overlapping driver/rollout GPU is safe only when phases hand it over.
-        if resources.lifecycle.rollout.mode != "on_demand":
+        if resources.lifecycle.rollout_mode != "on_demand":
             raise ValueError(
                 f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
                 f"{rollout_devices}, but the resolved rollout lifecycle is not on_demand. "

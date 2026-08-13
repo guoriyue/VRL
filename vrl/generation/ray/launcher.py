@@ -202,7 +202,7 @@ class RayGenerationLauncher:
             )
         resources = config.resources
         worker = config.worker
-        deferred = resources.lifecycle.rollout.mode == "on_demand"
+        deferred = resources.lifecycle.rollout_mode == "on_demand"
         if deferred and resources.rollout_gpus_per_worker > 0:
             launch_inputs = replace(
                 launch_inputs,

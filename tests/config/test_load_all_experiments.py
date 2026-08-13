@@ -449,7 +449,7 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
     assert resources.rollout_devices == (1, 2, 3)
     assert resources.reward_devices == ()
     assert resources.rollout_num_workers == 3
-    assert resources.lifecycle.rollout.mode == "resident"
+    assert resources.lifecycle.rollout_mode == "resident"
     assert not any(
         (
             resources.lifecycle.handoff.release_rollout_before_train,
@@ -493,7 +493,7 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
     assert resources.rollout_num_workers == 1
     assert resources.reward_devices == ()
     assert resources.reward_gpus_per_worker == 0
-    assert resources.lifecycle.rollout.mode == "on_demand"
+    assert resources.lifecycle.rollout_mode == "on_demand"
     assert resources.lifecycle.handoff.release_rollout_before_train is True
 
     # Per-rank geometry remains inherited from the parent, while four disjoint
@@ -540,7 +540,7 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
     assert resources.rollout_num_workers == 1
     assert resources.reward_devices == ()
     assert resources.reward_gpus_per_worker == 0
-    assert resources.lifecycle.rollout.mode == "on_demand"
+    assert resources.lifecycle.rollout_mode == "on_demand"
     assert resources.lifecycle.handoff.release_rollout_before_train is True
 
     assert cfg.model.torch_compile.enable is False
@@ -616,7 +616,7 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     assert resources.rollout_devices == (1, 2)
     assert resources.reward_devices == ()
     assert resources.rollout_num_workers == 2
-    assert resources.lifecycle.rollout.mode == "resident"
+    assert resources.lifecycle.rollout_mode == "resident"
     assert orchestration.schedule_mode == "continuous"
     assert orchestration.reward_collection_mode is None
     assert orchestration.continuous.max_stale_policy_versions == 1
@@ -664,7 +664,7 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_workers == 1
     assert resources.reward_devices == ()
-    assert resources.lifecycle.rollout.mode == "on_demand"
+    assert resources.lifecycle.rollout_mode == "on_demand"
     assert resources.lifecycle.handoff.release_rollout_before_train is True
     assert built.trainer.rollout_orchestration.schedule_mode == "strict_on_policy"
 
@@ -728,8 +728,8 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devi
     assert resources.reward_devices == ()
     assert resources.reward_uses_trainer_device is True
     assert resources.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
-    assert resources.lifecycle.rollout.mode == "on_demand"
-    assert resources.lifecycle.reward.mode == "on_demand"
+    assert resources.lifecycle.rollout_mode == "on_demand"
+    assert resources.lifecycle.handoff.release_reward_after_score is True
     handoff = resources.lifecycle.handoff
     assert handoff.release_rollout_before_train is True
     assert handoff.release_rollout_before_reward is True
@@ -1087,7 +1087,7 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> No
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_workers == 1
     assert resources.reward_devices == ()
-    assert resources.lifecycle.rollout.mode == "on_demand"
+    assert resources.lifecycle.rollout_mode == "on_demand"
     assert resources.lifecycle.handoff.release_rollout_before_train is True
     assert cfg.reward.components == {"motion_dynamics": 1.0}
     assert cfg.reward.kwargs.motion_dynamics.worker_config.device == "cpu"

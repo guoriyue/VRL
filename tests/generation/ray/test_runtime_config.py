@@ -991,10 +991,7 @@ def _runtime_factory_inputs(
                 config.resources,
                 lifecycle=replace(
                     config.resources.lifecycle,
-                    rollout=replace(
-                        config.resources.lifecycle.rollout,
-                        mode="on_demand",
-                    ),
+                    rollout_mode="on_demand",
                 ),
             ),
         )
@@ -1258,7 +1255,7 @@ def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
     )
 
     assert config.resources.colocated is True
-    assert config.resources.lifecycle.rollout.mode == "on_demand"
+    assert config.resources.lifecycle.rollout_mode == "on_demand"
 
 
 def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> None:

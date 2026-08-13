@@ -185,19 +185,6 @@ class DistributedResourceConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class ActorLeasePolicy:
-    """Whether a role keeps its accelerator active across phase boundaries.
-
-    ``resident`` keeps serving across phases because the role owns a dedicated
-    GPU. ``on_demand`` yields a shared GPU at a handoff and activates again on
-    next use. The rollout backend parks its actors in host RAM; this policy does
-    not require process destruction.
-    """
-
-    mode: Literal["resident", "on_demand"]
-
-
-@dataclass(frozen=True, slots=True)
 class PhaseHandoffPolicy:
     """Which resident-vs-shared roles must step off their GPU at each boundary.
 
@@ -220,12 +207,15 @@ class RayLifecyclePlan:
     launcher, collector, and reward runtime read one declarative plan instead of
     each re-deriving ``release_after_*`` from raw device sets. Real behavior reads
     ``resolved.lifecycle.*``; no flat release-after-collect mirror is retained.
+
+    ``rollout_mode``: ``resident`` keeps serving across phases because rollout
+    owns a dedicated GPU; ``on_demand`` yields a shared GPU at a handoff and
+    activates again on next use (workers park in host RAM — no process
+    destruction). The reward side needs no mode field: its only release
+    decision is the boundary-specific ``handoff.release_reward_after_score``.
     """
 
-    rollout: ActorLeasePolicy
-    # display/provenance-only: compact formatter summary derived from handoff;
-    # runtime behavior consumes the boundary-specific handoff flags instead.
-    reward: ActorLeasePolicy
+    rollout_mode: Literal["resident", "on_demand"]
     handoff: PhaseHandoffPolicy
 
 
@@ -533,12 +523,7 @@ def resolve_distributed_resources(
     # A role is on_demand when any handoff makes it yield, while the handoff plan
     # keeps the specific phase boundary explicit.
     lifecycle = RayLifecyclePlan(
-        rollout=ActorLeasePolicy(
-            mode="on_demand" if rollout_on_demand else "resident",
-        ),
-        reward=ActorLeasePolicy(
-            mode="on_demand" if reward_release_after_score else "resident",
-        ),
+        rollout_mode="on_demand" if rollout_on_demand else "resident",
         handoff=PhaseHandoffPolicy(
             release_rollout_before_train=rollout_release_before_train,
             release_rollout_before_reward=rollout_release_before_reward_model,
@@ -631,10 +616,9 @@ def format_distributed_resource_plan(resolved: ResolvedDistributedResources) -> 
         f"colocated={resolved.colocated}",
         f"cross_node={resolved.cross_node}",
         f"trainer_reservation={resolved.requires_trainer_reservation}",
-        # Reading the plan at a glance: lease mode per role + which boundaries
+        # Reading the plan at a glance: rollout lease mode + which boundaries
         # release. resident=stays active, on_demand=parks at the handoff.
-        f"lifecycle=rollout:{resolved.lifecycle.rollout.mode}"
-        f"/reward:{resolved.lifecycle.reward.mode}",
+        f"lifecycle=rollout:{resolved.lifecycle.rollout_mode}",
         "handoff="
         f"before_train:{resolved.lifecycle.handoff.release_rollout_before_train}"
         f",before_reward:{resolved.lifecycle.handoff.release_rollout_before_reward}"
@@ -1115,7 +1099,6 @@ def _is_auto(value: Any) -> bool:
 
 
 __all__ = [
-    "ActorLeasePolicy",
     "DistributedResourceConfig",
     "PhaseHandoffPolicy",
     "RayLifecyclePlan",
