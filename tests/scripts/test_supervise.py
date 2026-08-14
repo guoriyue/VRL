@@ -519,7 +519,7 @@ def test_train_verdict_uses_cleanup_wrapper_root_class(tmp_path) -> None:
     from vrl.rollouts.orchestration.prompt_collection import (
         PromptCollectionCleanupError,
     )
-    from vrl.rollouts.orchestration.strict_on_policy import RolloutPhaseCleanupError
+    from vrl.rollouts.orchestration.rollout_runtime import RolloutPhaseCleanupError
     from vrl.scripts import train
 
     root = RayOperationTimeout("rollout.generation.batch", 1.0)

@@ -13,6 +13,38 @@
 本轮已经落地代码合同。Track B 的真实分卡 continuous hardware acceptance 已于 2026-07-19
 完成；umbrella sprint 仍未完成，因为 Track A 的真实单卡多轮 acceptance 仍是完成门槛。
 
+## Phase lease 实施记录（2026-08-13）
+
+**动机**：换手编排知识泄漏进了消费者代码。strict schedule 的 `next_iteration`
+里有 40 行 park→activate→collect→offload→有条件 restore→错误合成的手工次序，
+且 collector/schedule 各处按 `release_<role>_before_<phase>` 这类把
+（角色×相位边）烧进标识符的旗子做判断——相位结构住在名字里而不是数据里，
+失败路径测试只能对一个"录音假 lifecycle"断言调用顺序，测不到真编排。
+
+**已落地（本轮）**：
+
+- `RayLifecyclePlan` 坍缩为拓扑三角的三条共卡边
+  （`trainer_and_rollout_share_gpu` / `rollout_and_reward_share_gpu` /
+  `trainer_and_reward_share_gpu`），全部 `release_*` 旗子与 `rollout_mode`
+  变成派生 property 视图——存储模型无序、不可自相矛盾；`PhaseHandoffPolicy`
+  退化为单字段嵌套后删除。
+- 换手编排收进 `RolloutRuntimeCoordinator.rollout_phase(stats)`（async
+  context manager）：schedule 只宣告相位，park/activate/release/restore 的
+  次序与逐边失败策略（release 失败 → trainer 保持停放、terminal cleanup 先
+  回收 rollout；body+cleanup 双失败 → `RolloutPhaseCleanupError` 合成）全部
+  与它排序的原语同住一处。`strict_on_policy.next_iteration` 收缩为
+  `async with lifecycle.rollout_phase(stats): collect...`。
+- `tests/rollouts/orchestration/test_strict_failure_path.py` 改为驱动真
+  `RolloutRuntimeCoordinator`（假的只有 strategy/collector 原语），断言的是
+  真编排而非录音假人。
+
+**完全体方向（触发器：相位结构从常量变为变量时）**：owner 排程表
+（每张共享卡一条 phase→owner 时间线），`enter(phase)` 对 diff 出的占用者做
+停放/唤醒；三条共卡边即该表在"相位循环固定"前提下的最小充分统计量，平移
+即可，不浪费。当 overlap 模式增殖或 eval 相位入环、named-flag 每加一条边要
+铸新名字时执行。score 中途的 generate↔score 子换手已由 collector
+`score_rollouts` 单点封装，视为该子边的 lease 持有者，不再拆动。
+
 已完成：
 
 - 删除 role `memory_fraction`、`require_separate_gpus`、bounded-resident lifecycle、worker cap、

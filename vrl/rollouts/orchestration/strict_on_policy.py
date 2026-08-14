@@ -13,23 +13,6 @@ from vrl.rollouts.orchestration.types import (
 from vrl.rollouts.stats import RolloutStats
 
 
-class RolloutPhaseCleanupError(RuntimeError):
-    """A rollout phase failed and its terminal cleanup also failed."""
-
-    def __init__(
-        self,
-        root_cause: BaseException,
-        cleanup_error: BaseException,
-    ) -> None:
-        self.root_cause = root_cause
-        self.cleanup_error = cleanup_error
-        super().__init__(
-            f"rollout phase root cause: {type(root_cause).__name__}: {root_cause}; "
-            "terminal cleanup failure: "
-            f"{type(cleanup_error).__name__}: {cleanup_error}",
-        )
-
-
 class StrictOnPolicyRolloutSchedule:
     """Collect one rollout, train it, then sync weights after training."""
 
@@ -65,11 +48,11 @@ class StrictOnPolicyRolloutSchedule:
         await self.lifecycle.ensure_initial_weights(stats)
         policy_version = self.lifecycle.current_policy_version()
 
-        parked = self.lifecycle.park_training_state_for_rollout(stats)
+        # The schedule only announces the phase; who parks, activates,
+        # releases, and restores (and in which order, under which failures)
+        # is owned by the coordinator's phase manager.
         batches: list[Any] | None = None
-        phase_error: BaseException | None = None
-        try:
-            await self.lifecycle.activate_rollout_runtime(stats)
+        async with self.lifecycle.rollout_phase(stats):
             with stats.phase("rollout.collect_s"):
                 batches = await collect_prompt_groups(
                     collector=self.lifecycle.collector,
@@ -80,32 +63,6 @@ class StrictOnPolicyRolloutSchedule:
                     stats=stats,
                     reward_mode=self.reward_mode,
                 )
-        except BaseException as error:
-            phase_error = error
-
-        cleanup_error: BaseException | None = None
-        rollout_memory_released = False
-        try:
-            await self.lifecycle.offload_rollout_runtime_memory(stats)
-            rollout_memory_released = True
-        except BaseException as error:
-            cleanup_error = error
-        # Restoring the trainer is safe only after rollout memory ownership was
-        # handed off successfully. If parking or its residual-memory check
-        # fails, the rollout GPU state is unknown; terminal shutdown must tear
-        # down the rollout runtime before the strategy restores training state.
-        if parked and rollout_memory_released:
-            try:
-                self.lifecycle.restore_training_state_after_rollout(stats)
-            except BaseException as error:
-                cleanup_error = error
-
-        if phase_error is not None:
-            if cleanup_error is not None:
-                raise RolloutPhaseCleanupError(phase_error, cleanup_error) from phase_error
-            raise phase_error
-        if cleanup_error is not None:
-            raise cleanup_error
         assert batches is not None
 
         return RolloutIteration(
@@ -136,4 +93,4 @@ class StrictOnPolicyRolloutSchedule:
         await self.lifecycle.shutdown_collector_runtime()
 
 
-__all__ = ["RolloutPhaseCleanupError", "StrictOnPolicyRolloutSchedule"]
+__all__ = ["StrictOnPolicyRolloutSchedule"]

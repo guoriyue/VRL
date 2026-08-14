@@ -11,13 +11,31 @@ so the scheduling layer never imports a concrete collector or strategy type.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
 from typing import Any, Protocol, runtime_checkable
 
 import torch
 
 from vrl.generation import GenerationRuntime
 from vrl.rollouts.stats import RolloutStats
+
+
+class RolloutPhaseCleanupError(RuntimeError):
+    """A rollout phase failed and its terminal cleanup also failed."""
+
+    def __init__(
+        self,
+        root_cause: BaseException,
+        cleanup_error: BaseException,
+    ) -> None:
+        self.root_cause = root_cause
+        self.cleanup_error = cleanup_error
+        super().__init__(
+            f"rollout phase root cause: {type(root_cause).__name__}: {root_cause}; "
+            "terminal cleanup failure: "
+            f"{type(cleanup_error).__name__}: {cleanup_error}",
+        )
 
 
 @runtime_checkable
@@ -178,6 +196,48 @@ class RolloutRuntimeCoordinator:
         with stats.phase("rollout.restore_driver_s"):
             self.strategy.restore_training_state(self.training_state_getter())
 
+    @asynccontextmanager
+    async def rollout_phase(self, stats: RolloutStats) -> AsyncIterator[None]:
+        """Own the whole GPU handoff around one rollout (generate + score) phase.
+
+        The schedule announces the phase; every ordering rule lives here, next
+        to the transition primitives it sequences: park the trainer when the
+        topology requires it, activate generation, run the body, then release
+        rollout memory (including the reward's phase-final park) and restore
+        the trainer ONLY after that release succeeded — a failed release
+        leaves the trainer parked so terminal shutdown reclaims the rollout
+        GPU before training state returns. A body failure plus a cleanup
+        failure combine into :class:`RolloutPhaseCleanupError`.
+        """
+
+        parked = self.park_training_state_for_rollout(stats)
+        phase_error: BaseException | None = None
+        try:
+            await self.activate_rollout_runtime(stats)
+            yield
+        except BaseException as error:
+            phase_error = error
+
+        cleanup_error: BaseException | None = None
+        rollout_memory_released = False
+        try:
+            await self.offload_rollout_runtime_memory(stats)
+            rollout_memory_released = True
+        except BaseException as error:
+            cleanup_error = error
+        if parked and rollout_memory_released:
+            try:
+                self.restore_training_state_after_rollout(stats)
+            except BaseException as error:
+                cleanup_error = error
+
+        if phase_error is not None:
+            if cleanup_error is not None:
+                raise RolloutPhaseCleanupError(phase_error, cleanup_error) from phase_error
+            raise phase_error
+        if cleanup_error is not None:
+            raise cleanup_error
+
     async def activate_rollout_runtime(self, stats: RolloutStats) -> None:
         with stats.phase("rollout.activate_generation_runtime_s"):
             await self.collector.activate_generation_runtime()
@@ -234,4 +294,8 @@ def _validate_prepared_weight_snapshot(value: Any) -> None:
             _validate_prepared_weight_snapshot(child)
 
 
-__all__ = ["RolloutCollectorControl", "RolloutRuntimeCoordinator"]
+__all__ = [
+    "RolloutCollectorControl",
+    "RolloutPhaseCleanupError",
+    "RolloutRuntimeCoordinator",
+]
