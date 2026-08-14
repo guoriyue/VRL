@@ -35,4 +35,3 @@ distributed:
       num_gpus: 0
       gpus_per_worker: 0.0
       num_workers: 0
-    allow_overlap: false

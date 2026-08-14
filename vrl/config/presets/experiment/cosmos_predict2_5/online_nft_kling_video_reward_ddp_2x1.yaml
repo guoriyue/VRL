@@ -56,8 +56,8 @@ distributed:
   resources:
     rollout:
       # Each rank colocates its rollout worker on its own (trainer) GPU — state the
-      # intent explicitly via the gpu_pool grammar rather than relying on the base
-      # preset's allow_overlap fallback. Shared roles always use on-demand phase
+      # intent explicitly via the gpu_pool grammar rather than relying on the auto
+      # pool's share fallback. Shared roles always use on-demand phase
       # handoff; the actor processes stay alive while their GPU state parks.
       gpu_pool: trainer
     reward:

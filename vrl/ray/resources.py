@@ -59,11 +59,13 @@ class RolloutResourceConfig(RoleResourceConfig):
     # Rollout GPU pool source (public key: distributed.resources.rollout.gpu_pool).
     # Mirrors reward.gpu_pool so all roles share one "which pool do I borrow" grammar:
     #   "auto"      derive from topology: a dedicated spare GPU when one exists,
-    #               else overlap the trainer GPU (single-GPU colocated fallback).
-    #   "trainer"   share the trainer GPU pool (colocated). Shared roles always
-    #               hand the GPU over between phases; gpu_pool=trainer is itself
-    #               the overlap permission (no allow_overlap needed).
+    #               else share the trainer GPU (single-GPU colocated fallback).
+    #   "trainer"   share the trainer GPU pool (colocated); shared roles always
+    #               hand the GPU over between phases.
     #   "dedicated" require a dedicated spare rollout GPU; error if none exists.
+    # Sharing needs no separate consent flag: it is declared either by a pool
+    # word ("trainer") or by hand-pinning intersecting ``devices`` sets, and the
+    # resolved sharing plan is announced in the startup resource receipt.
     gpu_pool: str = "auto"
 
     gpus_per_worker: float = 1.0
@@ -183,7 +185,6 @@ class DistributedResourceConfig:
     trainer: RoleResourceConfig = field(default_factory=RoleResourceConfig)
     rollout: RolloutResourceConfig = field(default_factory=RolloutResourceConfig)
     reward: RewardResourceConfig = field(default_factory=RewardResourceConfig)
-    allow_overlap: bool = False
     cross_node: bool = False
 
 
@@ -389,13 +390,10 @@ def resolve_distributed_resources(
             f"0 or 1, got {rollout_gpus_per_worker}",
         )
 
-    # rollout.gpu_pool=trainer borrows the trainer GPU (colocated) and is itself the
-    # overlap permission, so it doesn't also need distributed.resources.allow_overlap.
     rollout_devices = _resolve_rollout_devices(
         visible_devices=visible_devices,
         trainer_devices=trainer_devices,
         rollout_config=config.rollout,
-        allow_overlap=config.allow_overlap,
     )
     rollout_num_gpus = len(rollout_devices)
 
@@ -407,8 +405,8 @@ def resolve_distributed_resources(
         )
     if rollout_gpus_per_worker > 0 and rollout_num_gpus == 0:
         raise ValueError(
-            "No rollout GPUs are available after reserving trainer devices "
-            f"{list(trainer_devices)} with distributed.resources.allow_overlap=false. "
+            "No rollout GPUs resolved from visible devices "
+            f"{list(visible_devices)} (trainer reserved {list(trainer_devices)}). "
             "Expose more GPUs, or set "
             "distributed.resources.rollout.gpu_pool=trainer to time-share a trainer GPU.",
         )
@@ -417,15 +415,10 @@ def resolve_distributed_resources(
         resolved_gpu_count=rollout_num_gpus,
     )
 
+    # Sharing is consent: an intersection can only arise from hand-pinned
+    # ``devices`` sets, a sharing pool word, or the auto spare-first-else-share
+    # fallback. All are declarations; the startup receipt announces the plan.
     colocated = bool(set(trainer_devices) & set(rollout_devices))
-    if colocated and not config.allow_overlap and config.rollout.gpu_pool != "trainer":
-        raise ValueError(
-            "Trainer and rollout devices overlap but "
-            "distributed.resources.allow_overlap=false: "
-            f"trainer={list(trainer_devices)} rollout={list(rollout_devices)}. "
-            "Set distributed.resources.rollout.gpu_pool=trainer to colocate, or "
-            "allow_overlap=true.",
-        )
 
     reward_mode = config.reward.device
     if config.cross_node and reward_mode == "gpu":
@@ -440,20 +433,11 @@ def resolve_distributed_resources(
         trainer_devices=trainer_devices,
         rollout_devices=rollout_devices,
         reward_config=config.reward,
-        allow_overlap=config.allow_overlap,
     )
 
-    reserved_reward_overlaps_trainer = bool(set(reward_devices) & set(trainer_devices))
-    if reserved_reward_overlaps_trainer and not config.allow_overlap:
-        raise ValueError(
-            "Trainer and reward devices overlap but "
-            "distributed.resources.allow_overlap=false: "
-            f"trainer={list(trainer_devices)} reward={list(reward_devices)}",
-        )
-
     # Asymmetric fsdp owns the whole training world with rollout/reward on separate
-    # cards, so the trainer set must be disjoint from both regardless of
-    # allow_overlap. Symmetric colocated fsdp (rollout.gpu_pool=trainer) is the
+    # cards, so the trainer set must be disjoint from both regardless of any
+    # declared sharing. Symmetric colocated fsdp (rollout.gpu_pool=trainer) is the
     # opposite by design — each rank's rollout shares its trainer GPU, exactly like
     # ddp — so the disjoint rule does not apply to it.
     if fsdp_asymmetric:
@@ -531,7 +515,7 @@ def _validate_fsdp_trainer_disjoint(
     rollout_devices: tuple[int, ...],
     reward_devices: tuple[int, ...],
 ) -> None:
-    """fsdp trainer GPUs must not overlap rollout/reward (even with allow_overlap)."""
+    """fsdp trainer GPUs must not overlap rollout/reward (sharing cannot be declared)."""
 
     overlap_rollout = sorted(set(trainer_devices) & set(rollout_devices))
     overlap_reward = sorted(set(trainer_devices) & set(reward_devices))
@@ -610,7 +594,6 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
         trainer=trainer,
         rollout=rollout,
         reward=reward,
-        allow_overlap=bool(cfg_get(resources, "allow_overlap", False)),
         cross_node=bool(cfg_get(resources, "cross_node", False)),
     )
 
@@ -715,7 +698,6 @@ def _resolve_rollout_devices(
     visible_devices: tuple[int, ...],
     trainer_devices: tuple[int, ...],
     rollout_config: RolloutResourceConfig,
-    allow_overlap: bool,
 ) -> tuple[int, ...]:
     gpu_pool = rollout_config.gpu_pool
     devices = _explicit_role_devices(rollout_config, visible_devices=visible_devices)
@@ -758,7 +740,7 @@ def _resolve_rollout_devices(
         return tuple(trainer_devices[:requested])
 
     # auto / dedicated: a pool disjoint from the trainer GPU(s). `dedicated` forbids
-    # the overlap fallback (a spare GPU is required); `auto` allows it under allow_overlap.
+    # the share fallback (a spare GPU is required); `auto` is spare-first-else-share.
     excluded = set(trainer_devices)
     pool = tuple(device for device in visible_devices if device not in excluded)
     requested = rollout_config.requested_gpu_count(available_count=len(pool))
@@ -766,13 +748,13 @@ def _resolve_rollout_devices(
         return ()
     if requested <= len(pool):
         return tuple(pool[:requested])
-    if not (allow_overlap and gpu_pool != "dedicated"):
+    if gpu_pool == "dedicated":
         raise ValueError(
-            "Not enough non-overlapping rollout GPUs: "
-            f"requested={requested}, available={len(pool)}, "
+            "distributed.resources.rollout.gpu_pool=dedicated requires spare "
+            f"rollout GPUs: requested={requested}, available={len(pool)}, "
             f"trainer={list(trainer_devices)}, visible={list(visible_devices)}. "
-            "Expose more GPUs, or set distributed.resources.rollout.gpu_pool=trainer "
-            "to time-share the trainer GPU.",
+            "Expose more GPUs, or drop gpu_pool=dedicated to allow time-sharing "
+            "the trainer GPU.",
         )
     fallback = tuple(device for device in visible_devices if device in excluded)
     combined = pool + fallback
@@ -790,7 +772,6 @@ def _resolve_reward_devices(
     trainer_devices: tuple[int, ...],
     rollout_devices: tuple[int, ...],
     reward_config: RewardResourceConfig,
-    allow_overlap: bool,
 ) -> tuple[int, ...]:
     """Resolve the in-process reward reservation: () or exactly one GPU."""
 
@@ -810,7 +791,6 @@ def _resolve_reward_devices(
             trainer_devices=trainer_devices,
             rollout_devices=rollout_devices,
             reward_config=reward_config,
-            allow_overlap=allow_overlap,
         )
         return devices
 
@@ -845,8 +825,8 @@ def _resolve_reward_devices(
             )
         return _validated((rollout_devices[0],))
 
-    # Explicit dedicated pool: a spare GPU is required. ``allow_overlap`` permits
-    # auto placement to share, but cannot weaken a declared dedicated pool.
+    # Explicit dedicated pool: a spare GPU is required. Auto placement may fall
+    # back to sharing, but a declared dedicated pool never does.
     excluded = set(trainer_devices) | set(rollout_devices)
     pool = tuple(device for device in visible_devices if device not in excluded)
     if not pool:
@@ -867,7 +847,6 @@ def _validate_reward_overlap(
     trainer_devices: tuple[int, ...],
     rollout_devices: tuple[int, ...],
     reward_config: RewardResourceConfig,
-    allow_overlap: bool,
 ) -> None:
     device_set = set(devices)
     rollout_pool = set(rollout_devices)
@@ -889,13 +868,6 @@ def _validate_reward_overlap(
             "devices disjoint from both trainer and rollout pools: "
             f"reward={list(devices)} trainer={list(trainer_devices)} "
             f"rollout={list(rollout_devices)}",
-        )
-
-    if trainer_overlap and not allow_overlap:
-        raise ValueError(
-            "Trainer and reward devices overlap but "
-            "distributed.resources.allow_overlap=false: "
-            f"trainer={list(trainer_devices)} reward={list(devices)}",
         )
 
 

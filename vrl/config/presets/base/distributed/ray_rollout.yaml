@@ -7,7 +7,6 @@ distributed:
       num_gpus: auto
       gpus_per_worker: 1.0
       num_workers: auto
-    allow_overlap: false
 
   rollout:
     cpus_per_worker: 4.0

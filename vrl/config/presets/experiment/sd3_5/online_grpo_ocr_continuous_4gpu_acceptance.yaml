@@ -39,7 +39,6 @@ distributed:
       gpus_per_worker: 1.0
       num_workers: 3
       gpu_pool: dedicated
-    allow_overlap: false
 
 sampling:
   height: 128

@@ -172,8 +172,9 @@ class RayGenerationConfig:
         if not resources.colocated:
             raise ValueError(
                 f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
-                f"{rollout_devices}, but resources.allow_overlap=false. "
-                "Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto split for throughput, or set "
+                f"{rollout_devices}, but the resolved plan expected disjoint "
+                "trainer/rollout GPUs. Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto "
+                "split for throughput, or set "
                 "distributed.resources.rollout.gpu_pool=trainer for time-shared colocation.",
             )
 

@@ -165,7 +165,6 @@ def _cfg(
                 "gpus_per_worker": 1,
                 "num_workers": num_workers,
             },
-            "allow_overlap": overlap,
         },
         # Release scheduling is derived from topology; nothing to spell here.
         "rollout": {},
@@ -181,7 +180,6 @@ def _resource_cfg(
     *,
     trainer_devices: list[int],
     rollout_devices: list[int],
-    allow_overlap: bool = False,
 ):
     rollout_runtime: dict[str, Any] = {"cpus_per_worker": 1}
     rollout_resource: dict[str, Any] = {
@@ -196,7 +194,6 @@ def _resource_cfg(
                     "visible_devices": sorted(set(trainer_devices) | set(rollout_devices)),
                     "trainer": {"devices": trainer_devices},
                     "rollout": rollout_resource,
-                    "allow_overlap": allow_overlap,
                 },
                 "rollout": rollout_runtime,
             },
@@ -240,7 +237,6 @@ def _launch_cfg(
                     "gpus_per_worker": 0,
                     "num_workers": 1,
                 },
-                "allow_overlap": False,
             },
         },
         "model": model_config,
@@ -1208,7 +1204,7 @@ def test_ray_backend_rejects_unapproved_driver_cuda_overlap() -> None:
         ValueError,
         match=(
             r"Trainer device cuda:0 overlaps rollout devices \[0\], "
-            r"but resources\.allow_overlap=false"
+            r"but the resolved plan expected disjoint"
         ),
     ):
         config.validate_driver_state(
@@ -1248,7 +1244,6 @@ def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
         _resource_cfg(
             trainer_devices=[0],
             rollout_devices=[0],
-            allow_overlap=True,
         ),
     ).validate_driver_state(
         driver_bundle=_Bundle(model=_CudaPolicy(), trainable_modules={}),

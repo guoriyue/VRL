@@ -48,9 +48,10 @@ CANONICAL_CONFIG_NAME = "experiment/sana/online_grpo_aesthetic_fullparam_long"
 # Historical run configs persist the retired path, so it remains protocol data.
 _RETIRED_ENTRYPOINT = "vrl.scripts.diffusion.train:train_diffusion_grpo"
 _LIVE_ENTRYPOINT = "vrl.scripts.train:train_online"
-# Digest of the bundled canonical preset after the 2026-08 batch-vocabulary
-# key renames (samples_per_generation_batch etc.).
-CANONICAL_PROTOCOL_SHA256 = "2fbc6195c185f427f7e397b218d603f70d0bf0d1a5b573ef6ea8141be5f2db1c"
+# Digest of the bundled canonical preset after the 2026-08 sharing-grammar
+# simplification (distributed.resources.allow_overlap retired; sharing is
+# declared by pool words or pinned intersecting device sets).
+CANONICAL_PROTOCOL_SHA256 = "eda621c94a1261c630227b83e456e5b5bad4fdcdc29355f5ef728ba80703a50a"
 TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"
 EVAL_MANIFEST_SHA256 = "10c70e8af2ae16b0d76eb9da0f53801485ab0a3bae83e605d310faa9b16bfcdd"
 TRAIN_PROMPT_COUNT = 192
@@ -572,6 +573,13 @@ def _erase_meaningless_spelling(
         renamed_section = _section(actual, *path)
         if isinstance(renamed_section, dict) and old in renamed_section:
             renamed_section[new] = renamed_section.pop(old)
+
+    # 2026-08 sharing-grammar simplification retired allow_overlap. The canonical
+    # preset spelled `allow_overlap: true`; only that exact historical shape is
+    # meaningless spelling — any other persisted value stays visible as drift.
+    resources_section = _section(actual, "distributed", "resources")
+    if isinstance(resources_section, dict) and resources_section.get("allow_overlap") is True:
+        resources_section.pop("allow_overlap")
 
     # Defaults come from their live owners so a changed default cannot silently
     # keep validating stale runs.

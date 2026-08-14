@@ -55,7 +55,6 @@ def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
                     "gpus_per_worker": 1,
                     "num_workers": "auto",
                 },
-                "allow_overlap": False,
             },
         ),
     )
@@ -105,7 +104,6 @@ def test_explicit_split_devices_do_not_overlap() -> None:
                 "visible_devices": [0, 1, 2, 3],
                 "trainer": {"devices": [0]},
                 "rollout": {"devices": [1, 2, 3], "gpus_per_worker": 1},
-                "allow_overlap": False,
             },
         ),
     )
@@ -115,30 +113,14 @@ def test_explicit_split_devices_do_not_overlap() -> None:
     assert resolved.colocated is False
 
 
-def test_explicit_overlap_requires_allow_overlap() -> None:
-    """Checks explicit overlap requires allow overlap."""
-    with pytest.raises(ValueError, match="overlap"):
-        resolve_distributed_resources(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [0], "gpus_per_worker": 1},
-                    "allow_overlap": False,
-                },
-            ),
-        )
-
-
-def test_explicit_overlap_marks_colocated_when_allowed() -> None:
-    """Checks explicit overlap marks colocated when allowed."""
+def test_pinned_device_intersection_declares_colocation() -> None:
+    """Hand-pinning intersecting devices sets IS the sharing declaration."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
                 "visible_devices": [0],
                 "trainer": {"devices": [0]},
                 "rollout": {"devices": [0], "gpus_per_worker": 1},
-                "allow_overlap": True,
             },
         ),
     )
@@ -147,8 +129,8 @@ def test_explicit_overlap_marks_colocated_when_allowed() -> None:
     assert resolved.requires_trainer_reservation is False
 
 
-def test_colocate_implies_overlap_without_allow_overlap() -> None:
-    """gpu_pool=trainer is itself the overlap permission; allow_overlap unset."""
+def test_colocate_via_gpu_pool_trainer() -> None:
+    """gpu_pool=trainer declares sharing by pool word instead of pinned ids."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -243,9 +225,31 @@ def test_num_workers_auto_requires_divisible_gpu_budget() -> None:
         )
 
 
-def test_single_gpu_auto_split_fails_without_overlap() -> None:
-    """Checks single GPU auto split fails without overlap."""
-    with pytest.raises(ValueError, match="Not enough non-overlapping rollout GPUs"):
+def test_single_gpu_auto_split_shares_the_trainer_gpu() -> None:
+    """The auto pool is spare-first-else-share: no spare -> colocate on trainer."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0],
+                "trainer": {"num_gpus": 1},
+                "rollout": {
+                    "num_gpus": 1,
+                    "gpus_per_worker": 1,
+                    "num_workers": 1,
+                },
+            },
+        ),
+    )
+
+    assert resolved.trainer_devices == (0,)
+    assert resolved.rollout_devices == (0,)
+    assert resolved.colocated is True
+    assert resolved.lifecycle.rollout_mode == "on_demand"
+
+
+def test_single_gpu_dedicated_rollout_pool_requires_a_spare() -> None:
+    """gpu_pool=dedicated never falls back to sharing the trainer GPU."""
+    with pytest.raises(ValueError, match="gpu_pool=dedicated requires spare"):
         resolve_distributed_resources(
             _cfg(
                 {
@@ -255,8 +259,8 @@ def test_single_gpu_auto_split_fails_without_overlap() -> None:
                         "num_gpus": 1,
                         "gpus_per_worker": 1,
                         "num_workers": 1,
+                        "gpu_pool": "dedicated",
                     },
-                    "allow_overlap": False,
                 },
             ),
         )
@@ -453,7 +457,6 @@ def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
                 "cross_node": True,
                 "trainer": {"num_gpus": 1},
                 "rollout": {"num_gpus": 1, "gpus_per_worker": 1, "num_workers": 1},
-                "allow_overlap": False,
             },
         ),
     )
@@ -660,7 +663,6 @@ def test_lifecycle_plan_colocated_rollout_is_on_demand_before_train() -> None:
                 "visible_devices": [0],
                 "trainer": {"devices": [0]},
                 "rollout": {"devices": [0], "gpus_per_worker": 1},
-                "allow_overlap": True,
             },
         ),
     )
@@ -835,7 +837,6 @@ def test_reward_auto_placement_falls_back_to_shared_pool_on_single_gpu() -> None
                 "visible_devices": [0],
                 "trainer": {"devices": [0]},
                 "rollout": {"devices": [0], "gpus_per_worker": 1},
-                "allow_overlap": True,
                 "reward": {"device": "gpu"},
             },
         ),
@@ -856,7 +857,6 @@ def test_reward_can_share_rollout_pool_when_phases_release() -> None:
                 "trainer": {"devices": [0]},
                 "rollout": {"devices": [1], "gpus_per_worker": 1},
                 "reward": {"device": "gpu", "gpu_pool": "rollout"},
-                "allow_overlap": False,
             },
         ),
     )
@@ -877,26 +877,27 @@ def test_reward_shared_pool_requires_a_rollout_gpu() -> None:
                     "trainer": {"devices": [0]},
                     "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 1},
                     "reward": {"device": "gpu", "gpu_pool": "rollout"},
-                    "allow_overlap": False,
                 },
             ),
         )
 
 
-def test_reward_trainer_overlap_requires_explicit_allow_overlap() -> None:
-    """Checks reward trainer overlap requires explicit allow overlap."""
-    with pytest.raises(ValueError, match="Trainer and reward devices overlap"):
-        resolve_distributed_resources(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"num_gpus": 0, "gpus_per_worker": 0},
-                    "reward": {"device": "gpu", "devices": [0]},
-                    "allow_overlap": False,
-                },
-            ),
-        )
+def test_pinned_reward_on_the_trainer_gpu_declares_sharing() -> None:
+    """A reward reservation pinned onto the trainer GPU is a sharing declaration."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0],
+                "trainer": {"devices": [0]},
+                "rollout": {"num_gpus": 0, "gpus_per_worker": 0},
+                "reward": {"device": "gpu", "devices": [0]},
+            },
+            kling_video_reward=True,
+        ),
+    )
+
+    assert resolved.reward_devices == (0,)
+    assert resolved.lifecycle.trainer_and_reward_share_gpu is True
 
 
 def test_colocated_reward_on_dedicated_gpu_owns_its_own_bundle() -> None:
@@ -910,7 +911,6 @@ def test_colocated_reward_on_dedicated_gpu_owns_its_own_bundle() -> None:
                 "trainer": {"devices": [0]},
                 "rollout": {"devices": [0], "num_workers": 1},
                 "reward": {"device": "gpu", "devices": [1]},
-                "allow_overlap": True,
             },
             kling_video_reward=True,
         ),
@@ -936,7 +936,6 @@ def test_shared_single_gpu_reward_reuses_rollout_bundle() -> None:
                 "trainer": {"devices": [0]},
                 "rollout": {"devices": [0], "num_workers": 1},
                 "reward": {"device": "gpu", "devices": [0], "gpu_pool": "rollout"},
-                "allow_overlap": True,
             },
             kling_video_reward=True,
         ),
@@ -995,7 +994,7 @@ def test_fsdp_trainer_count_must_equal_world_size() -> None:
 
 
 def test_fsdp_trainer_must_be_disjoint_from_rollout_even_with_overlap() -> None:
-    """fsdp rejects trainer/rollout GPU overlap regardless of allow_overlap."""
+    """fsdp rejects trainer/rollout GPU overlap even when pinned deliberately."""
     with pytest.raises(ValueError, match="fsdp requires trainer GPUs disjoint"):
         resolve_distributed_resources(
             _cfg_training(
@@ -1003,7 +1002,6 @@ def test_fsdp_trainer_must_be_disjoint_from_rollout_even_with_overlap() -> None:
                     "visible_devices": [0, 1],
                     "trainer": {"devices": [0, 1]},
                     "rollout": {"devices": [1], "gpus_per_worker": 1},
-                    "allow_overlap": True,
                 },
                 {"strategy": "fsdp", "num_nodes": 1, "gpus_per_node": 2},
             ),

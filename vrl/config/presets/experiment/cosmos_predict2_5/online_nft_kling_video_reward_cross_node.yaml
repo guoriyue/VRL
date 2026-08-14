@@ -29,9 +29,6 @@ distributed:
     # separate placement_strategy key is needed -- it is derived from this flag
     # (vrl/ray/placement.py GlobalRayPlacementOwner.create).
     cross_node: true
-    # Trainer (head GPU) and rollout (node B GPU) are physically disjoint hosts,
-    # so no same-card overlap permission is needed.
-    allow_overlap: false
     # GPU "ids" here are budget TOKENS, not physical devices (cross_node): the
     # real rollout placement is by node (which host you `ray start` on).
     #   token 0 -> head/driver node A's card (held out of Ray: --num-gpus=0)

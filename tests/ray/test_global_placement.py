@@ -79,7 +79,6 @@ def test_bundle_plan_multi_rollout_worker_one_bundle_per_gpu() -> None:
             "visible_devices": [0, 1, 2, 3],
             "trainer": {"num_gpus": 1},
             "rollout": {"num_gpus": "auto", "gpus_per_worker": 1, "num_workers": "auto"},
-            "allow_overlap": False,
         },
     )
     plan = BundleLayout.from_resources(resolved)
@@ -116,7 +115,6 @@ def test_bundle_plan_colocated_debug_single_bundle_no_trainer_reservation() -> N
             "visible_devices": [0],
             "trainer": {"devices": [0]},
             "rollout": {"devices": [0], "gpus_per_worker": 1},
-            "allow_overlap": True,
         },
     )
     plan = BundleLayout.from_resources(resolved)
@@ -270,7 +268,6 @@ def test_assign_roles_rejects_duplicate_probed_gpu() -> None:
             "visible_devices": [0, 1],
             "trainer": {"num_gpus": 1},
             "rollout": {"num_gpus": 1, "gpus_per_worker": 1, "num_workers": 1},
-            "allow_overlap": False,
         },
     )
     with pytest.raises(RuntimeError, match="two bundles probed to GPU 0"):

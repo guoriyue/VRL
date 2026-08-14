@@ -4,15 +4,15 @@
 # TIME-SHARE it in turn (never at the same instant):
 #     collect (rollout generates) -> train (backward) -> weight sync -> repeat.
 #
-# This preset uses `allow_overlap: true` (the `auto` rollout pool): on a 1-GPU box
-# trainer and rollout both land on GPU 0 (colocated); on a box WITH a spare GPU,
-# `auto` prefers the spare (disaggregated). To FORCE colocation regardless of
-# spares, use the per-role `gpu_pool` grammar (mirrors reward.gpu_pool):
+# The `auto` rollout pool is spare-first-else-share: on a 1-GPU box trainer and
+# rollout both land on GPU 0 (colocated); on a box WITH a spare GPU, `auto`
+# prefers the spare (disaggregated). To FORCE colocation regardless of spares,
+# use the per-role `gpu_pool` grammar (mirrors reward.gpu_pool):
 #
 #   distributed:
 #     resources:
 #       rollout:
-#         gpu_pool: trainer        # borrow the trainer GPU = colocated (no allow_overlap needed)
+#         gpu_pool: trainer        # borrow the trainer GPU = colocated
 #
 # Shared trainer/rollout GPUs always use on-demand phase handoff: the trainer parks
 # during collect and the rollout worker parks before training, so each phase owns
@@ -23,12 +23,11 @@ distributed:
     trainer:
       num_gpus: 1
     rollout:
+      # auto pool: colocate on the trainer GPU when there's no spare (single-GPU
+      # box), else take the spare. Set gpu_pool: trainer to force colocation.
       num_gpus: 1
       gpus_per_worker: 1.0
       num_workers: 1
-    # auto pool: colocate on the trainer GPU when there's no spare (single-GPU box),
-    # else take the spare. Set rollout.gpu_pool: trainer to force colocation.
-    allow_overlap: true
 
   rollout:
     cpus_per_worker: 4.0

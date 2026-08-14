@@ -75,7 +75,6 @@ distributed:
       gpus_per_worker: 1.0
       num_workers: 2
       gpu_pool: dedicated
-    allow_overlap: false
 
 rollout:
   prompts_per_batch: 4
