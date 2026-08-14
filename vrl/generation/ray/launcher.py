@@ -84,7 +84,8 @@ class RayGenerationLauncher:
                 worker_configs=worker_configs,
                 worker_ids=worker_ids,
                 num_cpus=worker.cpus_per_worker,
-                num_gpus=config.resources.rollout_gpus_per_worker,
+                # Each GPU worker owns one whole GPU; a CPU fleet grants none.
+                num_gpus=1 if config.resources.rollout_devices else 0,
                 rpc_timeout_s=worker.worker_rpc_timeout_s,
                 operation_prefix="rollout",
                 placement_group=placement_group,
@@ -203,7 +204,7 @@ class RayGenerationLauncher:
         resources = config.resources
         worker = config.worker
         deferred = resources.lifecycle.rollout_mode == "on_demand"
-        if deferred and resources.rollout_gpus_per_worker > 0:
+        if deferred and resources.rollout_devices:
             launch_inputs = replace(
                 launch_inputs,
                 launch_contract=replace(
@@ -262,7 +263,7 @@ def _validate_worker_gpu_ids(
     """Validate launched workers against the resolved rollout placement."""
 
     resources = config.resources
-    if resources.rollout_gpus_per_worker <= 0:
+    if not resources.rollout_devices:
         return
 
     driver_node_ip: str | None = None

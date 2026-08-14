@@ -257,14 +257,6 @@ class ResolvedDistributedResources:
         return len(self.rollout_devices)
 
     @property
-    def rollout_gpus_per_worker(self) -> float:
-        """Ray GPU grant per rollout worker: a GPU fleet is always one GPU per
-        worker, so this is 1.0 whenever rollout owns devices and 0.0 for CPU
-        worker fleets (and for runs with no fleet at all)."""
-
-        return 1.0 if self.rollout_devices else 0.0
-
-    @property
     def colocated(self) -> bool:
         return bool(set(self.trainer_devices) & set(self.rollout_devices))
 
@@ -272,7 +264,7 @@ class ResolvedDistributedResources:
     def requires_trainer_reservation(self) -> bool:
         return (
             bool(self.trainer_devices)
-            and self.rollout_gpus_per_worker > 0
+            and bool(self.rollout_devices)
             and not self.colocated
             and self.rollout_num_workers > 0
             and not self.cross_node

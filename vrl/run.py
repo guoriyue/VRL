@@ -159,7 +159,7 @@ class ResolvedOnlineRun(ResolvedRun):
 
         generation = self.generation
         runtime_device = torch.device(
-            "cuda" if generation.resources.rollout_gpus_per_worker > 0 else "cpu",
+            "cuda" if generation.resources.rollout_devices else "cpu",
         )
         build = self.family.resolve_model_build(
             self.built.root,

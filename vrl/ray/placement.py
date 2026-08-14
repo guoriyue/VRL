@@ -124,7 +124,7 @@ class BundleLayout:
             for gpu_id in resolved.trainer_devices:
                 gpu_bundle(gpu_id)
 
-        if resolved.rollout_gpus_per_worker > 0:
+        if resolved.rollout_devices:
             rollout = tuple(gpu_bundle(gpu_id) for gpu_id in resolved.rollout_devices)
         else:
             rollout = cpu_bundles(resolved.rollout_num_workers)
@@ -507,14 +507,12 @@ class GlobalRayPlacementOwner:
             "rollout": self._match_gpu_bundles(
                 "rollout",
                 self.resources.rollout_devices,
-                self.resources.rollout_gpus_per_worker,
                 self.layout.rollout_bundle_indices,
                 gpu_to_bundle,
             ),
             "reward": self._match_gpu_bundles(
                 "reward",
                 self.resources.reward_devices,
-                1.0 if self.resources.reward_devices else 0.0,
                 self.layout.reward_bundle_indices,
                 gpu_to_bundle,
             ),
@@ -524,11 +522,10 @@ class GlobalRayPlacementOwner:
         self,
         role: str,
         devices: tuple[int, ...],
-        gpus_per_worker: float,
         cpu_plan_indices: tuple[int, ...],
         gpu_to_bundle: dict[int, int],
     ) -> tuple[int, ...]:
-        if gpus_per_worker <= 0:
+        if not devices:
             # CPU-only role: positional plan bundles (probe does not cover them).
             return cpu_plan_indices
         matched: list[int] = []

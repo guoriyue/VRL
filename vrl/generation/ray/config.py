@@ -193,11 +193,9 @@ class RayGenerationConfig:
         once those loaders exist.
         """
 
-        if not (
-            self.resources.colocated
-            and self.resources.rollout_num_workers >= 1
-            and self.resources.rollout_gpus_per_worker > 0
-        ):
+        # colocated already implies a non-empty rollout device set (it is the
+        # trainer/rollout intersection), so no separate GPU-fleet check needed.
+        if not (self.resources.colocated and self.resources.rollout_num_workers >= 1):
             return
         if not bundle.loads_full_generation_modules:
             return

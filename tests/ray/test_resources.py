@@ -298,7 +298,6 @@ def test_pinned_devices_supersede_a_zero_gpu_count() -> None:
 
     assert resolved.rollout_devices == (0,)
     assert resolved.rollout_num_workers == 1
-    assert resolved.rollout_gpus_per_worker == 1.0
 
 
 def test_cpu_only_reward_rejects_a_gpu_device_assignment() -> None:

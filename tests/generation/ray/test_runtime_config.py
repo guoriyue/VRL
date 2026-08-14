@@ -544,7 +544,6 @@ def test_base_rollout_presets_pin_only_the_cpu_override(preset_name: str) -> Non
         cfg,
         resources=SimpleNamespace(
             rollout_num_workers=1,
-            rollout_gpus_per_worker=1.0,
         ),
     )
     assert config.worker.cpus_per_worker == 4.0
@@ -1109,8 +1108,8 @@ async def test_deferred_activation_reuses_factory_launcher() -> None:
     config, launch_inputs, placement = _runtime_factory_inputs(
         rollout_mode="on_demand",
     )
-    # A GPU-owning fleet (rollout_gpus_per_worker derives to 1.0) selects the
-    # deferred activation path under test.
+    # A GPU-owning fleet (non-empty rollout devices) selects the deferred
+    # activation path under test.
     config = replace(
         config,
         resources=replace(
