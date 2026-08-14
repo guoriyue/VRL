@@ -79,17 +79,8 @@ class StrictOnPolicyRolloutSchedule:
         """No-op reset; the schedule holds no resume-sensitive state."""
 
     async def shutdown(self) -> None:
-        """Park shared trainer state before releasing the rollout pipeline."""
+        """Release the rollout pipeline; the coordinator owns the parking order."""
 
-        # A shared in-process reward may be asleep in a CuMem pool. Its terminal
-        # shutdown wakes those pages before dropping the model, so the trainer
-        # must yield the physical GPU first just as it does for a rollout phase.
-        # The top-level strategy owner restores only after this shutdown proves
-        # that every shared rollout/reward owner was released.
-        self.lifecycle.validate_training_state_parking()
-        # Shutdown reports no timings, but parking stays unconditional; a
-        # throwaway accumulator keeps the five recording sites branch-free.
-        self.lifecycle.park_training_state_for_rollout(RolloutStats())
         await self.lifecycle.shutdown_collector_runtime()
 
 

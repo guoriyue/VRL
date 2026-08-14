@@ -247,8 +247,21 @@ class RolloutRuntimeCoordinator:
             await self.collector.offload_generation_runtime_memory()
 
     async def shutdown_collector_runtime(self) -> None:
-        """Release the collector/runtime on the schedule's owning event loop."""
+        """Park shared trainer state, then release the collector/runtime.
 
+        A shared in-process reward may be asleep in a CuMem pool; its terminal
+        shutdown wakes those pages before dropping the model, so the trainer
+        must yield the physical GPU first — exactly as it does for a rollout
+        phase. Parking is a no-op on disjoint topologies, so every schedule
+        calls this unconditionally. The top-level strategy owner restores only
+        after this shutdown proves every shared rollout/reward owner was
+        released.
+        """
+
+        self.validate_training_state_parking()
+        # Shutdown reports no timings, but parking stays unconditional; a
+        # throwaway accumulator keeps the recording sites branch-free.
+        self.park_training_state_for_rollout(RolloutStats())
         await self.collector.shutdown()
 
     def requires_generation_offload_before_reward(self) -> bool:
