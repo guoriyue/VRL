@@ -45,7 +45,7 @@ def _resources():
                         "visible_devices": "auto",
                         "cross_node": True,
                         "trainer": {"num_gpus": 1},
-                        "rollout": {"num_gpus": 1, "gpus_per_worker": 1, "num_workers": 1},
+                        "rollout": {"num_gpus": 1, "num_workers": 1},
                     },
                 },
             },

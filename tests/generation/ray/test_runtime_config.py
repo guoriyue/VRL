@@ -162,7 +162,6 @@ def _cfg(
             "trainer": {"devices": [0]},
             "rollout": {
                 "devices": rollout_devices,
-                "gpus_per_worker": 1,
                 "num_workers": num_workers,
             },
         },
@@ -184,7 +183,6 @@ def _resource_cfg(
     rollout_runtime: dict[str, Any] = {"cpus_per_worker": 1}
     rollout_resource: dict[str, Any] = {
         "devices": rollout_devices,
-        "gpus_per_worker": 1,
         "num_workers": len(rollout_devices),
     }
     return OmegaConf.create(
@@ -234,7 +232,6 @@ def _launch_cfg(
                 "rollout": {
                     "num_gpus": 0,
                     "devices": [],
-                    "gpus_per_worker": 0,
                     "num_workers": 1,
                 },
             },
@@ -1112,11 +1109,13 @@ async def test_deferred_activation_reuses_factory_launcher() -> None:
     config, launch_inputs, placement = _runtime_factory_inputs(
         rollout_mode="on_demand",
     )
+    # A GPU-owning fleet (rollout_gpus_per_worker derives to 1.0) selects the
+    # deferred activation path under test.
     config = replace(
         config,
         resources=replace(
             config.resources,
-            rollout_gpus_per_worker=1.0,
+            rollout_devices=(0,),
         ),
     )
     expected_launch_inputs = replace(

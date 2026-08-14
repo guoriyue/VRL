@@ -28,7 +28,6 @@ trainer:
 
 distributed:
   resources:
-    visible_devices: auto
     rollout:
-      gpus_per_worker: 0.0
+      # Offline DPO trains from a fixed preference dataset: no generation fleet.
       num_workers: 0

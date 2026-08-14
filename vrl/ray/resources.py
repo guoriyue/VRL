@@ -68,8 +68,20 @@ class RolloutResourceConfig(RoleResourceConfig):
     # resolved sharing plan is announced in the startup resource receipt.
     gpu_pool: str = "auto"
 
-    gpus_per_worker: float = 1.0
+    # Worker fleet size. A GPU fleet always grants one GPU per worker, so the
+    # count derives from the resolved GPU set; the knob carries information only
+    # for the two GPU-less shapes: ``0`` = no fleet at all (offline recipes),
+    # explicit ``N`` with ``num_gpus: 0`` = a CPU worker fleet (defaults to 1).
     num_workers: int | str = "auto"
+
+    def requests_cpu_fleet(self) -> bool:
+        """True when the config explicitly asks for GPU-less rollout workers."""
+
+        parsed_num_gpus = _parse_num_gpus(
+            self.num_gpus,
+            field_name=f"{self.key_prefix}.num_gpus",
+        )
+        return parsed_num_gpus == 0
 
     def requested_gpu_count(self, *, available_count: int) -> int:
         """GPU count this role requests from a pool of ``available_count`` GPUs."""
@@ -83,64 +95,45 @@ class RolloutResourceConfig(RoleResourceConfig):
             if count < 0:
                 raise ValueError(f"{self.key_prefix}.num_gpus must be >= 0")
             return count
-        if float(self.gpus_per_worker) == 0.0:
-            return 0
 
         parsed_workers = _parse_num_workers(
             self.num_workers,
             field_name=f"{self.key_prefix}.num_workers",
+            allow_zero=True,
         )
         if parsed_workers != "auto":
-            return int(parsed_workers * float(self.gpus_per_worker))
+            # One GPU per worker; num_workers: 0 is the no-fleet declaration.
+            return int(parsed_workers)
         return int(available_count)
 
     def resolve_num_workers(self, *, resolved_gpu_count: int) -> int:
         """Worker count for the GPUs this role actually resolved to.
 
         ``resolved_gpu_count`` is the length of the resolved device tuple, not
-        the ``num_gpus`` request field. A CPU-only rollout may scale to zero
-        workers; the GPU-branch ``resolved_gpu_count == 0`` shortcut is
-        unreachable because ``resolve_distributed_resources`` raises earlier
-        when rollout requests GPUs but none resolve.
+        the ``num_gpus`` request field. A GPU fleet is always one GPU per
+        worker; with zero resolved GPUs the fleet is either explicitly CPU
+        (``num_gpus: 0`` -> ``num_workers`` workers, default 1) or absent.
         """
 
-        gpus_per_worker = float(self.gpus_per_worker)
-        minimum = 0
         requested = _parse_num_workers(
             self.num_workers,
             field_name=f"{self.key_prefix}.num_workers",
-            allow_zero=gpus_per_worker == 0 and resolved_gpu_count == 0,
+            allow_zero=True,
         )
-        if gpus_per_worker == 0:
-            workers = 1 if requested == "auto" else int(requested)
-            if workers < minimum:
-                raise ValueError(f"{self.key_prefix}.num_workers must be >= {minimum}")
-            return workers
-
-        if resolved_gpu_count == 0 and requested == "auto":
-            return 0
+        if resolved_gpu_count > 0:
+            if requested == "auto":
+                return resolved_gpu_count
+            if int(requested) != resolved_gpu_count:
+                raise ValueError(
+                    f"{self.key_prefix}.num_workers must equal the {self.role} "
+                    f"GPU count (one GPU per worker): {int(requested)} != "
+                    f"{resolved_gpu_count}",
+                )
+            return int(requested)
 
         if requested == "auto":
-            workers_float = resolved_gpu_count / gpus_per_worker
-            if int(workers_float) != workers_float:
-                raise ValueError(
-                    f"{self.key_prefix}.num_gpus must be divisible by "
-                    f"{self.key_prefix}.gpus_per_worker",
-                )
-            workers = int(workers_float)
-        else:
-            workers = int(requested)
-            expected_gpus = int(workers * gpus_per_worker)
-            if expected_gpus != resolved_gpu_count:
-                raise ValueError(
-                    f"{self.key_prefix}.num_workers * gpus_per_worker must "
-                    f"equal {self.role} GPU count: {workers} * {gpus_per_worker:g} "
-                    f"!= {resolved_gpu_count}",
-                )
-
-        if workers < 1:
-            raise ValueError(f"{self.key_prefix}.num_workers must be >= 1")
-        return workers
+            return 1 if self.requests_cpu_fleet() else 0
+        return int(requested)
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,7 +246,6 @@ class ResolvedDistributedResources:
     # reservation, distinct from "no reservation, follow the trainer device".
     reward_runs_on_cpu: bool
     rollout_num_workers: int
-    rollout_gpus_per_worker: float
     cross_node: bool
     # Named view over release decisions: lease mode per role plus the per-boundary
     # handoff. The launcher/collector/reward read this instead of re-deriving from
@@ -263,6 +255,14 @@ class ResolvedDistributedResources:
     @property
     def rollout_num_gpus(self) -> int:
         return len(self.rollout_devices)
+
+    @property
+    def rollout_gpus_per_worker(self) -> float:
+        """Ray GPU grant per rollout worker: a GPU fleet is always one GPU per
+        worker, so this is 1.0 whenever rollout owns devices and 0.0 for CPU
+        worker fleets (and for runs with no fleet at all)."""
+
+        return 1.0 if self.rollout_devices else 0.0
 
     @property
     def colocated(self) -> bool:
@@ -383,34 +383,12 @@ def resolve_distributed_resources(
         symmetric_colocated=fsdp_symmetric_colocated,
     )
 
-    rollout_gpus_per_worker = float(config.rollout.gpus_per_worker)
-    if rollout_gpus_per_worker not in {0.0, 1.0}:
-        raise ValueError(
-            "distributed.resources.rollout.gpus_per_worker currently supports "
-            f"0 or 1, got {rollout_gpus_per_worker}",
-        )
-
     rollout_devices = _resolve_rollout_devices(
         visible_devices=visible_devices,
         trainer_devices=trainer_devices,
         rollout_config=config.rollout,
     )
     rollout_num_gpus = len(rollout_devices)
-
-    if rollout_gpus_per_worker == 0 and rollout_num_gpus > 0:
-        raise ValueError(
-            "distributed.resources.rollout.gpus_per_worker=0 requires zero "
-            f"resolved rollout GPUs, got {list(rollout_devices)}. Remove the GPU "
-            "request or set gpus_per_worker=1.",
-        )
-    if rollout_gpus_per_worker > 0 and rollout_num_gpus == 0:
-        raise ValueError(
-            "No rollout GPUs resolved from visible devices "
-            f"{list(visible_devices)} (trainer reserved {list(trainer_devices)}). "
-            "Expose more GPUs, or set "
-            "distributed.resources.rollout.gpu_pool=trainer to time-share a trainer GPU.",
-        )
-
     rollout_num_workers = config.rollout.resolve_num_workers(
         resolved_gpu_count=rollout_num_gpus,
     )
@@ -469,7 +447,6 @@ def resolve_distributed_resources(
         reward_uses_trainer_device=reward_uses_trainer_device,
         reward_runs_on_cpu=reward_runs_on_cpu,
         rollout_num_workers=rollout_num_workers,
-        rollout_gpus_per_worker=rollout_gpus_per_worker,
         cross_node=config.cross_node,
         lifecycle=lifecycle,
     )
@@ -539,7 +516,6 @@ def format_distributed_resource_plan(resolved: ResolvedDistributedResources) -> 
         f"rollout={list(resolved.rollout_devices)}",
         f"reward={list(resolved.reward_devices)}",
         f"rollout_workers={resolved.rollout_num_workers}",
-        f"rollout_gpus_per_worker={resolved.rollout_gpus_per_worker:g}",
         "reward_mode="
         + (
             "gpu"
@@ -577,7 +553,6 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
     rollout = RolloutResourceConfig(
         num_gpus=cfg_get(rollout_node, "num_gpus", "auto"),
         devices=_parse_devices(cfg_get(rollout_node, "devices", "auto")),
-        gpus_per_worker=float(cfg_get(rollout_node, "gpus_per_worker", 1.0)),
         num_workers=cfg_get(rollout_node, "num_workers", "auto"),
         gpu_pool=rollout_gpu_pool,
     )

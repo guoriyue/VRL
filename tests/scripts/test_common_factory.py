@@ -528,7 +528,6 @@ def test_http_reward_accepts_torchrun_rank_local_device(monkeypatch) -> None:
                     "trainer": {"devices": [2]},
                     "rollout": {
                         "devices": [2],
-                        "gpus_per_worker": 1,
                         "gpu_pool": "trainer",
                     },
                 },
@@ -591,7 +590,6 @@ def _shared_reward_cfg(component: str) -> object:
                     "trainer": {"devices": [0]},
                     "rollout": {
                         "devices": [0],
-                        "gpus_per_worker": 1,
                         "gpu_pool": "trainer",
                     },
                 },
@@ -808,7 +806,7 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
                 "resources": {
                     "visible_devices": [0, 1],
                     "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                    "rollout": {"devices": [1]},
                     "reward": {"device": "cpu"},
                 },
             },

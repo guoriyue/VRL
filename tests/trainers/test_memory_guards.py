@@ -18,14 +18,12 @@ def _ray_config(*, colocated: bool) -> RayGenerationConfig:
         {
             "gpu_pool": "trainer",
             "num_gpus": 1,
-            "gpus_per_worker": 1,
             "num_workers": 1,
         }
         if colocated
         else {
             "devices": [1],
             "num_gpus": 1,
-            "gpus_per_worker": 1,
             "num_workers": 1,
         }
     )

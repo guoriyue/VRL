@@ -52,7 +52,6 @@ def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
                 "trainer": {"num_gpus": 1},
                 "rollout": {
                     "num_gpus": "auto",
-                    "gpus_per_worker": 1,
                     "num_workers": "auto",
                 },
             },
@@ -73,7 +72,7 @@ def test_resolved_resource_summaries_are_derived_from_topology() -> None:
             {
                 "visible_devices": [0, 1],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
             },
         ),
     )
@@ -103,7 +102,7 @@ def test_explicit_split_devices_do_not_overlap() -> None:
             {
                 "visible_devices": [0, 1, 2, 3],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1, 2, 3], "gpus_per_worker": 1},
+                "rollout": {"devices": [1, 2, 3]},
             },
         ),
     )
@@ -120,7 +119,7 @@ def test_pinned_device_intersection_declares_colocation() -> None:
             {
                 "visible_devices": [0],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [0], "gpus_per_worker": 1},
+                "rollout": {"devices": [0]},
             },
         ),
     )
@@ -138,7 +137,6 @@ def test_colocate_via_gpu_pool_trainer() -> None:
                 "trainer": {"devices": [0]},
                 "rollout": {
                     "devices": [0],
-                    "gpus_per_worker": 1,
                     "gpu_pool": "trainer",
                 },
             },
@@ -158,7 +156,6 @@ def test_colocate_auto_pins_rollout_to_trainer_gpu() -> None:
                 "trainer": {"devices": [0]},
                 "rollout": {
                     "num_gpus": "auto",
-                    "gpus_per_worker": 1,
                     "gpu_pool": "trainer",
                 },
             },
@@ -179,7 +176,6 @@ def test_colocate_rejects_explicit_disjoint_rollout_devices() -> None:
                     "trainer": {"devices": [0]},
                     "rollout": {
                         "devices": [1],
-                        "gpus_per_worker": 1,
                         "gpu_pool": "trainer",
                     },
                 },
@@ -201,24 +197,23 @@ def test_devices_must_be_subset_of_visible_devices() -> None:
                 {
                     "visible_devices": [0, 1],
                     "trainer": {"devices": [2]},
-                    "rollout": {"num_gpus": 1, "gpus_per_worker": 1},
+                    "rollout": {"num_gpus": 1},
                 },
             ),
         )
 
 
-def test_num_workers_auto_requires_divisible_gpu_budget() -> None:
-    """Checks num workers auto requires divisible GPU budget."""
-    with pytest.raises(ValueError, match="gpus_per_worker currently supports 0 or 1"):
+def test_num_workers_must_match_the_resolved_gpu_count() -> None:
+    """A GPU fleet is one GPU per worker; a contradicting num_workers fails."""
+    with pytest.raises(ValueError, match="num_workers must equal the rollout GPU count"):
         resolve_distributed_resources(
             _cfg(
                 {
-                    "visible_devices": [0, 1],
-                    "trainer": {"num_gpus": 0},
+                    "visible_devices": [0, 1, 2],
+                    "trainer": {"num_gpus": 1},
                     "rollout": {
-                        "num_gpus": 1,
-                        "gpus_per_worker": 0.5,
-                        "num_workers": "auto",
+                        "num_gpus": 2,
+                        "num_workers": 1,
                     },
                 },
             ),
@@ -234,7 +229,6 @@ def test_single_gpu_auto_split_shares_the_trainer_gpu() -> None:
                 "trainer": {"num_gpus": 1},
                 "rollout": {
                     "num_gpus": 1,
-                    "gpus_per_worker": 1,
                     "num_workers": 1,
                 },
             },
@@ -257,7 +251,6 @@ def test_single_gpu_dedicated_rollout_pool_requires_a_spare() -> None:
                     "trainer": {"num_gpus": 1},
                     "rollout": {
                         "num_gpus": 1,
-                        "gpus_per_worker": 1,
                         "num_workers": 1,
                         "gpu_pool": "dedicated",
                     },
@@ -275,7 +268,6 @@ def test_cpu_only_rollout_uses_no_gpu_bundles() -> None:
                 "trainer": {"num_gpus": 0},
                 "rollout": {
                     "num_gpus": 0,
-                    "gpus_per_worker": 0,
                     "num_workers": 2,
                 },
             },
@@ -288,22 +280,25 @@ def test_cpu_only_rollout_uses_no_gpu_bundles() -> None:
     assert resolved.trainer_torch_device == "cpu"
 
 
-def test_cpu_only_rollout_rejects_a_gpu_device_assignment() -> None:
-    """A zero-GPU worker cannot truthfully own a GPU ordinal."""
-    with pytest.raises(ValueError, match=r"rollout\.gpus_per_worker=0 requires zero"):
-        resolve_distributed_resources(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"num_gpus": 0},
-                    "rollout": {
-                        "devices": [0],
-                        "gpus_per_worker": 0,
-                        "num_workers": 1,
-                    },
+def test_pinned_devices_supersede_a_zero_gpu_count() -> None:
+    """Pinned devices are the authoritative count, even over num_gpus: 0."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0],
+                "trainer": {"num_gpus": 0},
+                "rollout": {
+                    "devices": [0],
+                    "num_gpus": 0,
+                    "num_workers": 1,
                 },
-            ),
-        )
+            },
+        ),
+    )
+
+    assert resolved.rollout_devices == (0,)
+    assert resolved.rollout_num_workers == 1
+    assert resolved.rollout_gpus_per_worker == 1.0
 
 
 def test_cpu_only_reward_rejects_a_gpu_device_assignment() -> None:
@@ -314,7 +309,7 @@ def test_cpu_only_reward_rejects_a_gpu_device_assignment() -> None:
                 {
                     "visible_devices": [0, 1, 2],
                     "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                    "rollout": {"devices": [1]},
                     "reward": {"device": "cpu", "devices": [2]},
                 },
             ),
@@ -330,7 +325,6 @@ def test_trainer_only_plan_allows_zero_rollout_workers() -> None:
                 "trainer": {"num_gpus": 1},
                 "rollout": {
                     "num_gpus": 0,
-                    "gpus_per_worker": 0,
                     "num_workers": 0,
                 },
             },
@@ -350,7 +344,7 @@ def test_reward_torch_device_uses_the_reserved_local_gpu() -> None:
             {
                 "visible_devices": [0, 1, 2],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "gpu", "devices": [2], "gpu_pool": "dedicated"},
             },
         ),
@@ -366,7 +360,7 @@ def test_reward_torch_device_without_a_reservation_follows_the_rank_local_traine
             {
                 "visible_devices": [0, 1],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
             },
         ),
     )
@@ -381,7 +375,7 @@ def test_reward_torch_device_honors_an_explicit_cpu_slot() -> None:
             {
                 "visible_devices": [0, 1],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "cpu"},
             },
         ),
@@ -398,7 +392,7 @@ def test_multi_gpu_local_reward_is_rejected_at_resolution() -> None:
                 {
                     "visible_devices": [0, 1, 2, 3],
                     "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                    "rollout": {"devices": [1]},
                     "reward": {"device": "gpu", "devices": [2, 3]},
                 },
             ),
@@ -416,7 +410,6 @@ def test_cross_node_reward_gpu_is_rejected_at_resolution() -> None:
                     "trainer": {"num_gpus": 1},
                     "rollout": {
                         "devices": [1],
-                        "gpus_per_worker": 1,
                         "num_workers": 1,
                     },
                     "reward": {"device": "gpu", "devices": [1]},
@@ -432,7 +425,7 @@ def test_resource_plan_formatter_includes_key_fields() -> None:
             {
                 "visible_devices": [0, 1],
                 "trainer": {"num_gpus": 1},
-                "rollout": {"num_gpus": "auto", "gpus_per_worker": 1},
+                "rollout": {"num_gpus": "auto"},
             },
         ),
     )
@@ -456,7 +449,7 @@ def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
                 "visible_devices": "auto",
                 "cross_node": True,
                 "trainer": {"num_gpus": 1},
-                "rollout": {"num_gpus": 1, "gpus_per_worker": 1, "num_workers": 1},
+                "rollout": {"num_gpus": 1, "num_workers": 1},
             },
         ),
     )
@@ -478,7 +471,7 @@ def test_cross_node_scales_to_multiple_rollout_workers() -> None:
                 "visible_devices": "auto",
                 "cross_node": True,
                 "trainer": {"num_gpus": 1},
-                "rollout": {"num_gpus": 3, "gpus_per_worker": 1, "num_workers": 3},
+                "rollout": {"num_gpus": 3, "num_workers": 3},
             },
         ),
     )
@@ -498,7 +491,7 @@ def test_cross_node_requires_explicit_rollout_count() -> None:
                     "visible_devices": "auto",
                     "cross_node": True,
                     "trainer": {"num_gpus": 1},
-                    "rollout": {"num_gpus": "auto", "gpus_per_worker": 1},
+                    "rollout": {"num_gpus": "auto"},
                 },
             ),
         )
@@ -512,7 +505,7 @@ def test_cross_node_plan_formatter_reports_flag() -> None:
                 "visible_devices": "auto",
                 "cross_node": True,
                 "trainer": {"num_gpus": 1},
-                "rollout": {"num_gpus": 1, "gpus_per_worker": 1, "num_workers": 1},
+                "rollout": {"num_gpus": 1, "num_workers": 1},
             },
         ),
     )
@@ -559,7 +552,7 @@ def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
             {
                 "visible_devices": [0, 1, 2],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "gpu"},
             },
         ),
@@ -580,7 +573,7 @@ def test_reward_shared_pool_derives_release_lifecycle_when_unset() -> None:
             {
                 "visible_devices": [0, 1],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "gpu", "gpu_pool": "rollout"},
             },
         ),
@@ -599,7 +592,7 @@ def test_dedicated_reward_gpu_derives_resident_lifecycle_when_unset() -> None:
             {
                 "visible_devices": [0, 1, 2],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "gpu", "devices": [2]},
             },
         ),
@@ -618,7 +611,7 @@ def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
             {
                 "visible_devices": [0, 1, 2],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "gpu", "devices": [2]},
             },
         ),
@@ -642,7 +635,7 @@ def test_lifecycle_plan_on_demand_for_shared_reward() -> None:
             {
                 "visible_devices": [0, 1],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "gpu", "gpu_pool": "rollout"},
             },
         ),
@@ -662,7 +655,7 @@ def test_lifecycle_plan_colocated_rollout_is_on_demand_before_train() -> None:
             {
                 "visible_devices": [0],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [0], "gpus_per_worker": 1},
+                "rollout": {"devices": [0]},
             },
         ),
     )
@@ -685,7 +678,6 @@ def test_in_process_reward_without_reservation_follows_trainer_topology() -> Non
                 "trainer": {"devices": [0]},
                 "rollout": {
                     "devices": [0],
-                    "gpus_per_worker": 1,
                     "gpu_pool": "trainer",
                 },
                 "reward": {"device": "trainer"},
@@ -708,7 +700,7 @@ def test_explicit_cpu_reward_does_not_create_gpu_handoffs() -> None:
             {
                 "visible_devices": [0, 1],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "cpu"},
             },
             reward_components={"ocr": 1.0},
@@ -730,7 +722,7 @@ def test_http_only_reward_owns_no_local_resource_or_handoff() -> None:
             {
                 "visible_devices": [0, 1, 2],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 # A reward preset may carry this local default. HTTP deployment
                 # owns its accelerator externally and must not reserve GPU2.
                 "reward": {"device": "gpu", "devices": [2]},
@@ -764,7 +756,7 @@ def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> N
             {
                 "visible_devices": [0, 1],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "cpu"},
             },
             reward_components={"ocr": 0.5, "videoscore2": 0.5},
@@ -795,7 +787,7 @@ def test_resource_plan_formatter_includes_lifecycle() -> None:
             {
                 "visible_devices": [0, 1],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "gpu", "gpu_pool": "rollout"},
             },
         ),
@@ -818,7 +810,7 @@ def test_reward_auto_placement_prefers_dedicated_spare_gpu() -> None:
             {
                 "visible_devices": [0, 1, 2],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "gpu"},
             },
         ),
@@ -836,7 +828,7 @@ def test_reward_auto_placement_falls_back_to_shared_pool_on_single_gpu() -> None
             {
                 "visible_devices": [0],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [0], "gpus_per_worker": 1},
+                "rollout": {"devices": [0]},
                 "reward": {"device": "gpu"},
             },
         ),
@@ -855,7 +847,7 @@ def test_reward_can_share_rollout_pool_when_phases_release() -> None:
             {
                 "visible_devices": [0, 1],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "gpu", "gpu_pool": "rollout"},
             },
         ),
@@ -875,7 +867,7 @@ def test_reward_shared_pool_requires_a_rollout_gpu() -> None:
                 {
                     "visible_devices": [0],
                     "trainer": {"devices": [0]},
-                    "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 1},
+                    "rollout": {"num_gpus": 0, "num_workers": 1},
                     "reward": {"device": "gpu", "gpu_pool": "rollout"},
                 },
             ),
@@ -889,7 +881,9 @@ def test_pinned_reward_on_the_trainer_gpu_declares_sharing() -> None:
             {
                 "visible_devices": [0],
                 "trainer": {"devices": [0]},
-                "rollout": {"num_gpus": 0, "gpus_per_worker": 0},
+                "rollout": {
+                    "num_gpus": 0,
+                },
                 "reward": {"device": "gpu", "devices": [0]},
             },
             kling_video_reward=True,
@@ -969,7 +963,7 @@ def test_fsdp_trainer_allows_multi_gpu_disjoint_from_rollout() -> None:
             {
                 "visible_devices": [0, 1, 2],
                 "trainer": {"devices": [0, 1]},
-                "rollout": {"devices": [2], "gpus_per_worker": 1},
+                "rollout": {"devices": [2]},
             },
             {"strategy": "fsdp", "num_nodes": 1, "gpus_per_node": 2},
         ),
@@ -986,7 +980,7 @@ def test_fsdp_trainer_count_must_equal_world_size() -> None:
                 {
                     "visible_devices": [0, 1],
                     "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                    "rollout": {"devices": [1]},
                 },
                 {"strategy": "fsdp", "num_nodes": 1, "gpus_per_node": 2},
             ),
@@ -1001,7 +995,7 @@ def test_fsdp_trainer_must_be_disjoint_from_rollout_even_with_overlap() -> None:
                 {
                     "visible_devices": [0, 1],
                     "trainer": {"devices": [0, 1]},
-                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                    "rollout": {"devices": [1]},
                 },
                 {"strategy": "fsdp", "num_nodes": 1, "gpus_per_node": 2},
             ),
@@ -1016,7 +1010,7 @@ def test_single_process_still_rejects_multi_gpu_trainer() -> None:
                 {
                     "visible_devices": [0, 1],
                     "trainer": {"devices": [0, 1]},
-                    "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 1},
+                    "rollout": {"num_gpus": 0, "num_workers": 1},
                 },
                 {"strategy": "single_process"},
             ),

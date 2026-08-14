@@ -300,7 +300,8 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
             return int(num_gpus)
         num_workers = node.get("num_workers", "auto")
         if num_workers != "auto":
-            return int(float(num_workers) * float(node.get("gpus_per_worker", 1.0)))
+            # One GPU per worker; num_workers: 0 declares no fleet.
+            return int(num_workers)
         return default
 
     failures = []

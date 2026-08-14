@@ -59,7 +59,7 @@ def test_bundle_plan_dedicated_trainer_rollout_reward_distinct_bundles() -> None
         {
             "visible_devices": [0, 1, 2],
             "trainer": {"devices": [0]},
-            "rollout": {"devices": [1], "gpus_per_worker": 1},
+            "rollout": {"devices": [1]},
             "reward": {"device": "gpu", "devices": [2]},
         },
     )
@@ -78,7 +78,7 @@ def test_bundle_plan_multi_rollout_worker_one_bundle_per_gpu() -> None:
         {
             "visible_devices": [0, 1, 2, 3],
             "trainer": {"num_gpus": 1},
-            "rollout": {"num_gpus": "auto", "gpus_per_worker": 1, "num_workers": "auto"},
+            "rollout": {"num_gpus": "auto", "num_workers": "auto"},
         },
     )
     plan = BundleLayout.from_resources(resolved)
@@ -95,7 +95,7 @@ def test_bundle_plan_shared_reward_reuses_rollout_bundle() -> None:
         {
             "visible_devices": [0, 1],
             "trainer": {"devices": [0]},
-            "rollout": {"devices": [1], "gpus_per_worker": 1},
+            "rollout": {"devices": [1]},
             "reward": {"device": "gpu", "gpu_pool": "rollout"},
         },
     )
@@ -114,7 +114,7 @@ def test_bundle_plan_colocated_debug_single_bundle_no_trainer_reservation() -> N
         {
             "visible_devices": [0],
             "trainer": {"devices": [0]},
-            "rollout": {"devices": [0], "gpus_per_worker": 1},
+            "rollout": {"devices": [0]},
         },
     )
     plan = BundleLayout.from_resources(resolved)
@@ -131,7 +131,7 @@ def test_bundle_plan_cross_node_skips_trainer_reservation() -> None:
             "visible_devices": "auto",
             "cross_node": True,
             "trainer": {"num_gpus": 1},
-            "rollout": {"num_gpus": 2, "gpus_per_worker": 1, "num_workers": 2},
+            "rollout": {"num_gpus": 2, "num_workers": 2},
         },
     )
     plan = BundleLayout.from_resources(resolved)
@@ -147,7 +147,7 @@ def test_bundle_plan_cpu_only_rollout_uses_cpu_bundles() -> None:
         {
             "visible_devices": [],
             "trainer": {"num_gpus": 0},
-            "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 2},
+            "rollout": {"num_gpus": 0, "num_workers": 2},
         },
     )
     plan = BundleLayout.from_resources(resolved)
@@ -163,7 +163,7 @@ def test_bundle_plan_dedicated_reward_appends_fresh_bundle() -> None:
         {
             "visible_devices": [0, 1, 2],
             "trainer": {"devices": [0]},
-            "rollout": {"devices": [1], "gpus_per_worker": 1},
+            "rollout": {"devices": [1]},
             "reward": {"device": "gpu"},
         },
     )
@@ -203,7 +203,7 @@ def test_assign_roles_matches_requested_ordinals_under_permuted_probe() -> None:
         {
             "visible_devices": [0, 1, 2],
             "trainer": {"devices": [0]},
-            "rollout": {"devices": [1], "gpus_per_worker": 1},
+            "rollout": {"devices": [1]},
             "reward": {"device": "gpu", "devices": [2]},
         },
     )
@@ -223,7 +223,7 @@ def test_assign_roles_shared_reward_binds_same_bundle_as_rollout() -> None:
         {
             "visible_devices": [0, 1],
             "trainer": {"devices": [0]},
-            "rollout": {"devices": [1], "gpus_per_worker": 1},
+            "rollout": {"devices": [1]},
             "reward": {"device": "gpu", "gpu_pool": "rollout"},
         },
     )
@@ -239,7 +239,7 @@ def test_assign_roles_raises_when_requested_gpu_absent_from_probe() -> None:
         {
             "visible_devices": [0, 1],
             "trainer": {"devices": [0]},
-            "rollout": {"devices": [1], "gpus_per_worker": 1},
+            "rollout": {"devices": [1]},
         },
     )
     with pytest.raises(RuntimeError, match="rollout device GPU 1"):
@@ -253,7 +253,7 @@ def test_assign_roles_cross_node_keeps_positional_bundles() -> None:
             "visible_devices": "auto",
             "cross_node": True,
             "trainer": {"num_gpus": 1},
-            "rollout": {"num_gpus": 2, "gpus_per_worker": 1, "num_workers": 2},
+            "rollout": {"num_gpus": 2, "num_workers": 2},
         },
     )
     # Real remote GPU ids bear no relation to the token ordinals (1, 2).
@@ -267,7 +267,7 @@ def test_assign_roles_rejects_duplicate_probed_gpu() -> None:
         {
             "visible_devices": [0, 1],
             "trainer": {"num_gpus": 1},
-            "rollout": {"num_gpus": 1, "gpus_per_worker": 1, "num_workers": 1},
+            "rollout": {"num_gpus": 1, "num_workers": 1},
         },
     )
     with pytest.raises(RuntimeError, match="two bundles probed to GPU 0"):
@@ -280,7 +280,7 @@ def test_bundle_requirements_size_shared_bundle_to_max_role_cpu() -> None:
         {
             "visible_devices": [0, 1],
             "trainer": {"devices": [0]},
-            "rollout": {"devices": [1], "gpus_per_worker": 1},
+            "rollout": {"devices": [1]},
             "reward": {"device": "gpu", "gpu_pool": "rollout"},
         },
         worker=_worker(cpus_per_worker=2.0),
@@ -304,7 +304,6 @@ def test_required_local_cluster_cpus_uses_placement_bundle_sum() -> None:
             "rollout": {
                 "gpu_pool": "trainer",
                 "devices": [0],
-                "gpus_per_worker": 1,
                 "num_workers": 1,
             },
             "reward": {"device": "cpu"},
@@ -328,7 +327,6 @@ def test_required_local_cluster_cpus_rejects_invalid_bundle_cpu(quantity: float)
             "rollout": {
                 "gpu_pool": "trainer",
                 "devices": [0],
-                "gpus_per_worker": 1,
             },
         },
         worker=_worker(cpus_per_worker=quantity),
@@ -344,7 +342,7 @@ def test_placement_owner_consumes_exact_rollout_cpu_capability() -> None:
         {
             "visible_devices": [],
             "trainer": {"num_gpus": 0},
-            "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 1},
+            "rollout": {"num_gpus": 0, "num_workers": 1},
         },
         worker=worker,
     )
@@ -359,7 +357,7 @@ def test_shutdown_retries_same_placement_group_after_remove_failure(monkeypatch)
         {
             "visible_devices": [0, 1],
             "trainer": {"devices": [0]},
-            "rollout": {"devices": [1], "gpus_per_worker": 1},
+            "rollout": {"devices": [1]},
         },
     )
     placement_group = object()
@@ -389,7 +387,7 @@ def test_create_failure_retains_placement_for_cleanup_retry(monkeypatch) -> None
         {
             "visible_devices": [0, 1],
             "trainer": {"devices": [0]},
-            "rollout": {"devices": [1], "gpus_per_worker": 1},
+            "rollout": {"devices": [1]},
         },
     )
 
@@ -443,7 +441,7 @@ def test_ready_failure_retains_exact_placement_for_shutdown_retry(monkeypatch) -
         {
             "visible_devices": [0, 1],
             "trainer": {"devices": [0]},
-            "rollout": {"devices": [1], "gpus_per_worker": 1},
+            "rollout": {"devices": [1]},
         },
     )
 
@@ -505,7 +503,7 @@ def test_probe_partial_actor_construction_cleans_created_handles(monkeypatch) ->
         {
             "visible_devices": [0, 1],
             "trainer": {"devices": [0]},
-            "rollout": {"devices": [1], "gpus_per_worker": 1},
+            "rollout": {"devices": [1]},
         },
     )
     first_actor = object()
@@ -549,7 +547,7 @@ def test_probe_timeout_cancels_refs_kills_actors_and_removes_placement(
         {
             "visible_devices": [0, 1],
             "trainer": {"devices": [0]},
-            "rollout": {"devices": [1], "gpus_per_worker": 1},
+            "rollout": {"devices": [1]},
         },
     )
     placement_group = type("_PlacementGroup", (), {"ready": lambda self: object()})()
@@ -654,7 +652,7 @@ def test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus(local_ray)
             {
                 "visible_devices": [0, 1, 2],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "gpu", "devices": [2]},
             },
         ),
@@ -687,7 +685,7 @@ def test_owner_shares_one_bundle_for_rollout_and_reward_on_simulated_gpus(local_
             {
                 "visible_devices": [0, 1],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "rollout": {"devices": [1]},
                 "reward": {"device": "gpu", "gpu_pool": "rollout"},
             },
         ),
@@ -725,7 +723,7 @@ def test_probe_actor_kill_failure_is_a_create_failure(local_ray, monkeypatch) ->
         {
             "visible_devices": [0],
             "trainer": {"num_gpus": 0},
-            "rollout": {"devices": [0], "gpus_per_worker": 1},
+            "rollout": {"devices": [0]},
         },
     )
     cleanup_error = RuntimeError("probe kill failed")

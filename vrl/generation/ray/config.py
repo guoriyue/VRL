@@ -97,8 +97,6 @@ class RayGenerationConfig:
             )
         if self.resources.rollout_num_workers < 1:
             raise ValueError("distributed.resources.rollout.num_workers must be >= 1")
-        if self.resources.rollout_gpus_per_worker < 0:
-            raise ValueError("distributed.resources.rollout.gpus_per_worker must be >= 0")
         if self.worker.pipelined and self.resources.rollout_num_workers != 1:
             raise ValueError(
                 "distributed.rollout.pipelined=true requires exactly one rollout "
