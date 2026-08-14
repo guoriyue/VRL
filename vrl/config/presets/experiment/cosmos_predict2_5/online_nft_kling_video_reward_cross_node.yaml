@@ -37,8 +37,6 @@ distributed:
       num_gpus: 1
     rollout:
       devices: [1]
-      gpus_per_worker: 1.0
-      num_workers: 1
     reward:
       # Override /reward/kling_video_reward's local-GPU reservation. In cross-node
       # mode non-trainer ordinals are remote Ray budget tokens, while Kling runs

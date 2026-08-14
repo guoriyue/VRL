@@ -1,12 +1,6 @@
+# Ray rollout preset: auto split. Resource resolution defaults do the work —
+# the trainer takes one visible GPU and the rollout auto pool takes the spares
+# (spare-first-else-share). Pin `devices` per role to override placement.
 distributed:
-  resources:
-    visible_devices: auto
-    trainer:
-      num_gpus: 1
-    rollout:
-      num_gpus: auto
-      gpus_per_worker: 1.0
-      num_workers: auto
-
   rollout:
     cpus_per_worker: 4.0

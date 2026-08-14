@@ -41,15 +41,10 @@ distributed:
       precision_policy: actor
       reshard_after_forward: true
   resources:
-    trainer:
-      num_gpus: 1
     rollout:
       # Colocated on the rank's own trainer GPU. See the header: `auto` would
       # resolve to a disjoint plan and be rejected.
       gpu_pool: trainer
-      num_gpus: 1
-      gpus_per_worker: 1.0
-      num_workers: 1
 
 model:
   # Required by FSDP2, not a tuning choice: build_strategy fail-fasts on

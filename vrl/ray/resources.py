@@ -653,21 +653,19 @@ def _explicit_role_devices(
 ) -> tuple[int, ...] | None:
     """Resolve an explicitly configured ``devices`` list, or None when auto.
 
-    Shared by every role: dedupe, require a subset of the visible pool, and
-    require ``num_gpus`` (when also set) to agree with the device count.
+    Shared by every role: dedupe and require a subset of the visible pool.
+    Pinned ``devices`` are the authoritative count: a ``num_gpus`` merged in
+    from a lower preset layer (e.g. the colocated single-GPU base) is the
+    weaker count-only request and is superseded, not cross-checked — a
+    mismatch error here would point at a line the experiment never wrote.
     """
 
     prefix = role_config.key_prefix
     explicit_devices = _parse_devices(role_config.devices)
     if explicit_devices == "auto":
         return None
-    num_gpus = _parse_num_gpus(role_config.num_gpus, field_name=f"{prefix}.num_gpus")
     devices = tuple(_dedupe_ints(explicit_devices, field_name=f"{prefix}.devices"))
     _validate_subset(devices, visible_devices, field_name=f"{prefix}.devices")
-    if num_gpus != "auto" and num_gpus is not None and int(num_gpus) != len(devices):
-        raise ValueError(
-            f"{prefix}.num_gpus={num_gpus} does not match len({prefix}.devices)={len(devices)}",
-        )
     return devices
 
 

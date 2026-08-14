@@ -29,9 +29,6 @@ trainer:
 distributed:
   resources:
     visible_devices: auto
-    trainer:
-      num_gpus: 1
     rollout:
-      num_gpus: 0
       gpus_per_worker: 0.0
       num_workers: 0

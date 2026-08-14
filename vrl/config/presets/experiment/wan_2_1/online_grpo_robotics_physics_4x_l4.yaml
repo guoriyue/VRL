@@ -68,13 +68,8 @@ distributed:
     visible_devices: [0, 1, 2]
     trainer:
       devices: [0]
-      num_gpus: 1
     rollout:
       devices: [1, 2]
-      num_gpus: 2
-      gpus_per_worker: 1.0
-      num_workers: 2
-      gpu_pool: dedicated
 
 rollout:
   prompts_per_batch: 4

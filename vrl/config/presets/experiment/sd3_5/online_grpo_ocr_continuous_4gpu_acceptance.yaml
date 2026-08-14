@@ -32,13 +32,8 @@ distributed:
     visible_devices: [0, 1, 2, 3]
     trainer:
       devices: [0]
-      num_gpus: 1
     rollout:
       devices: [1, 2, 3]
-      num_gpus: 3
-      gpus_per_worker: 1.0
-      num_workers: 3
-      gpu_pool: dedicated
 
 sampling:
   height: 128

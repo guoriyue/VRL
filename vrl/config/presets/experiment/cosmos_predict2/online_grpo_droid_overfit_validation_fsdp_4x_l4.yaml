@@ -37,15 +37,10 @@ distributed:
       reshard_after_forward: true
       cpu_offload: false
   resources:
-    trainer:
-      num_gpus: 1
     rollout:
       # Required for same-host multi-rank ownership: every rank may reserve only
       # the one logical GPU that its trainer owns.
       gpu_pool: trainer
-      num_gpus: 1
-      gpus_per_worker: 1.0
-      num_workers: 1
     reward:
       # DINOv2 and RAFT remain CPU-only so all four L4s can be FSDP ranks.
       device: cpu

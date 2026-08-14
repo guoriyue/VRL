@@ -45,15 +45,10 @@ distributed:
       # consume the active GPU budget.
       cpu_offload: true
   resources:
-    trainer:
-      num_gpus: 1
     rollout:
       # The online distributed path is symmetric-colocated: every torchrun rank
       # owns one local rollout worker and time-shares its trainer GPU.
       gpu_pool: trainer
-      num_gpus: 1
-      gpus_per_worker: 1.0
-      num_workers: 1
 
 model:
   trainable_transformers: both

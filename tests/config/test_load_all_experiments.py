@@ -292,6 +292,9 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
     """
 
     def requested_gpus(node, *, default: int) -> int:
+        devices = node.get("devices", "auto")
+        if devices != "auto":
+            return len(devices)
         num_gpus = node.get("num_gpus", "auto")
         if num_gpus not in (None, "auto"):
             return int(num_gpus)
@@ -307,7 +310,7 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
             continue
 
         resources_cfg = cfg.distributed.resources
-        rollout_pool = str(resources_cfg.rollout.get("gpu_pool", "auto"))
+        rollout_pool = str((resources_cfg.get("rollout") or {}).get("gpu_pool", "auto"))
         reward_pool = str(resources_cfg.get("reward", {}).get("gpu_pool", "auto"))
         if resources_cfg.get("visible_devices", "auto") == "auto":
             required = 1
@@ -315,8 +318,8 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
                 resources_cfg.get("cross_node", False)
             )
             if requires_disjoint_devices:
-                trainer_gpus = requested_gpus(resources_cfg.trainer, default=1)
-                rollout_gpus = requested_gpus(resources_cfg.rollout, default=1)
+                trainer_gpus = requested_gpus(resources_cfg.get("trainer") or {}, default=1)
+                rollout_gpus = requested_gpus(resources_cfg.get("rollout") or {}, default=1)
                 reward_cfg = resources_cfg.get("reward", {})
                 # Reward is in-process: device=gpu reserves exactly one GPU.
                 reward_gpus = 1 if str(reward_cfg.get("device", "trainer")) == "gpu" else 0
@@ -535,8 +538,6 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
     assert cfg.distributed.training.num_nodes * cfg.distributed.training.gpus_per_node == 4
     assert cfg.distributed.training.fsdp.precision_policy == "none"
     assert cfg.distributed.resources.rollout.gpu_pool == "trainer"
-    assert cfg.distributed.resources.trainer.num_gpus == 1
-    assert cfg.distributed.resources.rollout.num_workers == 1
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_workers == 1
     assert resources.reward_devices == ()

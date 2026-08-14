@@ -54,8 +54,6 @@ model:
 
 distributed:
   resources:
-    trainer:
-      num_gpus: 1                     # trainer on GPU0
     rollout:
       num_gpus: 1
       gpu_pool: dedicated             # rollout on its own GPU (GPU1), disjoint from trainer

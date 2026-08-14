@@ -74,13 +74,8 @@ distributed:
   resources:
     # Reward borrows each rank-local trainer/rollout GPU only after both owners
     # have returned a complete parking proof.
-    trainer:
-      num_gpus: 1
     rollout:
       gpu_pool: trainer
-      num_gpus: 1
-      gpus_per_worker: 1.0
-      num_workers: 1
 
 trainer:
   output_dir: outputs/wan_robotics_physics_4x_l4/droid_fullparam_fsdp_4x_l4

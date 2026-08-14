@@ -19,15 +19,10 @@
 # the whole GPU. Actors/processes stay alive; only their GPU state moves.
 distributed:
   resources:
-    visible_devices: auto
-    trainer:
-      num_gpus: 1
     rollout:
-      # auto pool: colocate on the trainer GPU when there's no spare (single-GPU
-      # box), else take the spare. Set gpu_pool: trainer to force colocation.
+      # Bound the auto pool to ONE worker GPU: without this, a multi-GPU box
+      # would hand every spare card to rollout instead of exactly one.
       num_gpus: 1
-      gpus_per_worker: 1.0
-      num_workers: 1
 
   rollout:
     cpus_per_worker: 4.0
