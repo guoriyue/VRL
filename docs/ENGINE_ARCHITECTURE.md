@@ -47,7 +47,7 @@ flowchart LR
 | `RolePlacement`, `GlobalRayPlacementOwner` | Placement-group lifecycle per role (create/probe/assign/remove). |
 | `RoleResourceConfig` → `RolloutResourceConfig`; `RewardResourceConfig` | Typed per-role resource schema: rollout is the only worker-replica role; reward is an in-process compute request (`device: trainer\|cpu\|gpu` + `gpu_pool`), not worker arithmetic. |
 | `DistributedResourceConfig`, `ResolvedDistributedResources`, `BundleLayout` | User schema → resolved topology → placement bundles. |
-| `PhaseHandoffPolicy`, `RayLifecyclePlan` | Derived once from GPU topology: `rollout_mode` (resident/on_demand) plus per-boundary handoff flags — who owns the GPU in which phase, and whether generation/reward must park at a handoff. The collector reads this plan; the runtimes never decide it themselves. |
+| `RayLifecyclePlan` | Derived once from GPU topology. Stores the three pairwise sharing facts (trainer∩rollout, rollout∩reward, trainer∩reward); `rollout_mode` and every `release_*` handoff flag are properties over them, so no stored flag can drift. The collector reads this plan; the runtimes never decide it themselves. |
 
 ---
 

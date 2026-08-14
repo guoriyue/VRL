@@ -453,10 +453,10 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
     assert resources.lifecycle.rollout_mode == "resident"
     assert not any(
         (
-            resources.lifecycle.handoff.release_rollout_before_train,
-            resources.lifecycle.handoff.release_rollout_before_reward,
-            resources.lifecycle.handoff.release_trainer_before_reward,
-            resources.lifecycle.handoff.release_reward_after_score,
+            resources.lifecycle.release_rollout_before_train,
+            resources.lifecycle.release_rollout_before_reward,
+            resources.lifecycle.release_trainer_before_reward,
+            resources.lifecycle.release_reward_after_score,
         ),
     )
     assert built.trainer.rollout_orchestration.schedule_mode == "continuous"
@@ -495,7 +495,7 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
     assert resources.reward_devices == ()
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.handoff.release_rollout_before_train is True
+    assert resources.lifecycle.release_rollout_before_train is True
 
     # Per-rank geometry remains inherited from the parent, while four disjoint
     # prompt groups make the global rollout batch four times larger. Compare the
@@ -542,7 +542,7 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
     assert resources.reward_devices == ()
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.handoff.release_rollout_before_train is True
+    assert resources.lifecycle.release_rollout_before_train is True
 
     assert cfg.model.torch_compile.enable is False
     assert cfg.sampling.guidance_scale == 7
@@ -666,7 +666,7 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
     assert resources.rollout_num_workers == 1
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.handoff.release_rollout_before_train is True
+    assert resources.lifecycle.release_rollout_before_train is True
     assert built.trainer.rollout_orchestration.schedule_mode == "strict_on_policy"
 
     assert (cfg.sampling.width, cfg.sampling.height, cfg.sampling.num_frames) == (
@@ -730,8 +730,8 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devi
     assert resources.reward_uses_trainer_device is True
     assert resources.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
     assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.handoff.release_reward_after_score is True
-    handoff = resources.lifecycle.handoff
+    assert resources.lifecycle.release_reward_after_score is True
+    handoff = resources.lifecycle
     assert handoff.release_rollout_before_train is True
     assert handoff.release_rollout_before_reward is True
     assert handoff.release_trainer_before_reward is True
@@ -1089,7 +1089,7 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> No
     assert resources.rollout_num_workers == 1
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.handoff.release_rollout_before_train is True
+    assert resources.lifecycle.release_rollout_before_train is True
     assert cfg.reward.components == {"motion_dynamics": 1.0}
     assert cfg.reward.kwargs.motion_dynamics.worker_config.device == "cpu"
     assert cfg.rollout.n_samples_per_prompt == 2

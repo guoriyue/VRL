@@ -789,8 +789,8 @@ async def run_online_recipe(
     # reject that topology here instead of failing after expensive launch work.
     strategy = build_strategy(built.root, training_context)
     if (
-        resources.lifecycle.handoff.release_rollout_before_train
-        or resources.lifecycle.handoff.release_trainer_before_reward
+        resources.lifecycle.release_rollout_before_train
+        or resources.lifecycle.release_trainer_before_reward
     ):
         strategy.validate_training_state_parking()
     # Under ddp every torchrun rank owns a distinct GPU: resolve_training_context

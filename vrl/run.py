@@ -252,7 +252,7 @@ def resolve_reward_inputs(
     memory_parking_required = (
         False
         if reward.all_external_inference
-        else bool(resources.lifecycle.handoff.release_reward_after_score)
+        else bool(resources.lifecycle.release_reward_after_score)
     )
     return ResolvedReward(
         config=reward,

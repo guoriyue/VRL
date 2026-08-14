@@ -247,7 +247,7 @@ def test_phase_handoff_keeps_actor_and_owner_placement(local_ray) -> None:
         owner.resources,
         lifecycle=replace(
             owner.resources.lifecycle,
-            rollout_mode="on_demand",
+            trainer_and_rollout_share_gpu=True,
         ),
     )
     runtime = RayGenerationLauncher(init_ray=False).create_runtime(

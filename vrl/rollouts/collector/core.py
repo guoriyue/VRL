@@ -297,7 +297,7 @@ class RolloutCollector:
         lifecycle = self._lifecycle
         if lifecycle is None:
             return False
-        return lifecycle.handoff.release_reward_after_score
+        return lifecycle.release_reward_after_score
 
     @property
     def requires_generation_offload_before_reward(self) -> bool:
@@ -309,7 +309,7 @@ class RolloutCollector:
         lifecycle = self._lifecycle
         if lifecycle is None:
             return False
-        return lifecycle.handoff.release_rollout_before_reward
+        return lifecycle.release_rollout_before_reward
 
     @property
     def requires_driver_model_offload_for_reward(self) -> bool:
@@ -318,7 +318,7 @@ class RolloutCollector:
         lifecycle = self._lifecycle
         if lifecycle is None:
             return False
-        return lifecycle.handoff.release_trainer_before_reward
+        return lifecycle.release_trainer_before_reward
 
     @property
     def supports_reward_generation_overlap(self) -> bool:

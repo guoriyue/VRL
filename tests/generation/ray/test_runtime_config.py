@@ -991,7 +991,7 @@ def _runtime_factory_inputs(
                 config.resources,
                 lifecycle=replace(
                     config.resources.lifecycle,
-                    rollout_mode="on_demand",
+                    trainer_and_rollout_share_gpu=True,
                 ),
             ),
         )

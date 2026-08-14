@@ -345,12 +345,10 @@ def _install_common_fakes(
         reward_devices=(),
         reward_torch_device=lambda *, trainer_device=None: "cpu",
         lifecycle=SimpleNamespace(
-            handoff=SimpleNamespace(
-                release_rollout_before_train=False,
-                release_rollout_before_reward=False,
-                release_trainer_before_reward=False,
-                release_reward_after_score=False,
-            ),
+            release_rollout_before_train=False,
+            release_rollout_before_reward=False,
+            release_trainer_before_reward=False,
+            release_reward_after_score=False,
         ),
     )
 
@@ -793,12 +791,10 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
         trainer_torch_device="cpu",
         reward_torch_device=lambda *, trainer_device=None: "cpu",
         lifecycle=SimpleNamespace(
-            handoff=SimpleNamespace(
-                release_rollout_before_train=False,
-                release_rollout_before_reward=False,
-                release_trainer_before_reward=False,
-                release_reward_after_score=False,
-            ),
+            release_rollout_before_train=False,
+            release_rollout_before_reward=False,
+            release_trainer_before_reward=False,
+            release_reward_after_score=False,
         ),
     )
     context = DistributedTrainingContext(
@@ -849,12 +845,10 @@ async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
         trainer_torch_device="cpu",
         reward_torch_device=lambda *, trainer_device=None: "cpu",
         lifecycle=SimpleNamespace(
-            handoff=SimpleNamespace(
-                release_rollout_before_train=release_rollout_before_train,
-                release_rollout_before_reward=False,
-                release_trainer_before_reward=release_trainer_before_reward,
-                release_reward_after_score=release_trainer_before_reward,
-            ),
+            release_rollout_before_train=release_rollout_before_train,
+            release_rollout_before_reward=False,
+            release_trainer_before_reward=release_trainer_before_reward,
+            release_reward_after_score=release_trainer_before_reward,
         ),
     )
     monkeypatch.setattr(

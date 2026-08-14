@@ -188,38 +188,48 @@ class DistributedResourceConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class PhaseHandoffPolicy:
-    """Which resident-vs-shared roles must step off their GPU at each boundary.
-
-    A flag is True only when two roles share a GPU and the next phase needs the
-    first to release it. Derived once from topology so no runtime re-decides it
-    per call.
-    """
-
-    release_rollout_before_train: bool
-    release_rollout_before_reward: bool
-    release_trainer_before_reward: bool
-    release_reward_after_score: bool
-
-
-@dataclass(frozen=True, slots=True)
 class RayLifecyclePlan:
     """Single topology-derived answer to "which role yields its GPU when".
 
-    Built by :func:`resolve_distributed_resources` from GPU ownership so the
-    launcher, collector, and reward runtime read one declarative plan instead of
-    each re-deriving ``release_after_*`` from raw device sets. Real behavior reads
-    ``resolved.lifecycle.*``; no flat release-after-collect mirror is retained.
-
-    ``rollout_mode``: ``resident`` keeps serving across phases because rollout
-    owns a dedicated GPU; ``on_demand`` yields a shared GPU at a handoff and
-    activates again on next use (workers park in host RAM — no process
-    destruction). The reward side needs no mode field: its only release
-    decision is the boundary-specific ``handoff.release_reward_after_score``.
+    Stores the run's three pairwise GPU-sharing facts — the only independent
+    bits in the trainer/rollout/reward topology triangle. Every handoff flag
+    and lease mode is a phase-ordered *view* over them, derived by property,
+    so no stored flag can drift from the sharing fact that implies it. Built
+    by :func:`resolve_distributed_resources`; the launcher, collector, and
+    reward runtime read this one declarative plan instead of re-deriving
+    releases from raw device sets.
     """
 
-    rollout_mode: Literal["resident", "on_demand"]
-    handoff: PhaseHandoffPolicy
+    trainer_and_rollout_share_gpu: bool
+    rollout_and_reward_share_gpu: bool
+    trainer_and_reward_share_gpu: bool
+
+    @property
+    def rollout_mode(self) -> Literal["resident", "on_demand"]:
+        """``resident`` keeps serving across phases (rollout owns its GPU);
+        ``on_demand`` yields a contested GPU at a handoff and reactivates on
+        next use (workers park in host RAM — no process destruction)."""
+
+        contested = self.trainer_and_rollout_share_gpu or self.rollout_and_reward_share_gpu
+        return "on_demand" if contested else "resident"
+
+    @property
+    def release_rollout_before_train(self) -> bool:
+        return self.trainer_and_rollout_share_gpu
+
+    @property
+    def release_rollout_before_reward(self) -> bool:
+        return self.rollout_and_reward_share_gpu
+
+    @property
+    def release_trainer_before_reward(self) -> bool:
+        return self.trainer_and_reward_share_gpu
+
+    @property
+    def release_reward_after_score(self) -> bool:
+        """A reward on anyone else's card must prove it parked after scoring."""
+
+        return self.rollout_and_reward_share_gpu or self.trainer_and_reward_share_gpu
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,27 +470,12 @@ def resolve_distributed_resources(
     reward_shared_with_trainer = bool(set(reward_execution_devices) & set(trainer_devices))
 
     # Release scheduling is derived entirely from the resolved GPU topology:
-    # roles that share a GPU hand it over between phases; roles with dedicated
-    # GPUs stay resident. The named handoff plan is the only behavior source.
-    rollout_release_before_train = colocated
-    rollout_release_before_reward_model = reward_shared_with_rollout
-    trainer_release_before_reward_model = reward_shared_with_trainer
-    # Rewards score in-process now (no Ray reward actors). A reward sharing
-    # either rollout or trainer must prove it parked before the next phase can
-    # reclaim the card; a dedicated reward stays resident.
-    reward_release_after_score = reward_shared_with_rollout or reward_shared_with_trainer
-    rollout_on_demand = rollout_release_before_train or rollout_release_before_reward_model
-
-    # A role is on_demand when any handoff makes it yield, while the handoff plan
-    # keeps the specific phase boundary explicit.
+    # the plan stores the three sharing facts; handoffs and lease modes are
+    # its derived views.
     lifecycle = RayLifecyclePlan(
-        rollout_mode="on_demand" if rollout_on_demand else "resident",
-        handoff=PhaseHandoffPolicy(
-            release_rollout_before_train=rollout_release_before_train,
-            release_rollout_before_reward=rollout_release_before_reward_model,
-            release_trainer_before_reward=trainer_release_before_reward_model,
-            release_reward_after_score=reward_release_after_score,
-        ),
+        trainer_and_rollout_share_gpu=colocated,
+        rollout_and_reward_share_gpu=reward_shared_with_rollout,
+        trainer_and_reward_share_gpu=reward_shared_with_trainer,
     )
     return ResolvedDistributedResources(
         visible_devices=visible_devices,
@@ -574,11 +569,11 @@ def format_distributed_resource_plan(resolved: ResolvedDistributedResources) -> 
         # release. resident=stays active, on_demand=parks at the handoff.
         f"lifecycle=rollout:{resolved.lifecycle.rollout_mode}",
         "handoff="
-        f"before_train:{resolved.lifecycle.handoff.release_rollout_before_train}"
-        f",before_reward:{resolved.lifecycle.handoff.release_rollout_before_reward}"
+        f"before_train:{resolved.lifecycle.release_rollout_before_train}"
+        f",before_reward:{resolved.lifecycle.release_rollout_before_reward}"
         f",trainer_before_reward:"
-        f"{resolved.lifecycle.handoff.release_trainer_before_reward}"
-        f",reward_after_score:{resolved.lifecycle.handoff.release_reward_after_score}",
+        f"{resolved.lifecycle.release_trainer_before_reward}"
+        f",reward_after_score:{resolved.lifecycle.release_reward_after_score}",
     ]
     return "Distributed resources: " + " ".join(parts)
 
@@ -1057,7 +1052,6 @@ def _is_auto(value: Any) -> bool:
 
 __all__ = [
     "DistributedResourceConfig",
-    "PhaseHandoffPolicy",
     "RayLifecyclePlan",
     "ResolvedDistributedResources",
     "format_distributed_resource_plan",

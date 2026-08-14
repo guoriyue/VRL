@@ -81,7 +81,7 @@ def validate_reward_memory_parking(
 ) -> None:
     """Validate shared reward parking without constructing a reward model."""
 
-    if not bool(resources.lifecycle.handoff.release_reward_after_score):
+    if not bool(resources.lifecycle.release_reward_after_score):
         return
     reward = built.reward
     if reward is None or reward.all_external_inference:
