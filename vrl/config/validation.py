@@ -406,7 +406,7 @@ def validate_yaml_home(
     field_name: str,
     home: str,
     *,
-    owner: str = "TrainerConfig",
+    owner: str,
 ) -> None:
     """Reject metadata addresses whose top-level section is not a known one.
 

@@ -288,7 +288,7 @@ class TrainerConfig:
                 )
             if home == "bridged":
                 continue
-            validate_yaml_home(f.name, home)
+            validate_yaml_home(f.name, home, owner=cls.__name__)
             field_cls = hints[f.name]
             if is_dataclass(field_cls):
                 section_payload, section_missing = section_payload_and_missing(

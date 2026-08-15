@@ -101,11 +101,11 @@ def test_typo_yaml_home_is_rejected() -> None:
     """A metadata address naming an unknown top-level section fails loudly."""
     from vrl.config.validation import validate_yaml_home
 
-    validate_yaml_home("save_freq", "trainer")  # known section: ok
-    validate_yaml_home("optim", "actor.optim")  # dotted path: ok
+    validate_yaml_home("save_freq", "trainer", owner="TrainerConfig")  # known section: ok
+    validate_yaml_home("optim", "actor.optim", owner="TrainerConfig")  # dotted path: ok
 
     with pytest.raises(AssertionError, match=r"trainerx"):
-        validate_yaml_home("save_freq", "trainerx")
+        validate_yaml_home("save_freq", "trainerx", owner="TrainerConfig")
 
 
 def test_config_groups_are_not_flattened() -> None:
