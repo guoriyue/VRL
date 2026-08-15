@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import traceback
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
@@ -234,6 +235,7 @@ class GenerationWorkerCore:
         )
 
     def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
+        self._synchronize_rank_rng()
         self._memory_parking.require_active(
             "execute_batch",
             executor=self.executor,
@@ -630,6 +632,61 @@ class GenerationWorkerCore:
         batch_output.memory = None
         return reading
 
+    def _install_sequence_parallel(self, model: Any) -> None:
+        """Make this rank's transformer sequence-parallel over the engine group.
+
+        Reached only when the launcher stamped a rank group (gpus_per_engine
+        > 1); the launch preflight gate already required the family installer,
+        so a missing one here is an internal contract break, not user error.
+        """
+
+        installer_path = self.family_entry.runtime_capabilities.sequence_parallel_installer
+        if installer_path is None:
+            raise RuntimeError(
+                f"rank {self.worker_id} joined a multi-rank engine group but "
+                f"family {self.family_entry.family!r} declares no "
+                "sequence_parallel_installer; the launch preflight gate should "
+                "have rejected this configuration",
+            )
+        transformer = getattr(model, "transformer", None)
+        if transformer is None:
+            raise RuntimeError(
+                f"family {self.family_entry.family!r} model exposes no "
+                ".transformer for the sequence-parallel install",
+            )
+        import torch.distributed as dist
+
+        install = import_from_path(installer_path)
+        install(transformer, dist.group.WORLD)
+
+    def _synchronize_rank_rng(self) -> None:
+        """Give every rank of the engine one fresh, shared RNG stream.
+
+        The pipeline is replicated across ranks (text encode, initial noise,
+        SDE steps); sequence-parallel attention is only correct when their
+        tensors are identical, and online RL still wants fresh noise per
+        request. Rank 0 draws entropy per call and broadcasts it; every rank
+        then reseeds python and torch RNGs identically.
+        """
+
+        if self.rank_group is None:
+            return
+        import random
+
+        import torch
+        import torch.distributed as dist
+
+        device = "cuda" if dist.get_backend() == "nccl" else "cpu"
+        seed_tensor = torch.empty(1, dtype=torch.int64, device=device)
+        if dist.get_rank() == 0:
+            seed_tensor[0] = int.from_bytes(os.urandom(8), "little") % (2**63 - 1)
+        dist.broadcast(seed_tensor, src=0)
+        shared = int(seed_tensor.item())
+        random.seed(shared)
+        torch.manual_seed(shared)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(shared)
+
     def _build_executor(self) -> GenerationBatchExecutor:
         launch_contract = self.launch_contract
         from vrl.models.interfaces.runtime import ModelBuild
@@ -670,6 +727,8 @@ class GenerationWorkerCore:
         from vrl.models.loader import assert_rollout_quantization_applied
 
         assert_rollout_quantization_applied(model, build)
+        if self.rank_group is not None:
+            self._install_sequence_parallel(model)
         executor_kwargs = dict(launch_contract.executor_kwargs)
         executor_kwargs["gatherer"] = self.gatherer
         from vrl.models.families.registry import GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR

@@ -61,13 +61,19 @@ class GenerationRuntimeCapabilities:
     """Concrete executor/runtime behaviors, separate from model semantics."""
 
     supports_torch_compile: bool = False
-    # True once the family's executor can run one engine across several GPUs
-    # (sequence-parallel denoise). Gated at config resolution: requesting
-    # distributed.rollout.gpus_per_engine > 1 for a family without this
-    # capability fails loud instead of silently computing every batch N times.
-    supports_multi_gpu_engine: bool = False
+    # Dotted path of the family's sequence-parallel installer
+    # (``module:function`` taking (transformer, process_group)). Its presence
+    # IS the multi-GPU engine capability — one source, no capability bool to
+    # drift. The launch preflight gate and the rank program both read it.
+    sequence_parallel_installer: str | None = None
     memory_parking: GenerationParkingProfile = GenerationParkingProfile.MODEL
     supported_model_memory_sections: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def supports_multi_gpu_engine(self) -> bool:
+        """Derived: a family is multi-GPU capable iff it ships an installer."""
+
+        return self.sequence_parallel_installer is not None
 
     def __post_init__(self) -> None:
         unsupported = sorted(
@@ -613,6 +619,17 @@ _register_model_family(
             model_cls="vrl.models.families.sd3_5.model:SD3_5Model",
             replay_cls="vrl.models.families.sd3_5.model:SD3_5ReplayModel",
             transformer_classname="SD3Transformer2DModel",
+        ),
+        # MMDiT joint attention has a verified Ulysses install (numeric
+        # N=2-vs-reference equivalence in tests/generation/execution/
+        # test_ulysses.py); declaring it here is what opens gpus_per_engine > 1.
+        runtime_capabilities=GenerationRuntimeCapabilities(
+            supports_torch_compile=True,
+            memory_parking=GenerationParkingProfile.CUMEM,
+            supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
+            sequence_parallel_installer=(
+                "vrl.generation.execution.ulysses:install_sd3_sequence_parallel"
+            ),
         ),
     ),
 )

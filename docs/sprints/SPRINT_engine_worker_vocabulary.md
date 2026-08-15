@@ -1,9 +1,18 @@
 # SPRINT：engine / worker 抽象 + 多卡引擎全量支持
 
-状态：**P1/P2 已实施，P3 待做，P4/P5 待多卡后端接线（2026-08-14）**。
-实施记录：P1 = commit `5fbb1470`（num_engines 键 + RolloutRuntimeSection）；
-P2 = 本 commit（GenerationRankActor 协议、RayGenerationEngine 组合体、driver
-全链改单位、BundleLayout 引擎分组、N=2/3 假件单测、reward 双子改名）。
+状态：**P1–P5 已实施；P6（多卡整机验收）挂多卡硬件（2026-08-14）**。
+实施记录：P1 = `5fbb1470`（num_engines 键 + RolloutRuntimeSection）；
+P2 = `6d0f716d`（GenerationRankActor 协议、RayGenerationEngine 组合体、driver
+全链改单位、BundleLayout 引擎分组、N=2/3 假件单测、reward 双子改名）；
+P3 = `180441e1`（RankGroupSpec + init/destroy + gloo 双进程冒烟）；
+P4 = `7badc680`（gpus_per_engine 键落 distributed.resources.rollout + capability
+gate；键的家在 resources 而非 runtime section——它是解析消费的资源形状算术，
+与计划原文的 distributed.rollout 位置为有意偏差）；
+P5 = 本 commit（手写 Ulysses——xfuser/para-attn 未装且版本强耦合，评估不过；
+hook 注入不复制 diffusers forward；all_gather 组合实现单代码路径，
+all_to_all_single 性能版留 P6 实测后；tiny SD3 双进程 CPU+gloo 数值等价通过；
+capability 单源化：sequence_parallel_installer 的存在即能力；rank 程序每批
+rank0 熵广播统一 RNG——在线 RL 噪声保持每请求新鲜、引擎内一致）。
 
 原始计划：前置事实：`gpus_per_worker` 配置旋钮与
 `rollout_gpus_per_worker` 派生视图已删除（commit `8c4ffd23`、`b50892bb`）——
