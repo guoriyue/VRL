@@ -132,7 +132,7 @@ class _ControlledStopEvent:
 
 def _runtime(*actors: _Actor) -> Any:
     return SimpleNamespace(
-        _owned_workers=[
+        _owned_ranks=[
             RayActorHandle(worker_id=f"rollout-{i}", actor=actor) for i, actor in enumerate(actors)
         ],
         lifecycle=RuntimeLifecycle(),
@@ -412,7 +412,7 @@ def test_workers_without_a_health_method_are_skipped(
     """Local (non-Ray) worker fakes have no remote probe and must not fail closed."""
 
     runtime = SimpleNamespace(
-        _owned_workers=[RayActorHandle(worker_id="local-0", actor=object())],
+        _owned_ranks=[RayActorHandle(worker_id="local-0", actor=object())],
         lifecycle=RuntimeLifecycle(),
     )
     ray = _FakeRay([])
@@ -483,7 +483,7 @@ def test_real_wedged_worker_times_out_and_the_fleet_really_dies(local_ray) -> No
             actor=wedged,
         ),
     ]
-    runtime = SimpleNamespace(_owned_workers=handles, lifecycle=RuntimeLifecycle())
+    runtime = SimpleNamespace(_owned_ranks=handles, lifecycle=RuntimeLifecycle())
     monitor = _monitor(runtime, timeout_s=0.5)
 
     # The driver call the monitor has to rescue: 300s of work on a healthy worker.

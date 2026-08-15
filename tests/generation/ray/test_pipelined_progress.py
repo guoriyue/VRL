@@ -17,6 +17,7 @@ from vrl.generation.execution.types import (
     BatchProduceFence,
     PipelinedRequestOutOfMemory,
 )
+from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.pipeline_protocol import (
     PipelinedProgressError,
@@ -59,7 +60,12 @@ class _GatedRef:
 def _executor(*, timeout_s: float = 1.0) -> RayGenerationExecutor:
     return RayGenerationExecutor(
         planner=object(),
-        workers=[RayActorHandle(worker_id="w0", actor=object())],
+        engines=[
+            RayGenerationEngine(
+                "w0",
+                [RayActorHandle(worker_id="w0", actor=object())],
+            ),
+        ],
         gatherer=object(),
         actor_dispatcher=RayActorDispatcher(("w0",)),
         generation_stall_timeout_s=timeout_s,
@@ -241,12 +247,17 @@ async def test_remote_pipelined_worker_requires_progress_endpoint() -> None:
         def remote(*_args: Any) -> None:
             raise AssertionError("request must not start without progress endpoint")
 
-    executor.workers[0] = RayActorHandle(
-        worker_id="w0",
-        actor=SimpleNamespace(execute_request_pipelined=_RemoteMethod()),
+    executor.engines[0] = RayGenerationEngine(
+        "w0",
+        [
+            RayActorHandle(
+                worker_id="w0",
+                actor=SimpleNamespace(execute_request_pipelined=_RemoteMethod()),
+            ),
+        ],
     )
 
-    with pytest.raises(PipelinedProgressError, match="requires worker progress"):
+    with pytest.raises(PipelinedProgressError, match="requires rank progress"):
         await executor._execute_request_pipelined(
             SimpleNamespace(request_id="req-missing-progress"),
             SimpleNamespace(sample_batches=("c0", "c1")),
@@ -291,12 +302,17 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
             raise AssertionError("an immediately resolved pipeline needs no progress RPC")
 
     monkeypatch.setattr(actor_pool_module, "RayCallDeadline", recording_deadline)
-    executor.workers[0] = RayActorHandle(
-        worker_id="w0",
-        actor=SimpleNamespace(
-            execute_request_pipelined=_PipelineMethod(),
-            pipelined_progress=_ProgressMethod(),
-        ),
+    executor.engines[0] = RayGenerationEngine(
+        "w0",
+        [
+            RayActorHandle(
+                worker_id="w0",
+                actor=SimpleNamespace(
+                    execute_request_pipelined=_PipelineMethod(),
+                    pipelined_progress=_ProgressMethod(),
+                ),
+            ),
+        ],
     )
     first = asyncio.create_task(
         executor.actor_dispatcher.run(

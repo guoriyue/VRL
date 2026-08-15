@@ -39,7 +39,16 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from vrl.generation.execution.planner import EnginePlan
     from vrl.generation.execution.sample_batches import GenerationSampleBatch
+    from vrl.generation.execution.types import (
+        BatchSizeProbeResult,
+        GenerationBatchEnvelope,
+        GenerationBatchResult,
+        PipelinedRequestOutOfMemory,
+        WorkerMemoryParkingSnapshot,
+    )
+    from vrl.generation.ray.pipeline_protocol import PipelinedRequestProgress
     from vrl.generation.types import (
         GenerationOutput,
         GenerationRequest,
@@ -110,6 +119,52 @@ class GenerationRuntime(Protocol):
 
 
 @runtime_checkable
+class GenerationRankActor(Protocol):
+    """RPC contract of one generation rank actor (the per-GPU worker).
+
+    The driver-side engine (``vrl/generation/ray/engine.py``) fans every call
+    out to its ranks and aggregates; this protocol is the cross-process
+    boundary those calls travel over. ``RayGenerationWorker`` satisfies it
+    structurally — pinned by a conformance test so the engine's method-name
+    strings cannot drift from the actor surface.
+    """
+
+    def health(self) -> str: ...
+
+    def load_policy(self) -> None: ...
+
+    def release_policy(self) -> None: ...
+
+    def sleep(self) -> WorkerMemoryParkingSnapshot: ...
+
+    def wake(self) -> None: ...
+
+    def update_weights(self, state_ref: Any, policy_version: int) -> int: ...
+
+    def supports_versioned_trainable_state(self) -> bool: ...
+
+    def worker_metadata(self) -> dict[str, Any]: ...
+
+    def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult: ...
+
+    def probe_batch_size(
+        self,
+        request: GenerationRequest,
+        *,
+        max_samples: int,
+    ) -> BatchSizeProbeResult: ...
+
+    def execute_request_pipelined(
+        self,
+        request: GenerationRequest,
+        engine_plan: EnginePlan,
+        sample_rows: Sequence[GenerationSampleRow],
+    ) -> GenerationOutput | PipelinedRequestOutOfMemory: ...
+
+    def pipelined_progress(self, request_id: str) -> PipelinedRequestProgress | None: ...
+
+
+@runtime_checkable
 class GenerationBatchExecutor(Protocol):
     """Family-specific distributed batch executor."""
 
@@ -154,5 +209,6 @@ __all__ = [
     "BatchSizeProbeExecutor",
     "GenerationBatchExecutor",
     "GenerationBatchGatherer",
+    "GenerationRankActor",
     "GenerationRuntime",
 ]

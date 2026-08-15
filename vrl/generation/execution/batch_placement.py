@@ -1,7 +1,7 @@
 """Batch placement planning for distributed generation.
 
 The fleet-only layer above planner.py: planner builds the runtime-neutral
-batch list every executor consumes, while this module decides which worker
+batch list every executor consumes, while this module decides which engine
 runs each batch — a question that only exists for the Ray runtime
 (vrl/generation/ray), never for the direct in-process path. Batch memory
 sizing (probe fit, occupancy snapshots, drift shadow) lives in
@@ -26,14 +26,14 @@ from vrl.generation.types import GenerationRequest
 
 @dataclass(frozen=True, slots=True)
 class DeviceAssignment:
-    """Map one logical batch to one generation worker.
+    """Map one logical batch to one generation engine.
 
-    ``worker_id`` is ``None`` under dynamic placement — binding then happens at
+    ``engine_id`` is ``None`` under dynamic placement — binding then happens at
     dispatch time in the actor pool, not at plan time. The envelope is the wire
     payload and single source of truth for batch identity.
     """
 
-    worker_id: str | None
+    engine_id: str | None
     envelope: GenerationBatchEnvelope
     estimated_cost: float = 0.0
 
@@ -46,17 +46,17 @@ class DeviceAssignment:
 
 @dataclass(frozen=True, slots=True)
 class DistributedGenerationPlan:
-    """Driver-side plan plus worker placement for one generation request."""
+    """Driver-side plan plus engine placement for one generation request."""
 
     engine_plan: EnginePlan
     assignments: tuple[DeviceAssignment, ...]
 
 
 class DistributedExecutionPlanner:
-    """Plan batch placement across generation workers.
+    """Plan batch placement across generation engines.
 
     ``round_robin`` binds at plan time. ``dynamic`` leaves batches unbound so
-    the dispatch loop can pull the highest-cost pending batch onto a free worker.
+    the dispatch loop can pull the highest-cost pending batch onto a free engine.
     """
 
     def __init__(
@@ -74,15 +74,15 @@ class DistributedExecutionPlanner:
     def plan_with_engine(
         self,
         request: GenerationRequest,
-        worker_ids: Sequence[str],
+        engine_ids: Sequence[str],
     ) -> DistributedGenerationPlan:
-        worker_ids = tuple(worker_ids)
-        if not worker_ids:
-            raise ValueError("DistributedExecutionPlanner requires at least one worker")
-        if any(not worker_id for worker_id in worker_ids):
-            raise ValueError("DistributedExecutionPlanner worker IDs must be non-empty")
-        if len(set(worker_ids)) != len(worker_ids):
-            raise ValueError("DistributedExecutionPlanner worker IDs must be unique")
+        engine_ids = tuple(engine_ids)
+        if not engine_ids:
+            raise ValueError("DistributedExecutionPlanner requires at least one engine")
+        if any(not engine_id for engine_id in engine_ids):
+            raise ValueError("DistributedExecutionPlanner engine IDs must be non-empty")
+        if len(set(engine_ids)) != len(engine_ids):
+            raise ValueError("DistributedExecutionPlanner engine IDs must be unique")
         engine_plan = EnginePlan.from_request(request)
         bind_at_plan_time = self.strategy == "round_robin"
         steps = request.sampling.get("num_steps") or request.sampling.get(
@@ -91,14 +91,14 @@ class DistributedExecutionPlanner:
         cost_per_sample = max(1, int(steps or 1))
         assignments: list[DeviceAssignment] = []
         for idx, batch in enumerate(engine_plan.sample_batches):
-            worker_id = worker_ids[idx % len(worker_ids)] if bind_at_plan_time else None
+            engine_id = engine_ids[idx % len(engine_ids)] if bind_at_plan_time else None
             envelope = GenerationBatchEnvelope(
                 request=request,
                 batch=batch,
             )
             assignments.append(
                 DeviceAssignment(
-                    worker_id=worker_id,
+                    engine_id=engine_id,
                     envelope=envelope,
                     estimated_cost=float(batch.sample_count * cost_per_sample),
                 ),

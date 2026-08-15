@@ -109,10 +109,10 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(local_r
         # Config-selected placement strategy must reach the live planner.
         assert session.executor.planner.strategy == "dynamic"
 
-        workers = session.executor.workers
-        assert [worker.worker_id for worker in workers] == ["rollout-0"]
-        assert workers[0].actor is not None
-        metadata = ray.get(workers[0].actor.worker_metadata.remote())
+        engines = session.executor.engines
+        assert [engine.engine_id for engine in engines] == ["rollout-0"]
+        assert engines[0].primary.actor is not None
+        metadata = ray.get(engines[0].primary.actor.worker_metadata.remote())
         assert metadata["worker_id"] == "rollout-0"
         assert "policy_version" not in metadata
     finally:
@@ -205,7 +205,7 @@ def test_owner_placement_runtime_does_not_own_placement_group(local_ray) -> None
         assert not hasattr(runtime, "_owned_actors")
         session = runtime._session
         assert session is not None
-        assert [w.worker_id for w in session.executor.workers] == ["rollout-0"]
+        assert [e.engine_id for e in session.executor.engines] == ["rollout-0"]
 
         # Tearing down the runtime kills workers but leaves the owner's PG alive.
         asyncio.run(runtime.shutdown())
@@ -264,7 +264,7 @@ def test_phase_handoff_keeps_actor_and_owner_placement(local_ray) -> None:
         session = runtime._session
         assert session is not None
         assert not hasattr(session, "_placement_group")  # session never owns the PG
-        first_actor = session.executor.workers[0].actor
+        first_actor = session.executor.engines[0].primary.actor
         asyncio.run(runtime.offload())
         assert runtime._session is session
         assert runtime._session_parked is True
@@ -273,9 +273,9 @@ def test_phase_handoff_keeps_actor_and_owner_placement(local_ray) -> None:
         asyncio.run(runtime.activate())
         reacquired = runtime._session
         assert reacquired is not None
-        assert [w.worker_id for w in reacquired.executor.workers] == ["rollout-0"]
+        assert [e.engine_id for e in reacquired.executor.engines] == ["rollout-0"]
         assert reacquired is session
-        assert reacquired.executor.workers[0].actor is first_actor
+        assert reacquired.executor.engines[0].primary.actor is first_actor
     finally:
         asyncio.run(runtime.shutdown())
         owner.shutdown()

@@ -36,7 +36,7 @@ from vrl.ray.dependencies import (
     require_ray,
 )
 from vrl.ray.operation_deadline import get_ray_refs
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ROLLOUT_GPUS_PER_ENGINE, ResolvedDistributedResources
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,26 @@ class BundleLayout:
     @property
     def total_bundles(self) -> int:
         return len(self.bundle_gpu_ids)
+
+    @property
+    def rollout_engine_bundle_groups(self) -> tuple[tuple[int, ...], ...]:
+        """Rollout bundles grouped per engine (ROLLOUT_GPUS_PER_ENGINE each).
+
+        One engine owns one consecutive group; the launcher assembles its rank
+        actors from exactly these bundles. Generic over the group size — today
+        every group has one bundle, so groups mirror the flat indices.
+        """
+
+        size = ROLLOUT_GPUS_PER_ENGINE
+        indices = self.rollout_bundle_indices
+        if len(indices) % size:
+            raise RuntimeError(
+                f"rollout bundles ({len(indices)}) are not divisible into "
+                f"engines of {size} rank(s)",
+            )
+        return tuple(
+            tuple(indices[start : start + size]) for start in range(0, len(indices), size)
+        )
 
     @classmethod
     def from_resources(cls, resolved: ResolvedDistributedResources) -> BundleLayout:

@@ -21,11 +21,12 @@ from vrl.config.schema import parse_config
 from vrl.generation.execution.types import BatchSizeProbeResult
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
-    _all_workers_support_versioned_slots,
+    _all_ranks_support_versioned_slots,
 )
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
@@ -356,7 +357,7 @@ def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
 
     with _slot_handles(local_ray, True, True) as handles:
         assert (
-            _all_workers_support_versioned_slots(
+            _all_ranks_support_versioned_slots(
                 local_ray,
                 handles,
                 weight_sync=weight_sync,
@@ -366,7 +367,7 @@ def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
         )
     with _slot_handles(local_ray, True, False) as handles:
         assert (
-            _all_workers_support_versioned_slots(
+            _all_ranks_support_versioned_slots(
                 local_ray,
                 handles,
                 weight_sync=weight_sync,
@@ -382,7 +383,7 @@ def test_runtime_capability_false_without_weight_sync_or_workers(local_ray) -> N
     barrier (False), never a silent True."""
     with _slot_handles(local_ray, True, True) as handles:
         assert (
-            _all_workers_support_versioned_slots(
+            _all_ranks_support_versioned_slots(
                 local_ray,
                 handles,
                 weight_sync=None,
@@ -391,7 +392,7 @@ def test_runtime_capability_false_without_weight_sync_or_workers(local_ray) -> N
             is False
         )
     assert (
-        _all_workers_support_versioned_slots(
+        _all_ranks_support_versioned_slots(
             local_ray,
             [],
             weight_sync=object(),
@@ -408,7 +409,7 @@ def test_runtime_capability_worker_query_failure_propagates(local_ray) -> None:
         _slot_handles(local_ray, True, None) as handles,
         pytest.raises(local_ray.exceptions.RayTaskError, match="actor dead"),
     ):
-        _all_workers_support_versioned_slots(
+        _all_ranks_support_versioned_slots(
             local_ray,
             handles,
             weight_sync=object(),
@@ -611,7 +612,7 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
     )
     monkeypatch.setattr(
         launcher_module,
-        "_all_workers_support_versioned_slots",
+        "_all_ranks_support_versioned_slots",
         lambda *_args, **_kwargs: False,
     )
     entry = get_model_family_entry("sd3_5")
@@ -769,7 +770,7 @@ def test_pipelined_rejects_multiple_placement_bundles_before_ray_start(
         expected_gpu_ids=(),
     )
 
-    with pytest.raises(ValueError, match="exactly one rollout placement bundle"):
+    with pytest.raises(ValueError, match="exactly one rollout engine"):
         RayGenerationLauncher(init_ray=False)._launch_session(
             config,
             launch_inputs,
@@ -1300,13 +1301,18 @@ async def test_remote_batch_size_probe_timeout_is_terminal_and_cancels_refs(
             assert max_samples == 10
             return ref
 
-    worker = RayActorHandle(
-        worker_id="w0",
-        actor=SimpleNamespace(probe_batch_size=_RemoteProbe()),
+    engine = RayGenerationEngine(
+        "w0",
+        [
+            RayActorHandle(
+                worker_id="w0",
+                actor=SimpleNamespace(probe_batch_size=_RemoteProbe()),
+            ),
+        ],
     )
     executor = RayGenerationExecutor(
         SimpleNamespace(),
-        [worker],
+        [engine],
         SimpleNamespace(),
         actor_dispatcher=RayActorDispatcher(("w0",)),
         generation_stall_timeout_s=0.01,
@@ -1363,13 +1369,18 @@ async def test_concurrent_auto_chunk_requests_share_one_probe_before_submission(
             probe_requests.append(request.request_id)
             return _ProbeRef()
 
-    worker = RayActorHandle(
-        worker_id="w0",
-        actor=SimpleNamespace(probe_batch_size=_RemoteProbe()),
+    engine = RayGenerationEngine(
+        "w0",
+        [
+            RayActorHandle(
+                worker_id="w0",
+                actor=SimpleNamespace(probe_batch_size=_RemoteProbe()),
+            ),
+        ],
     )
     executor = RayGenerationExecutor(
         SimpleNamespace(),
-        [worker],
+        [engine],
         SimpleNamespace(),
         actor_dispatcher=RayActorDispatcher(("w0",)),
         generation_stall_timeout_s=30.0,
@@ -1473,14 +1484,18 @@ def test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet(local_ray) -
     actors = [actor_cls.remote(answer, arrivals, 2) for answer in (6, 4)]
     executed: list[Any] = []
 
-    workers = [
-        RayActorHandle(worker_id=f"w{index}", actor=actor) for index, actor in enumerate(actors)
+    engines = [
+        RayGenerationEngine(
+            f"w{index}",
+            [RayActorHandle(worker_id=f"w{index}", actor=actor)],
+        )
+        for index, actor in enumerate(actors)
     ]
     executor = RayGenerationExecutor(
         SimpleNamespace(),
-        workers,
+        engines,
         SimpleNamespace(),
-        actor_dispatcher=RayActorDispatcher(tuple(worker.worker_id for worker in workers)),
+        actor_dispatcher=RayActorDispatcher(tuple(engine.engine_id for engine in engines)),
         generation_stall_timeout_s=30.0,
     )
 

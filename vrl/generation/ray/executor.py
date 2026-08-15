@@ -1,7 +1,7 @@
 """Ray-backed generation executor that gathers batch results.
 
 The per-request slice of the Ray adapter: split one ``EnginePlan`` across the
-worker fleet, await the batch RPCs (with stall deadlines and pipelined
+engine fleet, await the batch RPCs (with stall deadlines and pipelined
 progress probing), and reassemble outputs through the model-free gatherer.
 It deliberately owns no lifecycle — admission, terminal failure, and shutdown
 belong to ``RayGenerationRuntime``, while the live actors and this executor
@@ -26,6 +26,7 @@ from vrl.generation.execution.types import (
     StaleSlotDiscard,
 )
 from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
+from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.pipeline_protocol import (
     PipelinedProgressError,
     PipelinedRequestProgress,
@@ -47,47 +48,60 @@ _PIPELINED_PROGRESS_POLL_INTERVAL_S = 1.0
 
 
 class RayGenerationExecutor:
-    """Execute one GenerationRequest across generation workers."""
+    """Execute one GenerationRequest across generation engines."""
 
     def __init__(
         self,
         planner: DistributedExecutionPlanner,
-        workers: list[RayActorHandle],
+        engines: list[RayGenerationEngine],
         gatherer: GenerationBatchGatherer,
         *,
         actor_dispatcher: RayActorDispatcher,
         generation_stall_timeout_s: float,
         pipelined: bool = False,
     ) -> None:
-        if not workers:
-            raise ValueError("RayGenerationExecutor requires at least one worker")
-        if pipelined and len(workers) != 1:
+        if not engines:
+            raise ValueError("RayGenerationExecutor requires at least one engine")
+        if pipelined and len(engines) != 1:
             raise ValueError(
-                "pipelined Ray generation requires exactly one rollout worker; "
-                f"received {len(workers)}. Per-worker request pipelining is not "
+                "pipelined Ray generation requires exactly one rollout engine; "
+                f"received {len(engines)}. Per-engine request pipelining is not "
                 "implemented.",
             )
         self.planner = planner
-        self.workers = list(workers)
+        self.engines = list(engines)
         self.gatherer = gatherer
-        expected_worker_ids = tuple(worker.worker_id for worker in self.workers)
-        if actor_dispatcher.worker_ids != expected_worker_ids:
+        expected_engine_ids = tuple(engine.engine_id for engine in self.engines)
+        if actor_dispatcher.worker_ids != expected_engine_ids:
             raise ValueError(
-                "RayGenerationExecutor actor dispatcher does not own its worker fleet: "
-                f"{actor_dispatcher.worker_ids} != {expected_worker_ids}",
+                "RayGenerationExecutor actor dispatcher does not own its engine fleet: "
+                f"{actor_dispatcher.worker_ids} != {expected_engine_ids}",
             )
         self.actor_dispatcher = actor_dispatcher
         self.generation_stall_timeout_s = validate_timeout(
             generation_stall_timeout_s,
             name="generation_stall_timeout_s",
         )
-        # Config validation rejects multi-worker use; this constructor repeats the
+        # Config validation rejects multi-engine use; this constructor repeats the
         # guard for callers that construct executors directly.
         self.pipelined = bool(pipelined)
-        # A synchronous single-worker actor cannot execute two pipelined requests
+        # A synchronous single-rank actor cannot execute two pipelined requests
         # concurrently. Queue them on the driver so a later request does not spend
         # its stall budget waiting behind an earlier, legitimately long request.
         self._pipelined_request_lock = asyncio.Lock() if self.pipelined else None
+
+    def _engine_for_result_id(self, worker_id: str) -> RayGenerationEngine | None:
+        """Map a result's producing rank id (or an engine id) to its engine."""
+
+        for engine in self.engines:
+            if engine.engine_id == worker_id:
+                return engine
+            if any(rank.worker_id == worker_id for rank in engine.ranks):
+                return engine
+        return None
+
+    def _rank_by_id(self) -> dict[str, RayActorHandle]:
+        return {rank.worker_id: rank for engine in self.engines for rank in engine.ranks}
 
     async def execute(self, request: GenerationRequest) -> GenerationOutput:
         """Execute with single-flight admission for the pipelined worker."""
@@ -104,7 +118,7 @@ class RayGenerationExecutor:
         *,
         max_samples: int,
     ) -> list[BatchSizeProbeResult]:
-        """Probe every worker through the same actor admission as generation."""
+        """Probe every engine through the same actor admission as generation."""
 
         lock = self._pipelined_request_lock
         if lock is None:
@@ -120,21 +134,19 @@ class RayGenerationExecutor:
     ) -> list[BatchSizeProbeResult]:
         result_pairs: list[tuple[int, Any]] = []
         remote_jobs: list[RayActorJob] = []
-        for job_index, worker in enumerate(self.workers):
-            actor = worker.actor
-            probe = getattr(actor, "probe_batch_size", None)
+        for job_index, engine in enumerate(self.engines):
+            probe = getattr(engine.primary.actor, "probe_batch_size", None)
             if probe is None:
                 raise RuntimeError(
-                    f"worker {worker.worker_id!r} does not support the "
+                    f"engine {engine.engine_id!r} does not support the "
                     "batch-size probe required by samples_per_generation_batch: auto",
                 )
-            remote = getattr(probe, "remote", None)
-            if callable(remote):
+            if callable(getattr(probe, "remote", None)):
                 remote_jobs.append(
                     RayActorJob(
                         job_index=job_index,
-                        worker_id=worker.worker_id,
-                        remote_method=remote,
+                        worker_id=engine.engine_id,
+                        remote_method=engine.remote("probe_batch_size"),
                         payload=request,
                         keyword_args={"max_samples": max_samples},
                     ),
@@ -152,10 +164,10 @@ class RayGenerationExecutor:
                 ),
             )
         results = [result for _, result in sorted(result_pairs, key=lambda pair: pair[0])]
-        for worker, result in zip(self.workers, results, strict=True):
+        for engine, result in zip(self.engines, results, strict=True):
             if not isinstance(result, BatchSizeProbeResult):
                 raise TypeError(
-                    f"worker {worker.worker_id!r} returned invalid batch-size probe "
+                    f"engine {engine.engine_id!r} returned invalid batch-size probe "
                     f"result {type(result).__name__}",
                 )
         return results
@@ -170,7 +182,7 @@ class RayGenerationExecutor:
         with profile_range("engine.plan"):
             generation_plan = self.planner.plan_with_engine(
                 request,
-                tuple(worker.worker_id for worker in self.workers),
+                tuple(engine.engine_id for engine in self.engines),
             )
         assignments = list(generation_plan.assignments)
         engine_plan = generation_plan.engine_plan
@@ -190,13 +202,13 @@ class RayGenerationExecutor:
                 return pipelined_result
             pipelined_oom = pipelined_result
             logger.warning(
-                "pipelined generation request %s OOMed on worker %s; retrying "
+                "pipelined generation request %s OOMed on rank %s; retrying "
                 "through per-batch split admission: %s",
                 request.request_id,
                 pipelined_oom.worker_id,
                 pipelined_oom.error,
             )
-        worker_by_id = {worker.worker_id: worker for worker in self.workers}
+        engine_by_id = {engine.engine_id: engine for engine in self.engines}
         strategy = self.planner.strategy
         runtime_debug_on = request.runtime_debug
         remote_jobs: list[RayActorJob] = []
@@ -204,7 +216,7 @@ class RayGenerationExecutor:
         schedule_rows: list[dict[str, Any]] = []
 
         for job_index, assignment in enumerate(assignments):
-            if assignment.worker_id is None:
+            if assignment.engine_id is None:
                 # Dynamic placement: binding happens in the actor pool. The
                 # estimated cost becomes the submission priority (LPT).
                 remote_jobs.append(
@@ -217,16 +229,14 @@ class RayGenerationExecutor:
                     ),
                 )
                 continue
-            worker = worker_by_id[assignment.worker_id]
-            actor = worker.actor
-            execute_batch = actor.execute_batch
-            remote = getattr(execute_batch, "remote", None)
-            if callable(remote):
+            engine = engine_by_id[assignment.engine_id]
+            execute_batch = engine.primary.actor.execute_batch
+            if callable(getattr(execute_batch, "remote", None)):
                 remote_jobs.append(
                     RayActorJob(
                         job_index=job_index,
-                        worker_id=worker.worker_id,
-                        remote_method=remote,
+                        worker_id=engine.engine_id,
+                        remote_method=engine.remote("execute_batch"),
                         payload=assignment.envelope,
                     ),
                 )
@@ -238,7 +248,7 @@ class RayGenerationExecutor:
         if remote_jobs:
             worker_methods = None
             if any(job.worker_id is None for job in remote_jobs):
-                worker_methods = self._remote_worker_methods()
+                worker_methods = self._remote_engine_methods()
             result_pairs.extend(
                 await self.actor_dispatcher.run(
                     remote_jobs,
@@ -276,7 +286,7 @@ class RayGenerationExecutor:
             evicted = stale[0]
             raise StaleSlotDiscard(
                 "distributed rollout discarded a stale trainable-state slot "
-                f"(worker_id={evicted.worker_id}, "
+                f"(rank={evicted.worker_id}, "
                 f"policy_version={evicted.policy_version}, "
                 f"batches={len(stale)}/{len(results)}): {evicted.error}",
             )
@@ -284,7 +294,6 @@ class RayGenerationExecutor:
         results, oom_splits = await self._degrade_oom_chunks(
             results,
             envelope_by_batch_key=envelope_by_batch_key,
-            worker_by_id=worker_by_id,
         )
 
         for result in results:
@@ -294,7 +303,7 @@ class RayGenerationExecutor:
             ):
                 raise RuntimeError(
                     "distributed rollout policy_version mismatch "
-                    f"(worker_id={result.worker_id}, "
+                    f"(rank={result.worker_id}, "
                     f"expected={request.policy_version}, "
                     f"actual={result.policy_version})",
                 )
@@ -357,23 +366,24 @@ class RayGenerationExecutor:
                     row["queue_wait_s"],
                     row["execution_s"],
                 )
-        worker_debug_rows: list[dict[str, Any]] = []
+        rank_debug_rows: list[dict[str, Any]] = []
         if runtime_debug_on:
+            rank_by_id = self._rank_by_id()
             for result in results:
-                worker = worker_by_id[result.worker_id]
-                worker_debug_rows.append(
+                rank = rank_by_id[result.worker_id]
+                rank_debug_rows.append(
                     {
                         "worker_id": result.worker_id,
-                        "node_ip": worker.node_ip,
-                        "gpu_ids": list(worker.gpu_ids),
+                        "node_ip": rank.node_ip,
+                        "gpu_ids": list(rank.gpu_ids),
                         "policy_version": result.policy_version,
                         "batch_key": result.batch.batch_key,
                         **result.metrics,
                     },
                 )
         debug_payload: dict[str, Any] = {}
-        if worker_debug_rows:
-            debug_payload["ray_chunks"] = worker_debug_rows
+        if rank_debug_rows:
+            debug_payload["ray_chunks"] = rank_debug_rows
         if runtime_debug_on and schedule_summary:
             debug_payload["chunk_schedule"] = schedule_summary
         if runtime_debug_on and oom_splits:
@@ -398,25 +408,26 @@ class RayGenerationExecutor:
         engine_plan: EnginePlan,
         sample_rows: list[GenerationSampleRow],
     ) -> GenerationOutput | PipelinedRequestOutOfMemory:
-        """Single-worker stage-overlap path (opt-in, ``pipelined=True``):
-        the whole request's batches run software-pipelined on one worker
+        """Single-engine stage-overlap path (opt-in, ``pipelined=True``):
+        the whole request's batches run software-pipelined on one engine
         (``forward_plan_pipelined``), returning the already-gathered
         GenerationOutput. The pipeline keeps depth 1 (about two batches resident),
         so a typed OOM response falls back to the normal per-batch dispatch and
-        split admission path. Version safety is enforced in the worker (slot
+        split admission path. Version safety is enforced in the rank (slot
         activation / StaleSlotDiscard); a stale request raises and is counted as a
         graceful discard upstream, never trained off-policy."""
 
-        worker = self.workers[0]
-        actor = worker.actor
-        call = actor.execute_request_pipelined
+        engine = self.engines[0]
+        primary = engine.primary
+        call = primary.actor.execute_request_pipelined
         remote = getattr(call, "remote", None)
         if callable(remote):
-            progress = getattr(actor, "pipelined_progress", None)
+            # Progress is a rank-0 read on the health concurrency group.
+            progress = getattr(primary.actor, "pipelined_progress", None)
             progress_remote = getattr(progress, "remote", None)
             if not callable(progress_remote):
                 raise PipelinedProgressError(
-                    "pipelined Ray generation requires worker progress reporting",
+                    "pipelined Ray generation requires rank progress reporting",
                 )
 
             async def await_pipelined_result(
@@ -440,8 +451,8 @@ class RayGenerationExecutor:
             result = await self.actor_dispatcher.run_one(
                 RayActorJob(
                     job_index=0,
-                    worker_id=worker.worker_id,
-                    remote_method=remote,
+                    worker_id=engine.engine_id,
+                    remote_method=engine.remote("execute_request_pipelined"),
                     payload=request,
                     keyword_args={
                         "engine_plan": engine_plan,
@@ -458,7 +469,7 @@ class RayGenerationExecutor:
             raise result
         if not isinstance(result, (GenerationOutput, PipelinedRequestOutOfMemory)):
             raise TypeError(
-                f"pipelined generation worker returned unsupported result {type(result).__name__}",
+                f"pipelined generation engine returned unsupported result {type(result).__name__}",
             )
         if result.request_id != request.request_id:
             raise RuntimeError(
@@ -467,11 +478,11 @@ class RayGenerationExecutor:
             )
         if (
             isinstance(result, PipelinedRequestOutOfMemory)
-            and result.worker_id != worker.worker_id
+            and result.worker_id != primary.worker_id
         ):
             raise RuntimeError(
-                "pipelined generation worker_id mismatch: "
-                f"{result.worker_id!r} != {worker.worker_id!r}",
+                "pipelined generation rank mismatch: "
+                f"{result.worker_id!r} != {primary.worker_id!r}",
             )
         return result
 
@@ -543,7 +554,7 @@ class RayGenerationExecutor:
                     continue
                 if not isinstance(snapshot, PipelinedRequestProgress):
                     raise PipelinedProgressError(
-                        f"pipelined worker returned invalid progress {type(snapshot).__name__}",
+                        f"pipelined rank returned invalid progress {type(snapshot).__name__}",
                     )
                 if snapshot.request_id != request_id:
                     raise PipelinedProgressError(
@@ -586,16 +597,15 @@ class RayGenerationExecutor:
         results: list[GenerationBatchResult],
         *,
         envelope_by_batch_key: dict[str, Any],
-        worker_by_id: dict[str, RayActorHandle],
     ) -> tuple[list[GenerationBatchResult], list[dict[str, Any]]]:
         """Split OOM batches in half and re-run until success or single sample.
 
         The retry lives on the driver so vrl/ray stays batch-agnostic, and the
         gatherer reassembles by (prompt_index, sample_start) metadata, so the
         extra child results need no positional bookkeeping. Children rebind to
-        the worker that OOMed: the fleet-owned dispatcher exposes one real
-        slot per synchronous actor, so the two halves run sequentially instead
-        of landing concurrently on the GPU that just proved too full.
+        the engine that OOMed: the fleet-owned dispatcher exposes one real
+        slot per engine, so the two halves run sequentially instead
+        of landing concurrently on the GPUs that just proved too full.
         """
 
         final: list[GenerationBatchResult] = []
@@ -613,20 +623,20 @@ class RayGenerationExecutor:
                 if not _is_oom_error(result.error) or batch.sample_count <= 1:
                     raise RuntimeError(
                         "distributed rollout batch failed "
-                        f"(worker_id={result.worker_id}, batch={batch}): "
+                        f"(rank={result.worker_id}, batch={batch}): "
                         f"{result.error}",
                     )
-                worker = worker_by_id.get(result.worker_id)
-                if worker is None:
+                engine = self._engine_for_result_id(result.worker_id)
+                if engine is None:
                     raise RuntimeError(
-                        "distributed rollout batch OOMed on unknown worker "
+                        "distributed rollout batch OOMed on unknown rank "
                         f"{result.worker_id!r}: {result.error}",
                     )
                 children = batch.split()
                 logger.warning(
-                    "ray batch %s OOMed on worker %s; splitting %d samples into %s",
+                    "ray batch %s OOMed on engine %s; splitting %d samples into %s",
                     batch.batch_key,
-                    result.worker_id,
+                    engine.engine_id,
                     batch.sample_count,
                     [child.batch_key for child in children],
                 )
@@ -638,17 +648,17 @@ class RayGenerationExecutor:
                         "children": [child.batch_key for child in children],
                     },
                 )
-                execute_batch = worker.actor.execute_batch
-                remote = getattr(execute_batch, "remote", None)
+                execute_batch = engine.primary.actor.execute_batch
+                remote_capable = callable(getattr(execute_batch, "remote", None))
                 for child in children:
                     child_envelope = replace(parent_envelope, batch=child)
                     envelope_by_batch_key[child_envelope.batch_key] = child_envelope
-                    if callable(remote):
+                    if remote_capable:
                         retry_jobs.append(
                             RayActorJob(
                                 job_index=len(retry_jobs),
-                                worker_id=result.worker_id,
-                                remote_method=remote,
+                                worker_id=engine.engine_id,
+                                remote_method=engine.remote("execute_batch"),
                                 payload=child_envelope,
                             ),
                         )
@@ -667,19 +677,18 @@ class RayGenerationExecutor:
                 _require_correlated_result(result, envelope_by_batch_key)
         return final, splits
 
-    def _remote_worker_methods(self) -> dict[str, Any]:
-        """Collect remote execute_batch handles for pull-based dispatch."""
+    def _remote_engine_methods(self) -> dict[str, Any]:
+        """Collect per-engine execute_batch submitters for pull-based dispatch."""
 
         methods: dict[str, Any] = {}
-        for worker in self.workers:
-            actor = worker.actor
-            remote = getattr(getattr(actor, "execute_batch", None), "remote", None)
-            if not callable(remote):
+        for engine in self.engines:
+            probe = getattr(engine.primary.actor, "execute_batch", None)
+            if not callable(getattr(probe, "remote", None)):
                 raise RuntimeError(
-                    "dynamic batch placement requires Ray actor workers; "
-                    f"worker {worker.worker_id!r} has no remote execute_batch",
+                    "dynamic batch placement requires Ray actor ranks; "
+                    f"engine {engine.engine_id!r} has no remote execute_batch",
                 )
-            methods[worker.worker_id] = remote
+            methods[engine.engine_id] = engine.remote("execute_batch")
         return methods
 
 
@@ -687,26 +696,26 @@ def _require_correlated_result(
     result: GenerationBatchResult,
     envelope_by_batch_key: dict[str, GenerationBatchEnvelope],
 ) -> GenerationBatchEnvelope:
-    """Require a worker result to match a submitted request and batch."""
+    """Require a rank result to match a submitted request and batch."""
 
     envelope = envelope_by_batch_key.get(result.batch.batch_key)
     if envelope is None:
         raise RuntimeError(
             "distributed rollout returned an unknown batch "
-            f"(worker_id={result.worker_id}, batch={result.batch.batch_key})",
+            f"(rank={result.worker_id}, batch={result.batch.batch_key})",
         )
     expected_request_id = envelope.request.request_id
     if result.request_id != expected_request_id:
         raise RuntimeError(
             "distributed rollout request_id mismatch "
-            f"(worker_id={result.worker_id}, batch={result.batch.batch_key}, "
+            f"(rank={result.worker_id}, batch={result.batch.batch_key}, "
             f"expected={expected_request_id!r}, actual={result.request_id!r})",
         )
     return envelope
 
 
 def _is_oom_error(message: str) -> bool:
-    """Match CUDA/HIP allocator failures flattened to text by a worker."""
+    """Match CUDA/HIP allocator failures flattened to text by a rank."""
 
     return "out of memory" in message.lower()
 

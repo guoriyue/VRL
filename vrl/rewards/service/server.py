@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from vrl.rewards.launch_contract import RewardWorkerLaunchContract
+from vrl.rewards.launch_contract import RewardRuntimeLaunchContract
 from vrl.rewards.service.owner import RewardScorerOwner
 from vrl.rewards.service.protocol import (
     RewardServiceErrorCode,
@@ -671,7 +671,7 @@ def _load_service(config_path: Path) -> RewardService:
     if not isinstance(raw, Mapping):
         raise TypeError("reward service config must be a mapping")
     cfg = RewardServiceConfig.from_mapping(raw)
-    launch = RewardWorkerLaunchContract.from_worker_config(cfg.worker_config)
+    launch = RewardRuntimeLaunchContract.from_component_config(cfg.worker_config)
     if launch.sleep_offload:
         raise ValueError(
             "reward service owns its device for its whole lifetime; drop "
@@ -684,7 +684,7 @@ def _load_service(config_path: Path) -> RewardService:
     configured_device = launch.device.strip().lower()
     runs_on_cpu = configured_device == "cpu" or configured_device.startswith("cpu:")
     return RewardService(
-        InProcessRewardScorer(launch.worker_config),
+        InProcessRewardScorer(launch.component_config),
         artifact_roots=roots,
         host=str(cfg.host),
         port=int(cfg.port),

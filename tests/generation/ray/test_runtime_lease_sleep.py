@@ -13,6 +13,7 @@ import pytest
 from vrl.generation.execution.types import (
     WorkerMemoryParkingSnapshot,
 )
+from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.runtime import RayGenerationRuntime
@@ -38,10 +39,10 @@ class _FakeSession:
         self.supports_non_draining_weight_sync = False
         self.force_close_calls = 0
 
-    async def sleep_workers(self) -> None:
+    async def sleep_engines(self) -> None:
         self.calls.append("sleep")
 
-    async def wake_workers(self) -> None:
+    async def wake_engines(self) -> None:
         self.calls.append("wake")
 
     async def shutdown(self) -> None:
@@ -78,10 +79,10 @@ class _BlockingSleepSession(_FakeSession):
         self.sleep_started = asyncio.Event()
         self.finish_sleep = asyncio.Event()
 
-    async def sleep_workers(self) -> None:
+    async def sleep_engines(self) -> None:
         self.sleep_started.set()
         await self.finish_sleep.wait()
-        await super().sleep_workers()
+        await super().sleep_engines()
 
 
 class _BlockingWakeSession(_FakeSession):
@@ -90,10 +91,10 @@ class _BlockingWakeSession(_FakeSession):
         self.wake_started = asyncio.Event()
         self.finish_wake = asyncio.Event()
 
-    async def wake_workers(self) -> None:
+    async def wake_engines(self) -> None:
         self.wake_started.set()
         await self.finish_wake.wait()
-        await super().wake_workers()
+        await super().wake_engines()
 
 
 class _NonRetainingSession(_FakeSession):
@@ -113,7 +114,7 @@ class _TimeoutWeightSync:
     def __init__(self, error: RayOperationTimeout) -> None:
         self.error = error
 
-    async def push_to_rollout_workers(self, _state_ref: Any, _version: int) -> None:
+    async def push_to_rollout_engines(self, _state_ref: Any, _version: int) -> None:
         raise self.error
 
 
@@ -127,6 +128,13 @@ class _ReleaseActor:
         return object()
 
 
+def _engine(worker_id, actor):
+    return RayGenerationEngine(
+        worker_id,
+        [RayActorHandle(worker_id=worker_id, actor=actor)],
+    )
+
+
 def _timeout_session(
     error: RayOperationTimeout,
 ) -> tuple[RayGenerationSession, _ReleaseActor]:
@@ -134,7 +142,7 @@ def _timeout_session(
     session = RayGenerationSession(
         SimpleNamespace(),
         _TimeoutWeightSync(error),
-        [RayActorHandle(worker_id="w0", actor=actor)],
+        [_engine("w0", actor)],
     )
     return session, actor
 
@@ -263,15 +271,11 @@ def cleanup_ray(monkeypatch: pytest.MonkeyPatch) -> _CleanupRay:
 
 
 def _parking_runtime(*reports: Any) -> RayGenerationRuntime:
-    workers = [
-        RayActorHandle(
-            worker_id=f"rollout-{index}",
-            actor=_ParkingActor(report),
-        )
-        for index, report in enumerate(reports)
+    engines = [
+        _engine(f"rollout-{index}", _ParkingActor(report)) for index, report in enumerate(reports)
     ]
     runtime = _on_demand_runtime()
-    runtime._session = RayGenerationSession(SimpleNamespace(), None, workers)
+    runtime._session = RayGenerationSession(SimpleNamespace(), None, engines)
     return runtime
 
 
@@ -280,12 +284,7 @@ def _failed_parking_session() -> tuple[RayGenerationSession, _ParkingActor]:
     session = RayGenerationSession(
         SimpleNamespace(),
         None,
-        [
-            RayActorHandle(
-                worker_id="rollout-0",
-                actor=actor,
-            ),
-        ],
+        [_engine("rollout-0", actor)],
     )
     return session, actor
 
@@ -300,7 +299,7 @@ async def test_offload_accepts_complete_worker_parking_evidence() -> None:
     await runtime.offload()
 
     assert runtime._session_parked is True
-    assert [worker.actor.sleep.calls for worker in runtime._owned_workers] == [1, 1]
+    assert [worker.actor.sleep.calls for worker in runtime._owned_ranks] == [1, 1]
 
 
 @pytest.mark.asyncio
@@ -308,11 +307,11 @@ async def test_offload_rejects_mismatched_worker_parking_evidence(
     cleanup_ray: _CleanupRay,
 ) -> None:
     runtime = _parking_runtime(_parking_snapshot("another-worker"))
-    actor = runtime._owned_workers[0].actor
+    actor = runtime._owned_ranks[0].actor
 
     with pytest.raises(
         RuntimeError,
-        match="mismatched worker memory-parking report",
+        match="mismatched rank memory-parking report",
     ) as caught:
         await runtime.offload()
 
@@ -327,7 +326,7 @@ async def test_offload_rejects_worker_gpu_residual(
     cleanup_ray: _CleanupRay,
 ) -> None:
     runtime = _parking_runtime(_parking_snapshot(residual_bytes=1))
-    actor = runtime._owned_workers[0].actor
+    actor = runtime._owned_ranks[0].actor
 
     with pytest.raises(
         RuntimeError,
@@ -350,7 +349,7 @@ async def test_offload_requires_every_worker_parking_rpc_to_succeed(
         _parking_snapshot("rollout-0"),
         sleep_error,
     )
-    actors = [worker.actor for worker in runtime._owned_workers]
+    actors = [worker.actor for worker in runtime._owned_ranks]
 
     with pytest.raises(RuntimeError, match="worker sleep failed") as caught:
         await runtime.offload()
@@ -368,7 +367,7 @@ async def test_worker_sleep_remote_error_force_kills_without_graceful_release(
 ) -> None:
     timeout = TimeoutError("worker sleep timed out")
     runtime = _parking_runtime(timeout)
-    actor = runtime._owned_workers[0].actor
+    actor = runtime._owned_ranks[0].actor
 
     with pytest.raises(TimeoutError, match="worker sleep timed out") as caught:
         await runtime.offload()
@@ -386,7 +385,7 @@ async def test_worker_wake_remote_error_force_kills_without_graceful_release(
 ) -> None:
     timeout = TimeoutError("worker wake timed out")
     runtime = _parking_runtime(_parking_snapshot())
-    actor = runtime._owned_workers[0].actor
+    actor = runtime._owned_ranks[0].actor
     actor.wake = _RemoteResult(timeout)
     runtime._session_parked = True
 
@@ -418,7 +417,7 @@ async def test_worker_parking_deadline_force_kills_without_graceful_release(
     import vrl.generation.ray.session as session_module
 
     runtime = _parking_runtime(_parking_snapshot())
-    actor = runtime._owned_workers[0].actor
+    actor = runtime._owned_ranks[0].actor
     setattr(actor, remote_name, SimpleNamespace(remote=lambda: _NeverRef()))
     runtime._session_parked = workers_offloaded
     real_wait_for = asyncio.wait_for
@@ -445,7 +444,7 @@ async def test_offload_rejects_invalid_worker_parking_report_type(
     cleanup_ray: _CleanupRay,
 ) -> None:
     runtime = _parking_runtime({"worker_id": "rollout-0"})
-    actor = runtime._owned_workers[0].actor
+    actor = runtime._owned_ranks[0].actor
 
     with pytest.raises(TypeError, match="invalid memory-parking report") as caught:
         await runtime.offload()
@@ -535,13 +534,13 @@ async def test_runtime_orders_health_monitor_around_session_parking() -> None:
     events: list[Any] = []
 
     class _OrderedSession(_FakeSession):
-        async def sleep_workers(self) -> None:
+        async def sleep_engines(self) -> None:
             events.append("sleep")
-            await super().sleep_workers()
+            await super().sleep_engines()
 
-        async def wake_workers(self) -> None:
+        async def wake_engines(self) -> None:
             events.append("wake")
-            await super().wake_workers()
+            await super().wake_engines()
 
         async def update_weights(self, state_ref: Any, version: int) -> None:
             events.append(("update", state_ref, version))
@@ -931,10 +930,10 @@ async def test_auto_probe_timeout_force_kills_the_session_owner(
             )
 
     actor = _ProbeActor()
-    worker = RayActorHandle(worker_id="w0", actor=actor)
+    engine = _engine("w0", actor)
     executor = RayGenerationExecutor(
         SimpleNamespace(),
-        [worker],
+        [engine],
         SimpleNamespace(),
         actor_dispatcher=RayActorDispatcher(("w0",)),
         generation_stall_timeout_s=0.01,
@@ -942,7 +941,7 @@ async def test_auto_probe_timeout_force_kills_the_session_owner(
     session = RayGenerationSession(
         executor,
         None,
-        [worker],
+        [engine],
     )
     runtime._session = session
 
@@ -1002,7 +1001,7 @@ async def test_submitted_cancellation_force_kills_the_session_owner(
     session = RayGenerationSession(
         _Executor(),
         None,
-        [RayActorHandle(worker_id="w0", actor=actor)],
+        [_engine("w0", actor)],
     )
     runtime._session = session
     runtime.current_policy_version = None
@@ -1276,7 +1275,7 @@ async def test_offload_task_cleans_up_failure_after_waiter_cancellation() -> Non
             self.sleep_started = asyncio.Event()
             self.finish_sleep = asyncio.Event()
 
-        async def sleep_workers(self) -> None:
+        async def sleep_engines(self) -> None:
             self.sleep_started.set()
             await self.finish_sleep.wait()
             raise offload_error
@@ -1308,7 +1307,7 @@ async def test_offload_failure_runs_terminal_cleanup() -> None:
     offload_error = RuntimeError("sleep failed")
 
     class _FailingSession(_FakeSession):
-        async def sleep_workers(self) -> None:
+        async def sleep_engines(self) -> None:
             raise offload_error
 
     inner = _FailingSession()
@@ -1332,7 +1331,7 @@ async def test_offload_cleanup_failure_retries_without_replacing_root() -> None:
     class _FailingSession(_FakeSession):
         shutdown_calls = 0
 
-        async def sleep_workers(self) -> None:
+        async def sleep_engines(self) -> None:
             raise offload_error
 
         async def shutdown(self) -> None:
@@ -1366,7 +1365,7 @@ async def test_repeated_offload_cleanup_failure_preserves_root_for_later_retry()
     class _FailingSession(_FakeSession):
         shutdown_calls = 0
 
-        async def sleep_workers(self) -> None:
+        async def sleep_engines(self) -> None:
             raise offload_error
 
         async def shutdown(self) -> None:
@@ -1410,7 +1409,7 @@ async def test_waiter_cancellation_during_cleanup_retry_preserves_root_cause() -
             self.retry_started = asyncio.Event()
             self.finish_retry = asyncio.Event()
 
-        async def sleep_workers(self) -> None:
+        async def sleep_engines(self) -> None:
             raise offload_error
 
         async def shutdown(self) -> None:
@@ -1457,7 +1456,7 @@ async def test_waiter_cancellation_uses_root_published_during_graceful_shutdown(
             self.sleep_started = asyncio.Event()
             self.finish_sleep = asyncio.Event()
 
-        async def sleep_workers(self) -> None:
+        async def sleep_engines(self) -> None:
             self.sleep_started.set()
             await self.finish_sleep.wait()
             raise offload_error

@@ -63,13 +63,17 @@ def cancel_ray_refs(
 
     failures: list[Exception] = []
     for ref in refs:
-        try:
-            # Ray forbids force=True for actor tasks. Correctness comes from the
-            # owner's subsequent actor kill, not from assuming this interrupts
-            # synchronous model code.
-            ray.cancel(ref, force=False)
-        except Exception as error:
-            failures.append(error)
+        # Aggregate refs (one engine call fanned out to several rank actors)
+        # expose their per-rank refs as ``child_refs``; flatten by duck type so
+        # this generic layer never imports the engine composition.
+        for child in getattr(ref, "child_refs", (ref,)):
+            try:
+                # Ray forbids force=True for actor tasks. Correctness comes from
+                # the owner's subsequent actor kill, not from assuming this
+                # interrupts synchronous model code.
+                ray.cancel(child, force=False)
+            except Exception as error:
+                failures.append(error)
     if failures and root_error is not None:
         root_error.add_note(
             "Ray ref cancellation incomplete: "

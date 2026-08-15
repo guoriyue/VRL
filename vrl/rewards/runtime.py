@@ -33,7 +33,7 @@ from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
 )
-from vrl.rewards.launch_contract import RewardWorkerLaunchContract
+from vrl.rewards.launch_contract import RewardRuntimeLaunchContract
 from vrl.rewards.protocols import RewardScorer
 from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.config import import_from_path
@@ -277,8 +277,8 @@ class InProcessRewardScorer:
         model: Any | None = None,
     ) -> None:
         # Typed runtime contract; the verbatim bag still feeds the factory.
-        self._launch = RewardWorkerLaunchContract.from_worker_config(worker_config)
-        self._worker_config = self._launch.worker_config
+        self._launch = RewardRuntimeLaunchContract.from_component_config(worker_config)
+        self._worker_config = self._launch.component_config
         self._sleep_offload = self._launch.sleep_offload
         if model is not None and self._sleep_offload:
             raise ValueError(

@@ -24,7 +24,7 @@ def _runtime(
     session = RayGenerationSession(
         executor=object(),
         weight_sync=None,
-        owned_workers=[],
+        owned_engines=[],
     )
 
     if deferred:

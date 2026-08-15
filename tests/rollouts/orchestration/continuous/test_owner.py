@@ -34,7 +34,7 @@ def _runtime(weight_sync: Any) -> RayGenerationRuntime:
         session=RayGenerationSession(
             executor=object(),
             weight_sync=weight_sync,
-            owned_workers=[],
+            owned_engines=[],
         ),
     )
 
@@ -362,7 +362,7 @@ async def test_real_runtime_cleanup_failure_does_not_replace_ack_root() -> None:
     """Runtime quarantine and owner cleanup share one first-root contract."""
 
     class _AckMismatchSync:
-        async def push_to_rollout_workers(
+        async def push_to_rollout_engines(
             self,
             state_ref: Any,
             policy_version: int,
@@ -437,7 +437,7 @@ async def test_health_failure_after_weight_ack_never_resumes_owner_admission() -
     runtime: RayGenerationRuntime
 
     class _HealthRaceSync:
-        async def push_to_rollout_workers(
+        async def push_to_rollout_engines(
             self,
             state_ref: Any,
             policy_version: int,

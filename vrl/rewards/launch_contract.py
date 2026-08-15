@@ -1,8 +1,8 @@
-"""Serializable reward worker launch contract.
+"""Serializable reward runtime launch contract.
 
 The reward twin of ``GenerationRuntimeLaunchContract``
 (vrl/generation/launch_contract.py): the typed, closed key set the runtime
-itself branches on, parsed once from a reward worker config. It lives apart
+itself branches on, parsed once from a reward component config. It lives apart
 from runtime.py and the service because both sides of the process boundary
 (in-process runtime, standalone service launch parsing) share only this
 contract. The verbatim mapping still reaches the model factory as its open
@@ -18,8 +18,8 @@ from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
-class RewardWorkerLaunchContract:
-    """Runtime-owned keys parsed once from a reward worker config."""
+class RewardRuntimeLaunchContract:
+    """Runtime-owned keys parsed once from a reward component config."""
 
     model_factory: str
     device: str
@@ -27,14 +27,14 @@ class RewardWorkerLaunchContract:
     memory_parking_residual_bytes_limit: int
     reward_model_name: str
     reward_model_version: str
-    worker_config: Mapping[str, Any]
+    component_config: Mapping[str, Any]
 
     @classmethod
-    def from_worker_config(
+    def from_component_config(
         cls,
-        worker_config: Mapping[str, Any] | None,
-    ) -> RewardWorkerLaunchContract:
-        cfg = dict(worker_config or {})
+        component_config: Mapping[str, Any] | None,
+    ) -> RewardRuntimeLaunchContract:
+        cfg = dict(component_config or {})
         residual_limit = int(cfg.get("memory_parking_residual_bytes_limit", 0))
         if residual_limit < 0:
             raise ValueError("reward memory parking residual limit must be >= 0")
@@ -45,8 +45,8 @@ class RewardWorkerLaunchContract:
             memory_parking_residual_bytes_limit=residual_limit,
             reward_model_name=str(cfg.get("reward_model_name", "")).strip(),
             reward_model_version=str(cfg.get("reward_model_version", "")).strip(),
-            worker_config=cfg,
+            component_config=cfg,
         )
 
 
-__all__ = ["RewardWorkerLaunchContract"]
+__all__ = ["RewardRuntimeLaunchContract"]

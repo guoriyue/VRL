@@ -8,7 +8,7 @@ contract. Construction validates pickle-serializability and primitives-only
 content so a live driver object (callable, model, tensor) fails fast on the
 driver instead of inside actor deserialization.
 
-The reward-side twin is ``RewardWorkerLaunchContract``
+The reward-side twin is ``RewardRuntimeLaunchContract``
 (vrl/rewards/launch_contract.py).
 """
 

@@ -24,6 +24,15 @@ from vrl.config.reward_inference import (
 )
 from vrl.utils.config import cfg_get, to_builtin
 
+# Ranks per rollout engine. The ONE place "one GPU per engine" is hardcoded:
+# engine grouping (launcher, BundleLayout) and the num_engines arithmetic all
+# derive from it. A multi-GPU engine backend turns this into the
+# distributed.rollout.gpus_per_engine config key behind a per-family
+# capability gate (docs/sprints/SPRINT_engine_worker_vocabulary.md, P4) —
+# until that backend exists, a value > 1 would mean "compute the same batch
+# N times", so no knob is exposed.
+ROLLOUT_GPUS_PER_ENGINE = 1
+
 
 @dataclass(frozen=True, slots=True)
 class RoleResourceConfig:

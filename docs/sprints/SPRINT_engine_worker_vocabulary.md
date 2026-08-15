@@ -1,6 +1,11 @@
 # SPRINT：engine / worker 抽象 + 多卡引擎全量支持
 
-状态：**planned（2026-08-14）**。前置事实：`gpus_per_worker` 配置旋钮与
+状态：**P1/P2 已实施，P3 待做，P4/P5 待多卡后端接线（2026-08-14）**。
+实施记录：P1 = commit `5fbb1470`（num_engines 键 + RolloutRuntimeSection）；
+P2 = 本 commit（GenerationRankActor 协议、RayGenerationEngine 组合体、driver
+全链改单位、BundleLayout 引擎分组、N=2/3 假件单测、reward 双子改名）。
+
+原始计划：前置事实：`gpus_per_worker` 配置旋钮与
 `rollout_gpus_per_worker` 派生视图已删除（commit `8c4ffd23`、`b50892bb`）——
 删除的是"只有一种合法取值的旋钮"，不是概念的位置。
 

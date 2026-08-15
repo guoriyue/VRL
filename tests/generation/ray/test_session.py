@@ -12,6 +12,7 @@ from vrl.generation.execution.types import (
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.protocols import GenerationRuntime
+from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.ray.actor_group import RayActorHandle
 
@@ -63,7 +64,7 @@ class _WeightSync:
     def __init__(self) -> None:
         self.calls: list[Any] = []
 
-    async def push_to_rollout_workers(self, state_ref: Any, policy_version: int) -> None:
+    async def push_to_rollout_engines(self, state_ref: Any, policy_version: int) -> None:
         self.calls.append((state_ref, policy_version))
 
 
@@ -103,7 +104,10 @@ def _session(
         _Executor(),
         weight_sync,
         [
-            RayActorHandle(worker_id=f"rollout-{index}", actor=actor)
+            RayGenerationEngine(
+                f"rollout-{index}",
+                [RayActorHandle(worker_id=f"rollout-{index}", actor=actor)],
+            )
             for index, actor in enumerate(actors)
         ],
         supports_non_draining_weight_sync,
@@ -154,8 +158,8 @@ async def test_session_parks_and_wakes_the_complete_worker_fleet() -> None:
     actors = (_Actor("rollout-0"), _Actor("rollout-1"))
     session = _session(*actors)
 
-    snapshots = await session.sleep_workers()
-    await session.wake_workers()
+    snapshots = await session.sleep_engines()
+    await session.wake_engines()
 
     assert tuple(snapshot.worker_id for snapshot in snapshots) == (
         "rollout-0",
@@ -170,10 +174,10 @@ async def test_session_parking_failure_does_not_translate_or_close_resources() -
     actor = _Actor("wrong-worker")
     session = _session(actor)
 
-    with pytest.raises(RuntimeError, match="mismatched worker memory-parking report"):
-        await session.sleep_workers()
+    with pytest.raises(RuntimeError, match="mismatched rank memory-parking report"):
+        await session.sleep_engines()
 
-    assert session.workers[0].actor is actor
+    assert session.engines[0].primary.actor is actor
     assert actor.release_policy.calls == 0
 
 
@@ -182,14 +186,20 @@ def test_actor_handle_rejects_missing_actor() -> None:
         RayActorHandle(worker_id="rollout-0", actor=None)
 
 
-def test_session_rejects_duplicate_worker_ids() -> None:
-    workers = [
-        RayActorHandle(worker_id="rollout-0", actor=_Actor("rollout-0")),
-        RayActorHandle(worker_id="rollout-0", actor=_Actor("rollout-0")),
+def test_session_rejects_duplicate_engine_ids() -> None:
+    engines = [
+        RayGenerationEngine(
+            "rollout-0",
+            [RayActorHandle(worker_id="rollout-0", actor=_Actor("rollout-0"))],
+        ),
+        RayGenerationEngine(
+            "rollout-0",
+            [RayActorHandle(worker_id="rollout-0", actor=_Actor("rollout-0"))],
+        ),
     ]
 
-    with pytest.raises(RuntimeError, match="duplicate generation worker ids"):
-        RayGenerationSession(_Executor(), None, workers)
+    with pytest.raises(RuntimeError, match="duplicate generation engine ids"):
+        RayGenerationSession(_Executor(), None, engines)
 
 
 @pytest.mark.asyncio
@@ -210,7 +220,7 @@ async def test_close_releases_policies_then_kills_workers(
     assert len(ray.get_calls) == 1
     assert ray.get_calls[0][1] == 60
     assert ray.killed == list(actors)
-    assert session.workers == []
+    assert session.engines == []
 
 
 @pytest.mark.asyncio
@@ -225,14 +235,14 @@ async def test_close_retains_only_actor_handles_that_failed_to_die(
     monkeypatch.setattr(session_module, "require_ray", lambda: ray)
     session = _session(first, failed)
 
-    with pytest.raises(RuntimeError, match="1 worker actor kill") as caught:
+    with pytest.raises(RuntimeError, match="1 rank actor kill") as caught:
         await session.close(force=False)
 
     assert isinstance(caught.value.__cause__, RuntimeError)
     assert ray.killed == [first]
-    assert session.workers == [
-        RayActorHandle(worker_id="rollout-1", actor=failed),
-    ]
+    # The engine whose rank failed to die is retained; the killed one is gone.
+    assert [engine.engine_id for engine in session.engines] == ["rollout-1"]
+    assert session.engines[0].primary.actor is failed
 
 
 @pytest.mark.asyncio
@@ -251,12 +261,12 @@ async def test_force_close_marks_cleanup_forceful_without_killing_early(
     assert actor.release_policy.calls == 0
     assert ray.get_calls == []
     assert ray.killed == []
-    assert session.workers
+    assert session.engines
 
     await session.close(force=False)
 
     assert ray.killed == [actor]
-    assert session.workers == []
+    assert session.engines == []
 
 
 @pytest.mark.asyncio
@@ -287,4 +297,4 @@ async def test_force_close_interrupts_graceful_release_wait(
     finish_release.set()
 
     assert ray.killed == [actor]
-    assert session.workers == []
+    assert session.engines == []

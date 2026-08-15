@@ -29,6 +29,7 @@ from vrl.generation.execution.types import (
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
@@ -319,8 +320,8 @@ def _probe_worker(
     worker_id: str,
     answer: int,
     calls: list[str],
-) -> RayActorHandle:
-    """Build the executor's supported local-callable worker shape.
+) -> RayGenerationEngine:
+    """Build the executor's supported local-callable engine shape.
 
     This covers result ordering and cache reuse without pretending to exercise
     Ray serialization or ObjectRef deadlines.
@@ -334,9 +335,14 @@ def _probe_worker(
             trials=(),
         )
 
-    return RayActorHandle(
-        worker_id=worker_id,
-        actor=SimpleNamespace(probe_batch_size=probe),
+    return RayGenerationEngine(
+        worker_id,
+        [
+            RayActorHandle(
+                worker_id=worker_id,
+                actor=SimpleNamespace(probe_batch_size=probe),
+            ),
+        ],
     )
 
 

@@ -20,6 +20,7 @@ from vrl.generation.execution.types import (
     PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
 )
+from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor, _is_oom_error
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_group import RayActorHandle
@@ -99,7 +100,7 @@ class _StaticPlanner:
     ) -> DistributedGenerationPlan:
         assignments = tuple(
             DeviceAssignment(
-                worker_id=worker_ids[index % len(worker_ids)],
+                engine_id=worker_ids[index % len(worker_ids)],
                 envelope=GenerationBatchEnvelope(
                     request=request,
                     batch=batch,
@@ -158,17 +159,23 @@ def _executor(
     batches: list[GenerationSampleBatch],
     workers: list[_CapacityWorker],
 ) -> tuple[RayGenerationExecutor, list[RayActorHandle]]:
-    handles = [RayActorHandle(worker_id=worker.worker_id, actor=worker) for worker in workers]
+    engines = [
+        RayGenerationEngine(
+            worker.worker_id,
+            [RayActorHandle(worker_id=worker.worker_id, actor=worker)],
+        )
+        for worker in workers
+    ]
     executor = RayGenerationExecutor(
         planner=_StaticPlanner(batches=batches),
-        workers=handles,
+        engines=engines,
         gatherer=_CoverageGatherer(),
         actor_dispatcher=RayActorDispatcher(
-            tuple(handle.worker_id for handle in handles),
+            tuple(engine.engine_id for engine in engines),
         ),
         generation_stall_timeout_s=30.0,
     )
-    return executor, handles
+    return executor, engines
 
 
 @pytest.mark.gpu
@@ -317,12 +324,14 @@ async def test_stale_slot_routes_to_graceful_discard_not_failure() -> None:
 
     batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=2)
     worker = _StaleSlotWorker(worker_id="w0")
-    handles = [
-        RayActorHandle(worker_id=worker.worker_id, actor=worker),
-    ]
     executor = RayGenerationExecutor(
         planner=_StaticPlanner(batches=[batch]),
-        workers=handles,
+        engines=[
+            RayGenerationEngine(
+                worker.worker_id,
+                [RayActorHandle(worker_id=worker.worker_id, actor=worker)],
+            ),
+        ],
         gatherer=_CoverageGatherer(),
         actor_dispatcher=RayActorDispatcher(("w0",)),
         generation_stall_timeout_s=30.0,
@@ -407,13 +416,19 @@ class _RoutingWorker:
 
 
 def _routing_executor(batches, workers, *, pipelined):
-    handles = [RayActorHandle(worker_id=w.worker_id, actor=w) for w in workers]
+    engines = [
+        RayGenerationEngine(
+            w.worker_id,
+            [RayActorHandle(worker_id=w.worker_id, actor=w)],
+        )
+        for w in workers
+    ]
     return RayGenerationExecutor(
         planner=_StaticPlanner(batches=batches),
-        workers=handles,
+        engines=engines,
         gatherer=_CoverageGatherer(),
         actor_dispatcher=RayActorDispatcher(
-            tuple(handle.worker_id for handle in handles),
+            tuple(engine.engine_id for engine in engines),
         ),
         generation_stall_timeout_s=30.0,
         pipelined=pipelined,
@@ -438,14 +453,14 @@ async def test_pipelined_routes_single_worker_to_per_request_path() -> None:
     assert output.output == [{"pipelined": True}]
 
 
-def test_pipelined_rejects_multiple_workers_at_executor_construction() -> None:
+def test_pipelined_rejects_multiple_engines_at_executor_construction() -> None:
     """Direct executor callers get the same fail-fast guard as config users."""
 
     batches = [
         GenerationSampleBatch(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(2)
     ]
     workers = [_RoutingWorker(worker_id=f"w{i}") for i in range(2)]
-    with pytest.raises(ValueError, match="requires exactly one rollout worker"):
+    with pytest.raises(ValueError, match="requires exactly one rollout engine"):
         _routing_executor(batches, workers, pipelined=True)
 
     assert all(not worker.request_calls and not worker.batch_calls for worker in workers)
@@ -530,7 +545,7 @@ async def test_pipelined_oom_worker_id_must_match_actor() -> None:
     )
     executor = _routing_executor(batches, [worker], pipelined=True)
 
-    with pytest.raises(RuntimeError, match="worker_id mismatch"):
+    with pytest.raises(RuntimeError, match="rank mismatch"):
         await executor.execute(_request(4, samples_per_generation_batch=2))
 
     assert worker.request_calls == ["req-oom"]

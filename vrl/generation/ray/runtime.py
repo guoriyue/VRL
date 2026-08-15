@@ -110,11 +110,11 @@ class RayGenerationRuntime:
         )
 
     @property
-    def _owned_workers(self) -> list[RayActorHandle]:
-        """Fleet view consumed by the health-monitor framework adapter."""
+    def _owned_ranks(self) -> list[RayActorHandle]:
+        """Rank-actor view consumed by the health-monitor framework adapter."""
 
         session = self._session
-        return [] if session is None else session.workers
+        return [] if session is None else session.rank_handles
 
     @property
     def requires_driver_model_offload(self) -> bool:
@@ -151,9 +151,9 @@ class RayGenerationRuntime:
         if session is None or self._session_parked:
             return
         refs = []
-        for worker in session.workers:
+        for rank in session.rank_handles:
             # Tolerate probe-less test doubles the way the health monitor does.
-            remote = getattr(getattr(worker.actor, "health", None), "remote", None)
+            remote = getattr(getattr(rank.actor, "health", None), "remote", None)
             if callable(remote):
                 refs.append(remote())
         if not refs:
@@ -430,7 +430,7 @@ class RayGenerationRuntime:
             if session is None or self._session_parked:
                 return
             self._health_monitor.pause()
-            await session.sleep_workers()
+            await session.sleep_engines()
             if self.lifecycle.failure is not None:
                 self.lifecycle.require_running("complete worker sleep")
             self._session_parked = True
@@ -619,7 +619,7 @@ class RayGenerationRuntime:
             if session is not None:
                 if self._session_parked:
                     force_shutdown = True
-                    await session.wake_workers()
+                    await session.wake_engines()
                     self._session_parked = False
                     force_shutdown = False
                     if self.lifecycle.failure is not None:

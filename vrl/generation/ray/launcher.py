@@ -11,6 +11,7 @@ from typing import Any
 
 from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
 from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.engine import RayGenerationEngine, rank_handles
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
@@ -22,6 +23,7 @@ from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.dependencies import current_node_ip, require_ray
 from vrl.ray.operation_deadline import get_ray_refs
 from vrl.ray.placement import RolePlacement, validate_actor_gpu_ids
+from vrl.ray.resources import ROLLOUT_GPUS_PER_ENGINE
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +62,19 @@ class RayGenerationLauncher:
         worker = config.worker
 
         bundle_indices = list(placement.bundle_indices)
-        if worker.pipelined and len(bundle_indices) != 1:
+        # One engine per ROLLOUT_GPUS_PER_ENGINE bundles; the resolver's
+        # num_engines arithmetic guarantees divisibility (one GPU per engine
+        # today, so groups have size 1 and rank ids equal engine ids).
+        if len(bundle_indices) % ROLLOUT_GPUS_PER_ENGINE:
             raise ValueError(
-                "pipelined Ray generation requires exactly one rollout placement "
-                f"bundle; received {len(bundle_indices)}. Per-worker request "
+                f"rollout placement bundles ({len(bundle_indices)}) are not "
+                f"divisible into engines of {ROLLOUT_GPUS_PER_ENGINE} rank(s)",
+            )
+        engine_count = len(bundle_indices) // ROLLOUT_GPUS_PER_ENGINE
+        if worker.pipelined and engine_count != 1:
+            raise ValueError(
+                "pipelined Ray generation requires exactly one rollout engine; "
+                f"received {engine_count}. Per-engine request "
                 "pipelining is not implemented.",
             )
         ray = require_ray()
@@ -73,18 +84,23 @@ class RayGenerationLauncher:
         placement_group = placement.placement_group
         expected_gpu_ids = placement.expected_gpu_ids
 
-        worker_ids = [f"rollout-{logical_idx}" for logical_idx in range(len(bundle_indices))]
+        engine_ids = [f"rollout-{engine_idx}" for engine_idx in range(engine_count)]
+        rank_ids = [
+            engine_id if ROLLOUT_GPUS_PER_ENGINE == 1 else f"{engine_id}.r{rank_idx}"
+            for engine_id in engine_ids
+            for rank_idx in range(ROLLOUT_GPUS_PER_ENGINE)
+        ]
         # The same registry-owned gatherer serves the driver executor and the
-        # single-worker pipelined path. Ray serializes it to each actor; workers
-        # never re-resolve family identity from the neutral execution layer.
-        worker_configs = [launch_inputs for _ in bundle_indices]
+        # single-engine pipelined path. Ray serializes it to each rank actor;
+        # ranks never re-resolve family identity from the neutral execution layer.
+        rank_configs = [launch_inputs for _ in rank_ids]
         try:
             actor_group = RayActorGroup.launch(
                 worker_cls=RayGenerationWorker,
-                worker_configs=worker_configs,
-                worker_ids=worker_ids,
+                worker_configs=rank_configs,
+                worker_ids=rank_ids,
                 num_cpus=worker.cpus_per_worker,
-                # Each GPU worker owns one whole GPU; a CPU fleet grants none.
+                # Each GPU rank owns one whole GPU; a CPU fleet grants none.
                 num_gpus=1 if config.resources.rollout_devices else 0,
                 rpc_timeout_s=worker.worker_rpc_timeout_s,
                 operation_prefix="rollout",
@@ -95,21 +111,30 @@ class RayGenerationLauncher:
                 # generation; the default group keeps its serialization.
                 concurrency_groups={HEALTH_CONCURRENCY_GROUP: 1},
             )
-            _validate_worker_gpu_ids(
+            _validate_rank_gpu_ids(
                 config,
                 actor_group.handles,
                 expected_gpu_ids=expected_gpu_ids,
             )
-            workers = actor_group.handles
+            engines = [
+                RayGenerationEngine(
+                    engine_id,
+                    actor_group.handles[
+                        engine_idx * ROLLOUT_GPUS_PER_ENGINE : (engine_idx + 1)
+                        * ROLLOUT_GPUS_PER_ENGINE
+                    ],
+                )
+                for engine_idx, engine_id in enumerate(engine_ids)
+            ]
             actor_dispatcher = RayActorDispatcher(
-                tuple(worker.worker_id for worker in workers),
+                tuple(engine.engine_id for engine in engines),
             )
 
             executor = RayGenerationExecutor(
                 DistributedExecutionPlanner(
                     strategy=worker.batch_placement_strategy,
                 ),
-                workers,
+                engines,
                 launch_inputs.gatherer,
                 actor_dispatcher=actor_dispatcher,
                 generation_stall_timeout_s=worker.generation_stall_timeout_s,
@@ -117,23 +142,23 @@ class RayGenerationLauncher:
             )
             weight_sync = (
                 RayGenerationWeightSync(
-                    workers,
+                    engines,
                     actor_dispatcher=actor_dispatcher,
                     worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
                 )
                 if worker.sync_trainable_state
                 else None
             )
-            supports_non_draining_weight_sync = _all_workers_support_versioned_slots(
+            supports_non_draining_weight_sync = _all_ranks_support_versioned_slots(
                 ray,
-                workers,
+                rank_handles(engines),
                 weight_sync=weight_sync,
                 worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
             )
             return RayGenerationSession(
                 executor,
                 weight_sync=weight_sync,
-                owned_workers=workers,
+                owned_engines=engines,
                 supports_non_draining_weight_sync=supports_non_draining_weight_sync,
             )
         except BaseException as error:
@@ -254,13 +279,13 @@ class RayGenerationLauncher:
             raise
 
 
-def _validate_worker_gpu_ids(
+def _validate_rank_gpu_ids(
     config: RayGenerationConfig,
     metadata: Sequence[RayActorHandle],
     *,
     expected_gpu_ids: tuple[int, ...] | None = None,
 ) -> None:
-    """Validate launched workers against the resolved rollout placement."""
+    """Validate launched rank actors against the resolved rollout placement."""
 
     resources = config.resources
     if not resources.rollout_devices:
@@ -285,25 +310,25 @@ def _validate_worker_gpu_ids(
     )
 
 
-def _all_workers_support_versioned_slots(
+def _all_ranks_support_versioned_slots(
     ray: Any,
-    workers: Sequence[RayActorHandle],
+    ranks: Sequence[RayActorHandle],
     *,
     weight_sync: Any | None,
     worker_rpc_timeout_s: float,
 ) -> bool:
-    """Return whether every worker supports versioned trainable-state slots.
+    """Return whether every rank supports versioned trainable-state slots.
 
-    Non-draining weight sync needs slots on all workers because a batch stamped
-    with an older policy version can be placed on any worker. A missing weight
-    syncer or an empty worker set keeps the safe draining barrier. A query
+    Non-draining weight sync needs slots on all ranks because a batch stamped
+    with an older policy version can be placed on any engine. A missing weight
+    syncer or an empty fleet keeps the safe draining barrier. A query
     failure means the candidate fleet is broken, not merely unsupported, and
     therefore propagates to launcher-owned actor cleanup.
     """
 
     if weight_sync is None:
         return False
-    actors = [worker.actor for worker in workers]
+    actors = [rank.actor for rank in ranks]
     if not actors:
         return False
     results = get_ray_refs(
@@ -311,7 +336,7 @@ def _all_workers_support_versioned_slots(
         [actor.supports_versioned_trainable_state.remote() for actor in actors],
         operation="rollout.startup.versioned_slots",
         timeout_s=worker_rpc_timeout_s,
-        context=f"workers={len(actors)}",
+        context=f"ranks={len(actors)}",
     )
     return bool(results) and all(bool(result) for result in results)
 

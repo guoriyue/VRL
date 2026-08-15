@@ -26,6 +26,7 @@ from vrl.generation.execution.types import (
     GenerationBatchEnvelope,
     GenerationBatchResult,
 )
+from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_group import RayActorHandle
@@ -90,13 +91,16 @@ def _request() -> GenerationRequest:
 def _executor(ray: Any, strategy: str) -> tuple[RayGenerationExecutor, list[Any]]:
     actor_cls = ray.remote(num_cpus=0)(_ChunkWorker)
     actors = [actor_cls.remote(worker_id) for worker_id in ("w0", "w1")]
-    workers = [
-        RayActorHandle(worker_id=worker_id, actor=actor)
+    engines = [
+        RayGenerationEngine(
+            worker_id,
+            [RayActorHandle(worker_id=worker_id, actor=actor)],
+        )
         for worker_id, actor in zip(("w0", "w1"), actors, strict=True)
     ]
     executor = RayGenerationExecutor(
         DistributedExecutionPlanner(strategy=strategy),  # type: ignore[arg-type]
-        workers,
+        engines,
         _ListGatherer(),
         actor_dispatcher=RayActorDispatcher(("w0", "w1")),
         generation_stall_timeout_s=30.0,

@@ -28,6 +28,7 @@ from vrl.generation.execution.types import (
     GenerationBatchEnvelope,
     GenerationBatchResult,
 )
+from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_group import RayActorHandle
@@ -695,7 +696,7 @@ def test_round_robin_planner_binds_workers_at_plan_time() -> None:
     planner = DistributedExecutionPlanner()
     plan = planner.plan_with_engine(_request(), _worker_ids(2))
 
-    worker_ids = [assignment.worker_id for assignment in plan.assignments]
+    worker_ids = [assignment.engine_id for assignment in plan.assignments]
     assert worker_ids == ["w0", "w1", "w0", "w1"]
     assert all(a.estimated_cost > 0 for a in plan.assignments)
 
@@ -706,7 +707,7 @@ def test_dynamic_planner_leaves_chunks_unbound_with_costs() -> None:
     request = _request(num_steps=10, samples=8, sbs=2)
     plan = planner.plan_with_engine(request, _worker_ids(2))
 
-    assert all(a.worker_id is None for a in plan.assignments)
+    assert all(a.engine_id is None for a in plan.assignments)
     assert len(plan.assignments) == 4
     assert all(a.estimated_cost > 0 for a in plan.assignments)
     assert all(a.batch is a.envelope.batch for a in plan.assignments)
@@ -798,19 +799,19 @@ class _ListGatherer:
 
 
 def _executor(strategy: str, actors: list[_FakeActor]) -> RayGenerationExecutor:
-    workers = [
-        RayActorHandle(
-            worker_id=actor.worker_id,
-            actor=actor,
+    engines = [
+        RayGenerationEngine(
+            actor.worker_id,
+            [RayActorHandle(worker_id=actor.worker_id, actor=actor)],
         )
         for actor in actors
     ]
     return RayGenerationExecutor(
         DistributedExecutionPlanner(strategy=strategy),  # type: ignore[arg-type]
-        workers,
+        engines,
         _ListGatherer(),
         actor_dispatcher=RayActorDispatcher(
-            tuple(worker.worker_id for worker in workers),
+            tuple(engine.engine_id for engine in engines),
         ),
         generation_stall_timeout_s=30.0,
     )
