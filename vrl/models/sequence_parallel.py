@@ -16,6 +16,10 @@ forward internals:
 - every block's ``Attention``: ``UlyssesJointAttnProcessor``;
 - ``blocks[-1] -> norm_out``: a forward hook gathers the shards back.
 
+Families opt in by naming their installer in the registry
+(``GenerationRuntimeCapabilities.sequence_parallel_installer``); the rank
+program resolves it by dotted path at model build.
+
 The collectives are composed from ``all_gather`` + ``narrow``: numerically
 identical on gloo (CPU tests) and nccl, one code path everywhere. The
 bandwidth-optimal ``all_to_all_single`` rewrite is a P6 profiling decision,

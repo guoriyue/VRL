@@ -640,14 +640,14 @@ _register_model_family(
             transformer_classname="SD3Transformer2DModel",
         ),
         # MMDiT joint attention has a verified Ulysses install (numeric
-        # N=2-vs-reference equivalence in tests/generation/execution/
-        # test_ulysses.py); declaring it here is what opens gpus_per_engine > 1.
+        # N=2-vs-reference equivalence in tests/models/test_sequence_parallel.py);
+        # declaring it here is what opens gpus_per_engine > 1.
         runtime_capabilities=GenerationRuntimeCapabilities(
             supports_torch_compile=True,
             memory_parking=GenerationParkingProfile.CUMEM,
             supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
             sequence_parallel_installer=(
-                "vrl.generation.execution.ulysses:install_sd3_sequence_parallel"
+                "vrl.models.sequence_parallel:install_sd3_sequence_parallel"
             ),
         ),
     ),

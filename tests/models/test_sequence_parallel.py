@@ -61,7 +61,7 @@ def _rank_main(
         import torch.distributed as dist
         from diffusers import SD3Transformer2DModel
 
-        from vrl.generation.execution.ulysses import install_sd3_sequence_parallel
+        from vrl.models.sequence_parallel import install_sd3_sequence_parallel
 
         dist.init_process_group(
             backend="gloo",
@@ -132,7 +132,7 @@ def test_install_requires_a_multi_rank_group() -> None:
     import torch.distributed as dist
 
     from vrl.generation.execution.rank_group import destroy_rank_process_group
-    from vrl.generation.execution.ulysses import install_sd3_sequence_parallel
+    from vrl.models.sequence_parallel import install_sd3_sequence_parallel
 
     dist.init_process_group(
         backend="gloo",
