@@ -206,6 +206,25 @@ class ModelFamilyEntry:
             or self.family_build.replay_runtime_builder is not None
         )
 
+    def validate_gpus_per_engine(self, gpus_per_engine: int) -> None:
+        """Gate multi-GPU engines on this family's sequence-parallel install.
+
+        Without one, N ranks would each redundantly compute the full batch —
+        N times the GPU cost for zero benefit. The knob therefore either works
+        or fails loud here, before any actor launches.
+        """
+
+        if gpus_per_engine <= 1:
+            return
+        if not self.runtime_capabilities.supports_multi_gpu_engine:
+            raise ValueError(
+                f"model family {self.family!r} does not support multi-GPU "
+                "engines, but distributed.resources.rollout.gpus_per_engine="
+                f"{gpus_per_engine}. Remove the key (single-GPU engines) or "
+                "use a family whose runtime capabilities declare a "
+                "sequence_parallel_installer.",
+            )
+
     def validate_model_runtime_sections(
         self,
         *,

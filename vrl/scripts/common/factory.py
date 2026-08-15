@@ -101,29 +101,6 @@ def validate_reward_memory_parking(
     )
 
 
-def validate_multi_gpu_engine_support(
-    family_entry: ModelFamilyEntry,
-    resources: ResolvedDistributedResources,
-) -> None:
-    """Gate gpus_per_engine > 1 on the family's multi-GPU engine capability.
-
-    Without a sequence-parallel executor, N ranks would each redundantly
-    compute the full batch — N times the GPU cost for zero benefit. The knob
-    therefore either works or fails loud here, before any actor launches.
-    """
-
-    gpus_per_engine = resources.rollout_gpus_per_engine
-    if gpus_per_engine <= 1:
-        return
-    if not family_entry.runtime_capabilities.supports_multi_gpu_engine:
-        raise ValueError(
-            f"model family {family_entry.family!r} does not support multi-GPU "
-            "engines, but distributed.resources.rollout.gpus_per_engine="
-            f"{gpus_per_engine}. Remove the key (single-GPU engines) or use a "
-            "family whose runtime capabilities declare supports_multi_gpu_engine.",
-        )
-
-
 def build_algorithm_and_evaluator(
     *,
     family_entry: ModelFamilyEntry,
@@ -311,6 +288,5 @@ __all__ = [
     "build_algorithm_and_evaluator",
     "build_reward_function",
     "build_reward_runtime",
-    "validate_multi_gpu_engine_support",
     "validate_reward_memory_parking",
 ]

@@ -262,6 +262,10 @@ def _cfg() -> Any:
 class _FakeFamilyEntry:
     family = "sd3_5"
     task = "t2i"
+
+    def validate_gpus_per_engine(self, gpus_per_engine: int) -> None:
+        del gpus_per_engine
+
     policy_semantics = PolicySemantics(
         generation_regime="full_sequence",
         step_kind="denoise",
