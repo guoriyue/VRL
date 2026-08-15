@@ -342,17 +342,6 @@ def validate_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPoli
     return root, precision
 
 
-__all__ = [
-    "optional_none",
-    "path_exists",
-    "require",
-    "validate_production_kling_video_reward_config",
-    "validate_production_reward_contract",
-    "validate_reward_config",
-    "validate_training_config",
-]
-
-
 def dataclass_field_names(cls: type[Any]) -> set[str]:
     if not is_dataclass(cls):
         raise TypeError(f"{cls!r} must be a dataclass type")
@@ -426,3 +415,17 @@ def validate_yaml_home(
             f"{owner}.{field_name} declares unknown yaml home {home!r}; "
             f"the top-level section must be one of: {expected}",
         )
+
+
+__all__ = [
+    "dataclass_field_names",
+    "optional_none",
+    "path_exists",
+    "require",
+    "section_payload_and_missing",
+    "validate_production_kling_video_reward_config",
+    "validate_production_reward_contract",
+    "validate_reward_config",
+    "validate_training_config",
+    "validate_yaml_home",
+]
