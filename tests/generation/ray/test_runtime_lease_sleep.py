@@ -23,7 +23,7 @@ from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorCallError, RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.runtime_errors import failure_identity_cause
-from vrl.trainers.weight_sync import build_runtime_weight_syncer
+from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 from vrl.utils.lifecycle import RuntimeLifecycleError, RuntimePhase
 
 
@@ -460,9 +460,9 @@ def test_on_demand_weight_sync_capability_does_not_require_active_workers() -> N
     disabled = _on_demand_runtime(sync_trainable_state=False)
 
     assert runtime.supports_weight_sync is True
-    assert build_runtime_weight_syncer(runtime) is not None
+    assert RayRuntimeWeightSyncer.if_supported(runtime) is not None
     assert disabled.supports_weight_sync is False
-    assert build_runtime_weight_syncer(disabled) is None
+    assert RayRuntimeWeightSyncer.if_supported(disabled) is None
 
 
 @pytest.mark.parametrize("supports_non_draining_weight_sync", [False, True])

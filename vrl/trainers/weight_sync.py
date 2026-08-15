@@ -35,6 +35,25 @@ class WeightSyncer(ABC):
 class RayRuntimeWeightSyncer(WeightSyncer):
     """Bridge ``OnlineTrainer`` weight pushes to a Ray rollout runtime."""
 
+    @classmethod
+    def if_supported(
+        cls,
+        runtime: Any,
+        *,
+        initial_policy_version: int | None = None,
+    ) -> RayRuntimeWeightSyncer | None:
+        """Wrap the runtime only when it declares weight-sync support.
+
+        The construction precondition is this class's own invariant: a syncer
+        must never exist around a runtime that cannot receive weights.
+        """
+
+        if not callable(getattr(runtime, "update_weights", None)):
+            return None
+        if not bool(getattr(runtime, "supports_weight_sync", False)):
+            return None
+        return cls(runtime, initial_policy_version=initial_policy_version)
+
     def __init__(
         self,
         runtime: Any,
@@ -64,23 +83,6 @@ class RayRuntimeWeightSyncer(WeightSyncer):
         # a legal internal access (callers used to probe syncer.runtime from
         # outside).
         return self.runtime.current_policy_version
-
-
-def build_runtime_weight_syncer(
-    runtime: Any,
-    *,
-    initial_policy_version: int | None = None,
-) -> WeightSyncer | None:
-    """Return a syncer when a rollout runtime supports weight updates."""
-
-    if not callable(getattr(runtime, "update_weights", None)):
-        return None
-    if not bool(getattr(runtime, "supports_weight_sync", False)):
-        return None
-    return RayRuntimeWeightSyncer(
-        runtime,
-        initial_policy_version=initial_policy_version,
-    )
 
 
 def build_trainable_state_sync_getter(bundle: Any) -> TrainableStateGetter:

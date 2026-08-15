@@ -500,7 +500,11 @@ def _install_common_fakes(
     monkeypatch.setattr(
         online, "OnlineTrainer", lambda *args, **kwargs: _FakeTrainer(state, *args, **kwargs)
     )
-    monkeypatch.setattr(online, "build_runtime_weight_syncer", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        online.RayRuntimeWeightSyncer,
+        "if_supported",
+        classmethod(lambda cls, *args, **kwargs: object()),
+    )
     monkeypatch.setattr(online, "save_resolved_config", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         online.OnlineRecipeRun,

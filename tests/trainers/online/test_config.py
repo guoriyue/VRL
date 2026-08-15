@@ -9,7 +9,6 @@ from dataclasses import FrozenInstanceError, fields
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.config.builders import build_online_batch_plan
 from vrl.trainers.core.types import OptimConfig
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
@@ -93,11 +92,11 @@ def _trainer_config(batch_plan: OnlineBatchPlan, *, ppo_epochs: int = 1) -> Trai
 
 
 def test_batch_plan_resolves_size_and_count_to_the_same_state() -> None:
-    size_only = build_online_batch_plan(_public_batch_config(microbatch_size=4))
-    count_only = build_online_batch_plan(
+    size_only = OnlineBatchPlan.from_cfg(_public_batch_config(microbatch_size=4))
+    count_only = OnlineBatchPlan.from_cfg(
         _public_batch_config(gradient_accumulation_steps=8),
     )
-    both = build_online_batch_plan(
+    both = OnlineBatchPlan.from_cfg(
         _public_batch_config(
             microbatch_size=4,
             gradient_accumulation_steps=8,
@@ -111,7 +110,7 @@ def test_batch_plan_resolves_size_and_count_to_the_same_state() -> None:
 
 
 def test_unsplit_batch_plan_derives_the_full_batch_size() -> None:
-    plan = build_online_batch_plan(_public_batch_config())
+    plan = OnlineBatchPlan.from_cfg(_public_batch_config())
 
     assert plan.gradient_accumulation_steps == 0
     assert plan.microbatch_size == 32
@@ -128,8 +127,8 @@ def test_unsplit_batch_plan_derives_the_full_batch_size() -> None:
             {"microbatch_size": 4, "gradient_accumulation_steps": 4},
             "set only one",
         ),
-        ({"microbatch_size": -1}, "non-negative integer"),
-        ({"gradient_accumulation_steps": -1}, "non-negative integer"),
+        ({"microbatch_size": -1}, "must be >= 0"),
+        ({"gradient_accumulation_steps": -1}, "must be >= 0"),
         ({"samples_per_replay_batch": -1}, "samples_per_replay_batch"),
         ({"samples_per_replay_batch": "auto"}, "samples_per_replay_batch"),
     ],
@@ -139,7 +138,7 @@ def test_batch_plan_rejects_invalid_public_geometry(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        build_online_batch_plan(_public_batch_config(**actor))
+        OnlineBatchPlan.from_cfg(_public_batch_config(**actor))
 
 
 @pytest.mark.parametrize(
@@ -156,7 +155,7 @@ def test_batch_plan_rejects_non_positive_batch_dimensions(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        build_online_batch_plan(_public_batch_config(**rollout))
+        OnlineBatchPlan.from_cfg(_public_batch_config(**rollout))
 
 
 def test_streaming_plan_requires_one_ppo_epoch() -> None:

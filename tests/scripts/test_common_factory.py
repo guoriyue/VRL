@@ -14,7 +14,7 @@ from vrl.algorithms.grpo.continuous import (
     GRPOConfig,
     GRPOGuard,
 )
-from vrl.config.builders import build_configs, build_reward_config
+from vrl.config.builders import RewardRuntimeConfig, build_configs
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
@@ -36,7 +36,7 @@ def _built_reward(
     kwargs: dict[str, dict],
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        reward=build_reward_config(
+        reward=RewardRuntimeConfig.from_cfg(
             OmegaConf.create(
                 {"reward": {"components": weights, "kwargs": kwargs}},
             ),
@@ -788,7 +788,7 @@ def test_reward_config_rejects_yaml_lifecycle_override(key: str) -> None:
     )
 
     with pytest.raises(ValueError, match=rf"{key} is topology-derived"):
-        build_reward_config(cfg)
+        RewardRuntimeConfig.from_cfg(cfg)
 
 
 def test_reward_inputs_derive_device_from_resource_topology() -> None:

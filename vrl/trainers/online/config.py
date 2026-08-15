@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.trainers.core.types import (
@@ -26,6 +27,58 @@ class OnlineBatchPlan:
     gradient_accumulation_steps: int = field(default=0, metadata={"yaml": "actor"})
     samples_per_replay_batch: int = field(default=1, metadata={"yaml": "actor"})
     host_memory_budget_fraction: float = field(default=0.0, metadata={"yaml": "actor"})
+
+    @classmethod
+    def from_cfg(cls, cfg: Any) -> OnlineBatchPlan:
+        """Resolve public size/count inputs into one canonical optimizer batch plan."""
+
+        from vrl.config.validation import path_exists, require
+
+        base = cls(
+            prompts_per_batch=require(cfg, "rollout.prompts_per_batch"),
+            n_samples_per_prompt=require(cfg, "rollout.n_samples_per_prompt"),
+        )
+        prompts = base.prompts_per_batch
+
+        def optional_non_negative_int(path: str) -> int | None:
+            if not path_exists(cfg, path):
+                return None
+            value = require(cfg, path)
+            parsed = require_exact_int(value, path=path, minimum=0)
+            return parsed if parsed > 0 else None
+
+        accumulation_steps = optional_non_negative_int("actor.gradient_accumulation_steps")
+        microbatch_size = optional_non_negative_int("actor.microbatch_size")
+
+        active_accumulation = int(accumulation_steps or 0)
+        active_microbatch = int(microbatch_size or 0)
+        if active_accumulation > 0 and active_microbatch > 0:
+            if active_accumulation * active_microbatch != prompts:
+                raise ValueError(
+                    "actor.microbatch_size * actor.gradient_accumulation_steps "
+                    f"must equal rollout.prompts_per_batch "
+                    f"({active_microbatch} * {active_accumulation} != {prompts}); "
+                    "set only one of them.",
+                )
+        elif active_microbatch > 0:
+            if prompts % active_microbatch != 0:
+                raise ValueError(
+                    "actor.microbatch_size must evenly divide "
+                    f"rollout.prompts_per_batch ({prompts} % {active_microbatch} != 0)",
+                )
+            active_accumulation = prompts // active_microbatch
+
+        payload: dict[str, Any] = {
+            "prompts_per_batch": prompts,
+            "n_samples_per_prompt": base.n_samples_per_prompt,
+        }
+        if active_accumulation > 0:
+            payload["gradient_accumulation_steps"] = active_accumulation
+        for field_name in ("samples_per_replay_batch", "host_memory_budget_fraction"):
+            path = f"actor.{field_name}"
+            if path_exists(cfg, path):
+                payload[field_name] = require(cfg, path)
+        return cls(**payload)
 
     def __post_init__(self) -> None:
         prompts = require_exact_int(

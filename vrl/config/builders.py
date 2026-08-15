@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from vrl.trainers.checkpointing import TrainingResumeConfig
     from vrl.trainers.core.types import PrecisionDriftGuardConfig
     from vrl.trainers.offline import OfflineDPOTrainerConfig
-    from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+    from vrl.trainers.online.config import TrainerConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +65,37 @@ class RewardRuntimeConfig:
                         "be set in YAML; remove it and select shared or dedicated "
                         "reward GPU ownership under distributed.resources.reward",
                     )
+
+    @classmethod
+    def from_cfg(cls, cfg: DictConfig | RewardConfig) -> RewardRuntimeConfig:
+        """Resolve one public reward section into its runtime config.
+
+        Zero-weight components remain present so they can be scored and logged
+        as observation-only safeguards without changing the optimization
+        reward.
+        """
+
+        from vrl.config.validation import validate_reward_config
+
+        reward = cfg if isinstance(cfg, RewardConfig) else validate_reward_config(cfg)
+        weights = {name: float(weight) for name, weight in reward.components.items()}
+        unknown_kwargs = sorted(set(reward.kwargs) - set(weights))
+        if unknown_kwargs:
+            keys = ", ".join(f"reward.kwargs.{name}" for name in unknown_kwargs)
+            raise ValueError(f"reward kwargs configured for unknown component(s): {keys}")
+        kwargs = {name: dict(reward.kwargs.get(name) or {}) for name in weights}
+        inference_configs = {
+            name: parse_reward_inference_config(
+                (kwargs.get(name) or {}).get("inference"),
+                context=f"reward.kwargs.{name}.inference",
+            )
+            for name in weights
+        }
+        return cls(
+            weights=weights,
+            kwargs=kwargs,
+            inference_configs=inference_configs,
+        )
 
     @property
     def all_external_inference(self) -> bool:
@@ -202,62 +233,6 @@ def _validate_yaml_home(
         )
 
 
-def _optional_non_negative_int(cfg: DictConfig, path: str) -> int | None:
-    if not path_exists(cfg, path):
-        return None
-    value = require(cfg, path)
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"{path} must be a non-negative integer (got {value!r})")
-    return value
-
-
-def build_online_batch_plan(cfg: DictConfig) -> OnlineBatchPlan:
-    """Resolve public size/count inputs into one canonical optimizer batch plan."""
-
-    from vrl.trainers.online.config import OnlineBatchPlan
-
-    base = OnlineBatchPlan(
-        prompts_per_batch=require(cfg, "rollout.prompts_per_batch"),
-        n_samples_per_prompt=require(cfg, "rollout.n_samples_per_prompt"),
-    )
-    prompts = base.prompts_per_batch
-    accumulation_steps = _optional_non_negative_int(
-        cfg,
-        "actor.gradient_accumulation_steps",
-    )
-    microbatch_size = _optional_non_negative_int(cfg, "actor.microbatch_size")
-
-    active_accumulation = int(accumulation_steps or 0)
-    active_microbatch = int(microbatch_size or 0)
-    if active_accumulation > 0 and active_microbatch > 0:
-        if active_accumulation * active_microbatch != prompts:
-            raise ValueError(
-                "actor.microbatch_size * actor.gradient_accumulation_steps "
-                f"must equal rollout.prompts_per_batch "
-                f"({active_microbatch} * {active_accumulation} != {prompts}); "
-                "set only one of them.",
-            )
-    elif active_microbatch > 0:
-        if prompts % active_microbatch != 0:
-            raise ValueError(
-                "actor.microbatch_size must evenly divide "
-                f"rollout.prompts_per_batch ({prompts} % {active_microbatch} != 0)",
-            )
-        active_accumulation = prompts // active_microbatch
-
-    payload: dict[str, Any] = {
-        "prompts_per_batch": prompts,
-        "n_samples_per_prompt": base.n_samples_per_prompt,
-    }
-    if active_accumulation > 0:
-        payload["gradient_accumulation_steps"] = active_accumulation
-    for field_name in ("samples_per_replay_batch", "host_memory_budget_fraction"):
-        path = f"actor.{field_name}"
-        if path_exists(cfg, path):
-            payload[field_name] = require(cfg, path)
-    return OnlineBatchPlan(**payload)
-
-
 def build_trainer_config(
     cfg: DictConfig,
     *,
@@ -334,7 +309,7 @@ def build_trainer_config(
     # Resolve the public policy once; trainer fields are its runtime projection.
     precision = precision or resolve_precision_policy(cfg)
     payload.update(
-        batch_plan=build_online_batch_plan(cfg),
+        batch_plan=OnlineBatchPlan.from_cfg(cfg),
         train_precision=precision.training.label,
         rollout_precision=precision.rollout.label,
     )
@@ -424,36 +399,6 @@ def build_algorithm_config(cfg: DictConfig):
     return cls(**_dataclass_payload(cls, cfg.algorithm))
 
 
-def build_reward_config(cfg: DictConfig | RewardConfig) -> RewardRuntimeConfig:
-    """Resolve one public reward section into its runtime config.
-
-    Zero-weight components remain present so they can be scored and logged as
-    observation-only safeguards without changing the optimization reward.
-    """
-
-    from vrl.config.validation import validate_reward_config
-
-    reward = cfg if isinstance(cfg, RewardConfig) else validate_reward_config(cfg)
-    weights = {name: float(weight) for name, weight in reward.components.items()}
-    unknown_kwargs = sorted(set(reward.kwargs) - set(weights))
-    if unknown_kwargs:
-        keys = ", ".join(f"reward.kwargs.{name}" for name in unknown_kwargs)
-        raise ValueError(f"reward kwargs configured for unknown component(s): {keys}")
-    kwargs = {name: dict(reward.kwargs.get(name) or {}) for name in weights}
-    inference_configs = {
-        name: parse_reward_inference_config(
-            (kwargs.get(name) or {}).get("inference"),
-            context=f"reward.kwargs.{name}.inference",
-        )
-        for name in weights
-    }
-    return RewardRuntimeConfig(
-        weights=weights,
-        kwargs=kwargs,
-        inference_configs=inference_configs,
-    )
-
-
 def build_configs(cfg: DictConfig) -> BuiltConfigs:
     """Bundle typed configs for downstream training scripts."""
 
@@ -471,7 +416,7 @@ def build_configs(cfg: DictConfig) -> BuiltConfigs:
     algorithm = build_algorithm_config(cfg)
     is_offline_dpo = root.algorithm is not None and root.algorithm.kind == "diffusion_dpo"
     trainer = None if is_offline_dpo else build_trainer_config(cfg, precision=precision)
-    reward = build_reward_config(root.reward) if root.reward is not None else None
+    reward = RewardRuntimeConfig.from_cfg(root.reward) if root.reward is not None else None
     if not is_offline_dpo:
         if reward is None:
             raise ValueError("online recipe requires a reward section")
@@ -493,7 +438,5 @@ __all__ = [
     "build_algorithm_config",
     "build_configs",
     "build_offline_dpo_trainer_config",
-    "build_online_batch_plan",
-    "build_reward_config",
     "build_trainer_config",
 ]

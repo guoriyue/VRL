@@ -82,9 +82,9 @@ def test_build_resolves_public_config_precision_and_reward_once(
         counted("precision", validation.resolve_precision_policy),
     )
     monkeypatch.setattr(
-        builders,
-        "build_reward_config",
-        counted("reward", builders.build_reward_config),
+        builders.RewardRuntimeConfig,
+        "from_cfg",
+        classmethod(counted("reward", builders.RewardRuntimeConfig.from_cfg.__func__)),
     )
 
     def unexpected_reward_reparse(*args: Any, **kwargs: Any) -> Any:
@@ -122,7 +122,7 @@ def test_online_build_has_named_reward_and_trainer_fields() -> None:
 
 
 def test_reward_runtime_config_normalizes_every_component_and_derives_transport() -> None:
-    reward = builders.build_reward_config(
+    reward = builders.RewardRuntimeConfig.from_cfg(
         OmegaConf.create(
             {
                 "reward": {
@@ -146,7 +146,7 @@ def test_reward_runtime_config_normalizes_every_component_and_derives_transport(
     assert set(reward.kwargs) == {"remote", "local"}
     assert set(reward.inference_configs) == {"remote", "local"}
     assert reward.all_external_inference is False
-    external_only = builders.build_reward_config(
+    external_only = builders.RewardRuntimeConfig.from_cfg(
         OmegaConf.create(
             {
                 "reward": {
@@ -186,7 +186,7 @@ def test_reward_builder_rejects_kwargs_without_a_component() -> None:
     )
 
     with pytest.raises(ValueError, match=r"reward\.kwargs\.aestheic"):
-        builders.build_reward_config(cfg)
+        builders.RewardRuntimeConfig.from_cfg(cfg)
 
 
 def test_offline_dpo_uses_the_same_build_result_without_online_state() -> None:

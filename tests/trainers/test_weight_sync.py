@@ -10,7 +10,6 @@ import torch
 
 from vrl.trainers.weight_sync import (
     RayRuntimeWeightSyncer,
-    build_runtime_weight_syncer,
     build_trainable_state_sync_getter,
     flatten_trainable_module_state,
 )
@@ -78,10 +77,10 @@ def test_ray_runtime_weight_syncer_serializes_concurrent_push_versions() -> None
     assert runtime.current_policy_version == 2
 
 
-def test_build_runtime_weight_syncer_requires_explicit_runtime_capability() -> None:
+def test_weight_syncer_if_supported_requires_explicit_runtime_capability() -> None:
     """Checks the adapter reads capability instead of a current inner handle."""
-    assert build_runtime_weight_syncer(_RuntimeWithSync()) is not None
-    assert build_runtime_weight_syncer(_RuntimeWithoutSync()) is None
+    assert RayRuntimeWeightSyncer.if_supported(_RuntimeWithSync()) is not None
+    assert RayRuntimeWeightSyncer.if_supported(_RuntimeWithoutSync()) is None
 
 
 def test_flatten_trainable_module_state_prefixes_module_names() -> None:

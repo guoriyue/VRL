@@ -69,7 +69,7 @@ from vrl.trainers.metrics_io import (
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan
 from vrl.trainers.strategy import Strategy, build_strategy
-from vrl.trainers.weight_sync import build_runtime_weight_syncer
+from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 from vrl.utils.memory import capture_host_memory, format_host_memory, log_host_memory
 from vrl.utils.profiling import profile_range
 
@@ -952,7 +952,7 @@ async def run_online_recipe(
             evaluator=algorithm_and_evaluator.evaluator,
             model=model,
             ref_model=ref_model,
-            weight_syncer=build_runtime_weight_syncer(
+            weight_syncer=RayRuntimeWeightSyncer.if_supported(
                 collector.generation_runtime,
                 initial_policy_version=resume_step,
             ),

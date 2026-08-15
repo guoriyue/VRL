@@ -21,9 +21,9 @@ from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
 from vrl.algorithms.grpo.token import TokenGRPOConfig
 from vrl.config.builders import (
+    RewardRuntimeConfig,
     build_algorithm_config,
     build_configs,
-    build_reward_config,
     build_trainer_config,
 )
 from vrl.config.loading import (
@@ -1226,7 +1226,7 @@ def test_public_reward_builder_validates_its_input() -> None:
     )
 
     with pytest.raises(ValueError, match=r"reward\.kwargs\.ocr must be a mapping"):
-        build_reward_config(cfg)
+        RewardRuntimeConfig.from_cfg(cfg)
 
 
 def test_required_training_fields_fail_fast() -> None:
