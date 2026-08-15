@@ -339,7 +339,7 @@ def _install_common_fakes(
     resources = SimpleNamespace(
         cross_node=False,
         colocated=False,
-        rollout_num_workers=1,
+        rollout_num_engines=1,
         rollout_devices=(),
         trainer_torch_device="cpu",
         reward_devices=(),
@@ -785,7 +785,7 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
     resources = SimpleNamespace(
         cross_node=False,
         colocated=False,
-        rollout_num_workers=1,
+        rollout_num_engines=1,
         rollout_devices=(),
         rollout_num_gpus=2,
         trainer_torch_device="cpu",
@@ -840,7 +840,7 @@ async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
     _install_common_fakes(monkeypatch, tmp_path, state)
     resources = SimpleNamespace(
         cross_node=False,
-        rollout_num_workers=1,
+        rollout_num_engines=1,
         rollout_devices=(),
         trainer_torch_device="cpu",
         reward_torch_device=lambda *, trainer_device=None: "cpu",

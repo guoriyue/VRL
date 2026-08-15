@@ -722,47 +722,56 @@ class TrainingSection(ConfigBase):
         return self
 
 
-class RolloutWorkerSection(ConfigBase):
-    """distributed.rollout: per-worker runtime knobs.
+class RolloutRuntimeSection(ConfigBase):
+    """distributed.rollout: rollout runtime knobs (engine level and rank level).
 
-    reader: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
-    runtime knobs). Release scheduling and colocation are NOT declared here:
-    colocation lives in distributed.resources.rollout.gpu_pool=trainer (mirrors
-    reward.gpu_pool), and release scheduling is derived from GPU topology.
+    reader: vrl/generation/ray/config.py RayGenerationConfig.from_cfg. Release
+    scheduling and colocation are NOT declared here: colocation lives in
+    distributed.resources.rollout.gpu_pool=trainer (mirrors reward.gpu_pool),
+    and release scheduling is derived from GPU topology.
     batch_placement_strategy is a user-facing allow-list
     Literal: RayGenerationConfig is a plain dataclass whose annotations do not
     enforce, so this typed boundary is where a bad value is rejected (the runtime
     DistributedExecutionPlanner guard covers direct construction). sync_trainable_state
-    is a plain on/off: True keeps rollout workers resynced to the trained policy
+    is a plain on/off: True keeps rollout engines resynced to the trained policy
     (the syncer flattens whatever is trainable — lora or full-param), False
     disables the weight syncer.
+
+    Each knob belongs to one layer of the engine/rank split (an engine is one
+    replica; a rank is one per-GPU worker actor inside it):
+    rank level: cpus_per_worker, health_check_*, worker_rpc_timeout_s.
+    engine level: generation_stall_timeout_s, batch_placement_strategy,
+    sync_trainable_state, pipelined.
     """
 
+    # rank level: CPU grant per rank actor (Ray num_cpus).
     cpus_per_worker: float = 1.0
-    # Background liveness probing of rollout workers. interval <= 0 disables it;
-    # a worker that stops answering kills the owned actors so active or subsequent
-    # foreground work fails closed. A failed verdict then enters the supervisor's
-    # bounded restart policy.
+    # rank level: background liveness probing of rank actors. interval <= 0
+    # disables it; a rank that stops answering kills the owned actors so active
+    # or subsequent foreground work fails closed. A failed verdict then enters
+    # the supervisor's bounded restart policy.
     health_check_interval_s: float = 30.0
     health_check_timeout_s: float = 30.0
     health_check_first_wait_s: float = 0.0
-    # Opaque control-plane calls expose no useful progress. Bound startup,
-    # metadata, capability, and weight acknowledgements independently.
+    # rank level: opaque control-plane calls expose no useful progress. Bound
+    # startup, metadata, capability, and weight acknowledgements independently.
     worker_rpc_timeout_s: float = 600.0
-    # Generation has a separate stall budget: a completed batch is real progress,
-    # and the pipelined path reports the same progress from its worker. One hour
-    # covers the observed ~30-minute cold compile plus a 733-second Cosmos batch
-    # with margin; opaque control calls retain their tighter budget above.
+    # engine level: generation has a separate stall budget — a completed batch
+    # is real progress, and the pipelined path reports the same progress. One
+    # hour covers the observed ~30-minute cold compile plus a 733-second Cosmos
+    # batch with margin; opaque control calls retain their tighter budget above.
     generation_stall_timeout_s: float = 3600.0
+    # engine level: batch -> engine binding strategy.
     batch_placement_strategy: BatchPlacementStrategy = "round_robin"
     sync_trainable_state: bool = True
-    # Opt-in single-worker pipelined rollout. Config resolution rejects multiple
-    # workers; requests with fewer than two batches use the standard per-batch path,
-    # and a pipeline OOM falls back to that path's split-and-retry behavior.
+    # engine level: opt-in single-engine pipelined rollout. Config resolution
+    # rejects multiple engines; requests with fewer than two batches use the
+    # standard per-batch path, and a pipeline OOM falls back to that path's
+    # split-and-retry behavior.
     pipelined: bool = False
 
     @model_validator(mode="after")
-    def _validate_health_check(self) -> RolloutWorkerSection:
+    def _validate_health_check(self) -> RolloutRuntimeSection:
         if not math.isfinite(self.health_check_interval_s):
             raise ValueError(
                 "distributed.rollout.health_check_interval_s must be finite",
@@ -802,7 +811,7 @@ class DistributedSection(ConfigBase):
     # reader: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
     # runtime knobs). batch_placement_strategy / sync_trainable_state Literals reject
     # bad values here at parse time. Colocation lives in resources.rollout.gpu_pool.
-    rollout: RolloutWorkerSection | None = None
+    rollout: RolloutRuntimeSection | None = None
     # readers: vrl/trainers/distributed.py resolve_training_context (rank/device)
     # + vrl/ray/resources.py strategy-aware trainer GPU validation
     training: TrainingSection | None = None

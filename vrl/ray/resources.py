@@ -47,11 +47,11 @@ class RoleResourceConfig:
 
 @dataclass(frozen=True, slots=True)
 class RolloutResourceConfig(RoleResourceConfig):
-    """GPU ownership request for rollout workers.
+    """GPU ownership request for rollout engines.
 
-    The only role that runs worker replicas: the trainer is the driver process
+    The only role that runs engine replicas: the trainer is the driver process
     itself, and rewards score in-process (see :class:`RewardResourceConfig`),
-    so the worker arithmetic lives here.
+    so the engine-count arithmetic lives here.
     """
 
     role: ClassVar[str] = "rollout"
@@ -68,14 +68,15 @@ class RolloutResourceConfig(RoleResourceConfig):
     # resolved sharing plan is announced in the startup resource receipt.
     gpu_pool: str = "auto"
 
-    # Worker fleet size. A GPU fleet always grants one GPU per worker, so the
-    # count derives from the resolved GPU set; the knob carries information only
-    # for the two GPU-less shapes: ``0`` = no fleet at all (offline recipes),
-    # explicit ``N`` with ``num_gpus: 0`` = a CPU worker fleet (defaults to 1).
-    num_workers: int | str = "auto"
+    # Engine replica count (the data-parallel degree). A GPU fleet grants one
+    # GPU per engine (until gpus_per_engine lands), so the count derives from
+    # the resolved GPU set; the knob carries information only for the two
+    # GPU-less shapes: ``0`` = no fleet at all (offline recipes), explicit
+    # ``N`` with ``num_gpus: 0`` = a CPU engine fleet (defaults to 1).
+    num_engines: int | str = "auto"
 
     def requests_cpu_fleet(self) -> bool:
-        """True when the config explicitly asks for GPU-less rollout workers."""
+        """True when the config explicitly asks for GPU-less rollout engines."""
 
         parsed_num_gpus = _parse_num_gpus(
             self.num_gpus,
@@ -96,37 +97,36 @@ class RolloutResourceConfig(RoleResourceConfig):
                 raise ValueError(f"{self.key_prefix}.num_gpus must be >= 0")
             return count
 
-        parsed_workers = _parse_num_workers(
-            self.num_workers,
-            field_name=f"{self.key_prefix}.num_workers",
-            allow_zero=True,
+        parsed_engines = _parse_num_engines(
+            self.num_engines,
+            field_name=f"{self.key_prefix}.num_engines",
         )
-        if parsed_workers != "auto":
-            # One GPU per worker; num_workers: 0 is the no-fleet declaration.
-            return int(parsed_workers)
+        if parsed_engines != "auto":
+            # One GPU per engine; num_engines: 0 is the no-fleet declaration.
+            return int(parsed_engines)
         return int(available_count)
 
-    def resolve_num_workers(self, *, resolved_gpu_count: int) -> int:
-        """Worker count for the GPUs this role actually resolved to.
+    def resolve_num_engines(self, *, resolved_gpu_count: int) -> int:
+        """Engine replica count for the GPUs this role actually resolved to.
 
         ``resolved_gpu_count`` is the length of the resolved device tuple, not
-        the ``num_gpus`` request field. A GPU fleet is always one GPU per
-        worker; with zero resolved GPUs the fleet is either explicitly CPU
-        (``num_gpus: 0`` -> ``num_workers`` workers, default 1) or absent.
+        the ``num_gpus`` request field. A GPU fleet is one GPU per engine
+        (until gpus_per_engine lands); with zero resolved GPUs the fleet is
+        either explicitly CPU (``num_gpus: 0`` -> ``num_engines`` engines,
+        default 1) or absent.
         """
 
-        requested = _parse_num_workers(
-            self.num_workers,
-            field_name=f"{self.key_prefix}.num_workers",
-            allow_zero=True,
+        requested = _parse_num_engines(
+            self.num_engines,
+            field_name=f"{self.key_prefix}.num_engines",
         )
         if resolved_gpu_count > 0:
             if requested == "auto":
                 return resolved_gpu_count
             if int(requested) != resolved_gpu_count:
                 raise ValueError(
-                    f"{self.key_prefix}.num_workers must equal the {self.role} "
-                    f"GPU count (one GPU per worker): {int(requested)} != "
+                    f"{self.key_prefix}.num_engines must equal the {self.role} "
+                    f"GPU count (one GPU per engine): {int(requested)} != "
                     f"{resolved_gpu_count}",
                 )
             return int(requested)
@@ -245,7 +245,7 @@ class ResolvedDistributedResources:
     # distributed.resources.reward.device == "cpu": an explicit CPU reward
     # reservation, distinct from "no reservation, follow the trainer device".
     reward_runs_on_cpu: bool
-    rollout_num_workers: int
+    rollout_num_engines: int
     cross_node: bool
     # Named view over release decisions: lease mode per role plus the per-boundary
     # handoff. The launcher/collector/reward read this instead of re-deriving from
@@ -266,7 +266,7 @@ class ResolvedDistributedResources:
             bool(self.trainer_devices)
             and bool(self.rollout_devices)
             and not self.colocated
-            and self.rollout_num_workers > 0
+            and self.rollout_num_engines > 0
             and not self.cross_node
         )
 
@@ -381,7 +381,7 @@ def resolve_distributed_resources(
         rollout_config=config.rollout,
     )
     rollout_num_gpus = len(rollout_devices)
-    rollout_num_workers = config.rollout.resolve_num_workers(
+    rollout_num_engines = config.rollout.resolve_num_engines(
         resolved_gpu_count=rollout_num_gpus,
     )
 
@@ -438,7 +438,7 @@ def resolve_distributed_resources(
         reward_devices=reward_devices,
         reward_uses_trainer_device=reward_uses_trainer_device,
         reward_runs_on_cpu=reward_runs_on_cpu,
-        rollout_num_workers=rollout_num_workers,
+        rollout_num_engines=rollout_num_engines,
         cross_node=config.cross_node,
         lifecycle=lifecycle,
     )
@@ -507,7 +507,7 @@ def format_distributed_resource_plan(resolved: ResolvedDistributedResources) -> 
         f"trainer={list(resolved.trainer_devices)}",
         f"rollout={list(resolved.rollout_devices)}",
         f"reward={list(resolved.reward_devices)}",
-        f"rollout_workers={resolved.rollout_num_workers}",
+        f"engines={resolved.rollout_num_engines}",
         "reward_mode="
         + (
             "gpu"
@@ -545,7 +545,7 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
     rollout = RolloutResourceConfig(
         num_gpus=cfg_get(rollout_node, "num_gpus", "auto"),
         devices=_parse_devices(cfg_get(rollout_node, "devices", "auto")),
-        num_workers=cfg_get(rollout_node, "num_workers", "auto"),
+        num_engines=cfg_get(rollout_node, "num_engines", "auto"),
         gpu_pool=rollout_gpu_pool,
     )
     if reward_node is _MISSING:
@@ -923,12 +923,7 @@ def _parse_num_gpus(value: Any, *, field_name: str) -> int | str | None:
     return parsed
 
 
-def _parse_num_workers(
-    value: Any,
-    *,
-    field_name: str,
-    allow_zero: bool = False,
-) -> int | str:
+def _parse_num_engines(value: Any, *, field_name: str) -> int | str:
     value = to_builtin(value)
     if _is_auto(value):
         return "auto"
@@ -936,9 +931,8 @@ def _parse_num_workers(
         parsed = int(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{field_name} must be int or auto") from exc
-    if parsed < 0 or (parsed == 0 and not allow_zero):
-        minimum = 0 if allow_zero else 1
-        raise ValueError(f"{field_name} must be >= {minimum}")
+    if parsed < 0:
+        raise ValueError(f"{field_name} must be >= 0")
     return parsed
 
 

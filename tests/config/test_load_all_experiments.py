@@ -298,10 +298,10 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
         num_gpus = node.get("num_gpus", "auto")
         if num_gpus not in (None, "auto"):
             return int(num_gpus)
-        num_workers = node.get("num_workers", "auto")
-        if num_workers != "auto":
-            # One GPU per worker; num_workers: 0 declares no fleet.
-            return int(num_workers)
+        num_engines = node.get("num_engines", "auto")
+        if num_engines != "auto":
+            # One GPU per engine; num_engines: 0 declares no fleet.
+            return int(num_engines)
         return default
 
     failures = []
@@ -453,7 +453,7 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
     assert resources.trainer_devices == (0,)
     assert resources.rollout_devices == (1, 2, 3)
     assert resources.reward_devices == ()
-    assert resources.rollout_num_workers == 3
+    assert resources.rollout_num_engines == 3
     assert resources.lifecycle.rollout_mode == "resident"
     assert not any(
         (
@@ -495,7 +495,7 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
     assert cfg.sampling.guidance_scale == 7
     assert cfg.rollout.samples_per_generation_batch == 1
     assert resources.trainer_devices == resources.rollout_devices == (0,)
-    assert resources.rollout_num_workers == 1
+    assert resources.rollout_num_engines == 1
     assert resources.reward_devices == ()
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
@@ -540,7 +540,7 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
     assert cfg.distributed.training.fsdp.precision_policy == "none"
     assert cfg.distributed.resources.rollout.gpu_pool == "trainer"
     assert resources.trainer_devices == resources.rollout_devices == (0,)
-    assert resources.rollout_num_workers == 1
+    assert resources.rollout_num_engines == 1
     assert resources.reward_devices == ()
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
@@ -618,7 +618,7 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     assert resources.trainer_devices == (0,)
     assert resources.rollout_devices == (1, 2)
     assert resources.reward_devices == ()
-    assert resources.rollout_num_workers == 2
+    assert resources.rollout_num_engines == 2
     assert resources.lifecycle.rollout_mode == "resident"
     assert orchestration.schedule_mode == "continuous"
     assert orchestration.reward_collection_mode is None
@@ -665,7 +665,7 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
     assert cfg.distributed.training.fsdp.precision_policy == "actor"
     assert cfg.distributed.training.fsdp.cpu_offload is False
     assert resources.trainer_devices == resources.rollout_devices == (0,)
-    assert resources.rollout_num_workers == 1
+    assert resources.rollout_num_engines == 1
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
     assert resources.lifecycle.release_rollout_before_train is True
@@ -1088,7 +1088,7 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> No
     assert cfg.distributed.training.gpus_per_node == 2
     assert cfg.distributed.training.fsdp.cpu_offload is True
     assert resources.trainer_devices == resources.rollout_devices == (0,)
-    assert resources.rollout_num_workers == 1
+    assert resources.rollout_num_engines == 1
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
     assert resources.lifecycle.release_rollout_before_train is True

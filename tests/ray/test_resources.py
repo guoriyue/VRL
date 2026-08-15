@@ -52,7 +52,7 @@ def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
                 "trainer": {"num_gpus": 1},
                 "rollout": {
                     "num_gpus": "auto",
-                    "num_workers": "auto",
+                    "num_engines": "auto",
                 },
             },
         ),
@@ -61,7 +61,7 @@ def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
     assert resolved.trainer_devices == (0,)
     assert resolved.rollout_devices == (1, 2, 3)
     assert resolved.reward_devices == ()
-    assert resolved.rollout_num_workers == 3
+    assert resolved.rollout_num_engines == 3
     assert resolved.requires_trainer_reservation is True
     assert resolved.trainer_torch_device == "cuda:0"
 
@@ -203,9 +203,9 @@ def test_devices_must_be_subset_of_visible_devices() -> None:
         )
 
 
-def test_num_workers_must_match_the_resolved_gpu_count() -> None:
-    """A GPU fleet is one GPU per worker; a contradicting num_workers fails."""
-    with pytest.raises(ValueError, match="num_workers must equal the rollout GPU count"):
+def test_num_engines_must_match_the_resolved_gpu_count() -> None:
+    """A GPU fleet is one GPU per engine; a contradicting num_engines fails."""
+    with pytest.raises(ValueError, match="num_engines must equal the rollout GPU count"):
         resolve_distributed_resources(
             _cfg(
                 {
@@ -213,7 +213,7 @@ def test_num_workers_must_match_the_resolved_gpu_count() -> None:
                     "trainer": {"num_gpus": 1},
                     "rollout": {
                         "num_gpus": 2,
-                        "num_workers": 1,
+                        "num_engines": 1,
                     },
                 },
             ),
@@ -229,7 +229,7 @@ def test_single_gpu_auto_split_shares_the_trainer_gpu() -> None:
                 "trainer": {"num_gpus": 1},
                 "rollout": {
                     "num_gpus": 1,
-                    "num_workers": 1,
+                    "num_engines": 1,
                 },
             },
         ),
@@ -251,7 +251,7 @@ def test_single_gpu_dedicated_rollout_pool_requires_a_spare() -> None:
                     "trainer": {"num_gpus": 1},
                     "rollout": {
                         "num_gpus": 1,
-                        "num_workers": 1,
+                        "num_engines": 1,
                         "gpu_pool": "dedicated",
                     },
                 },
@@ -268,7 +268,7 @@ def test_cpu_only_rollout_uses_no_gpu_bundles() -> None:
                 "trainer": {"num_gpus": 0},
                 "rollout": {
                     "num_gpus": 0,
-                    "num_workers": 2,
+                    "num_engines": 2,
                 },
             },
         ),
@@ -276,7 +276,7 @@ def test_cpu_only_rollout_uses_no_gpu_bundles() -> None:
 
     assert resolved.trainer_devices == ()
     assert resolved.rollout_devices == ()
-    assert resolved.rollout_num_workers == 2
+    assert resolved.rollout_num_engines == 2
     assert resolved.trainer_torch_device == "cpu"
 
 
@@ -290,14 +290,14 @@ def test_pinned_devices_supersede_a_zero_gpu_count() -> None:
                 "rollout": {
                     "devices": [0],
                     "num_gpus": 0,
-                    "num_workers": 1,
+                    "num_engines": 1,
                 },
             },
         ),
     )
 
     assert resolved.rollout_devices == (0,)
-    assert resolved.rollout_num_workers == 1
+    assert resolved.rollout_num_engines == 1
 
 
 def test_cpu_only_reward_rejects_a_gpu_device_assignment() -> None:
@@ -324,7 +324,7 @@ def test_trainer_only_plan_allows_zero_rollout_workers() -> None:
                 "trainer": {"num_gpus": 1},
                 "rollout": {
                     "num_gpus": 0,
-                    "num_workers": 0,
+                    "num_engines": 0,
                 },
             },
         ),
@@ -332,7 +332,7 @@ def test_trainer_only_plan_allows_zero_rollout_workers() -> None:
 
     assert resolved.trainer_devices == (0,)
     assert resolved.rollout_devices == ()
-    assert resolved.rollout_num_workers == 0
+    assert resolved.rollout_num_engines == 0
     assert resolved.trainer_torch_device == "cuda:0"
 
 
@@ -409,7 +409,7 @@ def test_cross_node_reward_gpu_is_rejected_at_resolution() -> None:
                     "trainer": {"num_gpus": 1},
                     "rollout": {
                         "devices": [1],
-                        "num_workers": 1,
+                        "num_engines": 1,
                     },
                     "reward": {"device": "gpu", "devices": [1]},
                 },
@@ -448,7 +448,7 @@ def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
                 "visible_devices": "auto",
                 "cross_node": True,
                 "trainer": {"num_gpus": 1},
-                "rollout": {"num_gpus": 1, "num_workers": 1},
+                "rollout": {"num_gpus": 1, "num_engines": 1},
             },
         ),
     )
@@ -456,7 +456,7 @@ def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
     assert resolved.cross_node is True
     assert resolved.trainer_devices == (0,)
     assert resolved.rollout_devices == (1,)
-    assert resolved.rollout_num_workers == 1
+    assert resolved.rollout_num_engines == 1
     assert resolved.colocated is False
     assert resolved.requires_trainer_reservation is False
     assert resolved.trainer_torch_device == "cuda:0"
@@ -470,14 +470,14 @@ def test_cross_node_scales_to_multiple_rollout_workers() -> None:
                 "visible_devices": "auto",
                 "cross_node": True,
                 "trainer": {"num_gpus": 1},
-                "rollout": {"num_gpus": 3, "num_workers": 3},
+                "rollout": {"num_gpus": 3, "num_engines": 3},
             },
         ),
     )
 
     assert resolved.trainer_devices == (0,)
     assert resolved.rollout_devices == (1, 2, 3)
-    assert resolved.rollout_num_workers == 3
+    assert resolved.rollout_num_engines == 3
     assert resolved.requires_trainer_reservation is False
 
 
@@ -504,7 +504,7 @@ def test_cross_node_plan_formatter_reports_flag() -> None:
                 "visible_devices": "auto",
                 "cross_node": True,
                 "trainer": {"num_gpus": 1},
-                "rollout": {"num_gpus": 1, "num_workers": 1},
+                "rollout": {"num_gpus": 1, "num_engines": 1},
             },
         ),
     )
@@ -525,7 +525,7 @@ def test_cross_node_preset_resolves() -> None:
     assert resolved.cross_node is True
     assert resolved.trainer_devices == (0,)
     assert resolved.rollout_devices == (1,)
-    assert resolved.rollout_num_workers == 1
+    assert resolved.rollout_num_engines == 1
     assert resolved.requires_trainer_reservation is False
 
 
@@ -866,7 +866,7 @@ def test_reward_shared_pool_requires_a_rollout_gpu() -> None:
                 {
                     "visible_devices": [0],
                     "trainer": {"devices": [0]},
-                    "rollout": {"num_gpus": 0, "num_workers": 1},
+                    "rollout": {"num_gpus": 0, "num_engines": 1},
                     "reward": {"device": "gpu", "gpu_pool": "rollout"},
                 },
             ),
@@ -902,7 +902,7 @@ def test_colocated_reward_on_dedicated_gpu_owns_its_own_bundle() -> None:
             {
                 "visible_devices": [0, 1],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [0], "num_workers": 1},
+                "rollout": {"devices": [0], "num_engines": 1},
                 "reward": {"device": "gpu", "devices": [1]},
             },
             kling_video_reward=True,
@@ -927,7 +927,7 @@ def test_shared_single_gpu_reward_reuses_rollout_bundle() -> None:
             {
                 "visible_devices": [0],
                 "trainer": {"devices": [0]},
-                "rollout": {"devices": [0], "num_workers": 1},
+                "rollout": {"devices": [0], "num_engines": 1},
                 "reward": {"device": "gpu", "devices": [0], "gpu_pool": "rollout"},
             },
             kling_video_reward=True,
@@ -1009,7 +1009,7 @@ def test_single_process_still_rejects_multi_gpu_trainer() -> None:
                 {
                     "visible_devices": [0, 1],
                     "trainer": {"devices": [0, 1]},
-                    "rollout": {"num_gpus": 0, "num_workers": 1},
+                    "rollout": {"num_gpus": 0, "num_engines": 1},
                 },
                 {"strategy": "single_process"},
             ),

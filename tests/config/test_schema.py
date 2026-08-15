@@ -28,7 +28,7 @@ from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
     RewardConfig,
-    RolloutWorkerSection,
+    RolloutRuntimeSection,
     RootConfig,
     parse_config,
 )
@@ -1223,7 +1223,7 @@ def test_rollout_health_check_defaults_and_accepts_override() -> None:
 
 
 def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
-    """RolloutWorkerSection (pydantic lint boundary) and RolloutWorkerConfig (the
+    """RolloutRuntimeSection (pydantic lint boundary) and RolloutWorkerConfig (the
     frozen runtime projection composed into RayGenerationConfig) must stay
     field-for-field identical. ``from_public_section`` builds the dataclass via
     ``cls(**section.model_dump())``, so a field on one but not the other silently
@@ -1238,7 +1238,7 @@ def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
 
     from vrl.generation.ray.config import RolloutWorkerConfig
 
-    section_fields = set(RolloutWorkerSection.model_fields)
+    section_fields = set(RolloutRuntimeSection.model_fields)
     config_fields = {f.name for f in dataclasses.fields(RolloutWorkerConfig)}
     assert section_fields == config_fields
     assert "health_check_first_wait_s" in section_fields
@@ -1248,9 +1248,9 @@ def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
     # Per-field default parity: the section's declared defaults must survive the
     # projection unchanged (from_public_section adds no fallbacks or overrides), so
     # the section stays the single home of the default literals.
-    projected = RolloutWorkerConfig.from_public_section(RolloutWorkerSection())
+    projected = RolloutWorkerConfig.from_public_section(RolloutRuntimeSection())
     for name in section_fields:
-        assert getattr(projected, name) == RolloutWorkerSection.model_fields[name].default
+        assert getattr(projected, name) == RolloutRuntimeSection.model_fields[name].default
 
 
 @pytest.mark.parametrize("interval_s", [0.0, -1.0])

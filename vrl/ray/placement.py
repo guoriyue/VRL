@@ -127,7 +127,7 @@ class BundleLayout:
         if resolved.rollout_devices:
             rollout = tuple(gpu_bundle(gpu_id) for gpu_id in resolved.rollout_devices)
         else:
-            rollout = cpu_bundles(resolved.rollout_num_workers)
+            rollout = cpu_bundles(resolved.rollout_num_engines)
 
         if resolved.reward_devices:
             # Shared reward reuses the rollout GPU's existing bundle index; a

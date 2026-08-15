@@ -151,7 +151,7 @@ def test_launch_contract_rejects_empty_model_identity() -> None:
 
 def _cfg(
     *,
-    num_workers: int = 1,
+    num_engines: int = 1,
     overlap: bool = False,
 ):
     rollout_devices = [0] if overlap else [1]
@@ -162,7 +162,7 @@ def _cfg(
             "trainer": {"devices": [0]},
             "rollout": {
                 "devices": rollout_devices,
-                "num_workers": num_workers,
+                "num_engines": num_engines,
             },
         },
         # Release scheduling is derived from topology; nothing to spell here.
@@ -183,7 +183,7 @@ def _resource_cfg(
     rollout_runtime: dict[str, Any] = {"cpus_per_worker": 1}
     rollout_resource: dict[str, Any] = {
         "devices": rollout_devices,
-        "num_workers": len(rollout_devices),
+        "num_engines": len(rollout_devices),
     }
     return OmegaConf.create(
         {
@@ -232,7 +232,7 @@ def _launch_cfg(
                 "rollout": {
                     "num_gpus": 0,
                     "devices": [],
-                    "num_workers": 1,
+                    "num_engines": 1,
                 },
             },
         },
@@ -502,7 +502,7 @@ def test_batch_placement_strategy_switches_from_cfg() -> None:
     dynamic = _ray_config(cfg)
     assert dynamic.worker.batch_placement_strategy == "dynamic"
     # Invalid values are now rejected at the typed schema boundary
-    # (RolloutWorkerSection Literal) at parse time, not in RayGenerationConfig —
+    # (RolloutRuntimeSection Literal) at parse time, not in RayGenerationConfig —
     # see tests/config/test_schema.py::test_unknown_batch_placement_strategy_raises.
 
 
@@ -543,7 +543,7 @@ def test_base_rollout_presets_pin_only_the_cpu_override(preset_name: str) -> Non
     config = RayGenerationConfig.from_cfg(
         cfg,
         resources=SimpleNamespace(
-            rollout_num_workers=1,
+            rollout_num_engines=1,
         ),
     )
     assert config.worker.cpus_per_worker == 4.0
@@ -727,11 +727,11 @@ def test_pipelined_switches_from_cfg() -> None:
     assert _ray_config(cfg).worker.pipelined is True
 
 
-def test_pipelined_rejects_multiple_resolved_workers() -> None:
+def test_pipelined_rejects_multiple_resolved_engines() -> None:
     cfg = _resource_cfg(trainer_devices=[0], rollout_devices=[1, 2])
     cfg.distributed.rollout.pipelined = True
 
-    with pytest.raises(ValueError, match="requires exactly one rollout worker"):
+    with pytest.raises(ValueError, match="requires exactly one rollout engine"):
         RayGenerationConfig.from_cfg(
             cfg,
             resources=resolve_distributed_resources(cfg),

@@ -545,7 +545,7 @@ def _erase_meaningless_spelling(
     from dataclasses import fields as dataclass_fields
 
     from vrl.config.algorithm import resolve_kl_reward_coef
-    from vrl.config.schema import RolloutWorkerSection
+    from vrl.config.schema import RolloutRuntimeSection
     from vrl.trajectory import TrajectoryStoragePolicy, trajectory_storage_policy_from_cfg
 
     def storage_policy(value: Any) -> Any:
@@ -586,6 +586,8 @@ def _erase_meaningless_spelling(
         _drop_default_key(resources_section, "visible_devices", default="auto")
         _drop_default_key(_section(resources_section, "trainer"), "num_gpus", default=1)
         rollout_resources = _section(resources_section, "rollout")
+        # Historical spellings: gpus_per_worker was deleted and num_workers was
+        # renamed to num_engines; persisted run configs keep the old keys.
         _drop_default_key(rollout_resources, "gpus_per_worker", default=1.0)
         _drop_default_key(rollout_resources, "num_workers", default=1)
         if resources_section.get("trainer") == {}:
@@ -610,7 +612,7 @@ def _erase_meaningless_spelling(
         (("reward", "kwargs", "aesthetic"), "device", None, None),
         *(
             (("distributed", "rollout"), name, default, None)
-            for name, default in RolloutWorkerSection().model_dump().items()
+            for name, default in RolloutRuntimeSection().model_dump().items()
         ),
     ]
     for path, key, default, resolve in default_equivalent:

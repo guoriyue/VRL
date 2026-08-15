@@ -34,7 +34,7 @@ class RolloutWorkerConfig:
     pipelined: bool
     # Batch->worker binding: "round_robin" binds at plan time (baseline);
     # "dynamic" binds at dispatch time (pull + LPT). Equivalent for 1 worker.
-    # Allowed-set rejection is at the typed schema boundary (RolloutWorkerSection);
+    # Allowed-set rejection is at the typed schema boundary (RolloutRuntimeSection);
     # DistributedExecutionPlanner repeats it for direct runtime construction.
     batch_placement_strategy: BatchPlacementStrategy
     # Plain on/off. True keeps rollout workers resynced to the trained policy (the
@@ -67,10 +67,10 @@ class RolloutWorkerConfig:
     def from_public_section(cls, section: Any) -> RolloutWorkerConfig:
         """Freeze a validated public section without introducing fallback values."""
 
-        from vrl.config.schema import RolloutWorkerSection
+        from vrl.config.schema import RolloutRuntimeSection
 
-        if not isinstance(section, RolloutWorkerSection):
-            section = RolloutWorkerSection.model_validate(to_builtin_deep(section or {}))
+        if not isinstance(section, RolloutRuntimeSection):
+            section = RolloutRuntimeSection.model_validate(to_builtin_deep(section or {}))
         return cls(**section.model_dump())
 
 
@@ -95,12 +95,12 @@ class RayGenerationConfig:
                 "torch_profiler must be a TorchProfilerConfig or None, "
                 f"got {type(self.torch_profiler).__name__}",
             )
-        if self.resources.rollout_num_workers < 1:
-            raise ValueError("distributed.resources.rollout.num_workers must be >= 1")
-        if self.worker.pipelined and self.resources.rollout_num_workers != 1:
+        if self.resources.rollout_num_engines < 1:
+            raise ValueError("distributed.resources.rollout.num_engines must be >= 1")
+        if self.worker.pipelined and self.resources.rollout_num_engines != 1:
             raise ValueError(
                 "distributed.rollout.pipelined=true requires exactly one rollout "
-                f"worker; resolved {self.resources.rollout_num_workers}. "
+                f"engine; resolved {self.resources.rollout_num_engines}. "
                 "Per-worker request pipelining "
                 "is not implemented.",
             )
@@ -195,7 +195,7 @@ class RayGenerationConfig:
 
         # colocated already implies a non-empty rollout device set (it is the
         # trainer/rollout intersection), so no separate GPU-fleet check needed.
-        if not (self.resources.colocated and self.resources.rollout_num_workers >= 1):
+        if not (self.resources.colocated and self.resources.rollout_num_engines >= 1):
             return
         if not bundle.loads_full_generation_modules:
             return

@@ -78,7 +78,7 @@ def test_bundle_plan_multi_rollout_worker_one_bundle_per_gpu() -> None:
         {
             "visible_devices": [0, 1, 2, 3],
             "trainer": {"num_gpus": 1},
-            "rollout": {"num_gpus": "auto", "num_workers": "auto"},
+            "rollout": {"num_gpus": "auto", "num_engines": "auto"},
         },
     )
     plan = BundleLayout.from_resources(resolved)
@@ -131,7 +131,7 @@ def test_bundle_plan_cross_node_skips_trainer_reservation() -> None:
             "visible_devices": "auto",
             "cross_node": True,
             "trainer": {"num_gpus": 1},
-            "rollout": {"num_gpus": 2, "num_workers": 2},
+            "rollout": {"num_gpus": 2, "num_engines": 2},
         },
     )
     plan = BundleLayout.from_resources(resolved)
@@ -147,7 +147,7 @@ def test_bundle_plan_cpu_only_rollout_uses_cpu_bundles() -> None:
         {
             "visible_devices": [],
             "trainer": {"num_gpus": 0},
-            "rollout": {"num_gpus": 0, "num_workers": 2},
+            "rollout": {"num_gpus": 0, "num_engines": 2},
         },
     )
     plan = BundleLayout.from_resources(resolved)
@@ -253,7 +253,7 @@ def test_assign_roles_cross_node_keeps_positional_bundles() -> None:
             "visible_devices": "auto",
             "cross_node": True,
             "trainer": {"num_gpus": 1},
-            "rollout": {"num_gpus": 2, "num_workers": 2},
+            "rollout": {"num_gpus": 2, "num_engines": 2},
         },
     )
     # Real remote GPU ids bear no relation to the token ordinals (1, 2).
@@ -267,7 +267,7 @@ def test_assign_roles_rejects_duplicate_probed_gpu() -> None:
         {
             "visible_devices": [0, 1],
             "trainer": {"num_gpus": 1},
-            "rollout": {"num_gpus": 1, "num_workers": 1},
+            "rollout": {"num_gpus": 1, "num_engines": 1},
         },
     )
     with pytest.raises(RuntimeError, match="two bundles probed to GPU 0"):
@@ -304,7 +304,7 @@ def test_required_local_cluster_cpus_uses_placement_bundle_sum() -> None:
             "rollout": {
                 "gpu_pool": "trainer",
                 "devices": [0],
-                "num_workers": 1,
+                "num_engines": 1,
             },
             "reward": {"device": "cpu"},
         },
@@ -342,7 +342,7 @@ def test_placement_owner_consumes_exact_rollout_cpu_capability() -> None:
         {
             "visible_devices": [],
             "trainer": {"num_gpus": 0},
-            "rollout": {"num_gpus": 0, "num_workers": 1},
+            "rollout": {"num_gpus": 0, "num_engines": 1},
         },
         worker=worker,
     )

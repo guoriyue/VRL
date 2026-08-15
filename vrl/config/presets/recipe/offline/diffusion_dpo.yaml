@@ -30,4 +30,4 @@ distributed:
   resources:
     rollout:
       # Offline DPO trains from a fixed preference dataset: no generation fleet.
-      num_workers: 0
+      num_engines: 0

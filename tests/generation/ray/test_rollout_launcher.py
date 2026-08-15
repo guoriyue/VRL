@@ -137,7 +137,7 @@ def test_create_runtime_rejects_missing_rollout_placement() -> None:
                     "resources": {
                         "visible_devices": [],
                         "trainer": {"num_gpus": 0},
-                        "rollout": {"num_gpus": 0, "num_workers": 1},
+                        "rollout": {"num_gpus": 0, "num_engines": 1},
                     },
                     "rollout": {},
                     "reward": {},
@@ -171,7 +171,7 @@ def _cpu_rollout_owner(
                     "resources": {
                         "visible_devices": [],
                         "trainer": {"num_gpus": 0},
-                        "rollout": {"num_gpus": 0, "num_workers": 1},
+                        "rollout": {"num_gpus": 0, "num_engines": 1},
                     },
                     "rollout": {},
                     "reward": {},
