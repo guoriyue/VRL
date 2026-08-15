@@ -8,6 +8,11 @@ from typing import Any
 
 from vrl.generation.execution.memory_parking import WorkerMemoryParking
 from vrl.generation.execution.planner import EnginePlan
+from vrl.generation.execution.rank_group import (
+    RankGroupSpec,
+    destroy_rank_process_group,
+    init_rank_process_group,
+)
 from vrl.generation.execution.types import (
     BatchCompletionCallback,
     BatchMemoryReading,
@@ -46,8 +51,16 @@ class GenerationWorkerCore:
         worker_id: str,
         launch_contract: GenerationRuntimeLaunchContract,
         gatherer: GenerationBatchGatherer,
+        rank_group: RankGroupSpec | None = None,
     ) -> None:
         self.worker_id = worker_id
+        if rank_group is not None and not isinstance(rank_group, RankGroupSpec):
+            raise TypeError(
+                f"rank_group must be a RankGroupSpec or None, got {type(rank_group).__name__}",
+            )
+        # None for single-rank engines. A spec makes this rank join its
+        # engine's process group around the model lifetime (load -> release).
+        self.rank_group = rank_group
         if not isinstance(launch_contract, GenerationRuntimeLaunchContract):
             raise TypeError(
                 "launch_contract must be a GenerationRuntimeLaunchContract, "
@@ -91,6 +104,8 @@ class GenerationWorkerCore:
 
         log_host_memory(f"generation_worker:{self.worker_id}:before_load_policy", log=logger)
         try:
+            if self.rank_group is not None:
+                init_rank_process_group(self.rank_group)
             self.executor = self._memory_parking.build(self._build_executor)
             if (
                 self.executor.family != self.family_entry.family
@@ -119,10 +134,12 @@ class GenerationWorkerCore:
         log_host_memory(f"generation_worker:{self.worker_id}:after_load_policy", log=logger)
 
     def release_policy(self) -> None:
-        """Drop loaded model state so the worker releases CUDA memory before exit."""
+        """Drop loaded model state so the rank releases CUDA memory before exit."""
 
         with self._memory_parking.release_scope():
             self.executor = None
+        if self.rank_group is not None:
+            destroy_rank_process_group()
 
     def sleep(self) -> WorkerMemoryParkingSnapshot:
         """Offload the loaded model to host RAM, freeing the GPU without discarding it.

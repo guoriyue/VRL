@@ -10,6 +10,7 @@ from functools import partial
 from typing import Any
 
 from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
+from vrl.generation.execution.rank_group import RankGroupSpec
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.engine import RayGenerationEngine, rank_handles
 from vrl.generation.ray.executor import RayGenerationExecutor
@@ -93,7 +94,26 @@ class RayGenerationLauncher:
         # The same registry-owned gatherer serves the driver executor and the
         # single-engine pipelined path. Ray serializes it to each rank actor;
         # ranks never re-resolve family identity from the neutral execution layer.
-        rank_configs = [launch_inputs for _ in rank_ids]
+        # Multi-rank engines additionally get a per-rank rendezvous spec: one
+        # process-group port per engine, loopback address (engine groups are
+        # single-node; PACK affinity is enforced at placement).
+        if ROLLOUT_GPUS_PER_ENGINE == 1:
+            rank_configs = [launch_inputs for _ in rank_ids]
+        else:
+            rank_configs = [
+                replace(
+                    launch_inputs,
+                    rank_group=RankGroupSpec(
+                        master_addr="127.0.0.1",
+                        master_port=engine_port,
+                        group_rank=rank_idx,
+                        group_world_size=ROLLOUT_GPUS_PER_ENGINE,
+                        backend="nccl" if config.resources.rollout_devices else "gloo",
+                    ),
+                )
+                for engine_port in [_free_port() for _ in engine_ids]
+                for rank_idx in range(ROLLOUT_GPUS_PER_ENGINE)
+            ]
         try:
             actor_group = RayActorGroup.launch(
                 worker_cls=RayGenerationWorker,
@@ -277,6 +297,16 @@ class RayGenerationLauncher:
                         f"resident rollout startup cleanup also failed: {cleanup_error!r}",
                     )
             raise
+
+
+def _free_port() -> int:
+    """Reserve an ephemeral rendezvous port on the engine group's node."""
+
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
 def _validate_rank_gpu_ids(

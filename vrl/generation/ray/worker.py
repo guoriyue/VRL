@@ -48,6 +48,7 @@ class RayGenerationWorker:
             worker_id,
             launch_inputs.launch_contract,
             launch_inputs.gatherer,
+            rank_group=launch_inputs.rank_group,
         )
         self._pipelined_progress_lock = threading.Lock()
         self._pipelined_progress: PipelinedRequestProgress | None = None
