@@ -53,6 +53,24 @@ def _resolve(resources: dict):
 # ----------------------------------------------------------------- bundle plan
 
 
+def test_bundle_plan_groups_rollout_bundles_per_engine() -> None:
+    """gpus_per_engine=2 over 4 rollout GPUs -> two consecutive bundle groups."""
+    resolved = _resolve(
+        {
+            "visible_devices": [0, 1, 2, 3, 4],
+            "trainer": {"devices": [0]},
+            "rollout": {"devices": [1, 2, 3, 4], "gpus_per_engine": 2},
+        },
+    )
+    plan = BundleLayout.from_resources(resolved)
+
+    assert plan.rollout_gpus_per_engine == 2
+    groups = plan.rollout_engine_bundle_groups
+    assert len(groups) == 2
+    assert all(len(group) == 2 for group in groups)
+    assert tuple(index for group in groups for index in group) == plan.rollout_bundle_indices
+
+
 def test_bundle_plan_dedicated_trainer_rollout_reward_distinct_bundles() -> None:
     """Trainer/rollout/reward on distinct GPUs => one bundle each, reward owned."""
     resolved = _resolve(

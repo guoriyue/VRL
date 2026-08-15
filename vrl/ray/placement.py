@@ -36,7 +36,7 @@ from vrl.ray.dependencies import (
     require_ray,
 )
 from vrl.ray.operation_deadline import get_ray_refs
-from vrl.ray.resources import ROLLOUT_GPUS_PER_ENGINE, ResolvedDistributedResources
+from vrl.ray.resources import ResolvedDistributedResources
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,8 @@ class BundleLayout:
     bundle_gpu_ids: tuple[int | None, ...]
     rollout_bundle_indices: tuple[int, ...]
     reward_bundle_indices: tuple[int, ...]
+    # Ranks per rollout engine; consecutive rollout bundles group per engine.
+    rollout_gpus_per_engine: int = 1
 
     @property
     def total_bundles(self) -> int:
@@ -88,14 +90,13 @@ class BundleLayout:
 
     @property
     def rollout_engine_bundle_groups(self) -> tuple[tuple[int, ...], ...]:
-        """Rollout bundles grouped per engine (ROLLOUT_GPUS_PER_ENGINE each).
+        """Rollout bundles grouped per engine (rollout_gpus_per_engine each).
 
         One engine owns one consecutive group; the launcher assembles its rank
-        actors from exactly these bundles. Generic over the group size — today
-        every group has one bundle, so groups mirror the flat indices.
+        actors from exactly these bundles.
         """
 
-        size = ROLLOUT_GPUS_PER_ENGINE
+        size = self.rollout_gpus_per_engine
         indices = self.rollout_bundle_indices
         if len(indices) % size:
             raise RuntimeError(
@@ -162,6 +163,7 @@ class BundleLayout:
             bundle_gpu_ids=tuple(bundle_gpu_ids),
             rollout_bundle_indices=rollout,
             reward_bundle_indices=reward,
+            rollout_gpus_per_engine=resolved.rollout_gpus_per_engine,
         )
 
 

@@ -791,6 +791,7 @@ class RolloutRuntimeSection(ConfigBase):
             raise ValueError(
                 "distributed.rollout.worker_rpc_timeout_s must be finite and > 0",
             )
+
         if (
             not math.isfinite(self.generation_stall_timeout_s)
             or self.generation_stall_timeout_s <= 0

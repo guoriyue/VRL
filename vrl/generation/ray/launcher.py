@@ -24,7 +24,6 @@ from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.dependencies import current_node_ip, require_ray
 from vrl.ray.operation_deadline import get_ray_refs
 from vrl.ray.placement import RolePlacement, validate_actor_gpu_ids
-from vrl.ray.resources import ROLLOUT_GPUS_PER_ENGINE
 
 logger = logging.getLogger(__name__)
 
@@ -63,15 +62,16 @@ class RayGenerationLauncher:
         worker = config.worker
 
         bundle_indices = list(placement.bundle_indices)
-        # One engine per ROLLOUT_GPUS_PER_ENGINE bundles; the resolver's
-        # num_engines arithmetic guarantees divisibility (one GPU per engine
-        # today, so groups have size 1 and rank ids equal engine ids).
-        if len(bundle_indices) % ROLLOUT_GPUS_PER_ENGINE:
+        # One engine per gpus_per_engine bundles; the resolver's num_engines
+        # arithmetic guarantees divisibility (single-GPU engines have groups of
+        # one bundle and rank ids equal engine ids).
+        gpus_per_engine = config.resources.rollout_gpus_per_engine
+        if len(bundle_indices) % gpus_per_engine:
             raise ValueError(
                 f"rollout placement bundles ({len(bundle_indices)}) are not "
-                f"divisible into engines of {ROLLOUT_GPUS_PER_ENGINE} rank(s)",
+                f"divisible into engines of {gpus_per_engine} rank(s)",
             )
-        engine_count = len(bundle_indices) // ROLLOUT_GPUS_PER_ENGINE
+        engine_count = len(bundle_indices) // gpus_per_engine
         if worker.pipelined and engine_count != 1:
             raise ValueError(
                 "pipelined Ray generation requires exactly one rollout engine; "
@@ -87,9 +87,9 @@ class RayGenerationLauncher:
 
         engine_ids = [f"rollout-{engine_idx}" for engine_idx in range(engine_count)]
         rank_ids = [
-            engine_id if ROLLOUT_GPUS_PER_ENGINE == 1 else f"{engine_id}.r{rank_idx}"
+            engine_id if gpus_per_engine == 1 else f"{engine_id}.r{rank_idx}"
             for engine_id in engine_ids
-            for rank_idx in range(ROLLOUT_GPUS_PER_ENGINE)
+            for rank_idx in range(gpus_per_engine)
         ]
         # The same registry-owned gatherer serves the driver executor and the
         # single-engine pipelined path. Ray serializes it to each rank actor;
@@ -97,7 +97,7 @@ class RayGenerationLauncher:
         # Multi-rank engines additionally get a per-rank rendezvous spec: one
         # process-group port per engine, loopback address (engine groups are
         # single-node; PACK affinity is enforced at placement).
-        if ROLLOUT_GPUS_PER_ENGINE == 1:
+        if gpus_per_engine == 1:
             rank_configs = [launch_inputs for _ in rank_ids]
         else:
             rank_configs = [
@@ -107,12 +107,12 @@ class RayGenerationLauncher:
                         master_addr="127.0.0.1",
                         master_port=engine_port,
                         group_rank=rank_idx,
-                        group_world_size=ROLLOUT_GPUS_PER_ENGINE,
+                        group_world_size=gpus_per_engine,
                         backend="nccl" if config.resources.rollout_devices else "gloo",
                     ),
                 )
                 for engine_port in [_free_port() for _ in engine_ids]
-                for rank_idx in range(ROLLOUT_GPUS_PER_ENGINE)
+                for rank_idx in range(gpus_per_engine)
             ]
         try:
             actor_group = RayActorGroup.launch(
@@ -140,8 +140,7 @@ class RayGenerationLauncher:
                 RayGenerationEngine(
                     engine_id,
                     actor_group.handles[
-                        engine_idx * ROLLOUT_GPUS_PER_ENGINE : (engine_idx + 1)
-                        * ROLLOUT_GPUS_PER_ENGINE
+                        engine_idx * gpus_per_engine : (engine_idx + 1) * gpus_per_engine
                     ],
                 )
                 for engine_idx, engine_id in enumerate(engine_ids)

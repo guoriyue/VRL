@@ -38,6 +38,7 @@ from vrl.run import (
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator,
     build_reward_runtime,
+    validate_multi_gpu_engine_support,
     validate_reward_memory_parking,
 )
 from vrl.trainers.activation_checkpointing import (
@@ -777,6 +778,7 @@ async def run_online_recipe(
     resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
     validate_rollout_schedule_topology(trainer_config.rollout_orchestration, resources)
     validate_reward_memory_parking(resources=resources, built=built)
+    validate_multi_gpu_engine_support(family_entry, resources)
     logger.info(format_distributed_resource_plan(resources))
     # Resolve the training process identity (rank/device) and fail-fast on
     # strategies the online recipe can't yet drive end-to-end, before building the

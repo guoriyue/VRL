@@ -61,6 +61,11 @@ class GenerationRuntimeCapabilities:
     """Concrete executor/runtime behaviors, separate from model semantics."""
 
     supports_torch_compile: bool = False
+    # True once the family's executor can run one engine across several GPUs
+    # (sequence-parallel denoise). Gated at config resolution: requesting
+    # distributed.rollout.gpus_per_engine > 1 for a family without this
+    # capability fails loud instead of silently computing every batch N times.
+    supports_multi_gpu_engine: bool = False
     memory_parking: GenerationParkingProfile = GenerationParkingProfile.MODEL
     supported_model_memory_sections: frozenset[str] = field(default_factory=frozenset)
 

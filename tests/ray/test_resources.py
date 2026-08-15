@@ -204,8 +204,8 @@ def test_devices_must_be_subset_of_visible_devices() -> None:
 
 
 def test_num_engines_must_match_the_resolved_gpu_count() -> None:
-    """A GPU fleet is one GPU per engine; a contradicting num_engines fails."""
-    with pytest.raises(ValueError, match="num_engines must equal the rollout GPU count"):
+    """A contradicting explicit num_engines fails against the derivation."""
+    with pytest.raises(ValueError, match="num_engines must equal rollout GPUs"):
         resolve_distributed_resources(
             _cfg(
                 {
@@ -215,6 +215,78 @@ def test_num_engines_must_match_the_resolved_gpu_count() -> None:
                         "num_gpus": 2,
                         "num_engines": 1,
                     },
+                },
+            ),
+        )
+
+
+def test_gpus_per_engine_derives_engine_count() -> None:
+    """4 rollout GPUs at 2 ranks per engine = 2 sequence-parallel engines."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1, 2, 3, 4],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1, 2, 3, 4], "gpus_per_engine": 2},
+            },
+        ),
+    )
+
+    assert resolved.rollout_devices == (1, 2, 3, 4)
+    assert resolved.rollout_num_engines == 2
+    assert resolved.rollout_gpus_per_engine == 2
+    assert "gpus_per_engine=2" in format_distributed_resource_plan(resolved)
+
+
+def test_gpus_per_engine_requires_divisible_gpu_count() -> None:
+    with pytest.raises(ValueError, match="not divisible into engines of 2"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0, 1, 2, 3],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1, 2, 3], "gpus_per_engine": 2},
+                },
+            ),
+        )
+
+
+def test_explicit_num_engines_must_match_the_engine_derivation() -> None:
+    with pytest.raises(ValueError, match="num_engines must equal rollout GPUs / "):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0, 1, 2, 3, 4],
+                    "trainer": {"devices": [0]},
+                    "rollout": {
+                        "devices": [1, 2, 3, 4],
+                        "gpus_per_engine": 2,
+                        "num_engines": 4,
+                    },
+                },
+            ),
+        )
+
+
+def test_gpus_per_engine_rejects_cross_node_and_cpu_fleets() -> None:
+    with pytest.raises(ValueError, match="cross_node"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": "auto",
+                    "cross_node": True,
+                    "trainer": {"num_gpus": 1},
+                    "rollout": {"num_gpus": 2, "gpus_per_engine": 2},
+                },
+            ),
+        )
+    with pytest.raises(ValueError, match="CPU engine"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0],
+                    "trainer": {"num_gpus": 0},
+                    "rollout": {"num_gpus": 0, "gpus_per_engine": 2},
                 },
             ),
         )
