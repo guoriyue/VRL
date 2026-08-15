@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass
+from typing import TYPE_CHECKING, Any, get_type_hints
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.trainers.core.types import (
@@ -16,6 +16,9 @@ from vrl.trainers.core.types import (
 )
 from vrl.utils.config import require_exact_int
 from vrl.utils.profiling import TorchProfilerConfig
+
+if TYPE_CHECKING:
+    from vrl.config.precision import PrecisionPolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +159,7 @@ class TrainerConfig:
     Each field also declares its YAML home in ``metadata={"yaml": ...}``:
     a section name for scalars (the YAML key equals the field name), a dotted
     section path for nested config dataclasses, or ``"bridged"`` for values
-    computed by ``build_trainer_config`` (the precision policy projects into
+    computed by ``TrainerConfig.from_cfg`` (the precision policy projects into
     the two trainer-side precision fields). The builder derives the
     whole layout from this metadata — there is no separate layout table to
     maintain, and a field without metadata fails loudly at build time.
@@ -225,6 +228,109 @@ class TrainerConfig:
     # --- lifecycle ---
     # --- profiling ---
     profile: bool = field(default=False, metadata={"yaml": "trainer"})
+
+    @classmethod
+    def from_cfg(
+        cls,
+        cfg: Any,
+        *,
+        precision: PrecisionPolicy | None = None,
+    ) -> TrainerConfig:
+        """Slice merged YAML into ``TrainerConfig``.
+
+        The layout is derived from each field's ``metadata={"yaml": ...}`` on this
+        dataclass (section name for scalars, dotted path for nested sections,
+        "bridged" for constructor-computed values), and requiredness from the
+        field defaults — the dataclass is the single declaration of both. Missing
+        required keys across sections and scalars are collected and reported
+        together with full YAML paths.
+        """
+
+        from vrl.config.precision import resolve_precision_policy
+        from vrl.config.validation import (
+            path_exists,
+            require,
+            section_payload_and_missing,
+            validate_yaml_home,
+        )
+
+        hints = get_type_hints(cls)
+        payload: dict[str, Any] = {}
+        missing: list[str] = []
+
+        # ``batch_plan`` is bridged because its public inputs span rollout and actor.
+        # Derive its required public paths from the plan fields so missing-key
+        # reporting cannot drift when the typed plan changes.
+        for plan_field in fields(OnlineBatchPlan):
+            home = plan_field.metadata.get("yaml")
+            if home is None:
+                raise AssertionError(
+                    f"OnlineBatchPlan.{plan_field.name} does not declare its YAML home "
+                    "(field metadata {'yaml': ...})",
+                )
+            validate_yaml_home(plan_field.name, home, owner="OnlineBatchPlan")
+            path = f"{home}.{plan_field.name}"
+            if (
+                plan_field.default is MISSING
+                and plan_field.default_factory is MISSING
+                and not path_exists(cfg, path)
+            ):
+                missing.append(path)
+
+        for f in fields(cls):
+            if not f.init:
+                continue
+            home = f.metadata.get("yaml")
+            if home is None:
+                raise AssertionError(
+                    f"{cls.__name__}.{f.name} does not declare its YAML home "
+                    "(field metadata {'yaml': ...})",
+                )
+            if home == "bridged":
+                continue
+            validate_yaml_home(f.name, home)
+            field_cls = hints[f.name]
+            if is_dataclass(field_cls):
+                section_payload, section_missing = section_payload_and_missing(
+                    field_cls,
+                    cfg,
+                    home,
+                )
+                if section_missing:
+                    missing.extend(section_missing)
+                else:
+                    payload[f.name] = field_cls(**section_payload)
+            else:
+                path = f"{home}.{f.name}"
+                if path_exists(cfg, path):
+                    payload[f.name] = require(cfg, path)
+                elif f.default is MISSING and f.default_factory is MISSING:
+                    missing.append(path)
+
+        if missing:
+            raise ValueError("config missing required key(s): " + ", ".join(sorted(missing)))
+
+        # Resolve the public policy once; trainer fields are its runtime projection.
+        precision = precision or resolve_precision_policy(cfg)
+        payload.update(
+            batch_plan=OnlineBatchPlan.from_cfg(cfg),
+            train_precision=precision.training.label,
+            rollout_precision=precision.rollout.label,
+        )
+        # On a rollout/train precision split, the correction mechanism is an
+        # implementation detail the user should not have to spell out: default to
+        # TIS/RS correction plus a catastrophic-drift guard. Explicit expert
+        # trainer.precision_* blocks are still respected.
+        if not precision.stages_match:
+            from vrl.config.builders import build_precision_split_safety_configs
+
+            correction, guard = build_precision_split_safety_configs()
+            if not path_exists(cfg, "trainer.precision_correction"):
+                payload["precision_correction"] = correction
+            if not path_exists(cfg, "trainer.precision_drift_guard"):
+                payload["precision_drift_guard"] = guard
+
+        return cls(**payload)
 
     def __post_init__(self) -> None:
         if self.timestep_selection not in ("strided", "random"):

@@ -22,8 +22,6 @@ def _resolved_trainer_config(overrides: list[str] | None = None):
     return build_offline_dpo_trainer_config(
         cfg,
         DiffusionDPOConfig(beta=123.0, sft_weight=0.25),
-        train_batch_size=int(cfg.actor.train_batch_size),
-        gradient_accumulation_steps=int(cfg.actor.gradient_accumulation_steps),
     )
 
 

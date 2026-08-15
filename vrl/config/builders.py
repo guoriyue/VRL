@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import math
-from dataclasses import MISSING, dataclass, fields, is_dataclass
-from typing import TYPE_CHECKING, Any, get_type_hints
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.algorithm import algorithm_config_class
 from vrl.config.precision import (
     PrecisionPolicy,
-    resolve_precision_policy,
 )
 from vrl.config.reward_inference import (
     RewardInferenceConfig,
@@ -19,7 +18,7 @@ from vrl.config.reward_inference import (
 )
 from vrl.config.schema import RewardConfig, RootConfig
 from vrl.config.validation import (
-    path_exists,
+    dataclass_field_names,
     require,
     validate_training_config,
 )
@@ -145,60 +144,11 @@ def build_precision_split_safety_configs() -> tuple[
     )
 
 
-def _dataclass_field_names(cls: type[Any]) -> set[str]:
-    if not is_dataclass(cls):
-        raise TypeError(f"{cls!r} must be a dataclass type")
-    return {field.name for field in fields(cls) if field.init}
-
-
-def _section_payload_and_missing(
-    cls: type[Any],
-    cfg: DictConfig,
-    path: str,
-) -> tuple[dict[str, Any], list[str]]:
-    """Select ``cls`` fields from the section; report missing required paths.
-
-    An explicitly null section (``actor.ema: null``) raises instead of
-    silently replacing the section with all-defaults — only true absence
-    means "use the dataclass defaults". Unknown keys raise: for a typed
-    section the dataclass is the complete vocabulary, so a typo'd
-    hyperparameter must refuse to start rather than silently train with the
-    default behind a lint warning.
-    """
-
-    node = OmegaConf.select(cfg, path)
-    if node is None:
-        if path_exists(cfg, path):
-            raise ValueError(
-                f"config section {path} is null; delete the key or fill the section",
-            )
-        raw: dict[str, Any] = {}
-    else:
-        raw = OmegaConf.to_container(node, resolve=True, throw_on_missing=True)
-        if not isinstance(raw, dict):
-            raise ValueError(f"config section {path} must be a mapping")
-
-    allowed = _dataclass_field_names(cls)
-    unknown = sorted(set(raw) - allowed)
-    if unknown:
-        keys = ", ".join(f"{path}.{key}" for key in unknown)
-        raise ValueError(f"unknown {cls.__name__} key(s): {keys}")
-    payload = {key: value for key, value in raw.items() if key in allowed}
-    # Required = no default, torch signature semantics.
-    required = {
-        field.name
-        for field in fields(cls)
-        if field.init and field.default is MISSING and field.default_factory is MISSING
-    }
-    missing = sorted(f"{path}.{name}" for name in required - set(payload))
-    return payload, missing
-
-
 def _dataclass_payload(cls: type[Any], node: DictConfig) -> dict[str, Any]:
     raw = OmegaConf.to_container(node, resolve=True, throw_on_missing=True) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"{cls.__name__} config must be a mapping")
-    allowed = _dataclass_field_names(cls)
+    allowed = dataclass_field_names(cls)
     ignored_keys = {"kind", "kl_reward_coef"}
     unknown = sorted(set(raw) - allowed - ignored_keys)
     if unknown:
@@ -207,144 +157,25 @@ def _dataclass_payload(cls: type[Any], node: DictConfig) -> dict[str, Any]:
     return {key: value for key, value in raw.items() if key in allowed}
 
 
-def _validate_yaml_home(
-    field_name: str,
-    home: str,
-    *,
-    owner: str = "TrainerConfig",
-) -> None:
-    """Reject metadata addresses whose top-level section is not a known one.
-
-    Guards the silent failure mode of a typo'd address on an OPTIONAL field
-    (it would fall back to the default instead of reading the user's value).
-    The valid-section vocabulary is derived from the schema's RootConfig —
-    the existing source of truth for top-level sections — so this check can
-    never drift into rejecting a legitimately added section.
-    """
-
-    from vrl.config.schema import RootConfig
-
-    top = home.split(".", 1)[0]
-    if top not in RootConfig.model_fields:
-        expected = ", ".join(sorted(RootConfig.model_fields))
-        raise AssertionError(
-            f"{owner}.{field_name} declares unknown yaml home {home!r}; "
-            f"the top-level section must be one of: {expected}",
-        )
-
-
-def build_trainer_config(
-    cfg: DictConfig,
-    *,
-    precision: PrecisionPolicy | None = None,
-):
-    """Slice merged YAML into ``TrainerConfig``.
-
-    The layout is derived from each field's ``metadata={"yaml": ...}`` on the
-    dataclass (section name for scalars, dotted path for nested sections,
-    "bridged" for builder-computed values), and requiredness from the field
-    defaults — the dataclass is the single declaration of both. Missing
-    required keys across sections and scalars are
-    collected and reported together with full YAML paths.
-    """
-
-    from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-
-    hints = get_type_hints(TrainerConfig)
-    payload: dict[str, Any] = {}
-    missing: list[str] = []
-
-    # ``batch_plan`` is bridged because its public inputs span rollout and actor.
-    # Derive its required public paths from the plan fields so missing-key
-    # reporting cannot drift when the typed plan changes.
-    for plan_field in fields(OnlineBatchPlan):
-        home = plan_field.metadata.get("yaml")
-        if home is None:
-            raise AssertionError(
-                f"OnlineBatchPlan.{plan_field.name} does not declare its YAML home "
-                "(field metadata {'yaml': ...})",
-            )
-        _validate_yaml_home(plan_field.name, home, owner="OnlineBatchPlan")
-        path = f"{home}.{plan_field.name}"
-        if (
-            plan_field.default is MISSING
-            and plan_field.default_factory is MISSING
-            and not path_exists(cfg, path)
-        ):
-            missing.append(path)
-
-    for f in fields(TrainerConfig):
-        if not f.init:
-            continue
-        home = f.metadata.get("yaml")
-        if home is None:
-            raise AssertionError(
-                f"TrainerConfig.{f.name} does not declare its YAML home "
-                "(field metadata {'yaml': ...})",
-            )
-        if home == "bridged":
-            continue
-        _validate_yaml_home(f.name, home)
-        field_cls = hints[f.name]
-        if is_dataclass(field_cls):
-            section_payload, section_missing = _section_payload_and_missing(
-                field_cls,
-                cfg,
-                home,
-            )
-            if section_missing:
-                missing.extend(section_missing)
-            else:
-                payload[f.name] = field_cls(**section_payload)
-        else:
-            path = f"{home}.{f.name}"
-            if path_exists(cfg, path):
-                payload[f.name] = require(cfg, path)
-            elif f.default is MISSING and f.default_factory is MISSING:
-                missing.append(path)
-
-    if missing:
-        raise ValueError("config missing required key(s): " + ", ".join(sorted(missing)))
-
-    # Resolve the public policy once; trainer fields are its runtime projection.
-    precision = precision or resolve_precision_policy(cfg)
-    payload.update(
-        batch_plan=OnlineBatchPlan.from_cfg(cfg),
-        train_precision=precision.training.label,
-        rollout_precision=precision.rollout.label,
-    )
-    # On a rollout/train precision split, the correction mechanism is an
-    # implementation detail the user should not have to spell out: default to
-    # TIS/RS correction plus a catastrophic-drift guard. Explicit expert
-    # trainer.precision_* blocks are still respected.
-    if not precision.stages_match:
-        correction, guard = build_precision_split_safety_configs()
-        if not path_exists(cfg, "trainer.precision_correction"):
-            payload["precision_correction"] = correction
-        if not path_exists(cfg, "trainer.precision_drift_guard"):
-            payload["precision_drift_guard"] = guard
-
-    return TrainerConfig(**payload)
-
-
 def build_offline_dpo_trainer_config(
     cfg: DictConfig,
     dpo_config: DiffusionDPOConfig,
-    *,
-    train_batch_size: int,
-    gradient_accumulation_steps: int,
 ) -> OfflineDPOTrainerConfig:
     """Slice merged YAML into ``OfflineDPOTrainerConfig``.
 
-    The offline twin of ``build_trainer_config``: same public ``actor.*``
-    optimizer section, projected into the offline trainer instead. It lives here
-    rather than on the config dataclass because ``vrl.trainers.offline`` holds no
-    YAML knowledge, and rather than in the recipe script because a public config
-    projection is not a script-private detail.
+    The offline twin of ``TrainerConfig.from_cfg``: same public ``actor.*``
+    optimizer section, projected into the offline trainer instead. It stays a
+    free builder because ``vrl.trainers.offline`` deliberately holds no YAML
+    knowledge (unlike the online config, whose fields declare their own YAML
+    homes), and it takes two sources — the raw cfg plus the already-built
+    algorithm config.
     """
 
     from vrl.trainers.core.types import OptimConfig
     from vrl.trainers.offline import OfflineDPOTrainerConfig
+
+    train_batch_size = int(require(cfg, "actor.train_batch_size"))
+    gradient_accumulation_steps = int(require(cfg, "actor.gradient_accumulation_steps"))
 
     raw_optim = OmegaConf.to_container(
         cfg.actor.optim,
@@ -406,6 +237,7 @@ def build_configs(cfg: DictConfig) -> BuiltConfigs:
         prepare_model_config_for_training_resume,
         resolve_training_resume_config,
     )
+    from vrl.trainers.online.config import TrainerConfig
 
     resume = resolve_training_resume_config(cfg)
     # A full checkpoint, not model.lora.path, owns trainable state on resume.
@@ -415,7 +247,7 @@ def build_configs(cfg: DictConfig) -> BuiltConfigs:
     root, precision = validate_training_config(cfg)
     algorithm = build_algorithm_config(cfg)
     is_offline_dpo = root.algorithm is not None and root.algorithm.kind == "diffusion_dpo"
-    trainer = None if is_offline_dpo else build_trainer_config(cfg, precision=precision)
+    trainer = None if is_offline_dpo else TrainerConfig.from_cfg(cfg, precision=precision)
     reward = RewardRuntimeConfig.from_cfg(root.reward) if root.reward is not None else None
     if not is_offline_dpo:
         if reward is None:
@@ -438,5 +270,4 @@ __all__ = [
     "build_algorithm_config",
     "build_configs",
     "build_offline_dpo_trainer_config",
-    "build_trainer_config",
 ]

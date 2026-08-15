@@ -24,7 +24,6 @@ from vrl.config.builders import (
     RewardRuntimeConfig,
     build_algorithm_config,
     build_configs,
-    build_trainer_config,
 )
 from vrl.config.loading import (
     bundled_config_resource,
@@ -66,7 +65,7 @@ def test_load_config_enforces_mandatory_marker(tmp_path: Path) -> None:
     assert cfg.trainer.entrypoint == "pkg.mod:fn"
 
 
-def test_build_trainer_config_reports_all_missing_required_keys() -> None:
+def test_trainer_config_from_cfg_reports_all_missing_required_keys() -> None:
     """Missing required keys are reported together, each with its full YAML path."""
     cfg = OmegaConf.create(
         {
@@ -81,10 +80,10 @@ def test_build_trainer_config_reports_all_missing_required_keys() -> None:
         },
     )
 
-    from vrl.config.builders import build_trainer_config
+    from vrl.trainers.online.config import TrainerConfig
 
     with pytest.raises(ValueError) as exc:
-        build_trainer_config(cfg)
+        TrainerConfig.from_cfg(cfg)
 
     message = str(exc.value)
     for path in (
@@ -100,13 +99,13 @@ def test_build_trainer_config_reports_all_missing_required_keys() -> None:
 
 def test_typo_yaml_home_is_rejected() -> None:
     """A metadata address naming an unknown top-level section fails loudly."""
-    from vrl.config.builders import _validate_yaml_home
+    from vrl.config.validation import validate_yaml_home
 
-    _validate_yaml_home("save_freq", "trainer")  # known section: ok
-    _validate_yaml_home("optim", "actor.optim")  # dotted path: ok
+    validate_yaml_home("save_freq", "trainer")  # known section: ok
+    validate_yaml_home("optim", "actor.optim")  # dotted path: ok
 
     with pytest.raises(AssertionError, match=r"trainerx"):
-        _validate_yaml_home("save_freq", "trainerx")
+        validate_yaml_home("save_freq", "trainerx")
 
 
 def test_config_groups_are_not_flattened() -> None:
@@ -750,7 +749,9 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devi
         * cfg.distributed.training.gpus_per_node
         == 32
     )
-    trainer = build_trainer_config(cfg)
+    from vrl.trainers.online.config import TrainerConfig
+
+    trainer = TrainerConfig.from_cfg(cfg)
     assert trainer.batch_plan.microbatch_size == 1
     assert trainer.batch_plan.gradient_accumulation_steps == 2
     assert trainer.batch_plan.host_memory_budget_fraction == pytest.approx(0.98)

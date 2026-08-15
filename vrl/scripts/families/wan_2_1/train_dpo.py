@@ -153,13 +153,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     precision = built.precision
     train_batch_size = int(require(cfg, "actor.train_batch_size"))
-    grad_accum = int(require(cfg, "actor.gradient_accumulation_steps"))
-    trainer_cfg = build_offline_dpo_trainer_config(
-        cfg,
-        dpo_config,
-        train_batch_size=train_batch_size,
-        gradient_accumulation_steps=grad_accum,
-    )
+    trainer_cfg = build_offline_dpo_trainer_config(cfg, dpo_config)
     resume_config = built.resume
     resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
     logger.info(format_distributed_resource_plan(resources))

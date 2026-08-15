@@ -9,6 +9,7 @@ must not enter the Pydantic schema.
 from __future__ import annotations
 
 import json
+from dataclasses import MISSING, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -350,3 +351,78 @@ __all__ = [
     "validate_reward_config",
     "validate_training_config",
 ]
+
+
+def dataclass_field_names(cls: type[Any]) -> set[str]:
+    if not is_dataclass(cls):
+        raise TypeError(f"{cls!r} must be a dataclass type")
+    return {field.name for field in fields(cls) if field.init}
+
+
+def section_payload_and_missing(
+    cls: type[Any],
+    cfg: DictConfig,
+    path: str,
+) -> tuple[dict[str, Any], list[str]]:
+    """Select ``cls`` fields from the section; report missing required paths.
+
+    An explicitly null section (``actor.ema: null``) raises instead of
+    silently replacing the section with all-defaults — only true absence
+    means "use the dataclass defaults". Unknown keys raise: for a typed
+    section the dataclass is the complete vocabulary, so a typo'd
+    hyperparameter must refuse to start rather than silently train with the
+    default behind a lint warning.
+    """
+
+    node = OmegaConf.select(cfg, path)
+    if node is None:
+        if path_exists(cfg, path):
+            raise ValueError(
+                f"config section {path} is null; delete the key or fill the section",
+            )
+        raw: dict[str, Any] = {}
+    else:
+        raw = OmegaConf.to_container(node, resolve=True, throw_on_missing=True)
+        if not isinstance(raw, dict):
+            raise ValueError(f"config section {path} must be a mapping")
+
+    allowed = dataclass_field_names(cls)
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        keys = ", ".join(f"{path}.{key}" for key in unknown)
+        raise ValueError(f"unknown {cls.__name__} key(s): {keys}")
+    payload = {key: value for key, value in raw.items() if key in allowed}
+    # Required = no default, torch signature semantics.
+    required = {
+        field.name
+        for field in fields(cls)
+        if field.init and field.default is MISSING and field.default_factory is MISSING
+    }
+    missing = sorted(f"{path}.{name}" for name in required - set(payload))
+    return payload, missing
+
+
+def validate_yaml_home(
+    field_name: str,
+    home: str,
+    *,
+    owner: str = "TrainerConfig",
+) -> None:
+    """Reject metadata addresses whose top-level section is not a known one.
+
+    Guards the silent failure mode of a typo'd address on an OPTIONAL field
+    (it would fall back to the default instead of reading the user's value).
+    The valid-section vocabulary is derived from the schema's RootConfig —
+    the existing source of truth for top-level sections — so this check can
+    never drift into rejecting a legitimately added section.
+    """
+
+    from vrl.config.schema import RootConfig
+
+    top = home.split(".", 1)[0]
+    if top not in RootConfig.model_fields:
+        expected = ", ".join(sorted(RootConfig.model_fields))
+        raise AssertionError(
+            f"{owner}.{field_name} declares unknown yaml home {home!r}; "
+            f"the top-level section must be one of: {expected}",
+        )
