@@ -8,7 +8,13 @@ P3 = `180441e1`（RankGroupSpec + init/destroy + gloo 双进程冒烟）；
 P4 = `7badc680`（gpus_per_engine 键落 distributed.resources.rollout + capability
 gate；键的家在 resources 而非 runtime section——它是解析消费的资源形状算术，
 与计划原文的 distributed.rollout 位置为有意偏差）；
-P5 = 本 commit（手写 Ulysses——xfuser/para-attn 未装且版本强耦合，评估不过；
+P5 = `8ee27637`（手写 Ulysses。依赖评估证据（2026-08-14 拆包核实）：
+para-attn 0.3.38 的 context-parallel adapter 无 SD3（有 cogvideox/flux/
+hunyuan_video/mochi/wan）——对首个家族零复用，adapter 本身就是要手写的部分；
+xfuser 0.4.5 声明依赖宽松（diffusers>=0.33 无上界）但硬拖 yunchang/distvae/
+transformers/sentencepiece 等 6+ 依赖；两者集成单位都是 diffusers pipeline，
+而 VRL 自有去噪循环 + logprob 重放，胶水量 ≈ 手写本体。再评估触发器：P6 实测
+带宽瓶颈或 wan 长序列需要 ring attention 时重评——para-attn 有现成 wan adapter。
 hook 注入不复制 diffusers forward；all_gather 组合实现单代码路径，
 all_to_all_single 性能版留 P6 实测后；tiny SD3 双进程 CPU+gloo 数值等价通过；
 capability 单源化：sequence_parallel_installer 的存在即能力；rank 程序每批
