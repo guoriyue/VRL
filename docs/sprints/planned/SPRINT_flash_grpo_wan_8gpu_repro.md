@@ -54,6 +54,69 @@ FP8 是全部 Ada 四代 tensor core 的硬件能力，50W 功耗差不可能在
 
 FP8 是 L40S 唯一可能真正领先之处，但本配方是 `mixed_precision="bf16"`，用不到。
 
+### 1.1 变体：4 卡（AWS g6e.12xlarge）也可行，且更便宜
+
+`g6e.12xlarge` = **4 × L40S 48GB**（AWS 官方 spec 表原文 `4 x NVIDIA L40S GPU`），
+48 vCPU / 384 GiB RAM / 2×1900GB NVMe / 100 Gbps / **无 NVLink**（L40S 芯片本身就没有
+NVLink 连接器）。
+
+⚠️ **不要与 `g6` 系列混淆**：`g6` 用的是 **L4 24GB**，`g6.12xlarge` 是 4×L4 = 96GB，
+$4.60/hr。同样的 size 命名、同样的 EPYC 7R13、同样的 vCPU 数，**只有 GPU 和显存不同**。
+按 g6 报价规划 L40S 负载会让预算差 2 倍以上、单卡显存差一半。
+
+**算法上 4 卡与 8 卡完全等价**，改两处即可保持每次 update 96 样本：
+
+```python
+# config/dgx.py:wan2_1_flash_1node
+config.sample.num_batches_per_epoch = 24 → 48   # GA 会随之从 12 变 24
+```
+```bash
+# scripts/multi_node/train_wan2_1_flash_1node.sh
+--num_processes 8 → 4
+```
+
+验算：`8 卡 GA=12 → virtual=96 → 24 prompt × 4`；`4 卡 GA=24 → virtual=96 → 24 prompt × 4`。
+每 epoch 同为 2 次 optimizer step。每卡采样量从 12 翻到 24 —— 这是时间翻倍的来源，
+**不是算法损失**。
+
+**时间与成本**（us-east-1 on-demand，AWS Pricing API 实价）：
+
+| 方案 | GPU | $/hr | $/GPU-hr | 预计时长 | 预计成本 |
+|---|---|---|---|---|---|
+| **g6e.12xlarge** | 4 | 10.4926 | **2.62** | 170–260 h（7–11 天） | **$1,784–2,728** |
+| g6e.48xlarge | 8 | 30.1312 | 3.77 | 85–130 h（3.5–5.4 天） | $2,561–3,917 |
+| g6e.24xlarge | 4 | 15.0656 | 3.77 | 同 12xlarge | 更贵，仅多 CPU/RAM |
+
+**4 卡比 8 卡便宜约 30%**（12xlarge 是全家族最便宜的每-GPU-小时选项），
+代价是墙钟时间翻倍。⚠️ **`g6e.16xlarge` 只有 1 个 GPU**（$7.58/hr）——
+GPU 数在这个家族里不随 size 单调递增，从 12xlarge "升级" 到 16xlarge 是从 4 卡降到 1 卡。
+
+**🔴 显存要按实际可见容量规划，不是 48GB**：AWS 技术文档写 `178 GiB (4 x 44 GiB)`，
+实测约 46,068 MB/卡。ECC 开销 + 十进制/二进制单位换算，**每卡实际少约 4GB**。
+Gate 0 的判据应据此收紧：**单卡峰值 < ~40GB**（而非 44GB）。
+
+**🔴 4 卡下 reward 共卡更危险**：
+
+```text
+训练 21.98 GB + HPSv3 16.5 GB = 38.5 GB   vs 实际可用 ~44 GiB
+余量仅 5.5 GB —— 还要装 rollout buffer + 反传激活
+```
+
+8 卡时可以牺牲 1/8 算力把 reward 独占一卡；4 卡时那是 **25% 的算力**
+（时间从 7–11 天变 9–14 天，成本 $2,371–3,630，反而超过 8 卡方案）。
+**建议：4 卡方案优先把 reward server 放到单独的小实例**
+（如 g6e.xlarge $1.86/hr，1×L40S 足够跑 7B reward model），
+训练实例满 4 卡。总成本 ≈ $1,784–2,728 + $316–484 = **$2,100–3,212**，仍低于 8 卡方案。
+
+**PCIe 拓扑注意**：g6e.12xlarge 有 **2 个 NUMA node**，4 张卡很可能 2 卡/socket，
+跨 socket 的卡对通信更慢。上机后先跑 `nvidia-smi topo -m` 看是 `PHB`/`PIX`（同 root complex，快）
+还是 `SYS`（跨 socket，慢）。另：AWS 在 G7e 发布公告中把 GPUDirect P2P 作为**新**能力宣传，
+并称 "up to four times the inter-GPU bandwidth compared to L40s GPUs featured in G6e" ——
+**这是 G6e 不支持 P2P 的强证据**，GPU 间流量很可能经由主机内存中转。
+
+好在本配方对此不敏感（§6.5）：每次 update 只 all-gather 几 KB，
+ZeRO-2 只同步 LoRA 的 11.8M 参数（~24MB）。
+
 ## 2. 真正的瓶颈是 PCIe，不是算力
 
 ```text
@@ -268,7 +331,9 @@ nvidia-smi --query-gpu=index,memory.used --format=csv -l 5
 
 判据：
 
-- **单卡峰值 < ~44GB** → 通过，进入 Gate 1（留 4GB 余量给碎片与 reward server）
+- **单卡峰值 < ~40GB** → 通过，进入 Gate 1。阈值按**实际可见显存**定：
+  48GB 卡 `nvidia-smi` 只报 ~44–46 GiB（ECC + 单位换算，见 §1.1），再留 4GB 给碎片。
+  云上按小时计费，**这一小时必须先跑**——在按天计费的机器上撞 OOM 是最贵的错误。
 - **OOM** → 按下列顺序降，每降一档重测：
   1. `config.frames` 81 → 49 或 33（序列长度近似线性下降；33 帧实测 21.73GB vs 81 帧 21.98GB）
   2. `config.height/width` 480×832 → 320×576
@@ -497,7 +562,9 @@ ratio = torch.exp(log_prob - sample["log_probs"][:, 0, 0])
 ## 7. 待记录（执行时回填）
 
 - [x] 基座推理正确性 + 单卡推理显存 → §3.2（22GB @ 81 帧训练几何，画面正确）
-- [ ] 实际 GPU 型号（`nvidia-smi -L`）与驱动版本
+- [ ] 实际 GPU 型号（`nvidia-smi -L`）、驱动、**实际可见显存**（预期 ~44–46 GiB 而非 48GB）
+- [ ] PCIe 拓扑 `nvidia-smi topo -m`：`PHB`/`PIX`（同 root complex）还是 `SYS`（跨 socket）
+- [ ] 若用 4 卡：已改 `num_batches_per_epoch=48` + `--num_processes 4`
 - [ ] Gate 0 单卡峰值显存（**训练**，含 rollout buffer）
 - [ ] 是否降档、降了哪些、最终实际配置值
 - [ ] 单 epoch wall-clock，据此外推总时长
@@ -513,6 +580,13 @@ ratio = torch.exp(log_prob - sample["log_probs"][:, 0, 0])
 - **不把 ZeRO-3 当默认**：见 §2。
 - **不修改 `vrl/`**：本 sprint 是外部仓库复现，与本仓代码解耦。若后续要把 Flash-GRPO
   的算法移植进 `vrl/`，那是独立的 sprint，前置条件是本 sprint 的 Gate 1 通过。
+- **不在 L4 / g6 系列上跑**：L4 是 24GB、72W 的推理卡（AD104，58 SM，
+  **dense bf16 仅 121 TFLOPS** = L40S 的 1/3；官网标的 242 是稀疏数字）。
+  实测推理基线 21.98GB 已占满 24GB，且**降不下去**——把序列长度砍到约 1/6
+  （33帧 320×576）仍要 17.44GB，因为大头是 T5 + VAE + transformer 的固定权重而非激活。
+  训练还要叠反传激活、优化器与 rollout buffer，**几乎确定 OOM 且无可降空间**；
+  HPSv3 的 16.5GB 更无处安放。时间上 4×L4 外推为 **21–32 天**。
+  若只有 L4，应换方向（如调研中的 Video-R1，纯自回归无去噪循环），而非缩小本配方。
 - **不试图让 rollout 与 training 重叠**：见 §6.5——被 on-policy 的 `ratio` 定义挡住，
   且显存装不下。异步 RL 是换框架的事（`vrl/rollouts/orchestration/continuous/`
   的 `StalenessPolicy` 与 `SPRINT_continuous_three_stage_pipeline_program.md` 是本仓的
