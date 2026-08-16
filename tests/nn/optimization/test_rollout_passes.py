@@ -45,7 +45,14 @@ class _Policy:
         return self._cores
 
     def torch_compile_transformer(self, mode: str) -> None:
+        # Really compile: the pass verifies the EFFECT on the modules, so a fake
+        # that only records the call would (correctly) be rejected as a
+        # half-covering pass.
+        import torch
+
         self.compiled = [f"{name}:{mode}" for name in self._cores]
+        for name, core in list(self._cores.items()):
+            self._cores[name] = torch.compile(core, mode=mode)
 
 
 def _build(
@@ -107,12 +114,18 @@ def test_no_optimization_requested_touches_nothing() -> None:
     assert model.compiled == []
 
 
-def test_policy_without_cores_fails_only_when_a_pass_is_requested() -> None:
+def test_policy_without_cores_cannot_satisfy_a_core_level_pass() -> None:
+    """A model with no cores runs no core-level optimization, and says so.
+
+    The failure comes from the effect check (the swap matched nothing), not from
+    a pass reporting on itself.
+    """
+
     coreless = SimpleNamespace(policy_cores={}, quantization_exclude=())
 
-    apply_rollout_optimizations(coreless, _build())  # no pass -> no requirement
+    apply_rollout_optimizations(coreless, _build())  # no pass -> nothing to do
 
-    with pytest.raises(RuntimeError, match="declares no policy_cores"):
+    with pytest.raises(RuntimeError, match="matched 0 linears"):
         apply_rollout_optimizations(coreless, _build(quantization="fp8"))
 
 
@@ -192,41 +205,58 @@ def test_device_move_seam_runs_even_with_compile_disabled() -> None:
     assert order == ["move"]
 
 
-def test_partial_coverage_fails_loud() -> None:
-    """A pass that silently reaches only some roots must not pass unnoticed."""
+def test_a_half_covering_compile_is_caught() -> None:
+    """The Wan bug: a family override that reaches only ONE of two experts.
 
-    class _HalfPass:
-        name = "half"
-        introduces_replay_drift = False
-        replaces_modules = False
-        targets_policy_cores = True
+    Verified against the MODULES, not against the pass's own account of what it
+    touched. A pass buggy enough to miss a root is exactly the one whose
+    self-report is wrong, so a self-report can never catch this.
+    """
 
-        def enabled(self, build: Any) -> bool:
-            return True
+    import torch
 
-        def conflicts(self, build: Any) -> tuple[str, ...]:
-            return ()
+    class _HalfCompiling(_Policy):
+        def torch_compile_transformer(self, mode: str) -> None:
+            first = next(iter(self._cores))
+            self._cores[first] = torch.compile(self._cores[first], mode=mode)
 
-        def apply(self, model: Any, build: Any) -> PassResult:
-            first = next(iter(model.policy_cores))
-            return PassResult(
-                name=self.name,
-                applied=True,
-                detail="reached one root",
-                introduces_replay_drift=False,
-                touched=(first,),
-            )
+    with pytest.raises(RuntimeError, match=r"left transformer_2 uncompiled"):
+        apply_rollout_optimizations(
+            _HalfCompiling("transformer", "transformer_2"),
+            _build(compile_mode="default"),
+        )
+
+
+def test_a_half_covering_quantization_is_caught(monkeypatch) -> None:
+    """Same check on the quantize side, where the original bug actually shipped."""
+
+    import vrl.nn.quantization as quantization
 
     model = _Policy("transformer", "transformer_2")
-    import vrl.nn.optimization.passes as passes
+    real_swap = quantization.Fp8Linear.swap_linears
+    seen: list[str] = []
 
-    original = passes.ROLLOUT_PASSES
-    passes.ROLLOUT_PASSES = (_HalfPass(),)
-    try:
-        with pytest.raises(RuntimeError, match="transformer_2 would keep running"):
-            apply_rollout_optimizations(model, _build())
-    finally:
-        passes.ROLLOUT_PASSES = original
+    def _only_the_first(cls, root, **kwargs):
+        # Swap the first root and silently skip the rest -- the Wan failure.
+        seen.append("call")
+        if len(seen) > 1:
+            return []
+        return real_swap.__func__(cls, root, **kwargs)
+
+    monkeypatch.setattr(quantization.Fp8Linear, "swap_linears", classmethod(_only_the_first))
+
+    with pytest.raises(RuntimeError, match=r"left policy core\(s\) transformer_2 unquantized"):
+        apply_rollout_optimizations(model, _build(quantization="fp8"))
+
+
+def test_full_coverage_passes() -> None:
+    """The control arm: both roots covered, no error."""
+
+    model = _Policy("transformer", "transformer_2")
+
+    apply_rollout_optimizations(model, _build(quantization="fp8", compile_mode="default"))
+
+    assert model.compiled == ["transformer:default", "transformer_2:default"]
 
 
 # --- registry shape ------------------------------------------------------------

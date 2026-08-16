@@ -46,10 +46,6 @@ class PassResult:
     # from the trainer's exact replay forward must be paired with a drift
     # correction. ``OptimizationReport.drift_sources`` is the consumer.
     introduces_replay_drift: bool
-    # Policy-core keys this pass changed. The consumer is the coverage check in
-    # ``apply_rollout_optimizations``: a multi-root family whose pass reached
-    # only one root would otherwise split one trajectory across two precisions.
-    touched: tuple[str, ...] = ()
 
 
 @runtime_checkable
@@ -67,11 +63,6 @@ class OptimizationPass(Protocol):
     # real module from ``requires_grad_`` / ``.to()``, which is why the device
     # move seam sits immediately before the first replacing pass.
     replaces_modules: bool
-    # False for a pass that operates on a subtree OUTSIDE ``policy_cores`` (the
-    # VAE). Declared rather than inferred from an empty ``touched``, so a pass
-    # that MEANT to walk the cores and reached none still fails the coverage
-    # check instead of being mistaken for a disjoint one.
-    targets_policy_cores: bool
 
     def enabled(self, build: Any) -> bool:
         """Whether this build requests the pass."""
@@ -97,6 +88,37 @@ class OptimizationPass(Protocol):
         ...
 
 
+def require_every_core_quantized(model: Any, scheme: str) -> None:
+    """Every declared policy core must carry ``scheme``, not just the first.
+
+    Checks the MODULES, not the pass's own account of what it did. A pass that
+    reports which roots it touched is certifying itself: the Wan half-quantized
+    bug (expert 2 silently left at the base dtype while expert 1 ran quantized,
+    splitting one trajectory across two precisions) is exactly the case a
+    self-report cannot catch, because the buggy pass believes it covered
+    everything.
+    """
+
+    from vrl.nn.quantization import QuantizedLinear
+
+    missed = []
+    for name, core in model.policy_cores.items():
+        core = getattr(core, "_orig_mod", core)  # unwrap torch.compile
+        modules = getattr(core, "modules", None)
+        if not callable(modules) or not any(
+            isinstance(module, QuantizedLinear) and module.quantization_scheme == scheme
+            for module in modules()
+        ):
+            missed.append(name)
+    if missed:
+        raise RuntimeError(
+            f"rollout quantization {scheme!r} left policy core(s) "
+            f"{', '.join(missed)} unquantized; every core the policy samples "
+            "through must carry the scheme or one trajectory spans two "
+            "precisions.",
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class QuantizationPass:
     """Swap large policy GEMMs to the configured low-precision scheme."""
@@ -107,7 +129,6 @@ class QuantizationPass:
     introduces_replay_drift: bool = True
     # Swaps Linears inside the existing tree; the root object is unchanged.
     replaces_modules: bool = False
-    targets_policy_cores: bool = True
 
     def enabled(self, build: Any) -> bool:
         return getattr(getattr(build, "precision", None), "quantization", None) is not None
@@ -128,12 +149,13 @@ class QuantizationPass:
 
         count = apply_rollout_quantization(model, build)
         quantization = build.precision.quantization
+        if count:
+            require_every_core_quantized(model, quantization.format)
         return PassResult(
             name=self.name,
             applied=bool(count),
             detail=f"{quantization.format}: {count} linears",
             introduces_replay_drift=True,
-            touched=tuple(model.policy_cores),
         )
 
 
@@ -150,7 +172,6 @@ class CompilePass:
     introduces_replay_drift: bool = False
     # Wraps each root in an OptimizedModule, hiding the real module.
     replaces_modules: bool = True
-    targets_policy_cores: bool = True
 
     def enabled(self, build: Any) -> bool:
         return bool((getattr(build, "torch_compile", None) or {}).get("enable"))
@@ -171,14 +192,29 @@ class CompilePass:
 
     def apply(self, model: Any, build: Any) -> PassResult:
         mode = build.torch_compile["mode"]
-        touched = tuple(model.policy_cores)
         model.torch_compile_transformer(mode)
+        # Verify the EFFECT on the real modules. A family that overrides
+        # torch_compile_transformer and walks the wrong collection would
+        # otherwise leave one expert of a multi-expert policy uncompiled --
+        # the half-covering failure this layer exists to prevent. Asking the
+        # model what changed would be self-certification; a compiled root is
+        # observable, so observe it.
+        missed = [
+            name
+            for name, core in model.policy_cores.items()
+            if not hasattr(core, "_orig_mod")
+        ]
+        if missed:
+            raise RuntimeError(
+                f"{type(model).__name__}.torch_compile_transformer left "
+                f"{', '.join(missed)} uncompiled; every rollout policy core must "
+                "be compiled or the trajectory spans two execution paths.",
+            )
         return PassResult(
             name=self.name,
             applied=True,
             detail=f"mode={mode}",
             introduces_replay_drift=False,
-            touched=touched,
         )
 
 
@@ -202,10 +238,6 @@ class OffloadPass:
     introduces_replay_drift: bool = False
     # Registers hooks on the existing tree; the root object is unchanged.
     replaces_modules: bool = False
-    # Accelerate hooks are installed on the whole diffusers PIPELINE (VAE and
-    # text encoders included), not by walking policy cores, so the every-root
-    # coverage check does not apply and a model with no cores can still offload.
-    targets_policy_cores: bool = False
 
     def enabled(self, build: Any) -> bool:
         """Always true — ``apply`` decides, because it can see the model.
@@ -274,8 +306,6 @@ class VaeDecodeMemoryPass:
     # what replay reproduces, come from the denoise loop and never touch the VAE.
     introduces_replay_drift: bool = False
     replaces_modules: bool = False
-    # The VAE is not a policy core; this pass legitimately reaches none of them.
-    targets_policy_cores: bool = False
 
     def enabled(self, build: Any) -> bool:
         memory = getattr(build, "generation_memory", None)
@@ -300,10 +330,6 @@ class VaeDecodeMemoryPass:
             applied=True,
             detail=str(build.generation_memory.vae_decode),
             introduces_replay_drift=False,
-            # Deliberately empty: this pass configures the VAE, which is NOT a
-            # policy core. Claiming coverage it does not have would defeat the
-            # every-root check.
-            touched=(),
         )
 
 
@@ -361,11 +387,6 @@ def apply_rollout_optimizations(
     """
 
     enabled = tuple(o for o in ROLLOUT_PASSES if o.enabled(build))
-    # Only passes that walk the cores make the declaration mandatory. Offload
-    # runs for every build (it also validates that the mode did not change), and
-    # VAE memory targets a disjoint subtree — neither should force a model that
-    # requests no core-level optimization to own `policy_cores`.
-    core_passes = tuple(o for o in enabled if o.targets_policy_cores)
     # Conflicts before any mutation: an incompatible combination must fail with
     # the model untouched, not half-transformed.
     for optimization in enabled:
@@ -374,15 +395,11 @@ def apply_rollout_optimizations(
             raise ValueError(
                 f"rollout pass {optimization.name!r} cannot run with {'; '.join(reasons)}",
             )
-    # Only read the declaration when something will actually use it: a build with
-    # no optimization requested must not force every model to own policy cores.
-    declared = tuple(model.policy_cores) if core_passes else ()
-    if core_passes and not declared:
-        raise RuntimeError(
-            f"{type(model).__name__} declares no policy_cores, but this build "
-            f"requests {', '.join(o.name for o in core_passes)}. A rollout policy "
-            "must declare the module root(s) it samples through.",
-        )
+    # Each pass verifies its own EFFECT on the real modules (see
+    # ``require_every_core_quantized`` and CompilePass.apply). There is no
+    # coverage check here, because a pass reporting which roots it touched would
+    # be certifying itself -- and a pass buggy enough to miss a root is exactly
+    # the one whose self-report is wrong.
     results: list[PassResult] = []
     seam_done = False
     for optimization in ROLLOUT_PASSES:
@@ -395,23 +412,6 @@ def apply_rollout_optimizations(
         if not optimization.enabled(build):
             continue
         result = optimization.apply(model, build)
-        # A pass that reached only SOME roots would leave one expert of a
-        # multi-expert policy unoptimized -- the failure mode ``policy_cores``
-        # exists to make structurally impossible. Catch it here rather than
-        # trusting every pass to walk the declaration correctly.
-        #
-        # Only passes that operate ON policy cores are checked: a pass targeting
-        # a disjoint subtree (the VAE) legitimately reaches none of them, which
-        # is why the exemption is a declared property rather than an inference
-        # from an empty ``touched``.
-        missed = [name for name in declared if name not in result.touched]
-        if result.applied and optimization.targets_policy_cores and missed:
-            raise RuntimeError(
-                f"rollout pass {result.name!r} reached "
-                f"{', '.join(result.touched) or 'no'} policy core(s) but the model "
-                f"declares {', '.join(declared)}; {', '.join(missed)} would keep "
-                "running unoptimized inside the same trajectory.",
-            )
         results.append(result)
         logger.info("rollout pass %s applied (%s)", result.name, result.detail)
     if not seam_done and before_compile is not None:

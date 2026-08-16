@@ -298,6 +298,9 @@ def test_shared_builder_installs_pipeline_offload_after_final_cpu_module_tree(
         def torch_compile_transformer(self, mode: str) -> None:
             assert mode == "default"
             events.append("compile")
+            # Really compile: the pass verifies the effect on the modules, so a
+            # fake that only records the call reads as a half-covering pass.
+            self.transformer = torch.compile(self.transformer, mode=mode)
 
         def apply_generation_offload(self, _build: Any) -> None:
             events.append("install_offload_hooks")
