@@ -67,6 +67,11 @@ class OptimizationPass(Protocol):
     # real module from ``requires_grad_`` / ``.to()``, which is why the device
     # move seam sits immediately before the first replacing pass.
     replaces_modules: bool
+    # False for a pass that operates on a subtree OUTSIDE ``policy_cores`` (the
+    # VAE). Declared rather than inferred from an empty ``touched``, so a pass
+    # that MEANT to walk the cores and reached none still fails the coverage
+    # check instead of being mistaken for a disjoint one.
+    targets_policy_cores: bool
 
     def enabled(self, build: Any) -> bool:
         """Whether this build requests the pass."""
@@ -102,6 +107,7 @@ class QuantizationPass:
     introduces_replay_drift: bool = True
     # Swaps Linears inside the existing tree; the root object is unchanged.
     replaces_modules: bool = False
+    targets_policy_cores: bool = True
 
     def enabled(self, build: Any) -> bool:
         return getattr(getattr(build, "precision", None), "quantization", None) is not None
@@ -144,6 +150,7 @@ class CompilePass:
     introduces_replay_drift: bool = False
     # Wraps each root in an OptimizedModule, hiding the real module.
     replaces_modules: bool = True
+    targets_policy_cores: bool = True
 
     def enabled(self, build: Any) -> bool:
         return bool((getattr(build, "torch_compile", None) or {}).get("enable"))
@@ -152,14 +159,11 @@ class CompilePass:
         """Nothing detectable from ``build`` alone.
 
         Compile's real conflicts are all decided by config keys this object does
-        not carry, so they are all refused at config load, in
-        ``vrl.config.validation``: grad-checkpointing
-        (``require_compile_checkpointing_compatible``), sequence parallelism
-        (``require_compile_sequence_parallel_compatible`` — engine topology
-        never reaches ``ModelBuild``), and FSDP2 (the gate in
-        ``vrl.trainers.strategy``). Keeping this method honest — rather than
-        probing for an attribute ``ModelBuild`` does not have — is the point: a
-        guard that cannot fire is worse than no guard.
+        not carry (grad-checkpointing mode, training strategy, engine
+        topology), so they are all refused together at config load by
+        ``vrl.config.validation.compile_conflicts``. Keeping this method honest
+        — rather than probing for an attribute ``ModelBuild`` does not have — is
+        the point: a guard that cannot fire is worse than no guard.
         """
 
         del build
@@ -178,8 +182,140 @@ class CompilePass:
         )
 
 
-# Order is the contract (quantization before compile); see the module docstring.
-ROLLOUT_PASSES: tuple[OptimizationPass, ...] = (QuantizationPass(), CompilePass())
+@dataclass(frozen=True, slots=True)
+class OffloadPass:
+    """Install Accelerate CPU-offload hooks over the final module tree.
+
+    Runs LAST for the same reason compile runs after quantization: the hooks
+    must wrap whatever the earlier passes left behind. Wan's sequential path
+    keeps a 16.4B transformer on CPU through LoRA, quantization and compile, so
+    hooks installed any earlier would leave those wrappers outside the hook
+    graph.
+
+    Two-sided commit: the family must both accept the requested mode and report
+    a healthy install, because a partially-installed hook graph must never be
+    published as a reusable rollout model.
+    """
+
+    name: str = "offload"
+    # Streams the SAME weights through the SAME math; residency only.
+    introduces_replay_drift: bool = False
+    # Registers hooks on the existing tree; the root object is unchanged.
+    replaces_modules: bool = False
+    # Accelerate hooks are installed on the whole diffusers PIPELINE (VAE and
+    # text encoders included), not by walking policy cores, so the every-root
+    # coverage check does not apply and a model with no cores can still offload.
+    targets_policy_cores: bool = False
+
+    def enabled(self, build: Any) -> bool:
+        """Always true — ``apply`` decides, because it can see the model.
+
+        Deliberately NOT gated on ``mode != "none"``. A family's installer also
+        validates that the mode has not CHANGED since the model was loaded (Wan
+        raises "offload mode changed during rollout construction"), so skipping
+        it for ``none`` would drop that check. Whether the family implements
+        offload at all is a property of the MODEL, which ``enabled`` is not
+        given, so that branch lives in ``apply``.
+        """
+
+        del build
+        return True
+
+    def conflicts(self, build: Any) -> tuple[str, ...]:
+        del build
+        return ()
+
+    def apply(self, model: Any, build: Any) -> PassResult:
+        mode = getattr(getattr(build, "rollout", None), "pipeline_offload_mode", "none")
+        requested = mode != "none"
+        install = getattr(model, "apply_generation_offload", None)
+        if not callable(install):
+            if requested:
+                raise RuntimeError(
+                    f"{type(model).__name__} does not implement the requested pipeline "
+                    f"CPU-offload mode {mode!r}",
+                )
+            return PassResult(
+                name=self.name,
+                applied=False,
+                detail="unsupported by family (none requested)",
+                introduces_replay_drift=False,
+            )
+        install(build)
+        committed = bool(getattr(model, "uses_pipeline_cpu_offload", False))
+        if requested and not committed:
+            raise RuntimeError(
+                f"{type(model).__name__} did not commit the requested pipeline "
+                f"CPU-offload mode {mode!r}",
+            )
+        if committed and not bool(getattr(model, "pipeline_cpu_offload_healthy", False)):
+            raise RuntimeError(
+                f"{type(model).__name__} installed unusable pipeline CPU-offload hooks",
+            )
+        return PassResult(
+            name=self.name,
+            applied=committed,
+            detail=f"mode={mode}",
+            introduces_replay_drift=False,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class VaeDecodeMemoryPass:
+    """Trade VAE decode latency for peak memory (tiling / slicing).
+
+    The one pass that touches a DISJOINT subtree: the VAE is not a policy core,
+    so this has no ordering relation to any other pass and could run anywhere in
+    the sequence. It is last only because there is no reason for it to be first.
+    """
+
+    name: str = "vae_decode_memory"
+    # Tiling/slicing chunk the same decode math; the rollout LOG-PROBS, which are
+    # what replay reproduces, come from the denoise loop and never touch the VAE.
+    introduces_replay_drift: bool = False
+    replaces_modules: bool = False
+    # The VAE is not a policy core; this pass legitimately reaches none of them.
+    targets_policy_cores: bool = False
+
+    def enabled(self, build: Any) -> bool:
+        memory = getattr(build, "generation_memory", None)
+        return getattr(memory, "vae_decode", None) is not None
+
+    def conflicts(self, build: Any) -> tuple[str, ...]:
+        del build
+        return ()
+
+    def apply(self, model: Any, build: Any) -> PassResult:
+        from vrl.models.steps.denoise.common.vae_decode_memory import (
+            apply_generation_memory_policy,
+        )
+
+        apply_generation_memory_policy(
+            model,
+            memory=build.generation_memory,
+            owner=f"{getattr(build, 'family', '?')} model",
+        )
+        return PassResult(
+            name=self.name,
+            applied=True,
+            detail=str(build.generation_memory.vae_decode),
+            introduces_replay_drift=False,
+            # Deliberately empty: this pass configures the VAE, which is NOT a
+            # policy core. Claiming coverage it does not have would defeat the
+            # every-root check.
+            touched=(),
+        )
+
+
+# Order is the contract; see the module docstring. Offload is last because its
+# hooks must see the final tree; VAE memory is unordered (disjoint subtree) and
+# sits last only because nothing requires it earlier.
+ROLLOUT_PASSES: tuple[OptimizationPass, ...] = (
+    QuantizationPass(),
+    CompilePass(),
+    OffloadPass(),
+    VaeDecodeMemoryPass(),
+)
 
 # Optimizations that skip or approximate a rollout forward without a build-time
 # module seam, so they are configured per request rather than as a pass. Keyed by
@@ -225,6 +361,11 @@ def apply_rollout_optimizations(
     """
 
     enabled = tuple(o for o in ROLLOUT_PASSES if o.enabled(build))
+    # Only passes that walk the cores make the declaration mandatory. Offload
+    # runs for every build (it also validates that the mode did not change), and
+    # VAE memory targets a disjoint subtree — neither should force a model that
+    # requests no core-level optimization to own `policy_cores`.
+    core_passes = tuple(o for o in enabled if o.targets_policy_cores)
     # Conflicts before any mutation: an incompatible combination must fail with
     # the model untouched, not half-transformed.
     for optimization in enabled:
@@ -235,12 +376,12 @@ def apply_rollout_optimizations(
             )
     # Only read the declaration when something will actually use it: a build with
     # no optimization requested must not force every model to own policy cores.
-    declared = tuple(model.policy_cores) if enabled else ()
-    if enabled and not declared:
+    declared = tuple(model.policy_cores) if core_passes else ()
+    if core_passes and not declared:
         raise RuntimeError(
             f"{type(model).__name__} declares no policy_cores, but this build "
-            f"requests {', '.join(o.name for o in enabled)}. A rollout policy must "
-            "declare the module root(s) it samples through.",
+            f"requests {', '.join(o.name for o in core_passes)}. A rollout policy "
+            "must declare the module root(s) it samples through.",
         )
     results: list[PassResult] = []
     seam_done = False
@@ -254,12 +395,17 @@ def apply_rollout_optimizations(
         if not optimization.enabled(build):
             continue
         result = optimization.apply(model, build)
-        # A pass that reached only some roots would leave one expert of a
+        # A pass that reached only SOME roots would leave one expert of a
         # multi-expert policy unoptimized -- the failure mode ``policy_cores``
         # exists to make structurally impossible. Catch it here rather than
         # trusting every pass to walk the declaration correctly.
+        #
+        # Only passes that operate ON policy cores are checked: a pass targeting
+        # a disjoint subtree (the VAE) legitimately reaches none of them, which
+        # is why the exemption is a declared property rather than an inference
+        # from an empty ``touched``.
         missed = [name for name in declared if name not in result.touched]
-        if result.applied and missed:
+        if result.applied and optimization.targets_policy_cores and missed:
             raise RuntimeError(
                 f"rollout pass {result.name!r} reached "
                 f"{', '.join(result.touched) or 'no'} policy core(s) but the model "

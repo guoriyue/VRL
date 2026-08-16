@@ -24,6 +24,7 @@ from vrl.config.schema import (
     _extract_error_message,
     parse_config,
 )
+from vrl.utils.config import cfg_path
 
 _MISSING = object()
 _REQUIRED = object()
@@ -330,53 +331,94 @@ def validate_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPoli
     require_no_unknown_keys(cfg)
     root = parse_config(cfg)
     precision = resolve_precision_policy(root)
-    # compile x grad-checkpointing is refused at trainer startup; check it here
-    # too so the collision fails at config load (where the all-experiments test
-    # sees it) — a model-layer torch_compile.enable=true default can silently
-    # flip compile on underneath an experiment that needs checkpointing.
-    from vrl.trainers.activation_checkpointing import require_compile_checkpointing_compatible
-
-    require_compile_checkpointing_compatible(root)
-    require_compile_sequence_parallel_compatible(cfg)
+    # Every torch.compile incompatibility at once. Checked at config load — where
+    # the all-experiments test sees it — because a model-layer
+    # torch_compile.enable=true default can silently flip compile on underneath a
+    # recipe that needs checkpointing, FSDP, or a multi-rank engine.
+    require_compile_compatible(root)
     require_guarded_rollout_drift(cfg, precision)
     if bool(OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)):
         validate_production_kling_video_reward_config(cfg)
     return root, precision
 
 
-def require_compile_sequence_parallel_compatible(cfg: DictConfig) -> None:
-    """Refuse torch.compile combined with a multi-rank rollout engine.
+def compile_conflicts(cfg: DictConfig) -> tuple[str, ...]:
+    """Every feature this config turns on that cannot coexist with torch.compile.
 
-    Sequence parallelism is installed by the rollout WORKER, after the family
-    builder has already compiled the policy core
-    (``worker.py`` builds the bundle, then installs sequence parallel). The
-    installer swaps every attention processor and registers forward hooks on the
-    first/last block — mutating a module inductor has already traced, which
-    silently invalidates the compiled graph or forces a recompile that traces
-    the hooks.
+    ONE home for the compile compatibility matrix. Each of these was discovered
+    separately and used to be enforced somewhere different — grad-checkpointing
+    in the trainer, FSDP2 in the strategy builder, sequence parallelism nowhere
+    at all — so adding the fifth meant first finding the other four. They are
+    all decided by config keys, so config load is where they belong: a
+    combination that can never run should fail before a GPU is touched.
 
-    Unlike compile x grad-checkpointing and compile x FSDP2, this combination had
-    no gate at all, while sd3_5 declares BOTH ``supports_torch_compile`` and a
-    ``sequence_parallel_installer`` — so it is reachable from config today.
+    Returns one message per conflict (empty when compatible). The blockwise-fp8
+    conflict is deliberately NOT here: it is caught in ``vrl.models.loader``
+    where the resolved quantization recipe lives, and this function is given
+    only the raw config.
     """
 
-    if not bool(OmegaConf.select(cfg, "model.torch_compile.enable", default=False)):
-        return
-    gpus_per_engine = OmegaConf.select(
+    if not bool(cfg_path(cfg, "model.torch_compile.enable", False)):
+        return ()
+
+    conflicts: list[str] = []
+
+    # torch.compile traces torch.utils.checkpoint into an InternalTorchDynamoError
+    # (measured for full and selective alike), and inductor's min-cut partitioner
+    # already does automatic selective recompute.
+    from vrl.trainers.activation_checkpointing import resolve_gradient_checkpointing_mode
+
+    checkpointing = resolve_gradient_checkpointing_mode(cfg)
+    if checkpointing != "off":
+        conflicts.append(
+            f"actor.gradient_checkpointing={checkpointing!r}: torch.compile traces "
+            "torch.utils.checkpoint into an InternalTorchDynamoError, and its "
+            "min-cut partitioner already does automatic selective recompute. Pick "
+            "one — compile alone (preferred when it fits memory), or eager + "
+            "checkpointing.",
+        )
+
+    # Inductor graph capture is unsound with FSDP2's reshard-after-forward
+    # all-gathers. Previously only caught when the strategy was built, which is
+    # after config load, so a bad recipe surfaced later than it needed to.
+    if str(cfg_path(cfg, "distributed.training.strategy", "")) == "fsdp":
+        conflicts.append(
+            "distributed.training.strategy=fsdp: torch.compile (inductor graph "
+            "capture) is unsound with FSDP2 fully_shard's reshard-after-forward "
+            "all-gathers.",
+        )
+
+    # Sequence parallelism is installed by the rollout WORKER, after the family
+    # builder has already compiled the policy core: the installer swaps every
+    # attention processor and registers forward hooks on the first/last block,
+    # mutating a module inductor has already traced. sd3_5 declares BOTH
+    # supports_torch_compile and a sequence_parallel_installer, so this is
+    # reachable from config -- and it had no gate at all before.
+    gpus_per_engine = cfg_path(
         cfg,
         "distributed.resources.rollout.gpus_per_engine",
-        default=1,
+        1,
     )
-    if gpus_per_engine is None or int(gpus_per_engine) <= 1:
+    if gpus_per_engine is not None and int(gpus_per_engine) > 1:
+        conflicts.append(
+            f"distributed.resources.rollout.gpus_per_engine={int(gpus_per_engine)}: "
+            "sequence parallelism installs attention processors and forward hooks "
+            "on the policy core AFTER the model is built and compiled, mutating "
+            "the module torch.compile already traced.",
+        )
+
+    return tuple(conflicts)
+
+
+def require_compile_compatible(cfg: DictConfig) -> None:
+    """Refuse a config that enables torch.compile beside an incompatible feature."""
+
+    conflicts = compile_conflicts(cfg)
+    if not conflicts:
         return
+    joined = "\n  - ".join(conflicts)
     raise ValueError(
-        "model.torch_compile.enable=true cannot combine with "
-        f"distributed.resources.rollout.gpus_per_engine={int(gpus_per_engine)}: "
-        "sequence parallelism installs attention processors and forward hooks on "
-        "the policy core AFTER the model is built and compiled, mutating the "
-        "module torch.compile already traced. Pick one — compile with "
-        "gpus_per_engine=1, or multi-GPU engines with "
-        "model.torch_compile.enable=false.",
+        f"model.torch_compile.enable=true cannot combine with:\n  - {joined}",
     )
 
 

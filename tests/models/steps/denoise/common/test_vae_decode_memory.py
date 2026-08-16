@@ -538,11 +538,18 @@ def test_runtime_builders_apply_generation_memory_policy() -> None:
 
     from vrl.models.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild
 
-    # The shared denoise-step builder must own the policy call.
-    shared = Path("vrl/models/steps/denoise/build.py").read_text()
+    # The shared rollout optimization layer must own the policy call. It moved
+    # out of the denoise builder into a pass (VaeDecodeMemoryPass) so that every
+    # build-time model transformation goes through one assembly point; the
+    # invariant this test protects -- exactly one home for the call -- is
+    # unchanged.
+    shared = Path("vrl/nn/optimization/passes.py").read_text()
     assert "apply_generation_memory_policy" in shared, (
-        "shared denoise builder must apply the generation memory policy"
+        "the rollout optimization layer must apply the generation memory policy"
     )
+    assert "apply_generation_memory_policy" not in Path(
+        "vrl/models/steps/denoise/build.py",
+    ).read_text(), "the denoise builder must not re-apply the policy beside the pass"
     token = Path("vrl/models/steps/token/build.py").read_text()
     assert "apply_generation_memory_policy" not in token, (
         "token-family builders own no diffusers VAE memory targets"

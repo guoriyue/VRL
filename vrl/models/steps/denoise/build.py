@@ -20,9 +20,6 @@ from vrl.models.loader import (
     validate_rollout_quantization_support,
 )
 from vrl.models.precision import apply_float32_precision
-from vrl.models.steps.denoise.common.vae_decode_memory import (
-    apply_generation_memory_policy,
-)
 from vrl.nn.optimization import apply_rollout_optimizations
 from vrl.utils.logging import init_logger
 
@@ -41,13 +38,7 @@ def build_denoise_runtime_bundle(
     # or any other model mutation.
     validate_rollout_quantization_support(build)
     model = model_cls.from_build(build)
-    apply_generation_offload = getattr(model, "apply_generation_offload", None)
     pipeline_offload = rollout.pipeline_offload_mode != "none"
-    if pipeline_offload and not callable(apply_generation_offload):
-        raise RuntimeError(
-            f"{type(model).__name__} does not implement the requested pipeline "
-            f"CPU-offload mode {rollout.pipeline_offload_mode!r}",
-        )
 
     # PEFT can wrap only plain nn.Linear, while full-finetune owns the model's
     # device move. Both paths therefore optimize before the compact policy moves
@@ -75,38 +66,15 @@ def build_denoise_runtime_bundle(
                 lora_config["rank"],
                 lora_config["alpha"],
             )
+    # Quantize -> device move -> compile -> offload hooks -> VAE decode memory.
+    # The whole sequence and its ordering constraints live in the pass layer.
     apply_rollout_optimizations(model, build, before_compile=move_to_device)
-
-    # Accelerate hooks must see the final module tree. Wan's sequential path
-    # keeps the 16.4B transformer on CPU through LoRA, quantization, and compile;
-    # installing hooks any earlier would leave wrappers outside the hook graph.
-    if callable(apply_generation_offload):
-        apply_generation_offload(build)
-    uses_pipeline_offload = bool(
-        getattr(model, "uses_pipeline_cpu_offload", False),
-    )
-    if pipeline_offload and not uses_pipeline_offload:
-        raise RuntimeError(
-            f"{type(model).__name__} did not commit the requested pipeline "
-            f"CPU-offload mode {rollout.pipeline_offload_mode!r}",
-        )
-    if uses_pipeline_offload and not bool(
-        getattr(model, "pipeline_cpu_offload_healthy", False),
-    ):
-        raise RuntimeError(
-            f"{type(model).__name__} installed unusable pipeline CPU-offload hooks",
-        )
 
     num_steps = build.num_steps
     if num_steps is not None:
         model.set_num_steps(num_steps)
     # If None, a caller such as the DPO trainer sets scheduler timesteps itself.
 
-    apply_generation_memory_policy(
-        model,
-        memory=build.generation_memory,
-        owner=f"{build.family} model",
-    )
     apply_float32_precision(build.precision.float32_precision)
     return RuntimeBundle(
         model=model,

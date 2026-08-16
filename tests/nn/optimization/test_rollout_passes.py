@@ -199,6 +199,7 @@ def test_partial_coverage_fails_loud() -> None:
         name = "half"
         introduces_replay_drift = False
         replaces_modules = False
+        targets_policy_cores = True
 
         def enabled(self, build: Any) -> bool:
             return True
@@ -295,6 +296,7 @@ def test_a_declared_conflict_fails_before_any_mutation() -> None:
         name = "conflicting"
         introduces_replay_drift = False
         replaces_modules = False
+        targets_policy_cores = True
 
         def enabled(self, build: Any) -> bool:
             return True
@@ -325,6 +327,7 @@ def test_a_disabled_pass_conflict_is_not_consulted() -> None:
         name = "off"
         introduces_replay_drift = False
         replaces_modules = False
+        targets_policy_cores = True
 
         def enabled(self, build: Any) -> bool:
             return False

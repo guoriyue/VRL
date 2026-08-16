@@ -119,61 +119,117 @@ def test_check_runs_inside_validate_training_config() -> None:
     assert "require_guarded_rollout_drift" in inspect.getsource(validate_training_config)
 
 
-# --- compile x sequence parallel -----------------------------------------------
+# --- the compile compatibility matrix ----------------------------------------
 #
-# The third member of the compile-conflict family, and the one that had NO gate
-# until now. Sequence parallelism is installed by the rollout worker AFTER the
-# builder has compiled the policy core, so it mutates a module inductor already
-# traced. sd3_5 declares both `supports_torch_compile` and a
-# `sequence_parallel_installer`, so the combination is reachable from config.
+# One home for every torch.compile incompatibility. Each was discovered
+# separately and used to live somewhere different -- grad-checkpointing in the
+# trainer, FSDP2 in the strategy builder, sequence parallelism nowhere at all --
+# so adding the next one meant first finding the others.
 
 
-def _sp_cfg(*, compile_on: bool, gpus_per_engine: int) -> OmegaConf:
-    return OmegaConf.create(
+def _compile_cfg(**overrides) -> OmegaConf:
+    """A config with compile on and nothing else set, plus ``overrides``."""
+
+    base = {"model": {"torch_compile": {"enable": True}}}
+    base.update(overrides)
+    return OmegaConf.create(base)
+
+
+def test_compile_alone_has_no_conflicts() -> None:
+    from vrl.config.validation import compile_conflicts
+
+    assert compile_conflicts(_compile_cfg()) == ()
+
+
+def test_compile_off_never_conflicts() -> None:
+    """Every other feature is free as long as compile is not requested."""
+    from vrl.config.validation import compile_conflicts
+
+    cfg = OmegaConf.create(
         {
-            "model": {"torch_compile": {"enable": compile_on}},
-            "distributed": {"resources": {"rollout": {"gpus_per_engine": gpus_per_engine}}},
+            "model": {"torch_compile": {"enable": False}},
+            "actor": {"gradient_checkpointing": True},
+            "distributed": {
+                "training": {"strategy": "fsdp"},
+                "resources": {"rollout": {"gpus_per_engine": 4}},
+            },
         },
     )
 
-
-def test_compile_with_multi_rank_engine_is_refused() -> None:
-    from vrl.config.validation import require_compile_sequence_parallel_compatible
-
-    with pytest.raises(ValueError, match=r"gpus_per_engine=2"):
-        require_compile_sequence_parallel_compatible(_sp_cfg(compile_on=True, gpus_per_engine=2))
+    assert compile_conflicts(cfg) == ()
 
 
 @pytest.mark.parametrize(
-    ("compile_on", "gpus_per_engine"),
+    ("overrides", "expected"),
     [
-        (True, 1),  # compile alone
-        (False, 4),  # sequence parallel alone
-        (False, 1),  # neither
+        ({"actor": {"gradient_checkpointing": True}}, "gradient_checkpointing"),
+        ({"distributed": {"training": {"strategy": "fsdp"}}}, "strategy=fsdp"),
+        (
+            {"distributed": {"resources": {"rollout": {"gpus_per_engine": 2}}}},
+            "gpus_per_engine=2",
+        ),
     ],
 )
-def test_either_feature_alone_is_allowed(compile_on: bool, gpus_per_engine: int) -> None:
-    from vrl.config.validation import require_compile_sequence_parallel_compatible
+def test_each_incompatible_feature_is_reported(overrides: dict, expected: str) -> None:
+    from vrl.config.validation import compile_conflicts
 
-    require_compile_sequence_parallel_compatible(
-        _sp_cfg(compile_on=compile_on, gpus_per_engine=gpus_per_engine),
+    conflicts = compile_conflicts(_compile_cfg(**overrides))
+
+    assert len(conflicts) == 1
+    assert expected in conflicts[0]
+
+
+def test_several_conflicts_are_reported_together() -> None:
+    """One pass over the matrix, not fail-on-first: the user sees all of them."""
+    from vrl.config.validation import compile_conflicts
+
+    conflicts = compile_conflicts(
+        _compile_cfg(
+            actor={"gradient_checkpointing": True},
+            distributed={
+                "training": {"strategy": "fsdp"},
+                "resources": {"rollout": {"gpus_per_engine": 2}},
+            },
+        ),
     )
 
-
-def test_absent_resources_block_is_not_a_conflict() -> None:
-    """A recipe that never mentions engine topology defaults to one rank."""
-    from vrl.config.validation import require_compile_sequence_parallel_compatible
-
-    require_compile_sequence_parallel_compatible(
-        OmegaConf.create({"model": {"torch_compile": {"enable": True}}}),
-    )
+    assert len(conflicts) == 3
 
 
-def test_the_conflict_is_reachable_from_the_registry() -> None:
-    """Pins WHY this guard exists: a family declares both capabilities.
+def test_require_compile_compatible_raises_with_every_reason() -> None:
+    from vrl.config.validation import require_compile_compatible
 
-    If no family ever declared both, the guard would be dead code. sd3_5 does,
-    which is what makes the unguarded combination a real config a user can write.
+    with pytest.raises(ValueError) as excinfo:
+        require_compile_compatible(
+            _compile_cfg(
+                actor={"gradient_checkpointing": True},
+                distributed={"training": {"strategy": "fsdp"}},
+            ),
+        )
+    message = str(excinfo.value)
+    assert "gradient_checkpointing" in message
+    assert "strategy=fsdp" in message
+
+
+def test_fsdp_conflict_is_now_caught_at_config_load() -> None:
+    """Regression: FSDP x compile used to surface only at strategy build.
+
+    Grad-checkpointing was checked at config load but FSDP2 was not, so an
+    unrunnable recipe failed later than it needed to.
+    """
+
+    import inspect
+
+    from vrl.config.validation import validate_training_config
+
+    assert "require_compile_compatible" in inspect.getsource(validate_training_config)
+
+
+def test_the_sequence_parallel_conflict_is_reachable_from_the_registry() -> None:
+    """Pins WHY the sequence-parallel entry exists: a family declares both.
+
+    If no family ever declared both, it would be dead code. sd3_5 does, which is
+    what made the previously-unguarded combination a real config a user can write.
     """
 
     from vrl.models.families.registry import FAMILY_REGISTRY
