@@ -359,12 +359,12 @@ class FlowDPPO(GRPO):
             rs_keep,
         )
         unclipped_loss = -advantages * ratio
-        per_sample_loss = torch.where(
-            keep.bool(),
-            unclipped_loss,
-            torch.zeros_like(unclipped_loss),
-        )
-        policy_loss = per_sample_loss.mean()
+        # Masked mean, matching GRPO/GRPOGuard/TokenGRPO: the denominator is the
+        # KEPT count, not the batch size. Dividing by the batch size would scale
+        # the gradient by the keep fraction, so the effective learning rate would
+        # shrink exactly as the trust region engages — a gradient-magnitude
+        # dilution, not the true off-policy rejection the mask is meant to be.
+        policy_loss = (unclipped_loss * keep).sum() / keep.sum().clamp_min(1.0)
 
         masked_fraction = (1.0 - keep.mean()).item()
         tis_clip_fraction = (1.0 - tis_keep.mean()).item() if tis_keep is not None else 0.0

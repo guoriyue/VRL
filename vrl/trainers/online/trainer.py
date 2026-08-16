@@ -84,7 +84,11 @@ def _global_reward_stats(rewards: Any) -> tuple[float, float]:
     distributed = dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
     if not distributed:
         mean = rewards.mean().item() if n else 0.0
-        std = rewards.std().item() if n > 1 else 0.0
+        # unbiased=False to match the distributed branch below, which derives the
+        # std from summed sufficient statistics (a POPULATION std). Leaving the
+        # torch default (unbiased=True) would make the same config report a
+        # different reward_std at world_size 1 vs >1 — 15% apart on a 4-sample step.
+        std = rewards.std(unbiased=False).item() if n > 1 else 0.0
         return mean, std
     stats = torch.stack(
         [rewards.sum(), rewards.mul(rewards).sum(), rewards.new_tensor(float(n))],
@@ -983,12 +987,14 @@ class OnlineTrainer:
         if cfg.max_norm > 0:
             grad_norm = self._strategy.clip_grad_norm(parameters_for_clip, cfg.max_norm)
         else:
-            # no clip — compute norm manually for diagnostic
-            sq_sum = 0.0
-            for p in parameters_for_clip:
-                if p.grad is not None:
-                    sq_sum += float(p.grad.detach().pow(2).sum().item())
-            grad_norm = sq_sum**0.5
+            # No clip, but still route through the strategy: under FSDP the grads
+            # are DTensors holding only this rank's shard, so summing them locally
+            # would under-report the global norm and — worse — let the non-finite
+            # check below pass on ranks whose shard happens to be clean while the
+            # rank owning the NaN raises, diverging the ranks mid-step.
+            # max_norm=inf makes the clip coefficient a no-op while still
+            # computing (and cross-mesh reducing) the true global norm.
+            grad_norm = self._strategy.clip_grad_norm(parameters_for_clip, math.inf)
         grad_norm_value = float(grad_norm)
         if self._grad_scaler is None and not math.isfinite(grad_norm_value):
             # BF16 training has no GradScaler to skip a poisoned update. Refuse
@@ -2021,7 +2027,7 @@ class OnlineTrainer:
             "timesteps",
         )
         num_steps = timesteps.shape[1] if timesteps.ndim > 1 else timesteps.shape[0]
-        step_idx = int(torch.randint(0, int(num_steps), (1,)).item())
+        step_idx = self._shared_sft_step_index(int(num_steps))
         t = (
             timesteps[:, step_idx]
             if timesteps.ndim > 1
@@ -2033,6 +2039,26 @@ class OnlineTrainer:
         values = self.model.replay_forward_with_latents(group_batch, step_idx, noisy)
         model_pred = values["noise_pred"]
         return self._sft_weight * F.mse_loss(model_pred.float(), target.float())
+
+    def _shared_sft_step_index(self, num_steps: int) -> int:
+        """Draw one denoise step index that every training rank agrees on.
+
+        The regularizer is averaged across ranks by the gradient all-reduce, so an
+        unsynchronized draw would have each rank penalize a different noise level.
+        The estimator stays unbiased either way, but its variance would become
+        world-size dependent: the same ``sft_weight`` would behave differently at 1
+        vs 8 GPUs, and the run would not replay from the checkpointed RNG state
+        (which snapshots only the local process). Rank 0's draw is authoritative.
+        """
+
+        step = torch.randint(0, num_steps, (1,), dtype=torch.int64)
+        dist = torch.distributed
+        if not (dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1):
+            return int(step.item())
+        if dist.get_backend() == "nccl":
+            step = step.cuda()
+        dist.broadcast(step, src=0)
+        return int(step.item())
 
     # ------------------------------------------------------------------
     # State dict

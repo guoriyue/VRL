@@ -19,20 +19,22 @@ def _population_std_across_ranks(rewards: Any) -> Any:
     → falls back to the local population std, which is already the true global std
     in those cases. The collective is gated on ``global_std`` at the call site, so
     every rank runs it in lockstep (no mismatched-collective deadlock).
+
+    An empty local ``rewards`` must NOT short-circuit: emptiness is a rank-local
+    data condition, and returning early on it would skip the all_reduce that the
+    other ranks are already blocking on. An empty rank contributes zeros to the
+    reduction instead.
     """
 
     import torch
 
     n = rewards.numel()
-    if n == 0:
-        return rewards.new_tensor(0.0)
-
     dist = torch.distributed
-    distributed = (
-        dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
-    )
+    distributed = dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
     if not distributed:
-        return rewards.std(unbiased=False) if n > 1 else rewards.new_tensor(0.0)
+        if n <= 1:
+            return rewards.new_tensor(0.0)
+        return rewards.std(unbiased=False)
 
     # sum, sum-of-squares, count → reduced across ranks in one collective.
     stats = torch.stack(

@@ -302,6 +302,34 @@ def test_grpo_guard_rs_rejects_out_of_band_precision_drift() -> None:
     assert metrics.update.rs_seq_masked_fraction == pytest.approx(0.25)
 
 
+def test_flow_dppo_masked_loss_uses_the_kept_count_as_denominator() -> None:
+    # Regression: the masked mean must divide by the KEPT count, not the batch
+    # size. Dividing by the batch size scales the gradient by the keep fraction,
+    # so the effective LR would shrink exactly as the trust region engages.
+    # Sample 0 alone is trust-region masked: its mean drift (100) puts the KL far
+    # above the threshold AND its ratio > 1 with a positive advantage, which is
+    # the pos_rm rejection condition. The 3 survivors are on-policy (ratio == 1)
+    # and each contribute -1, so the loss must be -1.0, not -0.75.
+    n = 4
+    prev_sample_mean = torch.zeros(n, 1, 1, 1)
+    prev_sample_mean[0, 0, 0, 0] = 100.0
+    log_prob = torch.zeros(n)
+    log_prob[0] = 0.5  # ratio = exp(0.5) > 1
+    sig = _signals(
+        log_prob=log_prob,
+        old_log_prob=torch.zeros(n),
+        prev_sample_mean=prev_sample_mean,
+        old_prev_sample_mean=torch.zeros(n, 1, 1, 1),
+        std_dev_t=torch.ones(n, 1, 1, 1),
+        dt=torch.ones(n),
+    )
+    algo = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=1.0))
+    loss, metrics = algo.compute_loss(_input(sig, torch.ones(n)))
+    # FlowDPPO reports the trust-region masked fraction as clip_fraction.
+    assert metrics.update.clip_fraction == pytest.approx(0.25)
+    assert float(loss) == pytest.approx(-1.0)
+
+
 def test_trust_region_losses_fail_fast_without_dt() -> None:
     # dt is a hard contract: missing it must raise, not silently drop the
     # diffusion coefficient (Flow-DPPO) or collapse the step-scale to 1 (Guard).

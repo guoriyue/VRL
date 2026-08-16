@@ -64,4 +64,9 @@ def test_falls_back_to_local_without_process_group() -> None:
     r = torch.tensor([1.0, 2.0, 3.0, 4.0])
     mean, std = _global_reward_stats(r)
     assert mean == pytest.approx(float(r.mean()))
-    assert std == pytest.approx(float(r.std()))
+    # Population std — the SAME definition the distributed branch reports above,
+    # so reward_std stays comparable across world sizes. Asserting the unbiased
+    # (n-1) std here would re-encode the single-rank/multi-rank split this test
+    # exists to prevent.
+    assert std == pytest.approx(float(r.std(unbiased=False)))
+    assert std != pytest.approx(float(r.std()))
