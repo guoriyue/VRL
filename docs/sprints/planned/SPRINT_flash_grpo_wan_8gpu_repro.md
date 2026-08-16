@@ -175,6 +175,17 @@ HPSv3 是**图像**模型，不是视频模型。81 帧被当成 81 张独立图
 和 Subject Consistency 提升是自洽的。若要优化运动质量，需换 reward（如 VideoReward /
 VideoAlign，见 §9 调研），那是另一个 sprint。
 
+**已知的 reward hacking 面**（上游 issue，训练时按此盯指标）：
+
+- #32 某些配对下**忽略 prompt** —— 它对 prompt 的条件化偏弱
+- #31 **偏好正面情绪**，与 prompt 无关
+- #24 名画被打很低
+- #19 杂乱图像可以拿到 >15
+
+策略会去找这些缝隙。这也是为什么 §5 的 Gate 1 不能只看 reward 曲线上升就宣布成功——
+**必须同时看生成样本**。reward 涨而画面变差是本配方最可能的失败模式：
+时序完全不在 reward 内（见上），所以"每帧都很美但动起来是糊的/闪烁的"不会被惩罚。
+
 ### 3.2 已实测：基座推理在单卡上正确且只要 22GB（2026-08-15）
 
 在本地开发机（1×RTX 5090 32GB，sm_120，torch 2.11 / diffusers 0.39）跑了基座推理冒烟，
@@ -240,11 +251,14 @@ attention 后端可能不同（FlashAttention vs SDPA），显存会有出入。
 
 ## 5. 执行计划与 Gate
 
-### Gate 0（最高优先级，~1 小时）：单卡峰值显存
+顺序：**Gate 0.5 → Gate 0 → Gate 1 → Gate 2**。0.5 编号在前是因为它先于 0 执行
+（reward server 必须先起来），但 Gate 0 才是决定计划成败的那一个。
+
+### Gate 0（决定性，~1 小时）：单卡峰值显存
 
 **这是整个计划里性价比最高的一小时**，它一次性回答 §0 的核心未知。
 
-前置：独立环境 + HPSv3 + reward server 起来（见 §6）。
+前置：两个独立环境 + HPSv3 checkpoint + reward server 起来且通过 Gate 0.5（见 §6）。
 
 ```bash
 bash scripts/multi_node/train_wan2_1_flash_1node.sh   # 跑 1–2 步即可
@@ -270,10 +284,26 @@ G 减半只是把 24 个 prompt × 4 变成 48 个 prompt × 2。）
 
 降档会偏离论文配方，**必须在 §7 记录实际使用值**，否则复现结论不可比。
 
+### Gate 0.5（~10 分钟）：reward server 独立连通性
+
+在开训练之前单独验证 reward 通路，比在训练里 debug 省事得多。
+拿 §3.2 已生成的 `sample.mp4` 抽几帧，直接 POST 到跑起来的 server：
+
+判据：返回**有限浮点数**（无界，典型 -1~+12，越高越好，见 §6.3），不是报错/NaN。
+同一段视频重复打分应当稳定。
+
 ### Gate 1：短程收敛信号
 
-跑到 `eval_freq=20` 的第一个评测点，确认 reward 曲线上升、无 NaN、无发散。
-作者在 README 附了 train/eval 曲线（`asset/train.jpg` / `asset/eval.jpg`）可作对照。
+跑到 `eval_freq=20` 的第一个评测点。判据是三条**同时**成立：
+
+1. reward 曲线上升、无 NaN、无发散（作者 README 附了
+   `asset/train.jpg` / `asset/eval.jpg` 可作对照）
+2. **人眼看生成样本没有变差** —— 不能只看曲线
+3. 帧间连贯性没有退化
+
+第 2、3 条不是形式主义：reward 完全不含时序项，且有已知的 prompt-条件化偏弱与
+情绪偏置（§3.1），所以"reward 涨但视频变糊/闪烁/千篇一律"是本配方**最可能的失败模式**，
+而它在曲线上看不出来。
 
 ### Gate 2：完整复现
 
@@ -292,23 +322,104 @@ wall-clock 估算：作者 8 卡 ~40h，GPU 型号未公开（配置名 `dgx` �
 | 基座模型 | ✅ | `Wan2.1-T2V-1.3B-Diffusers` 已在 HF 缓存（27GB） |
 | 训练 prompt | ✅ | 仓库自带 `dataset/video/train.txt` 19,700 条 / `test.txt` 300 条 |
 | 8 卡启动脚本 | ✅ | 作者提供，ZeRO-2 |
-| **HPSv3 包 + checkpoint** | ❌ | `pip install git+https://github.com/MizzenAI/HPSv3` + `HPSv3/HPSv3.safetensors` |
-| **独立 conda 环境** | ❌ | 必须新建，见下 |
+| **HPSv3 包 + checkpoint** | ❌ | 见 §6.1 —— 比想象中麻烦，且**必须独立环境** |
+| **训练环境（独立 conda）** | ❌ | 必须新建，见下 |
 
-环境必须独立：`setup.py` 钉 `torch==2.6.0 / transformers==4.40.0 / diffusers==0.33.1 /
+训练环境必须独立：`setup.py` 钉 `torch==2.6.0 / transformers==4.40.0 / diffusers==0.33.1 /
 deepspeed==0.16.4 / peft==0.10.0`。L40/L40S 是 sm_89，该套钉版可正常安装
 （对比：本地开发机的 RTX 5090 是 sm_120，torch 2.6.0+cu124 不支持，这也是不能在本机跑的原因之一）。
 
-reward server 启动（注意用 `-c`，README 的命令未带，不会读到 gunicorn 配置）：
+### 6.1 HPSv3：三个必须提前知道的坑
+
+**坑 1（硬阻塞）：HPSv3 与训练环境的 transformers 版本不可调和。**
+
+HPSv3 的 backbone 是 **Qwen2-VL-7B-Instruct**（不是 CLIP 级小模型），而 Qwen2-VL 支持
+在 transformers 4.45 才落地。训练环境钉的是 **4.40.0**，其中根本不存在
+`Qwen2VLForConditionalGeneration` —— import 即失败。这不是"尽量隔离"的建议，
+**是必须分两个环境**。
+
+好在 reward server 本来就是独立进程（HTTP），隔离零成本。另有两条独立理由支持隔离：
+上游 issue #6 / #2 报告在同进程内初始化 HPSv3 会污染已初始化的 `Accelerator`
+（`accelerator.config` 变成 `None`，根因是其 `TrainingConfig` 继承
+`transformers.TrainingArguments` 并在构造时触碰 accelerate 全局状态）——对 RL trainer 是地雷。
+
+**坑 2：必须用 `upgrade_transformers_version` 分支，不能用 PyPI 或 main。**
+
+PyPI 只发过一次 `1.0.0`（2025-08-06，再未更新）。在 transformers > 4.45 上，
+HF 重命名了 Qwen2-VL 的子模块树（`model.embed_tokens` → `model.language_model.embed_tokens`，
+`visual.*` → `model.visual.*`），导致 16.6GB checkpoint 的 `load_state_dict(strict=True)` 失败：
+
+```text
+RuntimeError: Error(s) in loading state_dict for Qwen2VLRewardModelBT
+```
+
+这是上游 issue #15 / #29，**#29 的报告者用的正是 flow_grpo 的调用方式**
+（`HPSv3RewardInferencer(device='cuda', checkpoint_path=".../HPSv3.safetensors")`），
+main 分支至今未修。`upgrade_transformers_version` 分支加了 key 重映射 shim。
+
+**坑 3：磁盘要 ~33GB，不是 16.6GB。**
+
+`HPSv3RewardInferencer.__init__` 会先 `from_pretrained("Qwen/Qwen2-VL-7B-Instruct")`
+建骨架再用 checkpoint 覆盖，所以**除了 16.6GB 的 HPSv3.safetensors 还会拉整个
+~16GB 的 Qwen2-VL 基座**（上游 issue #3，未修）。可预下载后改
+`hpsv3/config/HPSv3_7B.yaml` 的 `model_name_or_path` 指向本地目录。
+
+另：`checkpoint_path` 被直接传给 `safetensors.torch.load_file()`，**不做任何路径解析**。
+`flow_grpo/reward-server/reward_server/hpsv3.py` 里的相对路径 `'HPSv3/HPSv3.safetensors'`
+只有在 gunicorn 的 CWD 恰好包含该目录时才成立 —— **改成绝对路径**。
+
+### 6.2 安装与启动
+
+```bash
+# reward server 的独立环境
+git clone -b upgrade_transformers_version https://github.com/MizzenAI/HPSv3.git
+cd HPSv3 && python -m venv .venv-hpsv3 && source .venv-hpsv3/bin/activate
+pip install torch==2.6.0 torchvision==0.21.0
+pip install -e .            # 该分支会拉 transformers>=4.45.2
+# flash-attn 可跳过：输入被硬限制在 256*28*28 像素，SDPA 回退代价很小，
+# 而 flash-attn==2.7.4.post1 是常见的编译失败源
+
+huggingface-cli download --repo-type model MizzenAI/HPSv3 --local-dir /abs/path/HPSv3
+huggingface-cli download Qwen/Qwen2-VL-7B-Instruct --local-dir /abs/path/Qwen2-VL-7B
+# 然后把 hpsv3/config/HPSv3_7B.yaml 的 model_name_or_path 指向本地 Qwen 目录
+```
+
+启动（**必须带 `-c`**，README 的命令未带，不会读到 gunicorn 配置，端口与 GPU 分配都不对）：
 
 ```bash
 cd flow_grpo/reward-server
 gunicorn -c gunicorn.conf.py "app_hpsv3:create_app()"
 ```
 
-**待定的取舍**：`gunicorn.conf.py` 写死 `NUM_DEVICES = 8`，8 个 reward worker 各占一卡，
-与训练争抢显存。建议先按 8 worker 试（reward 打分是 rollout 之后的间歇负载，非持续占用），
-Gate 0 若因此 OOM 再降到 2–4 worker。
+### 6.3 分数语义：无界，越高越好
+
+作者在 issue #9 明确："HPSv3 doesn't have a clear upper limit... Bradley-Terry loss
+only maximizes the margin, there's no upper or lower bound."
+
+README 的 benchmark 表里各模型均值大致落在 **-1 ~ +12**（Kolors 10.55、Flux-dev 10.43、
+SDXL 8.20、SD3-Medium 5.31、SD2 **-0.24**），单图有报告 >15。
+
+**对 GRPO 无妨**（组内相对归一化本就不依赖绝对尺度），但**不要在任何 reward 管线里
+假设 0–1 或 0–10 的钳位**。
+
+`reward()` 返回形状 `[batch, 2]` 的张量，两列是 (mu, sigma)（`output_dim: 2`,
+`loss_type: "uncertainty"`）。取 mu 用 `out[:, 0]`。
+
+### 6.4 显存取舍：8 worker 很可能塞不下
+
+HPSv3 是 7B VLM，**单 worker 约 16.5GB**（bf16 权重 ~15GB + 激活/head）。
+
+```text
+48 GB  -  16.5 GB (reward worker)  =  31.5 GB  留给训练
+但推理基线已实测 21.98 GB  ->  仅剩 ~9.5 GB 给 rollout buffer + 反传激活
+```
+
+这比原先"先按 8 worker 试"的判断悲观得多。**修订建议：直接从 2 个 worker 起步**
+（放在 2 张卡上，其余 6 张纯训练），Gate 0 通过后再视余量增加。
+reward 打分是 rollout 之后的间歇负载，worker 少只是打分排队久一点，不影响正确性。
+
+若 2 worker 仍紧，可把 reward server 挪到**另一台机器**（`REWARD_SERVER_URL` 已支持，
+见 §4 第 4 条），代价是网络传输 JPEG 的带宽。
 
 ## 7. 待记录（执行时回填）
 
@@ -334,7 +445,15 @@ Gate 0 若因此 OOM 再降到 2–4 worker。
 
 - Flash-GRPO：<https://github.com/Shredded-Pork/Flash-GRPO> · [arXiv:2605.15980](https://arxiv.org/abs/2605.15980) · [ICML 2026 poster](https://icml.cc/virtual/2026/poster/63629)
 - flow_grpo（上游）：<https://github.com/yifan123/flow_grpo>
-- HPSv3：<https://github.com/MizzenAI/HPSv3>
+- HPSv3：<https://github.com/MizzenAI/HPSv3> · [arXiv:2508.03789](https://arxiv.org/abs/2508.03789)
+  · **要用的分支** <https://github.com/MizzenAI/HPSv3/tree/upgrade_transformers_version>
+  · checkpoint <https://huggingface.co/MizzenAI/HPSv3>
+- HPSv3 关键 issue：[#15](https://github.com/MizzenAI/HPSv3/issues/15) /
+  [#29](https://github.com/MizzenAI/HPSv3/issues/29)（state_dict 加载失败，#29 正是 flow_grpo 用法）·
+  [#3](https://github.com/MizzenAI/HPSv3/issues/3)（额外拉 Qwen2-VL 基座）·
+  [#6](https://github.com/MizzenAI/HPSv3/issues/6)（污染 Accelerator）·
+  [#9](https://github.com/MizzenAI/HPSv3/issues/9)（分数无界）·
+  [#31](https://github.com/MizzenAI/HPSv3/issues/31) / [#32](https://github.com/MizzenAI/HPSv3/issues/32)（reward hacking 面）
 - Wan2.1-T2V-1.3B：<https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B-Diffusers>
 - 选型调研全文：`docs/research/video-rl-post-training-on-8xL40S.md`
 - NVIDIA Ada 专业卡白皮书（解决 bf16 口径冲突）：<https://images.nvidia.com/aem-dam/en-zz/Solutions/technologies/NVIDIA-ADA-GPU-PROVIZ-Architecture-Whitepaper_1.1.pdf>
