@@ -1,6 +1,11 @@
 # SPRINT: Diffusion Within-Chunk GPU Idle
 
-**Status:** PLANNED — measurement-gated
+**Status:** DONE — closed 2026-08-16 with a **documented negative result**. No
+optimization code was written.
+
+The `~65%` within-chunk idle **does not reproduce at a production-like shape**.
+It is an artifact of the tiny acceptance workload, exactly as the Origin section
+suspected. See "Measured result" below.
 
 ## Origin
 
@@ -127,6 +132,88 @@ If denoise kernels are nearly continuous but have low Compute(SM), use Nsight
 Compute on a representative hot kernel and compare it with an appropriate
 same-machine baseline. Do not call low per-kernel occupancy or throughput
 "GPU idle."
+
+## Measured result (2026-08-16, RTX 5090, bf16)
+
+Real `nsys` capture of `engine.forward_chunk` on the production
+`GenericDiffusionBatchExecutor` path, analysed with this repo's own
+kernel-interval-union primitives (`vrl/utils/nsys_report.py`). Two steady-state
+chunks per shape; warmup chunks emit a different NVTX name and are excluded by
+construction.
+
+| shape | chunk wall (ms) | kernel busy | idle |
+|---|---|---|---|
+| 128x128, 4 steps, 1 sample (acceptance) | 224 / 230 | **47.2% / 48.2%** | ~52% |
+| 512x512, 10 steps, 1 sample | 675 / 710 | **80.7% / 81.4%** | ~19% |
+| 512x512, 10 steps, 2 samples | 1080 / 1089 | **87.3% / 87.1%** | ~13% |
+| 512x512, 10 steps, 4 samples | 1941 / 1951 | **92.6% / 91.8%** | ~8% |
+
+### Stage attribution at the production shape (512px / 10 steps / 1 sample)
+
+| stage | % of chunk wall | busy within stage | idle as % of chunk wall |
+|---|---|---|---|
+| `generation.denoise_step` | 92.81 | 81.3 | 17.39 |
+| `generation.prompt_encode` | 6.26 | 76.3 | 1.49 |
+| `generation.decode_latents` | 0.43 | 77.1 | 0.10 |
+| `generation.prepare_sampling` | 0.23 | 78.3 | 0.05 |
+
+Latent snapshot/write and trajectory buffer write together are `<0.15%` of chunk
+wall. **No stage owns a reclaimable `10%`.**
+
+### Mechanism
+
+Launch-bound, not a synchronization point. At the tiny shape the median kernel
+is `1.89us` while the median inter-kernel gap is `2.21us` — kernels are shorter
+than the gap between them. At the production shape the median kernel grows to
+`3.26us` and the median gap falls to `1.18us`. Blocking/sync CUDA API on an idle
+GPU is only `2.1-3.8%` of tiny-shape chunk wall, so synchronization is not the
+cause.
+
+### Gate outcomes
+
+- **Gate A (stage-local gaps): NOT crossed.** `denoise_step` is 92.8% of wall but
+  already 81-83% busy; its idle is spread across ~50,000 sub-2us gaps, not a
+  removable sync point.
+- **Gate B (compiled path): NOT EVALUATED.** `torch_compile` was forced off for
+  every run so all points share one execution path. This question is genuinely
+  still open.
+- **Gate C (request-local batching): crossed on wall time.** Per-sample wall at
+  512px/10 steps: 728-763ms (1) -> 593-598ms (2, **-20%**) -> 529-530ms (4,
+  **-27%**). Absolute idle stays flat at ~110-160ms per chunk regardless of chunk
+  size, i.e. a fixed per-chunk cost that larger chunks amortize. Peak allocated
+  barely moves (16746 -> 16784 MiB; the resident T5-XXL dominates). **This needs
+  no new code:** `samples_per_generation_batch` already exists and
+  `online_grpo_ocr` already sets it to 16.
+- **Negative exit: satisfied.** Representative-shape busy is 81-93%, and at 4
+  samples/chunk it clears the 85% bar outright.
+
+### Measurement hazards worth remembering
+
+Two effects would each have produced a wrong answer:
+
+1. **GPU contention.** The card was shared with other sessions. The same code and
+   shape ran 1225ms/chunk under contention vs 728ms on a clear card — a 40%
+   swing — and the contended trace showed 78% of its idle in 50 gaps of 1-4.4ms,
+   a time-slice signature rather than a VRL bubble. All numbers above were taken
+   with the GPU verified idle (0% util, ~31GB free).
+2. **Profiler overhead is shape-dependent.** Interleaved A/B: tiny shape
+   155-163ms unprofiled -> 212-230ms profiled (~40% overhead); production shape
+   739-816ms unprofiled -> 697-770ms profiled (no overhead). Per-launch CUPTI
+   cost dominates only when kernels are ~2us — itself independent evidence that
+   the tiny shape is launch-bound. Corrected for this, the tiny shape's true
+   unprofiled busy is ~68%, not 47%.
+
+### Caveats on this result
+
+- **bf16, not fp32.** Free memory did not permit fp32 SD3.5. The prior
+  `65.57-66.70%` evidence is likely fp32. bf16 halves memory traffic and roughly
+  doubles kernel duration, which *helps* busy — so the production-shape number is
+  plausibly optimistic. The tiny-vs-production **contrast** is measured at
+  identical precision, so the gate answer stands; the absolute production number
+  should be re-confirmed in fp32 on a free card.
+- **Reached 4 samples/chunk, not 16.** The trend is monotone but 8 and 16 were
+  not measured.
+- **Single in-process executor, no Ray** — matching the sprint's stated boundary.
 
 ## Decision Gates
 

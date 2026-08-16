@@ -134,6 +134,48 @@ is why the run below uses LoRA rather than full fine-tuning.
 |---|---|---|---|
 | — | pre-flight | see above | design changed: anime dataset + AnimeReward required |
 | 1 | recipe defaults (clip_ratio 1e-4, lr 1e-5, 10-step rollout) | first honest attempt | **stopped at epoch 4 — policy frozen by the trust region** |
+| 2 | clip_ratio 3e-3 | widen trust region past the measured update size | **stopped at epoch 10 — clip_fraction fixed (0.45 -> 0.11) but reward flat (slope +6e-4)** |
+| 3 | + lr 1e-4 (LoRA rate) | run 2's lr was a full-param rate; repo LoRA configs use 1e-4..3e-4 | **stopped at epoch 12 — grad_norm rose ~3x, reward still flat/declining (slope -9e-4)** |
+
+### Run 3 — the decisive negative result
+
+Checkpoint-10 evaluated against base on the identical 24 prompts and seeds:
+
+| | base | ckpt-10 |
+|---|---|---|
+| quality mean | **0.6914** +/- 0.0396 | **0.6857** +/- 0.0467 |
+| diversity pixel_l2 | 32.639 | 33.026 |
+
+Paired t-test over the 24 matched prompts: **t = -1.53 (df 23), not significant**
+(|t| > 2.07 needed). Improved on 5/24, worsened on 10/24, tied on 9/24.
+Diversity held, so this is not collapse — it is simply **no learning**.
+
+**What was ruled out, with evidence:**
+
+- *Gradients not flowing.* Ruled out. All 224 `lora_B` tensors moved off their
+  zero init (mean norm 3.8e-2). The LoRA trains and checkpoints correctly.
+- *Reward signal too weak for GRPO.* Ruled out. Within-group reward std is
+  0.0327 vs between-group 0.0292 (ratio 1.12) — GRPO consumes within-group
+  variance and there is plenty.
+- *Reward is noise.* Ruled out in pre-flight (Cohen's d = 3.74).
+- *Learning rate.* Addressed in run 3; grad_norm rose ~3x with no reward effect.
+- *Trust region.* Addressed in run 2; clip_fraction fell to 0.11.
+
+**The remaining structural cause.** With `ppo_epochs=1` under
+`strict_on_policy`, behavior and target policy are identical on the single
+replay pass, so the importance ratio is identically 1. The trainer documents
+exactly this as "the documented flat-curve root cause" in
+`_validate_trust_region_engages` — but that guard only fires for algorithms
+that *declare* `requires_active_trust_region` (Flow-DPPO / GRPO-Guard). Plain
+GRPO is allowed through, and it degenerates to a plain policy-gradient step
+whose magnitude, at this batch size (4 prompts x 8 samples = 32 samples per
+update), is too small to move a 2B model in tens of epochs.
+
+**Highest-value next experiment** (not yet run): raise the per-update sample
+count substantially (more prompts per batch, and/or `ppo_epochs>1` via the
+legacy full-batch path the guard's message describes) so each update sees
+enough signal to overcome gradient noise. Scaling `lr` further without
+addressing batch size would trade one instability for another.
 
 ### Run 1 — stopped: the trust region strangles learning
 
