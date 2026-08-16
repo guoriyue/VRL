@@ -337,10 +337,47 @@ def validate_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPoli
     from vrl.trainers.activation_checkpointing import require_compile_checkpointing_compatible
 
     require_compile_checkpointing_compatible(root)
+    require_compile_sequence_parallel_compatible(cfg)
     require_guarded_rollout_drift(cfg, precision)
     if bool(OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)):
         validate_production_kling_video_reward_config(cfg)
     return root, precision
+
+
+def require_compile_sequence_parallel_compatible(cfg: DictConfig) -> None:
+    """Refuse torch.compile combined with a multi-rank rollout engine.
+
+    Sequence parallelism is installed by the rollout WORKER, after the family
+    builder has already compiled the policy core
+    (``worker.py`` builds the bundle, then installs sequence parallel). The
+    installer swaps every attention processor and registers forward hooks on the
+    first/last block — mutating a module inductor has already traced, which
+    silently invalidates the compiled graph or forces a recompile that traces
+    the hooks.
+
+    Unlike compile x grad-checkpointing and compile x FSDP2, this combination had
+    no gate at all, while sd3_5 declares BOTH ``supports_torch_compile`` and a
+    ``sequence_parallel_installer`` — so it is reachable from config today.
+    """
+
+    if not bool(OmegaConf.select(cfg, "model.torch_compile.enable", default=False)):
+        return
+    gpus_per_engine = OmegaConf.select(
+        cfg,
+        "distributed.resources.rollout.gpus_per_engine",
+        default=1,
+    )
+    if gpus_per_engine is None or int(gpus_per_engine) <= 1:
+        return
+    raise ValueError(
+        "model.torch_compile.enable=true cannot combine with "
+        f"distributed.resources.rollout.gpus_per_engine={int(gpus_per_engine)}: "
+        "sequence parallelism installs attention processors and forward hooks on "
+        "the policy core AFTER the model is built and compiled, mutating the "
+        "module torch.compile already traced. Pick one — compile with "
+        "gpus_per_engine=1, or multi-GPU engines with "
+        "model.torch_compile.enable=false.",
+    )
 
 
 def require_guarded_rollout_drift(cfg: DictConfig, precision: PrecisionPolicy) -> None:

@@ -117,3 +117,71 @@ def test_check_runs_inside_validate_training_config() -> None:
     from vrl.config.validation import validate_training_config
 
     assert "require_guarded_rollout_drift" in inspect.getsource(validate_training_config)
+
+
+# --- compile x sequence parallel -----------------------------------------------
+#
+# The third member of the compile-conflict family, and the one that had NO gate
+# until now. Sequence parallelism is installed by the rollout worker AFTER the
+# builder has compiled the policy core, so it mutates a module inductor already
+# traced. sd3_5 declares both `supports_torch_compile` and a
+# `sequence_parallel_installer`, so the combination is reachable from config.
+
+
+def _sp_cfg(*, compile_on: bool, gpus_per_engine: int) -> OmegaConf:
+    return OmegaConf.create(
+        {
+            "model": {"torch_compile": {"enable": compile_on}},
+            "distributed": {"resources": {"rollout": {"gpus_per_engine": gpus_per_engine}}},
+        },
+    )
+
+
+def test_compile_with_multi_rank_engine_is_refused() -> None:
+    from vrl.config.validation import require_compile_sequence_parallel_compatible
+
+    with pytest.raises(ValueError, match=r"gpus_per_engine=2"):
+        require_compile_sequence_parallel_compatible(_sp_cfg(compile_on=True, gpus_per_engine=2))
+
+
+@pytest.mark.parametrize(
+    ("compile_on", "gpus_per_engine"),
+    [
+        (True, 1),  # compile alone
+        (False, 4),  # sequence parallel alone
+        (False, 1),  # neither
+    ],
+)
+def test_either_feature_alone_is_allowed(compile_on: bool, gpus_per_engine: int) -> None:
+    from vrl.config.validation import require_compile_sequence_parallel_compatible
+
+    require_compile_sequence_parallel_compatible(
+        _sp_cfg(compile_on=compile_on, gpus_per_engine=gpus_per_engine),
+    )
+
+
+def test_absent_resources_block_is_not_a_conflict() -> None:
+    """A recipe that never mentions engine topology defaults to one rank."""
+    from vrl.config.validation import require_compile_sequence_parallel_compatible
+
+    require_compile_sequence_parallel_compatible(
+        OmegaConf.create({"model": {"torch_compile": {"enable": True}}}),
+    )
+
+
+def test_the_conflict_is_reachable_from_the_registry() -> None:
+    """Pins WHY this guard exists: a family declares both capabilities.
+
+    If no family ever declared both, the guard would be dead code. sd3_5 does,
+    which is what makes the unguarded combination a real config a user can write.
+    """
+
+    from vrl.models.families.registry import FAMILY_REGISTRY
+
+    both = [
+        family
+        for family, entry in FAMILY_REGISTRY.items()
+        if entry.runtime_capabilities.supports_torch_compile
+        and entry.runtime_capabilities.sequence_parallel_installer is not None
+    ]
+    assert both, "no family declares both compile and sequence parallel"

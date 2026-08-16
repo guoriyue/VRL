@@ -203,6 +203,9 @@ def test_partial_coverage_fails_loud() -> None:
         def enabled(self, build: Any) -> bool:
             return True
 
+        def conflicts(self, build: Any) -> tuple[str, ...]:
+            return ()
+
         def apply(self, model: Any, build: Any) -> PassResult:
             first = next(iter(model.policy_cores))
             return PassResult(
@@ -274,3 +277,81 @@ def test_teacache_off_or_precision_split_reports_nothing() -> None:
     assert unguarded_drift_sources({"teacache": {"enabled": False}}, matched) == ()
     # A precision split already arms the drift guard + TIS automatically.
     assert unguarded_drift_sources({"teacache": True}, split) == ()
+
+
+# --- declared conflicts --------------------------------------------------------
+#
+# The second relation between passes. Ordering is the ROLLOUT_PASSES tuple;
+# this is "these two must never both be on, in either order". It is declared so
+# that a new incompatibility has one home -- compile alone is currently refused
+# against grad-checkpointing, FSDP2, blockwise fp8 and sequence parallelism by
+# four separate hand-written guards in four different files.
+
+
+def test_a_declared_conflict_fails_before_any_mutation() -> None:
+    """An incompatible combination must leave the model untouched."""
+
+    class _ConflictingPass:
+        name = "conflicting"
+        introduces_replay_drift = False
+        replaces_modules = False
+
+        def enabled(self, build: Any) -> bool:
+            return True
+
+        def conflicts(self, build: Any) -> tuple[str, ...]:
+            return ("some other feature (because reasons)",)
+
+        def apply(self, model: Any, build: Any) -> PassResult:
+            raise AssertionError("apply must not run when a conflict is declared")
+
+    model = _Policy("transformer")
+    import vrl.nn.optimization.passes as passes
+
+    original = passes.ROLLOUT_PASSES
+    passes.ROLLOUT_PASSES = (_ConflictingPass(),)
+    try:
+        with pytest.raises(ValueError, match="some other feature"):
+            apply_rollout_optimizations(model, _build())
+    finally:
+        passes.ROLLOUT_PASSES = original
+    assert not _quantized(model.policy_cores["transformer"]), "model was mutated"
+
+
+def test_a_disabled_pass_conflict_is_not_consulted() -> None:
+    """Only ENABLED passes can conflict; an off feature constrains nothing."""
+
+    class _OffButConflicting:
+        name = "off"
+        introduces_replay_drift = False
+        replaces_modules = False
+
+        def enabled(self, build: Any) -> bool:
+            return False
+
+        def conflicts(self, build: Any) -> tuple[str, ...]:
+            raise AssertionError("conflicts must not be consulted for a disabled pass")
+
+        def apply(self, model: Any, build: Any) -> PassResult:
+            raise AssertionError("apply must not run")
+
+    import vrl.nn.optimization.passes as passes
+
+    original = passes.ROLLOUT_PASSES
+    passes.ROLLOUT_PASSES = (_OffButConflicting(),)
+    try:
+        apply_rollout_optimizations(_Policy("transformer"), _build())
+    finally:
+        passes.ROLLOUT_PASSES = original
+
+
+def test_shipped_passes_declare_no_conflict_from_model_build_alone() -> None:
+    """Compile's real conflicts are config-level, not ModelBuild-level.
+
+    Pinned deliberately: an earlier draft probed `build.rank_group`, which does
+    not exist on ModelBuild -- a guard that can never fire. The sequence-parallel
+    conflict lives in config validation, where engine topology is visible.
+    """
+
+    for optimization in ROLLOUT_PASSES:
+        assert optimization.conflicts(_build(quantization="fp8", compile_mode="default")) == ()

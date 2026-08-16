@@ -72,6 +72,21 @@ class OptimizationPass(Protocol):
         """Whether this build requests the pass."""
         ...
 
+    def conflicts(self, build: Any) -> tuple[str, ...]:
+        """Feature names this pass cannot coexist with, given ``build``.
+
+        Ordering between passes is the tuple order below; THIS is the other
+        relation — features that must never both be on, in either order. They
+        are declared rather than checked ad hoc because the same conflict
+        otherwise gets rediscovered per feature: today ``compile`` is refused
+        against grad-checkpointing, FSDP2, and blockwise fp8 by three separate
+        hand-written guards in three different files.
+
+        Returns human-readable reasons (empty when compatible); the assembly
+        point turns a non-empty result into a loud failure.
+        """
+        ...
+
     def apply(self, model: Any, build: Any) -> PassResult:
         """Transform ``model``'s declared policy cores in place."""
         ...
@@ -90,6 +105,17 @@ class QuantizationPass:
 
     def enabled(self, build: Any) -> bool:
         return getattr(getattr(build, "precision", None), "quantization", None) is not None
+
+    def conflicts(self, build: Any) -> tuple[str, ...]:
+        """None: a low-precision swap composes with every other rollout feature.
+
+        The one real fp8 conflict (blockwise x compile) is the COMPILE pass's,
+        not this one's -- the kernel is fine, it is only untraceable. Declared
+        there so the message names the thing to turn off.
+        """
+
+        del build
+        return ()
 
     def apply(self, model: Any, build: Any) -> PassResult:
         from vrl.models.loader import apply_rollout_quantization
@@ -121,6 +147,23 @@ class CompilePass:
 
     def enabled(self, build: Any) -> bool:
         return bool((getattr(build, "torch_compile", None) or {}).get("enable"))
+
+    def conflicts(self, build: Any) -> tuple[str, ...]:
+        """Nothing detectable from ``build`` alone.
+
+        Compile's real conflicts are all decided by config keys this object does
+        not carry, so they are all refused at config load, in
+        ``vrl.config.validation``: grad-checkpointing
+        (``require_compile_checkpointing_compatible``), sequence parallelism
+        (``require_compile_sequence_parallel_compatible`` — engine topology
+        never reaches ``ModelBuild``), and FSDP2 (the gate in
+        ``vrl.trainers.strategy``). Keeping this method honest — rather than
+        probing for an attribute ``ModelBuild`` does not have — is the point: a
+        guard that cannot fire is worse than no guard.
+        """
+
+        del build
+        return ()
 
     def apply(self, model: Any, build: Any) -> PassResult:
         mode = build.torch_compile["mode"]
@@ -182,6 +225,14 @@ def apply_rollout_optimizations(
     """
 
     enabled = tuple(o for o in ROLLOUT_PASSES if o.enabled(build))
+    # Conflicts before any mutation: an incompatible combination must fail with
+    # the model untouched, not half-transformed.
+    for optimization in enabled:
+        reasons = optimization.conflicts(build)
+        if reasons:
+            raise ValueError(
+                f"rollout pass {optimization.name!r} cannot run with {'; '.join(reasons)}",
+            )
     # Only read the declaration when something will actually use it: a build with
     # no optimization requested must not force every model to own policy cores.
     declared = tuple(model.policy_cores) if enabled else ()
