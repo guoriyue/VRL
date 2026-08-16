@@ -1,8 +1,10 @@
 """Tests for the AnimeReward visual-quality reward model.
 
-The Idefics2-8B head itself needs a pinned transformers-4.x environment, so
-these cover the repo-side logic instead: media normalisation, the frame-window
-fill that lets a still be scored by a video-trained head, and score scaling.
+Loading the real Idefics2-8B head costs GPU and minutes, so these cover the
+repo-side logic around it: media normalisation, the frame-window fill that lets
+a still be scored by a video-trained head, score scaling, and the two
+compatibility guarantees that let the head run under this repo's transformers
+rather than a pinned 4.x sidecar.
 """
 
 from __future__ import annotations
@@ -117,3 +119,47 @@ def test_unsupported_media_type_fails_loud() -> None:
 
     with pytest.raises(TypeError, match="cannot score media"):
         model.score_media(media="not-an-image", prompt="1girl")
+
+
+def test_forward_disables_cache() -> None:
+    """use_cache=False keeps the fork's 4.x-only cache paths unreachable.
+
+    Without it the mantis fork calls DynamicCache.from_legacy_cache and
+    get_usable_length, which transformers 5.x removed — so this is what lets the
+    reward run colocated in the repo env instead of a pinned 4.x service.
+    """
+    model, _ = _model()
+    seen: dict[str, object] = {}
+
+    class _RecordingHead(torch.nn.Module):
+        def forward(self, **kwargs: Any) -> Any:
+            seen.update(kwargs)
+
+            class _Output:
+                logits = torch.tensor([[70.0]])
+
+            return _Output()
+
+    model._module = _RecordingHead()
+    model.score_media(media=torch.zeros(3, 8, 8), prompt="1girl")
+
+    assert seen["use_cache"] is False
+
+
+def test_transformers_adapter_is_idempotent() -> None:
+    """Re-adapting must not wrap tie_weights twice (one model per process, many loads)."""
+
+    class _Head:
+        _calls = 0
+
+        def tie_weights(self):
+            type(self)._calls += 1
+
+    AnimeRewardQualityModel._adapt_mantis_to_current_transformers(_Head)
+    first = _Head.tie_weights
+    AnimeRewardQualityModel._adapt_mantis_to_current_transformers(_Head)
+
+    assert _Head.tie_weights is first
+    # The widened signature must swallow 5.x's kwarg and still call through.
+    _Head().tie_weights(recompute_mapping=False)
+    assert _Head._calls == 1

@@ -19,11 +19,17 @@ STILLS from an image model:
   and cross-frame character identity) are undefined for a single still and are
   not loaded.
 
-The head is Mantis's Idefics2 fork, which targets transformers 4.x, while this
-repo runs 5.x. It therefore loads only inside the standalone reward service run
-from its own pinned environment (see ``configs/reward_service/animereward.yaml``),
-mirroring the VBench precedent in ``[tool.uv] conflicts``. Importing this module
-under the repo's transformers is fine; ``_load_module`` is where the pin bites.
+The head is Mantis's Idefics2 fork, which targets transformers 4.x while this
+repo runs 5.x. That gap is bridged here rather than by pinning: see
+``_adapt_mantis_to_current_transformers``. The model therefore runs either
+colocated in the trainer process or behind the standalone reward service
+(``vrl/config/reward_service/animereward_quality.yaml``).
+
+Prefer colocated on a single-GPU box. The service holds its device for its whole
+lifetime and its transient scoring allocations are invisible to the rollout
+worker's allocator, so they surface as unparkable ``non_torch`` bytes (measured
+swing 7.0 -> 12.8 GiB) and trip the phase-handoff parking check. Colocated, the
+same allocations belong to the pool and park with everything else.
 """
 
 from __future__ import annotations
@@ -72,6 +78,38 @@ class AnimeRewardQualityModel(TorchRewardModel):
         self.load_in_4bit = bool(self.worker_config.get("load_in_4bit", False))
         self._processor: Any = None
 
+    @staticmethod
+    def _adapt_mantis_to_current_transformers(model_cls: Any) -> None:
+        """Bridge the two 4.x-era API breaks that scoring actually hits.
+
+        Mantis's fork targets transformers 4.x. Its 4.x-only *cache* calls are
+        all guarded (``if past_key_value is not None`` / ``if use_cache``) or
+        live in ``prepare_inputs_for_generation``, and scoring is a single
+        cache-less forward, so none of them execute. Only two breaks remain,
+        both signature/attribute shape rather than semantics:
+
+        1. 5.x calls ``tie_weights(recompute_mapping=...)``; the fork's override
+           takes no arguments. Widening the signature changes nothing else.
+        2. 5.x no longer exposes ``pad_token_id`` on the top-level config. The
+           head reads it only to choose the pooled position, and the ``None``
+           branch selects the last token -- which is what a batch-of-one score
+           wants anyway.
+
+        Verified end to end under transformers 5.13: the same image scores
+        0.7250, matching the pinned-4.49 service to 4 decimal places.
+        """
+
+        if getattr(model_cls, "_vrl_transformers_adapted", False):
+            return
+        original_tie_weights = model_cls.tie_weights
+
+        def tie_weights(self: Any, *args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            return original_tie_weights(self)
+
+        model_cls.tie_weights = tie_weights
+        model_cls._vrl_transformers_adapted = True
+
     def _load_module(self) -> Any:
         # Mantis's fork, not transformers' Idefics2: the released checkpoint
         # declares architectures=["Idefics2ForSequenceClassification"], which
@@ -79,11 +117,13 @@ class AnimeRewardQualityModel(TorchRewardModel):
         from mantis.models.idefics2 import Idefics2ForSequenceClassification
         from transformers import AutoProcessor
 
+        self._adapt_mantis_to_current_transformers(Idefics2ForSequenceClassification)
+
         # AutoProcessor owns CPU tokenization/image transforms only; the returned
         # module is the CUDA state the pool's build frame must capture.
         self._processor = AutoProcessor.from_pretrained(self.model_name)
         if not self.load_in_4bit:
-            return (
+            return self._finalize(
                 Idefics2ForSequenceClassification.from_pretrained(
                     self.model_name,
                     torch_dtype=self.dtype,
@@ -102,17 +142,27 @@ class AnimeRewardQualityModel(TorchRewardModel):
         import torch
         from transformers import BitsAndBytesConfig
 
-        return Idefics2ForSequenceClassification.from_pretrained(
-            self.model_name,
-            torch_dtype=self.dtype,
-            device_map=self.device,
-            quantization_config=BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_use_double_quant=True,
-            ),
-        ).eval()
+        return self._finalize(
+            Idefics2ForSequenceClassification.from_pretrained(
+                self.model_name,
+                torch_dtype=self.dtype,
+                device_map=self.device,
+                quantization_config=BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_use_double_quant=True,
+                ),
+            ).eval()
+        )
+
+    @staticmethod
+    def _finalize(module: Any) -> Any:
+        """Restore the config field the head's pooling step reads (see above)."""
+
+        if not hasattr(module.config, "pad_token_id"):
+            module.config.pad_token_id = None
+        return module
 
     def _as_frames(self, media: Any) -> list[Any]:
         """Normalise any supported media payload to a list of PIL frames."""
@@ -167,7 +217,11 @@ class AnimeRewardQualityModel(TorchRewardModel):
         inputs = self._processor(text=text, images=frames, return_tensors="pt")
         inputs = {key: value.to(self.device) for key, value in inputs.items()}
         with torch.no_grad():
-            logits = module(**inputs).logits
+            # use_cache=False is load-bearing, not an optimization: it is what
+            # keeps the fork's 4.x-only cache calls unreachable (see
+            # _adapt_mantis_to_current_transformers). Scoring is one forward, so
+            # there is nothing to cache anyway.
+            logits = module(**inputs, use_cache=False).logits
         return {"animereward_quality": float(logits[0].item()) / _SCORE_SCALE}
 
 
