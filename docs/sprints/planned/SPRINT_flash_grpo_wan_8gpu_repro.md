@@ -9,8 +9,9 @@
 
 ## 0. 结论先行
 
-在 8×L40 / L40S 48GB（PCIe，无 NVLink）上复现 Flash-GRPO（ICML 2026）：
-Wan2.1-T2V-1.3B 基座 + LoRA r=16 + HPSv3 reward + DeepSpeed ZeRO-2。
+在 **AWS `g6e.12xlarge` = 4 × L40S 48GB**（PCIe，无 NVLink）上复现
+Flash-GRPO（ICML 2026）：Wan2.1-T2V-1.3B 基座 + LoRA r=16 + HPSv3 reward
++ DeepSpeed ZeRO-2。预计 **7–11 天 / $1,784–2,728**（§1.1）。
 
 选它的唯一理由：**它是本次调研中唯一由作者亲自提供单机 8 卡脚本的视频扩散 RL 论文**
 （`scripts/multi_node/train_wan2_1_flash_1node.sh`，README 标注 ~40h，附训练曲线），
@@ -25,7 +26,10 @@ Wan2.1-T2V-1.3B 基座 + LoRA r=16 + HPSv3 reward + DeepSpeed ZeRO-2。
 
 ## 1. 硬件前提与 L40 / L40S 的等价性
 
-用户手上是 8×L40 或 8×L40S 48GB。两者对本计划**几乎等价**：
+> **已定（2026-08-16）：目标硬件是 AWS `g6e.12xlarge` = 4 × L40S 48GB。**
+> 执行时按 **§1.1 的 4 卡变体**（改两行配置）走，本节的 8 卡数字作为参照保留。
+
+本节原按 8×L40 / 8×L40S 撰写。两种卡对本计划**几乎等价**：
 
 | | L40 | L40S | 对本计划的影响 |
 |---|---|---|---|
@@ -273,6 +277,7 @@ prompt 的四个要素（`infinite white background` / `walking in a row` / `rig
 ```text
 outputs/wan_base_smoke_20260815/
 ├── wan_base_rollout_smoke.py     # 可重跑的脚本（一次性验证件，非长期资产）
+├── wan_offload_probe.py          # §3.3 的 CPU-offload 对比探针
 ├── wan_smoke/                    # 33 帧
 │   ├── sample.mp4
 │   ├── contact_sheet.png         # 第 0/8/16/24/32 帧拼图
@@ -292,6 +297,50 @@ outputs/wan_base_smoke_20260815/
 **限定**：本机是 sm_120 + torch 2.11，8 卡机是 sm_89 + torch 2.6.0（setup.py 钉版），
 attention 后端可能不同（FlashAttention vs SDPA），显存会有出入。
 **此测试证明的是"模型与权重没问题"，不是"L40 上就是 22GB"。**
+
+### 3.3 已实测：CPU offload 把推理显存从 22GB 降到 10.8GB，只慢 8%
+
+`enable_model_cpu_offload()` 让每个组件只在自己运行时上 GPU。同一 prompt、
+同一训练几何（81 帧 480×832、20 步、CFG 4.5）：
+
+| | 峰值显存 | 耗时 |
+|---|---|---|
+| `pipe.to("cuda")`（§3.2 基线） | 21.98 GB | 73.0 s |
+| **`enable_model_cpu_offload()`** | **10.81 GB** | 78.7 s |
+
+**省 11.2 GB，只慢 8%。** 原因看 §3 的权重分解：T5 文本编码器（bf16 约 9.4GB）
+和 VAE 在整个去噪循环里根本用不上——编码完就闲置，却一直占着显存。
+
+**对 reward 取舍的影响**（§6.4）：原本的困境是
+
+```text
+训练 21.98 + HPSv3 16.5 = 38.5 GB  vs 可用 ~44 GiB  ->  余量仅 5.5 GB
+```
+
+若 offload 在训练侧同样成立，则变成 `~10.8+ + 16.5 = ~27+ GB`，
+**方案 B（reward 与训练共卡）从"很紧"变为"大概率可行"**，
+不必再走 CPU 或按需搬运。
+
+**🔴 但这是推理路径上测的，不能照抄。** Flash-GRPO 的训练脚本自行管理 pipeline 组件
+（LoRA 挂在 transformer 上、要反传、走 accelerate + DeepSpeed），直接加这一行
+**可能与其集成冲突**。这是有希望的方向，不是已验证的结论——Gate 0 要对比测量。
+
+重跑：`python outputs/wan_base_smoke_20260815/wan_offload_probe.py`
+
+### 3.4 已实测：CPU 跑 reward 会成为新瓶颈（方案 C 的判据）
+
+`Qwen2-VL-7B` 每图前向约 **3.66 TFLOP**（28 层、hidden 3584、视觉 token 被硬限制在
+`256*28*28` → 约 256 token/图）。本机 16 线程实测 CPU GEMM 约 **1.93 TFLOPS**，
+按 AWS 48 vCPU 保守估两倍、取 35% 达成率：
+
+```text
+约 2.7 s/图  ->  81 帧/样本 = 219 s  ->  12 样本/卡 = 44 分钟
+对比 rollout：每卡 12 样本 × 20 步 = 18–24 分钟
+```
+
+**CPU reward 约为 rollout 的 2 倍，异步掩盖不住，会成为新瓶颈。**
+所以 §6.4 的方案 C 只在方案 B 被 Gate 0 否决时才考虑，
+而有了 §3.3 的 offload，方案 B 大概率不会被否决。
 
 ## 4. 上游代码的五个阻塞（已修复，本地提交 `8f7552e`）
 
@@ -329,6 +378,13 @@ bash scripts/multi_node/train_wan2_1_flash_1node.sh   # 跑 1–2 步即可
 # 另一个终端
 nvidia-smi --query-gpu=index,memory.used --format=csv -l 5
 ```
+
+判据：
+
+**测两个数，不是一个**：
+
+1. 训练峰值（原样，不加 offload）—— 基准，决定 reward 放哪
+2. 训练峰值（加 `enable_model_cpu_offload()`）—— 看 §3.3 的 11GB 节省在训练侧是否成立
 
 判据：
 
@@ -551,29 +607,25 @@ import**（§6.1 坑 1，这条是硬的）、污染 `Accelerator`（上游 #6/#
 | **D. 按需加载/卸载** | 4 | 峰值不重叠 | 每 update 搬 16.5GB 过 PCIe（~1–2s，可忽略）；要改 server 代码 |
 | A. reward 独占一卡 | 3 | 0（对训练卡） | **最后手段**：4 卡时这是 25% 算力，成本反超 8 卡方案 |
 
-**方案 C 值得优先试**，因为 g6e.12xlarge 有 **384 GiB 系统内存 + 48 vCPU** 完全闲置：
+**方案 C 已被实测降级**（§3.4）：CPU 跑 7B reward 约需 44 分钟/卡/update，
+是 rollout（18–24 分钟）的两倍，**异步掩盖不住，会变成新瓶颈**。
+它只在 B 和 D 都被否决时才考虑。
 
-```python
-# reward_server/hpsv3.py
-inferencer = HPSv3RewardInferencer(device='cpu', checkpoint_path='/abs/path/...')
-```
-
-关键算术：reward 目前占 rollout 时间的 5–8% 且**异步重叠**。即使 CPU 慢 10 倍变成
-50–80%，**只要不超过 rollout 时间，异步就能完全掩盖，墙钟时间不变**。48 vCPU 跑 7B
-批量前向并非不可行。**必须实测，但这是唯一不吃显存的路。**
+**方案 B 因 §3.3 的 offload 实测而升为首选**：推理侧 offload 省下 11.2GB
+（22 → 10.8GB）只慢 8%。若训练侧同样成立，共卡变成 `~27GB vs ~44GiB`，余量宽松。
 
 #### 决策顺序
 
 ```text
-1. Gate 0 先只跑训练（reward 用 mock 或暂不启动）-> 拿到训练真实峰值 X
-2. X + 16.5 < 40GB   -> 方案 B，共卡，改动最小
-3. 否则试方案 C（CPU），量一次 reward 耗时，确认仍被异步掩盖
-4. C 太慢  -> 方案 D（按需搬运）
-5. 都不行 -> 方案 A（独占一卡），接受 25% 算力损失
+1. Gate 0 测两个训练峰值：原样 X1，加 offload X2（§3.3 的节省是否在训练侧成立）
+2. min(X1, X2) + 16.5 < 40GB  -> 方案 B，共卡，改动最小【首选】
+3. 否则 -> 方案 D（按需加载/卸载），峰值不重叠
+4. 再否则 -> 方案 C（CPU），接受它成为瓶颈（§3.4 实测约 2 倍 rollout 时长）
+5. 都不行 -> 方案 A（独占一卡），4 卡下损失 25% 算力
 ```
 
-**第 1 步是前提**：现在的 21.98GB 是**推理**数字，训练侧的 rollout buffer 仍是未知数。
-在知道 X 之前，讨论 reward 放哪都是空谈。
+**第 1 步是前提**：21.98 / 10.81GB 都是**推理**数字，训练侧的反传激活与 rollout buffer
+仍是未知数。在知道 X 之前，讨论 reward 放哪都是空谈。
 
 ### 6.5 能不能让 rollout 和 training 重叠？
 
@@ -617,6 +669,9 @@ ratio = torch.exp(log_prob - sample["log_probs"][:, 0, 0])
 ## 7. 待记录（执行时回填）
 
 - [x] 基座推理正确性 + 单卡推理显存 → §3.2（22GB @ 81 帧训练几何，画面正确）
+- [x] CPU offload 的推理侧收益 → §3.3（10.81GB，−11.2GB，仅慢 8%）
+- [x] CPU 跑 reward 的可行性 → §3.4（约 2 倍 rollout 时长，会成瓶颈）
+- [ ] **Gate 0 的两个数**：训练峰值 X1（原样）与 X2（加 offload）
 - [ ] 实际 GPU 型号（`nvidia-smi -L`）、驱动、**实际可见显存**（预期 ~44–46 GiB 而非 48GB）
 - [ ] PCIe 拓扑 `nvidia-smi topo -m`：`PHB`/`PIX`（同 root complex）还是 `SYS`（跨 socket）
 - [ ] 若用 4 卡：已改 `num_batches_per_epoch=48` + `--num_processes 4`
