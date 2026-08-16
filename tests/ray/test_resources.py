@@ -758,7 +758,6 @@ def test_in_process_reward_without_reservation_follows_trainer_topology() -> Non
     )
 
     assert resolved.reward_devices == ()
-    assert resolved.reward_uses_trainer_device is True
     assert resolved.lifecycle.release_trainer_before_reward is True
     assert resolved.lifecycle.release_rollout_before_reward is True
     assert resolved.lifecycle.release_reward_after_score is True
@@ -778,7 +777,6 @@ def test_explicit_cpu_reward_does_not_create_gpu_handoffs() -> None:
         ),
     )
 
-    assert resolved.reward_uses_trainer_device is False
     assert resolved.lifecycle.release_trainer_before_reward is False
     assert resolved.lifecycle.release_rollout_before_reward is False
     assert resolved.lifecycle.release_reward_after_score is False
@@ -812,7 +810,6 @@ def test_http_only_reward_owns_no_local_resource_or_handoff() -> None:
     )
 
     assert resolved.reward_devices == ()
-    assert resolved.reward_uses_trainer_device is False
     assert resolved.lifecycle.release_trainer_before_reward is False
     assert resolved.lifecycle.release_rollout_before_reward is False
     assert resolved.lifecycle.release_reward_after_score is False

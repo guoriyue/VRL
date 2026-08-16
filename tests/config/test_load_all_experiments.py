@@ -728,7 +728,6 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devi
     assert cfg.distributed.training.gpus_per_node == 4
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.reward_devices == ()
-    assert resources.reward_uses_trainer_device is True
     assert resources.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
     assert resources.lifecycle.rollout_mode == "on_demand"
     assert resources.lifecycle.release_reward_after_score is True

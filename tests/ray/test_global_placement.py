@@ -15,7 +15,7 @@ from omegaconf import OmegaConf
 
 from vrl.ray import dependencies as ray_dependencies
 from vrl.ray.operation_deadline import RayOperationTimeout
-from vrl.ray.placement import BundleLayout, GlobalRayPlacementOwner
+from vrl.ray.placement import BundleLayout, GlobalRayPlacementOwner, RolePlacement
 from vrl.ray.resources import resolve_distributed_resources
 
 # The retry tests below all inject the same class of Ray failure for the same
@@ -65,10 +65,19 @@ def test_bundle_plan_groups_rollout_bundles_per_engine() -> None:
     plan = BundleLayout.from_resources(resolved)
 
     assert plan.rollout_gpus_per_engine == 2
-    groups = plan.rollout_engine_bundle_groups
+    # The grouping rule lives on RolePlacement (the type that owns the bundles),
+    # which is what the generation launcher calls to size its engine fleet.
+    placement = RolePlacement(
+        placement_group=None,
+        bundle_indices=plan.rollout_bundle_indices,
+        expected_gpu_ids=(),
+    )
+    groups = placement.engine_bundle_groups(plan.rollout_gpus_per_engine)
     assert len(groups) == 2
     assert all(len(group) == 2 for group in groups)
     assert tuple(index for group in groups for index in group) == plan.rollout_bundle_indices
+    with pytest.raises(RuntimeError, match="not divisible"):
+        placement.engine_bundle_groups(3)
 
 
 def test_bundle_plan_dedicated_trainer_rollout_reward_distinct_bundles() -> None:

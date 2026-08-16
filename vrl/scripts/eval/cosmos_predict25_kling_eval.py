@@ -15,14 +15,13 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
-from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
-from vrl.config.schema import RootConfig, parse_config
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
-from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
-from vrl.scripts.eval._device import resolve_eval_device
+from vrl.scripts.eval._device import resolve_eval_device, resolve_eval_dtype
 from vrl.scripts.eval._kling_reward import resolve_kling_worker_config
 from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.denoise_video_generation import (
@@ -147,11 +146,12 @@ def main(argv: list[str] | None = None) -> None:
     checkpoint_targets = _parse_checkpoint_targets(args.checkpoint)
 
     device = resolve_eval_device(args.device)
-    dtype = _resolve_dtype(
+    dtype = resolve_eval_dtype(
         args.dtype,
         root,
         precision=precision,
         device=device,
+        requires_trainer="Cosmos checkpoint evaluation",
     )
     sampling = _resolve_sampling(args, cfg)
     if root.model is None:
@@ -260,23 +260,6 @@ def _parse_checkpoint_target(value: str) -> CheckpointTarget:
 
 def _normalize_checkpoint_label(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value).strip()).strip("._-")
-
-
-def _resolve_dtype(
-    dtype_arg: str,
-    root: RootConfig,
-    *,
-    precision: PrecisionPolicy,
-    device: torch.device,
-) -> torch.dtype:
-    if dtype_arg != "auto":
-        return resolve_torch_dtype(dtype_arg)
-    if root.trainer is None:
-        raise ValueError("Cosmos checkpoint evaluation requires an online trainer config")
-    dtype = resolve_torch_dtype(precision.training.dtype)
-    if getattr(device, "type", str(device)) == "cpu":
-        return torch.float32
-    return dtype
 
 
 def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> dict[str, Any]:

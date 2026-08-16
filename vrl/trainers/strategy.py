@@ -725,26 +725,6 @@ class FSDPStrategy(_TrainingStateParking):
             for name, module in modules.items()
         }
 
-    def export_checkpoint_trainable_state(
-        self,
-        bundle: Any,
-    ) -> dict[str, dict[str, Any]]:
-        """Gather checkpoint weights but retain full CPU tensors only on rank0."""
-
-        from vrl.models.weight_utils import unwrap_compile_and_ddp
-        from vrl.trainers.fsdp import gather_trainable_state_dict
-        from vrl.trainers.weight_sync import require_trainable_modules
-
-        modules = require_trainable_modules(bundle)
-        gathered = {
-            name: gather_trainable_state_dict(
-                unwrap_compile_and_ddp(module),
-                rank0_only=True,
-            )
-            for name, module in modules.items()
-        }
-        return gathered if self.context.is_primary else {}
-
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
         from vrl.models.weight_utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import gather_trainable_state_dict

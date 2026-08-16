@@ -260,11 +260,6 @@ class ResolvedDistributedResources:
     trainer_devices: tuple[int, ...]
     rollout_devices: tuple[int, ...]
     reward_devices: tuple[int, ...]
-    # Rewards execute in-process. When no GPU reservation exists, an active
-    # reward follows the trainer's rank-local device instead of disappearing
-    # from the topology. Consumers use this flag to require trainer parking and
-    # reward release without conflating execution with Ray reservations.
-    reward_uses_trainer_device: bool
     # distributed.resources.reward.device == "cpu": an explicit CPU reward
     # reservation, distinct from "no reservation, follow the trainer device".
     reward_runs_on_cpu: bool
@@ -453,6 +448,10 @@ def resolve_distributed_resources(
         _validate_fsdp_trainer_disjoint(trainer_devices, rollout_devices, reward_devices)
 
     reward_runs_on_cpu = reward_mode == "cpu"
+    # Rewards execute in-process. With no GPU reservation of their own, an active
+    # reward follows the trainer's rank-local device instead of disappearing from
+    # the topology — which is what makes trainer/reward sharing visible to the
+    # lifecycle plan below.
     reward_uses_trainer_device = bool(
         local_reward_configured and reward_mode == "trainer" and trainer_devices
     )
@@ -475,7 +474,6 @@ def resolve_distributed_resources(
         trainer_devices=trainer_devices,
         rollout_devices=rollout_devices,
         reward_devices=reward_devices,
-        reward_uses_trainer_device=reward_uses_trainer_device,
         reward_runs_on_cpu=reward_runs_on_cpu,
         rollout_num_engines=rollout_num_engines,
         rollout_gpus_per_engine=rollout_gpus_per_engine,

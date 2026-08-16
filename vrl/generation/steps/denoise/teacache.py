@@ -41,6 +41,24 @@ _DEFAULT_THRESHOLD = 0.15
 _DEFAULT_WARMUP_STEPS = 2
 
 
+def rel_l1(cur: torch.Tensor, prev: torch.Tensor) -> float:
+    """Relative-L1 change between consecutive denoise signals.
+
+    THE TeaCache skip metric. Offline analysis tools must call this rather than
+    reimplement it: a drifting private copy would silently measure something
+    other than the signal the runtime actually skips on.
+
+    Reduced to a scalar in fp32. The ``.item()`` forces a tiny device sync per
+    step; it is negligible against the transformer forward the skip avoids (a
+    per-family on-device accumulator is a follow-up).
+    """
+
+    denom = prev.abs().sum()
+    if float(denom) <= 0.0:
+        return float("inf")  # degenerate prev -> never skip
+    return float((cur - prev).abs().sum().div(denom).item())
+
+
 @dataclass(frozen=True, slots=True)
 class TeaCacheConfig:
     """Parsed ``sampling.teacache`` block for the diffusion rollout."""
@@ -120,7 +138,7 @@ class TeaCacheState:
         if forced:
             run = True
         else:
-            self._acc += self._rel_l1(signal, self._prev_signal)
+            self._acc += rel_l1(signal, self._prev_signal)
             run = self._acc >= cfg.threshold
             if run:
                 self._acc = 0.0
@@ -155,15 +173,5 @@ class TeaCacheState:
             "teacache_threshold": self._cfg.threshold,
         }
 
-    @staticmethod
-    def _rel_l1(cur: torch.Tensor, prev: torch.Tensor) -> float:
-        # Relative-L1 in fp32, reduced to a scalar. The .item() forces a tiny
-        # device sync per step; it is negligible against the transformer forward
-        # the skip avoids (a per-family on-device accumulator is a follow-up).
-        denom = prev.abs().sum()
-        if float(denom) <= 0.0:
-            return float("inf")  # degenerate prev -> never skip
-        return float((cur - prev).abs().sum().div(denom).item())
 
-
-__all__ = ["TeaCacheConfig", "TeaCacheState"]
+__all__ = ["TeaCacheConfig", "TeaCacheState", "rel_l1"]

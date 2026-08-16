@@ -88,25 +88,6 @@ class BundleLayout:
     def total_bundles(self) -> int:
         return len(self.bundle_gpu_ids)
 
-    @property
-    def rollout_engine_bundle_groups(self) -> tuple[tuple[int, ...], ...]:
-        """Rollout bundles grouped per engine (rollout_gpus_per_engine each).
-
-        One engine owns one consecutive group; the launcher assembles its rank
-        actors from exactly these bundles.
-        """
-
-        size = self.rollout_gpus_per_engine
-        indices = self.rollout_bundle_indices
-        if len(indices) % size:
-            raise RuntimeError(
-                f"rollout bundles ({len(indices)}) are not divisible into "
-                f"engines of {size} rank(s)",
-            )
-        return tuple(
-            tuple(indices[start : start + size]) for start in range(0, len(indices), size)
-        )
-
     @classmethod
     def from_resources(cls, resolved: ResolvedDistributedResources) -> BundleLayout:
         """Derive the run-level role->bundle plan from a resolved resource plan.
@@ -354,6 +335,24 @@ class RolePlacement:
     placement_group: Any
     bundle_indices: tuple[int, ...]
     expected_gpu_ids: tuple[int, ...]
+
+    def engine_bundle_groups(self, gpus_per_engine: int) -> tuple[tuple[int, ...], ...]:
+        """This role's bundles split into consecutive per-engine groups.
+
+        The bundles-to-engines rule lives with the type that owns the bundles, so
+        the fleet the launcher actually starts cannot disagree with the plan
+        ``BundleLayout`` made (it delegates here).
+        """
+
+        if len(self.bundle_indices) % gpus_per_engine:
+            raise RuntimeError(
+                f"rollout bundles ({len(self.bundle_indices)}) are not divisible "
+                f"into engines of {gpus_per_engine} rank(s)",
+            )
+        return tuple(
+            tuple(self.bundle_indices[start : start + gpus_per_engine])
+            for start in range(0, len(self.bundle_indices), gpus_per_engine)
+        )
 
 
 class _ProbeActor:

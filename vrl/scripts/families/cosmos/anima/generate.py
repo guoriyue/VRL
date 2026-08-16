@@ -14,12 +14,11 @@ from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 
 from vrl.config.loading import load_config
-from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
-from vrl.config.schema import RootConfig, parse_config
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.generation.types import VideoGenerationRequest
-from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import get_model_family_entry
-from vrl.scripts.eval._device import resolve_eval_device
+from vrl.scripts.eval._device import resolve_eval_device, resolve_eval_dtype
 from vrl.trainers.data import load_prompt_manifest
 from vrl.utils.media import to_pil_image
 
@@ -172,12 +171,12 @@ def main(argv: list[str] | None = None) -> None:
     import torch
 
     device = resolve_eval_device(args.device)
-    dtype = _resolve_dtype(
+    dtype = resolve_eval_dtype(
         args.dtype,
         root,
         precision=precision,
         device=device,
-        torch=torch,
+        requires_trainer="Anima generation",
     )
     logger.info("Building Anima runtime on device=%s dtype=%s", device, dtype)
     if root.model is None:
@@ -299,25 +298,6 @@ def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> dict[str, An
             or OmegaConf.select(cfg, "sampling.max_sequence_length", default=128),
         ),
     }
-
-
-def _resolve_dtype(
-    dtype_arg: str,
-    root: RootConfig,
-    *,
-    precision: PrecisionPolicy,
-    device: Any,
-    torch: Any,
-) -> Any:
-    if dtype_arg != "auto":
-        return resolve_torch_dtype(dtype_arg)
-
-    if root.trainer is None:
-        raise ValueError("Anima generation requires an online trainer config")
-    dtype = resolve_torch_dtype(precision.training.dtype)
-    if getattr(device, "type", str(device)) == "cpu":
-        return torch.float32
-    return dtype
 
 
 def _generate_images(

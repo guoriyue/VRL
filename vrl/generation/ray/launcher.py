@@ -64,14 +64,11 @@ class RayGenerationLauncher:
         bundle_indices = list(placement.bundle_indices)
         # One engine per gpus_per_engine bundles; the resolver's num_engines
         # arithmetic guarantees divisibility (single-GPU engines have groups of
-        # one bundle and rank ids equal engine ids).
+        # one bundle and rank ids equal engine ids). The placement owns the
+        # grouping rule, so the launched fleet cannot disagree with the plan
+        # about where an engine's ranks live.
         gpus_per_engine = config.resources.rollout_gpus_per_engine
-        if len(bundle_indices) % gpus_per_engine:
-            raise ValueError(
-                f"rollout placement bundles ({len(bundle_indices)}) are not "
-                f"divisible into engines of {gpus_per_engine} rank(s)",
-            )
-        engine_count = len(bundle_indices) // gpus_per_engine
+        engine_count = len(placement.engine_bundle_groups(gpus_per_engine))
         if worker.pipelined and engine_count != 1:
             raise ValueError(
                 "pipelined Ray generation requires exactly one rollout engine; "

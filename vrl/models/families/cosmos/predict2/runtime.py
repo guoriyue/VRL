@@ -27,7 +27,6 @@ class CosmosBatchExecutor(ReferenceConditionedBatches, DiffusionBatchExecutorBas
     task: str = "v2w"
     default_num_frames: int = 93
     default_fps: int | None = 16
-    default_samples_per_generation_batch: int = 8
 
     def build_batch_encoded(
         self,
