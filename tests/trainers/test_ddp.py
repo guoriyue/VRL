@@ -73,14 +73,16 @@ class _ToyTransformer(nn.Module):
 
 
 class _FakePolicy:
-    """Diffusion-policy shape the wrapper needs: transformer + _set_transformer."""
+    """Diffusion-policy shape the wrapper needs: trainable_modules + writer."""
 
     def __init__(self, transformer: nn.Module) -> None:
         self.transformer = transformer
         self.set_calls = 0
 
-    def _set_transformer(self, transformer: nn.Module) -> None:
-        self.transformer = transformer
+    def set_module_root(self, name: str, module: nn.Module) -> None:
+        if name != "transformer":
+            raise ValueError(f"unknown trainable root: {name!r}")
+        self.transformer = module
         self.set_calls += 1
 
     @property
@@ -89,16 +91,23 @@ class _FakePolicy:
 
 
 class _DualStagePolicy(_FakePolicy):
-    """Wan-style policy with two independently writable trainable roots."""
+    """Wan-style policy with two independently writable trainable roots.
+
+    ONE name-keyed writer serves both roots -- the strategy never needs a
+    per-root method to exist under a derived name.
+    """
 
     def __init__(self, transformer: nn.Module) -> None:
         super().__init__(transformer)
         self.transformer_2 = _ToyTransformer()
         self.set_2_calls = 0
 
-    def _set_transformer_2(self, transformer: nn.Module) -> None:
-        self.transformer_2 = transformer
-        self.set_2_calls += 1
+    def set_module_root(self, name: str, module: nn.Module) -> None:
+        if name == "transformer_2":
+            self.transformer_2 = module
+            self.set_2_calls += 1
+            return
+        super().set_module_root(name, module)
 
     @property
     def trainable_modules(self) -> dict[str, nn.Module]:
@@ -106,7 +115,7 @@ class _DualStagePolicy(_FakePolicy):
 
 
 class _ARLikePolicy:
-    """No transformer handle / _set_transformer (AR family shape)."""
+    """No trainable_modules / writer (AR family shape)."""
 
 
 class _Bundle:

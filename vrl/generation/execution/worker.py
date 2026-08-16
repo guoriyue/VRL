@@ -633,11 +633,16 @@ class GenerationWorkerCore:
         return reading
 
     def _install_sequence_parallel(self, model: Any) -> None:
-        """Make this rank's transformer sequence-parallel over the engine group.
+        """Make every rollout policy core sequence-parallel over the engine group.
 
         Reached only when the launcher stamped a rank group (gpus_per_engine
         > 1); the launch preflight gate already required the family installer,
         so a missing one here is an internal contract break, not user error.
+
+        Walks ``policy_cores`` rather than probing ``model.transformer``: a
+        multi-expert family must shard EVERY expert it samples through, or the
+        ranks disagree about sequence layout the moment sampling crosses to the
+        unsharded one.
         """
 
         installer_path = self.family_entry.runtime_capabilities.sequence_parallel_installer
@@ -648,16 +653,17 @@ class GenerationWorkerCore:
                 "sequence_parallel_installer; the launch preflight gate should "
                 "have rejected this configuration",
             )
-        transformer = getattr(model, "transformer", None)
-        if transformer is None:
+        cores = model.policy_cores
+        if not cores:
             raise RuntimeError(
-                f"family {self.family_entry.family!r} model exposes no "
-                ".transformer for the sequence-parallel install",
+                f"family {self.family_entry.family!r} model declares no policy "
+                "cores for the sequence-parallel install",
             )
         import torch.distributed as dist
 
         install = import_from_path(installer_path)
-        install(transformer, dist.group.WORLD)
+        for core in cores.values():
+            install(core, dist.group.WORLD)
 
     def _synchronize_rank_rng(self) -> None:
         """Give every rank of the engine one fresh, shared RNG stream.
@@ -721,12 +727,11 @@ class GenerationWorkerCore:
                 f"after={loaded_model_identity!r}",
             )
         model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
-        # Family- and scheme-agnostic backstop: if rollout quantization asks for a
-        # quantized rollout (FP8/NVFP4/...) but this family's builder forgot to swap,
-        # the model would silently run at its base dtype — fail loudly instead.
-        from vrl.models.loader import assert_rollout_quantization_applied
-
-        assert_rollout_quantization_applied(model, build)
+        # No backstop for "the builder forgot to quantize" any more: every
+        # quantizable family reaches the ONE assembly point
+        # (``apply_rollout_optimizations``), which fails loud on a zero-match swap
+        # and on a pass that misses a declared policy core. The forgotten-wiring
+        # failure it guarded against is now structurally unreachable.
         if self.rank_group is not None:
             self._install_sequence_parallel(model)
         executor_kwargs = dict(launch_contract.executor_kwargs)

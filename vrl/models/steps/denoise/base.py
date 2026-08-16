@@ -13,7 +13,7 @@ import functools
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import torch
 import torch.nn as nn
@@ -33,6 +33,7 @@ from vrl.models.weight_utils import (
     load_weights_into,
     validate_weights_for,
 )
+from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE
 
 
 @dataclass
@@ -394,41 +395,56 @@ class DiffusionModelBase(nn.Module, ABC):
         self.transformer = transformer
 
     def torch_compile_transformer(self, mode: str) -> None:
-        """Apply torch.compile to the family transformer in-place."""
+        """Compile every rollout policy core in place.
 
-        self._set_transformer(
-            torch.compile(self.transformer, mode=mode, fullgraph=False),
-        )
-
-    def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
-        """Swap the transformer's big policy GEMMs to fp8 in place (rollout only).
-
-        Replaces the large attention/MLP ``nn.Linear`` modules with ``Fp8Linear``,
-        leaving embeddings / the noise-pred head / norm-feeding linears in the
-        resolved rollout base dtype.
-        Default ``rowwise`` (torch, validated); ``blockwise`` opts into vLLM's
-        faster block kernel (more GPU memory). Returns the dotted paths quantized.
-        This is a generation/rollout-only optimization; the trainer's replay forward
-        keeps its configured base-precision parameters and is never quantized. Call before
-        ``torch_compile_transformer`` so inductor sees the fp8 modules.
+        Walks ``policy_cores`` rather than ``self.transformer`` so a multi-expert
+        family compiles each expert it samples through, with no per-family
+        override.
         """
 
-        from vrl.nn.quantization import Fp8Linear
+        for name, module in self.policy_cores.items():
+            self.set_module_root(name, torch.compile(module, mode=mode, fullgraph=False))
 
-        return Fp8Linear.swap_linears(self.transformer, recipe=recipe)
+    def set_module_root(self, name: str, module: Any) -> None:
+        """Write a replaced module root back to EVERY handle that references it.
 
-    def quantize_rollout_nvfp4(self) -> list[str]:
-        """Swap validated rollout MLP GEMMs to NVFP4 in place.
+        Anything that replaces a root rather than mutating it in place goes
+        through here: ``torch.compile`` on the rollout side, FSDP/DDP wrapping on
+        the trainer side. A family that keeps a second reference to the same
+        module (a diffusers pipeline, Echo's LTX wrapper) must update both, or
+        sampling silently keeps using the unwrapped copy.
 
-        Attention projections remain under the rollout base dtype until the
-        wider NVFP4 target profile passes a real rollout-to-replay SDE/reward
-        gate. Keeping this thin method alongside the FP8 sibling is the shared
-        cross-family dispatch boundary used by the rollout loader.
+        ``name`` is a key of ``policy_cores`` or ``trainable_modules``. Those are
+        two different SELECTIONS of roots — rollout samples through every expert,
+        the trainer updates only some — but writing one back is the same
+        operation either way, so there is one method rather than a per-caller
+        spelling. Single-root families need no override; a multi-root family
+        overrides this once and both callers are served.
         """
 
-        from vrl.nn.quantization import Fp4Linear
+        if name != "transformer":
+            raise ValueError(
+                f"{type(self).__name__} has no module root {name!r}; a family with "
+                "more than one root must override set_module_root",
+            )
+        self._set_transformer(module)
 
-        return Fp4Linear.swap_linears(self.transformer)
+    @property
+    def policy_cores(self) -> dict[str, Any]:
+        """Module roots the rollout optimization passes walk, keyed for logs.
+
+        Deliberately NOT ``trainable_modules``: a multi-expert family filters
+        that by which experts the trainer updates, while every expert that runs
+        during sampling must be optimized — otherwise the halves of one
+        trajectory execute at different precisions. Override this (not the
+        individual passes) when a family owns more than one rollout module.
+        """
+
+        return {"transformer": self._require_transformer()}
+
+    # Structural exclusions only (norms, embeddings, the noise-pred head): a DiT
+    # has no vocabulary head, so the diffusion default is the shared base set.
+    quantization_exclude: ClassVar[tuple[str, ...]] = DEFAULT_EXCLUDE
 
     def set_num_steps(self, n: int) -> None:  # pragma: no cover
         raise NotImplementedError

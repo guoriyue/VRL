@@ -320,54 +320,26 @@ class WanT2VDiffusersModel(
         _enable_wan_pipeline_offload(self.pipeline, self.device, mode=mode)
         self._pipeline_offload = target
 
-    def torch_compile_transformer(self, mode: str) -> None:
-        for name, module in self.trainable_modules.items():
-            self._set_wan_transformer(
-                name,
-                torch.compile(module, mode=mode, fullgraph=False),
-            )
+    @property
+    def policy_cores(self) -> dict[str, Any]:
+        """Both experts, not just ``self.transformer`` and not ``trainable_modules``.
 
-    # TODO(P2): both quantize_rollout_* overrides below are replaced by a single
-    # ``policy_cores`` declaration -- see
-    # docs/sprints/SPRINT_plug_and_play_optimization_layer.md. They exist only
-    # because the base class hardcodes ``self.transformer``, which is exactly
-    # the duplication that sprint removes. Delete them in P2.
-    def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
-        """Quantize BOTH experts, unlike the single-transformer base method.
-
-        Walks every expert that runs during rollout, not ``trainable_modules``:
-        a config that trains only one expert still SAMPLES through both, so
-        both must be quantized or the two halves of one trajectory run at
-        different precisions.
+        A dual-stage config that trains only one expert still SAMPLES through
+        both, so every optimization pass must reach both: otherwise the two
+        halves of one trajectory run at different precisions and the
+        rollout-vs-replay drift differs across the boundary.
         """
 
-        from vrl.nn.quantization import Fp8Linear
+        return self._wan_transformers()
 
-        return self._swap_rollout_linears(
-            lambda module: Fp8Linear.swap_linears(module, recipe=recipe),
-        )
+    def set_module_root(self, name: str, module: Any) -> None:
+        """Route a replaced expert back to both the attribute and the pipeline.
 
-    def quantize_rollout_nvfp4(self) -> list[str]:
-        """NVFP4 twin of :meth:`quantize_rollout_fp8`; same both-experts rule."""
-
-        from vrl.nn.quantization import Fp4Linear
-
-        return self._swap_rollout_linears(Fp4Linear.swap_linears)
-
-    def _swap_rollout_linears(
-        self,
-        swap: Callable[[Any], list[str]],
-    ) -> list[str]:
-        """Apply ``swap`` to every rollout expert, prefixing the reported paths.
-
-        The prefix keeps the returned paths addressable from the model root, so
-        the loader's report and the run log name which expert changed.
+        One override serves every caller: rollout compile walks all experts,
+        FSDP/DDP walks only the trained ones, and both land here.
         """
 
-        swapped: list[str] = []
-        for name, module in self._wan_transformers().items():
-            swapped.extend(f"{name}.{path}" for path in swap(module))
-        return swapped
+        self._set_wan_transformer(name, module)
 
     @property
     def trainable_modules(self) -> dict[str, Any]:

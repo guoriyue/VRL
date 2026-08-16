@@ -22,14 +22,44 @@ from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
 class _TrackingTransformer(nn.Module):
-    def __init__(self, events: list[str]) -> None:
+    def __init__(self, events: list[str], *, quantizable: bool = False) -> None:
         super().__init__()
         self.proj = nn.Linear(2, 2)
+        if quantizable:
+            # The real swap skips linears under min_features and, for NVFP4, any
+            # path outside an MLP segment. A 2x2 ``proj`` clears neither, so a
+            # builder test that drives the real swap needs this wider MLP linear
+            # or the loader fails with "matched 0 linears".
+            self.ff = nn.Module()
+            self.ff.net = nn.Linear(1024, 1024, bias=False)
         self.events = events
 
     def to(self, *args: Any, **kwargs: Any) -> _TrackingTransformer:
         self.events.append("move")
         return super().to(*args, **kwargs)
+
+
+def _record_swap(monkeypatch, events: list[str], scheme_name: str = "Fp8Linear") -> None:
+    """Append ``"quantize"`` when the real module swap runs on a policy core.
+
+    Recorded at the swap itself rather than on ``policy_cores``: the loader reads
+    that declaration more than once (assembly, then the backstop), so a getter
+    side-effect would double-count and stop pinning the build order.
+    """
+
+    import vrl.nn.quantization as quantization
+
+    scheme = getattr(quantization, scheme_name)
+    real_swap = scheme.swap_linears
+    monkeypatch.setattr(
+        scheme,
+        "swap_linears",
+        classmethod(
+            lambda cls, root, **kwargs: (
+                events.append("quantize") or real_swap.__func__(cls, root, **kwargs)
+            ),
+        ),
+    )
 
 
 class _LoraPolicy(LoraModelMixin):
@@ -173,14 +203,20 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
     events: list[str] = []
 
     class _Policy:
+        quantization_exclude: tuple[str, ...] = ()
+
         def __init__(self) -> None:
-            self.transformer = _TrackingTransformer(events)
+            self.transformer = _TrackingTransformer(events, quantizable=True)
             self.device = "cpu"
             self.scheduler = object()
             self.raw_handle = object()
             self.trainable_modules = {"transformer": self.transformer}
             # No save_pretrained on the tracking transformer: nothing to publish.
             self.adapter_roots: dict[str, Any] = {}
+
+        @property
+        def policy_cores(self) -> dict[str, Any]:
+            return {"transformer": self.transformer}
 
         @classmethod
         def from_build(cls, _build: Any) -> _Policy:
@@ -189,11 +225,6 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
         def apply_lora(self, _build: Any) -> None:
             events.append("attach")
 
-        def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
-            assert recipe == "rowwise"
-            events.append("quantize")
-            return ["proj"]
-
         def generation_memory_targets(self) -> dict[str, Any]:
             return {}
 
@@ -201,6 +232,8 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
             return None
 
     import vrl.nn.quantization as quantization
+
+    _record_swap(monkeypatch, events)
 
     monkeypatch.setattr(
         quantization,
@@ -238,8 +271,10 @@ def test_shared_builder_installs_pipeline_offload_after_final_cpu_module_tree(
     events: list[str] = []
 
     class _Policy:
+        quantization_exclude: tuple[str, ...] = ()
+
         def __init__(self) -> None:
-            self.transformer = _TrackingTransformer(events)
+            self.transformer = _TrackingTransformer(events, quantizable=True)
             self.device = "cpu"
             self.scheduler = object()
             self.raw_handle = object()
@@ -249,17 +284,16 @@ def test_shared_builder_installs_pipeline_offload_after_final_cpu_module_tree(
             self.uses_pipeline_cpu_offload = False
             self.pipeline_cpu_offload_healthy = True
 
+        @property
+        def policy_cores(self) -> dict[str, Any]:
+            return {"transformer": self.transformer}
+
         @classmethod
         def from_build(cls, _build: Any) -> _Policy:
             return cls()
 
         def apply_lora(self, _build: Any) -> None:
             events.append("attach_lora")
-
-        def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
-            assert recipe == "rowwise"
-            events.append("quantize")
-            return ["proj"]
 
         def torch_compile_transformer(self, mode: str) -> None:
             assert mode == "default"
@@ -274,6 +308,7 @@ def test_shared_builder_installs_pipeline_offload_after_final_cpu_module_tree(
 
     import vrl.nn.quantization as quantization
 
+    _record_swap(monkeypatch, events)
     monkeypatch.setattr(
         quantization,
         "drop_quantized_masters",
@@ -367,12 +402,24 @@ def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
     from vrl.models.loader import apply_rollout_quantization
 
     class _Policy:
-        def __init__(self) -> None:
-            self.quantize_calls = 0
+        quantization_exclude: tuple[str, ...] = ()
 
-        def quantize_rollout_nvfp4(self) -> list[str]:
-            self.quantize_calls += 1
-            return ["proj"]
+        def __init__(self) -> None:
+            self.transformer = _TrackingTransformer([], quantizable=True)
+
+        @property
+        def policy_cores(self) -> dict[str, Any]:
+            return {"transformer": self.transformer}
+
+        @property
+        def quantize_calls(self) -> int:
+            """Modules actually swapped — 0 proves the gate ran before mutation."""
+
+            from vrl.nn.quantization import QuantizedLinear
+
+            return sum(
+                isinstance(module, QuantizedLinear) for module in self.transformer.modules()
+            )
 
     monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: False)
     model = _Policy()
@@ -400,19 +447,26 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The shared full path swaps on CPU before a model-owned dtype move."""
-    from vrl.nn.quantization import Fp4Linear, Fp8Linear
 
     if quantization_format == "nvfp4":
         monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
 
     class _Policy:
+        quantization_exclude: tuple[str, ...] = ()
+
         def __init__(self) -> None:
-            self.transformer = nn.Sequential(
-                nn.Linear(64, 64, bias=False).to(torch.bfloat16),
-            )
+            # MLP-pathed and >= min_features so BOTH schemes' real targeting
+            # rules select it (NVFP4's profile is mlp_only).
+            self.transformer = nn.Module()
+            self.transformer.ff = nn.Module()
+            self.transformer.ff.net = nn.Linear(1024, 1024, bias=False).to(torch.bfloat16)
             self.device = "cpu"
             self.scheduler = object()
             self.raw_handle = object()
+
+        @property
+        def policy_cores(self) -> dict[str, Any]:
+            return {"transformer": self.transformer}
 
         @classmethod
         def from_build(cls, _build: Any) -> _Policy:
@@ -426,15 +480,6 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
         def adapter_roots(self) -> dict[str, Any]:
             # No save_pretrained on a plain nn module: nothing to publish.
             return {}
-
-        def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
-            assert recipe == "rowwise"
-            self.transformer[0] = Fp8Linear(self.transformer[0])
-            return ["0"]
-
-        def quantize_rollout_nvfp4(self) -> list[str]:
-            self.transformer[0] = Fp4Linear(self.transformer[0])
-            return ["0"]
 
         def apply_full_finetune(self, _build: Any) -> None:
             self.transformer.to(self.device, dtype=torch.bfloat16)
@@ -461,7 +506,7 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
 
     bundle = _build_sd35_rollout(monkeypatch, build, _Policy)
 
-    quantized = bundle.model.transformer[0]
+    quantized = bundle.model.transformer.ff.net
     if quantization_format == "fp8":
         assert quantized.weight_fp8.dtype is torch.float8_e4m3fn
     else:

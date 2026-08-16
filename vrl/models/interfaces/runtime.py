@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, get_args
+from typing import Any, Literal, cast, get_args
 
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.generation_memory import GenerationMemoryPolicy
@@ -122,13 +122,25 @@ class RolloutBuildOptions:
 
         if not isinstance(self.base_weight_sync, bool):
             raise TypeError("rollout base_weight_sync must be a bool")
-        allowed_offload_modes = get_args(PipelineOffloadMode)
-        if self.pipeline_offload_mode not in allowed_offload_modes:
-            raise ValueError(
-                "rollout pipeline_offload_mode must be one of "
-                f"{list(allowed_offload_modes)}, got "
-                f"{self.pipeline_offload_mode!r}",
-            )
+        require_pipeline_offload_mode(self.pipeline_offload_mode)
+
+
+def require_pipeline_offload_mode(value: Any) -> PipelineOffloadMode:
+    """Validate one ``rollout.pipeline_offload_mode`` value and return it.
+
+    A free function, not a method: the Ray launch contract carries the rollout
+    block as a serializable primitive mapping and must read this field BEFORE
+    anyone reconstructs the typed ``RolloutBuildOptions`` from it. Both readers
+    share this one definition so the wire path and the typed path cannot drift
+    into accepting different vocabularies.
+    """
+
+    allowed = get_args(PipelineOffloadMode)
+    if value not in allowed:
+        raise ValueError(
+            f"rollout pipeline_offload_mode must be one of {list(allowed)}, got {value!r}",
+        )
+    return cast("PipelineOffloadMode", value)
 
 
 @dataclass

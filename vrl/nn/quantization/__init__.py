@@ -16,9 +16,18 @@ from vrl.nn.quantization.fp4 import Fp4Linear, nvfp4_available
 from vrl.nn.quantization.fp8 import Fp8Linear
 from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE, LM_EXCLUDE, LinearTargetProfile
 
+# Config ``precision.rollout.quantization.format`` -> the scheme that implements
+# it. Derived from each class's own ``quantization_scheme`` so the mapping cannot
+# disagree with the identity the runtime guard reads off a swapped module; adding
+# a scheme means adding it to this tuple and nothing else.
+QUANTIZATION_SCHEMES: dict[str, type[QuantizedLinear]] = {
+    scheme.quantization_scheme: scheme for scheme in (Fp8Linear, Fp4Linear)
+}
+
 __all__ = [
     "DEFAULT_EXCLUDE",
     "LM_EXCLUDE",
+    "QUANTIZATION_SCHEMES",
     "Fp4Linear",
     "Fp8Linear",
     "LinearTargetProfile",

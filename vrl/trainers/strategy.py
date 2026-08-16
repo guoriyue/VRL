@@ -15,6 +15,7 @@ from __future__ import annotations
 import gc
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol
 
 import torch
@@ -535,32 +536,40 @@ def _trainable_module_handles(model: Any) -> list[tuple[str, Any, Any]]:
     """Return every explicitly named trainable root and its writer.
 
     Diffusion policies already expose the source-of-truth mapping through
-    ``trainable_modules``. Each named root must also expose ``_set_<name>`` so a
-    distributed wrapper can be written back into every alias owned by the model
-    or pipeline. This supports ordinary ``transformer`` policies and Wan's
-    timestep-routed ``transformer`` / ``transformer_2`` without teaching the
-    strategy about either family.
+    ``trainable_modules``. The writer is the model's own
+    ``set_module_root(name, module)``, which is responsible for updating every
+    alias the model or its pipeline holds. This supports ordinary ``transformer``
+    policies and Wan's timestep-routed ``transformer`` / ``transformer_2``
+    without teaching the strategy about either family.
     """
 
     trainable = getattr(model, "trainable_modules", None)
     if not isinstance(trainable, Mapping) or not trainable:
         raise NotImplementedError(
             "multi-GPU model wrapping needs a non-empty `trainable_modules` mapping "
-            f"with matching `_set_<name>` writers; {type(model).__name__} exposes no "
+            f"and a `set_module_root` writer; {type(model).__name__} exposes no "
             "explicit trainable roots. AR families (janus_pro / nextstep_1) need "
             "explicit trainable roots first (SPRINT_multi_gpu_training.md §5).",
+        )
+    set_root = getattr(model, "set_module_root", None)
+    if not callable(set_root):
+        raise NotImplementedError(
+            f"multi-GPU model wrapping needs {type(model).__name__} to implement "
+            "`set_module_root(name, module)` so the distributed wrapper reaches "
+            "every alias the model holds for that root.",
         )
 
     handles: list[tuple[str, Any, Any]] = []
     for raw_name, handle in trainable.items():
         name = str(raw_name)
-        writer = getattr(model, f"_set_{name}", None)
-        if handle is None or not callable(writer):
+        if handle is None:
             raise NotImplementedError(
                 f"multi-GPU trainable root {name!r} on {type(model).__name__} "
-                f"requires a non-null handle and callable `_set_{name}` writer",
+                "requires a non-null handle",
             )
-        handles.append((name, handle, writer))
+        # Bind the name so each writer targets its own root; the strategies call
+        # these positionally with just the wrapped module.
+        handles.append((name, handle, partial(set_root, name)))
     return handles
 
 

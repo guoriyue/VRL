@@ -337,9 +337,50 @@ def validate_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPoli
     from vrl.trainers.activation_checkpointing import require_compile_checkpointing_compatible
 
     require_compile_checkpointing_compatible(root)
+    require_guarded_rollout_drift(cfg, precision)
     if bool(OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)):
         validate_production_kling_video_reward_config(cfg)
     return root, precision
+
+
+def require_guarded_rollout_drift(cfg: DictConfig, precision: PrecisionPolicy) -> None:
+    """Refuse a rollout approximation that no drift correction will cover.
+
+    Quantization needs no check here: it changes the rollout precision label, so
+    ``stages_match`` goes False and the trainer already installs TIS correction
+    plus a drift guard whose default ``mode="auto"`` resolves to ``"fail"``.
+
+    A request-scoped approximation is the uncovered case. TeaCache reuses a
+    cached ``noise_pred`` on skipped denoise steps, so the collection-time
+    log-prob stops matching the trainer's exact replay forward -- while BOTH
+    roles keep the same precision label, leaving every automatic correction off.
+    Silently, the run would train on uncorrected off-policy gradients and still
+    report convergence.
+    """
+
+    from vrl.nn.optimization import unguarded_drift_sources
+    from vrl.utils.config import to_builtin_deep
+
+    sampling = OmegaConf.select(cfg, "sampling", default=None)
+    sources = unguarded_drift_sources(
+        to_builtin_deep(sampling) if sampling is not None else None,
+        precision,
+    )
+    if not sources:
+        return
+    # The same escape hatch the precision-split path honors: an explicit expert
+    # block means the user has chosen the correction policy deliberately.
+    if OmegaConf.select(cfg, "trainer.precision_drift_guard", default=None) is not None:
+        return
+    if OmegaConf.select(cfg, "trainer.precision_correction", default=None) is not None:
+        return
+    raise ValueError(
+        f"sampling enables {', '.join(sources)}, which makes the rollout log-probs "
+        "diverge from the trainer's exact replay forward, but rollout and training "
+        "precision are identical so no drift guard or importance-sampling "
+        "correction is armed. Set an explicit trainer.precision_correction / "
+        "trainer.precision_drift_guard for this run, or disable the optimization.",
+    )
 
 
 def dataclass_field_names(cls: type[Any]) -> set[str]:

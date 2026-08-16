@@ -75,8 +75,10 @@ class _Policy(nn.Module):
     def trainable_modules(self) -> dict[str, nn.Module]:
         return {"transformer": self.transformer}
 
-    def _set_transformer(self, transformer: nn.Module) -> None:
-        self.transformer = transformer
+    def set_module_root(self, name: str, module: nn.Module) -> None:
+        if name != "transformer":
+            raise ValueError(f"unknown trainable root: {name!r}")
+        self.transformer = module
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         return self.transformer(value)

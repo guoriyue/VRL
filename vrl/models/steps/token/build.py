@@ -101,9 +101,9 @@ def build_token_family_bundle(
     model_cls = import_from_path(recipe.replay_cls if replay else recipe.model_cls)
     model = model_cls(config_cls(**config))
     if not replay:
-        from vrl.models.loader import apply_rollout_quantization
+        from vrl.nn.optimization import apply_rollout_optimizations
 
-        apply_rollout_quantization(model, build)
+        apply_rollout_optimizations(model, build)
 
     apply_float32_precision(build.precision.float32_precision)
     return RuntimeBundle(

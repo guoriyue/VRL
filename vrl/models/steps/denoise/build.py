@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.models.loader import (
-    apply_rollout_quantization,
     load_diffusers_scheduler,
     load_diffusers_transformer,
     load_flow_match_scheduler,
@@ -24,6 +23,7 @@ from vrl.models.precision import apply_float32_precision
 from vrl.models.steps.denoise.common.vae_decode_memory import (
     apply_generation_memory_policy,
 )
+from vrl.nn.optimization import apply_rollout_optimizations
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -50,8 +50,22 @@ def build_denoise_runtime_bundle(
         )
 
     # PEFT can wrap only plain nn.Linear, while full-finetune owns the model's
-    # device move. Both paths therefore quantize before the compact policy moves
-    # to CUDA, but LoRA must attach before that quantization swap.
+    # device move. Both paths therefore optimize before the compact policy moves
+    # to CUDA, but LoRA must attach before the quantization swap.
+    def move_to_device() -> None:
+        """Place the policy on its device between the quantize and compile passes.
+
+        Both branches move the (now compact) policy AFTER quantization and
+        BEFORE compile: ``requires_grad_`` / ``.to()`` must act on the real
+        module, not on a compiled wrapper.
+        """
+
+        if build.use_lora:
+            if build.precision.quantization and not pipeline_offload:
+                model.transformer.to(model.device)
+        else:
+            model.apply_full_finetune(build)
+
     if build.use_lora:
         model.apply_lora(build)
         lora_config = build.lora
@@ -61,17 +75,7 @@ def build_denoise_runtime_bundle(
                 lora_config["rank"],
                 lora_config["alpha"],
             )
-        apply_rollout_quantization(model, build)
-        if build.precision.quantization and not pipeline_offload:
-            model.transformer.to(model.device)
-    else:
-        apply_rollout_quantization(model, build)
-        model.apply_full_finetune(build)
-
-    compile_cfg = build.torch_compile or {}
-    if compile_cfg.get("enable"):
-        logger.info("Compiling transformer with mode=%s", compile_cfg["mode"])
-        model.torch_compile_transformer(compile_cfg["mode"])
+    apply_rollout_optimizations(model, build, before_compile=move_to_device)
 
     # Accelerate hooks must see the final module tree. Wan's sequential path
     # keeps the 16.4B transformer on CPU through LoRA, quantization, and compile;

@@ -92,7 +92,6 @@ def generate_rollout_preview(
         get_model_family_entry,
     )
     from vrl.models.interfaces.replay import require_runtime_model
-    from vrl.models.loader import assert_rollout_quantization_applied
     from vrl.rollouts.collector.config import RolloutCollectorConfig
     from vrl.trainers.data import load_prompt_examples_from_config
     from vrl.utils.config import cfg_path, import_from_path, to_builtin_deep
@@ -136,8 +135,9 @@ def generate_rollout_preview(
         for_rollout=True,
     )
     bundle = entry.build_rollout(build)
+    # No quantization backstop here, matching the rollout worker: the shared
+    # builder's optimization pass already fails loud on a zero-match swap.
     model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
-    assert_rollout_quantization_applied(model, build)
 
     executor_kwargs = entry.executor_kwargs(root)
     executor_kwargs["gatherer"] = entry.new_gatherer()

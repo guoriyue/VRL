@@ -245,6 +245,20 @@ class Magi1SubprocessModel(torch.nn.Module):
         return {}
 
     @property
+    def policy_cores(self) -> dict[str, Any]:
+        """No in-process rollout module, so no optimization pass can apply.
+
+        The weights live inside the MAGI CLI's own subprocesses, not in this
+        facade. Empty is the accurate declaration rather than an oversight: a
+        build that requests quantization or compile for this family fails loud
+        in ``apply_rollout_optimizations`` instead of silently doing nothing.
+        """
+
+        return {}
+
+    quantization_exclude: tuple[str, ...] = ()
+
+    @property
     def raw_handle(self) -> Magi1SubprocessModel:
         return self
 

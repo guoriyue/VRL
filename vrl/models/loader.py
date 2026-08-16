@@ -143,27 +143,40 @@ def apply_rollout_quantization(model: Any, build: Any) -> int:
             "compiled forward is ~10x slower than eager). Use recipe='rowwise' "
             "(compile-clean) or disable model.torch_compile.",
         )
-    # The profile literals below are log text only: this dispatch keys off the
-    # config format string and never holds a scheme class. The swap's actual
-    # scope is `QuantizedLinear.default_target_profile` on Fp8Linear/Fp4Linear.
-    if format_name == "fp8":
-        swapped = model.quantize_rollout_fp8(recipe=recipe or "rowwise")
-        policy_detail = f"recipe={recipe or 'rowwise'}, profile=attention_mlp"
-    elif format_name == "nvfp4":
-        swapped = model.quantize_rollout_nvfp4()
-        policy_detail = "profile=mlp_only"
-    else:
+    from vrl.nn.quantization import QUANTIZATION_SCHEMES
+
+    scheme = QUANTIZATION_SCHEMES.get(format_name)
+    if scheme is None:
+        supported = ", ".join(sorted(QUANTIZATION_SCHEMES))
         raise NotImplementedError(
             f"precision.rollout.quantization.format={format_name!r} has no rollout "
-            "swap yet (supported: fp8, nvfp4); add a "
-            "quantize_rollout_* method + dispatch branch for the new scheme.",
+            f"swap yet (supported: {supported}); add a QuantizedLinear subclass and "
+            "register it in vrl.nn.quantization.QUANTIZATION_SCHEMES.",
         )
+    # The scheme owns its target scope and kernel; the model declares only which
+    # roots to walk and what to exclude. Neither knows about the other, so a new
+    # scheme needs no model change and a new family needs no scheme change.
+    # ``QuantizationPolicy`` already normalized the recipe and filled the format's
+    # default, so its presence — not a second per-scheme table — decides whether
+    # this scheme takes one.
+    swap_kwargs: dict[str, Any] = {"exclude": model.quantization_exclude}
+    if recipe is not None:
+        swap_kwargs["recipe"] = recipe
+        policy_detail = f"recipe={recipe}, profile={scheme.default_target_profile}"
+    else:
+        policy_detail = f"profile={scheme.default_target_profile}"
+    # Paths are prefixed by root so the log names WHICH expert changed on a
+    # multi-root family.
+    swapped = [
+        f"{root_name}.{path}"
+        for root_name, root in model.policy_cores.items()
+        for path in scheme.swap_linears(root, **swap_kwargs)
+    ]
     if not swapped:
-        target = "MLP" if format_name == "nvfp4" else "attention/MLP"
         raise RuntimeError(
             f"precision.rollout.quantization.format={format_name!r} but the swap "
-            "matched 0 linears — the "
-            f"policy has no quantizable {target} linears (check the exclude "
+            "matched 0 linears — the policy has no quantizable "
+            f"{scheme.default_target_profile} linears (check the exclude "
             "list / min_features). It would be a no-op.",
         )
     if not getattr(rollout, "base_weight_sync", True):
@@ -188,60 +201,8 @@ def apply_rollout_quantization(model: Any, build: Any) -> int:
     return len(swapped)
 
 
-def assert_rollout_quantization_applied(model: Any, build: Any) -> None:
-    """Backstop guard: a rollout quantization was requested but no quantized module.
-
-    Family- and scheme-agnostic — called once at rollout-worker policy load, after
-    the family builder ran. If the builder forgot to apply the swap (e.g. a newly
-    added family), the model would silently run the base dtype despite
-    ``precision.rollout.quantization`` asking for fp8/nvfp4/etc.; this turns that
-    into a loud startup failure instead of a fake knob. Scheme identity lives on
-    ``QuantizedLinear.quantization_scheme``: an FP8 module cannot satisfy an
-    NVFP4 request merely because both share the same base class.
-    """
-
-    quantization = getattr(getattr(build, "precision", None), "quantization", None)
-    if quantization is None:  # bf16 / fp16 / fp32 rollout — nothing to verify
-        return
-    format_name = quantization.format
-    from vrl.nn.quantization import QuantizedLinear
-
-    # Diffusion wrappers expose ``transformer``; AR wrappers expose
-    # ``language_model``. Fall back to the model root for future families while
-    # preferring the policy core so an unrelated quantized auxiliary cannot make
-    # the guard pass accidentally.
-    policy_core = getattr(model, "transformer", None)
-    if policy_core is None:
-        policy_core = getattr(model, "language_model", None)
-    if policy_core is None:
-        policy_core = model
-    policy_core = getattr(policy_core, "_orig_mod", policy_core)  # unwrap torch.compile
-    modules = getattr(policy_core, "modules", None)
-    count = (
-        sum(
-            1
-            for module in modules()
-            if isinstance(module, QuantizedLinear) and module.quantization_scheme == format_name
-        )
-        if callable(modules)
-        else 0
-    )
-    if count == 0:
-        raise RuntimeError(
-            "precision.rollout.quantization.format="
-            f"{format_name!r} requested but the rollout policy core has "
-            f"0 {format_name} quantized linear modules "
-            f"(family={getattr(build, 'family', None)!r}). "
-            "The family runtime builder did not apply the rollout quantization swap "
-            f"(e.g. apply_rollout_quantization), so {format_name} would silently run at "
-            "the rollout base dtype. Wire "
-            "the swap into that builder (after LoRA/full-finetune, before compile).",
-        )
-
-
 __all__ = [
     "apply_rollout_quantization",
-    "assert_rollout_quantization_applied",
     "load_diffusers_scheduler",
     "load_diffusers_transformer",
     "load_flow_match_scheduler",

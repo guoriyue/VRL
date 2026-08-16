@@ -2,15 +2,17 @@
 
 Wan is the only dual-transformer family: a dual-stage checkpoint carries
 ``transformer`` and ``transformer_2`` and switches between them at
-``boundary_ratio``. ``torch_compile_transformer`` is overridden to walk both,
-but quantization used to inherit the single-transformer base implementation,
-so ``transformer_2`` silently stayed at the rollout base dtype.
+``boundary_ratio``. Quantization used to inherit a single-transformer base
+implementation that hardcoded ``self.transformer``, so ``transformer_2``
+silently stayed at the rollout base dtype.
 
 That is worse than half the speedup: the two experts then run at different
 precisions inside one sampling trajectory, so rollout-vs-replay drift differs
-either side of the boundary and the drift guard's premise no longer holds. The
-loader's fallback guard cannot catch it either -- it only asserts the swap count
-is non-zero, which a half-quantized model satisfies.
+either side of the boundary and the drift guard's premise no longer holds.
+
+Coverage now comes from Wan's ``policy_cores`` declaration rather than a
+per-scheme override, so these assertions also pin the declaration: any future
+pass automatically reaches both experts.
 """
 
 from __future__ import annotations
@@ -21,7 +23,25 @@ import pytest
 from torch import nn
 
 from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
+from vrl.models.loader import apply_rollout_quantization
 from vrl.nn.quantization import QuantizedLinear
+
+
+def _rollout_build(scheme: str) -> SimpleNamespace:
+    """A minimal rollout build requesting ``scheme`` with no compile / no sync."""
+
+    return SimpleNamespace(
+        device="cpu",
+        torch_compile=None,
+        family="wan_2_1",
+        precision=SimpleNamespace(
+            quantization=SimpleNamespace(
+                format=scheme,
+                recipe="rowwise" if scheme == "fp8" else None,
+            ),
+        ),
+        rollout=SimpleNamespace(base_weight_sync=True),
+    )
 
 
 class _TinyExpert(nn.Module):
@@ -61,23 +81,37 @@ def _quantized_paths(module: nn.Module) -> set[str]:
 
 
 @pytest.mark.parametrize("scheme", ["fp8", "nvfp4"])
-def test_wan_rollout_quantization_covers_both_experts(scheme: str) -> None:
+def test_wan_rollout_quantization_covers_both_experts(scheme: str, monkeypatch) -> None:
     model = _dual_stage_model()
     assert model.transformer_2 is not None, "fixture is not dual-stage"
+    # NVFP4's Blackwell gate is asserted in tests/nn/quantization/test_fp4.py; here
+    # it would only stop the walk this test is about from ever running on CPU.
+    monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device=None: True)
 
-    swapped = model.quantize_rollout_fp8() if scheme == "fp8" else model.quantize_rollout_nvfp4()
+    count = apply_rollout_quantization(model, _rollout_build(scheme))
 
-    assert swapped, "no linears swapped -- min_features/exclude gated everything"
+    assert count, "no linears swapped -- min_features/exclude gated everything"
     assert _quantized_paths(model.transformer), "expert 1 (transformer) not quantized"
     assert _quantized_paths(model.transformer_2), (
         "expert 2 (transformer_2) not quantized -- it would silently run at the "
         "rollout base dtype while expert 1 runs quantized"
     )
-    # The reported paths must name both experts, so the loader's count-based
-    # guard and the run log agree with what actually changed.
-    assert any(path.startswith("transformer_2") for path in swapped), (
-        f"swap report omits transformer_2: {swapped}"
-    )
+
+
+def test_wan_policy_cores_declares_both_experts() -> None:
+    """The declaration -- not any per-scheme override -- is what covers both.
+
+    Pinning it directly means a future pass (compile, a new scheme) inherits
+    dual-expert coverage without its own Wan-specific branch.
+    """
+
+    model = _dual_stage_model()
+
+    assert set(model.policy_cores) == {"transformer", "transformer_2"}
+    # trainable_modules is deliberately NARROWER here (this fixture trains only
+    # expert 1). Reusing it for optimization would reintroduce the half-quantized
+    # bug, so the two must not be conflated.
+    assert set(model.trainable_modules) == {"transformer"}
 
 
 def test_wan_single_expert_model_still_quantizes() -> None:
@@ -93,8 +127,7 @@ def test_wan_single_expert_model_still_quantizes() -> None:
         device="cpu",
     )
     assert model.transformer_2 is None
+    assert set(model.policy_cores) == {"transformer"}
 
-    swapped = model.quantize_rollout_fp8()
-
-    assert swapped
+    assert apply_rollout_quantization(model, _rollout_build("fp8"))
     assert _quantized_paths(model.transformer)

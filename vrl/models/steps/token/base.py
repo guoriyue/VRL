@@ -40,6 +40,7 @@ from vrl.models.interfaces.replay import (
 )
 from vrl.models.peft_adapter import disable_adapter_on, peel_peft
 from vrl.models.weight_utils import load_weights_into
+from vrl.nn.quantization.targeting import LM_EXCLUDE
 
 
 class ARModelBase(nn.Module):
@@ -102,40 +103,20 @@ class ARModelBase(nn.Module):
         """
         return load_weights_into(self, state_dict, prefix="model")
 
-    def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
-        """Swap the language trunk's big GEMMs to fp8 in place (rollout only).
+    @property
+    def policy_cores(self) -> dict[str, Any]:
+        """The one module root the rollout optimization passes walk.
 
-        Quantizes attention/MLP linears under ``self.language_model``; the
-        vocabulary heads (lm_head / gen_head / llamagen's ``output``) and
-        embeddings stay high precision — the per-token log-probs the RL loss
-        consumes are computed from them. VQ decoders / vision towers live
-        outside ``language_model`` and are never touched. The trainer's replay
-        core keeps its configured base-precision parameters and is never quantized.
+        VQ decoders / vision towers live outside ``language_model`` and are
+        deliberately absent: they are not the sampled policy.
         """
 
-        from vrl.nn.quantization import LM_EXCLUDE, Fp8Linear
+        return {"language_model": self.language_model}
 
-        return Fp8Linear.swap_linears(
-            self.language_model,
-            recipe=recipe,
-            exclude=LM_EXCLUDE,
-        )
-
-    def quantize_rollout_nvfp4(self) -> list[str]:
-        """Swap the language trunk's eligible MLP GEMMs to NVFP4.
-
-        Attention projections and vocabulary heads remain in the rollout base
-        dtype. The head exclusion preserves the logits scored by the RL
-        objective, while MLP-only targeting is the validated NVFP4 rollout
-        profile shared with diffusion models.
-        """
-
-        from vrl.nn.quantization import LM_EXCLUDE, Fp4Linear
-
-        return Fp4Linear.swap_linears(
-            self.language_model,
-            exclude=LM_EXCLUDE,
-        )
+    # Vocabulary heads (lm_head / gen_head / llamagen's ``output``) and embeddings
+    # stay in the base dtype on top of the structural exclusions: the per-token
+    # log-probs the RL loss consumes are computed from them.
+    quantization_exclude: ClassVar[tuple[str, ...]] = LM_EXCLUDE
 
     def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
         """Disable the LoRA adapter for a reference forward, or no-op when absent."""

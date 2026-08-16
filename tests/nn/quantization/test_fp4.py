@@ -272,12 +272,30 @@ def test_invalid_target_profile_raises_before_mutation() -> None:
 
 
 class _FakeModel:
-    def __init__(self) -> None:
-        self.nvfp4_calls = 0
+    """A policy with one NVFP4-eligible MLP linear, driven through the real swap.
 
-    def quantize_rollout_nvfp4(self) -> list[str]:
-        self.nvfp4_calls += 1
-        return ["blocks.0.ff.net.0"]
+    The linear must sit on an MLP path (the NVFP4 profile is ``mlp_only``) and
+    clear ``min_features``, or the swap would match nothing and the loader would
+    fail loud for the wrong reason.
+    """
+
+    quantization_exclude: tuple[str, ...] = ()
+
+    def __init__(self) -> None:
+        root = nn.Module()
+        root.ff = nn.Module()
+        root.ff.net = nn.Linear(1024, 1024, bias=False)
+        self._root = root
+
+    @property
+    def policy_cores(self) -> dict[str, nn.Module]:
+        return {"transformer": self._root}
+
+    @property
+    def nvfp4_calls(self) -> int:
+        """How many linears actually became NVFP4 — the effect, not the call."""
+
+        return sum(isinstance(module, Fp4Linear) for module in self._root.modules())
 
 
 def _rollout_spec(

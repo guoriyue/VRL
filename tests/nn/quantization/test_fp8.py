@@ -345,13 +345,34 @@ def test_fp8_linear_preserves_leading_dims_and_bias():
 
 
 class _SwapModel:
-    def __init__(self, swapped: list[str]) -> None:
-        self._swapped = swapped
-        self.recipe_seen: str | None = None
+    """A policy declaring real roots, so the loader drives the real swap.
 
-    def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
-        self.recipe_seen = recipe
-        return self._swapped
+    ``names`` become MLP-path linears wide enough to clear ``min_features``; an
+    empty list is a policy with nothing quantizable (the no-op case the loader
+    must reject).
+    """
+
+    quantization_exclude: tuple[str, ...] = ()
+
+    def __init__(self, names: list[str]) -> None:
+        root = nn.Module()
+        root.ff = nn.Module()
+        for name in names:
+            setattr(root.ff, name, nn.Linear(1024, 1024, bias=False))
+        self._root = root
+
+    @property
+    def policy_cores(self) -> dict[str, nn.Module]:
+        return {"transformer": self._root}
+
+    @property
+    def recipe_seen(self) -> str | None:
+        """The recipe the swapped modules actually recorded, not a captured arg."""
+
+        for module in self._root.modules():
+            if isinstance(module, Fp8Linear):
+                return module.recipe
+        return None
 
 
 def _rollout_spec(
@@ -440,62 +461,36 @@ def test_apply_rollout_quantization_passes_recipe_through():
     assert model.recipe_seen == "rowwise"
 
 
-@pytest.mark.parametrize("scheme", ["fp8", "nvfp4"])
-def test_backstop_raises_for_any_requested_scheme_when_unquantized(scheme):
-    """Scheme-agnostic: any requested rollout quantization with no QuantizedLinear
-    → loud fail, not silent bf16 (covers NVFP4 and future schemes uniformly)."""
-    from vrl.models.loader import assert_rollout_quantization_applied
+def test_scheme_identity_is_carried_by_the_module_not_its_base_class() -> None:
+    """An FP8 module must not satisfy an NVFP4 request.
 
-    model = SimpleNamespace(
-        transformer=nn.Sequential(nn.Linear(16, 16))
-    )  # plain, no QuantizedLinear
-    with pytest.raises(RuntimeError, match=rf"0 {scheme} quantized linear"):
-        assert_rollout_quantization_applied(model, _rollout_spec(scheme))
+    Both schemes share ``QuantizedLinear``, so identity has to live on
+    ``quantization_scheme``. The registry keys off the same attribute, which is
+    why the config format string and a swapped module can never disagree.
+    """
+    from vrl.nn.quantization import QUANTIZATION_SCHEMES, QuantizedLinear
 
-
-def test_backstop_ok_when_quantized_module_present_incl_compiled():
-    from vrl.models.loader import assert_rollout_quantization_applied
-    from vrl.nn.quantization import QuantizedLinear
-
-    assert isinstance(
-        Fp8Linear(nn.Linear(16, 16)), QuantizedLinear
-    )  # scheme subclasses the marker
-    real = nn.Sequential(Fp8Linear(nn.Linear(16, 16)))  # CPU construct is fine
-    assert_rollout_quantization_applied(SimpleNamespace(transformer=real), _rollout_spec("fp8"))
-    # torch.compile wrapper exposes _orig_mod — the guard must unwrap it
-    compiled = SimpleNamespace(_orig_mod=real)
-    assert_rollout_quantization_applied(
-        SimpleNamespace(transformer=compiled), _rollout_spec("fp8")
-    )
-
-
-def test_backstop_rejects_a_different_quantization_scheme() -> None:
-    from vrl.models.loader import assert_rollout_quantization_applied
-
-    fp8_policy = nn.Sequential(Fp8Linear(nn.Linear(16, 16)))
-    with pytest.raises(RuntimeError, match="0 nvfp4 quantized linear"):
-        assert_rollout_quantization_applied(
-            SimpleNamespace(transformer=fp8_policy),
-            _rollout_spec("nvfp4"),
-        )
-
-
-def test_backstop_noop_when_no_quantization_requested():
-    from vrl.models.loader import assert_rollout_quantization_applied
-
-    assert_rollout_quantization_applied(SimpleNamespace(transformer=None), _rollout_spec(None))
+    module = Fp8Linear(nn.Linear(16, 16))
+    assert isinstance(module, QuantizedLinear)  # shared base
+    assert module.quantization_scheme == "fp8"  # distinct identity
+    assert QUANTIZATION_SCHEMES["fp8"] is Fp8Linear
+    assert {name: cls.quantization_scheme for name, cls in QUANTIZATION_SCHEMES.items()} == {
+        name: name for name in QUANTIZATION_SCHEMES
+    }
 
 
 # --- runtime wiring: the swap reaches the rollout builder from precision (CPU) --
 
 
-class _FakeModel:
-    def __init__(self) -> None:
-        self.recipes: list[str] = []
+class _FakeModel(_SwapModel):
+    """A quantizable policy that records the recipe of every applied swap."""
 
-    def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
-        self.recipes.append(recipe)
-        return ["blocks.0.attn.to_q", "blocks.0.ff.net.0"]
+    def __init__(self) -> None:
+        super().__init__(["net"])
+
+    @property
+    def recipes(self) -> list[str]:
+        return [module.recipe for module in self._root.modules() if isinstance(module, Fp8Linear)]
 
 
 def test_apply_rollout_quantization_dispatches_by_scheme():

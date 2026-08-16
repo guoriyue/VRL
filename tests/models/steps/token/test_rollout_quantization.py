@@ -10,7 +10,29 @@ import pytest
 from torch import nn
 
 from vrl.config.precision import QuantizationPolicy, RolePrecision
-from vrl.nn.quantization import Fp4Linear, Fp8Linear, QuantizedLinear
+from vrl.models.loader import apply_rollout_quantization
+from vrl.nn.quantization import QuantizedLinear
+
+
+def _ar_rollout_build(format_name: str):
+    """A real rollout ModelBuild requesting ``format_name`` on CPU."""
+
+    from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
+
+    return ModelBuild(
+        model_name_or_path="fake/repo",
+        revision=None,
+        device="cpu",
+        parameter_dtype="bf16",
+        family="emu3",
+        precision=RolePrecision(
+            "bf16",
+            "tf32",
+            QuantizationPolicy(format=format_name),
+            outer_autocast=False,
+        ),
+        rollout=RolloutBuildOptions(prompt_encoder_dtype="bf16"),
+    )
 
 
 def _build_emu3_bundle(
@@ -74,108 +96,54 @@ def _tiny_emu3_model(*, use_lora: bool = False):
     return Emu3Model(config, emu3=hf_model, processor=_stub_processor())
 
 
+def _quantized_paths(model) -> set[str]:
+    """Dotted paths under the AR trunk that actually became QuantizedLinear."""
+
+    return {
+        name
+        for name, module in model.language_model.named_modules()
+        if isinstance(module, QuantizedLinear)
+    }
+
+
 def test_ar_quantize_rollout_fp8_swaps_trunk_not_heads() -> None:
     """Attention/MLP linears swap; lm_head and embeddings stay high precision."""
     torch = pytest.importorskip("torch")
     model = _tiny_emu3_model()
 
-    swapped = model.quantize_rollout_fp8()
+    apply_rollout_quantization(model, _ar_rollout_build("fp8"))
 
-    assert swapped, "no linears swapped — min_features/exclude gate everything"
-    assert all("head" not in path for path in swapped)
-    assert all("embed" not in path for path in swapped)
-    quantized = {
-        name
-        for name, module in model.language_model.named_modules()
-        if isinstance(module, QuantizedLinear)
-    }
-    assert quantized, "swap reported paths but no QuantizedLinear present"
+    quantized = _quantized_paths(model)
+    assert quantized, "no linears swapped — min_features/exclude gate everything"
+    assert all("head" not in path for path in quantized)
+    assert all("embed" not in path for path in quantized)
     # The vocabulary head must remain a plain Linear.
     head = model.language_model.get_output_embeddings()
     assert head is None or not isinstance(head, QuantizedLinear)
     del torch
 
 
-def test_ar_quantize_rollout_nvfp4_targets_mlp_not_attention_or_heads() -> None:
+def test_ar_quantize_rollout_nvfp4_targets_mlp_not_attention_or_heads(monkeypatch) -> None:
+    model = _tiny_emu3_model()
+    monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device=None: True)
+
+    apply_rollout_quantization(model, _ar_rollout_build("nvfp4"))
+
+    quantized = _quantized_paths(model)
+    assert quantized
+    assert all("mlp" in path for path in quantized)
+    assert not any("self_attn" in path for path in quantized)
+    assert all("head" not in path and "embed" not in path for path in quantized)
+
+
+def test_ar_policy_cores_declares_the_trunk_only() -> None:
+    """VQ decoder / vision tower are not the sampled policy and must stay out."""
+
     model = _tiny_emu3_model()
 
-    swapped = model.quantize_rollout_nvfp4()
-
-    assert swapped
-    assert all("mlp" in path for path in swapped)
-    assert not any("self_attn" in path for path in swapped)
-    assert all("head" not in path and "embed" not in path for path in swapped)
-
-
-@pytest.mark.parametrize(
-    ("format_name", "linear_type"),
-    [("fp8", Fp8Linear), ("nvfp4", Fp4Linear)],
-)
-def test_ar_worker_guard_requires_the_requested_format(
-    format_name: str,
-    linear_type: type[QuantizedLinear],
-) -> None:
-    """AR models expose language_model, not diffusion's transformer attribute."""
-    from vrl.models.interfaces.runtime import (
-        ModelBuild,
-        RolloutBuildOptions,
-    )
-    from vrl.models.loader import assert_rollout_quantization_applied
-
-    class _ArPolicy(nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.language_model = nn.Sequential(
-                linear_type(nn.Linear(64, 64, bias=False)),
-            )
-
-    build = ModelBuild(
-        model_name_or_path="fake/repo",
-        revision=None,
-        device="cpu",
-        parameter_dtype="bf16",
-        family="emu3",
-        precision=RolePrecision(
-            "bf16",
-            "tf32",
-            QuantizationPolicy(format=format_name),
-            outer_autocast=False,
-        ),
-        rollout=RolloutBuildOptions(
-            prompt_encoder_dtype="bf16",
-        ),
-    )
-    assert_rollout_quantization_applied(_ArPolicy(), build)
-
-
-def test_ar_worker_guard_rejects_a_different_quantization_format() -> None:
-    from vrl.models.interfaces.runtime import (
-        ModelBuild,
-        RolloutBuildOptions,
-    )
-    from vrl.models.loader import assert_rollout_quantization_applied
-
-    model = nn.Module()
-    model.language_model = nn.Sequential(Fp8Linear(nn.Linear(64, 64, bias=False)))
-    build = ModelBuild(
-        model_name_or_path="fake/repo",
-        revision=None,
-        device="cpu",
-        parameter_dtype="bf16",
-        family="emu3",
-        precision=RolePrecision(
-            "bf16",
-            "tf32",
-            QuantizationPolicy(format="nvfp4"),
-            outer_autocast=False,
-        ),
-        rollout=RolloutBuildOptions(
-            prompt_encoder_dtype="bf16",
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="0 nvfp4 quantized linear"):
-        assert_rollout_quantization_applied(model, build)
+    assert set(model.policy_cores) == {"language_model"}
+    assert model.policy_cores["language_model"] is model.language_model
+    assert "head" in model.quantization_exclude
 
 
 def test_ar_builder_rejects_unsupported_nvfp4_before_quantization_mutation(
@@ -189,12 +157,20 @@ def test_ar_builder_rejects_unsupported_nvfp4_before_quantization_mutation(
     class _ArPolicy(nn.Module):
         def __init__(self) -> None:
             super().__init__()
-            self.language_model = nn.Linear(64, 64, bias=False)
-            self.quantize_calls = 0
+            self.language_model = nn.Module()
+            self.language_model.mlp = nn.Linear(1024, 1024, bias=False)
 
-        def quantize_rollout_nvfp4(self) -> list[str]:
-            self.quantize_calls += 1
-            return ["language_model"]
+        @property
+        def policy_cores(self) -> dict[str, nn.Module]:
+            return {"language_model": self.language_model}
+
+        @property
+        def quantize_calls(self) -> int:
+            """Modules actually swapped — 0 proves the gate ran before mutation."""
+
+            return sum(
+                isinstance(module, QuantizedLinear) for module in self.language_model.modules()
+            )
 
     monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: False)
     model = _ArPolicy()
@@ -231,7 +207,6 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
         ModelBuild,
         RolloutBuildOptions,
     )
-    from vrl.models.loader import assert_rollout_quantization_applied
 
     if format_name == "nvfp4":
         monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
@@ -272,15 +247,6 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
     assert any(isinstance(m, QuantizedLinear) for m in rollout_model.language_model.modules()), (
         "rollout bundle did not quantize"
     )
-    # The common worker backstop must inspect the AR policy core, not assume the
-    # diffusion-only ``model.transformer`` shape.
-    assert_rollout_quantization_applied(rollout_model, rollout_build)
-
-    with pytest.raises(
-        RuntimeError,
-        match=rf"rollout policy core has 0 {format_name} quantized",
-    ):
-        assert_rollout_quantization_applied(_tiny_emu3_model(), _build(format_name))
 
     replay_model = _tiny_emu3_model(use_lora=True)
     _build_emu3_bundle(
