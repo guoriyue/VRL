@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -32,6 +33,10 @@ class DiffusionSamplingParams:
     sde_window_range: tuple[int, int]
     denoise_mode: str
     teacache: TeaCacheConfig | None = None
+    # The RESOLVED stochastic window, drawn once at parse time (see
+    # select_sde_window). Every sample batch of the request reads this field, so
+    # chunked groups share one window — Flash-GRPO's iso-temporal grouping.
+    sde_window: tuple[int, int] | None = None
 
     def text_encode_kwargs(self) -> dict[str, Any]:
         """Build shared prompt-encoder knobs without inventing a text length."""
@@ -121,7 +126,7 @@ class DiffusionRequestLayout:
                 sampling.get("cache_ref_noise_pred", False),
             ),
         )
-        return DiffusionSamplingParams(
+        params = DiffusionSamplingParams(
             model_request=VideoGenerationRequest(**model_request_kwargs),
             max_sequence_length=(
                 None if max_sequence_length is None else int(max_sequence_length)
@@ -132,6 +137,9 @@ class DiffusionRequestLayout:
             denoise_mode=denoise_mode,
             teacache=TeaCacheConfig.from_sampling(sampling.get("teacache")),
         )
+        # Resolve the stochastic window HERE, once per request, so every sample
+        # batch built from these params shares it (see select_sde_window).
+        return dataclasses.replace(params, sde_window=self.select_sde_window(params))
 
     def repeat_batch(self, value: Any, count: int) -> Any:
         """Repeat a singleton tensor batch or accept an already-sized batch."""
@@ -177,13 +185,32 @@ class DiffusionRequestLayout:
         self,
         params: DiffusionSamplingParams,
     ) -> tuple[int, int] | None:
-        """Pick the stochastic denoise-step window for a request."""
+        """Pick the stochastic denoise-step window for a request.
+
+        Drawn once per REQUEST (parse_sampling_params stores the result on the
+        params), not per sample batch: all chunks of a request — and therefore
+        all G samples of a prompt group — share one window, which is what makes
+        a group's stochastic step land on the same timestep (Flash-GRPO's
+        iso-temporal grouping; group advantages are then never confounded by
+        timestep difficulty).
+
+        When the request carries a seed the draw is derived from it, so
+        multi-rank engines and re-parses agree deterministically. Integer
+        arithmetic, not tuple hashing — hash() is process-randomized and would
+        silently break cross-rank agreement. Without a seed it falls back to
+        the module RNG (rank-coherent only via the worker RNG sync).
+        """
 
         sde_window_size = params.sde_window_size
         if sde_window_size <= 0:
             return None
         lo, hi = params.sde_window_range
-        start = random.randint(lo, hi - sde_window_size)
+        seed = params.model_request.seed
+        if seed is not None:
+            rng = random.Random(int(seed) ^ 0x5DE317D0)
+            start = rng.randint(lo, hi - sde_window_size)
+        else:
+            start = random.randint(lo, hi - sde_window_size)
         return (start, start + sde_window_size)
 
     @staticmethod

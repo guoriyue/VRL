@@ -173,6 +173,7 @@ class DiffusionSDELogProbEvaluator(ReplayEvaluatorBase):
             old_prev_sample_mean=old_prev_sample_mean,
             std_dev_t=result.std_dev_t,
             dt=result.sqrt_neg_dt if result.sqrt_neg_dt is not None else ref_sqrt_neg_dt,
+            sigma=result.sigma,
             timestep_idx=timestep_idx,
             mask_key="mask",
         )

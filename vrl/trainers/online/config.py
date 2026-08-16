@@ -205,10 +205,14 @@ class TrainerConfig:
     # --- gradient ---
     max_norm: float = field(default=1.0, metadata={"yaml": "actor"})
 
-    # How the timestep_fraction subset is chosen each update: "strided" (fixed
-    # evenly-spaced steps, default) or "random" (DanceGRPO — a fresh random
-    # subset per update, decorrelating denoise-step gradient coverage). No effect
-    # when timestep_fraction == 1 (all steps trained either way).
+    # How the trained denoise-step subset is chosen each update: "strided"
+    # (fixed evenly-spaced steps, default), "random" (DanceGRPO — a fresh
+    # random subset per update, decorrelating denoise-step gradient coverage),
+    # or "sde_window" (Flash-GRPO — exactly the steps the rollout made
+    # stochastic, read from the trajectory's recorded window; requires
+    # rollout.sde.window_size > 0). "strided"/"random" have no effect when
+    # timestep_fraction == 1; "sde_window" ignores timestep_fraction entirely,
+    # so it must be left at 1.0.
     timestep_selection: str = field(default="strided", metadata={"yaml": "actor"})
 
     # --- PPO/GRPO loop ---
@@ -333,10 +337,17 @@ class TrainerConfig:
         return cls(**payload)
 
     def __post_init__(self) -> None:
-        if self.timestep_selection not in ("strided", "random"):
+        if self.timestep_selection not in ("strided", "random", "sde_window"):
             raise ValueError(
-                "actor.timestep_selection must be 'strided' or 'random' "
-                f"(got {self.timestep_selection!r})",
+                "actor.timestep_selection must be 'strided', 'random', or "
+                f"'sde_window' (got {self.timestep_selection!r})",
+            )
+        if self.timestep_selection == "sde_window" and float(self.timestep_fraction) != 1.0:
+            raise ValueError(
+                "actor.timestep_selection='sde_window' derives the trained steps "
+                "from the rollout's recorded stochastic window; "
+                f"actor.timestep_fraction={self.timestep_fraction} would be "
+                "silently ignored — leave it at 1.0",
             )
         if self.batch_plan.streaming and int(self.ppo_epochs) != 1:
             raise ValueError(

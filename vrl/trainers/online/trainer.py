@@ -1215,6 +1215,13 @@ class OnlineTrainer:
                 "evaluator.replay_granularity must be 'step' or 'trajectory', "
                 f"got {granularity!r}",
             )
+        if selection == "sde_window":
+            # Flash-GRPO: train exactly the steps the rollout made stochastic.
+            # The window is a GENERATION-time fact recorded in the trajectory,
+            # not a trainer-side draw — training any step outside it would put
+            # surrogate loss on a deterministic ODE transition that was never a
+            # policy action.
+            return self._sde_window_indices(batch)
 
         from vrl.trajectory import TrajectoryResolver
 
@@ -1248,6 +1255,64 @@ class OnlineTrainer:
             timestep_fraction,
             selection,
         )
+
+    @staticmethod
+    def _sde_window_indices(batch: RolloutBatch) -> list[int]:
+        """Replay indices from the trajectory's recorded stochastic window.
+
+        Generation records ``[lo, hi)`` per sample (denoise replay tensor
+        ``sde_window``); one request owns one window, so every row of a
+        group's batch must agree — a mismatch means groups were merged across
+        requests and iso-temporal grouping is already broken upstream.
+        """
+
+        from vrl.trajectory import TrajectoryResolver
+
+        replay = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")
+        window = replay.get("sde_window")
+        if window is None:
+            raise ValueError(
+                "actor.timestep_selection='sde_window' requires the rollout to "
+                "record its stochastic window: set rollout.sde.window_size > 0 "
+                "so generation stores the 'sde_window' replay tensor "
+                "(absent on this batch).",
+            )
+        lo = int(window[:, 0].min().item())
+        hi = int(window[:, 1].max().item())
+        if int(window[:, 0].max().item()) != lo or int(window[:, 1].min().item()) != hi:
+            raise ValueError(
+                "sde_window differs across rows of one replay batch; a prompt "
+                "group's samples must come from one generation request so they "
+                "share the stochastic timestep",
+            )
+        if hi <= lo:
+            raise ValueError(f"recorded sde_window [{lo}, {hi}) is empty")
+        return list(range(lo, hi))
+
+    def _sample_batch_train_indices(
+        self,
+        sample_batch: Any,
+        default_indices: list[int],
+        selection: str,
+    ) -> list[int]:
+        """Per-microbatch replay indices; only ``sde_window`` varies by batch.
+
+        Each group's window sits at a different (iso-temporal) position, so the
+        first-batch indices cannot stand in for the others. The WIDTH must
+        match everywhere — loss_scale and the cross-rank microbatch counts are
+        derived from it, and sampling config fixes window_size for the run.
+        """
+
+        if selection != "sde_window":
+            return default_indices
+        indices = self._sde_window_indices(sample_batch.batch)
+        if len(indices) != len(default_indices):
+            raise ValueError(
+                f"sde_window width {len(indices)} differs from the first "
+                f"batch's {len(default_indices)}; sde_window_size must be "
+                "uniform across a run",
+            )
+        return indices
 
     # ------------------------------------------------------------------
     # Streaming accumulation boundary (gradient_accumulation_steps>0):
@@ -1322,7 +1387,11 @@ class OnlineTrainer:
                 is_dummy=sample_batch.is_dummy,
                 agg=agg,
             )
-            for j in train_indices:
+            for j in self._sample_batch_train_indices(
+                sample_batch,
+                train_indices,
+                cfg.timestep_selection,
+            ):
                 loss, metrics = self._compute_replay_loss(
                     group_batch,
                     batch_adv,
@@ -1739,7 +1808,11 @@ class OnlineTrainer:
                     is_dummy=sample_batch.is_dummy,
                     agg=agg_metrics,
                 )
-                for j in train_indices:
+                for j in self._sample_batch_train_indices(
+                    sample_batch,
+                    train_indices,
+                    cfg.timestep_selection,
+                ):
                     with timer.time("evaluate"):
                         loss, metrics = self._compute_replay_loss(
                             group_batch,

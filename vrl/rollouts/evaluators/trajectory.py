@@ -48,6 +48,7 @@ class TrajectorySignalBuilder:
         old_prev_sample_mean: Any | None = None,
         std_dev_t: Any | None = None,
         dt: Any | None = None,
+        sigma: Any | None = None,
         mask_key: str = "token_mask",
     ) -> TrajectorySignalBatch:
         """Build a one-segment ``TrajectorySignalBatch`` for concrete evaluators."""
@@ -64,6 +65,7 @@ class TrajectorySignalBuilder:
             old_prev_sample_mean=old_prev_sample_mean,
             std_dev_t=std_dev_t,
             dt=dt,
+            sigma=sigma,
             mask_key=mask_key,
         )
         return TrajectorySignalBatch(
@@ -87,6 +89,7 @@ class TrajectorySignalBuilder:
         old_prev_sample_mean: Any | None = None,
         std_dev_t: Any | None = None,
         dt: Any | None = None,
+        sigma: Any | None = None,
         mask_key: str = "token_mask",
     ) -> SegmentSignal:
         """Build one signal segment from first-class trajectory facts."""
@@ -137,6 +140,7 @@ class TrajectorySignalBuilder:
             old_prev_sample_mean=old_prev_sample_mean,
             std_dev_t=std_dev_t,
             dt=dt,
+            sigma=sigma,
         )
 
     @property

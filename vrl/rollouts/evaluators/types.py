@@ -26,6 +26,10 @@ class SegmentSignal:
     old_prev_sample_mean: Any | None = None
     std_dev_t: Any | None = None
     dt: Any | None = None
+    # Flow-domain sigma of the replayed step (same [0, 1] domain as
+    # std_dev_t / dt). Flash-GRPO's temporal gradient rectification consumes it;
+    # None for evaluators that do not run the flow-matching SDE.
+    sigma: Any | None = None
 
 
 @dataclass

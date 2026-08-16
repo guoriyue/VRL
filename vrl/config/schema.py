@@ -93,6 +93,7 @@ class AlgorithmConfig(ConfigBase):
     kind: Literal[
         "grpo",
         "dance_grpo",
+        "flash_grpo",
         "flow_dppo",
         "grpo_guard",
         "token_grpo",
@@ -963,6 +964,7 @@ class RootConfig(ConfigBase):
         if kind in {
             "grpo",
             "dance_grpo",
+            "flash_grpo",
             "flow_dppo",
             "grpo_guard",
             "diffusion_nft",

@@ -120,7 +120,7 @@ def build_algorithm_and_evaluator(
     if algorithm_section is None:
         raise ValueError("online recipe requires an algorithm section")
     kind = algorithm_section.kind
-    diffusion_logprob_kinds = {"grpo", "dance_grpo", "flow_dppo", "grpo_guard"}
+    diffusion_logprob_kinds = {"grpo", "dance_grpo", "flash_grpo", "flow_dppo", "grpo_guard"}
     precision = built.precision
     if precision.diffusion_math != "fp32" and kind not in diffusion_logprob_kinds:
         raise ValueError(
@@ -137,6 +137,8 @@ def build_algorithm_and_evaluator(
         # proposal mean (sampling.return_prev_sample_mean).
         from vrl.algorithms.grpo.continuous import (
             GRPO,
+            FlashGRPO,
+            FlashGRPOConfig,
             FlowDPPO,
             FlowDPPOConfig,
             GRPOConfig,
@@ -147,6 +149,7 @@ def build_algorithm_and_evaluator(
         expected_config_type = {
             "grpo": GRPOConfig,
             "dance_grpo": GRPOConfig,
+            "flash_grpo": FlashGRPOConfig,
             "flow_dppo": FlowDPPOConfig,
             "grpo_guard": GRPOGuardConfig,
         }[kind]
@@ -168,6 +171,8 @@ def build_algorithm_and_evaluator(
             algorithm: object = FlowDPPO(algorithm_config)
         elif kind == "grpo_guard":
             algorithm = GRPOGuard(algorithm_config)
+        elif kind == "flash_grpo":
+            algorithm = FlashGRPO(algorithm_config)
         else:
             algorithm = GRPO(algorithm_config)
         if is_chunk_autoregressive:
@@ -183,7 +188,7 @@ def build_algorithm_and_evaluator(
                     "DanceGRPO's random denoise-timestep subset is not defined for "
                     "the [temporal_chunk, denoise_transition] policy axes. Use grpo.",
                 )
-            if kind in {"flow_dppo", "grpo_guard"}:
+            if kind in {"flash_grpo", "flow_dppo", "grpo_guard"}:
                 raise ValueError(
                     f"{family_entry.family} uses grouped causal-chunk replay; "
                     f"algorithm.kind={kind!r} requires reverse-SDE dt signals that "

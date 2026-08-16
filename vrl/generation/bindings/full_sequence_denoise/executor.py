@@ -177,13 +177,16 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
     ) -> DenoiseLoopConfig:
         """Build the SDE denoise config for one sample batch."""
 
-        layout = self.layout
         return DenoiseLoopConfig(
             sample_start=batch.sample_start,
             sample_count=batch.sample_count,
             seed=params.model_request.seed,
             sde=params.sde,
-            sde_window=layout.select_sde_window(params),
+            # Resolved once per request at parse time (NOT drawn here): every
+            # sample batch of the request shares the window, so a chunked prompt
+            # group keeps its stochastic step on one timestep (iso-temporal
+            # grouping — see DiffusionRequestLayout.select_sde_window).
+            sde_window=params.sde_window,
             denoise_mode=params.denoise_mode,
             teacache=params.teacache,
         )
@@ -435,6 +438,21 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
             replay_tensors = {
                 **replay_tensors,
                 "ref_noise_pred": denoise_result.ref_noise_preds,
+            }
+        # The stochastic-window bounds [lo, hi) actually used for this batch's
+        # rollout, one row per sample so chunk concatenation is trivial. The
+        # trainer's timestep_selection="sde_window" reads it to train exactly
+        # the steps that were policy actions — ODE steps outside the window
+        # were deterministic and must never receive surrogate loss. Absent when
+        # no window is configured (all steps stochastic).
+        if config.sde_window is not None:
+            window_lo, window_hi = config.sde_window
+            replay_tensors = {
+                **replay_tensors,
+                "sde_window": torch.tensor(
+                    [[int(window_lo), int(window_hi)]],
+                    dtype=torch.int64,
+                ).repeat(batch.sample_count, 1),
             }
         context = dict(model.export_batch_context(state))
 

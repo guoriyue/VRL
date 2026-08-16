@@ -13,6 +13,10 @@ def algorithm_config_class(kind: str) -> type[Any]:
         from vrl.algorithms.grpo.continuous import GRPOConfig
 
         return GRPOConfig
+    if kind == "flash_grpo":
+        from vrl.algorithms.grpo.continuous import FlashGRPOConfig
+
+        return FlashGRPOConfig
     if kind == "flow_dppo":
         from vrl.algorithms.grpo.continuous import FlowDPPOConfig
 

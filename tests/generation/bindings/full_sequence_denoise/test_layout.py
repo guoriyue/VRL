@@ -160,6 +160,40 @@ def test_custom_family_text_length_defaults_match_encoder_capability(
     assert params.max_sequence_length == expected
 
 
+def test_sde_window_is_resolved_once_at_parse_time() -> None:
+    """The RESOLVED window lives on the params, so every sample batch of a
+    request — and therefore every sample of a prompt group — shares one window
+    (Flash-GRPO's iso-temporal grouping)."""
+
+    params = _layout().parse_sampling_params(
+        _request({"sde_window_size": 1, "sde_window_range": (0, 10), "seed": 7}),
+    )
+    assert params.sde_window is not None
+    lo, hi = params.sde_window
+    assert hi - lo == 1
+    assert 0 <= lo < 10
+
+    no_window = _layout().parse_sampling_params(_request({"sde_window_size": 0}))
+    assert no_window.sde_window is None
+
+
+def test_seeded_sde_window_is_deterministic_per_request() -> None:
+    """Same request seed -> same window on every parse (multi-rank engines and
+    re-parses agree without relying on the worker RNG sync); the seed does
+    actually steer the draw."""
+
+    sampling = {"sde_window_size": 1, "sde_window_range": (0, 10), "seed": 1234}
+    first = _layout().parse_sampling_params(_request(dict(sampling)))
+    second = _layout().parse_sampling_params(_request(dict(sampling)))
+    assert first.sde_window == second.sde_window
+
+    windows = {
+        _layout().parse_sampling_params(_request({**sampling, "seed": seed})).sde_window
+        for seed in range(30)
+    }
+    assert len(windows) > 1, "30 distinct seeds all drew the same window"
+
+
 def _layout() -> DiffusionRequestLayout:
     """A layout with explicit fallbacks (the executor is the real source)."""
     return DiffusionRequestLayout(

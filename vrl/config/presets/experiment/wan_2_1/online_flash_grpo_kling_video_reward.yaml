@@ -1,0 +1,83 @@
+# Wan 2.1 1.3B T2V + Flash-GRPO (arXiv:2605.15980) with the production video
+# reward. Reproduces the reference recipe's ALGORITHM (verified against its
+# code, see tests/algorithms/test_flash_grpo.py) on vrl's runtime; every knob
+# below that mirrors the reference names its source.
+#
+# One intentional divergence: the reference optimizes HPSv3 (a 7B image
+# preference model scored per frame, top-30% mean); vrl has no HPSv3
+# integration, so this preset scores with the Kling VideoReward instead.
+# The three Flash-GRPO mechanisms are reward-agnostic.
+defaults:
+  - /recipe/online/wan_2_1_grpo
+  - /model/wan_2_1/1_3b
+  - /sampling/video/480x832_81f        # reference geometry: 480x832, 81 frames
+  - /sampling/denoise/20_step_cfg_4_5  # reference: 20 train steps, CFG 4.5
+  - /reward/kling_video_reward
+  - /dataset/videophy
+
+algorithm:
+  kind: flash_grpo        # rectified loss; clip_ratio defaults to the paper's 1e-3
+  global_std: true        # reference config: sample.global_std = True
+
+actor:
+  optim:
+    lr: 1.0e-4            # reference: train.learning_rate = 1e-4
+  ppo_epochs: 1           # reference: train.num_inner_epochs = 1
+  # Train EXACTLY the rollout's stochastic step (mechanism 1: one-step policy
+  # optimization). The trained subset is the recorded window, not a
+  # trainer-side draw, so timestep_fraction must be 1.0 — overriding
+  # base/actor.yaml's repo-wide 0.99 (the sde_window validation refuses any
+  # other value instead of silently ignoring it).
+  timestep_selection: sde_window
+  timestep_fraction: 1.0
+  # Stream one prompt group at a time; with prompts_per_batch=24 this derives
+  # gradient_accumulation_steps=24 — the 4-GPU equivalent of the reference's
+  # 8-GPU GA=12 (same 96 samples per optimizer update).
+  microbatch_size: 1
+  host_memory_budget_fraction: 0.9
+  ema:
+    enable: true          # reference: EMAModuleWrapper(trainable_parameters,
+    decay: 0.9            #   decay=0.9,
+    update_interval: 8    #   update_step_interval=8)
+
+rollout:
+  # G=4 samples per prompt (reference: sample.num_image_per_prompt = 4);
+  # 24 distinct prompts per update (reference: 96-sample updates / G).
+  n_samples_per_prompt: 4
+  prompts_per_batch: 24
+  samples_per_generation_batch: 4
+  # The window machinery lives on the SDE branch of the denoise loop; wan's
+  # family default is 'native', which bypasses it.
+  denoise_mode: sde
+  # flow_grpo SDE at noise_level 1.0 is the reference pipeline's exact
+  # parameterization (std_dev_t = sigmas[1] * sigma) — the rectification table
+  # parity test is pinned to it. cps / other noise levels are different math.
+  noise_level: 1.0
+  sde:
+    type: flow_grpo
+    # Mechanism 1+2: ONE stochastic step per trajectory, drawn once per
+    # request from the first 10 (noisy) steps — all G samples of a prompt
+    # share the draw (iso-temporal grouping). Reference: index ~ U{0..9},
+    # int(20 * timestep_fraction 0.51) = 10.
+    window_size: 1
+    window_range: [0, 10]
+
+model:
+  torch_compile:
+    enable: true
+    mode: default
+
+trainer:
+  output_dir: outputs/wan_1_3b_flash_grpo_kling_video_reward
+  save_freq: 20           # reference: save_freq = 20 epochs
+  debug:
+    first_step: true
+
+reward:
+  kwargs:
+    kling_video_reward:
+      artifact_format: mp4
+
+production:
+  kling_video_reward:
+    enabled: true

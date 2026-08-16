@@ -688,8 +688,29 @@ ratio = torch.exp(log_prob - sample["log_probs"][:, 0, 0])
 - **不碰 VideoAlign 的 Flow-DPO 视频结果**：其发布的 DPO 代码是纯文生图（SD3.5-medium），
   `config/dpo.py` 只有 `geneval_sd3()` / `pickscore_sd3()` 两个入口，无任何视频模型引用。
 - **不把 ZeRO-3 当默认**：见 §2。
-- **不修改 `vrl/`**：本 sprint 是外部仓库复现，与本仓代码解耦。若后续要把 Flash-GRPO
-  的算法移植进 `vrl/`，那是独立的 sprint，前置条件是本 sprint 的 Gate 1 通过。
+- ~~**不修改 `vrl/`**~~ **（2026-08-16 撤销）**：方向已改为**把 Flash-GRPO 移植进 `vrl/`**
+  而不是在外部仓库复现——本仓的 runtime（Ray / FSDP / checkpoint / drift guard /
+  reward 栈）远比那个研究脚本完整。移植已落地，三个机制各就其位：
+  1. **temporal gradient rectification** → `FlashGRPO(GRPO)`
+     （`vrl/algorithms/grpo/continuous.py`，`algorithm.kind: flash_grpo`）。
+     系数按 `1/c(t)`、批均值归一（跨 rank all-reduce）解析计算，
+     **不硬编码时间步表**；`tests/algorithms/test_flash_grpo.py` 中的
+     parity 测试证明它经由本仓真实的 `sde_step_with_logprob` 复现参考实现的
+     硬编码表（`value_dict {999: 7.4770 ...}`）到 0.2%，另有 autograd
+     交叉验证 `c(t)` 确为 log-prob 对 velocity 的梯度幅度。
+  2. **单随机步 rollout** → 既有 `rollout.sde.window_size=1` + `window_range=[0,10]`；
+     窗口改为**每请求解析一次**（seed 派生）并记录进轨迹
+     （replay tensor `sde_window`）。
+  3. **iso-temporal 分组** → 每请求一次的窗口抽取天然覆盖组内全部 G 个样本
+     （chunk 间共享 request seed）。
+  4. **只训练随机步** → `actor.timestep_selection: "sde_window"`
+     （逐 microbatch 读取记录的窗口；ODE 步永不吃 surrogate loss）。
+
+  配方：`experiment/wan_2_1/online_flash_grpo_kling_video_reward`
+  （480×832×81f、20 步 CFG 4.5、G=4、24 prompts/update、lr 1e-4、clip 1e-3、
+  EMA 0.9/8、global_std=true —— 全部对齐参考超参）。
+  **唯一有意分歧**：reward 用 Kling VideoReward 而非 HPSv3（本仓无 HPSv3 集成，
+  三机制与 reward 无关；HPSv3 集成是后续独立工作）。
 - **不在 L4 / g6 系列上跑**：L4 是 24GB、72W 的推理卡（AD104，58 SM，
   **dense bf16 仅 121 TFLOPS** = L40S 的 1/3；官网标的 242 是稀疏数字）。
   实测推理基线 21.98GB 已占满 24GB，且**降不下去**——把序列长度砍到约 1/6

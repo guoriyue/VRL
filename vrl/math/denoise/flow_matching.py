@@ -16,6 +16,12 @@ class SDEStepResult:
     prev_sample_mean: Any
     std_dev_t: Any
     sqrt_neg_dt: Any | None = None
+    # Flow-domain sigma of the CURRENT step (post EDM conversion, so it lives in
+    # the same [0, 1] domain as std_dev_t / sqrt_neg_dt). Flash-GRPO's temporal
+    # gradient rectification reads it: the log-prob gradient magnitude scales as
+    # sqrt(-dt)/std + std*sqrt(-dt)*(1-sigma)/(2*sigma), and the loss weight is
+    # that factor's reciprocal. None on the DDIM path (alphas ladder, no sigma).
+    sigma: Any | None = None
 
 
 def sde_step_with_logprob(
@@ -215,6 +221,7 @@ def sde_step_with_logprob(
         prev_sample_mean=prev_sample_mean,
         std_dev_t=std_dev_t,
         sqrt_neg_dt=sqrt_neg_dt,
+        sigma=sigma,
     )
 
 

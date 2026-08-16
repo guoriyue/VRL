@@ -149,6 +149,16 @@ class GRPO:
         unclipped_loss = -advantages * ratio
         clipped_loss = -advantages * clipped_ratio
         per_sample_loss = torch.maximum(unclipped_loss, clipped_loss)
+        # Optional per-sample positive weight (Flash-GRPO's temporal gradient
+        # rectification). Applied AFTER the max: for w > 0,
+        # max(w*a, w*b) == w*max(a, b), so this is exactly the weighted clipped
+        # surrogate without duplicating the loss body in the subclass.
+        weight = self._loss_weight(signals)
+        if weight is not None:
+            per_sample_loss = per_sample_loss * self._broadcast_sample_values(
+                weight,
+                per_sample_loss,
+            )
         # Unlike the historical scalar-per-denoise-step path, grouped causal
         # replay has a real transition mask. Fold it into the same denominator
         # as TIS/RS so deterministic cache-finalization passes never become
@@ -220,6 +230,16 @@ class GRPO:
 
         return loss, metrics
 
+    def _loss_weight(self, signals: Any) -> Any | None:
+        """Per-sample positive weight on the clipped surrogate; None = unweighted.
+
+        The Flash-GRPO subclass overrides this with its temporal gradient
+        rectification factor. Base GRPO (and the trust-region subclasses, which
+        own their loss bodies) return None.
+        """
+
+        return None
+
     @staticmethod
     def _broadcast_sample_values(values: Any, target: Any) -> Any:
         """Expand one value per sample across grouped policy-action axes."""
@@ -236,6 +256,119 @@ class GRPO:
         while values.ndim < target.ndim:
             values = values.unsqueeze(-1)
         return values
+
+
+@dataclass(slots=True)
+class FlashGRPOConfig(GRPOConfig):
+    """Hyper-parameters for Flash-GRPO (one-step policy optimization).
+
+    Inherits every GRPO knob; the default ``clip_ratio`` drops to the paper's
+    1e-3. At ppo_epochs=1 the policy does not move within an update, so the
+    ratio only deviates from 1 through rollout-vs-replay numeric drift — the
+    tight clip is a drift rail, not a trust region.
+    """
+
+    clip_ratio: float = 1e-3
+
+
+class FlashGRPO(GRPO):
+    """Flash-GRPO: GRPO with per-timestep gradient rectification.
+
+    arXiv:2605.15980 (ICML 2026). The full recipe is three mechanisms; this
+    class owns the loss-side one, the other two are rollout/trainer config:
+
+    1. Single stochastic step (rollout): ``rollout.sde.window_size=1`` with a
+       ``window_range`` over the noisy early steps — one SDE step per
+       trajectory, ODE elsewhere. One action per sample -> one transition to
+       replay and train.
+    2. Iso-temporal grouping (rollout): the window is drawn once per generation
+       request, so every sample of a prompt group shares the same timestep and
+       the group advantage is never confounded by timestep difficulty.
+    3. Temporal gradient rectification (THIS class): under the flow-matching
+       SDE with mean
+       ``mu = x*(1 + std^2/(2s)*dt) + v*(1 + std^2*(1-s)/(2s))*dt`` and noise
+       scale ``std*sqrt(-dt)``, the log-prob gradient w.r.t. the velocity
+       scales as
+
+           c(t) = sqrt(-dt)/std + std*sqrt(-dt)*(1-sigma)/(2*sigma)
+
+       which varies ~2x across the trained window (verified: 1/c reproduces
+       the reference implementation's hardcoded per-timestep table
+       {999: 7.4770 ... 785: 3.7754} on the Wan 20-step shift-3 schedule to
+       0.1%). The loss weight is ``w_i = (1/c_i) / mean(1/c)`` with the mean
+       reduced across ranks, so per-timestep gradient magnitudes equalize
+       while the effective learning rate is untouched (batch-mean weight = 1).
+
+    The cross-rank mean matches the reference's gradient_accumulation==1
+    branch (per-microbatch all-reduced mean); the reference's accumulation
+    branch normalizes over the whole update window instead — same expectation,
+    slightly different variance.
+    """
+
+    # Rectification reads std_dev_t / dt from the SDE intermediates, exactly
+    # like the trust-region subclasses.
+    needs_kl_intermediates = True
+
+    def _loss_weight(self, signals: Any) -> Any:
+        import torch
+
+        _require_rectification_signals(signals, "FlashGRPO")
+
+        def _per_sample(value: Any) -> Any:
+            tensor = torch.as_tensor(value)
+            if tensor.ndim > 1:
+                return tensor.reshape(tensor.shape[0], -1).mean(dim=1)
+            return tensor
+
+        std = _per_sample(signals.std_dev_t).float()
+        sqrt_neg_dt = _per_sample(signals.dt).float()
+        sigma = _per_sample(signals.sigma).float().clamp_min(1e-6)
+        grad_scale = sqrt_neg_dt / std + std * sqrt_neg_dt * (1 - sigma) / (2 * sigma)
+        coe = 1.0 / grad_scale.clamp_min(1e-12)
+        return coe / _cross_rank_mean(coe).clamp_min(1e-12)
+
+
+def _require_rectification_signals(signals: Any, algorithm: str) -> None:
+    """Fail fast when the SDE intermediates the rectification needs are absent.
+
+    A missing input would otherwise silently degrade to unweighted GRPO —
+    quietly changing the objective, the same failure mode
+    ``_require_trust_region_signals`` guards for the trust-region losses.
+    """
+
+    if signals.std_dev_t is None or signals.dt is None or signals.sigma is None:
+        raise RuntimeError(
+            f"{algorithm} requires flow-matching SDE signals "
+            "(std_dev_t / dt / sigma). dt comes from the evaluator's KL "
+            "intermediates (needs_kl_intermediates=True drives "
+            "SignalRequest(need_kl_intermediates=True)); sigma is produced only "
+            "by the flow-matching SDE path — it is None on DDIM/token replays, "
+            "which Flash-GRPO does not support.",
+        )
+
+
+def _cross_rank_mean(values: Any) -> Any:
+    """Mean of ``values`` over all training ranks.
+
+    Called once per microbatch by every rank in lockstep (the trainer's
+    unanimous-work gate keeps microbatch counts balanced), so the collective
+    cannot deadlock — the same argument as ``_population_std_across_ranks``.
+    An empty local tensor must NOT short-circuit before the collective:
+    emptiness is rank-local, so an empty rank contributes zeros instead.
+    """
+
+    import torch
+
+    n = values.numel()
+    dist = torch.distributed
+    distributed = dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
+    if not distributed:
+        return values.mean() if n else values.new_tensor(0.0)
+    stats = torch.stack([values.sum(), values.new_tensor(float(n))])
+    if dist.get_backend() == "nccl":
+        stats = stats.cuda()
+    dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+    return (stats[0] / stats[1].clamp_min(1.0)).to(values.device)
 
 
 def _require_trust_region_signals(signals: Any, algorithm: str) -> Any:
