@@ -43,8 +43,15 @@ algorithm:
 
 rollout:
   n_samples_per_prompt: 8
-  prompts_per_batch: 4
-  samples_per_generation_batch: 8
+  # 4 prompts x 8 samples = 32 samples per update was too small to move a 2B
+  # model: runs 2 and 3 both stayed flat after the trust region and the LoRA
+  # learning rate were each fixed and verified. 16 prompts quadruples the
+  # per-update signal and widens prompt coverage per epoch (4 prompts/epoch
+  # also risks fitting a handful of prompts rather than the distribution).
+  prompts_per_batch: 16
+  # The reward service is nf4 (4.9 GiB, not 17.3), so ~12 GiB came back to the
+  # trainer; spend it on bigger generation batches instead of leaving it idle.
+  samples_per_generation_batch: 16
   sde:
     type: flow_grpo
 

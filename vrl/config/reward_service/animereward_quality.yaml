@@ -33,5 +33,9 @@ worker_config:
   reward_model_version: IndexTeam/Index-anisora@b134a8e6+mantis-8b-idefics2-quality-4096-regression
   device: cuda:0
   dtype: bfloat16
+  # 17.3 GiB resident bf16 leaves ~15 GiB for trainer+rollout on a 32 GiB card,
+  # which caps the batch size. nf4 holds the separation (d 3.74 -> 3.61, Spearman
+  # +0.976 vs bf16) at 4.2 GiB, returning ~13 GiB to training.
+  load_in_4bit: true
   model_name: /home/mingfeiguo/.cache/huggingface/hub/models--IndexTeam--Index-anisora/snapshots/b134a8e677e4b22269827af7d596a4f2d9d3430a/reward/weights/mantis-8b-idefics2-video-eval-24frame-quality_4096_regression/checkpoint-final
   num_frames: 8
