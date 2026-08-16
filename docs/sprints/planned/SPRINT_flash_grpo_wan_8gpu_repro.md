@@ -272,7 +272,7 @@ nvidia-smi --query-gpu=index,memory.used --format=csv -l 5
 - **OOM** → 按下列顺序降，每降一档重测：
   1. `config.frames` 81 → 49 或 33（序列长度近似线性下降；33 帧实测 21.73GB vs 81 帧 21.98GB）
   2. `config.height/width` 480×832 → 320×576
-  3. reward server worker 数 8 → 2~4（见 §6，与训练争抢同样的卡）
+  3. reward server 挪到另一台机器（若已按 §6.4 从 1 worker 起步，这里已无可降）
   4. `config.sample.num_image_per_prompt` 4 → 2
   5. 最后才考虑 ZeRO-3 / param offload（见 §2 的警告）
 
@@ -405,21 +405,94 @@ SDXL 8.20、SD3-Medium 5.31、SD2 **-0.24**），单图有报告 >15。
 `reward()` 返回形状 `[batch, 2]` 的张量，两列是 (mu, sigma)（`output_dim: 2`,
 `loss_type: "uncertainty"`）。取 mu 用 `out[:, 0]`。
 
-### 6.4 显存取舍：8 worker 很可能塞不下
+### 6.4 为什么是 HTTP，以及为什么从 1 个 worker 起步
 
-HPSv3 是 7B VLM，**单 worker 约 16.5GB**（bf16 权重 ~15GB + 激活/head）。
+**HTTP 不是性能选择，是上游代码唯一提供的路径 + 版本冲突的解法。**
+`flow_grpo/rewards.py:415` 的注册表里 `ocr` / `aesthetic` / `pickscore` / `imagereward`
+都是 in-process，但 `videohpsv3` 只有 `video_hpsv3_remote` 一个实现。
+即使自己补一个 in-process 版本也走不通：HPSv3 需要 transformers ≥4.45（Qwen2-VL 支持
+在 4.45 落地），训练环境钉 4.40.0，同进程即同环境，版本只能二选一（§6.1 坑 1）。
+
+**HTTP 只决定进程间通信方式，不决定进程住哪张卡。** `gunicorn.conf.py` 的
+`post_fork` 给每个 worker 设 `CUDA_VISIBLE_DEVICES`，所以把 `NUM_DEVICES` 改小即可让
+reward 只占少数几张卡，其余卡纯训练——**这才是"复用同样 8 张卡"的正确做法**，
+而不是取消 HTTP。
+
+**性能上 HTTP 几乎无代价，因为 reward 已经是异步的**：
+
+```python
+# scripts/train_wan2_1_flash_1node.py:797
+rewards = executor.submit(reward_fn, [videos, path], prompts, ...)   # 立即返回
+time.sleep(0)          # yield，让 reward 线程真正启动
+...                    # 继续 rollout 下一个样本
+# :829 —— 隔了整整一轮采样之后才取结果
+rewards, reward_metadata = sample["rewards"].result()
+```
+
+`ThreadPoolExecutor(max_workers=8)`（`:658`）让 reward 计算与后续 rollout **重叠**。
+量级对比（基于 §3.2 实测的 73s/81帧）：
+
+| 每卡每次 update | 时间 |
+|---|---|
+| rollout（12 样本 × 20 步去噪） | ~18–24 分钟 |
+| reward（12 样本 × 81 帧 HPSv3 前向） | ~1–1.6 分钟 |
+
+**reward 仅占 rollout 的 5–8%，且被异步掩盖。** localhost 上 JPEG+pickle 的搬运是
+毫秒级，相对 7B 模型 81 次前向可忽略。
+
+**显存才是 HTTP 的真实代价**：每个 worker 一份完整 7B 权重，**约 16.5GB**。
 
 ```text
 48 GB  -  16.5 GB (reward worker)  =  31.5 GB  留给训练
 但推理基线已实测 21.98 GB  ->  仅剩 ~9.5 GB 给 rollout buffer + 反传激活
 ```
 
-这比原先"先按 8 worker 试"的判断悲观得多。**修订建议：直接从 2 个 worker 起步**
-（放在 2 张卡上，其余 6 张纯训练），Gate 0 通过后再视余量增加。
-reward 打分是 rollout 之后的间歇负载，worker 少只是打分排队久一点，不影响正确性。
+**修订建议：从 1 个 worker 起步**（早先写的 "先试 8 worker" 已被上面的算术推翻，
+"2 worker" 也偏保守）。理由是 reward 只占 5–8% 的时间且异步执行，单 worker 串行排队
+不会成为瓶颈；而每多一个 worker 就多吃一张卡 16.5GB。
 
-若 2 worker 仍紧，可把 reward server 挪到**另一台机器**（`REWARD_SERVER_URL` 已支持，
-见 §4 第 4 条），代价是网络传输 JPEG 的带宽。
+Gate 0 通过、确认还有余量后再加 worker。若单 worker 仍挤，把 reward server 挪到
+**另一台机器**（`REWARD_SERVER_URL` 已支持，见 §4 第 4 条）——这条退路正是 HTTP 架构
+给的，in-process 没有。
+
+### 6.5 能不能让 rollout 和 training 重叠？
+
+**在本 sprint 的范围内：不能，而且不应该试。** 但这是个真问题，值得写清为什么。
+
+主循环是严格的两段式（`:702` `#### SAMPLING ####` → `:984` `#### TRAINING ####`）：
+先 `transformer.eval()` 采完整个 update 的 96 个样本，再 `transformer.train()` 做 12 次
+梯度累积。两段之间没有重叠。
+
+**阻挡重叠的是 on-policy 约束，不是工程惰性**：
+
+```python
+# :1062
+ratio = torch.exp(log_prob - sample["log_probs"][:, 0, 0])
+```
+
+`sample["log_probs"]` 是**采样时那份权重**算出的 log-prob，`log_prob` 是**当前正在训练的
+权重**算出的。这个比值就是重要性采样权重，PPO/GRPO 的裁剪正是作用在它上面。
+
+如果一边训练一边采样，采样用的权重在同一个 update 内不断漂移，`ratio` 的分母就不再对应
+一个确定的行为策略——**这不是精度问题，是算法定义被破坏**。同理，GRPO 的组内 advantage
+要求同 prompt 的 G 个样本来自同一策略，否则组内比较失去意义。
+
+还有两条现实约束：
+
+1. **显存**：rollout（推理，实测 22GB）与 training（反传激活 + 优化器）如果同时驻留，
+   峰值是两者之和。48GB 卡在 §6.4 的算术下已经很紧，重叠会直接 OOM。
+2. **同一份权重**：两阶段共用同一个 `pipeline.transformer`，靠 `eval()`/`train()` 切换。
+   要真重叠得持有两份权重副本（+2.78GB）并做显式同步——这是 slime / veRL 那类
+   异步 RL 框架的做法，不是给这个脚本打补丁能得到的。
+
+**已经存在的重叠**（免费拿到的那部分）：reward 计算与 rollout 通过
+`executor.submit` 重叠（§6.4），而这恰好是最容易重叠、收益最明确的一段——
+因为 reward 用的是**已经生成完的视频**，不依赖任何还在变的权重。
+
+**真想做异步 RL 的正确姿势**是换框架（rollout engine 与 trainer 分离、
+带明确的权重同步与 staleness 策略），而不是改这个脚本。本仓 `vrl/` 里有相关工作
+（`StalenessPolicy`、continuous three-stage pipeline），但那是独立方向，
+**前置条件仍是本 sprint 的 Gate 1 先跑通**——先证明能复现，再谈提速。
 
 ## 7. 待记录（执行时回填）
 
@@ -440,6 +513,10 @@ reward 打分是 rollout 之后的间歇负载，worker 少只是打分排队久
 - **不把 ZeRO-3 当默认**：见 §2。
 - **不修改 `vrl/`**：本 sprint 是外部仓库复现，与本仓代码解耦。若后续要把 Flash-GRPO
   的算法移植进 `vrl/`，那是独立的 sprint，前置条件是本 sprint 的 Gate 1 通过。
+- **不试图让 rollout 与 training 重叠**：见 §6.5——被 on-policy 的 `ratio` 定义挡住，
+  且显存装不下。异步 RL 是换框架的事（`vrl/rollouts/orchestration/continuous/`
+  的 `StalenessPolicy` 与 `SPRINT_continuous_three_stage_pipeline_program.md` 是本仓的
+  相关方向），不是给这个脚本打补丁。
 
 ## 9. 参考
 
