@@ -68,8 +68,12 @@ def register(subparsers: Any) -> None:
     parser = subparsers.add_parser(COMMAND_NAME)
     parser.add_argument("--repo-id", default=DEFAULT_REPO_ID)
     parser.add_argument("--csv-file", default=DEFAULT_CSV_FILE)
-    parser.add_argument("--train-prompts", type=Path, default=repo_root() / "datasets/videophy/train.txt")
-    parser.add_argument("--eval-prompts", type=Path, default=repo_root() / "datasets/videophy/eval.txt")
+    parser.add_argument(
+        "--train-prompts", type=Path, default=repo_root() / "datasets/videophy/train.txt"
+    )
+    parser.add_argument(
+        "--eval-prompts", type=Path, default=repo_root() / "datasets/videophy/eval.txt"
+    )
     parser.add_argument("--data-root", type=Path, default=None)
     parser.add_argument("--cache-dir", type=Path, default=default_cache_dir())
     parser.add_argument("--width", type=int, default=832)
@@ -374,11 +378,7 @@ def _cmd_videophy_i2v(args: argparse.Namespace) -> None:
 
 
 def _read_prompts(path: Path) -> list[str]:
-    return [
-        line.strip()
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _normalize_caption(text: str) -> str:

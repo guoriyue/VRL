@@ -36,9 +36,7 @@ def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
         std = float(_population_std_across_ranks(local))
         # also exercise the full advantage path: one group per rank, global_std on
         gids = torch.zeros(local.numel(), dtype=torch.long)
-        adv = group_relative_advantages(
-            local, gids, eps=1e-8, adv_clip_max=10.0, global_std=True
-        )
+        adv = group_relative_advantages(local, gids, eps=1e-8, adv_clip_max=10.0, global_std=True)
         # advantage = (r - local_group_mean) / global_std → recover the denominator
         recovered_denom = float((local[0] - local.mean()) / adv[0])
         q.put((rank, std, recovered_denom))
@@ -57,9 +55,7 @@ def test_global_std_is_cross_rank_not_per_rank() -> None:
 
     ctx = mp.get_context("spawn")
     q: mp.Queue = ctx.Queue()
-    procs = [
-        ctx.Process(target=_run_rank, args=(rank, 2, 29555, q)) for rank in range(2)
-    ]
+    procs = [ctx.Process(target=_run_rank, args=(rank, 2, 29555, q)) for rank in range(2)]
     for p in procs:
         p.start()
     results = {}

@@ -1,2 +1,1 @@
 """Reusable NN layer contracts."""
-

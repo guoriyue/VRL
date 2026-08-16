@@ -30,7 +30,9 @@ from vrl.utils.nsys_report import analyze, format_report, report_to_dict
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("capture", help="path to a .nsys-rep or exported .sqlite")
     parser.add_argument(
         "--window-nvtx",
@@ -59,7 +61,9 @@ def main(argv: list[str] | None = None) -> int:
         "sub-launch gaps, so a floor keeps the report about real bubbles",
     )
     parser.add_argument("--top-nvtx", type=int, default=20, help="number of NVTX stages to show")
-    parser.add_argument("--json", default=None, metavar="PATH", help="also write the report as JSON")
+    parser.add_argument(
+        "--json", default=None, metavar="PATH", help="also write the report as JSON"
+    )
     args = parser.parse_args(argv)
 
     window = None

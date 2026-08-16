@@ -41,17 +41,25 @@ def main() -> None:
     p.add_argument("--height", type=int, default=1024)
     p.add_argument("--width", type=int, default=1024)
     p.add_argument("--batches", type=int, nargs="+", default=[1, 2, 4])
-    p.add_argument("--peak-tflops", type=float, default=0.0,
-                   help="bf16 MFU denominator; 0 = measure real bf16 peak (gpu_preflight). "
-                        "419 is the fp8/sparse headline; real 5090 bf16 dense is ~232.")
-    p.add_argument("--compile", action="store_true",
-                   help="torch.compile the transformer (measures training-side fusion "
-                        "headroom: backward MFU eager vs compiled). Restricts to ckpt=False "
-                        "since compile+grad-checkpointing recompiles/collides.")
+    p.add_argument(
+        "--peak-tflops",
+        type=float,
+        default=0.0,
+        help="bf16 MFU denominator; 0 = measure real bf16 peak (gpu_preflight). "
+        "419 is the fp8/sparse headline; real 5090 bf16 dense is ~232.",
+    )
+    p.add_argument(
+        "--compile",
+        action="store_true",
+        help="torch.compile the transformer (measures training-side fusion "
+        "headroom: backward MFU eager vs compiled). Restricts to ckpt=False "
+        "since compile+grad-checkpointing recompiles/collides.",
+    )
     args = p.parse_args()
 
     if args.peak_tflops <= 0:
         from vrl.scripts.perf.gpu_preflight import measured_bf16_peak_tflops
+
         args.peak_tflops = measured_bf16_peak_tflops()
         print(f"measured bf16 peak (MFU denominator) = {args.peak_tflops:.0f} TFLOPS")
 
@@ -86,9 +94,11 @@ def main() -> None:
         attn = cfg.num_layers * 2 * 2 * (seq * seq) * d_model * rows
         return lin + attn
 
-    print(f"model {n_params/1e9:.2f}B, seq={seq}, peak~{args.peak_tflops:.0f} TFLOPS bf16")
-    print(f"\n{'batch':>5} | {'ckpt':>9} | {'fwd ms':>7} | {'bwd ms':>7} | "
-          f"{'bwd/fwd':>7} | {'fwd+bwd MFU':>11} | {'peak GB':>7}")
+    print(f"model {n_params / 1e9:.2f}B, seq={seq}, peak~{args.peak_tflops:.0f} TFLOPS bf16")
+    print(
+        f"\n{'batch':>5} | {'ckpt':>9} | {'fwd ms':>7} | {'bwd ms':>7} | "
+        f"{'bwd/fwd':>7} | {'fwd+bwd MFU':>11} | {'peak GB':>7}"
+    )
 
     for b in args.batches:
         # No CFG in training replay here; one row per sample.
@@ -111,13 +121,23 @@ def main() -> None:
 
             def _fwd_nograd(emb=emb, pol=pol, latents=latents, ts=ts):
                 with torch.no_grad():
-                    tf(hidden_states=latents, timestep=ts, encoder_hidden_states=emb,
-                       pooled_projections=pol, return_dict=False)
+                    tf(
+                        hidden_states=latents,
+                        timestep=ts,
+                        encoder_hidden_states=emb,
+                        pooled_projections=pol,
+                        return_dict=False,
+                    )
 
             def _step(emb=emb, pol=pol, latents=latents, ts=ts):
                 tf.zero_grad(set_to_none=True)
-                out = tf(hidden_states=latents, timestep=ts, encoder_hidden_states=emb,
-                         pooled_projections=pol, return_dict=False)[0]
+                out = tf(
+                    hidden_states=latents,
+                    timestep=ts,
+                    encoder_hidden_states=emb,
+                    pooled_projections=pol,
+                    return_dict=False,
+                )[0]
                 out.float().pow(2).mean().backward()
                 del out
 
@@ -129,8 +149,10 @@ def main() -> None:
                 peak = torch.cuda.max_memory_allocated() / 1024**3
                 bwd_ms = max(step_ms - fwd_ms, 0.01)
                 mfu = total_flops / (step_ms / 1e3) / 1e12 / args.peak_tflops * 100
-                print(f"{b:>5} | {ckpt:>9} | {fwd_ms:>7.1f} | {bwd_ms:>7.1f} | "
-                      f"{bwd_ms/fwd_ms:>7.2f} | {mfu:>10.0f}% | {peak:>7.2f}")
+                print(
+                    f"{b:>5} | {ckpt:>9} | {fwd_ms:>7.1f} | {bwd_ms:>7.1f} | "
+                    f"{bwd_ms / fwd_ms:>7.2f} | {mfu:>10.0f}% | {peak:>7.2f}"
+                )
             except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
                 print(f"{b:>5} | {ckpt:>9} | OOM/err ({type(exc).__name__})")
             finally:
@@ -138,10 +160,12 @@ def main() -> None:
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
 
-    print("\nreads: bwd/fwd~2 expected; if MFU low at batch=1 -> launch-bound "
-          "(batch up / compile helps). full = lower peak GB but recompute tax; "
-          "selective should sit between off and full on time, near full on peak GB "
-          "-> the win is reaching larger batch (higher MFU) where off would OOM.")
+    print(
+        "\nreads: bwd/fwd~2 expected; if MFU low at batch=1 -> launch-bound "
+        "(batch up / compile helps). full = lower peak GB but recompute tax; "
+        "selective should sit between off and full on time, near full on peak GB "
+        "-> the win is reaching larger batch (higher MFU) where off would OOM."
+    )
 
 
 if __name__ == "__main__":

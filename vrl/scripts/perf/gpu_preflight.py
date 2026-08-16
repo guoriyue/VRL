@@ -162,9 +162,16 @@ def run_gpu_preflight(*, force: bool = False) -> GpuPreflight:
 
     if not torch.cuda.is_available():
         _REPORT_CACHE = GpuPreflight(
-            available=False, device_name="cpu", sm="", arch_list=(), arch_ok=False,
-            bf16_peak_tflops=0.0, sdpa_backend_tflops={}, best_sdpa_backend="math",
-            flash_attn_pkg=None, warnings=("no CUDA device",),
+            available=False,
+            device_name="cpu",
+            sm="",
+            arch_list=(),
+            arch_ok=False,
+            bf16_peak_tflops=0.0,
+            sdpa_backend_tflops={},
+            best_sdpa_backend="math",
+            flash_attn_pkg=None,
+            warnings=("no CUDA device",),
         )
         return _REPORT_CACHE
 
@@ -192,9 +199,15 @@ def run_gpu_preflight(*, force: bool = False) -> GpuPreflight:
     fa = _flash_attn_version()
 
     _REPORT_CACHE = GpuPreflight(
-        available=True, device_name=torch.cuda.get_device_name(0), sm=sm,
-        arch_list=arch_list, arch_ok=arch_ok, bf16_peak_tflops=peak,
-        sdpa_backend_tflops=sdpa, best_sdpa_backend=best, flash_attn_pkg=fa,
+        available=True,
+        device_name=torch.cuda.get_device_name(0),
+        sm=sm,
+        arch_list=arch_list,
+        arch_ok=arch_ok,
+        bf16_peak_tflops=peak,
+        sdpa_backend_tflops=sdpa,
+        best_sdpa_backend=best,
+        flash_attn_pkg=fa,
         warnings=tuple(warns),
     )
     return _REPORT_CACHE
@@ -209,8 +222,13 @@ def log_gpu_preflight() -> GpuPreflight:
     logger.info(
         "GPU preflight: %s (%s) | arch_ok=%s | bf16 peak=%.0f TFLOPS (MFU denominator) "
         "| best SDPA=%s %s | flash_attn_pkg=%s",
-        r.device_name, r.sm, r.arch_ok, r.bf16_peak_tflops, r.best_sdpa_backend,
-        {k: round(v) for k, v in r.sdpa_backend_tflops.items()}, r.flash_attn_pkg,
+        r.device_name,
+        r.sm,
+        r.arch_ok,
+        r.bf16_peak_tflops,
+        r.best_sdpa_backend,
+        {k: round(v) for k, v in r.sdpa_backend_tflops.items()},
+        r.flash_attn_pkg,
     )
     for w in r.warnings:
         logger.warning("GPU preflight: %s", w)

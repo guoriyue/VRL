@@ -91,8 +91,12 @@ def main(argv=None) -> None:
     p.add_argument("--warmup", type=int, default=1)
     p.add_argument("--iters", type=int, default=3)
     p.add_argument("--out", default="results_vllm_omni.json")
-    p.add_argument("--no-offload", dest="offload", action="store_false",
-                   help="disable vLLM-Omni CPU offload (will OOM the big models on 32GB)")
+    p.add_argument(
+        "--no-offload",
+        dest="offload",
+        action="store_false",
+        help="disable vLLM-Omni CPU offload (will OOM the big models on 32GB)",
+    )
     p.set_defaults(offload=True)
     args = p.parse_args(argv)
 
@@ -113,7 +117,11 @@ def main(argv=None) -> None:
     try:
         omni = _build_omni(args.model, args.precision, args.offload)
         params = _sampling_params(
-            args.height, args.width, args.steps, args.guidance, is_qwen,
+            args.height,
+            args.width,
+            args.steps,
+            args.guidance,
+            is_qwen,
         )
         for _ in range(args.warmup):
             omni.generate(DIFFUSION_BENCHMARK_PROMPT, params)
@@ -144,9 +152,11 @@ def main(argv=None) -> None:
             ),
             engine_metrics=_jsonable(last_metrics),
         )
-        print(f"[ok] {args.model} {args.precision}: "
-              f"{record['forward_ms_median']:.1f} ms/img, "
-              f"peak {record['peak_mem_mib']:.0f} MiB")
+        print(
+            f"[ok] {args.model} {args.precision}: "
+            f"{record['forward_ms_median']:.1f} ms/img, "
+            f"peak {record['peak_mem_mib']:.0f} MiB"
+        )
     except Exception as exc:
         peak = (
             torch.cuda.max_memory_allocated() / (1024 * 1024)

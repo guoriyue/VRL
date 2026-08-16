@@ -10,6 +10,7 @@ def test_production_preflight_fails_when_inference_code_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks production preflight fails when inference code missing."""
+
     def _raise() -> None:
         raise ImportError("missing Kling inference backend")
 
@@ -31,6 +32,7 @@ def test_production_preflight_skipped_when_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks production preflight skipped when disabled."""
+
     def _raise() -> None:
         raise ImportError("missing Kling inference backend")
 

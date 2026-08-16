@@ -60,7 +60,9 @@ def _first_frame(video_path: Path) -> Image.Image:
     return Image.fromarray(np.asarray(frame)).convert("RGB")
 
 
-def _fit_resolution(image: Image.Image, pipe: WanImageToVideoPipeline, max_area: int) -> Image.Image:
+def _fit_resolution(
+    image: Image.Image, pipe: WanImageToVideoPipeline, max_area: int
+) -> Image.Image:
     """Resize keeping aspect so H*W ~= max_area and both are model-valid multiples.
 
     Mirrors the diffusers Wan I2V recipe: dims must be divisible by
@@ -175,8 +177,11 @@ def main() -> None:
             generator=torch.Generator(device="cpu").manual_seed(idx),
         )
 
-        print(f"[gen] prompt{idx:02d} {image.width}x{image.height} "
-              f"{args.num_frames}f/{args.steps}steps :: {prompt}", flush=True)
+        print(
+            f"[gen] prompt{idx:02d} {image.width}x{image.height} "
+            f"{args.num_frames}f/{args.steps}steps :: {prompt}",
+            flush=True,
+        )
         t1 = time.time()
         try:
             frames = pipe(**kwargs).frames[0]

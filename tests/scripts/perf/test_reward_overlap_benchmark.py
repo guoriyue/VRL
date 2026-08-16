@@ -61,16 +61,31 @@ def _passing_campaign(out_dir: Path, repeats: int = 5) -> None:
 
     for repeat in range(repeats):
         _write_run(
-            out_dir, "A", repeat,
-            collect_wall=100.0, generation_wall=40.0, reward_wall=60.0, overlap=0.0,
+            out_dir,
+            "A",
+            repeat,
+            collect_wall=100.0,
+            generation_wall=40.0,
+            reward_wall=60.0,
+            overlap=0.0,
         )
         _write_run(
-            out_dir, "B", repeat,
-            collect_wall=102.0, generation_wall=40.0, reward_wall=62.0, overlap=0.0,
+            out_dir,
+            "B",
+            repeat,
+            collect_wall=102.0,
+            generation_wall=40.0,
+            reward_wall=62.0,
+            overlap=0.0,
         )
         _write_run(
-            out_dir, "C", repeat,
-            collect_wall=70.0, generation_wall=40.0, reward_wall=60.0, overlap=30.0,
+            out_dir,
+            "C",
+            repeat,
+            collect_wall=70.0,
+            generation_wall=40.0,
+            reward_wall=60.0,
+            overlap=30.0,
         )
 
 
@@ -95,12 +110,22 @@ def test_rejects_improvement_below_the_ten_percent_floor(tmp_path: Path) -> None
     """A 5% win is the sprint's kill condition, not a pass."""
     for repeat in range(5):
         _write_run(
-            tmp_path, "A", repeat,
-            collect_wall=100.0, generation_wall=40.0, reward_wall=60.0, overlap=0.0,
+            tmp_path,
+            "A",
+            repeat,
+            collect_wall=100.0,
+            generation_wall=40.0,
+            reward_wall=60.0,
+            overlap=0.0,
         )
         _write_run(
-            tmp_path, "C", repeat,
-            collect_wall=95.0, generation_wall=40.0, reward_wall=60.0, overlap=5.0,
+            tmp_path,
+            "C",
+            repeat,
+            collect_wall=95.0,
+            generation_wall=40.0,
+            reward_wall=60.0,
+            overlap=5.0,
         )
 
     report = analyze(tmp_path, warmup_iterations=2)
@@ -113,12 +138,22 @@ def test_rejects_generation_p95_regression_beyond_five_percent(tmp_path: Path) -
     """Overlap that steals generation throughput is not a win."""
     for repeat in range(5):
         _write_run(
-            tmp_path, "A", repeat,
-            collect_wall=100.0, generation_wall=40.0, reward_wall=60.0, overlap=0.0,
+            tmp_path,
+            "A",
+            repeat,
+            collect_wall=100.0,
+            generation_wall=40.0,
+            reward_wall=60.0,
+            overlap=0.0,
         )
         _write_run(
-            tmp_path, "C", repeat,
-            collect_wall=80.0, generation_wall=44.0, reward_wall=60.0, overlap=25.0,
+            tmp_path,
+            "C",
+            repeat,
+            collect_wall=80.0,
+            generation_wall=44.0,
+            reward_wall=60.0,
+            overlap=25.0,
         )
 
     report = analyze(tmp_path, warmup_iterations=2)
@@ -132,13 +167,23 @@ def test_rejects_when_realized_saving_is_under_half_the_theoretical(tmp_path: Pa
     """Queue/hash/network overhead eating the saving is a kill condition."""
     for repeat in range(5):
         _write_run(
-            tmp_path, "A", repeat,
-            collect_wall=100.0, generation_wall=40.0, reward_wall=60.0, overlap=0.0,
+            tmp_path,
+            "A",
+            repeat,
+            collect_wall=100.0,
+            generation_wall=40.0,
+            reward_wall=60.0,
+            overlap=0.0,
         )
         # 12s realized of a theoretical 40s = 0.30.
         _write_run(
-            tmp_path, "C", repeat,
-            collect_wall=88.0, generation_wall=40.0, reward_wall=60.0, overlap=12.0,
+            tmp_path,
+            "C",
+            repeat,
+            collect_wall=88.0,
+            generation_wall=40.0,
+            reward_wall=60.0,
+            overlap=12.0,
         )
 
     report = analyze(tmp_path, warmup_iterations=2)
@@ -164,12 +209,22 @@ def test_noisy_arms_fail_the_confidence_bound_despite_a_mean_win(tmp_path: Path)
     c_walls = [55.0, 130.0, 55.0, 130.0, 60.0]
     for repeat, (a_wall, c_wall) in enumerate(zip(a_walls, c_walls, strict=True)):
         _write_run(
-            tmp_path, "A", repeat,
-            collect_wall=a_wall, generation_wall=40.0, reward_wall=60.0, overlap=0.0,
+            tmp_path,
+            "A",
+            repeat,
+            collect_wall=a_wall,
+            generation_wall=40.0,
+            reward_wall=60.0,
+            overlap=0.0,
         )
         _write_run(
-            tmp_path, "C", repeat,
-            collect_wall=c_wall, generation_wall=40.0, reward_wall=60.0, overlap=20.0,
+            tmp_path,
+            "C",
+            repeat,
+            collect_wall=c_wall,
+            generation_wall=40.0,
+            reward_wall=60.0,
+            overlap=20.0,
         )
 
     report = analyze(tmp_path, warmup_iterations=2)
@@ -182,8 +237,13 @@ def test_failed_run_is_not_silently_averaged_in(tmp_path: Path) -> None:
     """A crashed run must abort the verdict, not shrink the sample."""
     _passing_campaign(tmp_path)
     _write_run(
-        tmp_path, "C", 9,
-        collect_wall=10.0, generation_wall=40.0, reward_wall=60.0, overlap=30.0,
+        tmp_path,
+        "C",
+        9,
+        collect_wall=10.0,
+        generation_wall=40.0,
+        reward_wall=60.0,
+        overlap=30.0,
         verdict="failed",
     )
 
@@ -197,14 +257,34 @@ def test_warmup_steps_are_dropped_before_averaging(tmp_path: Path) -> None:
     run_dir.mkdir(parents=True)
     (run_dir / "run_verdict.json").write_text(json.dumps({"verdict": "success"}))
     rows = [
-        {"step": 0, "collect.wall": 500.0, "collect.generation_wall": 1.0,
-         "collect.reward_wall": 1.0, "collect.generation_reward_overlap": 0.0},
-        {"step": 1, "collect.wall": 300.0, "collect.generation_wall": 1.0,
-         "collect.reward_wall": 1.0, "collect.generation_reward_overlap": 0.0},
-        {"step": 2, "collect.wall": 100.0, "collect.generation_wall": 1.0,
-         "collect.reward_wall": 1.0, "collect.generation_reward_overlap": 0.0},
-        {"step": 3, "collect.wall": 100.0, "collect.generation_wall": 1.0,
-         "collect.reward_wall": 1.0, "collect.generation_reward_overlap": 0.0},
+        {
+            "step": 0,
+            "collect.wall": 500.0,
+            "collect.generation_wall": 1.0,
+            "collect.reward_wall": 1.0,
+            "collect.generation_reward_overlap": 0.0,
+        },
+        {
+            "step": 1,
+            "collect.wall": 300.0,
+            "collect.generation_wall": 1.0,
+            "collect.reward_wall": 1.0,
+            "collect.generation_reward_overlap": 0.0,
+        },
+        {
+            "step": 2,
+            "collect.wall": 100.0,
+            "collect.generation_wall": 1.0,
+            "collect.reward_wall": 1.0,
+            "collect.generation_reward_overlap": 0.0,
+        },
+        {
+            "step": 3,
+            "collect.wall": 100.0,
+            "collect.generation_wall": 1.0,
+            "collect.reward_wall": 1.0,
+            "collect.generation_reward_overlap": 0.0,
+        },
     ]
     (run_dir / "rollout_stats.jsonl").write_text(
         "\n".join(json.dumps(row) for row in rows) + "\n",
@@ -221,11 +301,21 @@ def test_steps_without_collection_are_skipped_not_scored_as_zero(tmp_path: Path)
     run_dir = tmp_path / "armA_run0"
     run_dir.mkdir(parents=True)
     rows = [
-        {"step": 0, "collect.wall": 100.0, "collect.generation_wall": 40.0,
-         "collect.reward_wall": 60.0, "collect.generation_reward_overlap": 0.0},
+        {
+            "step": 0,
+            "collect.wall": 100.0,
+            "collect.generation_wall": 40.0,
+            "collect.reward_wall": 60.0,
+            "collect.generation_reward_overlap": 0.0,
+        },
         {"step": 1, "backward": 3.0},
-        {"step": 2, "collect.wall": 100.0, "collect.generation_wall": 40.0,
-         "collect.reward_wall": 60.0, "collect.generation_reward_overlap": 0.0},
+        {
+            "step": 2,
+            "collect.wall": 100.0,
+            "collect.generation_wall": 40.0,
+            "collect.reward_wall": 60.0,
+            "collect.generation_reward_overlap": 0.0,
+        },
     ]
     (run_dir / "rollout_stats.jsonl").write_text(
         "\n".join(json.dumps(row) for row in rows) + "\n",
@@ -241,8 +331,13 @@ def test_analysis_requires_both_the_baseline_and_streaming_arms(tmp_path: Path) 
     """B alone cannot produce a verdict: C must beat A, not merely B."""
     for repeat in range(5):
         _write_run(
-            tmp_path, "B", repeat,
-            collect_wall=100.0, generation_wall=40.0, reward_wall=60.0, overlap=0.0,
+            tmp_path,
+            "B",
+            repeat,
+            collect_wall=100.0,
+            generation_wall=40.0,
+            reward_wall=60.0,
+            overlap=0.0,
         )
 
     with pytest.raises(RuntimeError, match=r"\['A', 'C'\]"):
@@ -252,8 +347,14 @@ def test_analysis_requires_both_the_baseline_and_streaming_arms(tmp_path: Path) 
 def test_theoretical_saving_uses_min_of_generation_and_reward(tmp_path: Path) -> None:
     """The ideal saving is min(G, R); the bottleneck stage cannot be hidden."""
     run_dir = _write_run(
-        tmp_path, "C", 0, steps=1,
-        collect_wall=70.0, generation_wall=40.0, reward_wall=60.0, overlap=30.0,
+        tmp_path,
+        "C",
+        0,
+        steps=1,
+        collect_wall=70.0,
+        generation_wall=40.0,
+        reward_wall=60.0,
+        overlap=30.0,
     )
 
     metrics = read_run_metrics(run_dir, warmup_iterations=0)

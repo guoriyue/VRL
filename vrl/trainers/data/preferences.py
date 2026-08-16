@@ -32,7 +32,7 @@ class PreferenceBatch:
     ``[B, 3, H, W]`` tensors.
     """
 
-    pixel_values: torch.Tensor   # [B, 6, H, W]
+    pixel_values: torch.Tensor  # [B, 6, H, W]
     captions: list[str]
 
     def split_winner_loser(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -65,9 +65,7 @@ class PickAPicPreferenceDataset(Dataset):
         from torchvision import transforms
 
         # Strip indecisive labels (0.5 means tie)
-        keep_idx = [
-            i for i, lbl in enumerate(hf_dataset["label_0"]) if lbl in (0, 1)
-        ]
+        keep_idx = [i for i, lbl in enumerate(hf_dataset["label_0"]) if lbl in (0, 1)]
         if len(keep_idx) < len(hf_dataset):
             hf_dataset = hf_dataset.select(keep_idx)
         self._ds = hf_dataset
@@ -76,8 +74,7 @@ class PickAPicPreferenceDataset(Dataset):
             transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BILINEAR),
         ]
         ops.append(
-            transforms.RandomCrop(resolution) if random_crop
-            else transforms.CenterCrop(resolution)
+            transforms.RandomCrop(resolution) if random_crop else transforms.CenterCrop(resolution)
         )
         if not no_hflip:
             ops.append(transforms.RandomHorizontalFlip())
@@ -147,8 +144,14 @@ def load_pickapic(
         ds = Dataset.from_list(rows)
     else:
         ds = load_dataset(
-            dataset_name, split=split, cache_dir=cache_dir, streaming=streaming,
+            dataset_name,
+            split=split,
+            cache_dir=cache_dir,
+            streaming=streaming,
         )
     return PickAPicPreferenceDataset(
-        ds, resolution=resolution, random_crop=random_crop, no_hflip=no_hflip,
+        ds,
+        resolution=resolution,
+        random_crop=random_crop,
+        no_hflip=no_hflip,
     )

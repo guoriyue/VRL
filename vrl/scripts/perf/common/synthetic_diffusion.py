@@ -29,19 +29,23 @@ def build_synthetic_inputs(
         from diffusers import SD3Transformer2DModel
 
         hidden = 1536
-        model = SD3Transformer2DModel(
-            sample_size=64,
-            patch_size=2,
-            in_channels=16,
-            out_channels=16,
-            num_layers=layers or 24,
-            attention_head_dim=64,
-            num_attention_heads=24,
-            joint_attention_dim=4096,
-            caption_projection_dim=hidden,
-            pooled_projection_dim=2048,
-            pos_embed_max_size=192,
-        ).to(device=device, dtype=dtype).eval()
+        model = (
+            SD3Transformer2DModel(
+                sample_size=64,
+                patch_size=2,
+                in_channels=16,
+                out_channels=16,
+                num_layers=layers or 24,
+                attention_head_dim=64,
+                num_attention_heads=24,
+                joint_attention_dim=4096,
+                caption_projection_dim=hidden,
+                pooled_projection_dim=2048,
+                pos_embed_max_size=192,
+            )
+            .to(device=device, dtype=dtype)
+            .eval()
+        )
         h = w = 64
         seq = 333
         kwargs: dict[str, Any] = dict(
@@ -57,19 +61,23 @@ def build_synthetic_inputs(
         from diffusers import CosmosTransformer3DModel
 
         in_ch = 16 + (1 if concat_padding_mask else 0)
-        model = CosmosTransformer3DModel(
-            in_channels=in_ch,
-            out_channels=16,
-            num_attention_heads=16,
-            attention_head_dim=128,
-            num_layers=layers or 28,
-            mlp_ratio=4.0,
-            text_embed_dim=1024,
-            adaln_lora_dim=256,
-            max_size=(128, 240, 240),
-            patch_size=(1, 2, 2),
-            concat_padding_mask=concat_padding_mask,
-        ).to(device=device, dtype=dtype).eval()
+        model = (
+            CosmosTransformer3DModel(
+                in_channels=in_ch,
+                out_channels=16,
+                num_attention_heads=16,
+                attention_head_dim=128,
+                num_layers=layers or 28,
+                mlp_ratio=4.0,
+                text_embed_dim=1024,
+                adaln_lora_dim=256,
+                max_size=(128, 240, 240),
+                patch_size=(1, 2, 2),
+                concat_padding_mask=concat_padding_mask,
+            )
+            .to(device=device, dtype=dtype)
+            .eval()
+        )
         t, h, w = 1, 44, 80
         seq = 512
         kwargs = dict(
@@ -88,18 +96,22 @@ def build_synthetic_inputs(
     if family == "wan_2_1":
         from diffusers import WanTransformer3DModel
 
-        model = WanTransformer3DModel(
-            patch_size=(1, 2, 2),
-            num_attention_heads=40,
-            attention_head_dim=128,
-            in_channels=16,
-            out_channels=16,
-            text_dim=4096,
-            freq_dim=256,
-            ffn_dim=13824,
-            num_layers=layers or 40,
-            rope_max_seq_len=1024,
-        ).to(device=device, dtype=dtype).eval()
+        model = (
+            WanTransformer3DModel(
+                patch_size=(1, 2, 2),
+                num_attention_heads=40,
+                attention_head_dim=128,
+                in_channels=16,
+                out_channels=16,
+                text_dim=4096,
+                freq_dim=256,
+                ffn_dim=13824,
+                num_layers=layers or 40,
+                rope_max_seq_len=1024,
+            )
+            .to(device=device, dtype=dtype)
+            .eval()
+        )
         t, h, w = 3, 30, 52
         seq = 512
         kwargs = dict(

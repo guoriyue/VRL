@@ -79,8 +79,7 @@ class ARCacheRows:
         row_values = list(rows)
         if len(row_values) != len(row_indices):
             raise ValueError(
-                f"{self.owner} received {len(row_values)} rows for "
-                f"{len(row_indices)} row indices",
+                f"{self.owner} received {len(row_values)} rows for {len(row_indices)} row indices",
             )
         for index, row_value in zip(row_indices, row_values, strict=True):
             self.rows[index] = row_value
@@ -119,14 +118,11 @@ def _split_plain_rows(value: Any, batch_size: int) -> list[Any]:
     if isinstance(value, torch.Tensor):
         if value.shape[0] != batch_size:
             raise ValueError(
-                f"cannot split tensor with batch={value.shape[0]} into "
-                f"{batch_size} rows",
+                f"cannot split tensor with batch={value.shape[0]} into {batch_size} rows",
             )
         return [value[row : row + 1] for row in range(batch_size)]
     if isinstance(value, Mapping):
-        split_items = {
-            key: ar_split_rows(inner, batch_size) for key, inner in value.items()
-        }
+        split_items = {key: ar_split_rows(inner, batch_size) for key, inner in value.items()}
         return [
             type(value)((key, parts[row]) for key, parts in split_items.items())
             for row in range(batch_size)
@@ -150,14 +146,10 @@ def _concat_plain_rows(values: Sequence[Any]) -> Any:
         )
     if isinstance(first, tuple):
         return tuple(
-            ar_concat_rows([value[index] for value in values])
-            for index in range(len(first))
+            ar_concat_rows([value[index] for value in values]) for index in range(len(first))
         )
     if isinstance(first, list):
-        return [
-            ar_concat_rows([value[index] for value in values])
-            for index in range(len(first))
-        ]
+        return [ar_concat_rows([value[index] for value in values]) for index in range(len(first))]
     if any(value != first for value in values[1:]):
         raise ValueError("cannot concatenate non-tensor AR values that differ")
     return first

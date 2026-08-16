@@ -22,6 +22,7 @@ verify:
 	uv sync --locked --group lint --group test --extra cosmos
 	uv pip install --python .venv/bin/python -e third_party
 	CUDA_VISIBLE_DEVICES="" uv run --no-sync ruff check .
+	CUDA_VISIBLE_DEVICES="" uv run --no-sync ruff format --check .
 	CUDA_VISIBLE_DEVICES="" uv run --no-sync python -m vrl.config.lint
 	CUDA_VISIBLE_DEVICES="" uv run --no-sync pytest tests/config -q
 	CUDA_VISIBLE_DEVICES="" uv run --no-sync pytest -m "not e2e and not slow_test" -q

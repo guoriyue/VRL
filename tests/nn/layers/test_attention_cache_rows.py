@@ -59,9 +59,7 @@ def test_ar_cache_rows_gather_and_scatter_nested_values() -> None:
     )
 
     replacement = {
-        "past_key_values": (
-            (torch.full((2, 2, 4), -1.0), torch.full((2, 2, 4), 7.0)),
-        ),
+        "past_key_values": ((torch.full((2, 2, 4), -1.0), torch.full((2, 2, 4), 7.0)),),
         "last_hidden": torch.full((2, 5), 3.0),
     }
     rows.scatter([0, 2], replacement)

@@ -14,4 +14,6 @@ import torch
 def relative_l1_drift(out: torch.Tensor, ref: torch.Tensor) -> float:
     """Mean absolute relative drift, using fp32 reductions."""
 
-    return float((out.float() - ref.float()).abs().mean() / ref.float().abs().mean().clamp_min(1e-12))
+    return float(
+        (out.float() - ref.float()).abs().mean() / ref.float().abs().mean().clamp_min(1e-12)
+    )

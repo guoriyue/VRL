@@ -223,7 +223,9 @@ def test_ddp_wraps_resolved_device_after_per_rank_mask(monkeypatch) -> None:
 
     monkeypatch.setattr(torch.nn.parallel, "DistributedDataParallel", _wrap)
 
-    DDPStrategy(context, find_unused_parameters=False).prepare_model(_FakePolicy(_ToyTransformer()))
+    DDPStrategy(context, find_unused_parameters=False).prepare_model(
+        _FakePolicy(_ToyTransformer())
+    )
 
     assert wrap_calls == [{"device_ids": [0], "find_unused_parameters": False}]
 

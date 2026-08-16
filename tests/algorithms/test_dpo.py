@@ -46,6 +46,7 @@ def _reference_dpo_loss(
 
 class TestParityWithReference:
     """Groups tests for parity with reference."""
+
     def test_matches_reference_4d_image(self) -> None:
         """SD-style image latents [2B, 4, 64, 64]."""
         torch.manual_seed(0)
@@ -84,6 +85,7 @@ class TestParityWithReference:
 
 class TestBehavior:
     """Groups tests for behavior."""
+
     def test_zero_when_policy_equals_reference(self) -> None:
         """Identical policy & reference → inside_term = 0 → loss = log(2)."""
         torch.manual_seed(2)
@@ -122,8 +124,8 @@ class TestBehavior:
         torch.manual_seed(4)
         B = 4
         target = torch.zeros(2 * B, 4, 8, 8)
-        winner = 1.0 * torch.randn(B, 4, 8, 8)   # bad on winner
-        loser = 0.01 * torch.randn(B, 4, 8, 8)   # good on loser
+        winner = 1.0 * torch.randn(B, 4, 8, 8)  # bad on winner
+        loser = 0.01 * torch.randn(B, 4, 8, 8)  # good on loser
         model_pred = torch.cat([winner, loser], dim=0)
         ref_pred = torch.randn(2 * B, 4, 8, 8) * 0.5
 
@@ -140,6 +142,7 @@ class TestBehavior:
 
 class TestValidation:
     """Groups tests for validation."""
+
     def test_rejects_odd_batch(self) -> None:
         """Checks that rejects odd batch."""
         x = torch.randn(3, 4, 4, 4)

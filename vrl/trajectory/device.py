@@ -33,15 +33,16 @@ def map_tensor_tree(
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         payload = {
             field.name: map_tensor_tree(
-                getattr(value, field.name), leaf_fn, is_leaf=is_leaf,
+                getattr(value, field.name),
+                leaf_fn,
+                is_leaf=is_leaf,
             )
             for field in dataclasses.fields(value)
         }
         return type(value)(**payload)
     if isinstance(value, dict):
         return {
-            key: map_tensor_tree(inner, leaf_fn, is_leaf=is_leaf)
-            for key, inner in value.items()
+            key: map_tensor_tree(inner, leaf_fn, is_leaf=is_leaf) for key, inner in value.items()
         }
     if isinstance(value, list):
         return [map_tensor_tree(inner, leaf_fn, is_leaf=is_leaf) for inner in value]
@@ -65,7 +66,9 @@ def move_value_to_device(value: Any, device: Any | None) -> Any:
     return map_tensor_tree(
         value,
         _move,
-        is_leaf=lambda v: callable(getattr(v, "to", None)) and not isinstance(v, (dict, list, tuple)),
+        is_leaf=lambda v: (
+            callable(getattr(v, "to", None)) and not isinstance(v, (dict, list, tuple))
+        ),
     )
 
 

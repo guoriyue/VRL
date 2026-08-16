@@ -66,7 +66,11 @@ def main(argv: list[str] | None = None) -> None:
         json.dumps({str(k): float(v) for k, v in dict(scores).items()}, indent=2),
         encoding="utf-8",
     )
-    print(json.dumps({"output": str(output), "scores": {k: float(v) for k, v in dict(scores).items()}}))
+    print(
+        json.dumps(
+            {"output": str(output), "scores": {k: float(v) for k, v in dict(scores).items()}}
+        )
+    )
 
 
 if __name__ == "__main__":

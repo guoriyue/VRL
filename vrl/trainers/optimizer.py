@@ -64,6 +64,7 @@ def build_optimizer(parameters: Any, config: TrainerConfig) -> torch.optim.Optim
         fused=use_fused or None,
     )
 
+
 class FP32MasterWeightOptimizer(torch.optim.Optimizer):
     """Run an optimizer on FP32 masters while the model keeps low-precision weights.
 

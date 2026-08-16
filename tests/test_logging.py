@@ -41,7 +41,5 @@ def test_logger_emits_once_to_stdout(capsys) -> None:
 
 def test_kv_formats_floats_and_passthrough() -> None:
     """Floats render as .3f; other values render verbatim."""
-    assert kv(elapsed_s=1.23456, n=3, name="kling") == (
-        "elapsed_s=1.235 n=3 name=kling"
-    )
+    assert kv(elapsed_s=1.23456, n=3, name="kling") == ("elapsed_s=1.235 n=3 name=kling")
     assert kv() == ""
