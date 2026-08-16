@@ -104,9 +104,10 @@ Gate 0 的判据应据此收紧：**单卡峰值 < ~40GB**（而非 44GB）。
 
 8 卡时可以牺牲 1/8 算力把 reward 独占一卡；4 卡时那是 **25% 的算力**
 （时间从 7–11 天变 9–14 天，成本 $2,371–3,630，反而超过 8 卡方案）。
-**建议：4 卡方案优先把 reward server 放到单独的小实例**
-（如 g6e.xlarge $1.86/hr，1×L40S 足够跑 7B reward model），
-训练实例满 4 卡。总成本 ≈ $1,784–2,728 + $316–484 = **$2,100–3,212**，仍低于 8 卡方案。
+**所以 4 卡下不要给 reward 独占一张卡** —— 但也**不需要开第二个实例**：
+reward server 就跑在同一台机器上，只是那 16.5GB 该放哪张卡（或放 CPU）需要选。
+四个方案与决策顺序见 **§6.4**（优先试 CPU 常驻，它零显存占用，而本机有 384 GiB
+系统内存完全闲置）。
 
 **PCIe 拓扑注意**：g6e.12xlarge 有 **2 个 NUMA node**，4 张卡很可能 2 卡/socket，
 跨 socket 的卡对通信更慢。上机后先跑 `nvidia-smi topo -m` 看是 `PHB`/`PIX`（同 root complex，快）
@@ -337,7 +338,7 @@ nvidia-smi --query-gpu=index,memory.used --format=csv -l 5
 - **OOM** → 按下列顺序降，每降一档重测：
   1. `config.frames` 81 → 49 或 33（序列长度近似线性下降；33 帧实测 21.73GB vs 81 帧 21.98GB）
   2. `config.height/width` 480×832 → 320×576
-  3. reward server 挪到另一台机器（若已按 §6.4 从 1 worker 起步，这里已无可降）
+  3. reward 从 GPU 挪到 CPU 或改按需加载（§6.4 方案 C / D，零显存占用）
   4. `config.sample.num_image_per_prompt` 4 → 2
   5. 最后才考虑 ZeRO-3 / param offload（见 §2 的警告）
 
@@ -506,19 +507,73 @@ rewards, reward_metadata = sample["rewards"].result()
 毫秒级，相对 7B 模型 81 次前向可忽略。
 
 **显存才是 HTTP 的真实代价**：每个 worker 一份完整 7B 权重，**约 16.5GB**。
+所以 **worker 数从 1 起步**（早先写的 "先试 8 worker" 已被算术推翻，"2 worker" 也偏保守）：
+reward 只占 5–8% 的时间且异步执行，单 worker 串行排队不会成为瓶颈，而每多一个 worker
+就多吃一张卡 16.5GB。
 
-```text
-48 GB  -  16.5 GB (reward worker)  =  31.5 GB  留给训练
-但推理基线已实测 21.98 GB  ->  仅剩 ~9.5 GB 给 rollout buffer + 反传激活
+#### ⚠️ 两个必须澄清的误解
+
+**误解 1：HTTP ≠ 需要第二台机器。** 本文档早期版本建议"单独开一个 g6e.xlarge 跑 reward"，
+**那是过度设计，已撤销**。server 就跑在训练同一台机器上：
+
+```python
+# gunicorn.conf.py:27
+bind = f"0.0.0.0:{port}"                        # 监听所有网卡，localhost 自然可达
+# rewards.py 默认值
+REWARD_SERVER_URL = "http://127.0.0.1:8081"     # 同机 localhost，走内存回环不过网卡
 ```
 
-**修订建议：从 1 个 worker 起步**（早先写的 "先试 8 worker" 已被上面的算术推翻，
-"2 worker" 也偏保守）。理由是 reward 只占 5–8% 的时间且异步执行，单 worker 串行排队
-不会成为瓶颈；而每多一个 worker 就多吃一张卡 16.5GB。
+"挪到另一台机器"只是 HTTP 架构**顺带提供的退路**，不是推荐做法。真正的问题从来只有一个：
+**那 16.5GB 放在哪张卡（或不放在卡上）。**
 
-Gate 0 通过、确认还有余量后再加 worker。若单 worker 仍挤，把 reward server 挪到
-**另一台机器**（`REWARD_SERVER_URL` 已支持，见 §4 第 4 条）——这条退路正是 HTTP 架构
-给的，in-process 没有。
+**误解 2：改成 in-process 并不能省显存。**
+
+```text
+独立进程 :  训练 21.98 GB + HPSv3 进程 16.5 GB = 38.5 GB
+in-process:  训练 21.98 GB + HPSv3 张量 16.5 GB = 38.5 GB
+```
+
+权重就是权重，放在哪个进程里都占同样的显存。in-process 唯一省下的是 CUDA context
+（每进程 ~300–500MB），杯水车薪。而代价有三条：**transformers 版本冲突使其根本无法
+import**（§6.1 坑 1，这条是硬的）、污染 `Accelerator`（上游 #6/#2）、
+以及**失去 `executor.submit` 的异步重叠**（同步调用会把 5–8% 变成串行阻塞）。
+
+**结论：in-process 是"付出版本冲突的代价，换来 0.5GB 和更慢"。不做。**
+
+#### 那 16.5GB 到底放哪：四个方案
+
+全部在**同一台机器**上，不需要第二个实例。
+
+| 方案 | 训练可用卡 | 显存代价 | 备注 |
+|---|---|---|---|
+| **B. 与训练共卡** | 4 | 那张卡 38.5GB / ~44GiB | 最简单；余量 5.5GB，需 Gate 0 验证 |
+| **C. reward 常驻 CPU** | 4 | **0** | 唯一零显存方案；需实测 CPU 是否够快 |
+| **D. 按需加载/卸载** | 4 | 峰值不重叠 | 每 update 搬 16.5GB 过 PCIe（~1–2s，可忽略）；要改 server 代码 |
+| A. reward 独占一卡 | 3 | 0（对训练卡） | **最后手段**：4 卡时这是 25% 算力，成本反超 8 卡方案 |
+
+**方案 C 值得优先试**，因为 g6e.12xlarge 有 **384 GiB 系统内存 + 48 vCPU** 完全闲置：
+
+```python
+# reward_server/hpsv3.py
+inferencer = HPSv3RewardInferencer(device='cpu', checkpoint_path='/abs/path/...')
+```
+
+关键算术：reward 目前占 rollout 时间的 5–8% 且**异步重叠**。即使 CPU 慢 10 倍变成
+50–80%，**只要不超过 rollout 时间，异步就能完全掩盖，墙钟时间不变**。48 vCPU 跑 7B
+批量前向并非不可行。**必须实测，但这是唯一不吃显存的路。**
+
+#### 决策顺序
+
+```text
+1. Gate 0 先只跑训练（reward 用 mock 或暂不启动）-> 拿到训练真实峰值 X
+2. X + 16.5 < 40GB   -> 方案 B，共卡，改动最小
+3. 否则试方案 C（CPU），量一次 reward 耗时，确认仍被异步掩盖
+4. C 太慢  -> 方案 D（按需搬运）
+5. 都不行 -> 方案 A（独占一卡），接受 25% 算力损失
+```
+
+**第 1 步是前提**：现在的 21.98GB 是**推理**数字，训练侧的 rollout buffer 仍是未知数。
+在知道 X 之前，讨论 reward 放哪都是空谈。
 
 ### 6.5 能不能让 rollout 和 training 重叠？
 
