@@ -105,6 +105,119 @@ gradient checkpoint  代码中默认已开（train_wan2_1_flash_1node.py:520）
 **参数侧合计仅约 3GB。** 32,760 token 的激活与 G=4 的 rollout 轨迹缓冲才是大头——
 这正是无法纸面推算、必须实测的部分。
 
+### 3.0 8 卡怎么分工：`virtual_num_replicas`
+
+并行方式是**纯数据并行**（8 张卡各持一份完整的 1.39B 模型，不切模型），
+但 GRPO 要求同一 prompt 的 G 个样本必须在同一次 update 内才能算组内 advantage，
+而每卡每次只放得下 1 个视频。作者的解法是把梯度累积也算进"并行度"：
+
+```python
+# scripts/train_wan2_1_flash_1node.py:578-586
+train_sampler = DistributedKRepeatSampler(
+    batch_size=1, k=4, num_replicas=8,
+    virtual_num_replicas=8 * 12,   # N × gradient_accum —— 注释：“一次性采样整个update的prompt”
+)
+```
+
+```text
+virtual_num_replicas = 8 × 12 = 96      个虚拟 rank
+total_samples        = 96 × 1  = 96     一次 update 的总样本
+96 % k(=4) == 0                          ✓（sampler 内有 assert）
+distinct prompts     = 96 / 4  = 24     每个重复 4 次
+accum_chunks / rank  = 96 / 8  = 12     = gradient_accum ✓
+num_batches_per_epoch = 24              → 每 epoch 2 次 optimizer step
+```
+
+分派规则 `virtual_rank = chunk * num_replicas + rank`（`:138-146`），
+所以 rank0 拿虚拟 rank 0,8,16,…,88。一个 prompt 的 4 个样本落在哪张卡无所谓——
+advantage 是跨卡算的：
+
+```python
+# :879, :896
+gathered_rewards = {k: accelerator.gather(v) for k, v in samples["rewards"].items()}
+prompt_ids       = accelerator.gather(samples["prompt_ids"]).cpu().numpy()
+```
+
+配合 `config.sample.global_std = True`，用全局 96 个样本的标准差而非每卡本地的。
+
+**为什么适合无 NVLink 的 8×L40**：每次 update 只 all-gather 96 个标量 reward +
+96 条短 token 序列（**几 KB 量级**）；ZeRO-2 同步的梯度也只有 LoRA 的 11.8M 参数
+（~24MB bf16，因为基座冻结）。最贵的 rollout（每样本 20 步去噪）在 8 卡上
+**完全独立、零通信**。真正会打爆 PCIe 的是 ZeRO-3 每步 2.78GB 的参数 all-gather——
+这正是 §2 说不要先升 ZeRO-3 的原因。
+
+### 3.1 训练数据与 reward 的实际定义
+
+**数据集**：仓库自带 `dataset/video/train.txt`（19,700 行）/ `test.txt`（300 行），
+每行一条纯文本 prompt，**无配对视频、无标注**（`TextPromptDataset` 只做 `line.strip()`，
+metadata 为空 dict）。这是 RL 而非 SFT 的直接体现：不需要目标视频，模型自采样、
+reward model 打分、GRPO 用组内相对分数更新；数据集只提供探索方向的 prompt 分布。
+内容是真实用户 T2V 查询风格（含拼写错误、西班牙语、2D 游戏素材需求）。
+
+**reward 是 HTTP 服务，不是 in-process**。训练进程把视频逐帧编码成 JPEG、pickle 打包
+POST 给 gunicorn（`flow_grpo/rewards.py:93` `video_hpsv3_remote`）；服务端才持有模型
+（`flow_grpo/reward-server/reward_server/hpsv3.py`）。这就是 `gunicorn.conf.py` 写死
+`NUM_DEVICES = 8` 的由来——它与训练争抢同样 8 张卡（§6 的待定取舍）。
+
+**打分粒度：逐帧打分，取最高 30% 的均值**：
+
+```python
+# flow_grpo/rewards.py:145-147
+response_data["outputs"].sort(reverse=True)
+all_scores += [sum(response_data["outputs"][:int(l*0.3)])/int(l*0.3)]
+```
+
+HPSv3 是**图像**模型，不是视频模型。81 帧被当成 81 张独立图片各打一分，降序取前 30%
+求平均。含义有三：优化的是"最好的那些帧有多好"而非平均质量；取 top-30% 抗运动模糊/
+过渡帧的噪声；**完全不看时序**——帧间连贯性与运动合理性不在 reward 内。
+
+因此本配方优化的是**逐帧美学 + 图文对齐**，与论文在 VBench 上主要报告 Aesthetic Quality
+和 Subject Consistency 提升是自洽的。若要优化运动质量，需换 reward（如 VideoReward /
+VideoAlign，见 §9 调研），那是另一个 sprint。
+
+### 3.2 已实测：基座推理在单卡上正确且只要 22GB（2026-08-15）
+
+在本地开发机（1×RTX 5090 32GB，sm_120，torch 2.11 / diffusers 0.39）跑了基座推理冒烟，
+用**训练配置的真实第一条 prompt** 与**训练时的采样参数**（20 步、CFG 4.5）：
+
+| | 33 帧 | **81 帧（训练几何）** |
+|---|---|---|
+| 峰值显存 | 21.73 GB | **21.98 GB** |
+| 耗时 | 21.8 s | 73.0 s |
+| 每步 | 1.09 s | 3.65 s |
+| 空间 std（0-255） | 77.1 | 53.9 |
+| 帧间平均绝对差 | 11.62 | 13.53 |
+
+画面正确：白色背景、蓝色士兵剪影排成一列自右向左行进，逐帧位置变化。
+prompt 的四个要素（`infinite white background` / `walking in a row` / `right to left` /
+`one behind the other`）全部命中。**基座权重、VAE、调度器、文本编码器均正常，
+缓存的 27GB 权重完整可用。**
+
+产物（`outputs/` 已被 .gitignore，故留在本地不入库）：
+
+```text
+outputs/wan_base_smoke_20260815/
+├── wan_base_rollout_smoke.py     # 可重跑的脚本（一次性验证件，非长期资产）
+├── wan_smoke/                    # 33 帧
+│   ├── sample.mp4
+│   ├── contact_sheet.png         # 第 0/8/16/24/32 帧拼图
+│   └── stats.json
+└── wan_smoke_81f/                # 81 帧，训练几何
+    ├── sample.mp4
+    └── stats.json
+```
+
+重跑：`python outputs/wan_base_smoke_20260815/wan_base_rollout_smoke.py --frames 81 --out <dir>`
+
+**对 Gate 0 的意义**：22GB 是推理下界，48GB 卡尚余 ~26GB 给训练侧的
+反传激活（已开 checkpointing）、LoRA 优化器（~0.12GB）和 rollout buffer
+（G=4 条轨迹 × 20 步的 latent + logprob）。**Gate 0 实测的就是最后一项**，
+风险比纸面推算时估计的低。
+
+**限定**：本机是 sm_120 + torch 2.11，8 卡机是 sm_89 + torch 2.6.0（setup.py 钉版），
+attention 后端可能不同（FlashAttention vs SDPA），显存会有出入。
+**此测试证明的是"模型与权重没问题"，不是"L40 上就是 22GB"。**
+
 ## 4. 上游代码的五个阻塞（已修复，本地提交 `8f7552e`）
 
 `Shredded-Pork/Flash-GRPO` 的 1-node 路径开箱即坏，五处各自独立阻断启动：
@@ -143,10 +256,17 @@ nvidia-smi --query-gpu=index,memory.used --format=csv -l 5
 
 - **单卡峰值 < ~44GB** → 通过，进入 Gate 1（留 4GB 余量给碎片与 reward server）
 - **OOM** → 按下列顺序降，每降一档重测：
-  1. `config.sample.num_image_per_prompt` 4 → 2（G 减半，rollout buffer 直接减半）
-  2. `config.frames` 81 → 49 或 33
-  3. `config.height/width` 480×832 → 320×576
-  4. 最后才考虑 ZeRO-3 / param offload（见 §2 的警告）
+  1. `config.frames` 81 → 49 或 33（序列长度近似线性下降；33 帧实测 21.73GB vs 81 帧 21.98GB）
+  2. `config.height/width` 480×832 → 320×576
+  3. reward server worker 数 8 → 2~4（见 §6，与训练争抢同样的卡）
+  4. `config.sample.num_image_per_prompt` 4 → 2
+  5. 最后才考虑 ZeRO-3 / param offload（见 §2 的警告）
+
+**顺序理由**：降帧数/分辨率只减少单样本的计算量，**不改变 GRPO 的统计结构**；
+降 G 会直接削弱 advantage 的信噪比——组内只剩 2 个样本时，组内均值/标准差的估计方差
+显著变大，影响 RL 收敛质量。因此把 G 排在帧数与分辨率之后。
+（注意降 G 不减少 `total_samples`：sampler 的 `virtual_num_replicas = N × GA = 96` 固定，
+G 减半只是把 24 个 prompt × 4 变成 48 个 prompt × 2。）
 
 降档会偏离论文配方，**必须在 §7 记录实际使用值**，否则复现结论不可比。
 
@@ -192,8 +312,9 @@ Gate 0 若因此 OOM 再降到 2–4 worker。
 
 ## 7. 待记录（执行时回填）
 
+- [x] 基座推理正确性 + 单卡推理显存 → §3.2（22GB @ 81 帧训练几何，画面正确）
 - [ ] 实际 GPU 型号（`nvidia-smi -L`）与驱动版本
-- [ ] Gate 0 单卡峰值显存
+- [ ] Gate 0 单卡峰值显存（**训练**，含 rollout buffer）
 - [ ] 是否降档、降了哪些、最终实际配置值
 - [ ] 单 epoch wall-clock，据此外推总时长
 - [ ] reward server worker 数的最终取舍
