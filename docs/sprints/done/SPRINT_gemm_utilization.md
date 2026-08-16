@@ -133,6 +133,53 @@ cosmos 最大是因为 eager 碎得多（层更深 + AdaLN-LoRA modulation 每�
 
 > **关键反混淆**：P1 表里"wan 融合后 +1.1% 更慢 / sd3.5 −1.8% 几乎没动"是 **QKV 融合**（`fuse_qkv_projections()`，把 to_q/k/v 拼成一个宽 GEMM——改 GEMM 形状），**不是 compile**。两者机制无关：compile 削 launch（帮 wan 1.14×），QKV 融合改 GEMM 宽度（wan 已经够宽 → compute-bound → 融了反而 +1.1%）。**wan 慢只在 QKV 融合那条，compile 这条 wan 是快的。**
 
+#### 复测更正（2026-08-16，同一 RTX 5090、同一 `compile_benchmark.py`）
+
+上面「CUDA graph 跑通但零收益」的结论**方向对、幅度错**。当时只测了 cosmos 的
+`reduce-overhead` 一条腿（44.6 vs 43.6ms，判为「没差」）。这次把 4 个 family 的
+两条腿都测全，直接比**两个 compiled 臂**（eager baseline 在 GPU 竞争下会漂，
+compiled 臂才是生产实际跑的东西）：
+
+| family | fusion (default) | CUDA graph (reduce-overhead) | graph 相对 fusion |
+|---|---|---|---|
+| sd3_5（24 层） | 29.37 ms | 28.35 ms | **+3.5%** |
+| wan_2_1（12 层） | 174.94 ms | 173.43 ms | +0.9% |
+| **cosmos-predict2（28 层）** | **50.61 ms** | **80.01 ms** | **−58%（大幅变慢）** |
+| **cosmos-predict2.5（28 层）** | **40.57 ms** | **76.19 ms** | **−88%（大幅变慢）** |
+
+四个 family 的 `reduce-overhead` 都把 launch 打到 **1**，捕获全部成功。但：
+
+- **cosmos 两个家族上 CUDA graph 比 fusion 慢 1.6–1.9 倍。** 旧记录的「没差」
+  低估了代价 —— `reduce-overhead` 为了保证 replay 安全会插入额外的输入拷贝，
+  而 cosmos 的 fusion 收益本来就最大（本次复测 default 2.06×/2.47×，高于
+  2026-06 记录的 1.37×），graph 把这部分吃掉了。
+- **sd3_5 / wan 上是微小正收益（+3.5% / +0.9%）**，不是零。所以
+  「CUDA graph 对 diffusion 一律无用」这个说法**不能外推**，它是 family-specific 的。
+
+**净结论不变（不做 CUDA graph），但理由要换**：不是「消 launch 零收益」，而是
+**收益 family 相反且最大受益家族反受其害**，同时安全前提未满足（见下）。
+
+#### 为什么即使收益为正也不能开（2026-08-16 审计，旧 sprint 未查）
+
+旧 sprint 只问了「快不快」，没问「对不对」。CUDA graph replay 的三条硬前提：
+
+| 前提 | 判定 | 证据 |
+|---|---|---|
+| 权重地址稳定 | ✅ 满足 | `load_state_dict` 原地 copy（`weight_utils.py:65`），版本化 slot 同样是 copy 语义；全仓 `assign=True` 零命中 |
+| graph 活过 sleep/wake | ❌ **硬阻断** | parking 强制 `empty_cache()`（`cuda_memory.py:300-305`）且残留 >256MiB 硬报错（`cuda_memory.py:25-27`）。CuMem 的「virtual addresses stay valid」只覆盖 `pool.building()` 作用域内的分配，而 graph 是首次 warmup forward 才录的，那时 building 已关闭 → graph pool 来自 torch caching allocator，拿不到保护。代码里**没有任何 graph 失效钩子**（`graph_pool` / `cuda.graph` / `make_graphed` 在 `vrl/` 下零命中） |
+| 捕获区内无 host 控制流 | ❌ 违反 | TeaCache 的 `.item()`（`teacache.py:59`）决定 forward 跑不跑；`disable_adapter()` 的 reference 分支在同一 module 上跑两种结构的 forward |
+
+第三条已经在生产里踩过并留了注释：
+
+```yaml
+# Disable torch.compile on the transformer — DPO's twin policy/ref forwards
+# under no_grad collide with reduce-overhead CUDA graphs.
+```
+`vrl/config/presets/experiment/wan_2_1/offline_dpo_pickapic.yaml:36-37`
+
+**要开 CUDA graph，必须先给 `WorkerMemoryParking.sleep()` 加 graph 失效钩子** ——
+那部分代码今天不存在。为 sd3_5 的 +3.5% 写这个不划算。
+
 **结论 3：vLLM/SGLang 靠 CUDA graph 吃饭、我们不行的根因。** 它们录的是 decode（每步 1 token = memory-bound 小 GEMV，时间几乎全是 launch 开销）→ CUDA graph 1.5–2×；做法是对 bucket 过的 batch size 各录一张图、运行时 pad 到最近桶再重放、变长 paged attention 走 piecewise eager。**我们每步是大块 DiT GEMM（compute-bound），launch 只占一小条** → 同样消 launch，他们赚 2×、我们赚 0。CUDA graph 只在"极低分辨率 / 极短序列"这种真正 launch-bound 的区间才对扩散有意义，生产视频/图像分辨率不在其中。
 
 ---
@@ -143,7 +190,7 @@ cosmos 最大是因为 eager 碎得多（层更深 + AdaLN-LoRA modulation 每�
 |---|---|---|---|
 | **P0 逐-projection GEMM 拆分**（FFN vs QKV vs AdaLN vs out-proj 各几秒） | 不提速，但**决定 FP8/融合先打哪类 GEMM**——文档最细只到 `aten::addmm`，从没拆到 per-projection | 极小（trace 已有） | **空白，最该先做** |
 | **full-param 替 LoRA**（sd3.5 / wan / predict2.5） | 干掉 ~47% elementwise + lora_A/lora_B 瘦 GEMM → 每个 linear 一个大 dense GEMM | 配置 `use_lora:false`（+显存/多卡） | 路径已有（`enable_full_finetune`）；**cosmos predict2 已是全参**，故只对仍在 LoRA 的家族有用 |
-| **torch.compile 开在 cosmos**【已实测 2026-06-15，落地】 | 融合 elementwise epilogue、削 launch → **实测 1.37× rollout / 1.25× train**（launch 数砍 2.6–2.9×） | 一行 `torch_compile.enable:true`（predict2_2b.yaml） | **已落地默认开**；全链路已接线（rollout + train）。`fullgraph=False` + grad-ckpt 确实挡住 CUDA-graph，但纯 inductor fusion 削 launch 已值 1.25–1.37×——比先验"提升有限"大（见 P2 实测） |
+| **torch.compile 开在 cosmos**【已实测 2026-06-15，落地】 | 融合 elementwise epilogue、削 launch → **实测 1.37× rollout / 1.25× train**（launch 数砍 2.6–2.9×） | 一行 `torch_compile.enable:true`（predict2_2b.yaml） | **已落地默认开**；全链路已接线（rollout + train）。纯 inductor fusion 削 launch 已值 1.25–1.37×——比先验"提升有限"大（见 P2 实测）。（注："`fullgraph=False` + grad-ckpt 挡住 CUDA-graph" 是**已被推翻的旧说法**，捕获其实能跑通；见 P2 的 2026-08-16 复测更正） |
 | **融合 QKV 投影**【已实测 2026-06-14，低 ROI】 | 3 个瘦 GEMM 拼成 1 个大 GEMM，减 launch | 小（全参 SD3/Wan）；**Cosmos 无 fuse API** | **实测确认低 ROI**：SD3.5 −2% 总 GEMM、Wan ~0、Cosmos 不支持（无 `fuse_qkv_projections()`）。数值等价（rel<0.6%），但需 full-param（破 LoRA `target_modules=to_q/k/v`）、不碰 FFN。**不落地 runtime**；`--fuse-qkv` 留在 profiler 作度量 |
 | **rollout 侧 merge LoRA → dense** | 35 步×CFG 的推理前向变单个大 GEMM | 真要写（merge/unmerge 要跟 colocated 训练 + 权重同步配合） | 只接了 `disable_adapter`（给 KL ref 用），**没有 `merge_adapter`** |
 | **FP8/FP4 线性层**（torchao float8 / TransformerEngine）**【暂缓 2026-06-14】** | **唯一没碰的硬件 peak，~2× bf16 throughput**；P0 证实可安全覆盖 ~95% GEMM | 大 + 风险高 | **用户暂缓，未做**：`precision.py` 是封闭的 `(fp32,bf16,fp16)`；要新精度轴 + float8 替换 + dtype plumbing；**必须过 rollout-vs-train logprob parity 红线**（`trainer.py:603` 均差≤0.01）；DiT 的 modulation/最终投影**必须 FQN 过滤否则毁图**；调参尾巴是多天 |
@@ -173,7 +220,7 @@ cosmos 最大是因为 eager 碎得多（层更深 + AdaLN-LoRA modulation 每�
 
 - **logprob parity 红线**：`trainer.py:603-610` 一旦 rollout-vs-train 首步 log-prob 均差 >0.01 就报警并判 "GRPO ratios untrustworthy"（注释点名 Predict2 sigma bug 曾差到 ~115），外加 `precision_drift_guard`。**任何改变 rollout 前向数值的杠杆（FP8、融合后数值漂移、rollout 单独 merge LoRA）都必须保证两侧走等价数值路径。** 这就是为什么 SD3 在 rollout 和 train 两侧装同一个 attention processor、LoRA 包后再重装（`sd3_5/model.py:88,418,99,428`）。
 - **单一调用点**：rollout `forward_step` 与 train `replay_forward` 共用 `common/backbone.py:152` 的 `_call_transformer → self.transformer(**kwargs)`——任何 fuse/compile/merge 作用在 `self.transformer` 上会**同时影响两侧**（既是便利也是 parity 约束）。
-- **compile 限制**（已被 P2 CUDA graph A/B 修正）：运行时用 `torch.compile(..., mode=default, fullgraph=False)`。`reduce-overhead`（CUDA-graph）实测**在 cosmos 全参上能跑通、把 launch 消到 1**——并非被 PEFT LoRA / grad-ckpt 完全挡住（旧说法过强）。真正不用它的原因是 **fusion 后已 compute-bound、消 launch 零收益**（rollout 1.36× ≈ default 1.37×）；带 grad-ckpt 时还叠加 CUDA-graph 数值正确性风险（dynamo 自警）。详见上方"P2 实测结果 → CUDA graph A/B"。
+- **compile 限制**（已被 P2 CUDA graph A/B 修正）：运行时用 `torch.compile(..., mode=default, fullgraph=False)`。`reduce-overhead`（CUDA-graph）实测**在 cosmos 全参上能跑通、把 launch 消到 1**——并非被 PEFT LoRA / grad-ckpt 完全挡住（旧说法过强）。真正不用它的原因（**2026-08-16 复测更正**）：收益 family 相反 —— sd3_5/wan 上是 +3.5%/+0.9% 的微小正收益，但 **cosmos 两个家族上比 fusion 慢 1.6–1.9 倍**；且 graph 活不过 worker 的 sleep/wake（parking 强制 `empty_cache`，无失效钩子）。详见上方"P2 实测结果 → CUDA graph A/B → 复测更正"。
 - **容量墙**：单卡 32GB。做大 M 的路被 OOM 先堵（predict2 512p93f sbs=8 OOM，b16 在 VAE decode OOM 后靠 VAE tiling 回到 16）。
 
 ---
