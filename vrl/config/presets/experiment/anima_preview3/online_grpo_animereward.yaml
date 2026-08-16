@@ -1,0 +1,55 @@
+# Anima Preview3 + image GRPO on anime prompts, judged by AnimeReward quality.
+#
+# Differs from online_grpo_aesthetic in the two things that decide whether this
+# run can work at all:
+#   - dataset: anime_anatomy, not drawbench. The aesthetic recipe trains on
+#     general T2I prompts (LEGO men, "a black colored banana"), which is not
+#     the target distribution for an anime model.
+#   - reward: AnimeReward quality over HTTP. Measured on anima output, LAION
+#     aesthetic and PickScore both score on-prompt anime and off-prompt
+#     collapse identically (4.98 vs 5.01 / 0.829 vs 0.830), while AnimeReward
+#     separates them at Cohen's d = 3.7. See docs/sprints/SPRINT_anima_rl_5090.md.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/cosmos/anima_preview3
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /reward/animereward_quality_http
+  - /dataset/anime_anatomy
+
+actor:
+  optim:
+    # 1e-5 (inherited from the aesthetic recipe) is a full-param rate. Run 2
+    # measured grad_norm ~5e-3 with it, i.e. ~5e-8 of parameter movement per
+    # step, and reward was flat across 10 epochs (slope +6e-4, noise). Every
+    # other LoRA config in this repo uses 1e-4..3e-4 — see the droid LoRA
+    # preset's note, "LoRA wants 1e-4, not full-param's 2e-5".
+    lr: 1.0e-4
+  ppo_epochs: 1
+  gradient_accumulation_steps: 4
+
+algorithm:
+  kl_coef: 0.004
+  # Matches the sibling aesthetic recipe's explicit per-prompt std rather than
+  # the recipe-level global_std default.
+  global_std: false
+  # Recipe default is 1e-4, inherited from flow_grpo's SD3 setup. Measured on
+  # Anima that is far too tight: run 1 logged ratio_abs_dev_mean = 6.1e-4, i.e.
+  # 6x the threshold, so ~45% of every batch was clipped and approx_kl sat at
+  # 1e-6 for four straight epochs (policy numerically frozen). Widened to just
+  # above the observed update magnitude so typical steps pass and only genuine
+  # outliers clip.
+  clip_ratio: 3.0e-3
+
+rollout:
+  n_samples_per_prompt: 8
+  prompts_per_batch: 4
+  samples_per_generation_batch: 8
+  sde:
+    type: flow_grpo
+
+trainer:
+  output_dir: outputs/anima_animereward_grpo
+  # Frequent enough that a run which starts to hack the reward still leaves a
+  # pre-hack checkpoint on disk to fall back to.
+  save_freq: 10

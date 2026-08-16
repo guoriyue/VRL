@@ -1,0 +1,37 @@
+# Operator-owned AnimeReward quality service for single-GPU Anima RL.
+#
+# generation_overlap_safe is FALSE here on purpose: on a one-GPU workstation this
+# 8B head shares the physical device with the colocated trainer/rollout, so the
+# collector must not overlap reward N with generation N+1.
+#
+# Run this from an environment pinned to transformers 4.49 + tokenizers 0.21 --
+# NOT the repo venv. The head is Mantis's Idefics2 fork, which predates the 5.x
+# cache API; 4.44 is too old to read this checkpoint's tokenizer.json. See
+# docs/sprints/SPRINT_anima_rl_5090.md.
+#
+#   <pinned-env>/bin/python -m vrl.rewards.service.server \
+#     --config vrl/config/reward_service/animereward_quality.yaml
+#
+# artifact_roots and worker_config.model_name are operator/machine paths
+# (matching the sibling configs' convention) -- repoint both on another box.
+host: 127.0.0.1
+port: 8310
+model_name: animereward-quality
+model_version: IndexTeam/Index-anisora@b134a8e6+mantis-8b-idefics2-quality-4096-regression
+
+artifact_roots:
+  - /home/mingfeiguo/Desktop/VRL/outputs
+
+max_concurrency: 1
+max_pending_requests: 16
+max_cached_requests: 1024
+generation_overlap_safe: false
+
+worker_config:
+  model_factory: vrl.rewards.models.animereward:AnimeRewardQualityModel
+  reward_model_name: animereward-quality
+  reward_model_version: IndexTeam/Index-anisora@b134a8e6+mantis-8b-idefics2-quality-4096-regression
+  device: cuda:0
+  dtype: bfloat16
+  model_name: /home/mingfeiguo/.cache/huggingface/hub/models--IndexTeam--Index-anisora/snapshots/b134a8e677e4b22269827af7d596a4f2d9d3430a/reward/weights/mantis-8b-idefics2-video-eval-24frame-quality_4096_regression/checkpoint-final
+  num_frames: 8

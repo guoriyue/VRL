@@ -157,7 +157,9 @@ def main(argv: list[str] | None = None) -> None:
         "model": {
             "path": str(cfg.model.path),
             "use_lora": bool(cfg.model.use_lora),
-            "lora_path": str(cfg.model.lora.path or ""),
+            # Training presets declare lora rank/alpha/target_modules without a
+            # path (nothing trained yet), so this key is genuinely absent.
+            "lora_path": str(OmegaConf.select(cfg, "model.lora.path", default="") or ""),
         },
     }
     (out_dir / "run_config.json").write_text(
