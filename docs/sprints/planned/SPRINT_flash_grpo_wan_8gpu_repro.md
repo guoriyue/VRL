@@ -1,10 +1,33 @@
 # SPRINT: Flash-GRPO on Wan2.1-T2V-1.3B — 8 卡单机复现
 
-状态：**planned / 依赖未就绪（2026-08-15）**。代码侧阻塞已全部清除并本地提交；
-唯一未完成的准备工作是 HPSv3 reward model 的安装与 checkpoint 下载。
-第一个可执行动作是 §5 Gate 0 的显存冒烟测试。
+状态：**superseded — 改经 vrl 执行（2026-08-16）**。本文档保留为配方与算力分析的
+参考；执行路径已从"跑外部仓库"改为"跑 `vrl/` 自身"。
 
-本文档是外部仓库（`Shredded-Pork/Flash-GRPO`）的复现计划，不改动 `vrl/`。
+## 0.-1 路线变更（2026-08-16）
+
+原计划跑外部 Flash-GRPO 仓库的唯一硬理由是 HPSv3 reward 不在 vrl 里，以及其
+钉版 transformers 4.40 与 HPSv3 需要的 ≥4.45 的版本死结。vrl 环境是
+transformers 4.57，死结不存在；HPSv3 已按 Kling VideoReward 的先例收窄移植为
+vrl 原生 reward（`vrl/rewards/models/hpsv3.py`，MIT 归属注明），§8 的
+"不修改 `vrl/`" 约束随之作废。
+
+- **入口**：`vrl-train --config experiment/wan_2_1/online_grpo_hpsv3_4x_l40s`
+  （拓扑：GPU0 trainer / GPU1-2 rollout / GPU3 reward；96 样本每 update、
+  G=4、global_std、480×832×81f、20 步 CFG4.5，与论文配方对齐；
+  prompt 集就是上游的 19,700 条，`datasets/flash_grpo_video/`）。
+- **移植逐点对分（2026-08-16，g6e.12xlarge 实测）**：与上游
+  `HPSv3RewardInferencer`（同权重、同 transformers 4.57、同 SDPA）在 8 张
+  图上对比，max |Δ| = 0.27（量表 ~22 宽），8/8 排序一致。关键坑：上游
+  forward 手工合并 embedding 后以 `input_ids=None` 调内层模型，**从不经过
+  Qwen2-VL 的 M-RoPE 位置计算**（训练时也如此）；若走 4.57 的规范合并路径，
+  分数偏移可达 0.9 且近分档排序翻转。移植忠实复刻了这一训练时行为。
+- **单卡实测**：模型加载 + 3 图打分峰值 16.0GiB；81 帧 480×832 视频全帧打分
+  8.4s（103ms/帧，8 帧/前向），一次 96 样本 update 约 13 分钟 —— 小于
+  rollout（2 卡 ~30-40 分钟），单独占 GPU3 时串行即可盖住。
+- 本文档其余部分（硬件分析 §1-2、显存实测 §3、上游修复 §4、HPSv3 的坑
+  §6.1）对 vrl 路线仍然有效；§5 的 Gate 顺序照用，只是启动命令换成 vrl-train。
+
+本文档原为外部仓库（`Shredded-Pork/Flash-GRPO`）的复现计划。
 选型依据见 `docs/research/video-rl-post-training-on-8xL40S.md`。
 
 ## 0. 结论先行
@@ -672,9 +695,10 @@ ratio = torch.exp(log_prob - sample["log_probs"][:, 0, 0])
 - [x] CPU offload 的推理侧收益 → §3.3（10.81GB，−11.2GB，仅慢 8%）
 - [x] CPU 跑 reward 的可行性 → §3.4（约 2 倍 rollout 时长，会成瓶颈）
 - [ ] **Gate 0 的两个数**：训练峰值 X1（原样）与 X2（加 offload）
-- [ ] 实际 GPU 型号（`nvidia-smi -L`）、驱动、**实际可见显存**（预期 ~44–46 GiB 而非 48GB）
-- [ ] PCIe 拓扑 `nvidia-smi topo -m`：`PHB`/`PIX`（同 root complex）还是 `SYS`（跨 socket）
-- [ ] 若用 4 卡：已改 `num_batches_per_epoch=48` + `--num_processes 4`
+- [x] 实际 GPU 型号、可见显存 → 4×L40S，46,068 MiB/卡（~45GiB；2026-08-16 实测）
+- [x] PCIe 拓扑 → 4 卡全 `NODE`（单 NUMA node，无跨 socket；2026-08-16 实测）
+- [x] 4 卡配比 → vrl 路线：`prompts_per_batch=24` × `n_samples_per_prompt=4` = 96/update（§0.-1）
+- [x] HPSv3 单图/视频吞吐与显存 → §0.-1（16.0GiB 峰值；103ms/帧；96 样本 ~13 分钟）
 - [ ] Gate 0 单卡峰值显存（**训练**，含 rollout buffer）
 - [ ] 是否降档、降了哪些、最终实际配置值
 - [ ] 单 epoch wall-clock，据此外推总时长

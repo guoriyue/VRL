@@ -1,0 +1,120 @@
+# Wan 2.1 1.3B T2V + HPSv3 per-frame preference GRPO — the Flash-GRPO recipe
+# (arXiv:2605.15980) run through vrl on one g6e.12xlarge (4x L40S 48GB, no
+# NVLink). Paper-parity pieces: Wan2.1-T2V-1.3B base + LoRA, 480x832 / 81
+# frames, 20-step CFG 4.5 sampling, GRPO group size 4 with 24 prompt groups
+# (96 samples) per update and GLOBAL std, HPSv3 frame reward aggregated as the
+# mean of the best 30% of frames, on Flash-GRPO's own 19,700-prompt set.
+# Deliberate deviations: LoRA rank 32 (vrl wan family default; paper r=16 —
+# capacity knob, not algorithm), vrl's kl_coef 0.004 reference KL, and vrl's
+# trainer/rollout orchestration instead of the paper's DeepSpeed ZeRO-2 loop.
+#
+# The reward is frame-only aesthetics/alignment — temporal coherence is NOT
+# rewarded, so "reward rises while motion rots" is the expected failure mode.
+# Judge every eval by watching samples, not by the curve alone (watch
+# frame_min in the reward debug records for the best-frames-only signature).
+#
+# Physical topology (g6e.12xlarge, ~45GiB visible per card):
+#   GPU 0:   single-process LoRA trainer
+#   GPU 1/2: one dedicated rollout worker each (~22GB per Wan pipeline)
+#   GPU 3:   HPSv3 reward, in-process on the auto-resolved spare GPU (~16GB)
+#
+# Run a three-update acceptance before an unattended launch:
+#   .venv/bin/vrl-train \
+#     --config experiment/wan_2_1/online_grpo_hpsv3_4x_l40s \
+#     trainer.total_epochs=3 \
+#     trainer.output_dir=outputs/wan_hpsv3_flash_grpo/smoke
+defaults:
+  - /recipe/online/wan_2_1_grpo
+  - /model/wan_2_1/1_3b
+  - /sampling/video/480x832_81f
+  - /sampling/denoise/20_step_cfg_4_5
+  - /dataset/flash_grpo_video
+  - /reward/hpsv3
+
+actor:
+  optim:
+    lr: 1.0e-5
+  # 24 prompt groups per update replay one group at a time on the single
+  # trainer GPU (81-frame 480p sequences); streaming collect->backward->release
+  # keeps only one group's activations resident.
+  microbatch_size: 1
+  ppo_epochs: 1
+  # Flash-GRPO trains on 51% of the 20 denoise steps per sample (its
+  # config.train.timestep_fraction=0.51) — paper parity that also halves the
+  # single-GPU replay phase vs the repo-wide 0.99 default.
+  timestep_fraction: 0.51
+  # Required at this geometry: the 32,760-token replay backward OOM'd a 44.4GiB
+  # L40S under compile-alone (measured 2026-08-16, first smoke), and compile
+  # cannot combine with checkpointing (activation_checkpointing.py guard) — so
+  # eager + full checkpointing, which is also the paper's configuration.
+  gradient_checkpointing: full
+
+algorithm:
+  kl_coef: 0.004
+  # Flash-GRPO normalizes advantages with the std of the whole 96-sample
+  # update, not each 4-sample group (config.sample.global_std=True upstream);
+  # per-group std over 4 samples is too noisy an estimate.
+  global_std: true
+
+model:
+  # Eager on both sides: actor.gradient_checkpointing is mandatory at 81-frame
+  # 480p (see actor block), it excludes compile, and compiling only the rollout
+  # side would add rollout->replay kernel drift. Matches the droid 4x-L4 recipe
+  # and the paper's own eager + checkpointing setup.
+  torch_compile:
+    enable: false
+
+distributed:
+  training:
+    strategy: single_process
+    num_nodes: 1
+    gpus_per_node: 1
+  rollout:
+    # Each rollout worker loads the full Wan pipeline (T5 alone is five 2GB+
+    # shards) at startup. The 600s default killed a real launch when the HF
+    # cache sat on EBS; even with the cache on NVMe, keep headroom for a
+    # cold-page-cache first start.
+    worker_rpc_timeout_s: 1800
+  resources:
+    visible_devices: [0, 1, 2, 3]
+    trainer:
+      devices: [0]
+    rollout:
+      devices: [1, 2]
+    # reward defaults to device: gpu (reward/hpsv3 preset); resolution assigns
+    # the spare GPU 3 with a reserved Ray bundle.
+
+rollout:
+  # 24 prompt groups x G=4 = 96 samples per optimizer update — Flash-GRPO's
+  # exact update statistics (virtual_num_replicas=96, 24 distinct prompts).
+  prompts_per_batch: 24
+  n_samples_per_prompt: 4
+  # One 81-frame 480p video per generation forward (~22GB pipeline per L40S).
+  samples_per_generation_batch: 1
+  noise_level: 0.7
+  sde:
+    type: cps
+  # 96 trajectories x 81 frames per update: store host-side trajectory leaves
+  # in bf16 or host RAM becomes the wall before GPU memory does.
+  trajectory_storage:
+    dtype: bfloat16
+
+reward:
+  kwargs:
+    hpsv3:
+      worker_config:
+        # This host keeps the big checkpoints on instance-store NVMe (wiped on
+        # instance stop — re-download per docs/sprints memory). Drop these two
+        # overrides to resolve both from the HF cache instead.
+        model_path: /mnt/nvme/models/HPSv3
+        base_model_path: /mnt/nvme/models/Qwen2-VL-7B-Instruct
+        local_files_only: true
+
+trainer:
+  output_dir: outputs/wan_hpsv3_flash_grpo/run
+  # The paper trains until manually stopped; 300 updates matches its
+  # num_epochs headroom. Stop on eval-sample quality, not the curve.
+  total_epochs: 300
+  save_freq: 10
+  debug:
+    first_step: true

@@ -1,0 +1,118 @@
+# Wan 2.1 1.3B T2V + HPSv3 GRPO, ALL-RANK phase-cycled variant: four torchrun
+# ranks each own one L40S and run every phase on it, Flash-GRPO style —
+#   trainer parked -> Wan rollout (24 videos/rank) -> rollout parked
+#   -> HPSv3 reward (rank-local 24 samples) -> reward parked -> FSDP trainer.
+# All four GPUs are busy in rollout, reward, AND training; idle time shrinks to
+# park/wake transitions. Strict on-policy is fully preserved (same 96-sample
+# update statistics as the disaggregated online_grpo_hpsv3_4x_l40s preset:
+# 6 prompt groups/rank x 4 ranks x G=4 = 96, global_std all-reduces across
+# ranks). DDP cannot express this today (reducer-bucket collective parking is
+# unimplemented; DDPStrategy rejects shared-GPU topologies), so the trainer is
+# FSDP over the LoRA run — the same pattern the droid fullparam 4x-L4 recipe
+# validated, with LoRA precedent from the I2V 14B FSDP acceptance.
+#
+# Memory: each 45GiB card time-shares ~17GB Wan pipeline / ~17GB HPSv3 / the
+# checkpointed 81-frame replay; parked owners live in host RAM (4 ranks x ~34GB
+# well inside 372GB). Reward weights load from instance-store NVMe (wiped on
+# instance stop — re-download per the machine notes).
+#
+# Run a three-update acceptance before an unattended launch:
+#   VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB=512 HF_HOME=/mnt/nvme/hf/huggingface \
+#   torchrun --standalone --nproc_per_node=4 -m vrl.scripts.train \
+#     --config experiment/wan_2_1/online_grpo_hpsv3_fsdp_4x_l40s \
+#     trainer.total_epochs=3 \
+#     trainer.output_dir=outputs/wan_hpsv3_flash_grpo/fsdp_smoke
+defaults:
+  - /recipe/online/wan_2_1_grpo
+  - /model/wan_2_1/1_3b
+  - /sampling/video/480x832_81f
+  - /sampling/denoise/20_step_cfg_4_5
+  - /dataset/flash_grpo_video
+  - /reward/hpsv3
+  - /base/distributed/training_fsdp
+
+actor:
+  optim:
+    lr: 1.0e-5
+  # All six prompt groups per streaming microbatch (GAS=1): per-sample replay
+  # keeps GPU activations bounded regardless, and collecting the whole update
+  # before one backward pass cuts phase park/wake transitions from 18 to 3 per
+  # update. That is a stability requirement, not a tuning choice: at
+  # microbatch_size=1 the cumem map/unmap churn (~50 transitions) wedged all
+  # four GPUs with driver Xid 154 "Node Reboot Required" (2026-08-16, attempt
+  # 8 of this smoke).
+  microbatch_size: 6
+  ppo_epochs: 1
+  # Paper parity (Flash-GRPO trains 51% of the 20 denoise steps) and half the
+  # replay compute vs the repo-wide 0.99 default.
+  timestep_fraction: 0.51
+  # Mandatory at this geometry: the 32,760-token replay backward OOM'd a
+  # 44.4GiB L40S under compile-alone (measured 2026-08-16); checkpointing
+  # excludes compile, so the run is eager end to end.
+  gradient_checkpointing: full
+
+algorithm:
+  kl_coef: 0.004
+  # Flash-GRPO normalizes with the std of the whole 96-sample update; under
+  # FSDP this is the true cross-rank std (advantages.py all-reduces it).
+  global_std: true
+
+model:
+  local_files_only: true
+  torch_compile:
+    enable: false
+
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 4
+    fsdp:
+      mesh: ["dp_shard"]
+      precision_policy: actor
+      reshard_after_forward: true
+      cpu_offload: false
+  resources:
+    # Each rank colocates its rollout worker on its own trainer GPU; the reward
+    # then borrows the same rank-local card once both owners have parked.
+    rollout:
+      gpu_pool: trainer
+  rollout:
+    # Wan pipeline startup reads five T5 shards; 600s default killed a real
+    # launch off EBS. Keep cold-start headroom even with the NVMe cache.
+    worker_rpc_timeout_s: 1800
+
+rollout:
+  # Per-rank: 6 prompt groups x G=4 = 24 samples; x4 ranks = the paper's exact
+  # 96-sample update (24 distinct prompts, 4 samples each).
+  prompts_per_batch: 6
+  n_samples_per_prompt: 4
+  samples_per_generation_batch: 1
+  noise_level: 0.7
+  sde:
+    type: cps
+  # 24 trajectories x 81 frames per rank per update: bf16 host-side leaves or
+  # host RAM becomes the wall before GPU memory does.
+  trajectory_storage:
+    dtype: bfloat16
+
+reward:
+  kwargs:
+    hpsv3:
+      worker_config:
+        model_path: /mnt/nvme/models/HPSv3
+        base_model_path: /mnt/nvme/models/Qwen2-VL-7B-Instruct
+        local_files_only: true
+
+trainer:
+  output_dir: outputs/wan_hpsv3_flash_grpo/fsdp_run
+  # The paper trains until manually stopped; stop on eval-sample quality, not
+  # the curve (the reward has no temporal term).
+  total_epochs: 300
+  # ~2.2h per update measured; at 10 a crash costs a day of work. The LoRA +
+  # optimizer checkpoint is tens of MB, so save every other update — crash-only
+  # recovery (Xid 79 wedged this host once) is only as cheap as the last
+  # complete checkpoint.
+  save_freq: 2
+  debug:
+    first_step: true
