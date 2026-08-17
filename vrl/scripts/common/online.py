@@ -361,12 +361,16 @@ def _validate_reward_placement(
             "have diverged",
         )
     if reward_device.startswith("cuda"):
-        ordinal = int(reward_device.split(":", 1)[1])
+        # reward_device is a process-local torch ordinal while the placement
+        # bundle reports Ray physical ids; on a rank-local torchrun launch the
+        # two spaces differ (CUDA mask narrows torch to one logical device),
+        # so translate back to plan space before comparing.
+        ordinal = resources.plan_device_ordinal(int(reward_device.split(":", 1)[1]))
         if placement.expected_gpu_ids and ordinal not in placement.expected_gpu_ids:
             raise RuntimeError(
-                f"in-process reward executes on {reward_device} but the placement "
-                f"group reserved GPUs {list(placement.expected_gpu_ids)} for the "
-                "reward role",
+                f"in-process reward executes on {reward_device} (plan GPU {ordinal}) "
+                f"but the placement group reserved GPUs "
+                f"{list(placement.expected_gpu_ids)} for the reward role",
             )
 
 
@@ -1096,6 +1100,13 @@ async def run_online_recipe(
             logger.info("Training complete. Final checkpoint: %s", output_dir / "checkpoint-final")
     except BaseException as exc:
         run_error = exc
+        # Log BEFORE lifecycle.shutdown: shutdown crosses collective barriers
+        # (park_training_state -> all_ranks_succeeded), so on a multi-rank run
+        # a peer still inside the update path deadlocks the barrier and the
+        # re-raise below never prints. Without this line the failing rank's
+        # traceback dies with the NCCL watchdog SIGABRT (observed on the hpsv3
+        # fsdp 4-rank smoke, 2026-08-16).
+        logger.exception("online recipe failed before shutdown: %r", exc)
         raise
     finally:
         await lifecycle.shutdown(run_error=run_error)

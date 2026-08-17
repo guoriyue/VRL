@@ -424,6 +424,34 @@ def test_reward_torch_device_uses_the_reserved_local_gpu() -> None:
     assert resolved.reward_torch_device(trainer_device="cuda:0") == "cuda:2"
 
 
+def test_reward_torch_device_translates_narrowed_rank_plan_ordinals(monkeypatch) -> None:
+    """A rank narrowed to one physical GPU addresses its reward as torch cuda:0.
+
+    Rank-local torchrun launches keep the plan in physical ordinal space
+    (visible_devices=[2] on local rank 2) while CUDA_VISIBLE_DEVICES masks the
+    process to that single card; the raw physical id is then an invalid torch
+    ordinal (measured: non-zero ranks of the hpsv3 fsdp 4-rank smoke).
+    """
+    import torch
+
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [2],
+                "trainer": {"devices": [2]},
+                "rollout": {"gpu_pool": "trainer"},
+                "reward": {"device": "gpu"},
+            },
+        ),
+    )
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    assert resolved.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
+    # The inverse translation returns the plan-space id Ray placement reports.
+    assert resolved.plan_device_ordinal(0) == 2
+
+
 def test_reward_torch_device_without_a_reservation_follows_the_rank_local_trainer() -> None:
     """An unreserved in-process reward shares the caller's actual trainer device."""
     resolved = resolve_distributed_resources(

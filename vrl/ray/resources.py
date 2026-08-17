@@ -313,12 +313,58 @@ class ResolvedDistributedResources:
 
         devices = tuple(self.reward_devices)
         if devices:
-            return f"cuda:{int(devices[0])}"
+            return f"cuda:{self._local_torch_ordinal(int(devices[0]))}"
         if self.reward_runs_on_cpu:
             return "cpu"
         if trainer_device is not None:
             return str(trainer_device)
         return self.trainer_torch_device
+
+    def plan_device_ordinal(self, torch_ordinal: int) -> int:
+        """Translate a process-local torch ordinal back into plan space.
+
+        Inverse of ``_local_torch_ordinal``, for callers that must compare an
+        execution device against Ray-side state (placement bundles report
+        physical ids from ``ray.get_gpu_ids()`` regardless of the process's
+        CUDA mask). Passthrough whenever the process view and the plan already
+        share one space.
+        """
+
+        import torch
+
+        visible = [int(device) for device in self.visible_devices]
+        if (
+            torch.cuda.is_available()
+            and torch.cuda.device_count() == len(visible)
+            and 0 <= torch_ordinal < len(visible)
+        ):
+            return visible[torch_ordinal]
+        return torch_ordinal
+
+    def _local_torch_ordinal(self, plan_ordinal: int) -> int:
+        """Translate a plan-space CUDA ordinal into this process's torch ordinal.
+
+        Rank-local torchrun launches keep the resource plan in Ray's physical
+        ordinal space but narrow the process to CUDA_VISIBLE_DEVICES=<physical>
+        (see train.py ``_narrow_rank_local_cuda_visibility``), so torch
+        enumerates exactly ``visible_devices`` in order and the torch ordinal
+        is the id's *position*, not its value — returning the raw physical id
+        raised "CUDA error: invalid device ordinal" on every non-zero rank of
+        the hpsv3 fsdp 4-rank smoke (2026-08-16; rank0 survived only because
+        physical 0 == logical 0). Translate only when the process view
+        provably matches the plan (device_count == len(visible_devices)); a
+        wider process view (bare launch, subset plan without a mask) keeps
+        plan ordinals valid as-is, and an identity pool translates to itself.
+        """
+
+        import torch
+
+        visible = [int(device) for device in self.visible_devices]
+        if plan_ordinal not in visible:
+            return plan_ordinal
+        if torch.cuda.is_available() and torch.cuda.device_count() == len(visible):
+            return visible.index(plan_ordinal)
+        return plan_ordinal
 
 
 _MISSING = object()

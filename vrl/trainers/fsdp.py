@@ -33,6 +33,32 @@ from vrl.trainers.distributed import DistributedTrainingContext
 logger = logging.getLogger(__name__)
 
 
+_COORDINATION_GROUP: Any = None
+
+
+def cpu_coordination_group() -> Any:
+    """The CPU-capable group for phase-boundary coordination, or ``None``.
+
+    Park/wake windows unmap multi-GB cumem pools; coordination messages inside
+    those windows (quiesce barriers, park-success flags) must therefore issue
+    ZERO GPU kernels — a NCCL all-reduce right after this rank's unmap runs a
+    kernel on the just-parked card while slower peers are still unmapping
+    theirs (the load pattern in the 2026-08-16 Xid 79 postmortem). NCCL runs
+    get a dedicated gloo subgroup; a gloo default group is already CPU-capable
+    and is returned as-is.
+    """
+
+    import torch.distributed as dist
+
+    if not dist.is_initialized():
+        return None
+    if _COORDINATION_GROUP is not None:
+        return _COORDINATION_GROUP
+    if dist.get_backend() == "gloo":
+        return dist.group.WORLD
+    return None
+
+
 def init_training_process_group(
     context: DistributedTrainingContext,
     *,
@@ -49,6 +75,7 @@ def init_training_process_group(
 
     import torch.distributed as dist
 
+    global _COORDINATION_GROUP
     if not context.distributed or dist.is_initialized():
         return
     if context.device.type == "cuda":
@@ -59,6 +86,10 @@ def init_training_process_group(
         rank=context.rank,
         world_size=context.world_size,
     )
+    if backend == "nccl":
+        # Collective creation: every rank reaches this line inside the same
+        # init call, so the subgroup handshake cannot mismatch.
+        _COORDINATION_GROUP = dist.new_group(backend="gloo")
 
 
 def shutdown_training_process_group() -> None:
@@ -66,6 +97,8 @@ def shutdown_training_process_group() -> None:
 
     import torch.distributed as dist
 
+    global _COORDINATION_GROUP
+    _COORDINATION_GROUP = None
     if dist.is_initialized():
         dist.destroy_process_group()
 
