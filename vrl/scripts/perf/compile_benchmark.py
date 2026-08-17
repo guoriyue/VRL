@@ -43,6 +43,11 @@ from typing import Any
 import torch
 
 from vrl.models.dtypes import resolve_torch_dtype
+from vrl.scripts.perf.common.baseline import (
+    DEFAULT_BASELINE_PATH,
+    BaselineRecord,
+    append_baseline,
+)
 from vrl.scripts.perf.common.synthetic_diffusion import build_synthetic_inputs
 from vrl.scripts.perf.common.timing import cuda_median_ms, kernel_launches_per_step
 from vrl.utils.logging import init_logger
@@ -355,6 +360,17 @@ def main() -> None:
         action="store_true",
         help="numeric eager-vs-compiled parity (max |Δ| output/grad) instead of timing",
     )
+    parser.add_argument(
+        "--record-baseline",
+        nargs="?",
+        const=str(DEFAULT_BASELINE_PATH),
+        default=None,
+        metavar="PATH",
+        help=(
+            "append this run's timings to the perf baseline record "
+            f"(default {DEFAULT_BASELINE_PATH}); see docs/perf/README.md"
+        ),
+    )
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -416,6 +432,31 @@ def main() -> None:
             )
 
     print(format_report(results, mode=args.mode))
+
+    if args.record_baseline:
+        # One record per run, not per cell: the comparison that matters is
+        # between arms measured together on the same GPU under the same
+        # contention, which is what the 2026-06 single-point note lacked.
+        metrics = {
+            f"{r.path}_{'compiled' if r.compiled else 'eager'}_ms": r.latency_ms for r in results
+        }
+        path = append_baseline(
+            BaselineRecord(
+                probe="compile_benchmark",
+                metrics=metrics,
+                context={
+                    "family": args.family,
+                    "mode": args.mode,
+                    "dtype": args.dtype,
+                    "batch": args.batch,
+                    "layers": args.layers,
+                    "warmup": args.warmup,
+                    "iters": args.iters,
+                },
+            ),
+            path=args.record_baseline,
+        )
+        print(f"\nbaseline appended -> {path}")
 
 
 if __name__ == "__main__":

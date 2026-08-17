@@ -71,10 +71,18 @@ class RayRuntimeWeightSyncer(WeightSyncer):
         self._push_lock = asyncio.Lock()
 
     async def push(self, state_dict: dict[str, Any]) -> None:
-        state = _cpu_state_dict(state_dict)
+        # Split the two costs: the device->host copy is trainer-side GPU work,
+        # the update_weights await is transport plus worker-side load. They
+        # overlap differently once rollout and training stop sharing one GPU, so
+        # they must be attributable separately rather than as one "sync" blob.
+        from vrl.utils.profiling import profile_range
+
+        with profile_range("weight_sync.state_to_cpu"):
+            state = _cpu_state_dict(state_dict)
         async with self._push_lock:
             policy_version = self._next_policy_version
-            await self.runtime.update_weights(state, policy_version)
+            with profile_range("weight_sync.push"):
+                await self.runtime.update_weights(state, policy_version)
             self._next_policy_version = policy_version + 1
 
     @property

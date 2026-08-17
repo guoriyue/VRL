@@ -50,6 +50,11 @@ from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.config.builders import build_precision_split_safety_configs
 from vrl.nn.quantization import Fp4Linear, Fp8Linear, nvfp4_available
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
+from vrl.scripts.perf.common.baseline import (
+    DEFAULT_BASELINE_PATH,
+    BaselineRecord,
+    append_baseline,
+)
 from vrl.trainers.online.precision_guard import (
     PrecisionDriftError,
     run_precision_drift_guard,
@@ -133,6 +138,17 @@ def _policy_grad_norm(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scheme", choices=("fp8", "nvfp4"), default="fp8")
+    parser.add_argument(
+        "--record-baseline",
+        nargs="?",
+        const=str(DEFAULT_BASELINE_PATH),
+        default=None,
+        metavar="PATH",
+        help=(
+            "append this run's drift numbers to the perf baseline record "
+            f"(default {DEFAULT_BASELINE_PATH}); see docs/perf/README.md"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -168,9 +184,13 @@ def _require_precision_guard(
     )
 
 
-def main(*, scheme: str | None = None) -> None:
+def main(*, scheme: str | None = None, record_baseline: str | None = None) -> None:
+    # An explicit ``scheme`` means a programmatic caller (the fp8_rollout_drift_probe
+    # compatibility entry point), which has no argv of its own to parse.
     if scheme is None:
-        scheme = _parse_args().scheme
+        args = _parse_args()
+        scheme = args.scheme
+        record_baseline = record_baseline or args.record_baseline
     elif scheme not in {"fp8", "nvfp4"}:
         raise ValueError(f"scheme must be fp8 or nvfp4; got {scheme!r}")
     if not torch.cuda.is_available():
@@ -338,6 +358,40 @@ def main(*, scheme: str | None = None) -> None:
     print("  The guard, TIS, and RS paths are wired and measured with the trainer's")
     print("  per-timestep semantics. The trajectory product above is stress context only.")
     print("  This synthetic head cannot replace a real-model SDE-logprob calibration run.")
+
+    if record_baseline:
+        # Recorded before the gate below so a FAILING run still leaves its
+        # evidence behind — the failure is the datapoint worth keeping.
+        path = append_baseline(
+            BaselineRecord(
+                probe="quantized_rollout_drift",
+                metrics={
+                    "step_ratio_dev_mean": step_stats.ratio_abs_dev_mean,
+                    "step_ratio_dev_max": step_stats.ratio_abs_dev_max,
+                    "step_over_cap_fraction": over_cap,
+                    "trajectory_ratio_dev_mean": trajectory_stats.ratio_abs_dev_mean,
+                    "trajectory_ratio_dev_max": trajectory_stats.ratio_abs_dev_max,
+                    "trajectory_over_cap_fraction": trajectory_over_cap,
+                    "production_grad_norm_ratio": production_ratio,
+                    "rs_masked_fraction": production_rs,
+                },
+                context={
+                    "scheme": scheme,
+                    "n_samples": n_samples,
+                    "hidden": hidden,
+                    "vocab": vocab,
+                    "n_steps": n_steps,
+                    "tis_cap": cap,
+                    "profile": "synthetic_full_head",
+                },
+                notes=(
+                    "synthetic head; per-timestep metrics are the trainer semantics, "
+                    "trajectory_* is the counterfactual product diagnostic"
+                ),
+            ),
+            path=record_baseline,
+        )
+        print(f"\nbaseline appended -> {path}")
 
     # NVFP4's synthetic correction-path gate follows the same sample-step ratio
     # consumed by GRPO. Real-model SDE logprobs remain a separate P2 gate.

@@ -54,6 +54,23 @@ def test_ray_runtime_weight_syncer_pushes_cpu_state_with_monotonic_versions() ->
     assert torch.equal(runtime.calls[-1][0]["weight"], torch.full((2,), 2.0))
 
 
+def test_push_annotates_state_copy_and_transport_as_separate_ranges() -> None:
+    """The device->host copy and the transport await must be attributable apart.
+
+    They overlap differently once rollout and training stop sharing one GPU, so a
+    single fused "sync" range would hide which half to schedule against.
+    """
+    runtime = _RuntimeWithSync()
+    syncer = RayRuntimeWeightSyncer(runtime)
+
+    with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as prof:
+        asyncio.run(syncer.push({"weight": torch.ones(2)}))
+
+    names = {event.key for event in prof.key_averages()}
+    assert "weight_sync.state_to_cpu" in names
+    assert "weight_sync.push" in names
+
+
 def test_ray_runtime_weight_syncer_serializes_concurrent_push_versions() -> None:
     """Two overlapping pushes must not both claim the same version number."""
 
