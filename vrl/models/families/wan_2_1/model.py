@@ -268,6 +268,8 @@ class WanT2VDiffusersModel(
                     expected_alpha=lora_config["alpha"],
                     expected_dropout=lora_config.get("dropout", 0.0),
                     expected_target_modules=lora_config["target_modules"],
+                    # Same construction dtype as the fresh-create branch below.
+                    autocast_adapter_dtype=False,
                 )
                 wrapped.set_adapter("default")
             else:
@@ -281,7 +283,17 @@ class WanT2VDiffusersModel(
                     ),
                     target_modules=lora_config["target_modules"],
                 )
-                wrapped = get_peft_model(transformer, cfg)
+                # Adapters must be created in the transformer's resolved dtype,
+                # not peft's default fp32 upcast: the FSDP actor policy stores
+                # every trainer parameter in the resolved low precision (update
+                # precision comes from the fp32-master optimizer on all
+                # topologies), so an fp32 adapter here makes the rollout
+                # worker's runtime dtype diverge from the FSDP trainer's synced
+                # payload — load_trainable_state then fails its strict dtype
+                # check (measured on the hpsv3 fsdp 4-rank smoke, 2026-08-16).
+                # One construction dtype keeps single-process, FSDP, and worker
+                # replicas byte-compatible at weight sync.
+                wrapped = get_peft_model(transformer, cfg, autocast_adapter_dtype=False)
             self._set_wan_transformer(name, wrapped)
 
     @property

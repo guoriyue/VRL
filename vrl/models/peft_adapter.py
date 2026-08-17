@@ -131,8 +131,16 @@ def load_trainable_lora_adapter(
     expected_target_modules: Iterable[str],
     expected_task_type: str | None = None,
     adapter_name: str = "default",
+    autocast_adapter_dtype: bool = True,
 ) -> Any:
-    """Validate and load one trainable LoRA adapter before mutating ``base``."""
+    """Validate and load one trainable LoRA adapter before mutating ``base``.
+
+    ``autocast_adapter_dtype`` is peft's fp32 adapter upcast. Families whose
+    weight-sync contract requires one construction dtype across trainer
+    topologies and rollout replicas (wan: the FSDP actor policy stores trainer
+    parameters in the resolved low precision) pass ``False`` so a warm-started
+    adapter matches a freshly created one.
+    """
 
     from peft import LoraConfig, PeftConfig, PeftModel
 
@@ -213,6 +221,7 @@ def load_trainable_lora_adapter(
         adapter_name=adapter_name,
         is_trainable=True,
         config=config,
+        autocast_adapter_dtype=autocast_adapter_dtype,
     )
 
 

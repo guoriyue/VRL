@@ -98,6 +98,9 @@ def test_wan_warm_start_validates_effective_topology(
     assert captured == {
         "base": base,
         "adapter_path": "/adapter",
+        # Warm start must construct adapters in the transformer's resolved
+        # dtype (no peft fp32 upcast) so it matches the fresh-create branch.
+        "autocast_adapter_dtype": False,
         "expected_rank": 2,
         "expected_alpha": 4,
         "expected_dropout": 0.4,

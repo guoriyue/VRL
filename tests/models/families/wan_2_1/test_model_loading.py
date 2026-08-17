@@ -248,7 +248,11 @@ def test_wan_i2v_sequential_offload_attaches_lora_without_full_gpu_move(monkeypa
     from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
 
     pipeline, _ = _patch_from_pretrained(monkeypatch)
-    monkeypatch.setattr(peft, "get_peft_model", lambda transformer, _cfg: transformer)
+    monkeypatch.setattr(
+        peft,
+        "get_peft_model",
+        lambda transformer, _cfg, **_kwargs: transformer,
+    )
     build = _i2v_build(
         rollout=_rollout_build_options("sequential"),
         use_lora=True,
