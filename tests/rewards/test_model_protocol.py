@@ -8,6 +8,7 @@ import pytest
 
 from vrl.rewards.models.base import RewardModel
 from vrl.rewards.models.cosmos3_reasoner import Cosmos3ReasonerRewardModel
+from vrl.rewards.models.hpsv3 import HPSv3Model
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 from vrl.rewards.models.phymotion import PhyMotionModel
 from vrl.rewards.models.unified_reward_video import UnifiedRewardVideoModel
@@ -15,6 +16,7 @@ from vrl.rewards.models.videocon_physics import VideoConPhysicsModel
 from vrl.rewards.models.videoscore2 import VideoScore2Model
 
 _REWARD_MODEL_CLASSES = (
+    HPSv3Model,
     VideoScore2Model,
     VideoConPhysicsModel,
     KlingVideoRewardModel,

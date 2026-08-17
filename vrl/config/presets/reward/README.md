@@ -71,6 +71,7 @@ Use these conventions for compound video recipes:
 | Human dynamics (external) | `phymotion` | `overall` | SMPL+MuJoCo kinematic/contact/dynamic feasibility via an external PhyMotion env (opt-in). |
 | Robot V2W perceptual anchor | `target_dino_similarity` | `target_dino_similarity` | Frozen-DINOv2 cosine + temporal term vs manifest `target_video` / `target_image`; keeps frames on the real-image manifold. Zero-training (pretrained). |
 | Robot V2W motion guard | `motion_dynamics` | `motion_dynamics` | RAFT optical-flow Dynamic Degree; a hard floor under static/blur collapse. |
+| Frame-aesthetic preference (Flash-GRPO) | `hpsv3` | `top_frame_mean` | HPSv3 image preference over the best 30% of frames (unbounded scale, ~-1..+12). Zero temporal signal — judge motion by watching samples, and watch `frame_min` in the debug records for best-frames-only hacking. |
 
 Keep `reward/kling_video_reward` on `overall_reward` for single-reward
 baselines. Compound experiments should override the score key explicitly, e.g.

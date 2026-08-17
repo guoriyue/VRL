@@ -46,6 +46,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.animereward import AnimeRewardQualityReward
     from vrl.rewards.functions.cosmos3_reasoner import Cosmos3ReasonerReward
     from vrl.rewards.functions.geneval import GenEvalReward
+    from vrl.rewards.functions.hpsv3 import HPSv3Reward
     from vrl.rewards.functions.kling_video_reward import KlingVideoReward
     from vrl.rewards.functions.motion_dynamics import MotionDynamicsReward
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
@@ -73,6 +74,7 @@ def _register_builtins() -> None:
             "target_dino_similarity": TargetDinoSimilarityReward,
             "motion_dynamics": MotionDynamicsReward,
             "robotics_video_reward": RoboticsVideoReward,
+            "hpsv3": HPSv3Reward,
             "kling_video_reward": KlingVideoReward,
             "cosmos3_reasoner": Cosmos3ReasonerReward,
             "videocon_physics": VideoConPhysicsReward,

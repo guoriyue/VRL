@@ -1,0 +1,33 @@
+# HPSv3 reward (MizzenAI/HPSv3, Qwen2-VL-7B + ranknet preference head).
+# An IMAGE preference model applied per video frame: each frame is scored
+# independently ((mu, sigma) head, mu used), then aggregated Flash-GRPO style —
+# default score_key top_frame_mean is the mean of the best 30% of frame scores.
+# Scores are unbounded (typically -1..+12, higher is better); GRPO's group
+# normalization makes the absolute scale irrelevant. Temporal coherence is NOT
+# in this reward — pair with a motion-aware component when motion matters.
+distributed:
+  resources:
+    reward:
+      device: gpu
+
+reward:
+  components:
+    hpsv3: 1.0
+  kwargs:
+    hpsv3:
+      reward_name: hpsv3   # logical tag (request label)
+      score_key: top_frame_mean
+      media_type: video
+      artifact_format: mp4
+      artifact_dir: ${trainer.output_dir}/reward_artifacts
+      debug_dir: ${trainer.output_dir}/reward_debug
+      # Omit model_path to resolve MizzenAI/HPSv3 from the local HF cache; set
+      # worker_config.model_path to a local dir containing HPSv3.safetensors.
+      # base_model_path likewise overrides the Qwen/Qwen2-VL-7B-Instruct base.
+      worker_config:
+        reward_model_name: MizzenAI/HPSv3@main
+        dtype: bfloat16
+        # Flash-GRPO parity: score EVERY frame (num_frames omitted). Set
+        # num_frames to subsample uniformly and bound scoring cost.
+        frames_per_forward: 8
+        top_frame_fraction: 0.3

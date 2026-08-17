@@ -7,6 +7,7 @@ import inspect
 import pytest
 
 from vrl.rewards.functions.cosmos3_reasoner import Cosmos3ReasonerReward
+from vrl.rewards.functions.hpsv3 import HPSv3Reward
 from vrl.rewards.functions.kling_video_reward import KlingVideoReward
 from vrl.rewards.functions.phymotion import PhyMotionReward
 from vrl.rewards.functions.robotics_video_reward import RoboticsVideoReward
@@ -29,6 +30,7 @@ class _Runtime:
 @pytest.mark.parametrize(
     ("reward_cls", "reward_name", "score_key"),
     [
+        (HPSv3Reward, "MizzenAI/HPSv3@main", "top_frame_mean"),
         (KlingVideoReward, "kling_video_reward", "overall_reward"),
         (RoboticsVideoReward, "robotics_video_reward", "robotics_blend"),
         (Cosmos3ReasonerReward, "nvidia/Cosmos3-Nano", "task_success"),
