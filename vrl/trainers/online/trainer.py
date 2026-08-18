@@ -702,6 +702,23 @@ class OnlineTrainer:
                 "getter; syncing model.state_dict() would send frozen modules.",
             )
         self.sync_state_getter = sync_state_getter
+        # A rollout policy with LoRA folded into its base weights cannot train:
+        # PEFT routes a merged layer straight to its (frozen) base layer, so
+        # lora_A/lora_B leave the autograd graph entirely. Depending on what else
+        # is in the loss that surfaces as a bare "does not require grad" backward
+        # or as absent adapter gradients -- either way the policy stops updating.
+        # Production never reaches this (rollout lives in its own Ray actor with
+        # its own model), but a harness that hands ONE bundle to both the executor
+        # and the trainer would, so refuse it here rather than at whichever of the
+        # two symptoms happens to show up first.
+        if getattr(model, "lora_pristine_base", None) is not None:
+            raise ValueError(
+                "OnlineTrainer received a rollout policy whose LoRA is folded "
+                "into the base weights (model.lora.merge_for_rollout). A folded "
+                "policy has no adapter in its autograd graph, so it cannot be "
+                "trained. Build a separate replay bundle for the trainer, or "
+                "disable the fold.",
+            )
         self.config = config
         # RuntimeBundle stamps the selected role policy on the model so trainer
         # process settings cannot be paired with a different build.

@@ -344,3 +344,26 @@ def test_stale_base_without_refold_is_observable() -> None:
 
     merge_lora_into_base(policy, pristine)
     assert not torch.equal(_forward(policy, x), before)
+
+
+def test_folding_removes_the_adapter_from_the_autograd_graph() -> None:
+    """Why OnlineTrainer refuses a folded policy.
+
+    PEFT routes a merged layer straight to its frozen base layer, so the adapter
+    leaves the graph. This is the failure the trainer-side guard exists to catch
+    before it shows up as a training run that changes nothing.
+    """
+
+    policy = _Policy()
+    policy.randomize_adapter()
+    layer = next(iter(lora_layers(policy.policy_cores["core0"])))[1]
+    x = torch.randn(4, 32)
+
+    policy.policy_cores["core0"](x).pow(2).mean().backward()
+    assert layer.lora_A.default.weight.grad is not None
+
+    policy.policy_cores["core0"].zero_grad(set_to_none=True)
+    merge_lora_into_base(policy, capture_pristine_base(policy))
+
+    with pytest.raises(RuntimeError, match="does not require grad"):
+        policy.policy_cores["core0"](x).pow(2).mean().backward()
