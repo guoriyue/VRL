@@ -547,9 +547,12 @@ def test_runtime_builders_apply_generation_memory_policy() -> None:
     assert "apply_generation_memory_policy" in shared, (
         "the rollout optimization layer must apply the generation memory policy"
     )
-    assert "apply_generation_memory_policy" not in Path(
-        "vrl/models/steps/denoise/build.py",
-    ).read_text(), "the denoise builder must not re-apply the policy beside the pass"
+    assert (
+        "apply_generation_memory_policy"
+        not in Path(
+            "vrl/models/steps/denoise/build.py",
+        ).read_text()
+    ), "the denoise builder must not re-apply the policy beside the pass"
     token = Path("vrl/models/steps/token/build.py").read_text()
     assert "apply_generation_memory_policy" not in token, (
         "token-family builders own no diffusers VAE memory targets"
