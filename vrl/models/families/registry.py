@@ -366,12 +366,8 @@ class ModelFamilyEntry:
         rollout = None
         generation_memory = None
         if for_rollout:
-            lora_section = root.model.lora
             rollout = RolloutBuildOptions(
                 prompt_encoder_dtype=precision.prompt_encoder_dtype,
-                merge_lora=bool(
-                    lora_section is not None and lora_section.merge_for_rollout,
-                ),
             )
             model_memory = root.model.memory
             if model_memory is not None and "vae_decode" in model_memory.model_fields_set:

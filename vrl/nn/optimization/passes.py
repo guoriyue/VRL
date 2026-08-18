@@ -130,11 +130,12 @@ class LoraMergePass:
     EFFECTIVE weight. Reversing the two would quantize the base and then fold a
     high-precision delta into a quantized tensor.
 
-    Rollout-only by construction rather than by a guard: replay bundles carry
-    ``rollout=None`` (``assemble_replay_bundle`` vs
-    ``build_denoise_runtime_bundle``), so ``enabled`` is False on every path
-    that computes gradients. The trainer's LoRA is untouched -- weight sync
-    exists precisely because the two are separate model instances.
+    Rollout-only by construction rather than by a guard: only
+    ``build_denoise_runtime_bundle`` runs the pass layer at all
+    (``assemble_replay_bundle`` never calls ``apply_rollout_optimizations``), so
+    no gradient-computing path can reach this. The trainer's LoRA is untouched
+    -- weight sync exists precisely because the two are separate model
+    instances.
     """
 
     name: str = "lora_merge"
@@ -146,10 +147,7 @@ class LoraMergePass:
     replaces_modules: bool = False
 
     def enabled(self, build: Any) -> bool:
-        rollout = getattr(build, "rollout", None)
-        return bool(
-            getattr(build, "use_lora", False) and getattr(rollout, "merge_lora", False),
-        )
+        return bool((getattr(build, "lora", None) or {}).get("merge_for_rollout"))
 
     def conflicts(self, build: Any) -> tuple[str, ...]:
         """Nothing detectable from ``build`` alone.

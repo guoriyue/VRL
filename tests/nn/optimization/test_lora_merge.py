@@ -226,15 +226,19 @@ def test_bf16_pristine_restore_beats_peft_unmerge_round_trips() -> None:
     assert peft_error > 0.0
 
 
-def _build(*, use_lora: bool = True, merge_lora: bool = True) -> object:
-    """Minimal ModelBuild-shaped stand-in for the pass's enable decision."""
+_DEFAULT_LORA = {"rank": 32, "alpha": 64, "merge_for_rollout": True}
+
+
+def _build(*, lora: dict | None = _DEFAULT_LORA) -> object:
+    """Minimal ModelBuild-shaped stand-in for the pass's enable decision.
+
+    ``ModelBuild.lora`` is None when use_lora is off, so one field answers both
+    halves of the question -- pass ``lora=None`` for that case.
+    """
 
     from types import SimpleNamespace
 
-    return SimpleNamespace(
-        use_lora=use_lora,
-        rollout=SimpleNamespace(merge_lora=merge_lora),
-    )
+    return SimpleNamespace(lora=lora)
 
 
 def test_pass_runs_before_quantization() -> None:
@@ -256,18 +260,20 @@ def test_pass_declares_replay_drift() -> None:
     assert LoraMergePass().replaces_modules is False
 
 
-def test_pass_is_off_for_replay_builds() -> None:
-    """Replay carries ``rollout=None``, so the trainer can never fold."""
+def test_pass_reads_exactly_one_config_key() -> None:
+    """``model.lora.merge_for_rollout``, off unless asked for.
 
-    from types import SimpleNamespace
+    ``ModelBuild.lora`` is already None when use_lora is off, so the pass needs
+    no second condition -- and the replay path never runs the pass layer at all.
+    """
 
     from vrl.nn.optimization.passes import LoraMergePass
 
     pass_ = LoraMergePass()
     assert pass_.enabled(_build()) is True
-    assert pass_.enabled(_build(merge_lora=False)) is False
-    assert pass_.enabled(_build(use_lora=False)) is False
-    assert pass_.enabled(SimpleNamespace(use_lora=True, rollout=None)) is False
+    assert pass_.enabled(_build(lora={"rank": 32, "alpha": 64})) is False
+    assert pass_.enabled(_build(lora={"merge_for_rollout": False})) is False
+    assert pass_.enabled(_build(lora=None)) is False
 
 
 def test_pass_folds_and_publishes_the_pristine_base() -> None:

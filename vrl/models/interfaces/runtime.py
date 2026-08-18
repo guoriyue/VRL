@@ -110,10 +110,6 @@ class RolloutBuildOptions:
     prompt_encoder_dtype: Any
     base_weight_sync: bool = True
     pipeline_offload_mode: PipelineOffloadMode = "none"
-    # Fold LoRA into the base weights for sampling. Rollout-only by
-    # construction: replay builds carry ``rollout=None``, so the trainer's
-    # differentiable path can never inherit a folded policy.
-    merge_lora: bool = False
 
     def __post_init__(self) -> None:
         from vrl.models.dtypes import require_plain_dtype
@@ -126,8 +122,6 @@ class RolloutBuildOptions:
 
         if not isinstance(self.base_weight_sync, bool):
             raise TypeError("rollout base_weight_sync must be a bool")
-        if not isinstance(self.merge_lora, bool):
-            raise TypeError("rollout merge_lora must be a bool")
         require_pipeline_offload_mode(self.pipeline_offload_mode)
 
 
@@ -306,7 +300,7 @@ class ModelBuild:
             "alpha": int(lora["alpha"]),
             "target_modules": list(lora["target_modules"]),
         }
-        for key in ("init_lora_weights", "dropout", "init"):
+        for key in ("init_lora_weights", "dropout", "init", "merge_for_rollout"):
             if key in lora:
                 config[key] = lora[key]
         return config

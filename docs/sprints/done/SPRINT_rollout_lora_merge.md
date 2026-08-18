@@ -44,7 +44,13 @@ plumbing（280 个 PEFT 层）」。
 - `LoraMergePass`（`vrl/nn/optimization/passes.py`）—— 排在**最前**，
   在 quantization 之前，让低精度替换看到**有效权重**。
 - `model.lora.merge_for_rollout`（默认 `null`/off），identity 标 `exclude`：
-  折叠是同一个 policy 的改写，不是另一个模型。
+  折叠是同一个 policy 的改写，不是另一个模型。**一处声明、一处透传、一处读取** ——
+  schema 一个字段，`ModelBuild.lora` 的现成 extras 列表加一个键，
+  `LoraMergePass.enabled` 一次读取。第一版曾在 `RolloutBuildOptions` 上另立字段、
+  经 registry 接线、再在 `run.py` 裁 wire，中途还把名字从 `merge_for_rollout`
+  改成 `merge_lora` —— **全是多余的**：pass 只在 `build_denoise_runtime_bundle`
+  里跑（`assemble_replay_bundle` 从不调 `apply_rollout_optimizations`），
+  rollout-only 是结构保证，不需要再用一个字段去表达。
 - `update_weights` 每次同步后重折（`vrl/generation/execution/worker.py`）。
 - `require_every_core_merged` 查**层**不查自报，照抄
   `require_every_core_quantized` 的理由（Wan 双专家半覆盖 bug）。
