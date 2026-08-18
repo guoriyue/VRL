@@ -253,6 +253,39 @@ stats/guard/TIS/RS 后如何表现”，不回答真实 diffusion SDE accuracy�
 `exp(sum_t(replay_t-old_t))` 驱动 TIS gate。修正后的回归测试会把同一 timestep 复制两次，断言
 GRPO gradient norm 不翻倍，防止该错误回来。
 
+## 5.5 真实模型 SDE-logprob 的一个直接数据点（2026-08-17 补测）
+
+§5 的表来自 synthetic categorical head probe，文中已注明它"不回答真实
+diffusion SDE accuracy"；§6 的 `real rollout→BF16 replay SDE-logprob` 一格
+写的是 **historical FP8 live run PASS**。下面是那一格的一次**直接测量**，
+用真实 Wan2.1-T2V-1.3B（不是 SD3.5）跑完整 35 步去噪链、
+`sde_step_with_logprob` + `compute_logprob_mismatch_stats`：
+
+| | steps 0–33 平均 | 末步(34) | 总 mean | 总 max |
+|---|---:|---:|---:|---:|
+| **FP8 rowwise（300 个 linear 被换）** | 1.17e-03 | 8.59e-01 | **2.57e-02** | **8.59e-01** |
+| 对照：无 drift 源（同策略重放） | 0.0 | 0.0 | 0.0 | 0.0 |
+
+两点：
+
+1. **mean 2.57e-02 高于 `trainer.debug.max_abs_logprob_diff` 的默认 1e-2**
+   （mean 与 §5 synthetic 的 .03105 同量级，互相印证；max 则是 synthetic 的 7 倍）。
+2. **误差高度集中在末步**：前 34 步平均 1.17e-03（比门低 8 倍），末步 8.59e-01。
+   σ→0 时 logprob 的 1/σ² 会放大**任何**对 `noise_pred` 的扰动 —— 这不是 fp8
+   特有的。同一条链上把 LoRA 折进基权重作对照，得到 2.2e-04 / 1.57e-01 /
+   4.7e-03，即比 fp8 干净约 5 倍，量级规律一致。
+
+**这不是"fp8 坏了"的结论**，测量边界要说清楚：用的是 wan 而非 SD3.5、
+文本条件是随机 embedding 而非真实 prompt 编码、单条链单 seed。
+但它确实给 §6 那格「historical live run PASS」提了一个问题：
+**在真实链上，fp8 的 mean 是过不了默认门的，且这个门与末步同时存在时对任何
+drift 源都不兼容。** 若要在 `trainer.debug.first_step=true` 的配置上开 fp8，
+建议先用真实 prompt 复跑这条链确认。
+
+顺带一个可能相关的观察：**没有任何 checked-in experiment preset 打开量化**
+（只走显式 override），而 44 个 preset 开着 `debug.first_step` ——
+这两件事从未在同一个 run 里碰过面。
+
 ## 6. Gate 状态
 
 | gate | FP8 | NVFP4 MLP-only |
@@ -262,7 +295,7 @@ GRPO gradient norm 不翻倍，防止该错误回来。
 | production compile executes | PASS | PASS |
 | master-dropped peak memory | PASS：−25.8% | PASS：−18.1% |
 | synthetic per-step correction path | PASS：0% TIS/RS | PASS：0% TIS/RS |
-| real rollout→BF16 replay SDE-logprob | historical FP8 live run PASS | **NOT MEASURED for current FP4 profile** |
+| real rollout→BF16 replay SDE-logprob | historical FP8 live run PASS；**但 2026-08-17 的直接复测在 wan 上 mean=2.57e-2 > 默认门 1e-2，见 §5.5** | **NOT MEASURED for current FP4 profile** |
 | reward / generated quality curve | historical FP8 live run GO | **NOT MEASURED** |
 
 所以当前决策是：FP8 已有 production evidence；FP4 的 kernel、compiled forward 和 correction

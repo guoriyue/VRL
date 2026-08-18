@@ -189,7 +189,7 @@ compiled 臂才是生产实际跑的东西）：
 | 杠杆 | 效果 | 工作量 | 代码现状 |
 |---|---|---|---|
 | **P0 逐-projection GEMM 拆分**（FFN vs QKV vs AdaLN vs out-proj 各几秒） | 不提速，但**决定 FP8/融合先打哪类 GEMM**——文档最细只到 `aten::addmm`，从没拆到 per-projection | 极小（trace 已有） | **空白，最该先做** |
-| **full-param 替 LoRA**（sd3.5 / wan / predict2.5） | 干掉 ~47% elementwise + lora_A/lora_B 瘦 GEMM → 每个 linear 一个大 dense GEMM | 配置 `use_lora:false`（+显存/多卡） | 路径已有（`enable_full_finetune`）；**cosmos predict2 已是全参**，故只对仍在 LoRA 的家族有用 |
+| **full-param 替 LoRA**（sd3.5 / wan / predict2.5）**【rollout-only 收益，训练段慢 26%，见 §4 P1.5 的补测】** | 干掉 ~47% elementwise + lora_A/lora_B 瘦 GEMM → 每个 linear 一个大 dense GEMM | 配置 `use_lora:false`（+显存/多卡） | 路径已有（`enable_full_finetune`）；**cosmos predict2 已是全参**，故只对仍在 LoRA 的家族有用 |
 | **torch.compile 开在 cosmos**【已实测 2026-06-15，落地】 | 融合 elementwise epilogue、削 launch → **实测 1.37× rollout / 1.25× train**（launch 数砍 2.6–2.9×） | 一行 `torch_compile.enable:true`（predict2_2b.yaml） | **已落地默认开**；全链路已接线（rollout + train）。纯 inductor fusion 削 launch 已值 1.25–1.37×——比先验"提升有限"大（见 P2 实测）。（注："`fullgraph=False` + grad-ckpt 挡住 CUDA-graph" 是**已被推翻的旧说法**，捕获其实能跑通；见 P2 的 2026-08-16 复测更正） |
 | **融合 QKV 投影**【已实测 2026-06-14，低 ROI】 | 3 个瘦 GEMM 拼成 1 个大 GEMM，减 launch | 小（全参 SD3/Wan）；**Cosmos 无 fuse API** | **实测确认低 ROI**：SD3.5 −2% 总 GEMM、Wan ~0、Cosmos 不支持（无 `fuse_qkv_projections()`）。数值等价（rel<0.6%），但需 full-param（破 LoRA `target_modules=to_q/k/v`）、不碰 FFN。**不落地 runtime**；`--fuse-qkv` 留在 profiler 作度量 |
 | **rollout 侧 merge LoRA → dense** | 35 步×CFG 的推理前向变单个大 GEMM | 真要写（merge/unmerge 要跟 colocated 训练 + 权重同步配合） | 只接了 `disable_adapter`（给 KL ref 用），**没有 `merge_adapter`** |
@@ -207,6 +207,14 @@ compiled 臂才是生产实际跑的东西）：
 非-FP8 活跃路径（按杠杆排）：
 
 - [x] **P1 — QKV 融合：已实测，确认低 ROI，不落地（见上方"P1 验证"）。** SD3.5 ~−2% 总 GEMM、Wan ~0、Cosmos 不支持；需 full-param、破 LoRA targeting、不碰 FFN。数值正确但收益不抵复杂度——**不在 runtime 加这个特性**，`--fuse-qkv` 仅留在 profiler 作度量。
+> **⚠️ 2026-08-17 补测：P1.5 的收益是 rollout-only 的，训练段是净亏。**
+> 本条只算了 kernel 数（LoRA 909 vs 全参 440 每次 replay 迭代，方向正确），
+> 但 wall time 相反：**全参训练步 43.01 ms vs LoRA 34.19 ms，慢 26%**。
+> 两个原因叠加——反向要为 340M 参数算梯度而不是 4.7M（replay 慢 9%）；
+> optimizer/clip/EMA 要扫 340M 而不是 4.7M（非-replay 占比 0.9% → 14%）。
+> **动手前先量该 run 的 rollout/训练时间配比**，不要当作无条件杠杆。
+> 数据：`info/SPRINT_train_phase_gap_hunt.md` §2。
+
 - [ ] **P1.5（仅 LoRA 家族 sd3.5/wan/predict2.5）— full-param 替 LoRA**：`use_lora:false`，砍掉 ~47% 的 LoRA elementwise + lora_A/lora_B 瘦 GEMM 碎片化。注意这改善的是 GEMM *之间* 的碎片化/elementwise，不是 GEMM kernel 本身。代价：显存 / 多卡。cosmos predict2 已是全参。**这是非-FP8 路径里剩下最大的一条**，但前提是显存/多卡可用。
 - [x] **P2 —（cosmos predict2，已全参）翻 `torch_compile.enable:true`：已实测 + 落地（见上方"P2 实测结果"）。** 结果比先验好：rollout 1.37× / train 1.25×，靠 launch 数砍 2.6–2.9×（fullgraph=False 削不动 `Compute(SM)` 是对的，但削 launch 这条本身就值钱）。显存不变。config 默认已翻 true，唯一未结：下次真实 run 确认 logprob drift guard 绿。
 
