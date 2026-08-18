@@ -130,7 +130,37 @@ rollout/训练时间配比 —— 决定前应该先量那个比值，而不是�
    用朴素 AdamW/EMA 量出 28%，看起来是个大机会；换成仓库真实用的
    fused/foreach 后是 14%，而且贴着带宽极限 —— 机会是我自己造的。
 
-## 4. 相关
+## 4. 顺带做的 parked 复核（2026-08-17）
+
+既然本次的教训是「一个数字过期了两个月没人标」，就把 `parked/` 的 46 篇按
+同一个问题扫了一遍：**有没有别的也已经被后续工作悄悄解决了？**
+
+**结论：没有。归档状态是健康的，不需要动。** 具体：
+
+- **8 篇已带 supersession banner**（`cosmos3_full_support`、
+  `cross_request_step_scheduler`、`diffusion_nft_validation`、
+  `diffusion_rollout_stage_pipeline`、`generation_scheduler`、
+  `physical_stage_runtime`、`video_rollout_stage_overlap`、
+  `wan_2_1_i2v_proof_run`）。2026-07-12/13 有过一次维护 pass，就地加了
+  「Current-state correction」而不是移走 —— 这是有意的选择，不是遗漏。
+- **5 篇是「实测证伪」而非「等事件」**（`diffusion_stepwise_batching_probe`、
+  `paged_trajectory_store`、`checkpoint_async_write`、
+  `media_artifact_async_write`、`straggler_oversample_control`）。
+  初看像是该进 `done/`，但逐篇读下来**每篇都写了真实的重启条件**
+  （小 batch/低分辨率的 launch-bound 区间、全参 2B 的 24GB/次 checkpoint 规模、
+  慢尾尚未 instrument…），所以按 README 的判据「在等一个 EVENT」是**成立的**，
+  留在 `parked/` 正确。
+- **只有 1 篇自报触发条件已满足**：`video_rollout_stage_overlap`
+  （2026-07-19，4×L4 到位、probe 完成、campaign 未跑）。但**同一篇的顶部
+  banner 又说它的架构前提已被删除**（Ray reward actor pool 已整体移除，
+  reward 改为进程内 + sleep/wake）。两个事实在同一篇里互相矛盾 ——
+  真要重启它，第一步是先判定 campaign 在新架构下还成不成立，而不是直接跑。
+
+- 顺带核过的两个触发条件，**都未满足**：`attention_kernel_medium` 等
+  「第三个 attention backend」（今天只有 `vllm_paged.py` 一个）；
+  `weight_sync_transport_seam` 等「全参大模型多卡负载」（本机单卡）。
+
+## 5. 相关
 
 - 起点（**注意日期**）：`docs/sprints/info/SPRINT_cross_model_performance.md` §0（2026-06-11）
 - 直接处理了它的工作：`docs/sprints/done/SPRINT_gemm_utilization.md` §P2（2026-06-15）
