@@ -11,6 +11,17 @@
 
 ## 0. Core Decision
 
+> **⚠️ 时效标注（2026-08-17 补）：下面第 1 条的数字是 pre-compile 的。**
+> 「训练段 ~64% busy / 1.02M kernel/step」测于 **2026-06-11**，而 cosmos 翻
+> `torch_compile.enable: true` 于 **2026-06-15** 落地，实测 **launch 数砍
+> 2.6–2.9×、训练段 1.25×**（`done/SPRINT_gemm_utilization.md` §P2）——
+> 正是针对这条。**引用这个数字前请先重测。**
+> 五个候选根因的逐项排除见 `info/SPRINT_train_phase_gap_hunt.md`。
+>
+> 同一节第 2 条「cosmos 转全参后 elementwise 自然消失」也需要补一句：
+> 全参消掉的是 LoRA plumbing 的 elementwise，但 optimizer/EMA 对 340M 参数的
+> elementwise 扫描会顶上来，**整个训练步实测比 LoRA 慢 26%**（同上存档 §2）。
+
 三个跨家族结论：
 
 1. **"busy 95-99%" 是第一层假象**：cosmos 训练段 GPU 实际只有 ~64% 在做事
