@@ -108,4 +108,4 @@ video 家族的 denoise 分母比 SD3.5 涨得多得多，**比值反而降到 ~
 - 直接测量：`docs/sprints/info/SPRINT_rollout_performance.md:686-700`（b8/b16）
   与 :136-150（D0 stage 表）
 - 同为「实测后否决」：`docs/sprints/done/SPRINT_train_step_sync_audit.md`
-- 父 program：`docs/sprints/planned/SPRINT_train_phase_efficiency_program.md`
+- 父 program：`docs/sprints/done/SPRINT_train_phase_efficiency_program.md`

@@ -1,12 +1,23 @@
 # SPRINT PROGRAM：训练段效率 —— rollout 段之外剩下的那 36%
 
-状态：**active（2026-08-17）**。基线 main @ `abb8e4da`。
-本文是索引 + 排序，不含实施细节；执行项各自独立可做。
+状态：**done（2026-08-17）**。三项全部收口：**两否决、一落地**。
+基线 main @ `abb8e4da`。
 
-> **P1 已实测否决（2026-08-17）**，见
-> [`done/SPRINT_train_step_sync_audit.md`](../done/SPRINT_train_step_sync_audit.md)。
-> 收益 0.2%（噪声内），不实施。**§0 那个「训练段 64% busy」的问题仍未解释** ——
-> P1 只排除了一个嫌疑人，见该文 §4 的剩余嫌疑人清单。
+| 项 | 结果 | 收益 |
+|---|---|---|
+| P1 训练步同步审计 | **实测否决** | 0.2%（噪声内） |
+| P2 prompt embedding 缓存 | **实测否决** | 0.4%（仓库自己早测过） |
+| P3 rollout 侧 merge LoRA | **已落地（opt-in）** | **5–12%**，扛得住 compile |
+
+**这个 program 最大的产出是三次 KILL-RISK 门本身**：两个看起来合理的提案
+（数得出 16 次同步、证明得了 encoder 冻结）在实测下都只值零点几个百分点，
+而真正有货的那条是仓库自己杠杆表里列了却一直没写的。
+**先测再写**这条纪律省下的，是两次对 `trainer.py` 和 rollout 执行路径的高风险重构。
+
+> **§0 那个「训练段 64% busy」仍未解释。** P1 只排除了一个嫌疑人 ——
+> 实测证明内层循环是 GPU-bound 的，空转不在那里。
+> 剩余嫌疑人清单见 [`done/SPRINT_train_step_sync_audit.md`](SPRINT_train_step_sync_audit.md) §4。
+> 下一个接手的人：**先用 nsys 定位区间**，不要再从「哪里有 `.item()`」找。
 
 ## 0. 这个 program 为什么存在
 
@@ -27,13 +38,13 @@
 这个 program 把这句结论应用到它自己还没被应用的地方。**并且每一项先过
 KILL-RISK 门再实施** —— P1 就是被自己的门挡下来的。
 
-## 1. 执行项（P1 已否决，剩 P2 / P3）
+## 1. 执行项（全部收口）
 
 按「证据强度 × 风险倒序」排。互相独立，可并行。
 
 ### ~~P1 — 训练步同步审计~~ —— **实测否决，不实施**
 
-移至 [`done/SPRINT_train_step_sync_audit.md`](../done/SPRINT_train_step_sync_audit.md)。
+移至 [`done/SPRINT_train_step_sync_audit.md`](SPRINT_train_step_sync_audit.md)。
 
 计数是对的（每次迭代确实 16 次 D2H，且确实无循环内消费者），**代价不对**：
 那 16 次同步合计 75 µs，而所在迭代是 138 ms —— 占 0.05%，端到端交替 A/B
@@ -43,29 +54,28 @@ DiT replay 比那个 regime 重两个数量级。
 **留下的教训**：不要再从「哪里有 `.item()`」找训练段的 36% 空转；实测证明内层
 循环是 GPU-bound 的，空转不在那里。下一步应该先用 nsys 定位区间。
 
-### P2 — [prompt embedding 缓存](SPRINT_prompt_encode_cache.md)
+### ~~P2 — prompt embedding 缓存~~ —— **实测否决，不实施**
 
-**做什么**：text encoder 证明冻结（`requires_grad_(False)`、不在
-`trainable_modules`、不在 `policy_cores`、weight sync 不推它），但
-`_forward_chunk` 每个 chunk 重新编码。`sample_batch_size=1` 时同一 prompt 被
-编码 G 次。缓存它。
+移至 [`done/SPRINT_prompt_encode_cache.md`](SPRINT_prompt_encode_cache.md)。
 
-**为什么排第二**：收益机制最干净（常量函数缓存，逐位等价，零 drift），
-baseline 用现成 telemetry（`stage_durations["encode"]` 已在生产里）。唯一真实
-集成风险是 parking 的 256 MiB 残留预算，已在 sprint 的 P3 点名。
+前提全对（encoder 确实冻结、确实跨 chunk 重复编码），收益不对：encode 只占
+denoise 的 0.63%，而且本仓的 b8/b16 对照**早就直接测过这个干预本身**（chunk 数
+减半 = encode 次数减半）→ 0.4%。结构性原因：encode 每 chunk 一次，denoise
+每 chunk `steps × CFG` 次。video 家族的比值只会更小。
 
-严格说 P2 打的是 rollout 段，但它属于「重复固定成本」这一类，和 P1 是同一个
-病因，所以放在同一个 program 里。
+**重开条件**：极少步数的蒸馏家族（causvid）。见该文 §3。
 
-### P3 — [rollout 侧 merge LoRA → dense](SPRINT_rollout_lora_merge.md)
+### P3 — [rollout 侧 merge LoRA → dense](SPRINT_rollout_lora_merge.md) —— **已落地（opt-in）**
 
-**做什么**：`SPRINT_gemm_utilization.md` 杠杆表里唯一列出但没写的一条。
-merge 后 rollout 前向拿到全参的 GEMM 形状，训练侧仍只存 LoRA 状态。
-范围收在 disaggregated worker，colocated 明确排除。
+唯一过门的一项。实测 eager 14.0% / compiled 11.9%（seq 1024），
+走真实 pass 端到端 9.8%（seq 2048）。**收益扛得住 compile** —— inductor 融得掉
+scaling，消不掉那两个额外 GEMM。
 
-**为什么排最后**：收益最大（LoRA 家族 ~47% elementwise），但也是三项里唯一
-**会引入 replay drift** 的（`(W+BA)x` vs `Wx+B(A x)` 在 bf16 下不逐位相同），
-必须过 parity 红线，且有 colocated 的边界要守。
+计划里三处假设被执行中的证据推翻（colocated 不必排除；PEFT merge/unmerge 往返在
+bf16 下 1000 轮后毁掉基权重；versioned weight sync 是计划没预见的冲突），
+详见该文 §4。
+
+**默认关。** 开启前必须先过真实模型的 logprob parity 红线，见该文 §5。
 
 ## 2. 共用的测量口径
 

@@ -117,4 +117,4 @@ balanced 那行的 38% 是真的，但**它要求每次迭代的 GPU 工作量�
 - 未解释的起点：`docs/sprints/info/SPRINT_cross_model_performance.md` §0
 - 同样「实测后否决」的先例：`docs/sprints/done/SPRINT_gemm_utilization.md`
   的 QKV 融合（P1）与 CUDA graph（2026-08-16 复测）
-- 父 program：`docs/sprints/planned/SPRINT_train_phase_efficiency_program.md`
+- 父 program：`docs/sprints/done/SPRINT_train_phase_efficiency_program.md`
