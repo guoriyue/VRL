@@ -43,7 +43,7 @@ def get_reward(name: str) -> type[RewardFunction]:
 
 def _register_builtins() -> None:
     from vrl.rewards.functions.aesthetic import AestheticReward
-    from vrl.rewards.functions.animereward import AnimeRewardQualityReward
+    from vrl.rewards.functions.animereward_quality import AnimeRewardQualityReward
     from vrl.rewards.functions.cosmos3_reasoner import Cosmos3ReasonerReward
     from vrl.rewards.functions.geneval import GenEvalReward
     from vrl.rewards.functions.hpsv3 import HPSv3Reward

@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.rewards.models.animereward import AnimeRewardQualityModel
+from vrl.rewards.models.animereward_quality import AnimeRewardQualityModel
 
 _MODEL_NAME = "/nonexistent/checkpoint-final"
 

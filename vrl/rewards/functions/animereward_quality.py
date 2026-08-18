@@ -16,7 +16,7 @@ from typing import Any
 
 from vrl.rewards.base import DiskArtifactRewardFunction
 
-_ANIMEREWARD_QUALITY_MODEL = "vrl.rewards.models.animereward:AnimeRewardQualityModel"
+_ANIMEREWARD_QUALITY_MODEL = "vrl.rewards.models.animereward_quality:AnimeRewardQualityModel"
 
 
 class AnimeRewardQualityReward(DiskArtifactRewardFunction):

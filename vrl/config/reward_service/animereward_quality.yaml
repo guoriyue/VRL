@@ -28,7 +28,7 @@ max_cached_requests: 1024
 generation_overlap_safe: false
 
 worker_config:
-  model_factory: vrl.rewards.models.animereward:AnimeRewardQualityModel
+  model_factory: vrl.rewards.models.animereward_quality:AnimeRewardQualityModel
   reward_model_name: animereward-quality
   reward_model_version: IndexTeam/Index-anisora@b134a8e6+mantis-8b-idefics2-quality-4096-regression
   device: cuda:0

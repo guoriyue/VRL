@@ -3,7 +3,7 @@
 # The service owns model placement and lifecycle, so this transport preset must
 # not reserve a local reward GPU or include worker/device configuration. The
 # service runs from its own transformers-4.x environment because the Idefics2
-# regression head comes from Mantis's fork (see vrl/rewards/models/animereward.py).
+# regression head comes from Mantis's fork (see vrl/rewards/models/animereward_quality.py).
 reward:
   components:
     animereward_quality: 1.0
