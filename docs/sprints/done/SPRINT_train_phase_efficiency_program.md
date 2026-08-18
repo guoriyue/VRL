@@ -14,10 +14,12 @@
 而真正有货的那条是仓库自己杠杆表里列了却一直没写的。
 **先测再写**这条纪律省下的，是两次对 `trainer.py` 和 rollout 执行路径的高风险重构。
 
-> **§0 那个「训练段 64% busy」仍未解释。** P1 只排除了一个嫌疑人 ——
-> 实测证明内层循环是 GPU-bound 的，空转不在那里。
-> 剩余嫌疑人清单见 [`done/SPRINT_train_step_sync_audit.md`](SPRINT_train_step_sync_audit.md) §4。
-> 下一个接手的人：**先用 nsys 定位区间**，不要再从「哪里有 `.item()`」找。
+> **§0 那个「训练段 64% busy」已经查清：那个数字是过期的。**
+> 它测于 2026-06-11，而直接针对它的 compile（launch 数砍 2.6–2.9×、训练 1.25×）
+> 于 **2026-06-15** 落地 —— 四天后。五个候选根因已逐个实测排除，
+> 全部记录在 [`info/SPRINT_train_phase_gap_hunt.md`](../info/SPRINT_train_phase_gap_hunt.md)。
+> 那份存档还测出一条与杠杆表**方向相反**的事实：全参在**训练段**比 LoRA 慢 26%，
+> 所以 P1.5 的收益是 rollout-only 的。
 
 ## 0. 这个 program 为什么存在
 

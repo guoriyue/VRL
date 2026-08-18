@@ -101,8 +101,10 @@ balanced 那行的 38% 是真的，但**它要求每次迭代的 GPU 工作量�
 - microbatch 之间的数据准备与 Python plumbing
 - 权重同步与 rollout 交接
 
-**下一个接手的人：先用 nsys 在真实 run 上定位那 36% 落在哪个区间，再立 sprint。**
-不要再从「哪里有 `.item()`」这个角度找 —— 本文已经证明那条路是死的。
+**这个排查已经做完了**，见
+[`info/SPRINT_train_phase_gap_hunt.md`](../info/SPRINT_train_phase_gap_hunt.md)：
+上面列的嫌疑人逐个实测排除，而那个 64% 数字本身测于 2026-06-15 compile 落地
+**之前**——它四天后就被直接处理了（launch 数砍 2.6–2.9×、训练 1.25×）。
 
 ## 5. 方法学留档
 
