@@ -200,9 +200,7 @@ class CompilePass:
         # model what changed would be self-certification; a compiled root is
         # observable, so observe it.
         missed = [
-            name
-            for name, core in model.policy_cores.items()
-            if not hasattr(core, "_orig_mod")
+            name for name, core in model.policy_cores.items() if not hasattr(core, "_orig_mod")
         ]
         if missed:
             raise RuntimeError(
