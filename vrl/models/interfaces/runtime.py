@@ -300,7 +300,7 @@ class ModelBuild:
             "alpha": int(lora["alpha"]),
             "target_modules": list(lora["target_modules"]),
         }
-        for key in ("init_lora_weights", "dropout", "init", "merge_for_rollout"):
+        for key in ("init_lora_weights", "dropout", "init"):
             if key in lora:
                 config[key] = lora[key]
         return config

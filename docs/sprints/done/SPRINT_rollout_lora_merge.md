@@ -1,43 +1,26 @@
-# SPRINT：rollout 侧 merge LoRA → dense —— 已落地（opt-in）
+# SPRINT：rollout 侧 merge LoRA → dense —— 实测后撤销
 
-状态：**done / 落地但收益被下修（2026-08-17）**。机制 + pass + worker 重折 +
-trainer 护栏全部落地，**默认关**。
+状态：**done / 已实施并撤销（2026-08-17）**。功能完整落地过（机制 + pass +
+worker 重折 + trainer 护栏 + 16 个测试，全量 gate 绿），随后**按实测收益撤销**。
+生产代码已回到 `origin/main` 状态；本文保留全部测量，是这次工作的真正产出。
 
-**两次更正，都把结论往下拉：**
-
-1. **收益**：合成模型 5–12% → **真实 Wan2.1-1.3B 生产分辨率 0.6–4%**（§1）。
-   原数字测在 seq 1024–4096 的合成 stack 上，而真实视频 latent 是 32k–106k
-   token，收益随序列长度衰减。
-2. **parity**：mean 门过（4.7e-3）、**max 门不过**（1.57e-1，末步 σ→0 放大）。
-   已发货的 fp8 量化在两个门上都差 5 倍，但这不改变 max 门开着时不能用（§6）。
-
-**因此这个功能是否值得保留是一个开放问题** —— 0.6–4% 换三个 hazard
-（parity max 门不兼容、versioned weight sync 冲突、需要 trainer 护栏防训练
-静默失效）+ 278 行生产代码。见 §7 的取舍记录。
-基线 main @ `abb8e4da`。实施提交：`d97d4069`（机制）、`59101209`（pass 接线）。
-
-执行中有**三处证据推翻了计划里的假设**，已按证据修正（见 §4）。
+基线 main @ `abb8e4da`。撤销提交见文末。
 
 ## 0. 结论先行
 
-`SPRINT_gemm_utilization.md` 杠杆表里唯一「列了但没写」的一条，现在写了。
+`SPRINT_gemm_utilization.md` 杠杆表里唯一「列了但没写」的一条，写了，测了，撤了。
 
-> **⚠️ 数字更正（2026-08-17，同日）：下面的 5–12% 是合成模型的，真实模型是
-> 0.6–4%。** 详见 §1.1。原始 5–12% 测在一个 12-block / 48 个 LoRA 层 /
-> seq 1024–4096 的合成 stack 上；真实 Wan2.1-1.3B 是 30 blocks / 240 层，
-> 生产 latent 是 32k–106k token。**收益随序列长度衰减，我引用了自己曲线上
-> 最有利的那一端。**
+**撤销理由 = 收益不抵代价**：
 
-合成 stack（12 blocks / d=1536 / rank 32 / 4 个注意力投影 / bf16 / eval+no_grad，
-交替 A/B 取中位数）：
+| | |
+|---|---|
+| 真实 Wan2.1-1.3B 生产分辨率收益 | **0.6–4%**（§1） |
+| 代价 | 3 个 hazard 各需一个护栏 + 278 行生产代码（§3） |
 
-| arm | seq 1024 | seq 4096 |
-|---|---|---|
-| eager | 8.30 → 7.14 ms（14.0%） | 28.54 → 26.95 ms（5.6%） |
-| compiled | 8.07 → 7.11 ms（11.9%） | 28.36 → 27.01 ms（4.7%） |
-
-**收益扛得住 compile**，这是最关键的一条：inductor 能融 scaling，但**消不掉那两个
-额外 GEMM**。所以这不是已经默认开的 compile pass 顺手拿走的东西。
+**关键教训:第一版报的 5–12% 是错的。** 那是合成 stack（12 blocks / 48 个
+LoRA 层 / seq 1024–4096）的数字,而真实模型是 30 blocks / 240 层、生产 latent
+32k–106k token。**收益随序列长度衰减,而我引用了自己曲线上最有利的那一端。**
+在真模型上重测才得到 0.6–4%。
 
 ## 1. 真实模型实测（这才是决策该用的数字）
 
@@ -72,7 +55,7 @@ plumbing（280 个 PEFT 层）」。
 相对 P1.5（`use_lora:false` 转全参）的好处：**拿到全参的 GEMM 形状，不付全参的
 显存**——训练侧仍然只存 LoRA 的优化器状态。
 
-## 3. 落地形态
+## 3. 当时的落地形态（已撤销，留作重开时的蓝图）
 
 - `vrl/nn/optimization/lora_merge.py` —— 机制。按 `peft.tuners.lora.LoraLayer`
   **走树**而不是问模型，因为本仓两个 adapter 表面接法不同（`get_peft_model`
@@ -98,7 +81,7 @@ plumbing（280 个 PEFT 层）」。
   executor 和 trainer 的 harness 会（`tests/e2e/test_real_checkpoint_rl.py`
   就是这么搭的），所以在 trainer 入口拒绝，而不是等它以两种症状之一暴露。
 
-## 4. 验收结果
+## 4. 撤销前的验收结果（全部通过）
 
 - ✅ 数值：端到端前向 max rel diff **0.0**（bf16，本例恰好逐位相同；
   `introduces_replay_drift=True` 仍按保守声明，因为累加顺序确实变了）。
@@ -204,17 +187,32 @@ replay 腿用未折叠策略对同一批 `prev_sample` 重新打分 —— 就�
 **必须跑真实链** —— 用固定初始噪声 latent 喂所有 step 会在末步给出
 非物理的 1.6e-01（σ 已趋零而 latent 还是纯噪声），第一次就是这么测错的。
 
-## 7. 保留还是撤掉（未决）
+## 7. 撤销记录
 
-**支持保留**：低分辨率 / 小 latent 场景 7.7%；默认关时零执行开销；
-是拿到 rollout 收益又不付全参训练税（实测 +26%）的唯一路径；
-所有数据已记录，撤掉也不会有人再重提这个方案。
+**决定（2026-08-17）：撤销。** 生产分辨率 0.6–4% 不抵三个 hazard + 278 行代码。
 
-**支持撤掉**：生产视频分辨率只有 0.6–4%；三个 hazard 各要一个护栏；
-278 行生产代码；`debug.first_step` 开着时直接不能用，而 44 个 preset 开着它。
+撤掉的东西：
 
-**撤法**：`git revert` 掉 `d97d4069`、`59101209`、`24f70a64`、`1f9a9632`。
-§1 / §6 的实测记录留在本文，是这次工作的真正产出。
+- `vrl/nn/optimization/lora_merge.py`（机制，150 行）
+- `LoraMergePass` 与 `ROLLOUT_PASSES` 里的注册（`passes.py`）
+- `model.lora.merge_for_rollout` 配置键（`model_schema.py`）与
+  `ModelBuild.lora` 的 extras 透传（`runtime.py`）
+- `update_weights` 的同步后重折与 versioned-sync 拒绝（`worker.py`）
+- `OnlineTrainer` 的折叠策略护栏（`trainer.py`）
+- `tests/nn/optimization/test_lora_merge.py`（16 个测试）
+
+**留下的东西**：本文的全部测量（§1 真实模型收益曲线、§6 parity 红线与
+fp8 对照）。三个数字未来还会有人需要：
+
+1. **rollout 折叠的真实收益是 0.6–4%**，不要再从合成基准外推。
+2. **末步 σ→0 会把任何 drift 源放大 ~1000×**，而 `debug.first_step` 的 max 门
+   与任何 drift 源都不兼容 —— 已发货的 fp8 量化在同一条链上比折叠差 5 倍，
+   且连 mean 门都不过。
+3. **全参替 LoRA 在训练段贵 26%**（见 `info/SPRINT_train_phase_gap_hunt.md` §2），
+   所以杠杆表里的 P1.5 是 rollout-only 的收益。
+
+**若将来重开**：门槛是低分辨率 / 小 latent 工作负载（240p 实测 7.7%）。
+先在目标 shape 上量收益，超过 5% 再动工 —— 本文 §3 的落地形态可以照抄。
 
 ## 8. 相关
 

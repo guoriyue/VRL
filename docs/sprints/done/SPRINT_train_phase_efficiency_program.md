@@ -1,18 +1,23 @@
 # SPRINT PROGRAM：训练段效率 —— rollout 段之外剩下的那 36%
 
-状态：**done（2026-08-17）**。三项全部收口：**两否决、一落地**。
+状态：**done（2026-08-17）**。三项全部收口：**三个都没留下生产代码。**
 基线 main @ `abb8e4da`。
 
 | 项 | 结果 | 收益 |
 |---|---|---|
 | P1 训练步同步审计 | **实测否决** | 0.2%（噪声内） |
 | P2 prompt embedding 缓存 | **实测否决** | 0.4%（仓库自己早测过） |
-| P3 rollout 侧 merge LoRA | **已落地（opt-in）** | **5–12%**，扛得住 compile |
+| P3 rollout 侧 merge LoRA | **实施后撤销** | 真实模型 0.6–4%（合成基准误报为 5–12%） |
 
-**这个 program 最大的产出是三次 KILL-RISK 门本身**：两个看起来合理的提案
-（数得出 16 次同步、证明得了 encoder 冻结）在实测下都只值零点几个百分点，
-而真正有货的那条是仓库自己杠杆表里列了却一直没写的。
-**先测再写**这条纪律省下的，是两次对 `trainer.py` 和 rollout 执行路径的高风险重构。
+**这个 program 最大的产出是四次测量否决**：三个看起来合理的提案
+（数得出 16 次同步、证明得了 encoder 冻结、杠杆表自己列了的 LoRA 折叠）
+在实测下都不值它们的代价。
+
+P3 还多教了一课：**它过了 KILL-RISK 门，是因为门用的是合成基准**
+（12 blocks / 48 层 / seq 1024–4096）。真实 Wan2.1-1.3B 是 30 blocks / 240 层、
+生产 latent 32k–106k token，重测只有 0.6–4%。
+**门要用真实 shape，否则门本身会骗人** —— 这是本轮最贵的一条教训，
+代价是一个完整实现 + 撤销。
 
 > **§0 那个「训练段 64% busy」已经查清：那个数字是过期的。**
 > 它测于 2026-06-11，而直接针对它的 compile（launch 数砍 2.6–2.9×、训练 1.25×）
@@ -67,17 +72,19 @@ denoise 的 0.63%，而且本仓的 b8/b16 对照**早就直接测过这个干�
 
 **重开条件**：极少步数的蒸馏家族（causvid）。见该文 §3。
 
-### P3 — [rollout 侧 merge LoRA → dense](SPRINT_rollout_lora_merge.md) —— **已落地（opt-in）**
+### P3 — [rollout 侧 merge LoRA → dense](SPRINT_rollout_lora_merge.md) —— **实施后撤销**
 
-唯一过门的一项。实测 eager 14.0% / compiled 11.9%（seq 1024），
-走真实 pass 端到端 9.8%（seq 2048）。**收益扛得住 compile** —— inductor 融得掉
-scaling，消不掉那两个额外 GEMM。
+唯一过了 KILL-RISK 门的一项，完整落地过（机制 + pass + worker 重折 +
+trainer 护栏 + 16 个测试，全量 gate 绿），随后撤销。
 
-计划里三处假设被执行中的证据推翻（colocated 不必排除；PEFT merge/unmerge 往返在
-bf16 下 1000 轮后毁掉基权重；versioned weight sync 是计划没预见的冲突），
-详见该文 §4。
+**撤销理由**：门用的是合成基准（seq 1024 → 12%），真实 Wan2.1-1.3B 在生产
+分辨率只有 **0.6–4%**（480p 实测 2.7%）。0.6–4% 不抵三个 hazard
+（parity max 门不兼容、versioned weight sync 冲突、需要 trainer 护栏防训练
+静默失效）+ 278 行生产代码。
 
-**默认关。** 开启前必须先过真实模型的 logprob parity 红线，见该文 §5。
+全部测量留在该文，包括三条以后还会用到的事实：折叠的真实收益曲线、
+末步 σ→0 对**任何** drift 源的 ~1000× 放大（已发货的 fp8 比折叠差 5 倍）、
+以及全参替 LoRA 在训练段贵 26%。
 
 ## 2. 共用的测量口径
 
