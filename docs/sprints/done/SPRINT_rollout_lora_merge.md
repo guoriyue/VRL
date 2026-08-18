@@ -201,13 +201,21 @@ replay 腿用未折叠策略对同一批 `prev_sample` 重新打分 —— 就�
 - `OnlineTrainer` 的折叠策略护栏（`trainer.py`）
 - `tests/nn/optimization/test_lora_merge.py`（16 个测试）
 
+**分 lane 复测补记（同日）**：折叠在所有当前生产 lane 其实都能过 parity 门
+（见下第 2 条）——撤销决定不因此改变：撤销理由是收益 0.6–4%，不是 parity。
+记下这一点，免得未来读者把 parity 当成撤销原因。
+
 **留下的东西**：本文的全部测量（§1 真实模型收益曲线、§6 parity 红线与
 fp8 对照）。三个数字未来还会有人需要：
 
 1. **rollout 折叠的真实收益是 0.6–4%**，不要再从合成基准外推。
-2. **末步 σ→0 会把任何 drift 源放大 ~1000×**，而 `debug.first_step` 的 max 门
-   与任何 drift 源都不兼容 —— 已发货的 fp8 量化在同一条链上比折叠差 5 倍，
-   且连 mean 门都不过。
+2. **末步 σ→0 放大器是分 lane 的，不是普适的**（2026-08-17 同日修正）：
+   `strided` 在 tf<1 时 floor 数学永不训末步；生产 `noise_level=0.7` 的公式把
+   末步 std 抬高 23 倍。用 trainer 真实选择函数分 lane 重算后，**折叠与 fp8
+   在所有生产 lane 都 PASS parity 门**（折叠生产 lane max ≤ 3.4e-4；fp8 最差
+   2.5e-3）；唯一 FAIL 组合 `nl=1.0 ∧ (tf=1.0 ∨ random 选择)` 无 preset 占据。
+   完整判决表：`info/SPRINT_quantized_rollout_precision_performance.md` §5.5。
+   fp8 比折叠差 ~5 倍的相对关系在每个 lane 都成立。
 3. **全参替 LoRA 在训练段贵 26%**（见 `info/SPRINT_train_phase_gap_hunt.md` §2），
    所以杠杆表里的 P1.5 是 rollout-only 的收益。
 

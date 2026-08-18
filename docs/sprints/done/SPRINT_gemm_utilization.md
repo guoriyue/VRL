@@ -207,7 +207,11 @@ compiled 臂才是生产实际跑的东西）：
 非-FP8 活跃路径（按杠杆排）：
 
 - [x] **P1 — QKV 融合：已实测，确认低 ROI，不落地（见上方"P1 验证"）。** SD3.5 ~−2% 总 GEMM、Wan ~0、Cosmos 不支持；需 full-param、破 LoRA targeting、不碰 FFN。数值正确但收益不抵复杂度——**不在 runtime 加这个特性**，`--fuse-qkv` 仅留在 profiler 作度量。
-> **⚠️ 2026-08-17 补测：P1.5 的收益是 rollout-only 的，训练段是净亏。**
+> **⚠️ 2026-08-17 补测 + break-even 收口：P1.5 作为速度杠杆已死，无生产
+> lane 能到 break-even。** rollout 侧增益有硬上界 = 折叠曲线（480p 2.7%），
+> 训练侧代价 c ∈ [10%, 26%]，结构比 R = CFG/(3·tf) ≤ 2.67 < break-even
+> 3.7–9.6。完整推导：`info/SPRINT_train_phase_gap_hunt.md` §2.1。
+> 保留 P1.5 的唯一理由是质量/容量，不是速度。
 > 本条只算了 kernel 数（LoRA 909 vs 全参 440 每次 replay 迭代，方向正确），
 > 但 wall time 相反：**全参训练步 43.01 ms vs LoRA 34.19 ms，慢 26%**。
 > 两个原因叠加——反向要为 340M 参数算梯度而不是 4.7M（replay 慢 9%）；

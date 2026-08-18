@@ -253,40 +253,57 @@ stats/guard/TIS/RS 后如何表现”，不回答真实 diffusion SDE accuracy�
 `exp(sum_t(replay_t-old_t))` 驱动 TIS gate。修正后的回归测试会把同一 timestep 复制两次，断言
 GRPO gradient norm 不翻倍，防止该错误回来。
 
-## 5.5 真实模型 SDE-logprob 的一个直接数据点（2026-08-17 补测）
+## 5.5 真实模型 SDE-logprob：分 lane 判决表（2026-08-17 补测，同日修正）
 
-§5 的表来自 synthetic categorical head probe，文中已注明它"不回答真实
-diffusion SDE accuracy"；§6 的 `real rollout→BF16 replay SDE-logprob` 一格
-写的是 **historical FP8 live run PASS**。下面是那一格的一次**直接测量**，
-用真实 Wan2.1-T2V-1.3B（不是 SD3.5）跑完整 35 步去噪链、
-`sde_step_with_logprob` + `compute_logprob_mismatch_stats`：
+§5 的表来自 synthetic categorical head probe（文中已注明它"不回答真实
+diffusion SDE accuracy"）；§6 的 real-SDE 一格写的是 historical FP8 live run
+PASS。下面是那一格的直接测量：真实 **Wan2.1-T2V-1.3B**、完整 35 步链、
+`sde_step_with_logprob` + trainer 的 `_train_timestep_indices` 真函数算出的
+受训子集。同日的第一版只测了 `noise_level=1.0` 全步集并报了 FAIL —— **那是一个
+没有任何 preset 占据的 lane**，本节是修正后的完整判决。
 
-| | steps 0–33 平均 | 末步(34) | 总 mean | 总 max |
-|---|---:|---:|---:|---:|
-| **FP8 rowwise（300 个 linear 被换）** | 1.17e-03 | 8.59e-01 | **2.57e-02** | **8.59e-01** |
-| 对照：无 drift 源（同策略重放） | 0.0 | 0.0 | 0.0 | 0.0 |
+### 判决表（fp8 rowwise，300 linear 被换；门 = mean 与 max 均 ≤ 1e-2）
 
-两点：
+| noise_level | lane | mean | max | 判决 |
+|---|---|---:|---:|---|
+| **0.7（生产：flow_matching_sde 基座）** | strided tf=0.25 | 9.1e-05 | 4.1e-04 | **PASS** |
+| 0.7 | strided tf=0.5 | 1.3e-04 | 9.3e-04 | **PASS** |
+| 0.7 | strided tf=0.99 | 1.8e-04 | 2.2e-03 | **PASS** |
+| 0.7 | **strided tf=1.0（含末步）** | 2.4e-04 | 2.5e-03 | **PASS** |
+| 0.7 | random tf=0.5（抽中末步的 update） | 2.2e-04 | 2.5e-03 | **PASS** |
+| 1.0（仅 flash_grpo 基座用；且它配 sde_window） | strided tf=0.25 | 2.7e-04 | 1.5e-03 | PASS |
+| 1.0 | strided tf=0.5 | 5.5e-04 | 6.1e-03 | PASS |
+| 1.0 | strided tf=0.99 | 1.2e-03 | 2.6e-02 | mean 过 / max 不过 |
+| 1.0 | **strided tf=1.0** | 2.6e-02 | 8.8e-01 | **FAIL** |
+| 1.0 | **random tf=0.5（抽中末步）** | 5.2e-02 | 8.8e-01 | **FAIL** |
 
-1. **mean 2.57e-02 高于 `trainer.debug.max_abs_logprob_diff` 的默认 1e-2**
-   （mean 与 §5 synthetic 的 .03105 同量级，互相印证；max 则是 synthetic 的 7 倍）。
-2. **误差高度集中在末步**：前 34 步平均 1.17e-03（比门低 8 倍），末步 8.59e-01。
-   σ→0 时 logprob 的 1/σ² 会放大**任何**对 `noise_pred` 的扰动 —— 这不是 fp8
-   特有的。同一条链上把 LoRA 折进基权重作对照，得到 2.2e-04 / 1.57e-01 /
-   4.7e-03，即比 fp8 干净约 5 倍，量级规律一致。
+对照（同协议）：LoRA 折进基权重这个 drift 源在**每一个** lane 都 PASS
+（最差 nl=1.0 全步集 mean 3.6e-3 / max 1.2e-1，生产 lane max ≤ 3.4e-4）；
+无 drift 源对照精确 0.0。
 
-**这不是"fp8 坏了"的结论**，测量边界要说清楚：用的是 wan 而非 SD3.5、
-文本条件是随机 embedding 而非真实 prompt 编码、单条链单 seed。
-但它确实给 §6 那格「historical live run PASS」提了一个问题：
-**在真实链上，fp8 的 mean 是过不了默认门的，且这个门与末步同时存在时对任何
-drift 源都不兼容。** 若要在 `trainer.debug.first_step=true` 的配置上开 fp8，
-建议先用真实 prompt 复跑这条链确认。
+### 机制（两个代码事实决定了整张表）
 
-顺带一个可能相关的观察：**没有任何 checked-in experiment preset 打开量化**
-（只走显式 override），而 44 个 preset 开着 `debug.first_step` ——
-这两件事从未在同一个 run 里碰过面。
+1. **`strided` 是 floor 型**（`trainer.py::_train_timestep_indices`：
+   `int(i · T/count)`）——**tf<1 时末步(34)永远不被训**。只有 tf=1.0
+   （`range(T)`）和 `random` 选择（`randperm`，以概率 tf 抽中末步）会碰它。
+2. **`noise_level≠1` 整个替换 std 公式**（`flow_matching.py:168-184`）：
+   `std = sqrt(σ/(1−σ))·nl`。末步 σ=0.001 时 std=2.2e-2，而 nl=1.0 的
+   线性公式给 9.7e-4 —— **差 23 倍**。对 logprob 的扰动放大器
+   （每元素梯度尺度 1/noise_scale，相对 step 0）：step 33 是 ×33（良性），
+   step 34 在 nl=0.7 是 ×1000、在 nl=1.0 是 **×5400**。
 
-## 6. Gate 状态
+### 结论
+
+- **historical FP8 live run PASS 成立且被解释**：生产跑在 nl=0.7，
+  该公式把末步放大器压掉 23 倍；且多数配置 tf<1 根本不训末步。
+- **危险 lane 精确到一条**：`nl=1.0 ∧ (tf=1.0 ∨ selection=random) ∧
+  debug.first_step`。当前没有 preset 占据它（flash_grpo 是 nl=1.0 + tf=1.0，
+  但走 sde_window 中段窗口，不含末步）。若未来有人组出这条 lane，
+  fp8 会在 step 0 硬失败 —— 而那是 σ→0 放大器的表现，不是量化坏了。
+- 测量边界：wan 而非 SD3.5、随机 embedding 条件、单链单 seed；
+  §6 那格仍建议用真实 prompt 在 SD3.5 上复核一次后再签字。
+
+## 6. Gate 状态## 6. Gate 状态
 
 | gate | FP8 | NVFP4 MLP-only |
 |---|---|---|
@@ -295,7 +312,7 @@ drift 源都不兼容。** 若要在 `trainer.debug.first_step=true` 的配置�
 | production compile executes | PASS | PASS |
 | master-dropped peak memory | PASS：−25.8% | PASS：−18.1% |
 | synthetic per-step correction path | PASS：0% TIS/RS | PASS：0% TIS/RS |
-| real rollout→BF16 replay SDE-logprob | historical FP8 live run PASS；**但 2026-08-17 的直接复测在 wan 上 mean=2.57e-2 > 默认门 1e-2，见 §5.5** | **NOT MEASURED for current FP4 profile** |
+| real rollout→BF16 replay SDE-logprob | historical FP8 live run PASS；**2026-08-17 wan 直接复测：所有生产 lane（nl=0.7）PASS，见 §5.5 判决表；唯一 FAIL lane（nl=1.0 ∧ 训末步）无 preset 占据** | **NOT MEASURED for current FP4 profile** |
 | reward / generated quality curve | historical FP8 live run GO | **NOT MEASURED** |
 
 所以当前决策是：FP8 已有 production evidence；FP4 的 kernel、compiled forward 和 correction

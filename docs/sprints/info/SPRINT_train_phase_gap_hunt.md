@@ -118,8 +118,42 @@ rollout/训练时间配比 —— 决定前应该先量那个比值，而不是�
 > 这条曾经是 `done/SPRINT_rollout_lora_merge.md` 的立项理由：rollout 侧折叠
 > 拿全参的 GEMM 形状、训练侧继续用 LoRA。**该 sprint 已实施后撤销** ——
 > 真实模型上折叠只有 0.6–4%（不是合成基准报的 5–12%），不抵其代价。
-> 但本节这条结论不受影响：**P1.5 的收益仍然是 rollout-only 的**，
-> 训练段换全参仍然贵 26%。
+> 但本节这条结论不受影响：**P1.5 的收益仍然是 rollout-only 的**。
+
+### 2.1 P1.5 的 break-even（2026-08-17 补全 —— 结论：无生产 lane 能到）
+
+三个量决定净收益 `net = f·T_denoise − c·T_train`：
+
+**f（rollout 侧增益）有硬上界 = 折叠收益曲线。** 折叠后的前向与全参前向
+GEMM 形状相同（差异只剩 PEFT 的 python 分发，eager 估 <1%），所以 P1.5 的
+rollout 收益 ≤ 真实模型折叠实测：**480p 2.7%、360p 0.6%、240p 7.7%**
+（`done/SPRINT_rollout_lora_merge.md` §1）。原理由「~47% elementwise」是
+kernel-count 记账 + pre-compile 时代的数字，不是 wall time。
+
+**c（训练侧代价）**：合成尺度一点实测 +26%（上表）。实际尺度未测
+（wan 1.4B 全参 480p 反向在 32GB 上需 activation checkpointing 才能跑），
+分解上界与下界：grad-weight GEMM 增量（合成 +9%）是随规模保持的下限；
+optimizer/EMA 扫描在真实规模摊薄（1.4B 全参 ~20ms vs replay ~1.4s ≈ 1.5%）。
+诚实区间 **c ∈ [~10%, 26%]**。
+
+**T_denoise/T_train 的结构比**：rollout 每样本 CFG·S 次无梯度前向，
+训练 replay ≈ 3·tf·S 次前向当量（fwd+bwd≈3×fwd）→
+`R = CFG/(3·tf)`。生产 lane：CFG ∈ {1,2}（droid curve guidance 0.0！），
+tf ∈ [0.25, 1.0] → **R ∈ [0.34, 2.67]**。
+
+**break-even 需要 R > c/f**：取最乐观的 c=10%、f=2.7%（480p）→ R > 3.7；
+取 c=26% → R > 9.6。**两个界都高于所有生产 lane 的 R ≤ 2.67。**
+240p（f=7.7%）时 break-even R > 1.3 —— 只有低分辨率 + 低 tf 的组合才可能翻正。
+
+**结论：P1.5 作为速度杠杆对生产分辨率的视频家族已经死了**；保留它的唯一
+理由是模型质量/容量（cosmos 转全参属于这类），那是另一根轴。
+
+**顺带钉死的两个 knob 事实**（本轮实测）：
+- `optim.optim_8bit` 是**容量开关不是速度开关**：AdamW8bit 8.28 ms vs
+  fused AdamW 3.23 ms（340M，**慢 2.6 倍**，每步量化/反量化优化器状态）。
+  `types.py` 的注释只说了省显存，这里补上时间代价。
+- EMA `update_step_interval=8`（现成参数）摊薄 87% 的 EMA 成本
+  （1.36 → 0.17 ms）。改默认值影响 EMA 质量，属 owner 决定。
 
 ## 3. 方法学（三条都是这次踩出来的）
 
