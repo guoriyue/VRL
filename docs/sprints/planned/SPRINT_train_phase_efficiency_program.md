@@ -1,7 +1,12 @@
 # SPRINT PROGRAM：训练段效率 —— rollout 段之外剩下的那 36%
 
-状态：**planned（2026-08-17）**。基线 main @ `abb8e4da`。
-本文是索引 + 排序，不含实施细节；三个执行项各自独立可做。
+状态：**active（2026-08-17）**。基线 main @ `abb8e4da`。
+本文是索引 + 排序，不含实施细节；执行项各自独立可做。
+
+> **P1 已实测否决（2026-08-17）**，见
+> [`done/SPRINT_train_step_sync_audit.md`](../done/SPRINT_train_step_sync_audit.md)。
+> 收益 0.2%（噪声内），不实施。**§0 那个「训练段 64% busy」的问题仍未解释** ——
+> P1 只排除了一个嫌疑人，见该文 §4 的剩余嫌疑人清单。
 
 ## 0. 这个 program 为什么存在
 
@@ -19,21 +24,24 @@
 
 > **挤性能的对象是 launch 开销和传输/序列化，不是 kernel 本身。**
 
-这个 program 把这句结论应用到它自己还没被应用的地方。
+这个 program 把这句结论应用到它自己还没被应用的地方。**并且每一项先过
+KILL-RISK 门再实施** —— P1 就是被自己的门挡下来的。
 
-## 1. 三个执行项
+## 1. 执行项（P1 已否决，剩 P2 / P3）
 
-按「证据强度 × 风险倒序」排。三项互相独立，可并行，也可只做第一项。
+按「证据强度 × 风险倒序」排。互相独立，可并行。
 
-### P1 — [训练步同步审计](SPRINT_train_step_sync_audit.md)
+### ~~P1 — 训练步同步审计~~ —— **实测否决，不实施**
 
-**做什么**：训练内层循环每次迭代 ~16 次阻塞 D2H（parity 统计 8 次 +
-GRPO 指标 ~8 次），而这些值在循环内**没有控制流消费者**。收成 optimizer
-边界的一次传输。附带合并 parity 的两次单标量 collective。
+移至 [`done/SPRINT_train_step_sync_audit.md`](../done/SPRINT_train_step_sync_audit.md)。
 
-**为什么排第一**：证据可以逐行数出来、修法在本仓已有先例
-（`continuous.py:367`）、对外 schema 零变化、不需要新硬件。风险集中在一处 ——
-不能把 correctness gate 优化掉，验收标准里有专门一条。
+计数是对的（每次迭代确实 16 次 D2H，且确实无循环内消费者），**代价不对**：
+那 16 次同步合计 75 µs，而所在迭代是 138 ms —— 占 0.05%，端到端交替 A/B
+中位数差 0.2%，在噪声以下。同步只在「CPU 与 GPU 时间可比」时才贵，真实
+DiT replay 比那个 regime 重两个数量级。
+
+**留下的教训**：不要再从「哪里有 `.item()`」找训练段的 36% 空转；实测证明内层
+循环是 GPU-bound 的，空转不在那里。下一步应该先用 nsys 定位区间。
 
 ### P2 — [prompt embedding 缓存](SPRINT_prompt_encode_cache.md)
 
@@ -78,8 +86,6 @@ merge 后 rollout 前向拿到全参的 GEMM 形状，训练侧仍只存 LoRA �
 
 - **rollout-vs-replay logprob parity 均差 ≤ 0.01**（`trainer.py`）。过不了就
   停，把数字记进对应 sprint 的执行记录，**不放宽阈值**。
-- **correctness gate 不得被优化掉**。P1 直接动 gate 的数据通路，验收里有专门
-  的注入用例。
 - **默认行为零变化**。三项都默认关或默认等价，开关走配置。
 
 ## 4. 明确不在本 program 内
