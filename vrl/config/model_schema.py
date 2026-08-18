@@ -24,6 +24,13 @@ class _ClosedModelSection(ConfigBase):
 class LoraSection(_ClosedModelSection):
     """Shared adapter inputs consumed by ``ModelBuild.lora``."""
 
+    # Rollout-only execution knob: folding B@A into the base weight is a rewrite
+    # of the same policy, so it is excluded from checkpoint identity -- a run
+    # resumed with it flipped is the same model, not a different one.
+    merge_for_rollout: bool | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
     rank: int | None = Field(
         default=None,
         json_schema_extra=checkpoint_identity_metadata("value", required=True),

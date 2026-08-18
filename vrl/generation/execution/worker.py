@@ -192,6 +192,21 @@ class GenerationWorkerCore:
         )
         self.load_policy()
         policy_obj = getattr(self.executor, "model", None)
+        folded_base = getattr(policy_obj, "lora_pristine_base", None)
+        if folded_base is not None and self.launch_contract.versioned_weight_sync:
+            # LoraMergePass.conflicts cannot see this: versioned_weight_sync is a
+            # launch-contract fact, not a ModelBuild field, so the refusal lands
+            # here where both are visible. A folded policy has no adapter left to
+            # switch per request -- the version IS the base weight -- so retaining
+            # slots would silently serve every in-flight request the newest
+            # weights, the off-policy bug versioned slots exist to prevent.
+            raise RuntimeError(
+                "rollout LoRA merge cannot run with versioned weight sync: a "
+                "folded policy holds exactly one weight version, so older "
+                "in-flight requests cannot keep sampling the version they "
+                "started with. Disable model.lora.merge_for_rollout or turn off "
+                "non-draining weight sync.",
+            )
         try:
             if self.launch_contract.versioned_weight_sync and bool(
                 getattr(policy_obj, "supports_versioned_trainable_state", False),
@@ -217,6 +232,18 @@ class GenerationWorkerCore:
         # RolloutLifecycle.current_policy_version() -> runtime.current_policy_version
         # (attribute), not by reading this worker directly. Per-batch results take
         # their version from request.policy_version, not this field.
+        if folded_base is not None:
+            # The freshly installed adapter is still unfolded, so sampling would
+            # run the three-GEMM path until the next rebuild. Re-fold onto the
+            # SAME pristine base captured at build: folding onto the current
+            # (already folded) weight is what compounds bf16 error into the base.
+            from vrl.nn.optimization.lora_merge import (
+                merge_lora_into_base,
+                require_every_core_merged,
+            )
+
+            merge_lora_into_base(policy_obj, folded_base)
+            require_every_core_merged(policy_obj)
         self._policy_version = int(policy_version)
         return self._policy_version
 

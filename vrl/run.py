@@ -206,6 +206,10 @@ class ResolvedOnlineRun(ResolvedRun):
             # default. Only a selected residency mode needs to cross Ray.
             if rollout.get("pipeline_offload_mode") == "none":
                 rollout.pop("pipeline_offload_mode")
+            # Same rule for the LoRA fold: off is the default, so only an
+            # opted-in fold needs to cross.
+            if not rollout.get("merge_lora"):
+                rollout.pop("merge_lora", None)
 
         profiler = generation.torch_profiler
         return RayGenerationLaunchInputs(

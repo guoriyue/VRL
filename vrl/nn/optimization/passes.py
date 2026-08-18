@@ -14,6 +14,8 @@ rather than in each family builder:
   through a quantized replacement. LoRA is training configuration, not an
   optimization, so it stays with the builder and this module takes an
   already-adapted model.
+* The LoRA fold runs BEFORE quantization so the low-precision swap sees the
+  EFFECTIVE weight, not a base that still needs a delta added to it.
 * Quantization runs BEFORE compile so inductor traces the final module tree.
 * Device moves and Accelerate offload hooks run AFTER every pass, for the same
   reason: hooks must see the final tree.
@@ -120,6 +122,80 @@ def require_every_core_quantized(model: Any, scheme: str) -> None:
 
 
 @dataclass(frozen=True, slots=True)
+class LoraMergePass:
+    """Fold LoRA into the base weights so sampling runs one GEMM per projection.
+
+    Runs FIRST, before quantization: the fold must land in the plain
+    ``nn.Linear`` PEFT wrapped, so a later low-precision swap quantizes the
+    EFFECTIVE weight. Reversing the two would quantize the base and then fold a
+    high-precision delta into a quantized tensor.
+
+    Rollout-only by construction rather than by a guard: replay bundles carry
+    ``rollout=None`` (``assemble_replay_bundle`` vs
+    ``build_denoise_runtime_bundle``), so ``enabled`` is False on every path
+    that computes gradients. The trainer's LoRA is untouched -- weight sync
+    exists precisely because the two are separate model instances.
+    """
+
+    name: str = "lora_merge"
+    # (W + BA)x in one GEMM does not accumulate in the same order as
+    # Wx + B(Ax), so bf16 sampling diverges from the trainer's exact replay
+    # forward. Small, but it is drift and the guard must know.
+    introduces_replay_drift: bool = True
+    # Rewrites weights inside the existing tree; the root object is unchanged.
+    replaces_modules: bool = False
+
+    def enabled(self, build: Any) -> bool:
+        rollout = getattr(build, "rollout", None)
+        return bool(
+            getattr(build, "use_lora", False) and getattr(rollout, "merge_lora", False),
+        )
+
+    def conflicts(self, build: Any) -> tuple[str, ...]:
+        """Nothing detectable from ``build`` alone.
+
+        The real conflict is versioned trainable-state slots: non-draining
+        weight sync keeps several adapter versions resident so in-flight
+        requests each activate the one they started with, and a folded policy
+        has no adapter left to switch -- the version lives in the base weight
+        and there is only one of those. But ``versioned_weight_sync`` is a
+        launch-contract fact, not a ``ModelBuild`` field, so it is refused in
+        the worker where both are visible (``DiffusionGenerationWorker``).
+        Keeping this method honest rather than probing for an attribute
+        ``ModelBuild`` does not have is the point: a guard that cannot fire is
+        worse than no guard. Same reasoning as :class:`CompilePass`.
+        """
+
+        del build
+        return ()
+
+    def apply(self, model: Any, build: Any) -> PassResult:
+        from vrl.nn.optimization.lora_merge import (
+            capture_pristine_base,
+            merge_lora_into_base,
+            require_every_core_merged,
+        )
+
+        pristine = capture_pristine_base(model)
+        merged = merge_lora_into_base(model, pristine)
+        # Verify the EFFECT on the real layers, not this pass's own account of
+        # what it did -- see require_every_core_quantized for why a self-report
+        # cannot catch the half-covering case.
+        require_every_core_merged(model)
+        # The snapshot is the model's, not this pass's: weight sync re-folds on
+        # every optimizer step and must fold onto the SAME pristine base, or the
+        # bf16 error compounds (4.8e-3 relative after one cycle, 2.4e-1 after
+        # 1000). Handing it to the model is what makes the re-fold reproducible.
+        model.lora_pristine_base = pristine
+        return PassResult(
+            name=self.name,
+            applied=True,
+            detail=f"folded {len(merged)} LoRA layer(s)",
+            introduces_replay_drift=self.introduces_replay_drift,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class QuantizationPass:
     """Swap large policy GEMMs to the configured low-precision scheme."""
 
@@ -200,9 +276,7 @@ class CompilePass:
         # model what changed would be self-certification; a compiled root is
         # observable, so observe it.
         missed = [
-            name
-            for name, core in model.policy_cores.items()
-            if not hasattr(core, "_orig_mod")
+            name for name, core in model.policy_cores.items() if not hasattr(core, "_orig_mod")
         ]
         if missed:
             raise RuntimeError(
@@ -337,6 +411,7 @@ class VaeDecodeMemoryPass:
 # hooks must see the final tree; VAE memory is unordered (disjoint subtree) and
 # sits last only because nothing requires it earlier.
 ROLLOUT_PASSES: tuple[OptimizationPass, ...] = (
+    LoraMergePass(),
     QuantizationPass(),
     CompilePass(),
     OffloadPass(),

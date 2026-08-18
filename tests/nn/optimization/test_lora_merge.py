@@ -224,3 +224,123 @@ def test_bf16_pristine_restore_beats_peft_unmerge_round_trips() -> None:
 
     assert kept_error == 0.0
     assert peft_error > 0.0
+
+
+def _build(*, use_lora: bool = True, merge_lora: bool = True) -> object:
+    """Minimal ModelBuild-shaped stand-in for the pass's enable decision."""
+
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        use_lora=use_lora,
+        rollout=SimpleNamespace(merge_lora=merge_lora),
+    )
+
+
+def test_pass_runs_before_quantization() -> None:
+    """The fold must land in the plain Linear PEFT wrapped, not after the swap."""
+
+    from vrl.nn.optimization import ROLLOUT_PASSES
+
+    names = [pass_.name for pass_ in ROLLOUT_PASSES]
+    assert names.index("lora_merge") < names.index("quantization")
+    assert names.index("lora_merge") < names.index("compile")
+
+
+def test_pass_declares_replay_drift() -> None:
+    """(W+BA)x accumulates differently from Wx+B(Ax); the guard must know."""
+
+    from vrl.nn.optimization.passes import LoraMergePass
+
+    assert LoraMergePass().introduces_replay_drift is True
+    assert LoraMergePass().replaces_modules is False
+
+
+def test_pass_is_off_for_replay_builds() -> None:
+    """Replay carries ``rollout=None``, so the trainer can never fold."""
+
+    from types import SimpleNamespace
+
+    from vrl.nn.optimization.passes import LoraMergePass
+
+    pass_ = LoraMergePass()
+    assert pass_.enabled(_build()) is True
+    assert pass_.enabled(_build(merge_lora=False)) is False
+    assert pass_.enabled(_build(use_lora=False)) is False
+    assert pass_.enabled(SimpleNamespace(use_lora=True, rollout=None)) is False
+
+
+def test_pass_folds_and_publishes_the_pristine_base() -> None:
+    """Weight sync re-folds from this snapshot, so the pass must hand it over."""
+
+    from vrl.nn.optimization.passes import LoraMergePass
+
+    policy = _Policy(cores=2)
+    policy.randomize_adapter()
+
+    result = LoraMergePass().apply(policy, _build())
+
+    assert result.applied and result.introduces_replay_drift
+    assert "2 LoRA layer(s)" in result.detail
+    require_every_core_merged(policy)
+    assert set(policy.lora_pristine_base) == {
+        "core0.base_model.model.0",
+        "core1.base_model.model.0",
+    }
+
+
+def test_refold_after_weight_sync_tracks_the_new_adapter() -> None:
+    """The property the worker's re-fold exists to guarantee.
+
+    Weight sync installs a fresh adapter onto an ALREADY folded policy. Until
+    it is re-folded the base still carries the previous delta, so sampling
+    would serve stale weights. After the re-fold the forward must equal an
+    unfolded policy holding the same adapter -- checked against an independent
+    model so a stale base cannot agree with itself.
+    """
+
+    folded = _Policy()
+    reference = _Policy()
+    with torch.no_grad():  # identical starting base weights
+        ref_layer = next(iter(lora_layers(reference.policy_cores["core0"])))[1]
+        fold_layer = next(iter(lora_layers(folded.policy_cores["core0"])))[1]
+        ref_layer.get_base_layer().weight.copy_(fold_layer.get_base_layer().weight)
+
+    pristine = capture_pristine_base(folded)
+    x = torch.randn(8, 32)
+
+    for _ in range(5):
+        folded.randomize_adapter()
+        merge_lora_into_base(folded, pristine)
+        # The trainer's next push lands on the already-folded policy.
+        with torch.no_grad():
+            for layer, source in ((ref_layer, fold_layer),):
+                layer.lora_A.default.weight.copy_(source.lora_A.default.weight)
+                layer.lora_B.default.weight.copy_(source.lora_B.default.weight)
+        torch.testing.assert_close(
+            _forward(folded, x),
+            _forward(reference, x),
+            rtol=1e-5,
+            atol=1e-5,
+        )
+
+
+def test_stale_base_without_refold_is_observable() -> None:
+    """Counter-test: without the re-fold the folded policy serves old weights.
+
+    Pins that the assertion above is actually load-bearing -- if re-folding were
+    a no-op this test would fail and the one above would pass vacuously.
+    """
+
+    policy = _Policy()
+    policy.randomize_adapter()
+    pristine = capture_pristine_base(policy)
+    merge_lora_into_base(policy, pristine)
+    x = torch.randn(8, 32)
+    before = _forward(policy, x)
+
+    policy.randomize_adapter()  # new adapter arrives, no re-fold
+    assert torch.equal(_forward(policy, x), before)
+
+    merge_lora_into_base(policy, pristine)
+    assert not torch.equal(_forward(policy, x), before)
