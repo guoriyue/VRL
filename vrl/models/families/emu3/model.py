@@ -482,6 +482,11 @@ class Emu3Model(ARModelBase):
             image_token_ids,
         )  # [B, L_img, V_gen]
 
+        # Stays on eager logits (base vocab_head_split -> None): the
+        # structural mask below is per-position over the vocab, and the fused
+        # head path computes its logsumexp without ever materializing logits,
+        # leaving nowhere to apply the mask. Adopting the fused payload here
+        # requires a mask input on the kernel first.
         height, width = self._replay_grid_dims(batch, int(image_token_ids.shape[1]))
         forced = emu3_forced_token_schedule(
             height,

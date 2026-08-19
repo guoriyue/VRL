@@ -72,6 +72,7 @@ from vrl.models.steps.token.base import (
     ARReplayRolloutStubs,
 )
 from vrl.models.steps.token.lora import install_token_lora_adapter
+from vrl.models.steps.token.vocab_head import VocabHeadSplit, head_replay_values
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -433,7 +434,7 @@ class GlmImageModel(ARModelBase):
     # Train-time forward — codebook logits (teacher-forced)
     # ------------------------------------------------------------------
 
-    def forward_image_logits(
+    def _image_gen_hidden(
         self,
         prompt_inputs_embeds: torch.Tensor,  # [B, L_text, H]
         prompt_attention_mask: torch.Tensor,  # [B, L_text]
@@ -441,13 +442,13 @@ class GlmImageModel(ARModelBase):
         *,
         grids: tuple[tuple[int, int], ...],
     ) -> torch.Tensor:
-        """One teacher-forced pass returning per-position codebook logits.
+        """One teacher-forced trunk pass returning hidden states per position.
 
         Layout matches Emu3 (text first, then the generated raster; logits
         read at the positions that *predict* each token), with the GLM
         addition of explicit 3-axis mrope position ids: text positions for
         the prompt, then the decode schedule offset by each row's valid
-        prompt length. Returns ``[B, L_img, V_codebook]``.
+        prompt length. Returns the ``lm_head`` input, ``[B, L_img, H]``.
         """
         B, L_img = image_token_ids.shape
         img_embeds = self.embed_gen_tokens(image_token_ids)  # [B, L_img, H]
@@ -492,8 +493,43 @@ class GlmImageModel(ARModelBase):
             use_cache=False,
         )
         hidden = outputs.last_hidden_state  # [B, L_text + L_img - 1, H]
-        gen_hidden = hidden[:, L_text - 1 : L_text - 1 + L_img, :]
+        return hidden[:, L_text - 1 : L_text - 1 + L_img, :]
+
+    def forward_image_logits(
+        self,
+        prompt_inputs_embeds: torch.Tensor,
+        prompt_attention_mask: torch.Tensor,
+        image_token_ids: torch.Tensor,
+        *,
+        grids: tuple[tuple[int, int], ...],
+    ) -> torch.Tensor:
+        """Teacher-forced codebook logits; see ``_image_gen_hidden``."""
+
+        gen_hidden = self._image_gen_hidden(
+            prompt_inputs_embeds,
+            prompt_attention_mask,
+            image_token_ids,
+            grids=grids,
+        )
         return self.image_gen_logits(gen_hidden)
+
+    def vocab_head_split(self) -> VocabHeadSplit | None:
+        """The codebook restriction as a weight slice of a plain lm_head.
+
+        ``image_gen_logits`` is ``lm_head(hidden)[..., :V_codebook]`` — a row
+        slice of the projection, so the split's weight/bias are the same
+        slice (views, no copy). Exact-type check for the same reason as
+        janus: a LoRA-wrapped lm_head must fall back to eager logits.
+        """
+
+        lm_head = self.glm.lm_head
+        if type(lm_head) is not nn.Linear:
+            return None
+        return VocabHeadSplit(
+            prefix=lambda h: h,
+            weight=lm_head.weight[: self.image_vocab_size],
+            bias=lm_head.bias[: self.image_vocab_size] if lm_head.bias is not None else None,
+        )
 
     # ------------------------------------------------------------------
     # Replay forward — recompute logits at training time
@@ -530,15 +566,20 @@ class GlmImageModel(ARModelBase):
 
         embed = self.language_model.get_input_embeddings()
         prompt_embeds = embed(prompt_ids)
-        logits = self.forward_image_logits(
+        gen_hidden = self._image_gen_hidden(
             prompt_embeds,
             prompt_mask,
             image_token_ids,
             grids=grids,
-        )  # [B, L_img, V_codebook]
+        )
+        values = head_replay_values(
+            gen_hidden,
+            self.vocab_head_split(),
+            lambda: self.image_gen_logits(gen_hidden),
+        )
         return single_segment_result(
             "image_tokens",
-            {"logits": logits, "image_token_ids": image_token_ids},
+            {**values, "image_token_ids": image_token_ids},
         )
 
     def _replay_grids(

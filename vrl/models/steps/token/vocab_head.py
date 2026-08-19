@@ -1,0 +1,68 @@
+"""Separable vocab-head contract for AR replay.
+
+AR replay's memory hot spot is the final vocab projection: materializing
+``[B, L, V]`` logits (and their gradient) when the evaluator only needs one
+log-prob per position. ``vrl.nn.kernels.fused_linear_logprob`` removes that
+tensor, but it needs the projection in algebraic form — a ``(weight, bias)``
+GEMM it can chunk and recompute — which a black-box head module cannot
+provide. This module is the contract by which a family DECLARES that split:
+
+* :class:`VocabHeadSplit` — the family's structure knowledge, reduced to
+  "everything before the final projection" plus the projection's tensors.
+* :func:`head_replay_values` — the producer-side twin of
+  ``ReplaySegmentResult.logprobs``'s fused branch: turns a split (or its
+  absence) into the replay payload keys that method consumes.
+
+Families that cannot split return ``None`` from ``vocab_head_split`` and keep
+shipping eager ``logits`` — known cases: emu3 applies a per-position
+structural-token mask on the logits (the fused kernel has no mask input), and
+llamagen's projection lives inside the vendored trunk forward.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True, slots=True)
+class VocabHeadSplit:
+    """A family's generation head, split at its final vocab projection.
+
+    ``prefix`` maps trunk hidden states to the projection input (identity for
+    plain ``lm_head`` families, the projector+activation for janus-style MLP
+    heads); its output stays small. ``weight``/``bias`` are the final
+    projection's tensors — pass slices when the sampleable vocab is a
+    contiguous slice of a wider head (glm_image's codebook prefix).
+
+    Callers must hand over PLAIN tensors whose values ARE the projection: a
+    LoRA-wrapped final layer must not be split (``.weight`` would silently
+    drop the adapter delta) — return ``None`` and fall back to eager logits.
+    """
+
+    prefix: Callable[[Any], Any]
+    weight: Any
+    bias: Any | None = None
+
+
+def head_replay_values(
+    gen_hidden: Any, split: VocabHeadSplit | None, eager_logits: Callable[[], Any]
+) -> dict[str, Any]:
+    """Replay payload for one generation segment: fused form when split allows.
+
+    Key names are consumed by ``ReplaySegmentResult.logprobs`` (the contract
+    method owning payload-key knowledge); ``eager_logits`` is only called on
+    the fallback path, so the fused path never materializes ``[.., V]``.
+    """
+
+    if split is None:
+        return {"logits": eager_logits()}
+    return {
+        "head_hidden": split.prefix(gen_hidden),
+        "head_weight": split.weight,
+        "head_bias": split.bias,
+    }
+
+
+__all__ = ["VocabHeadSplit", "head_replay_values"]

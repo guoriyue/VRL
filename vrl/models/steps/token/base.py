@@ -46,6 +46,20 @@ from vrl.nn.quantization.targeting import LM_EXCLUDE
 class ARModelBase(nn.Module):
     """Shared model base for autoregressive families on the RL path."""
 
+    def vocab_head_split(self):
+        """Separable final vocab projection, or None to replay eager logits.
+
+        Families whose generation head ends in a plain final Linear override
+        this with a :class:`vrl.models.steps.token.vocab_head.VocabHeadSplit`
+        so replay can use the fused log-prob path (never materializing
+        ``[B, L, V]`` logits). The default opts out — the correct answer
+        whenever the head cannot be split exactly (LoRA-wrapped final layer,
+        per-position structural masks on logits, projection fused into the
+        trunk forward).
+        """
+
+        return None
+
     # What a correctly loaded checkpoint should look like, e.g. "an
     # Emu3ForConditionalGeneration checkpoint". It names an UPSTREAM class, so
     # it cannot be derived from ``type(self).__name__``; ``_require_module_attrs``

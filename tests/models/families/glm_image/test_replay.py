@@ -81,7 +81,7 @@ def test_glm_image_model_exposes_trainer_replay_methods() -> None:
     assert callable(model.load_trainable_state)
 
 
-def test_replay_forward_returns_codebook_logits() -> None:
+def test_replay_forward_returns_fused_codebook_head() -> None:
     model = build_tiny_glm_image_model()
     batch = _discrete_batch()
 
@@ -90,14 +90,37 @@ def test_replay_forward_returns_codebook_logits() -> None:
     assert isinstance(result, ReplayResult)
     segment = result.segments["image_tokens"]
     assert segment.segment == "image_tokens"
-    assert set(segment.values) == {"logits", "image_token_ids"}
-    logits = segment.values["logits"]
+    # Fused vocab-head payload: logits are never materialized during replay.
     # Restricted to the codebook prefix — the 24-wide vision vocab's
-    # image_start/image_end/reserved columns never appear in replay logits.
-    assert logits.shape == (2, TOTAL, TINY_CODEBOOK)
-    assert torch.isfinite(logits).all()
+    # image_start/image_end/reserved columns never appear as head rows.
+    assert set(segment.values) == {
+        "head_hidden",
+        "head_weight",
+        "head_bias",
+        "image_token_ids",
+    }
+    assert segment.values["head_weight"].shape[0] == TINY_CODEBOOK
     actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
     assert torch.equal(segment.values["image_token_ids"], actions)
+
+    # The contract path must agree with the eager codebook-logits gather.
+    from vrl.math.token.logprob import gather_categorical_log_probs
+
+    replay, _ = model._resolve_image_token_replay(batch, 0, None)
+    grids = model._replay_grids(batch, int(actions.shape[1]))
+    logits = model.forward_image_logits(
+        model.language_model.get_input_embeddings()(replay["prompt_input_ids"]),
+        replay["prompt_attention_mask"],
+        actions,
+        grids=grids,
+    )
+    assert logits.shape == (2, TOTAL, TINY_CODEBOOK)
+    torch.testing.assert_close(
+        segment.logprobs(actions),
+        gather_categorical_log_probs(logits, actions),
+        rtol=1e-5,
+        atol=1e-5,
+    )
 
 
 def test_replay_forward_requires_pixel_dims_in_context() -> None:
@@ -158,11 +181,9 @@ def test_replay_model_replays_without_vision_tower_or_decode_stack() -> None:
 
     result = model.replay_forward(batch)
 
-    assert result.segments["image_tokens"].values["logits"].shape == (
-        2,
-        TOTAL,
-        TINY_CODEBOOK,
-    )
+    segment = result.segments["image_tokens"]
+    assert segment.values["head_weight"].shape[0] == TINY_CODEBOOK
+    assert segment.values["head_hidden"].shape[:2] == (2, TOTAL)
     with pytest.raises(RuntimeError, match="cannot decode image tokens"):
         actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
         model.decode_image_tokens(
@@ -181,12 +202,14 @@ def test_lora_wrap_keeps_replay_and_adapter_surfaces_working() -> None:
     assert sum(p.numel() for p in model.parameters() if p.requires_grad) > 0
 
     batch = _discrete_batch()
-    logits = model.replay_forward(batch).segments["image_tokens"].values["logits"]
-    assert logits.shape == (2, TOTAL, TINY_CODEBOOK)
+    actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+    log_probs = model.replay_forward(batch).segments["image_tokens"].logprobs(actions)
+    assert log_probs.shape == (2, TOTAL)
 
     with model.disable_adapter():
-        ref_logits = model.replay_forward(batch).segments["image_tokens"].values["logits"]
-    assert ref_logits.shape == logits.shape
+        ref_result = model.replay_forward(batch).segments["image_tokens"]
+    ref_log_probs = ref_result.logprobs(actions)
+    assert ref_log_probs.shape == log_probs.shape
 
 
 def test_disable_adapter_without_lora_is_noop() -> None:

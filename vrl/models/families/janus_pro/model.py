@@ -65,6 +65,7 @@ from vrl.models.steps.token.base import (
     ARReplayRolloutStubs,
 )
 from vrl.models.steps.token.lora import install_token_lora_adapter
+from vrl.models.steps.token.vocab_head import VocabHeadSplit, head_replay_values
 from vrl.trajectory import role_tensor
 from vrl.utils.logging import init_logger
 
@@ -111,25 +112,30 @@ def image_token_logits_from_hidden(
     return base.gen_head(hidden_states)
 
 
-def image_token_head_split(mmgpt: nn.Module) -> tuple[Callable[..., Any], nn.Linear] | None:
-    """Split ``gen_head`` into (prefix, final vocab Linear) when its shape allows.
+def image_token_head_split(mmgpt: nn.Module) -> VocabHeadSplit | None:
+    """Split ``gen_head`` at its final vocab Linear when its shape allows.
 
     DeepSeek's ``vision_head`` is ``vision_head(vision_activation(
     output_mlp_projector(h)))`` with a plain final Linear over the 16384-token
-    image vocab; the fused replay log-prob path needs that Linear separated so
-    the logits are never materialized. Returns None for any other structure
-    (callers must then fall back to eager logits), which also fail-safes a
-    future checkpoint that LoRA-wraps or reshapes the head.
+    image vocab. Returns None for any other structure (callers fall back to
+    eager logits), which also fail-safes a future checkpoint that LoRA-wraps
+    or reshapes the head — the exact-type checks are load-bearing: PEFT's
+    lora.Linear can subclass nn.Linear, and reading ``.weight`` off a wrapped
+    layer would silently drop the adapter delta.
     """
 
     head = peel_peft(mmgpt).gen_head
-    if isinstance(head, nn.Linear):
-        return (lambda h: h), head
+    if type(head) is nn.Linear:
+        return VocabHeadSplit(prefix=lambda h: h, weight=head.weight, bias=head.bias)
     final = getattr(head, "vision_head", None)
     proj = getattr(head, "output_mlp_projector", None)
     act = getattr(head, "vision_activation", None)
-    if isinstance(final, nn.Linear) and callable(proj) and callable(act):
-        return (lambda h: act(proj(h))), final
+    if type(final) is nn.Linear and callable(proj) and callable(act):
+        return VocabHeadSplit(
+            prefix=lambda h: act(proj(h)),
+            weight=final.weight,
+            bias=final.bias,
+        )
     return None
 
 
@@ -335,6 +341,11 @@ class JanusProModel(ARModelBase):
         )
         return image_token_logits_from_hidden(self.mmgpt, gen_hidden)
 
+    def vocab_head_split(self) -> VocabHeadSplit | None:
+        """Janus' gen_head split (DeepSeek projector+GELU+Linear structure)."""
+
+        return image_token_head_split(self.mmgpt)
+
     def _image_token_replay_values(
         self,
         prompt_inputs_embeds: torch.Tensor,
@@ -343,11 +354,10 @@ class JanusProModel(ARModelBase):
     ) -> dict[str, Any]:
         """Replay payload for the image segment, fused-head form when possible.
 
-        The eager form materializes ``[B, L_img, 16384]`` logits and keeps them
-        alive for backward. When ``gen_head``'s final projection is a plain
-        ``nn.Linear`` (it is not a LoRA target — janus adapts q/k/v/o only), we
-        instead hand the ReplaySegmentResult contract the projection's input
-        and weight, and its fused kernel path never builds the logits tensor.
+        The eager form materializes ``[B, L_img, 16384]`` logits and keeps
+        them alive for backward; the split form (janus' head is not a LoRA
+        target — it adapts q/k/v/o only) hands the projection's input and
+        weight to the ReplaySegmentResult contract instead.
         """
 
         gen_hidden = self._image_gen_hidden(
@@ -355,15 +365,11 @@ class JanusProModel(ARModelBase):
             prompt_attention_mask,
             image_token_ids,
         )
-        split = image_token_head_split(self.mmgpt)
-        if split is None:
-            return {"logits": image_token_logits_from_hidden(self.mmgpt, gen_hidden)}
-        head_prefix, final = split
-        return {
-            "head_hidden": head_prefix(gen_hidden),
-            "head_weight": final.weight,
-            "head_bias": final.bias,
-        }
+        return head_replay_values(
+            gen_hidden,
+            self.vocab_head_split(),
+            lambda: image_token_logits_from_hidden(self.mmgpt, gen_hidden),
+        )
 
     def forward_text_logits(
         self,
