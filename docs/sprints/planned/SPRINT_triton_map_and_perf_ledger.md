@@ -197,6 +197,14 @@ vLLM 的 Triton 资产在这类**真的能用**（paged attention 已借入：
   CPU/fp64 走等价 torch 回退）；payload 契约新增 fused 形态
   （`ReplaySegmentResult.logprobs` 的 `head_hidden`/`head_weight`/`head_bias`），
   janus replay（含 R1 visual 段）已切换，`gen_head` 结构不匹配时自动回退 eager。
+- **契约化（同日）**：能力提升为 family 级契约——`ARModelBase.vocab_head_split()`
+  默认 None（eager 回退），`vrl/models/steps/token/vocab_head.py` 定义
+  `VocabHeadSplit`（prefix + 最终投影的 weight/bias）与 payload 构造器。两个采用者：
+  janus（MLP 头拆分）、glm_image（lm_head 行切片即 codebook 限制，view 零拷贝）。
+  两个记录在案的不采用者：emu3（logits 上有 per-position 结构 mask，kernel 需先支持
+  mask 输入）、llamagen（投影在 vendor trunk forward 内部）。LoRA 陷阱已封死：
+  探测用精确类型判断（PEFT lora.Linear 可能继承 nn.Linear，`.weight` 会静默丢
+  adapter 增量），包装过的头一律回退 eager。
 - **验收结果**：①fp64 `gradcheck` 通过；CUDA 上 fwd/bwd 与 eager autograd 对照
   fp32 ≤2e-5 / ≤2e-4。②janus 形状（B8×L576×V16384×D2048 bf16 含 backward）峰值
   显存 564 MiB → 34 MiB（**16.6×**）。③kernel 对同一 logits 与 torch 参考一致到
