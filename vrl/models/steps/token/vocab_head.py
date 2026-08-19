@@ -9,9 +9,9 @@ provide. This module is the contract by which a family DECLARES that split:
 
 * :class:`VocabHeadSplit` — the family's structure knowledge, reduced to
   "everything before the final projection" plus the projection's tensors.
-* :func:`head_replay_values` — the producer-side twin of
-  ``ReplaySegmentResult.logprobs``'s fused branch: turns a split (or its
-  absence) into the replay payload keys that method consumes.
+  ``ARModelBase.vocab_head_split`` returns it (or None), and
+  ``ARModelBase._head_replay_values`` turns it into the replay payload that
+  ``ReplaySegmentResult.logprobs`` consumes.
 
 Families that cannot split return ``None`` from ``vocab_head_split`` and keep
 shipping eager ``logits`` — known cases: emu3 applies a per-position
@@ -28,17 +28,14 @@ from typing import Any
 import torch.nn as nn
 
 
-def _identity(hidden: Any) -> Any:
-    return hidden
-
-
 @dataclass(frozen=True, slots=True)
 class VocabHeadSplit:
     """A family's generation head, split at its final vocab projection.
 
-    ``prefix`` maps trunk hidden states to the projection input (identity for
-    plain ``lm_head`` families, the projector+activation for janus-style MLP
-    heads); its output stays small. ``weight``/``bias`` are the final
+    ``prefix`` maps trunk hidden states to the projection input (the
+    projector+activation for janus-style MLP heads; ``None`` means the hidden
+    states feed the projection directly); its output stays small.
+    ``weight``/``bias`` are the final
     projection's tensors — pass slices when the sampleable vocab is a
     contiguous slice of a wider head (glm_image's codebook prefix).
 
@@ -47,16 +44,16 @@ class VocabHeadSplit:
     drop the adapter delta) — return ``None`` and fall back to eager logits.
     """
 
-    prefix: Callable[[Any], Any]
     weight: Any
     bias: Any | None = None
+    prefix: Callable[[Any], Any] | None = None
 
     @classmethod
     def from_linear(
         cls,
         linear: Any,
         *,
-        prefix: Callable[[Any], Any] = _identity,
+        prefix: Callable[[Any], Any] | None = None,
         rows: int | None = None,
     ) -> VocabHeadSplit | None:
         """Build from a candidate final projection; None if it cannot be split.
@@ -76,26 +73,7 @@ class VocabHeadSplit:
         bias = linear.bias
         if bias is not None and rows is not None:
             bias = bias[:rows]
-        return cls(prefix=prefix, weight=weight, bias=bias)
+        return cls(weight=weight, bias=bias, prefix=prefix)
 
 
-def head_replay_values(
-    gen_hidden: Any, split: VocabHeadSplit | None, eager_logits: Callable[[], Any]
-) -> dict[str, Any]:
-    """Replay payload for one generation segment: fused form when split allows.
-
-    Key names are consumed by ``ReplaySegmentResult.logprobs`` (the contract
-    method owning payload-key knowledge); ``eager_logits`` is only called on
-    the fallback path, so the fused path never materializes ``[.., V]``.
-    """
-
-    if split is None:
-        return {"logits": eager_logits()}
-    return {
-        "head_hidden": split.prefix(gen_hidden),
-        "head_weight": split.weight,
-        "head_bias": split.bias,
-    }
-
-
-__all__ = ["VocabHeadSplit", "head_replay_values"]
+__all__ = ["VocabHeadSplit"]

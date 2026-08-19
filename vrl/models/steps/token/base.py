@@ -60,6 +60,25 @@ class ARModelBase(nn.Module):
 
         return None
 
+    def _head_replay_values(self, gen_hidden, eager_logits):
+        """Replay payload for one generation segment: fused form when possible.
+
+        Key names are consumed by ``ReplaySegmentResult.logprobs`` (the
+        contract method owning payload-key knowledge). ``eager_logits`` is a
+        thunk on purpose: it only runs on the fallback path, so the fused
+        path never materializes ``[.., V]`` — pass a closure, never
+        precomputed logits.
+        """
+
+        split = self.vocab_head_split()
+        if split is None:
+            return {"logits": eager_logits()}
+        return {
+            "head_hidden": split.prefix(gen_hidden) if split.prefix is not None else gen_hidden,
+            "head_weight": split.weight,
+            "head_bias": split.bias,
+        }
+
     # What a correctly loaded checkpoint should look like, e.g. "an
     # Emu3ForConditionalGeneration checkpoint". It names an UPSTREAM class, so
     # it cannot be derived from ``type(self).__name__``; ``_require_module_attrs``

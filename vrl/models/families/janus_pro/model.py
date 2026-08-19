@@ -65,7 +65,7 @@ from vrl.models.steps.token.base import (
     ARReplayRolloutStubs,
 )
 from vrl.models.steps.token.lora import install_token_lora_adapter
-from vrl.models.steps.token.vocab_head import VocabHeadSplit, head_replay_values
+from vrl.models.steps.token.vocab_head import VocabHeadSplit
 from vrl.trajectory import role_tensor
 from vrl.utils.logging import init_logger
 
@@ -362,9 +362,8 @@ class JanusProModel(ARModelBase):
             prompt_attention_mask,
             image_token_ids,
         )
-        return head_replay_values(
+        return self._head_replay_values(
             gen_hidden,
-            self.vocab_head_split(),
             lambda: image_token_logits_from_hidden(self.mmgpt, gen_hidden),
         )
 

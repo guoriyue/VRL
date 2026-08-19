@@ -72,7 +72,7 @@ from vrl.models.steps.token.base import (
     ARReplayRolloutStubs,
 )
 from vrl.models.steps.token.lora import install_token_lora_adapter
-from vrl.models.steps.token.vocab_head import VocabHeadSplit, head_replay_values
+from vrl.models.steps.token.vocab_head import VocabHeadSplit
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -564,9 +564,8 @@ class GlmImageModel(ARModelBase):
             image_token_ids,
             grids=grids,
         )
-        values = head_replay_values(
+        values = self._head_replay_values(
             gen_hidden,
-            self.vocab_head_split(),
             lambda: self.image_gen_logits(gen_hidden),
         )
         return single_segment_result(
