@@ -13,7 +13,12 @@ defaults:
   - /recipe/online/flow_matching_grpo
   - /model/cosmos/anima_preview3
   - /sampling/image/512
-  - /sampling/denoise/10_step_cfg_4_5
+  # 20, not the recipe's 10. Measured on this model at a fixed seed: 10 steps
+  # with the recipe's noise_level scores 0.211, 20 steps scores 0.600 -- the
+  # 10-step rollout is undersampled to the point of a visible crystalline
+  # texture, so GRPO was being asked to improve images the sampler had already
+  # ruined. 20 recovers almost all of 30's quality (0.638) at 2/3 the rollout cost.
+  - /sampling/denoise/20_step_cfg_4_5
   - /reward/animereward_quality_http
   - /dataset/anime_anatomy
 
@@ -27,6 +32,14 @@ actor:
     lr: 1.0e-4
   ppo_epochs: 1
   gradient_accumulation_steps: 4
+  # Pipeline fixes proven in experiment D (see SPRINT_anima_rl_5090.md): the
+  # base actor's timestep_fraction 0.99 resolves to 19 of 20 trained steps and
+  # silently drops the FINAL denoise step -- the one that produces the image;
+  # 1.0 trains all 20. EMA off so the exported adapter IS the trained policy
+  # instead of a 0.9-decay average the training curve never described.
+  timestep_fraction: 1.0
+  ema:
+    enable: false
 
 algorithm:
   kl_coef: 0.004
@@ -42,15 +55,28 @@ algorithm:
   clip_ratio: 3.0e-3
 
 rollout:
-  n_samples_per_prompt: 8
+  # 0.3, not the recipe's 0.7. At 0.7 the exploration noise dominates the image:
+  # same prompt and seed, mean reward 0.214 vs 0.589 at 0.3. Crucially this does
+  # NOT cost exploration -- within-group std, which is the only thing GRPO
+  # consumes, went UP (0.032 -> 0.056) because the spread now reflects real
+  # image differences instead of a noise floor that swamps them.
+  noise_level: 0.3
+  # 16, not 8. This is the knob that sets how many samples share one prompt's
+  # advantage baseline, so it directly sharpens GRPO's within-group estimate --
+  # the quantity the algorithm actually consumes (measured within-group reward
+  # std 0.033 vs between-group 0.029). It is also the knob that fills the card:
+  # generation peaked at 6.4 GiB of a 25 GiB budget with 8, and the marginal
+  # cost per sample is small (5.8 GiB of that peak is the resident baseline).
+  n_samples_per_prompt: 16
   # 4 prompts x 8 samples = 32 samples per update was too small to move a 2B
   # model: runs 2 and 3 both stayed flat after the trust region and the LoRA
-  # learning rate were each fixed and verified. 16 prompts quadruples the
-  # per-update signal and widens prompt coverage per epoch (4 prompts/epoch
-  # also risks fitting a handful of prompts rather than the distribution).
+  # learning rate were each fixed and verified. 16 prompts widens prompt
+  # coverage per epoch too (4 prompts/epoch risks fitting a handful of prompts
+  # rather than the distribution).
   prompts_per_batch: 16
-  # The reward service is nf4 (4.9 GiB, not 17.3), so ~12 GiB came back to the
-  # trainer; spend it on bigger generation batches instead of leaving it idle.
+  # The executor dispatches one prompt group at a time, so this bounds the
+  # in-flight generation batch. Matched to n_samples_per_prompt so a whole group
+  # generates in one dispatch instead of being split.
   samples_per_generation_batch: 16
   sde:
     type: flow_grpo

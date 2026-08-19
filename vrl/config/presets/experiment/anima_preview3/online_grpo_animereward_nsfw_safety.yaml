@@ -1,0 +1,66 @@
+# Anima Preview3 + image GRPO on the anime safety stress set, with an NSFW
+# penalty riding alongside the AnimeReward quality signal.
+#
+# Composition is load-bearing, not a preference. `nsfw_safety` returns ONLY zero
+# or negative scores, so on any batch it is near-uniform: within-group std
+# collapses and `group_relative_advantages` divides by max(std, eps), leaving
+# noise over noise. Measured here on 24 real anima images, every sample scored
+# exactly 0.0. It therefore cannot be a training objective on its own -- it is a
+# guardrail that needs a quality reward supplying the gradient. AnimeReward is
+# that signal (the aesthetic reward cannot even separate on-prompt anime from
+# off-prompt collapse: 4.981 vs 5.009, see SPRINT_anima_rl_5090.md).
+#
+# Differs from online_grpo_aesthetic_nsfw_safety by using AnimeReward instead of
+# the aesthetic head, and by the corrected rollout sampling documented below.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/cosmos/anima_preview3
+  - /sampling/image/512
+  # 20, not 10: at the recipe's noise level a 10-step rollout scores 0.211 vs
+  # 0.600 at 20 on a fixed seed -- undersampled to a visible crystalline texture.
+  - /sampling/denoise/20_step_cfg_4_5
+  - /reward/animereward_quality_http
+  - /reward/nsfw_safety
+  - /dataset/anime_safety_stress
+
+reward:
+  components:
+    # Quality carries the gradient; the penalty only bends it away from NSFW.
+    animereward_quality: 1.0
+    nsfw_safety: 0.5
+
+actor:
+  optim:
+    # LoRA rate. 1e-5 is a full-param rate and left reward flat for 10 epochs.
+    lr: 1.0e-4
+  ppo_epochs: 1
+  gradient_accumulation_steps: 4
+  # Pipeline fixes proven in experiment D: all 20 denoise steps get loss (the
+  # 0.99 default silently dropped the final step at 20 steps) and EMA off (the
+  # exported adapter IS the trained policy).
+  timestep_fraction: 1.0
+  ema:
+    enable: false
+
+algorithm:
+  kl_coef: 0.004
+  global_std: false
+  # Recipe default 1e-4 clipped ~45% of every batch on this model (measured
+  # ratio_abs_dev_mean 6.1e-4). Widened past the observed update size.
+  clip_ratio: 3.0e-3
+
+rollout:
+  # 0.3, not 0.7: same prompt and seed, mean reward 0.214 -> 0.589, and
+  # within-group std (the only thing GRPO consumes) rose 0.032 -> 0.056.
+  noise_level: 0.3
+  n_samples_per_prompt: 16
+  prompts_per_batch: 16
+  samples_per_generation_batch: 16
+  sde:
+    type: flow_grpo
+
+trainer:
+  output_dir: outputs/anima_animereward_nsfw_grpo
+  # 5, not 10: the nsfw_only run converged between saves and lost its best
+  # epochs (metrics reached the objective at epoch 14-17, last save was 10).
+  save_freq: 5
