@@ -148,10 +148,32 @@ def test_janus_model_replay_forward_returns_typed_replay_result() -> None:
     assert isinstance(result, ReplayResult)
     segment = result.segments["image_tokens"]
     assert segment.segment == "image_tokens"
-    assert set(segment.values) == {"logits", "image_token_ids"}
-    assert segment.values["logits"].shape == (2, 2, JANUS_IMAGE_VOCAB_SIZE)
+    # Fused vocab-head payload: logits are never materialized during replay.
+    assert set(segment.values) == {
+        "head_hidden",
+        "head_weight",
+        "head_bias",
+        "image_token_ids",
+    }
+    assert segment.values["head_weight"].shape[0] == JANUS_IMAGE_VOCAB_SIZE
     actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
     assert torch.equal(segment.values["image_token_ids"], actions)
+
+    # The contract path must agree with the eager forward_image_logits gather.
+    from vrl.math.token.logprob import gather_categorical_log_probs
+
+    replay, _ = model._resolve_image_token_replay(batch, 0, None)
+    logits = model.forward_image_logits(
+        model.language_model.get_input_embeddings()(replay["prompt_input_ids"]),
+        replay["prompt_attention_mask"],
+        actions,
+    )
+    torch.testing.assert_close(
+        segment.logprobs(actions),
+        gather_categorical_log_probs(logits, actions),
+        rtol=1e-5,
+        atol=1e-5,
+    )
 
 
 def test_janus_disable_adapter_without_lora_is_noop() -> None:

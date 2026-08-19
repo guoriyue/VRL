@@ -303,7 +303,9 @@ def test_r1_model_replay_forward_returns_requested_replay_segments() -> None:
     assert isinstance(result, ReplayResult)
     assert set(result.segments) == set(JANUS_R1_SEGMENTS[1:])
     assert result.segments["selfcheck_text"].values["logits"].shape == (2, 2, TEXT_VOCAB)
-    assert result.segments["final_image"].values["logits"].shape == (2, 3, IMAGE_VOCAB)
+    # Image segments use the fused vocab-head payload (no materialized logits).
+    assert result.segments["final_image"].values["head_weight"].shape[0] == IMAGE_VOCAB
+    assert result.segments["final_image"].values["head_hidden"].shape[:2] == (2, 3)
     actions = TrajectoryResolver.from_batch(batch).role_value("final_image", "action")
     assert torch.equal(
         result.segments["final_image"].values["token_ids"],

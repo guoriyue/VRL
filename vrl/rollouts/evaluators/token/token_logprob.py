@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import torch
 
-from vrl.math.token.logprob import gather_categorical_log_probs
 from vrl.models.interfaces import ReplayModel
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import ReplayEvaluatorBase
@@ -100,9 +99,6 @@ class TokenLogProbEvaluator(ReplayEvaluatorBase):
         """Forward + gather. Always returns ``[B, L]`` float32 log-probs."""
         out = model.replay_forward(batch, timestep_idx=0)
         result = out.require_segment("image_tokens")
-        logits: torch.Tensor = result.require_value("logits")  # [B, L, V_img]
-        return gather_categorical_log_probs(
-            logits,
-            action_ids,
-            temperature=temperature,
-        )  # [B, L]
+        # Payload-key knowledge (log_probs / logits / fused head) lives on
+        # ReplaySegmentResult; this evaluator only supplies the sampled ids.
+        return result.logprobs(action_ids, temperature=temperature)  # [B, L]

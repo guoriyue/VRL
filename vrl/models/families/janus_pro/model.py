@@ -111,6 +111,28 @@ def image_token_logits_from_hidden(
     return base.gen_head(hidden_states)
 
 
+def image_token_head_split(mmgpt: nn.Module) -> tuple[Callable[..., Any], nn.Linear] | None:
+    """Split ``gen_head`` into (prefix, final vocab Linear) when its shape allows.
+
+    DeepSeek's ``vision_head`` is ``vision_head(vision_activation(
+    output_mlp_projector(h)))`` with a plain final Linear over the 16384-token
+    image vocab; the fused replay log-prob path needs that Linear separated so
+    the logits are never materialized. Returns None for any other structure
+    (callers must then fall back to eager logits), which also fail-safes a
+    future checkpoint that LoRA-wraps or reshapes the head.
+    """
+
+    head = peel_peft(mmgpt).gen_head
+    if isinstance(head, nn.Linear):
+        return (lambda h: h), head
+    final = getattr(head, "vision_head", None)
+    proj = getattr(head, "output_mlp_projector", None)
+    act = getattr(head, "vision_activation", None)
+    if isinstance(final, nn.Linear) and callable(proj) and callable(act):
+        return (lambda h: act(proj(h))), final
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Wrapper
 # ---------------------------------------------------------------------------
@@ -238,13 +260,13 @@ class JanusProModel(ARModelBase):
     # Train-time forward — image-token logits
     # ------------------------------------------------------------------
 
-    def forward_image_logits(
+    def _image_gen_hidden(
         self,
         prompt_inputs_embeds: torch.Tensor,  # [B, L_text, H]
         prompt_attention_mask: torch.Tensor,  # [B, L_text]
         image_token_ids: torch.Tensor,  # [B, L_img]
     ) -> torch.Tensor:
-        """One forward pass returning per-position image-vocab logits.
+        """One trunk pass returning hidden states at image-token positions.
 
         Layout convention: text comes first, then image tokens. We feed
         the *teacher-forced* sequence and extract logits at positions
@@ -261,8 +283,8 @@ class JanusProModel(ARModelBase):
             ``JANUS_IMAGE_TOKEN_NUM`` (576).
 
         Returns:
-          Logits over image vocab at positions that *predict* each
-          image token. Shape ``[B, L_img, JANUS_IMAGE_VOCAB_SIZE]``.
+          Trunk hidden states at positions that *predict* each image token,
+          shape ``[B, L_img, hidden_size]`` — the ``gen_head`` input.
         """
         base = self._base()
         B, L_img = image_token_ids.shape
@@ -296,8 +318,52 @@ class JanusProModel(ARModelBase):
 
         # Positions that *predict* image_token_ids[:, 0..L_img-1]
         # are L_text - 1, L_text, ..., L_text + L_img - 2.
-        gen_hidden = hidden[:, L_text - 1 : L_text - 1 + L_img, :]
+        return hidden[:, L_text - 1 : L_text - 1 + L_img, :]
+
+    def forward_image_logits(
+        self,
+        prompt_inputs_embeds: torch.Tensor,
+        prompt_attention_mask: torch.Tensor,
+        image_token_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Teacher-forced image-vocab logits; see ``_image_gen_hidden``."""
+
+        gen_hidden = self._image_gen_hidden(
+            prompt_inputs_embeds,
+            prompt_attention_mask,
+            image_token_ids,
+        )
         return image_token_logits_from_hidden(self.mmgpt, gen_hidden)
+
+    def _image_token_replay_values(
+        self,
+        prompt_inputs_embeds: torch.Tensor,
+        prompt_attention_mask: torch.Tensor,
+        image_token_ids: torch.Tensor,
+    ) -> dict[str, Any]:
+        """Replay payload for the image segment, fused-head form when possible.
+
+        The eager form materializes ``[B, L_img, 16384]`` logits and keeps them
+        alive for backward. When ``gen_head``'s final projection is a plain
+        ``nn.Linear`` (it is not a LoRA target — janus adapts q/k/v/o only), we
+        instead hand the ReplaySegmentResult contract the projection's input
+        and weight, and its fused kernel path never builds the logits tensor.
+        """
+
+        gen_hidden = self._image_gen_hidden(
+            prompt_inputs_embeds,
+            prompt_attention_mask,
+            image_token_ids,
+        )
+        split = image_token_head_split(self.mmgpt)
+        if split is None:
+            return {"logits": image_token_logits_from_hidden(self.mmgpt, gen_hidden)}
+        head_prefix, final = split
+        return {
+            "head_hidden": head_prefix(gen_hidden),
+            "head_weight": final.weight,
+            "head_bias": final.bias,
+        }
 
     def forward_text_logits(
         self,
@@ -389,14 +455,14 @@ class JanusProModel(ARModelBase):
 
         embed = self.language_model.get_input_embeddings()
         prompt_embeds = embed(prompt_ids)
-        logits = self.forward_image_logits(
+        values = self._image_token_replay_values(
             prompt_embeds,
             prompt_mask,
             image_token_ids,
-        )  # [B, L_img, V_img]
+        )
         return single_segment_result(
             "image_tokens",
-            {"logits": logits, "image_token_ids": image_token_ids},
+            {**values, "image_token_ids": image_token_ids},
         )
 
     def _r1_segment_payload_from_trajectory(
@@ -431,17 +497,17 @@ class JanusProModel(ARModelBase):
         prompt_embeds = segment["prompt_embeds"]
         attention_mask = segment["attention_mask"]
         if bool(segment.get("visual", True)):
-            logits = self.forward_image_logits(
+            values = self._image_token_replay_values(
                 prompt_embeds,
                 attention_mask,
                 token_ids,
             )
-        else:
-            logits = self.forward_text_logits(
-                prompt_embeds,
-                attention_mask,
-                token_ids,
-            )
+            return {**values, "token_ids": token_ids}
+        logits = self.forward_text_logits(
+            prompt_embeds,
+            attention_mask,
+            token_ids,
+        )
         return {"logits": logits, "token_ids": token_ids}
 
     @torch.no_grad()

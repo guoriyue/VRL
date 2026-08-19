@@ -63,6 +63,23 @@ class ReplaySegmentResult:
         if direct is not None:
             return direct.float()
 
+        if "head_hidden" in self.values:
+            # Fused vocab-head payload: the family hands over the final
+            # projection's input and weight instead of materialized logits,
+            # and the chunked kernel never builds the [.., V] tensor.
+            if token_ids is None:
+                token_ids = self.require_value("token_ids")
+
+            from vrl.nn.kernels.fused_linear_logprob import fused_linear_logprob
+
+            return fused_linear_logprob(
+                self.values["head_hidden"],
+                self.require_value("head_weight"),
+                token_ids,
+                bias=self.values.get("head_bias"),
+                temperature=temperature,
+            )
+
         logits = self.require_value("logits")  # raises with available keys
 
         if token_ids is None:
