@@ -40,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--guidance-scale", type=float, default=None)
     parser.add_argument("--endpoint", default="http://127.0.0.1:8310")
     parser.add_argument("--label", default="", help="Name for this run in the report")
+    parser.add_argument(
+        "--with-pickscore",
+        action="store_true",
+        help="Also score with PickScore. Required when PickScore drove training: "
+        "a rise there alongside a fall in AnimeReward is reward hacking, not gain.",
+    )
     return parser
 
 
@@ -50,7 +56,10 @@ def main(argv: list[str] | None = None) -> None:
     (out_dir / "images").mkdir(parents=True, exist_ok=True)
 
     rows = _generate(args, out_dir)
-    scores = asyncio.run(_score(rows, endpoint=args.endpoint))
+    per_component = asyncio.run(
+        _score(rows, endpoint=args.endpoint, with_pickscore=args.with_pickscore)
+    )
+    scores = per_component["animereward_quality"]
     diversity = _diversity(rows)
 
     report: dict[str, Any] = {
@@ -63,10 +72,22 @@ def main(argv: list[str] | None = None) -> None:
         "quality_max": max(scores),
         "diversity": diversity,
         "per_image": [
-            {"image": row["image_path"], "prompt": row["prompt"], "quality": score}
-            for row, score in zip(rows, scores, strict=True)
+            {
+                "image": row["image_path"],
+                "prompt": row["prompt"],
+                "quality": score,
+                **(
+                    {"pickscore": per_component["pickscore"][i]}
+                    if "pickscore" in per_component
+                    else {}
+                ),
+            }
+            for i, (row, score) in enumerate(zip(rows, scores, strict=True))
         ],
     }
+    if "pickscore" in per_component:
+        picks = per_component["pickscore"]
+        report["pickscore_mean"] = sum(picks) / len(picks)
     variance = sum((s - report["quality_mean"]) ** 2 for s in scores) / len(scores)
     report["quality_std"] = variance**0.5
     (out_dir / "eval_report.json").write_text(
@@ -165,7 +186,16 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
     return rows
 
 
-async def _score(rows: list[dict[str, Any]], *, endpoint: str) -> list[float]:
+async def _score(
+    rows: list[dict[str, Any]], *, endpoint: str, with_pickscore: bool = False
+) -> dict[str, list[float]]:
+    """Score every image with AnimeReward, and optionally PickScore too.
+
+    Both are reported separately and neither is summed into a single number. When
+    one reward drives training, a rise in *that* reward alongside a fall in the
+    other is the signature of reward hacking rather than improvement — collapsing
+    them into one score would hide exactly the thing this eval exists to detect.
+    """
     import numpy as np
     import torch
     from PIL import Image
@@ -173,22 +203,25 @@ async def _score(rows: list[dict[str, Any]], *, endpoint: str) -> list[float]:
     from vrl.rewards.functions.registry import MultiReward
     from vrl.rewards.types import RewardSample
 
-    reward = MultiReward.from_dict(
-        {"animereward_quality": 1.0},
-        reward_kwargs={
-            "animereward_quality": {
-                "media_type": "image",
-                "artifact_format": "tensor",
-                "artifact_dir": "outputs/reward_artifacts",
-                "inference": {
-                    "kind": "http",
-                    "endpoint": endpoint,
-                    "timeout_s": 1800,
-                    "expected_model": "animereward-quality",
-                },
-            }
-        },
-    )
+    components: dict[str, float] = {"animereward_quality": 1.0}
+    kwargs: dict[str, Any] = {
+        "animereward_quality": {
+            "media_type": "image",
+            "artifact_format": "tensor",
+            "artifact_dir": "outputs/reward_artifacts",
+            "inference": {
+                "kind": "http",
+                "endpoint": endpoint,
+                "timeout_s": 1800,
+                "expected_model": "animereward-quality",
+            },
+        }
+    }
+    if with_pickscore:
+        components["pickscore"] = 1.0
+        kwargs["pickscore"] = {"dtype": "float32"}
+
+    reward = MultiReward.from_dict(components, reward_kwargs=kwargs)
     samples = []
     for row in rows:
         arr = np.asarray(Image.open(row["image_path"]).convert("RGB"), dtype=np.uint8).copy()
@@ -197,7 +230,11 @@ async def _score(rows: list[dict[str, Any]], *, endpoint: str) -> list[float]:
             RewardSample(prompt=row["prompt"], output=tensor, sample_id=f"eval-{row['index']:04d}")
         )
     output = await reward.score_batch(samples)
-    return [float(score) for score in output.scores]
+    per_component = {
+        name: [float(v) for v in values] for name, values in (output.components or {}).items()
+    }
+    per_component.setdefault("animereward_quality", [float(s) for s in output.scores])
+    return per_component
 
 
 def _diversity(rows: list[dict[str, Any]]) -> dict[str, float]:
