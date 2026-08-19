@@ -113,6 +113,11 @@ class HPSv3Qwen2VLRewardModel(Qwen2VLForConditionalGeneration):
         if pixel_values is not None:
             pixel_values = pixel_values.type(self.model.visual.dtype)
             image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw)
+            # Transformers 5.x returns BaseModelOutputWithPooling from the vision
+            # tower; the merged patch embeddings this scatter needs are its
+            # pooler_output (`merger(hidden_states)`), not last_hidden_state.
+            # Older versions returned that tensor directly.
+            image_embeds = getattr(image_embeds, "pooler_output", image_embeds)
             image_mask = (
                 (input_ids == self.config.image_token_id).unsqueeze(-1).expand_as(inputs_embeds)
             )
