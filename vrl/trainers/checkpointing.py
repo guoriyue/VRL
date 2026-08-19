@@ -1340,6 +1340,10 @@ def _require_equal_tensor_tree(expected: Any, actual: Any, *, label: str) -> Non
     """Fail closed unless two checkpoint state trees are tensor-exact."""
 
     if isinstance(expected, torch.Tensor) and isinstance(actual, torch.Tensor):
+        # load_state_dict legitimately moves optimizer state onto the param
+        # device (disk side stays CPU), so compare values, not placement.
+        if expected.device != actual.device:
+            actual = actual.to(expected.device)
         if not torch.equal(expected, actual):
             raise ValueError(f"{label} tensor mismatch")
         return

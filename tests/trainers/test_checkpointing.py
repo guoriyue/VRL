@@ -2451,3 +2451,33 @@ def test_resave_to_existing_checkpoint_dir_replaces_it(tmp_path) -> None:
         )
     assert is_complete_checkpoint(target)
     assert load_training_checkpoint(target).payload["family"] == "unit"
+
+
+def test_require_equal_tensor_tree_bridges_devices() -> None:
+    """Optimizer-restore parity must compare values, not tensor placement.
+
+    load_state_dict moves optimizer state onto the param device while the
+    checkpoint side stays on CPU; the strict parity gate crashed on that
+    legitimate device split (torch.equal rejects cross-device operands).
+    """
+    from vrl.trainers.checkpointing import _require_equal_tensor_tree
+
+    cpu_tree = {"optimizer": {"exp_avg": torch.ones(3)}}
+    _require_equal_tensor_tree(cpu_tree, cpu_tree, label="same device")
+    with pytest.raises(ValueError, match="tensor mismatch"):
+        _require_equal_tensor_tree(
+            cpu_tree,
+            {"optimizer": {"exp_avg": torch.zeros(3)}},
+            label="mismatch",
+        )
+
+    if not torch.cuda.is_available():
+        pytest.skip("cross-device case needs CUDA")
+    cuda_tree = {"optimizer": {"exp_avg": torch.ones(3, device="cuda")}}
+    _require_equal_tensor_tree(cpu_tree, cuda_tree, label="cross device")
+    with pytest.raises(ValueError, match="tensor mismatch"):
+        _require_equal_tensor_tree(
+            {"optimizer": {"exp_avg": torch.zeros(3)}},
+            cuda_tree,
+            label="cross device mismatch",
+        )
