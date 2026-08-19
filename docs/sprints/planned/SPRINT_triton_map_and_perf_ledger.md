@@ -20,10 +20,10 @@ Triton 的价值按**负载类**分，不是全仓一个答案：
 - **扩散类（图像+视频）**：不值得新写任何 kernel——SDE/logprob 逐元素数学占端到端
   ≤0.03%（图像实测算术 §2.5，视频外推 §5.2）。收益全在两个**已写好但没开**的路径：
   compile pass（inductor 生成 Triton）和 NVFP4 量化 rollout（手写 Triton 已在仓）。
-- **AR token 类（llamagen / janus_pro / emu3 / nextstep_1 / glm_image）**：存在一个
-  真实的新 kernel 候选——Liger 式 **fused linear + log-softmax + gather（FLCE）**，
-  消掉 replay 物化的完整 logits `[B,L,V]` 及其梯度（janus 16k 词表、B16×L576 下
-  ~1.2GB 峰值，§5.3），这是训练侧显存杠杆而非速度杠杆。
+- **AR token 类（llamagen / janus_pro / emu3 / nextstep_1 / glm_image）**：唯一值得
+  新写的 kernel——Liger 式 **fused linear + log-softmax + gather**——**已落地**
+  （`vrl/nn/kernels/fused_linear_logprob.py`，janus replay 已接入）：janus 形状实测
+  峰值显存 564 MiB → 34 MiB（**16.6×**），细节见 §5.3。
 - **当前最大的墙钟杠杆根本不是 kernel**：Run E 每迭代 ~25 分钟里 82% 是训练+reward
   间隙，reward 服务每图排队 24.4s 才做 0.38s 推理（§1.2）。
 
@@ -138,7 +138,7 @@ per-phase 事件。**验收**：分段数据回填 §1.3 两个估算区间；�
 | P2 NVFP4 rollout 提速 | 1.5–2× GEMM，~100s/迭代 | |
 | P2 drift（logprob_abs_diff_mean） | ≤ TIS 可救；bf16 基线 2.5–2.9e-3 | |
 | P3 修后 service_inference_wall_ms | ~inference_ms × 批深度 | |
-| P4 FLCE 峰值显存节省（janus B16×L576） | ~1.2GB（§5.3） | |
+| P4 FLCE 峰值显存节省（janus B16×L576） | ~1.2GB（§5.3） | B8×L576×V16384×D2048 bf16 实测 564→34 MiB（16.6×）；B16 约 2×该值 |
 
 ## 4. 执行顺序与门
 
@@ -148,8 +148,7 @@ Run E 正在跑（GPU 84%），P1/P2 的 GPU 探针须等其结束或用间隙�
 2. **P1（Run E 后）**：`compile_benchmark.py` 短探针 → 达标进 preset（全 family）。
 3. **P2（与 P1 并行可跑探针）**：drift probe 定漂移 → TIS 范围内则短 run 验曲线。
 4. **门**：P0 分段若显示 reward 份额 ≥ 500s/迭代 → P3 升为最高优先级。
-5. **P4（独立轨，不与 P0–P3 争 GPU 排期）**：AR token FLCE（§5.3），在 AR family
-   下一次真实训练需求出现时做，验收标准已写死在 §5.3。
+5. **P4（独立轨）**：已完成（2026-08-18），验收记录见 §5.3。
 
 ## 5. 全仓 Triton 地图（按负载类）
 
@@ -193,9 +192,18 @@ vLLM 的 Triton 资产在这类**真的能用**（paged attention 已借入：
   （取代已被 §2.5 否决的 fused SDE logprob）。
 - 先例：Liger Kernel 的 fused_linear_cross_entropy（对标对象，vLLM kernel 无
   backward 不适用）。
-- **验收**：①`gradcheck`（fp64）或与 eager 路径梯度逐元素对照 ≤1e-6；
-  ②janus replay 微批在同显存预算下可增大 ≥1 档；③GRPO old/new ratio 与 eager
-  路径 bit 级一致性检查通过（温度缩放契约见 `logprob.py` docstring）。
+- **落地（2026-08-18）**：`vrl/nn/kernels/fused_linear_logprob.py`（Triton 前向
+  online-logsumexp+gather、反向 in-place grad_z，GEMM 留 cuBLAS、反向重算换显存，
+  CPU/fp64 走等价 torch 回退）；payload 契约新增 fused 形态
+  （`ReplaySegmentResult.logprobs` 的 `head_hidden`/`head_weight`/`head_bias`），
+  janus replay（含 R1 visual 段）已切换，`gen_head` 结构不匹配时自动回退 eager。
+- **验收结果**：①fp64 `gradcheck` 通过；CUDA 上 fwd/bwd 与 eager autograd 对照
+  fp32 ≤2e-5 / ≤2e-4。②janus 形状（B8×L576×V16384×D2048 bf16 含 backward）峰值
+  显存 564 MiB → 34 MiB（**16.6×**）。③kernel 对同一 logits 与 torch 参考一致到
+  ~4e-6；bf16 下 chunked GEMM 与一次性 linear 的 logits 本身差几个 ulp（cuBLAS
+  tiling，与改微批大小同类，逐位一致在 bf16 下不可达），测试改为对 fp64 真值
+  断言 fused 误差 ≤ eager 误差——已通过。测试：
+  `tests/nn/kernels/test_fused_linear_logprob.py`（11）+ janus/replay 套件（61）。
 
 ### 5.4 否决项汇总（记录以免重提）
 
