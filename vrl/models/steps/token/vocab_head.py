@@ -25,6 +25,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+import torch.nn as nn
+
+
+def _identity(hidden: Any) -> Any:
+    return hidden
+
 
 @dataclass(frozen=True, slots=True)
 class VocabHeadSplit:
@@ -44,6 +50,33 @@ class VocabHeadSplit:
     prefix: Callable[[Any], Any]
     weight: Any
     bias: Any | None = None
+
+    @classmethod
+    def from_linear(
+        cls,
+        linear: Any,
+        *,
+        prefix: Callable[[Any], Any] = _identity,
+        rows: int | None = None,
+    ) -> VocabHeadSplit | None:
+        """Build from a candidate final projection; None if it cannot be split.
+
+        This owns the LoRA guard shared by every family probe: the check is
+        EXACT type, not isinstance — PEFT's ``lora.Linear`` can subclass
+        ``nn.Linear``, and reading ``.weight`` off a wrapped layer would
+        silently drop the adapter delta, so anything but a plain Linear
+        falls back to eager logits. ``rows`` slices the leading weight/bias
+        rows (views, no copy) for heads whose sampleable vocab is a
+        contiguous prefix of a wider projection (glm_image's codebook).
+        """
+
+        if type(linear) is not nn.Linear:
+            return None
+        weight = linear.weight if rows is None else linear.weight[:rows]
+        bias = linear.bias
+        if bias is not None and rows is not None:
+            bias = bias[:rows]
+        return cls(prefix=prefix, weight=weight, bias=bias)
 
 
 def head_replay_values(

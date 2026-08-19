@@ -517,19 +517,11 @@ class GlmImageModel(ARModelBase):
         """The codebook restriction as a weight slice of a plain lm_head.
 
         ``image_gen_logits`` is ``lm_head(hidden)[..., :V_codebook]`` — a row
-        slice of the projection, so the split's weight/bias are the same
-        slice (views, no copy). Exact-type check for the same reason as
-        janus: a LoRA-wrapped lm_head must fall back to eager logits.
+        slice of the projection, so the split is the same slice
+        (``VocabHeadSplit.from_linear`` owns the slicing and the LoRA guard).
         """
 
-        lm_head = self.glm.lm_head
-        if type(lm_head) is not nn.Linear:
-            return None
-        return VocabHeadSplit(
-            prefix=lambda h: h,
-            weight=lm_head.weight[: self.image_vocab_size],
-            bias=lm_head.bias[: self.image_vocab_size] if lm_head.bias is not None else None,
-        )
+        return VocabHeadSplit.from_linear(self.glm.lm_head, rows=self.image_vocab_size)
 
     # ------------------------------------------------------------------
     # Replay forward — recompute logits at training time

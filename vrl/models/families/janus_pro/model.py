@@ -119,22 +119,19 @@ def image_token_head_split(mmgpt: nn.Module) -> VocabHeadSplit | None:
     output_mlp_projector(h)))`` with a plain final Linear over the 16384-token
     image vocab. Returns None for any other structure (callers fall back to
     eager logits), which also fail-safes a future checkpoint that LoRA-wraps
-    or reshapes the head — the exact-type checks are load-bearing: PEFT's
-    lora.Linear can subclass nn.Linear, and reading ``.weight`` off a wrapped
-    layer would silently drop the adapter delta.
+    or reshapes the head — ``VocabHeadSplit.from_linear`` owns that guard.
     """
 
     head = peel_peft(mmgpt).gen_head
-    if type(head) is nn.Linear:
-        return VocabHeadSplit(prefix=lambda h: h, weight=head.weight, bias=head.bias)
-    final = getattr(head, "vision_head", None)
+    split = VocabHeadSplit.from_linear(head)
+    if split is not None:
+        return split
     proj = getattr(head, "output_mlp_projector", None)
     act = getattr(head, "vision_activation", None)
-    if type(final) is nn.Linear and callable(proj) and callable(act):
-        return VocabHeadSplit(
+    if callable(proj) and callable(act):
+        return VocabHeadSplit.from_linear(
+            getattr(head, "vision_head", None),
             prefix=lambda h: act(proj(h)),
-            weight=final.weight,
-            bias=final.bias,
         )
     return None
 
