@@ -1448,7 +1448,10 @@ class OnlineTrainer:
             if stepped:
                 sync_stats = await self.rollout_schedule.after_train_step()
         else:
-            initial_replay = None
+            # No replay evaluations ran, so report the same zero-stats snapshot
+            # the non-streaming path uses; build() and the metrics CSV require
+            # a non-None InitialReplayStats.
+            initial_replay = InitialReplayStats()
             agg.grad_norms.append(0.0)
             logger.info(
                 "step %d: every streamed microbatch was filtered; skipping "

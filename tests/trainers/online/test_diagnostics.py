@@ -255,3 +255,77 @@ class TestDiagnostics:
         assert resolved.finite is True
         assert resolved.logprob_abs_diff_max == 0.0
         assert not (tmp_path / "training_debug.jsonl").exists()
+
+    def test_fully_filtered_update_still_serializes_metrics_row(
+        self,
+        tmp_path,
+    ) -> None:
+        """A no-work streaming update must produce a CSV-serializable row.
+
+        When every streamed microbatch is filtered (e.g. the reward signal is
+        exhausted and all groups have zero advantage), finish_optimizer_update
+        skips the optimizer but the recipe still writes a metrics row; the
+        step result must carry a real InitialReplayStats, not None.
+        """
+        import asyncio
+
+        import torch.nn as nn
+
+        from vrl.algorithms.types import InitialReplayStats
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
+        from vrl.trainers.metrics_io import OnlineMetricRow
+        from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+        from vrl.trainers.online.trainer import RolloutStats
+
+        class _Algorithm(_EvaluatorAlgorithmFake):
+            required_signal_keys: tuple[str, ...] = ()
+            required_data_keys: tuple[str, ...] = ()
+
+            class _Config:
+                kl_coef = 0.0
+
+            config = _Config()
+
+        class _Evaluator(Evaluator):
+            def evaluate(self, model, batch, timestep_idx, **kw):
+                raise AssertionError("a fully filtered update must not evaluate")
+
+        model = nn.Linear(1, 1, bias=False)
+        _stamp_model_precision(model)
+        trainer = OnlineTrainer(
+            algorithm=_Algorithm(),
+            collector=CollectorControlFake(),
+            evaluator=_Evaluator(),
+            model=model,
+            config=TrainerConfig(
+                batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
+                timestep_fraction=1.0,
+                drop_zero_advantage=True,
+                output_dir=str(tmp_path),
+                optim=OptimConfig(lr=0.01),
+                ema=EMAConfig(),
+                debug=DebugConfig(),
+            ),
+            device="cpu",
+        )
+
+        trainer.begin_optimizer_update()
+        metrics = asyncio.run(
+            trainer.finish_optimizer_update(
+                stats=RolloutStats(),
+                reward_mean=0.0,
+                reward_std=0.0,
+                adv_mean=0.0,
+                adv_zero_rate=1.0,
+                adv_saturation=0.0,
+                group_size=2.0,
+                trained_prompt_num=0,
+                reward_components={"nsfw_safety": 0.0},
+            ),
+        )
+
+        assert isinstance(metrics.initial_replay, InitialReplayStats)
+        row = OnlineMetricRow.from_step_metrics(0, metrics, ("nsfw_safety",))
+        assert row.pre_update_clip_fraction == 0.0
+        assert trainer.state.global_step == 0
