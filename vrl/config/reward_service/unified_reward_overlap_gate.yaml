@@ -1,5 +1,5 @@
 # Operator-owned UnifiedReward-2.0 service for the generation/reward overlap
-# acceptance gate (docs/sprints/parked/SPRINT_video_rollout_stage_overlap.md).
+# acceptance gate (docs/sprints/info/SPRINT_video_rollout_stage_overlap.md).
 #
 # This is NOT a hydra preset — it is the standalone service process's own config,
 # passed with `--config`. It lives outside vrl/config/presets/ so the trainer

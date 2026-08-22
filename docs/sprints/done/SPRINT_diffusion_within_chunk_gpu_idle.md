@@ -320,8 +320,8 @@ requires a separate explicit memory decision.
 ## Related Work
 
 - `docs/sprints/done/SPRINT_multigpu_rollout_perf.md`
-- `docs/sprints/parked/SPRINT_diffusion_rollout_stage_pipeline.md`
-- `docs/sprints/parked/SPRINT_diffusion_stepwise_batching_probe.md`
+- `docs/sprints/reading/SPRINT_diffusion_rollout_stage_pipeline.md`
+- `docs/sprints/info/SPRINT_diffusion_stepwise_batching_probe.md`
 - `docs/sprints/parked/SPRINT_cross_request_step_scheduler.md`
 - `docs/sprints/planned/SPRINT_rollout_finalize_overlap_ga.md`
 - `docs/sprints/info/SPRINT_rollout_performance.md`

@@ -4,7 +4,7 @@
 
 > **事实更正一：本探针不是 6.2x 的来源。** README 与 `vrl/rewards/runtime.py` 引用的
 > 6.2x 是 **reward 侧**实测（14GB Kling 规模、5090、`wake+score+sleep`=0.71s vs 4.42s），
-> 原文在 `parked/SPRINT_video_rollout_stage_overlap.md:25`，由 `2fe7fab4` 引入。本探针
+> 原文在 `info/SPRINT_video_rollout_stage_overlap.md:25`，由 `2fe7fab4` 引入。本探针
 > 通篇只有 `_do_sleep`/`_do_wake`，**没有打分步骤**，物理上产不出该指标。它自己的数是
 > 4.4x（vs naive）与 6.4x（vs 冷重载）——两者相近，早先审计应是记混。删除不影响 6.2x。
 >

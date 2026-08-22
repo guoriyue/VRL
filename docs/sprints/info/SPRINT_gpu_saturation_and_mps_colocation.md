@@ -194,7 +194,7 @@ Corrected conclusions:
 1. **时间轴上的空洞（大头）**：rollout run 级 64% busy / 36% idle，其中 ~33% 是无归属的
    编排间隙（Ray/Python/传输）。这是**时间上的洞，不是 SM 里的洞**——解法是
    **进程内 pipelining / resident actor**（已有 sprint：
-   `parked/SPRINT_diffusion_rollout_stage_pipeline.md`、
+   `reading/SPRINT_diffusion_rollout_stage_pipeline.md`、
    `docs/sprints/SPRINT_miles_phase_lease_and_one_continuous.md`），不是同卡多副本。
 2. **Stage overlap (small target):** §3.3 shows only about `3%` normalized
    effective-work improvement after correcting the arithmetic, with a `4.18x`

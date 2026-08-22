@@ -188,7 +188,7 @@ executor 路径上不存在**（`vrl/generation/ray/executor.py:93` 直接 raise
   `sample_batch_size` 生效的容量 knob 处理，后续实验解读必须标记 group size 变化。
 - reward worker 内部 mini-batch 打分维持 parked（SPRINT_reward_batched_inference.md）。
 - Physical stage runtime / SGLang-Omni-style stage topology 不属于本 sprint；
-  另见 `docs/sprints/parked/SPRINT_physical_stage_runtime.md`。
+  另见 `docs/sprints/reading/SPRINT_physical_stage_runtime.md`。
 
 ## 7. References
 

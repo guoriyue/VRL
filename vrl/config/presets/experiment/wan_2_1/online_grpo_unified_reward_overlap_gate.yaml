@@ -3,7 +3,7 @@
 # This is a reusable scheduling gate, not a production training recipe. It is the
 # workload for the A/B/C acceptance in docs/sprints/done/SPRINT_reward_service.md
 # and the throughput measurement parked in
-# docs/sprints/parked/SPRINT_video_rollout_stage_overlap.md.
+# docs/sprints/info/SPRINT_video_rollout_stage_overlap.md.
 #
 # Physical topology (four L4s):
 #   GPU 0:   single-process trainer

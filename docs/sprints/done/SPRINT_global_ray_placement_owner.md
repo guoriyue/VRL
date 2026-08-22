@@ -4,7 +4,7 @@
 mapping、rollout/reward owner-managed placement、online recipe cleanup 已落地；本文保留
 原设计作为决策记录。当前 reward execution contract 归
 `docs/sprints/done/SPRINT_reward_service.md`；多 GPU 吞吐测量归
-`docs/sprints/parked/SPRINT_video_rollout_stage_overlap.md`。
+`docs/sprints/info/SPRINT_video_rollout_stage_overlap.md`。
 
 > Runtime follow-up（2026-07-30）：当前只有一个 `RayGenerationRuntime` lifecycle
 > owner。它 eager 持有或 deferred 创建一个无 lifecycle 的 `RayGenerationSession`；
@@ -37,7 +37,7 @@ mapping、rollout/reward owner-managed placement、online recipe cleanup 已落�
 
 - Reward async scoring 与 overlap capability contract 已由
   `docs/sprints/done/SPRINT_reward_service.md` 收口；真实多 GPU 吞吐测量留在
-  `docs/sprints/parked/SPRINT_video_rollout_stage_overlap.md`。
+  `docs/sprints/info/SPRINT_video_rollout_stage_overlap.md`。
 - 历史 `reward_cost` 成本感知 auto-placement 提案已撤回，没有 active owner；当前 device
   placement 只认 `vrl/ray/resources.py` 的 typed resource contract。
 - Memory budget、ReplayModel parity、把 trainer 变成 Ray actor 都不是本 sprint 目标。

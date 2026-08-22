@@ -97,7 +97,7 @@ transformer / kernel / provider scheduling   mostly upstream or parked
 | Provider selection | `ModelFamilyEntry` 当前只有一个 `executor_cls`，launch contract 没有 provider identity/schema/provenance | 本 program N2 + [multi-engine conformance](parked/SPRINT_multi_engine_rollout_conformance.md) |
 | Full model ownership | diffusion backbone 最终调用 Diffusers transformer；pipeline/scheduler/text encoder/VAE 仍大量来自 upstream | [native transformer executor](parked/SPRINT_diffusion_native_transformer_executor.md)，继续 profile-gated |
 | Cross-request batching | full-sequence denoise binding 跑完整 denoise loop；`TokenScheduler` 每个 `TokenAutoregressiveLoop` 单独创建；不同 request 不共享 forward | [cross-request step scheduler](parked/SPRINT_cross_request_step_scheduler.md)，继续 workload-gated |
-| Video trajectory capacity | denoise 前预分配完整 observations/actions，并可选再分配 previous means/reference predictions | [paged trajectory store](parked/SPRINT_paged_trajectory_store.md)，只在目标 video profile 证明容量/搬运瓶颈后解 park |
+| Video trajectory capacity | denoise 前预分配完整 observations/actions，并可选再分配 previous means/reference predictions | [paged trajectory store](reading/SPRINT_paged_trajectory_store.md)，只在目标 video profile 证明容量/搬运瓶颈后解 park |
 
 因此本 program 的架构结论不是“native 一定比外部 engine 快”，而是替换成本不对称：
 替换顶层 engine 会重做 trajectory、replay、policy freshness、resource ownership 与 trainer
@@ -388,6 +388,6 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 - `docs/sprints/done/SPRINT_gemm_utilization.md`
 - `docs/sprints/parked/SPRINT_diffusion_native_transformer_executor.md`
 - `docs/sprints/parked/SPRINT_cross_request_step_scheduler.md`
-- `docs/sprints/parked/SPRINT_paged_trajectory_store.md`
+- `docs/sprints/reading/SPRINT_paged_trajectory_store.md`
 - `docs/sprints/parked/SPRINT_weight_sync_transport_seam.md`
 - `docs/sprints/done/SPRINT_slime_overlap_strategy.md`

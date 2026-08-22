@@ -3,7 +3,7 @@
 Status: **DONE (2026-07-18)**. The service, fail-closed isolation contract, and
 CPU contract coverage are implemented. Multi-GPU throughput measurement is a
 separate hardware-triggered task in
-[`SPRINT_video_rollout_stage_overlap.md`](../parked/SPRINT_video_rollout_stage_overlap.md).
+[`SPRINT_video_rollout_stage_overlap.md`](../info/SPRINT_video_rollout_stage_overlap.md).
 
 ## Decision
 

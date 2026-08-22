@@ -75,7 +75,7 @@ cosmos video sbs=1   42%        4%(!)  26%       58%    41%     182s/8样本
 - video 的 sbs 难调大(240p_33f at sbs>1 可能 OOM)→ 欠载部分不好用 batch 填;
 - 更多 idle 是**真·串行的非-DiT stage**(VAE/reward/CPU 数学)→ 单卡上它们都 GPU-bound 抢不了,但 **reward model 可与下一批 denoise 错峰(async reward)、CPU SDE/logprob 数学可与 GPU denoise 重叠(stream)** → 这俩是 video 的真 staged-pipeline 杠杆,比 image 更值。
 - **要精确归因(VAE vs reward vs CPU 数学各占多少 idle)需 nsys 时间线**；是否继续由
-  `docs/sprints/parked/SPRINT_diffusion_rollout_stage_pipeline.md` 的 profiling gate 裁决。
+  `docs/sprints/reading/SPRINT_diffusion_rollout_stage_pipeline.md` 的 profiling gate 裁决。
 
 
 ## 3. 诚实天花板（确认）
@@ -107,7 +107,7 @@ cosmos video sbs=1   42%        4%(!)  26%       58%    41%     182s/8样本
   `docs/sprints/parked/SPRINT_fp4_off_policy_reward_vae.md` 的 profiling-triggered gate。
 - **request finalize / stage overlap**：分别由
   `docs/sprints/planned/SPRINT_rollout_finalize_overlap_ga.md` 和
-  `docs/sprints/parked/SPRINT_diffusion_rollout_stage_pipeline.md` 持有；本文不再保留 P3。
+  `docs/sprints/reading/SPRINT_diffusion_rollout_stage_pipeline.md` 持有；本文不再保留 P3。
 
 ## 6. 非目标
 

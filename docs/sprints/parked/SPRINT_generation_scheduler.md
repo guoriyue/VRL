@@ -1,5 +1,10 @@
 # SPRINT: Generation scheduler upgrade
 
+> **Gate note (2026-08-22).** Track B's unfreeze gate pointed at the physical
+> stage runtime, whose design was retired ("rebuild none of it") and archived to
+> `reading/SPRINT_physical_stage_runtime.md`; Track B therefore has no live
+> unfreeze path and would need a fresh gate before any work.
+>
 > **Current-state correction (2026-07-13).** Track A is the live chunk-level
 > scheduler: `chunk_placement.py` provides the placement policy used when the
 > planner assigns whole-model chunks to rollout workers, and multi-worker
@@ -866,8 +871,8 @@ OOM retry behavior is documented for stage failures
 
 ## 9. References
 
-- `docs/sprints/parked/SPRINT_physical_stage_runtime.md`
-- `docs/sprints/parked/SPRINT_diffusion_rollout_stage_pipeline.md`
+- `docs/sprints/reading/SPRINT_physical_stage_runtime.md`
+- `docs/sprints/reading/SPRINT_diffusion_rollout_stage_pipeline.md`
 - `docs/sprints/done/SPRINT_runtime_block_policies.md`
 - `vrl/generation/execution/chunk_placement.py`
 - `vrl/generation/execution/planner.py`
