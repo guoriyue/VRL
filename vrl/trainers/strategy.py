@@ -1098,12 +1098,15 @@ def _assert_fsdp_config_supported(config: RootConfig) -> None:
     torch.compile remains gated.
     """
 
-    if bool(cfg_path(config, "model.torch_compile.enable", False)):
+    from vrl.models.interfaces.runtime import torch_compile_for_role
+
+    if torch_compile_for_role(cfg_path(config, "model.torch_compile", None), "replay"):
         raise NotImplementedError(
-            "distributed.training.strategy=fsdp with model.torch_compile.enable=true "
-            "is not supported: torch.compile (inductor graph capture) is unsound with "
-            "FSDP2 fully_shard's reshard-after-forward all-gathers. Set "
-            "model.torch_compile.enable=false to run FSDP2.",
+            "distributed.training.strategy=fsdp cannot compile the replay policy: "
+            "torch.compile (inductor graph capture) is unsound with FSDP2 "
+            "fully_shard's reshard-after-forward all-gathers. Set "
+            "model.torch_compile.enable=false, or model.torch_compile.scope=rollout "
+            "to keep the FSDP2 replay policy eager while the rollout policy compiles.",
         )
 
 

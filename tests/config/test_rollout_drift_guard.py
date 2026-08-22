@@ -211,6 +211,70 @@ def test_require_compile_compatible_raises_with_every_reason() -> None:
     assert "strategy=fsdp" in message
 
 
+# Every conflict in the matrix binds one build role, so ``scope`` releases the
+# conflicts of the role it excludes -- and ONLY those. The rollout-scope case is
+# the production unlock: FSDP2 + checkpointing trainers with a compiled rollout.
+
+
+def _scoped_compile_cfg(scope: str, **overrides) -> OmegaConf:
+    cfg = _compile_cfg(**overrides)
+    cfg.model.torch_compile.scope = scope
+    return cfg
+
+
+def test_rollout_scope_releases_trainer_conflicts() -> None:
+    from vrl.config.validation import compile_conflicts
+
+    cfg = _scoped_compile_cfg(
+        "rollout",
+        actor={"gradient_checkpointing": True},
+        distributed={"training": {"strategy": "fsdp"}},
+    )
+
+    assert compile_conflicts(cfg) == ()
+
+
+def test_rollout_scope_keeps_rollout_conflicts() -> None:
+    from vrl.config.validation import compile_conflicts
+
+    cfg = _scoped_compile_cfg(
+        "rollout",
+        distributed={"resources": {"rollout": {"gpus_per_engine": 2}}},
+    )
+
+    conflicts = compile_conflicts(cfg)
+    assert len(conflicts) == 1
+    assert "gpus_per_engine=2" in conflicts[0]
+
+
+def test_replay_scope_releases_rollout_conflicts() -> None:
+    from vrl.config.validation import compile_conflicts
+
+    cfg = _scoped_compile_cfg(
+        "replay",
+        distributed={"resources": {"rollout": {"gpus_per_engine": 2}}},
+    )
+
+    assert compile_conflicts(cfg) == ()
+
+
+def test_replay_scope_keeps_trainer_conflicts() -> None:
+    from vrl.config.validation import compile_conflicts
+
+    cfg = _scoped_compile_cfg("replay", actor={"gradient_checkpointing": True})
+
+    conflicts = compile_conflicts(cfg)
+    assert len(conflicts) == 1
+    assert "gradient_checkpointing" in conflicts[0]
+
+
+def test_unknown_compile_scope_is_refused_at_config_load() -> None:
+    from vrl.config.validation import compile_conflicts
+
+    with pytest.raises(ValueError, match=r"torch_compile\.scope must be one of"):
+        compile_conflicts(_scoped_compile_cfg("trainer"))
+
+
 def test_fsdp_conflict_is_now_caught_at_config_load() -> None:
     """Regression: FSDP x compile used to surface only at strategy build.
 

@@ -95,7 +95,7 @@ def resolve_gradient_checkpointing_mode(cfg: Any) -> str:
 
 
 def require_compile_checkpointing_compatible(cfg: Any) -> None:
-    """Refuse model.torch_compile.enable=true combined with grad-checkpointing.
+    """Refuse compiling the replay policy combined with grad-checkpointing.
 
     compile + manual checkpointing collide: torch.compile traces
     torch.utils.checkpoint into an InternalTorchDynamoError (measured for both
@@ -111,13 +111,17 @@ def require_compile_checkpointing_compatible(cfg: Any) -> None:
     mode = resolve_gradient_checkpointing_mode(cfg)
     if mode == "off":
         return
-    if bool(cfg_path(cfg, "model.torch_compile.enable", False)):
+    from vrl.models.interfaces.runtime import torch_compile_for_role
+
+    if torch_compile_for_role(cfg_path(cfg, "model.torch_compile", None), "replay"):
         raise ValueError(
-            f"actor.gradient_checkpointing={mode!r} cannot combine with "
-            "model.torch_compile.enable=true: torch.compile traces "
-            "torch.utils.checkpoint into an InternalTorchDynamoError, and its min-cut "
-            "partitioner already does automatic selective recompute. Pick one — compile "
-            "alone (preferred when it fits memory), or eager + checkpointing.",
+            f"actor.gradient_checkpointing={mode!r} cannot combine with compiling "
+            "the replay policy: torch.compile traces torch.utils.checkpoint into "
+            "an InternalTorchDynamoError, and its min-cut partitioner already does "
+            "automatic selective recompute. Pick one — compile alone (preferred "
+            "when it fits memory), eager + checkpointing, or "
+            "model.torch_compile.scope=rollout to keep the trainer eager while "
+            "the rollout policy compiles.",
         )
 
 

@@ -173,8 +173,15 @@ class ResolvedOnlineRun(ResolvedRun):
                 # adapters, so only the former needs retained base-weight masters.
                 base_weight_sync=(generation.worker.sync_trainable_state and not build.use_lora),
             )
+        # Family capability is role-agnostic, so read the raw enable bit rather
+        # than the rollout build's scope-resolved property: a replay-scoped
+        # compile on an unsupporting family must fail here too, not slip through
+        # because this happens to be the rollout launch path.
+        from vrl.models.interfaces.runtime import TORCH_COMPILE_MODEL_KEY
+
+        compile_block = (build.model_config or {}).get(TORCH_COMPILE_MODEL_KEY) or {}
         if (
-            build.torch_compile is not None
+            bool(compile_block.get("enable"))
             and not self.family.runtime_capabilities.supports_torch_compile
         ):
             raise ValueError(
