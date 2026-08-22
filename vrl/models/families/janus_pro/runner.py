@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import torch
 
 from vrl.generation.steps.token import TokenLoopInit
-from vrl.models.families.janus_pro.model import image_token_logits_from_hidden
 from vrl.models.steps.token.paged_attention_helpers import (
     PagedCFGARState,
     PagedCFGTokenRunner,
@@ -61,7 +60,7 @@ class JanusProARModelRunner(PagedCFGTokenRunner):
         position: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         del position  # Janus has no per-position structural constraint.
-        logits = image_token_logits_from_hidden(self.model.mmgpt, hidden).squeeze(1)
+        logits = self.model._base().gen_head(hidden).squeeze(1)
         cond_logits, uncond_logits = logits.chunk(2, dim=0)
 
         # RL-correctness contract — do NOT "align to upstream" by scoring `guided`.

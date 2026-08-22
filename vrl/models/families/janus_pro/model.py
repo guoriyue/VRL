@@ -87,56 +87,6 @@ JANUS_R1_REGEN_PROMPT = "<｜end▁of▁sentence｜>\nNext, I will draw a new im
 
 
 # ---------------------------------------------------------------------------
-# Functional helper: project hidden states to image-token logits
-# ---------------------------------------------------------------------------
-
-
-def image_token_logits_from_hidden(
-    mmgpt: nn.Module,
-    hidden_states: torch.Tensor,
-) -> torch.Tensor:
-    """Apply Janus' generation head to hidden states.
-
-    Args:
-      mmgpt: a ``MultiModalityCausalLM`` instance (or LoRA-wrapped peer).
-      hidden_states: trunk output at *image-token* positions, shape
-        ``[B, L_img, hidden_size]``.
-
-    Returns:
-      Logits over the image vocabulary, shape
-      ``[B, L_img, JANUS_IMAGE_VOCAB_SIZE]``.
-    """
-    # ``gen_head`` lives on the underlying mmgpt; PEFT wrapping preserves it.
-    # ``peel_peft`` documents why hasattr(base_model) alone is not the key.
-    base = peel_peft(mmgpt)
-    return base.gen_head(hidden_states)
-
-
-def image_token_head_split(mmgpt: nn.Module) -> VocabHeadSplit | None:
-    """Split ``gen_head`` at its final vocab Linear when its shape allows.
-
-    DeepSeek's ``vision_head`` is ``vision_head(vision_activation(
-    output_mlp_projector(h)))`` with a plain final Linear over the 16384-token
-    image vocab. Returns None for any other structure (callers fall back to
-    eager logits), which also fail-safes a future checkpoint that LoRA-wraps
-    or reshapes the head — ``VocabHeadSplit.from_linear`` owns that guard.
-    """
-
-    head = peel_peft(mmgpt).gen_head
-    split = VocabHeadSplit.from_linear(head)
-    if split is not None:
-        return split
-    proj = getattr(head, "output_mlp_projector", None)
-    act = getattr(head, "vision_activation", None)
-    if callable(proj) and callable(act):
-        return VocabHeadSplit.from_linear(
-            getattr(head, "vision_head", None),
-            prefix=lambda h: act(proj(h)),
-        )
-    return None
-
-
-# ---------------------------------------------------------------------------
 # Wrapper
 # ---------------------------------------------------------------------------
 
@@ -336,12 +286,33 @@ class JanusProModel(ARModelBase):
             prompt_attention_mask,
             image_token_ids,
         )
-        return image_token_logits_from_hidden(self.mmgpt, gen_hidden)
+        return self._base().gen_head(gen_hidden)
 
     def vocab_head_split(self) -> VocabHeadSplit | None:
-        """Janus' gen_head split (DeepSeek projector+GELU+Linear structure)."""
+        """Split ``gen_head`` at its final vocab Linear when its shape allows.
 
-        return image_token_head_split(self.mmgpt)
+        DeepSeek's ``vision_head`` is ``vision_head(vision_activation(
+        output_mlp_projector(h)))`` with a plain final Linear over the
+        16384-token image vocab; the attribute probe (rather than an
+        isinstance check) is what covers both installed Janus forks, whose
+        structurally identical head classes are distinct objects. Returns None
+        for any other structure (replay falls back to eager logits), which
+        also fail-safes a checkpoint that LoRA-wraps or reshapes the head —
+        ``VocabHeadSplit.from_linear`` owns that guard.
+        """
+
+        head = self._base().gen_head
+        split = VocabHeadSplit.from_linear(head)
+        if split is not None:
+            return split
+        proj = getattr(head, "output_mlp_projector", None)
+        act = getattr(head, "vision_activation", None)
+        if callable(proj) and callable(act):
+            return VocabHeadSplit.from_linear(
+                getattr(head, "vision_head", None),
+                prefix=lambda h: act(proj(h)),
+            )
+        return None
 
     def _image_token_replay_values(
         self,
@@ -364,7 +335,7 @@ class JanusProModel(ARModelBase):
         )
         return self._head_replay_values(
             gen_hidden,
-            lambda: image_token_logits_from_hidden(self.mmgpt, gen_hidden),
+            lambda: self._base().gen_head(gen_hidden),
         )
 
     def forward_text_logits(
