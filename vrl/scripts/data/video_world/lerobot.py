@@ -301,7 +301,11 @@ def _iter_v21_target_clips_from_episode_metadata(
     video_chunk_col = f"videos/{video_key}/chunk_index"
     video_file_col = f"videos/{video_key}/file_index"
     video_from_col = f"videos/{video_key}/from_timestamp"
+    data_chunk_col = "data/chunk_index"
+    data_file_col = "data/file_index"
     for episode_file in episode_files:
+        local = dl(episode_file)
+        schema_names = set(pq.read_schema(local).names)
         columns = [
             "episode_index",
             "tasks",
@@ -310,7 +314,10 @@ def _iter_v21_target_clips_from_episode_metadata(
             video_file_col,
             video_from_col,
         ]
-        table = pq.read_table(dl(episode_file), columns=columns)
+        has_data_location = {data_chunk_col, data_file_col} <= schema_names
+        if has_data_location:
+            columns += [data_chunk_col, data_file_col]
+        table = pq.read_table(local, columns=columns)
         for row in table.to_pylist():
             prompt = _episode_prompt(row)
             if not prompt:
@@ -323,6 +330,8 @@ def _iter_v21_target_clips_from_episode_metadata(
                     "video_file": int(row[video_file_col]),
                     "start_timestamp": float(row[video_from_col]),
                     "dataset_from_index": int(row.get("dataset_from_index") or 0),
+                    "data_chunk": int(row[data_chunk_col]) if has_data_location else None,
+                    "data_file": int(row[data_file_col]) if has_data_location else None,
                 },
             )
             if len(selected) >= limit:
@@ -331,6 +340,7 @@ def _iter_v21_target_clips_from_episode_metadata(
             break
     if not selected:
         return
+    _attach_episode_actions(selected, info, max_target_frames=max_target_frames, dl=dl)
 
     groups: dict[tuple[int, int], list[dict[str, Any]]] = {}
     for item in selected:
@@ -530,6 +540,65 @@ def _episode_prompt(row: Mapping[str, Any]) -> str:
     return ""
 
 
+def _attach_episode_actions(
+    selected: Sequence[dict[str, Any]],
+    info: Mapping[str, Any],
+    *,
+    max_target_frames: int,
+    dl: Callable[[str], str],
+) -> None:
+    """Attach instruction actions to episodes selected via v3 episode metadata.
+
+    The v2.1 data-rows path reads actions from the rows it already scans; this
+    path never touches data parquet, so the IDM action labels were silently
+    absent (the SPRINT_idm_action_following_reward Phase 1 gap). v3 episode
+    metadata locates each episode's rows via ``dataset_from_index`` plus the
+    ``data/{chunk,file}_index`` columns, and the 15Hz data rows are
+    frame-aligned, so row ``dataset_from_index + k`` labels clip frame ``k``.
+    Missing location columns or action columns degrade to no labels, never to
+    an error — action-less manifests stay valid for pure-video consumers.
+    """
+
+    import pyarrow.parquet as pq
+
+    data_tmpl = str(info.get("data_path") or "")
+    if not data_tmpl:
+        return
+    groups: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for item in selected:
+        if item.get("data_chunk") is None or item.get("data_file") is None:
+            return
+        groups.setdefault((int(item["data_chunk"]), int(item["data_file"])), []).append(item)
+
+    action_cols: list[str] | None = None
+    for (chunk_index, file_index), items in groups.items():
+        path = dl(data_tmpl.format(chunk_index=chunk_index, file_index=file_index))
+        if action_cols is None:
+            names = pq.read_schema(path).names
+            action_cols = sorted(c for c in names if c == "action" or c.startswith("action."))
+            if not action_cols:
+                return
+        lo = min(int(it["dataset_from_index"]) for it in items)
+        hi = max(int(it["dataset_from_index"]) for it in items) + max_target_frames
+        table = pq.read_table(
+            path,
+            columns=["index", *action_cols],
+            filters=[("index", ">=", lo), ("index", "<", hi)],
+        )
+        rows = {int(row["index"]): row for row in table.to_pylist()}
+        for item in items:
+            start = int(item["dataset_from_index"])
+            actions: list[list[float]] = []
+            for offset in range(max_target_frames):
+                row = rows.get(start + offset)
+                if row is None:
+                    break
+                actions.append(_row_action(row, action_cols))
+            if actions:
+                item["actions"] = actions
+                item["action_keys"] = list(action_cols)
+
+
 def _decode_grouped_target_clips(
     repo_id: str,
     rel: str,
@@ -549,6 +618,8 @@ def _decode_grouped_target_clips(
                 "start_frame": start_frame,
                 "end_frame": start_frame + max_target_frames - 1,
                 "dataset_from_index": int(item.get("dataset_from_index") or 0),
+                "actions": list(item.get("actions") or []),
+                "action_keys": list(item.get("action_keys") or []),
                 "frames": [],
             },
         )
@@ -585,6 +656,12 @@ def _decode_grouped_target_clips(
                         "source_target_frame_count": len(frames),
                     },
                 )
+                actions = entry.get("actions") or []
+                if actions:
+                    aligned = [list(a) for a in actions[: len(frames)]]
+                    metadata["target_actions"] = aligned
+                    metadata["action_keys"] = list(entry.get("action_keys") or [])
+                    metadata["action_dim"] = len(aligned[0]) if aligned else 0
                 yield {
                     "frames": frames,
                     "prompt": str(entry["prompt"]),
