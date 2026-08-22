@@ -189,8 +189,15 @@ def main() -> None:
     # exact for every probed batch — including batches whose ckpt=off run OOMs.
     _apply_ckpt(eager, "off")
     per_sample_flops = _count_flops(_step_fn(eager, *_inputs(1)))
-    doubled_flops = _count_flops(_step_fn(eager, *_inputs(2)))
-    if doubled_flops != 2 * per_sample_flops:
+    try:
+        doubled_flops = _count_flops(_step_fn(eager, *_inputs(2)))
+    except torch.OutOfMemoryError:
+        # The b=2 probe VALIDATES linearity; it is not a prerequisite. b=1 rows
+        # need no scaling at all, and when b=2 does not fit at this shape the
+        # loop below counts any larger batch directly instead of scaling.
+        doubled_flops = None
+        print("note: b=2 ckpt=off does not fit; larger batches count FLOPs directly")
+    if doubled_flops is not None and doubled_flops != 2 * per_sample_flops:
         raise RuntimeError(
             f"step FLOPs are not linear in batch (b=1: {per_sample_flops}, "
             f"b=2: {doubled_flops}); refusing to scale — count each batch directly",
@@ -210,7 +217,17 @@ def main() -> None:
 
     for b in args.batches:
         emb, pol, latents, ts = _inputs(b)
-        mfu_flops = float(b * per_sample_flops)
+        if doubled_flops is None and b > 1:
+            # Linearity unvalidated at this shape: count this batch directly
+            # (guarded — a batch that cannot even be counted gets no MFU).
+            _apply_ckpt(eager, "off")
+            try:
+                mfu_flops = float(_count_flops(_step_fn(eager, emb, pol, latents, ts)))
+            except torch.OutOfMemoryError:
+                mfu_flops = None
+                torch.cuda.empty_cache()
+        else:
+            mfu_flops = float(b * per_sample_flops)
 
         # Eager measures all three. Under --compile we skip full (compile + full
         # block checkpointing recompiles/collides) but DO measure selective: SAC
@@ -231,11 +248,15 @@ def main() -> None:
                 step_ms = cuda_mean_ms(_step_fn(tf, emb, pol, latents, ts), iters=4, warmup=warmup)
                 peak = torch.cuda.max_memory_allocated() / 1024**3
                 bwd_ms = max(step_ms - fwd_ms, 0.01)
-                mfu = mfu_flops / (step_ms / 1e3) / 1e12 / args.peak_tflops * 100
                 hfu = hfu_flops / (step_ms / 1e3) / 1e12 / args.peak_tflops * 100
+                if mfu_flops is None:
+                    mfu_cell = "   —"
+                else:
+                    mfu = mfu_flops / (step_ms / 1e3) / 1e12 / args.peak_tflops * 100
+                    mfu_cell = f"{mfu:>4.0f}%"
                 print(
                     f"{b:>5} | {ckpt:>9} | {fwd_ms:>7.1f} | {bwd_ms:>7.1f} | "
-                    f"{bwd_ms / fwd_ms:>7.2f} | {mfu:>4.0f}% | {hfu:>4.0f}% | {peak:>7.2f}"
+                    f"{bwd_ms / fwd_ms:>7.2f} | {mfu_cell} | {hfu:>4.0f}% | {peak:>7.2f}"
                 )
             except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
                 print(f"{b:>5} | {ckpt:>9} | OOM/err ({type(exc).__name__})")
