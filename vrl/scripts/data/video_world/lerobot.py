@@ -225,6 +225,35 @@ def _iter_lerobot_v20(
             }
 
 
+_CANONICAL_ACTION_COLS = ("action.cartesian_velocity", "action.gripper_position")
+
+
+def _select_action_columns(names: Sequence[str]) -> list[str]:
+    """Pick the manifest's action label columns from a data parquet schema.
+
+    droid_1.0.1 stores every representation side by side (cartesian/joint x
+    position/velocity, the packed 8-dim ``action``, ``action.original``);
+    flattening them all yields a redundant 43-dim label. The reward contract
+    (SPRINT_idm_action_following_reward §2) is cartesian 6 + gripper 1 with
+    the gripper LAST — and the cartesian block must be the VELOCITY command:
+    DROID teleop commands are velocity setpoints, zero-centered and
+    recoverable from a frame pair, while ``action.cartesian_position`` is the
+    absolute workspace pose, unknowable from an uncalibrated per-episode
+    camera (training on it memorizes scene->position and generalizes worse
+    than predicting zero — measured 2026-08-22, eval_mse_z 1.28 vs the 1.0
+    baseline). Fall back to the packed ``action`` column (droid_100's 7-dim
+    delta layout), then to every ``action.*`` column for datasets with
+    neither.
+    """
+
+    present = set(names)
+    if set(_CANONICAL_ACTION_COLS) <= present:
+        return list(_CANONICAL_ACTION_COLS)
+    if "action" in present:
+        return ["action"]
+    return sorted(c for c in names if c.startswith("action."))
+
+
 def _row_action(row: Mapping[str, Any], action_cols: Sequence[str]) -> list[float]:
     """Flatten a parquet row's action column(s) into one control-step vector.
 
@@ -394,7 +423,7 @@ def _iter_v21_target_clips_from_data_rows(
     data_path = dl(data_tmpl.format(chunk_index=0, file_index=0))
     base_cols = ["episode_index", "frame_index", "task_index", "index"]
     schema_names = set(pq.ParquetFile(data_path).schema_arrow.names)
-    action_cols = sorted(c for c in schema_names if c == "action" or c.startswith("action."))
+    action_cols = _select_action_columns(schema_names)
     data_rows = pq.read_table(
         data_path,
         columns=base_cols + [c for c in action_cols if c not in base_cols],
@@ -574,8 +603,7 @@ def _attach_episode_actions(
     for (chunk_index, file_index), items in groups.items():
         path = dl(data_tmpl.format(chunk_index=chunk_index, file_index=file_index))
         if action_cols is None:
-            names = pq.read_schema(path).names
-            action_cols = sorted(c for c in names if c == "action" or c.startswith("action."))
+            action_cols = _select_action_columns(pq.read_schema(path).names)
             if not action_cols:
                 return
         lo = min(int(it["dataset_from_index"]) for it in items)

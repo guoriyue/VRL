@@ -1,6 +1,18 @@
 # SPRINT: IDM action-following reward —— 在低维动作空间给 V2W 世界模型打分
 
-状态：**planned / 自训-gated（2026-06-29，从 [[SPRINT_future_reward]] 拆出）**。范围：给 Cosmos Predict2 Video2World 的 GRPO 加一个**主信号** reward —— 用一个 inverse-dynamics model（IDM）从生成的相邻帧对回归出动作，reward = 与 DROID **指令动作**的匹配度。这是 [[SPRINT_future_reward]] §2 排序里唯一评 **STRONG** 的候选，但用户先走了零训练路线（dino+motion），故 IDM 的 reward/bridge/训练脚本曾建好后删除；本 sprint 把它作为独立目标重新立项，**设计与来源调查全部保留在此**，照此重建即可。硬前置 = **自训一个小 IDM checkpoint**（没有现成的能直接插，见 §5）。
+状态：**in progress（2026-08-22：Phase 1-2 落地，Phase 3 探针首轮 FAIL，回炉中）**。
+首轮实测（droid_1.0.1，360 clip / 11,520 帧对，0.36M IDM，cartesian_velocity+gripper 7 维）：
+探针排序方向正确（exact 0.650 最高，frame_shuffle 0.439 最低，wrong_clip 0.504、reverse
+0.497 低于 exact），但 static_frozen 0.593 / perceptual_blur 0.598 落在 exact 的 0.1 内 =
+按 §3 判"在读全局外观"，且 exact−wrong_clip 仅 0.8σ（门槛 >2σ）→ **FAIL，按纪律回炉**。
+已知修正与教训：①动作语义必须用 `action.cartesian_velocity`（速度指令，零均值、帧对可恢
+复）——首次误用 `cartesian_position`（绝对位姿，相机外参逐集不同，不可恢复）时 eval_mse_z
+1.28 劣于零基线，train 0.05 = 纯记场景；②z 归一化需 std 下限（droid_100 gripper std 0.018
+放大 55×）；③38 clip（droid_100）数据量不足，360 clip eval_mse_z 0.746/R² 0.1-0.5 仍欠，
+2000-clip 数据集构建中。已落地资产：manifest 动作管线（v3 episode-metadata 路径）、
+`vrl/rewards/models/action_following.py`（FramePairIDM + reward worker）、
+`vrl/scripts/rewards/train_droid_idm.py`、`idm_discrimination_probe.py`、registry
+`idm_action_following`。原文（2026-06-29）：planned / 自训-gated，从 [[SPRINT_future_reward]] 拆出。范围：给 Cosmos Predict2 Video2World 的 GRPO 加一个**主信号** reward —— 用一个 inverse-dynamics model（IDM）从生成的相邻帧对回归出动作，reward = 与 DROID **指令动作**的匹配度。这是 [[SPRINT_future_reward]] §2 排序里唯一评 **STRONG** 的候选，但用户先走了零训练路线（dino+motion），故 IDM 的 reward/bridge/训练脚本曾建好后删除；本 sprint 把它作为独立目标重新立项，**设计与来源调查全部保留在此**，照此重建即可。硬前置 = **自训一个小 IDM checkpoint**（没有现成的能直接插，见 §5）。
 
 ## 0. 结论先行
 
