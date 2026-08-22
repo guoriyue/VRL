@@ -42,7 +42,7 @@ them through that abstraction fights the core contracts:
 
 `visual-rl` keeps these policy semantics explicit behind one rollout / replay /
 algorithm contract. See [`docs/MODEL_TAXONOMY.md`](docs/MODEL_TAXONOMY.md) for
-the typed semantics and [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md) for the full
+the typed semantics for the full
 positioning and roadmap.
 
 ## Status Policy
@@ -286,7 +286,6 @@ recipe lives under `vrl/config/presets/experiment/` — browse it to see what ru
 
 ## Docs
 
-- [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md) — positioning, moat, and roadmap (why visual-rl, not slime/verl).
 - [`docs/MODEL_TAXONOMY.md`](docs/MODEL_TAXONOMY.md) — policy axes, current family profiles, and physical layout.
 - [`docs/ADDING_A_MODEL_FAMILY.md`](docs/ADDING_A_MODEL_FAMILY.md) — add a model module, registry descriptor, presets, and contract tests without forking the trainer.
 - [`docs/PRECISION.md`](docs/PRECISION.md) — base dtypes, selective FP8 quantization, protected diffusion math, and frozen rollout components.

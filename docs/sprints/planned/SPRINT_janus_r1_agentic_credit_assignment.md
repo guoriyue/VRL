@@ -227,4 +227,3 @@ reward recipe 做 ablation。若 generator 更新提高 candidate reward 却破�
 
 - `SPRINT_agentic_visual_rl_program.md`
 - `../parked/SPRINT_agentic_image_episode_runtime.md`
-- `../../NORTH_STAR.md`

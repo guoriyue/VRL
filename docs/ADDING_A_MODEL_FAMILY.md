@@ -218,5 +218,5 @@ status.
 - [ ] the full-sequence denoise probe passes with the real checkpoint.
 - [ ] a real run clears the promotion bar before the README says **Validated**.
 
-See [`docs/NORTH_STAR.md`](NORTH_STAR.md) for why the model-family seam is a core
+The model-family seam is a core
 project asset.

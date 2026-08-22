@@ -89,7 +89,7 @@ action-fidelity gate. The static probe alone is not executable support.
 
 **Phase-0 静态门已过,把这个从"可能 not_yet"升级成"原型在现有 backbone 上可行"——但真正的悬念是 Phase-1 的 action-fidelity。** 它仍一次性动三个承重假设:sequential env(跨步带状态、翻转驱动)、新的外部 reward(VLM critic,开放世界 reward 未解)、(Target I)协议没接缝的 value function。一致性是活跃前沿(Genie 3 最优"几分钟一致、真记忆约 1 分钟",是你任务 horizon 的硬上限)。
 
-> **判决:Phase 0 已过 → 值得花 Phase 1 那个便宜的 action-fidelity probe。** 过了 → 这是值得专门推进的第二支柱(用自己的世界模型当 env,训 agent 而非只 finetune generator,即 DreamerV3/DIAMOND 形状)。Phase 1 堵了(backbone 教不会听 action)→ 大声说 "not yet",hold,守住 bandit 北极星,等上游交互式 checkpoint。**与 `docs/NORTH_STAR.md` 一致:这是 scope 扩张、不是把 bandit 训练换个说法。**
+> **判决:Phase 0 已过 → 值得花 Phase 1 那个便宜的 action-fidelity probe。** 过了 → 这是值得专门推进的第二支柱(用自己的世界模型当 env,训 agent 而非只 finetune generator,即 DreamerV3/DIAMOND 形状)。Phase 1 堵了(backbone 教不会听 action)→ 大声说 "not yet",hold,守住 bandit 北极星,等上游交互式 checkpoint。**与仓库定位（原 NORTH_STAR，已删除）一致:这是 scope 扩张、不是把 bandit 训练换个说法。**
 
 ## 6. 验收
 

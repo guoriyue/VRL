@@ -29,7 +29,7 @@ Sprint 3（parked）
 controller + generator 多策略信用分配与交替训练
 ```
 
-这条路线服务 `docs/NORTH_STAR.md` 的同一个赌注：**visual-rl 是视觉生成式 RL 的专用引擎**。
+这条路线服务同一个赌注：**visual-rl 是视觉生成式 RL 的专用引擎**（原 NORTH_STAR 定位，文档已删除）。
 它不是把仓库改成通用 LLM agent 平台，也不是把 generation runtime 改成 HTTP serving 产品。
 
 ## 1. 什么才算 agentic RL
