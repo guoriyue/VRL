@@ -521,6 +521,58 @@ the penalty is the only signal) was never measured because of defect 1. The
 composite run — AnimeReward carrying the gradient, `nsfw_safety` at 0.5
 bending it — supersedes this configuration.
 
+### Experiment F — "quality consistent + NSFW trigger down": a three-attempt ladder
+
+Goal: keep anatomy quality at base level while reducing the safety trigger rate
+(base: 19/24 images on the fixed safety set). Three configs were run and are
+**since deleted — one-shot experiments, this section is their record**. Only the
+lever changed between them; everything else (lr 1e-4, clip_ratio 3e-3,
+timestep_fraction 1.0, EMA off, 20-step rollout at noise 0.3, 16x16 batch) was
+held at the Experiment-D settings.
+
+| # | config (deleted) | lever | outcome |
+|---|---|---|---|
+| 1 | `online_grpo_quality_nsfw_guardrail` | 85/15 anatomy/safety mix, nsfw weight **0.15** | anatomy quality drifted DOWN (0.691 base -> 0.683 ck4 -> 0.673 ck6), trigger rate **unmoved** (19/24) |
+| 2 | `online_grpo_quality_nsfw_klanchor` | 50/50 mix, nsfw **0.3**, **kl_coef 0.05** (~12x) | trigger rate **unmoved** (19/24) |
+| 3 | `online_grpo_quality_nsfw_strong` | 50/50 mix, nsfw **0.5**, kl back to 0.004 | trigger **0/24** — by collapsing into a yellow grid that destroys the image |
+
+**What each attempt taught, in order:**
+
+1. A guardrail weight small enough not to disturb quality is also too small to
+   move the trigger rate. It did not buy safety, and it still cost quality — the
+   weight is not a free dial between the two objectives.
+2. A global KL anchor is the wrong instrument here. It pins the whole policy to
+   base, and **base is exactly what produces the triggering images**, so KL
+   blocks the behavior change on explicit prompts that safety needs. It protects
+   quality by forbidding the very move being asked for.
+3. Given real strength, the policy does find a way to zero the penalty — the
+   cheapest one, which is to stop producing images. The yellow-grid collapse
+   eliminated NSFW completely (0/24) while destroying every image.
+
+**The load-bearing finding of attempt 3: AnimeReward was blind to the collapse.**
+It scored the grid 0.61, the same range as real anime. A reward-robustness probe
+over base real-anime frames vs the ck30 grid frames:
+
+| reward | real anime | yellow grid | separates? |
+|---|---|---|---|
+| AnimeReward | 0.691 | 0.533 | no (blind, small d) |
+| PickScore | 0.814 | 0.634 | **yes** (Cohen d +6.0) |
+| LAION aesthetic | 5.81 | 3.99 | **yes** (Cohen d +5.3) |
+
+That is why the ladder continues with PickScore as the quality anchor
+(`online_grpo_pickscore_nsfw`, kept) rather than AnimeReward: a quality model
+that cannot see the degenerate solution cannot prevent it. The caveat recorded
+in that config still stands — PickScore/aesthetic separate the *grid* collapse
+but not subtle on-prompt-vs-off-prompt collapse (0.829 vs 0.830), so runs are
+judged by eye plus the model-free diversity metric, never a single score.
+
+**Dataset note.** These three runs trained off a mixed prompt manifest built on
+the side by a `build_anime_quality_safety_mix` script. Both the script and its
+output are gone: the mix ratio is now declared in the dataset preset itself
+(`data.manifest` as a `{manifest path: prompt count}` mapping plus
+`data.mix_seed`), so no derived manifest is materialized. The surviving 50/50
+preset reproduces those runs' prompt set exactly, prompt for prompt.
+
 ### Run 3 — the decisive negative result
 
 Checkpoint-10 evaluated against base on the identical 24 prompts and seeds:
