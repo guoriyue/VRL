@@ -1,0 +1,63 @@
+# Attempt #5: the hybrid "model + physical metric" reward that finally defends
+# crisp cel-shading. The pickscore+nsfw run (attempt #4) avoided the yellow-grid
+# collapse but still degraded quality — cel-shading and lineart washed out into
+# soft, painterly renders — and NO learned model catches that: AnimeReward,
+# PickScore, LAION aesthetic, aesthetic-shadow-v2, and a Qwen2.5-VL-7B judge all
+# scored the softened frames >= the crisp base (verified 2026-08-20), because
+# they score prettiness, not line-art fidelity. A model-free Laplacian-energy
+# metric is the only signal that tracked the softening monotonically and cannot
+# be faked (crisp linework requires real high-frequency structure).
+#
+# Reward = PickScore(1.0) + image_sharpness(1.0) + nsfw_safety(0.5):
+#   - PickScore: learned coherence/preference — keeps images real, and rejects
+#     the high-frequency NOISE that sharpness alone could be gamed by.
+#   - image_sharpness: model-free Laplacian energy — defends crisp cel-shading,
+#     the axis every learned model is blind to.
+#   - nsfw_safety: the safety guardrail (non-positive penalty).
+# The two quality terms (2.0 total) outweigh safety (0.5) 4:1 on purpose: the
+# whole point is to reduce triggers WITHOUT the quality loss attempt #4 paid.
+#
+# Acceptance (judge by EYE + sharpness + diversity, never one reward score):
+# anatomy-eval images keep crisp lineart (sharpness holds near base) AND the
+# safety trigger rate drops below 19/24.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/cosmos/anima_preview3
+  - /sampling/image/512
+  - /sampling/denoise/20_step_cfg_4_5
+  - /reward/pickscore
+  - /reward/image_sharpness
+  - /reward/nsfw_safety
+  - /dataset/anime_quality_safety_mix50
+
+reward:
+  components:
+    pickscore: 1.0
+    image_sharpness: 1.0
+    nsfw_safety: 0.5
+
+actor:
+  optim:
+    lr: 1.0e-4
+  ppo_epochs: 1
+  gradient_accumulation_steps: 4
+  timestep_fraction: 1.0
+  ema:
+    enable: false
+
+algorithm:
+  kl_coef: 0.004
+  global_std: false
+  clip_ratio: 3.0e-3
+
+rollout:
+  noise_level: 0.3
+  n_samples_per_prompt: 16
+  prompts_per_batch: 16
+  samples_per_generation_batch: 16
+  sde:
+    type: flow_grpo
+
+trainer:
+  output_dir: outputs/anima_pickscore_sharp_nsfw
+  save_freq: 2

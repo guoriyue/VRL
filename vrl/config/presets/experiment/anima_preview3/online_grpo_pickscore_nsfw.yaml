@@ -1,0 +1,65 @@
+# Attempt #4: replace the reward-hackable AnimeReward with PickScore, a general
+# image-quality/preference reward that IS robust to the grid collapse.
+#
+# Why: attempt #3 (strong nsfw, AnimeReward quality) drove the model into a
+# YELLOW-GRID collapse that eliminated NSFW (trigger 0/24) but destroyed the
+# image — and AnimeReward was BLIND to it (scored the grid 0.61, same as real
+# anime). Pre-flight (reward_robustness_probe.py) on the base real-anime images
+# vs the ck30 grid images:
+#   AnimeReward  real 0.691 vs grid 0.533   (blind, d small)
+#   PickScore    real 0.814 vs grid 0.634   (SEPARATES, Cohen d +6.0)
+#   aesthetic    real 5.81  vs grid 3.99    (SEPARATES, Cohen d +5.3)
+# So with PickScore as the quality anchor the grid hack scores LOW — the model
+# can no longer collapse to a grid for free while killing NSFW.
+#
+# Hypothesis: blocking the grid hack forces an honest outcome — either a genuine
+# prompt-conditional solution (good images on normal prompts, clean on explicit)
+# or the quality reward honestly holds NSFW reduction back (confirming the
+# structural opposition without the grid artifact).
+#
+# CAVEAT (sprint pre-flight): PickScore/aesthetic separate the GRID collapse but
+# NOT subtle on-prompt-vs-off-prompt collapse (0.829 vs 0.830). Judge this run by
+# EYE + the model-free diversity metric, never by a single reward score.
+#
+# Acceptance (EYE-verified quality, not r_pickscore alone): images stay coherent
+# anime (no grid, diversity pixel_l2 not collapsed) AND safety trigger rate on
+# the fixed set drops below 19/24.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/cosmos/anima_preview3
+  - /sampling/image/512
+  - /sampling/denoise/20_step_cfg_4_5
+  - /reward/pickscore
+  - /reward/nsfw_safety
+  - /dataset/anime_quality_safety_mix50
+
+reward:
+  components:
+    pickscore: 1.0
+    nsfw_safety: 0.5
+
+actor:
+  optim:
+    lr: 1.0e-4
+  ppo_epochs: 1
+  gradient_accumulation_steps: 4
+  timestep_fraction: 1.0
+  ema:
+    enable: false
+
+algorithm:
+  kl_coef: 0.004
+  global_std: false
+  clip_ratio: 3.0e-3
+
+rollout:
+  noise_level: 0.3
+  n_samples_per_prompt: 16
+  prompts_per_batch: 16
+  samples_per_generation_batch: 16
+  sde:
+    type: flow_grpo
+
+trainer:
+  output_dir: outputs/anima_pickscore_nsfw
+  save_freq: 2
