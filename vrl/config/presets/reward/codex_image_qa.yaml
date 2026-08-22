@@ -1,0 +1,62 @@
+# Codex-CLI image-QA reward — a rubric-driven LLM judge (restored 2026-08-22).
+# The prompt_template IS the reward definition; rewrite it to target the axis you
+# need. Runs `codex exec` as a CPU subprocess per image, fanned out over
+# max_concurrency; keep that in line with your CLI rate limits.
+distributed:
+  resources:
+    reward:
+      # CLI subprocess judge — no trainer GPU.
+      device: cpu
+
+reward:
+  components:
+    codex_image_qa: 1.0
+  kwargs:
+    codex_image_qa:
+      command:
+        - codex
+        - exec
+        - --sandbox
+        - read-only
+        - --skip-git-repo-check
+        - --image
+        - "{image_path}"
+        - --output-last-message
+        - "{output_path}"
+        - "-"
+      timeout_s: 300.0
+      pass_prompt_stdin: true
+      max_concurrency: 8
+      # Grid batching — the ONLY real token saver. Measured: codex's fixed
+      # per-call overhead is ~16.8k input tokens and is INDEPENDENT of image
+      # resolution (512px and 128px cost the same), so compressing tiles saves
+      # nothing; packing more images per call is what amortizes the overhead.
+      # But discrimination weakens as cells shrink — measured crisp-vs-soft gap
+      # (crispness rubric) fell with N:
+      #   N=4  -> gap +0.73  (~$21 / 100 epochs)   <- chosen: strongest signal
+      #   N=9  -> gap +0.60  (~$10 / 100 epochs)
+      #   N=16 -> gap +0.54  (~$5  / 100 epochs)
+      # All still separate cleanly, but the run is cheap either way, so we spend
+      # for the strongest GRPO signal rather than max token savings. 4@256 =
+      # 512px montage, cells fully legible.
+      images_per_call: 4
+      tile_size: 256
+      prompt_template: |-
+        You are a strict image-text alignment judge.
+        Evaluate whether the attached image matches the text prompt.
+        Return exactly one JSON object and no extra text:
+        {"score": 0.37}
+
+        Use a dense continuous score in [0, 1]. Do not collapse most samples to 0.
+        Reserve 0.0 only for blank, broken, or completely unrelated images.
+        Assign fine-grained decimals based on visible evidence; avoid repeated generic
+        scores such as 0.10, 0.12, or 0.50 when images differ.
+
+        Scoring rubric:
+        - 0.85-1.00: the image clearly matches the prompt.
+        - 0.60-0.84: the image mostly matches with minor missing details.
+        - 0.35-0.59: the image partially matches but misses important details.
+        - 0.10-0.34: the image is coherent but weakly related to the prompt.
+        - 0.00-0.09: the image is blank, broken, or completely unrelated.
+
+        Text prompt: {prompt}

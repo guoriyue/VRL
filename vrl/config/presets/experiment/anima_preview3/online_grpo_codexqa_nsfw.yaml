@@ -1,0 +1,74 @@
+# Attempt #6: codex-CLI LLM judge as the quality reward + nsfw guardrail.
+#
+# Motivation: every learned quality model (AnimeReward, PickScore, LAION
+# aesthetic, aesthetic-shadow-v2, small VLM) is blind to cel-shading softening —
+# they rank softened frames >= crisp ones. The codex LLM judge is the ONLY
+# scorer that ranked crisp above soft (verified 2026-08-22: crisp ~0.95 vs soft
+# ~0.22, gap +0.73 at 4-per-grid), because a side-by-side montage lets it judge
+# RELATIVE line-art crispness, which is exactly the axis the fixed models miss.
+#
+# codex_image_qa runs the judge over a 4-image montage per CLI call (N=4 gave
+# the strongest crisp/soft gap; cost ~$21/100ep on gpt-5.6-luna, trivial).
+# Verified codex returns real quality scores for NSFW images too (does not
+# refuse), so it stays valid on the safety half of the mix.
+#
+# Reward = codex_image_qa(1.0) + nsfw_safety(0.5): the judge defends crisp
+# quality (the axis nothing else could see), the penalty bends away from NSFW.
+# Judge results by EYE + sharpness + trigger rate, never one reward score.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/cosmos/anima_preview3
+  - /sampling/image/512
+  - /sampling/denoise/20_step_cfg_4_5
+  - /reward/codex_image_qa
+  - /reward/nsfw_safety
+  - /dataset/anime_quality_safety_mix50
+
+reward:
+  components:
+    codex_image_qa: 1.0
+    nsfw_safety: 0.5
+  kwargs:
+    codex_image_qa:
+      images_per_call: 4
+      tile_size: 256
+      max_concurrency: 8
+      # Crispness-focused grid rubric (the one that scored gap +0.73). The judge
+      # rates line-art/cel-shading sharpness per cell — quality, independent of
+      # content — so it stays meaningful on both anatomy and safety prompts.
+      grid_prompt_template: |-
+        You are judging anime line-art crispness in a numbered montage of {count} cells
+        (labeled 1..{count}, left-to-right, top-to-bottom). Every cell shares the SAME prompt.
+        Score EACH cell 0-1 for how CRISP the cel-shading and ink line art is:
+        1.0 = sharp clean dark outlines with flat cel-shaded color blocks (classic anime).
+        0.5 = soft, airbrushed, outlines faded.
+        0.0 = blurry smudge, no line art, or a degenerate/repeating pattern.
+        Judge rendering quality only, not the subject matter.
+        Return exactly one JSON object, {count} scores in cell order: {{"scores": [0.9, 0.3, ...]}}
+        Prompt: {prompt}
+
+actor:
+  optim:
+    lr: 1.0e-4
+  ppo_epochs: 1
+  gradient_accumulation_steps: 4
+  timestep_fraction: 1.0
+  ema:
+    enable: false
+
+algorithm:
+  kl_coef: 0.004
+  global_std: false
+  clip_ratio: 3.0e-3
+
+rollout:
+  noise_level: 0.3
+  n_samples_per_prompt: 16
+  prompts_per_batch: 16
+  samples_per_generation_batch: 16
+  sde:
+    type: flow_grpo
+
+trainer:
+  output_dir: outputs/anima_codexqa_nsfw
+  save_freq: 2
