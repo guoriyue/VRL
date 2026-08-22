@@ -1,6 +1,6 @@
 # SPRINT: 全仓 Triton 地图与性能账本 — 按负载类判定，不按直觉
 
-**日期**: 2026-08-18  **状态**: PLANNED
+**日期**: 2026-08-18  **状态**: IN PROGRESS（P0/P1/P2 探针 2026-08-22 已执行，见 §3/§6）
 **触发**: 用户问 "能给仓库加什么 Triton？vLLM 用了很多 Triton"，追问 thorough
 estimation，并指出判定应覆盖全仓而非只看 anima。
 **证据来源**: Run E 实测（`train_E_0818.log`，pid 1238430，config
@@ -130,25 +130,44 @@ per-phase 事件。**验收**：分段数据回填 §1.3 两个估算区间；�
 
 ## 3. 复查清单（回填实测）
 
-| 项 | 预期区间 | 实测（回填） |
+| 项 | 预期区间 | 实测（回填，2026-08-22） |
 |---|---|---|
-| evaluate+backward /迭代 | 400–500s | |
-| reward 等待份额 /迭代 | ~700–800s | |
-| P1 compile rollout 提速 | 10–25% | |
-| P2 NVFP4 rollout 提速 | 1.5–2× GEMM，~100s/迭代 | |
-| P2 drift（logprob_abs_diff_mean） | ≤ TIS 可救；bf16 基线 2.5–2.9e-3 | |
-| P3 修后 service_inference_wall_ms | ~inference_ms × 批深度 | |
+| evaluate+backward /迭代 | 400–500s | 待 P0 profile run（presets 已开 profile: true） |
+| reward 等待份额 /迭代 | ~700–800s | 同上 |
+| P1 compile rollout 提速 | 10–25% | **1.31×**（compile_benchmark cosmos-predict2 生产深度：rollout 69.6→53.1ms，launches 2764→948）；train 路径 **1.26×**（278.9→221.2ms）。**但见 §6 修正：生产早已开启，此为确认值非增量** |
+| P1 训练侧 MFU（新 backward_mfu_probe，SD3.5-medium 1024px LoRA r32 参照） | — | eager：b1 60% / b2 62%（ckpt off）；full ckpt 39–43%（HFU 55–60%，重算税可见）；**compile：73%/74%，整步 283→235ms（-17%），峰值 12.0→10.3GB**。selective+compile 抛 InternalTorchDynamoError——与 `require_compile_checkpointing_compatible` 的既有裁定一致 |
+| P2 NVFP4 rollout 提速 | 1.5–2× GEMM，~100s/迭代 | 待真实 run（探针为漂移验证，非吞吐） |
+| P2 drift | ≤ TIS 可救 | **通过**（合成 head，512×2048×4096）：单步 ratio_dev mean 0.108 / max 0.81，guard 上限 9.0 远未触及；TIS cap 2.0 截断 **0%**，RS 掩码 0%，梯度范数三种模式完全一致。真模型 SDE-logprob 校准 run 仍是收口条件 |
+| P3 修后 service_inference_wall_ms | ~inference_ms × 批深度 | 待 P0 证实份额后动工 |
 | P4 FLCE 峰值显存节省（janus B16×L576） | ~1.2GB（§5.3） | B8×L576×V16384×D2048 bf16 实测 564→34 MiB（16.6×）；B16 约 2×该值 |
 
 ## 4. 执行顺序与门
 
-Run E 正在跑（GPU 84%），P1/P2 的 GPU 探针须等其结束或用间隙窗口。
-
-1. **P0（现在）**：下一 run 配置加 `trainer.profile: true`。零成本。
-2. **P1（Run E 后）**：`compile_benchmark.py` 短探针 → 达标进 preset（全 family）。
-3. **P2（与 P1 并行可跑探针）**：drift probe 定漂移 → TIS 范围内则短 run 验曲线。
+1. **P0**：已落地（2026-08-22）——pickscore_nsfw / pickscore_sharp_nsfw 两个
+   next-run preset 已加 `trainer.profile: true`，下一次 run 自动产出分段。
+2. **P1**：探针已跑（数字见 §3），但被 §6 的修正**改判为已部署**，无增量动作。
+3. **P2**：drift probe 通过（§3）；剩真实 anima NVFP4 短 run 验 reward 曲线。
 4. **门**：P0 分段若显示 reward 份额 ≥ 500s/迭代 → P3 升为最高优先级。
 5. **P4（独立轨）**：已完成（2026-08-18），验收记录见 §5.3。
+
+## 6. 勘误（2026-08-22）：P1 的前提是错的——compile 早已全量开启
+
+§1 断言"resolved config 中 torch_compile 与 quantization 均未启用"，其中 compile
+一半**错误**：当时只 grep 了 experiment preset 文件和 quantization 键，没查
+resolved config 的 torch_compile 键。事实链：
+
+- `/model/cosmos/anima_preview3` preset 于 **2026-07-02** 已置 `torch_compile.enable: true`
+  （preset 注释记录了当时的 A/B：1.31×/1.33×）。
+- Run E resolved config 第 83–85 行 `enable: true, mode: default`；日志
+  15:05:10 有 `rollout pass compile applied (mode=default)`。
+- 训练侧同样生效：`assemble_replay_bundle`（`vrl/models/steps/denoise/build.py:104`）
+  按同一 knob compile 重放模型；compile×checkpointing 冲突由
+  `require_compile_checkpointing_compatible` 在配置加载期拦截。
+
+推论：§1 的 16.5s/批与 ~25min/迭代基线**已含 compile**；§2.2 的"2–4% 端到端"
+不存在增量。扩散侧剩余杠杆重排为：**P3 reward 服务（最大）→ P2 NVFP4 真实
+run → 多卡结构解（姊妹 sprint）**。教训并入方法论：查"是否启用"必须以
+resolved config + 运行日志为准，preset 文件链不可作数。
 
 ## 5. 全仓 Triton 地图（按负载类）
 
