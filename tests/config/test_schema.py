@@ -1490,6 +1490,58 @@ def test_prompt_image_manifest_requires_image_caption_fields() -> None:
         )
 
 
+def test_prompt_manifest_accepts_mixture_counts() -> None:
+    """A {path: count} manifest is the recipe-level way to declare a prompt mix."""
+    data = DataConfig(
+        loader="prompt_manifest",
+        manifest={"anatomy.jsonl": 6800, "safety.jsonl": 1200},
+        mix_seed=20260818,
+        preprocessing={"format": "jsonl"},
+        sampler={"type": "random_without_replacement"},
+    )
+    assert data.manifest == {"anatomy.jsonl": 6800, "safety.jsonl": 1200}
+
+
+def test_prompt_manifest_mixture_requires_a_seed() -> None:
+    """A mixture without a seed would draw a different prompt set on every rank."""
+    with pytest.raises(ValueError, match=r"data\.mix_seed"):
+        DataConfig(
+            loader="prompt_manifest",
+            manifest={"anatomy.jsonl": 6800, "safety.jsonl": 1200},
+            preprocessing={"format": "jsonl"},
+            sampler={"type": "random_without_replacement"},
+        )
+
+
+@pytest.mark.parametrize("count", [0, -5, 1.5, "many"])
+def test_prompt_manifest_rejects_non_positive_mixture_count(count: object) -> None:
+    """A mixture count that cannot select prompts fails at config time."""
+    with pytest.raises(ValueError, match=r"positive prompt count"):
+        DataConfig(
+            loader="prompt_manifest",
+            manifest={"anatomy.jsonl": count},
+            preprocessing={"format": "jsonl"},
+            sampler={"type": "random_without_replacement"},
+        )
+
+
+def test_prompt_image_manifest_rejects_mixture() -> None:
+    """Image-conditioned runs pair one manifest with its reference tree."""
+    with pytest.raises(ValueError, match=r"single data\.manifest path"):
+        DataConfig(
+            loader="prompt_image_manifest",
+            manifest={"a.jsonl": 10, "b.jsonl": 10},
+            eval_manifest="eval.jsonl",
+            preprocessing={
+                "format": "image_caption_jsonl",
+                "image_field": "image",
+                "caption_field": "caption",
+                "conditioning": "reference_image",
+            },
+            sampler={"type": "random_without_replacement"},
+        )
+
+
 # ── Sampler type literal ──────────────────────────────────────────────────────
 
 

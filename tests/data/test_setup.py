@@ -57,6 +57,108 @@ def test_runtime_data_loader_derives_image_prompt_manifest(tmp_path: Path) -> No
     assert examples[0].reference_image == "reference.png"
 
 
+def _write_prompts(path: Path, prompts: list[str]) -> Path:
+    path.write_text(
+        "".join(json.dumps({"prompt": prompt}) + "\n" for prompt in prompts),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_runtime_data_loader_mixes_manifests_by_declared_counts(tmp_path: Path) -> None:
+    """A {path: count} manifest draws exactly that many prompts from each source."""
+    anatomy = _write_prompts(tmp_path / "anatomy.jsonl", [f"anatomy {i}" for i in range(50)])
+    safety = _write_prompts(tmp_path / "safety.jsonl", [f"safety {i}" for i in range(50)])
+
+    examples = load_prompt_examples_from_config(
+        OmegaConf.create(
+            {
+                "loader": "prompt_manifest",
+                "manifest": {str(anatomy): 8, str(safety): 2},
+                "mix_seed": 20260818,
+                "preprocessing": {"format": "jsonl"},
+            },
+        ),
+    )
+
+    prompts = [example.prompt for example in examples]
+    assert len(prompts) == 10
+    assert sum(prompt.startswith("anatomy") for prompt in prompts) == 8
+    assert sum(prompt.startswith("safety") for prompt in prompts) == 2
+
+
+def test_runtime_data_loader_mixture_is_seed_reproducible(tmp_path: Path) -> None:
+    """Same spec and seed reproduce the prompt set; a different seed redraws it."""
+    anatomy = _write_prompts(tmp_path / "anatomy.jsonl", [f"anatomy {i}" for i in range(50)])
+    safety = _write_prompts(tmp_path / "safety.jsonl", [f"safety {i}" for i in range(50)])
+
+    def load(seed: int) -> list[str]:
+        data = {
+            "loader": "prompt_manifest",
+            "manifest": {str(anatomy): 8, str(safety): 2},
+            "mix_seed": seed,
+            "preprocessing": {"format": "jsonl"},
+        }
+        return [e.prompt for e in load_prompt_examples_from_config(OmegaConf.create(data))]
+
+    assert load(7) == load(7)
+    assert load(7) != load(8)
+
+
+def test_runtime_data_loader_requires_a_seed_for_a_mixture(tmp_path: Path) -> None:
+    """Every rank draws the mixture itself, so an unseeded draw would desync them."""
+    anatomy = _write_prompts(tmp_path / "anatomy.jsonl", ["a", "b", "c"])
+    safety = _write_prompts(tmp_path / "safety.jsonl", ["x", "y", "z"])
+
+    with pytest.raises(ValueError, match=r"data\.mix_seed"):
+        load_prompt_examples_from_config(
+            OmegaConf.create(
+                {
+                    "loader": "prompt_manifest",
+                    "manifest": {str(anatomy): 2, str(safety): 1},
+                    "preprocessing": {"format": "jsonl"},
+                },
+            ),
+        )
+
+
+def test_runtime_data_loader_rejects_mixture_count_over_manifest_size(tmp_path: Path) -> None:
+    """Asking for more prompts than a source holds fails loudly, not silently short."""
+    anatomy = _write_prompts(tmp_path / "anatomy.jsonl", ["only one"])
+
+    with pytest.raises(ValueError, match="only 1 available"):
+        load_prompt_examples_from_config(
+            OmegaConf.create(
+                {
+                    "loader": "prompt_manifest",
+                    "manifest": {str(anatomy): 5},
+                    "mix_seed": 20260818,
+                    "preprocessing": {"format": "jsonl"},
+                },
+            ),
+        )
+
+
+def test_for_experiment_plan_covers_every_mixture_source(tmp_path: Path) -> None:
+    """Each source of a manifest mixture gets its own present/populate step."""
+    plan = bootstrap.resolve_experiment_dataset_plan(
+        {
+            "loader": "prompt_manifest",
+            "manifest": {
+                "datasets/danbooru/anatomy/train_prompts.jsonl": 6800,
+                "datasets/danbooru/safety/train.jsonl": 1200,
+            },
+        },
+        repo_root=tmp_path,
+    )
+
+    assert [step["path"] for step in plan["steps"]] == [
+        "datasets/danbooru/anatomy/train_prompts.jsonl",
+        "datasets/danbooru/safety/train.jsonl",
+    ]
+    assert plan["ready"] is False
+
+
 def test_runtime_data_loader_rejects_explicit_format_conflict() -> None:
     data = OmegaConf.create(
         {

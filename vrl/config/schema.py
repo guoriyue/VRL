@@ -29,7 +29,7 @@ from pydantic import (
 
 from vrl.config.algorithm import algorithm_config_class, resolve_kl_reward_coef
 from vrl.config.base import ConfigBase
-from vrl.config.data import DataLoaderName, resolve_data_loader
+from vrl.config.data import DataLoaderName, manifest_sources, resolve_data_loader
 from vrl.config.model_schema import ModelSection
 from vrl.config.precision import PrecisionConfig
 from vrl.config.reward_inference import parse_reward_inference_config
@@ -151,7 +151,13 @@ _algorithm_config_variant_blocks: tuple[ConfigBlock, ...] = tuple(
 
 class DataConfig(ConfigBase):
     loader: DataLoaderName | None = None
-    manifest: str | None = None
+    # A path, or a {manifest path: prompt count} mixture whose keys are file
+    # paths chosen by the recipe (hence OPEN). reader: manifest_sources.
+    manifest: Annotated[str | dict[str, Any] | None, OPEN] = None
+    # Draw seed for a manifest mixture, required whenever one is declared: every
+    # rank draws the mixture itself and then indexes into it.
+    # reader: load_prompt_examples_from_config
+    mix_seed: int | None = None
     eval_manifest: str | None = None
     # readers: _validate_data + loader tooling
     preprocessing: Annotated[
@@ -196,6 +202,8 @@ class DataConfig(ConfigBase):
         if self.loader == "prompt_manifest":
             if not self.manifest:
                 raise ValueError("config missing required field: data.manifest")
+            if len(manifest_sources(self.manifest)) > 1 and self.mix_seed is None:
+                raise ValueError("config missing required field: data.mix_seed")
             if self.preprocessing is None:
                 raise ValueError("config missing required field: data.preprocessing")
             self._validate_sampler_type()
@@ -203,6 +211,11 @@ class DataConfig(ConfigBase):
         if self.loader == "prompt_image_manifest":
             if not self.manifest:
                 raise ValueError("config missing required field: data.manifest")
+            if not isinstance(self.manifest, str):
+                raise ValueError(
+                    "data.loader='prompt_image_manifest' takes a single data.manifest path, "
+                    "not a mixture mapping",
+                )
             if not self.eval_manifest:
                 raise ValueError("config missing required field: data.eval_manifest")
             if self.preprocessing is None:

@@ -1,0 +1,20 @@
+# 50/50 anatomy/safety prompt mix for the quality+safety recipes (see
+# SPRINT_anima_rl_5090, "Experiment F"). The ratio is the experiment knob, so it
+# is declared here rather than baked into a manifest on the side: the loader
+# draws these counts from the two committed manifests and shuffles them with
+# mix_seed.
+# Half the batch is anatomy prompts, where the quality reward has real gradient
+# and the nsfw penalty is ~0 — that half is what anchors quality. The other half
+# is explicit prompts, where disobeying the prompt is the DESIRED behavior and
+# the penalty does the work. Eval stays on the pure sets.
+data:
+  loader: prompt_manifest
+  manifest:
+    datasets/danbooru/anatomy/train_prompts.jsonl: 2000
+    datasets/danbooru/safety/train.jsonl: 2000
+  mix_seed: 20260818
+  eval_manifest: datasets/danbooru/anatomy/eval_prompts.jsonl
+  preprocessing:
+    format: jsonl
+  sampler:
+    type: random_without_replacement

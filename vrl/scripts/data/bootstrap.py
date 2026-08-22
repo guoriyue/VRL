@@ -42,10 +42,7 @@ def resolve_experiment_dataset_plan(
     loader = str(data.get("loader", "") or "")
     steps: list[dict[str, Any]] = []
     ready = True
-    for role in ("manifest", "eval_manifest", "source_report"):
-        path = str(data.get(role, "") or "").strip()
-        if not path:
-            continue
+    for role, path in _manifest_roles(data):
         resolved = Path(path) if os.path.isabs(path) else (repo_root / path)
         present = resolved.exists()
         rows = _count_rows(resolved) if present and role != "source_report" else 0
@@ -78,6 +75,26 @@ def resolve_experiment_dataset_plan(
             },
         )
     return {"loader": loader, "ready": ready, "steps": steps}
+
+
+def _manifest_roles(data: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """Pair each configured manifest path with the config role that names it.
+
+    ``data.manifest`` may name several source manifests (a prompt mixture), and
+    each of them has to be present before the experiment can run.
+    """
+
+    from vrl.config.data import manifest_sources
+
+    roles: list[tuple[str, str]] = []
+    for role in ("manifest", "eval_manifest", "source_report"):
+        value = data.get(role)
+        paths = manifest_sources(value) if role == "manifest" and value else {value: None}
+        for path in paths:
+            text = str(path or "").strip()
+            if text:
+                roles.append((role, text))
+    return roles
 
 
 def _count_rows(path: Path) -> int:
