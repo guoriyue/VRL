@@ -47,6 +47,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.cosmos3_reasoner import Cosmos3ReasonerReward
     from vrl.rewards.functions.geneval import GenEvalReward
     from vrl.rewards.functions.hpsv3 import HPSv3Reward
+    from vrl.rewards.functions.image_sharpness import ImageSharpnessReward
     from vrl.rewards.functions.kling_video_reward import KlingVideoReward
     from vrl.rewards.functions.motion_dynamics import MotionDynamicsReward
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
@@ -63,6 +64,7 @@ def _register_builtins() -> None:
         {
             "aesthetic": AestheticReward,
             "animereward_quality": AnimeRewardQualityReward,
+            "image_sharpness": ImageSharpnessReward,
             "geneval": GenEvalReward,
             "nsfw_safety": NSFWSafetyReward,
             "ocr": OCRReward,

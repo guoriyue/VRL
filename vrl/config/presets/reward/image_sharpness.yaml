@@ -1,0 +1,18 @@
+# Line-art sharpness reward — normalized Laplacian edge energy, CPU, model-free.
+# Defends crisp cel-shading, which every learned quality model failed to capture.
+# Must ride alongside a coherence reward (PickScore) so noise cannot game it.
+distributed:
+  resources:
+    reward:
+      # Pure numpy compute; keep it off the trainer GPU.
+      device: cpu
+
+reward:
+  components:
+    image_sharpness: 1.0
+  kwargs:
+    image_sharpness:
+      # Divisor mapping base-quality crisp anime (~0.013 raw Laplacian variance)
+      # to ~1.0; softened frames fall below, the yellow-grid collapse to ~0.02.
+      scale: 0.013
+      num_frames: 1
