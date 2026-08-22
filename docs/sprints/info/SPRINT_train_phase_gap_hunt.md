@@ -136,14 +136,18 @@ kernel-count 记账 + pre-compile 时代的数字，不是 wall time。
 optimizer/EMA 扫描在真实规模摊薄（1.4B 全参 ~20ms vs replay ~1.4s ≈ 1.5%）。
 诚实区间 **c ∈ [~10%, 26%]**。
 
-**T_denoise/T_train 的结构比**：rollout 每样本 CFG·S 次无梯度前向，
-训练 replay ≈ 3·tf·S 次前向当量（fwd+bwd≈3×fwd）→
-`R = CFG/(3·tf)`。生产 lane：CFG ∈ {1,2}（droid curve guidance 0.0！），
-tf ∈ [0.25, 1.0] → **R ∈ [0.34, 2.67]**。
+**T_denoise/T_train 的结构比**（2026-08-22 修正 —— `fix/mfu-exact-flop-count`
+证实 LoRA 冻基后 backward ≈ 1×fwd，不是 2×）：rollout 每样本 CFG·S 次无梯度
+前向，**LoRA 基线**的 replay ≈ 2·tf·S 次前向当量（fwd + adapter-only bwd）→
+`R = CFG/(2·tf)`。生产 lane：CFG ∈ {1,2}（droid curve guidance 0.0！），
+tf ∈ [0.25, 1.0] → **R ∈ [0.5, 4.0]**。
 
 **break-even 需要 R > c/f**：取最乐观的 c=10%、f=2.7%（480p）→ R > 3.7；
-取 c=26% → R > 9.6。**两个界都高于所有生产 lane 的 R ≤ 2.67。**
-240p（f=7.7%）时 break-even R > 1.3 —— 只有低分辨率 + 低 tf 的组合才可能翻正。
+取 c=26% → R > 9.6。**tf=0.25 ∧ CFG=2 的角落 R=4.0 刚好越过乐观界** ——
+原先「无 lane 能到」在该角落不再成立；其余 lane（tf ≥ 0.5 → R ≤ 2.0）仍然
+远够不着。240p（f=7.7%）时 break-even R > 1.3。**该角落要不要动 P1.5，
+用 `backward_mfu_probe --lora-rank`（现已按 FlopCounterMode 精确计数）在
+目标 run 的真实 shape 上量 c 与 R 再定,不要用本节的合成估计。**
 
 **结论：P1.5 作为速度杠杆对生产分辨率的视频家族已经死了**；保留它的唯一
 理由是模型质量/容量（cosmos 转全参属于这类），那是另一根轴。
