@@ -1110,6 +1110,21 @@ def test_build_strategy_fsdp_rejects_train_compile() -> None:
         )
 
 
+def test_build_strategy_fsdp_accepts_rollout_scoped_compile() -> None:
+    # scope=rollout keeps the FSDP2 replay policy eager, so the §10 gate must
+    # not fire: only a compile that binds the replay role is unsound here.
+    assert isinstance(
+        build_strategy(
+            _strategy_config(
+                "fsdp",
+                model={"torch_compile": {"enable": True, "scope": "rollout"}},
+            ),
+            _cpu_fsdp_context(),
+        ),
+        FSDPStrategy,
+    )
+
+
 # ── gathered HF-adapter export (save_pretrained under FSDP2) ─────────────────
 
 

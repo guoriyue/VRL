@@ -361,6 +361,16 @@ def compile_conflicts(cfg: DictConfig) -> tuple[str, ...]:
     if not bool(cfg_path(cfg, "model.torch_compile.enable", False)):
         return ()
 
+    # Each conflict below binds one build role, so the matrix honors
+    # ``model.torch_compile.scope``: trainer constraints cannot veto a
+    # rollout-only compile, and rollout constraints cannot veto a replay-only
+    # one. The (block, role) decision is owned by the typed build contract.
+    from vrl.models.interfaces.runtime import torch_compile_for_role
+
+    compile_block = cfg_path(cfg, "model.torch_compile", None)
+    compiles_replay = torch_compile_for_role(compile_block, "replay") is not None
+    compiles_rollout = torch_compile_for_role(compile_block, "rollout") is not None
+
     conflicts: list[str] = []
 
     # torch.compile traces torch.utils.checkpoint into an InternalTorchDynamoError
@@ -369,23 +379,25 @@ def compile_conflicts(cfg: DictConfig) -> tuple[str, ...]:
     from vrl.trainers.activation_checkpointing import resolve_gradient_checkpointing_mode
 
     checkpointing = resolve_gradient_checkpointing_mode(cfg)
-    if checkpointing != "off":
+    if compiles_replay and checkpointing != "off":
         conflicts.append(
             f"actor.gradient_checkpointing={checkpointing!r}: torch.compile traces "
             "torch.utils.checkpoint into an InternalTorchDynamoError, and its "
             "min-cut partitioner already does automatic selective recompute. Pick "
-            "one — compile alone (preferred when it fits memory), or eager + "
-            "checkpointing.",
+            "one — compile alone (preferred when it fits memory), eager + "
+            "checkpointing, or model.torch_compile.scope=rollout to keep the "
+            "trainer eager while the rollout policy compiles.",
         )
 
     # Inductor graph capture is unsound with FSDP2's reshard-after-forward
     # all-gathers. Previously only caught when the strategy was built, which is
     # after config load, so a bad recipe surfaced later than it needed to.
-    if str(cfg_path(cfg, "distributed.training.strategy", "")) == "fsdp":
+    if compiles_replay and str(cfg_path(cfg, "distributed.training.strategy", "")) == "fsdp":
         conflicts.append(
             "distributed.training.strategy=fsdp: torch.compile (inductor graph "
             "capture) is unsound with FSDP2 fully_shard's reshard-after-forward "
-            "all-gathers.",
+            "all-gathers. model.torch_compile.scope=rollout keeps the FSDP2 "
+            "replay policy eager while the rollout policy compiles.",
         )
 
     # Sequence parallelism is installed by the rollout WORKER, after the family
@@ -399,7 +411,7 @@ def compile_conflicts(cfg: DictConfig) -> tuple[str, ...]:
         "distributed.resources.rollout.gpus_per_engine",
         1,
     )
-    if gpus_per_engine is not None and int(gpus_per_engine) > 1:
+    if compiles_rollout and gpus_per_engine is not None and int(gpus_per_engine) > 1:
         conflicts.append(
             f"distributed.resources.rollout.gpus_per_engine={int(gpus_per_engine)}: "
             "sequence parallelism installs attention processors and forward hooks "
