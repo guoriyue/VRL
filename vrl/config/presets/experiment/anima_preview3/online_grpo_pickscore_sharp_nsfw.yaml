@@ -59,5 +59,8 @@ rollout:
     type: flow_grpo
 
 trainer:
+  # Phase timing (SPRINT_triton_map_and_perf_ledger P0): split the silent
+  # 82% gap into evaluate/backward/optim vs reward wait. Costs nothing.
+  profile: true
   output_dir: outputs/anima_pickscore_sharp_nsfw
   save_freq: 2
