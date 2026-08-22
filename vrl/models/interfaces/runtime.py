@@ -18,6 +18,12 @@ from vrl.models.interfaces.replay import RuntimeModel
 # Single source of truth for the model_config compile block that the
 # ``ModelBuild.torch_compile`` property below consumes.
 TORCH_COMPILE_MODEL_KEY = "torch_compile"
+# Which build roles ``model.torch_compile`` applies to. ``rollout`` exists
+# because the trainer's constraints (gradient checkpointing, FSDP2) forbid
+# compiling the replay policy while the rollout policy — a plain inference
+# module — remains compile-clean; ``replay`` is the mirror for sequence-parallel
+# rollouts whose worker mutates the module tree after tracing.
+TorchCompileScope = Literal["all", "rollout", "replay"]
 PipelineOffloadMode = Literal["none", "model", "sequential"]
 
 # Internal module attribute carrying the non-derivable part of checkpoint
@@ -141,6 +147,55 @@ def require_pipeline_offload_mode(value: Any) -> PipelineOffloadMode:
             f"rollout pipeline_offload_mode must be one of {list(allowed)}, got {value!r}",
         )
     return cast("PipelineOffloadMode", value)
+
+
+def require_torch_compile_scope(value: Any) -> TorchCompileScope:
+    """Validate one ``model.torch_compile.scope`` value and return it.
+
+    A free function, not a method: the config-load compile matrix
+    (``vrl.config.validation.compile_conflicts``) must read this field before
+    any ``ModelBuild`` exists, and the typed ``torch_compile`` property reads it
+    per build. Both share this one definition so the two readers cannot drift
+    into accepting different vocabularies (the ``require_pipeline_offload_mode``
+    pattern above).
+    """
+
+    allowed = get_args(TorchCompileScope)
+    if value not in allowed:
+        raise ValueError(
+            f"model.torch_compile.scope must be one of {list(allowed)}, got {value!r}",
+        )
+    return cast("TorchCompileScope", value)
+
+
+def torch_compile_for_role(
+    block: Any,
+    role: Literal["rollout", "replay"],
+) -> dict[str, Any] | None:
+    """Resolve one raw ``model.torch_compile`` block for one build role.
+
+    The single (block, role) -> compile decision. Consumers: the
+    ``ModelBuild.torch_compile`` property (role from the build itself), the
+    config-load compile matrix, and the two trainer-side runtime guards
+    (FSDP2 in ``trainers/strategy.py``, grad-checkpointing in
+    ``trainers/activation_checkpointing.py``) — all replay-role questions
+    asked before a build exists. One definition so a scope added here cannot
+    leave a guard reading the raw ``enable`` key and vetoing a role it does
+    not bind.
+
+    ``block`` is whatever shape the caller's layer holds — a plain mapping
+    (``model_config``), a ``DictConfig`` (raw config), or the typed pydantic
+    ``TorchCompileSection`` (RootConfig) — read through ``cfg_get``.
+    """
+
+    from vrl.utils.config import cfg_get
+
+    if not cfg_get(block, "enable", False):
+        return None
+    scope = require_torch_compile_scope(cfg_get(block, "scope", None) or "all")
+    if scope not in ("all", role):
+        return None
+    return {"enable": True, "mode": cfg_get(block, "mode", None) or "default"}
 
 
 @dataclass
@@ -313,11 +368,21 @@ class ModelBuild:
 
     @property
     def torch_compile(self) -> dict[str, Any] | None:
-        """``model.torch_compile`` block only when ``enable`` is truthy."""
-        block = (self.model_config or {}).get(TORCH_COMPILE_MODEL_KEY) or {}
-        if not block.get("enable"):
-            return None
-        return {"enable": True, "mode": block.get("mode", "default")}
+        """``model.torch_compile`` block only when it covers this build's role.
+
+        ``scope`` narrows compilation to one side of the rollout/replay split:
+        under gradient checkpointing or FSDP2 the replay policy must stay
+        eager while the rollout policy can still compile (and mirrored for
+        sequence-parallel rollouts). The role is decided by the build itself —
+        ``rollout`` present or ``None`` — so every consumer (the rollout
+        ``CompilePass``, ``assemble_replay_bundle``, the loader's
+        quantization conflict) reads one role-correct answer instead of
+        re-deriving it.
+        """
+        return torch_compile_for_role(
+            (self.model_config or {}).get(TORCH_COMPILE_MODEL_KEY),
+            "rollout" if self.rollout is not None else "replay",
+        )
 
     @property
     def revision_kwargs(self) -> dict[str, str]:

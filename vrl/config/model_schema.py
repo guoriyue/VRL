@@ -82,6 +82,10 @@ class TorchCompileSection(_ClosedModelSection):
 
     enable: bool | None = None
     mode: str | None = None
+    # Which build roles compile: all | rollout | replay. Vocabulary owned by
+    # ``vrl.models.interfaces.runtime.require_torch_compile_scope`` (validated
+    # at config load by the compile matrix and per build by the property).
+    scope: str | None = None
 
 
 class ModelExecutorSection(_ClosedModelSection):

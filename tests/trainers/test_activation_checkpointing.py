@@ -97,3 +97,27 @@ def test_selective_gradient_checkpointing_reports_legacy_full_fallback(
 
     assert calls == 1
     assert "falling back to full checkpointing" in caplog.text
+
+
+def test_checkpointing_rejects_replay_compile_but_accepts_rollout_scope() -> None:
+    """The collision is with compiling the REPLAY policy; a rollout-scoped
+    compile leaves the checkpointed trainer eager and must pass."""
+
+    from vrl.trainers.activation_checkpointing import (
+        require_compile_checkpointing_compatible,
+    )
+
+    def _cfg(compile_block: dict) -> OmegaConf:
+        return OmegaConf.create(
+            {
+                "actor": {"gradient_checkpointing": "full"},
+                "model": {"torch_compile": compile_block},
+            },
+        )
+
+    with pytest.raises(ValueError, match="gradient_checkpointing"):
+        require_compile_checkpointing_compatible(_cfg({"enable": True}))
+
+    require_compile_checkpointing_compatible(
+        _cfg({"enable": True, "scope": "rollout"}),
+    )
