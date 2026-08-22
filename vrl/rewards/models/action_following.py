@@ -119,10 +119,18 @@ def score_action_following(
     """Per-clip agreement between IDM-recovered and commanded actions.
 
     ``match = exp(-mse_z)`` per pair in the checkpoint's normalized action
-    space, averaged over pairs — 1.0 is perfect recovery, and a clip whose
-    recovered motion is unrelated to the commands decays toward 0. Splits:
-    ``ee_pose_match`` (first 6 dims) and ``gripper_match`` (last dim) localize
-    WHAT disagrees; ``action_match``/``overall`` are the full-vector score.
+    space, aggregated with COMMAND-MAGNITUDE weights — 1.0 is perfect
+    recovery, and a clip whose recovered motion is unrelated to the commands
+    decays toward 0. The weighting is load-bearing, not cosmetic: DROID
+    teleop has long near-zero-velocity stretches where predicting "no
+    motion" is correct for any clip, static ones included; an unweighted
+    mean lets those idle pairs dilute exactly the commanded-motion pairs
+    where a static/blurred clip fails (measured 2026-08-22: unweighted,
+    static_frozen sat within 0.08 of exact). Weighting by ``||target_z||^2``
+    scores each pair in proportion to how much motion was actually
+    commanded. Splits: ``ee_pose_match`` (first 6 dims) and
+    ``gripper_match`` (last dim) localize WHAT disagrees;
+    ``action_match``/``overall`` are the full-vector score.
     """
 
     model: FramePairIDM = idm["model"]
@@ -139,7 +147,8 @@ def score_action_following(
 
     def match(dims: slice) -> float:
         err = (predicted_z[:, dims] - target_z[:, dims]).pow(2).mean(dim=-1)
-        return float(torch.exp(-err).mean().item())
+        weight = target_z[:, dims].pow(2).mean(dim=-1).clamp_min(1e-3)
+        return float(((torch.exp(-err) * weight).sum() / weight.sum()).item())
 
     overall = match(slice(None))
     return {

@@ -9,10 +9,27 @@
 复）——首次误用 `cartesian_position`（绝对位姿，相机外参逐集不同，不可恢复）时 eval_mse_z
 1.28 劣于零基线，train 0.05 = 纯记场景；②z 归一化需 std 下限（droid_100 gripper std 0.018
 放大 55×）；③38 clip（droid_100）数据量不足，360 clip eval_mse_z 0.746/R² 0.1-0.5 仍欠，
-2000-clip 数据集构建中。已落地资产：manifest 动作管线（v3 episode-metadata 路径）、
-`vrl/rewards/models/action_following.py`（FramePairIDM + reward worker）、
-`vrl/scripts/rewards/train_droid_idm.py`、`idm_discrimination_probe.py`、registry
-`idm_action_following`。原文（2026-06-29）：planned / 自训-gated，从 [[SPRINT_future_reward]] 拆出。范围：给 Cosmos Predict2 Video2World 的 GRPO 加一个**主信号** reward —— 用一个 inverse-dynamics model（IDM）从生成的相邻帧对回归出动作，reward = 与 DROID **指令动作**的匹配度。这是 [[SPRINT_future_reward]] §2 排序里唯一评 **STRONG** 的候选，但用户先走了零训练路线（dino+motion），故 IDM 的 reward/bridge/训练脚本曾建好后删除；本 sprint 把它作为独立目标重新立项，**设计与来源调查全部保留在此**，照此重建即可。硬前置 = **自训一个小 IDM checkpoint**（没有现成的能直接插，见 §5）。
+2000-clip 数据集构建中。**第二轮（1940 clip / 62k 帧对，width 96，eval_mse_z 0.641，全维 R² 正，gripper 0.90）+
+指令幅度加权评分**（`score_action_following`：以 ``||target_z||²`` 加权——DROID 遥操作
+大量近零速度空闲步会稀释静止候选真正失败的运动步；未加权时 static 距 exact 仅 0.08）：
+
+| 判据 | 结果 |
+|---|---|
+| 刷分候选全 ≤ 0.4 | **PASS**（static 0.293 / blur 0.300 / shuffle 0.246 / reverse 0.252 / wrong 0.252）|
+| static/blur 距 exact > 0.1（非读外观）| **PASS**（差 0.15–0.16）|
+| exact ≥ 0.7 | **FAIL**（0.451）|
+| exact − wrong_clip > 2σ | **FAIL**（+0.199 = 0.8σ，逐 clip 方差 0.24 太大）|
+
+短板收敛为 IDM 绝对精度：候选间方向与间隔已对，exact 本身不够高、不够稳。下一轮
+杠杆（未做）：①数据 2k → 10k+ clip（95k 可用，manifest 构建 ~8min/2k）；②输入 128px
+可能不辨夹爪，试 192/224；③per-clip 方差可用多 seed 候选平均压低。
+
+已落地资产：manifest 动作管线（v3 episode-metadata 路径 + `_select_action_columns`
+的速度语义契约）、`vrl/rewards/models/action_following.py`（FramePairIDM + 加权评分 +
+reward worker）、`vrl/scripts/rewards/train_droid_idm.py`（uint8 预分配 + 磁盘缓存）、
+`idm_discrimination_probe.py`、registry `idm_action_following`、
+`tests/rewards/models/test_action_following.py`（9）。
+原文（2026-06-29）：planned / 自训-gated，从 [[SPRINT_future_reward]] 拆出。范围：给 Cosmos Predict2 Video2World 的 GRPO 加一个**主信号** reward —— 用一个 inverse-dynamics model（IDM）从生成的相邻帧对回归出动作，reward = 与 DROID **指令动作**的匹配度。这是 [[SPRINT_future_reward]] §2 排序里唯一评 **STRONG** 的候选，但用户先走了零训练路线（dino+motion），故 IDM 的 reward/bridge/训练脚本曾建好后删除；本 sprint 把它作为独立目标重新立项，**设计与来源调查全部保留在此**，照此重建即可。硬前置 = **自训一个小 IDM checkpoint**（没有现成的能直接插，见 §5）。
 
 ## 0. 结论先行
 

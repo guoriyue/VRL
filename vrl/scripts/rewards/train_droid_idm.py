@@ -69,24 +69,47 @@ def load_pair_dataset(
     diagnostics readable.
     """
 
-    pairs: list[torch.Tensor] = []
-    actions: list[torch.Tensor] = []
     root = manifest.parent.parent.parent  # data root: manifests/ -> video_world/ -> external/
-    for line in manifest.read_text().splitlines():
-        row = json.loads(line)
-        raw = row.get("metadata", {}).get("target_actions")
-        if not raw:
-            continue
-        video_path = root / row["target_video"]
-        frames = read_video_frames(video_path)
-        clip_pairs = frame_pairs_from_clip(frames, image_size=image_size)
-        labels = torch.as_tensor(raw, dtype=torch.float32)
-        count = min(clip_pairs.shape[0], labels.shape[0])
-        pairs.append(clip_pairs[:count])
-        actions.append(labels[:count])
-    if not pairs:
+    rows = [json.loads(line) for line in manifest.read_text().splitlines()]
+    rows = [row for row in rows if row.get("metadata", {}).get("target_actions")]
+    if not rows:
         raise SystemExit(f"no rows with target_actions in {manifest}")
-    return torch.cat(pairs), torch.cat(actions)
+
+    # Preallocate uint8 pair storage: 60k pairs at 128px is ~6 GB as uint8 but
+    # ~24 GB as fp32, and torch.cat of per-clip float pieces doubles the peak —
+    # the fp32 version of this loader was OOM-killed at 1940 clips. Batches
+    # convert to float on the GPU.
+    cache = manifest.with_suffix(".pairs.pt")
+    if cache.exists():
+        payload = torch.load(cache, weights_only=True)
+        if int(payload.get("image_size", 0)) == image_size:
+            print(f"loaded cached pairs {tuple(payload['pairs'].shape)} from {cache}")
+            return payload["pairs"], payload["actions"]
+
+    counts = []
+    for row in rows:
+        labels = row["metadata"]["target_actions"]
+        frame_count = int(row["metadata"].get("source_target_frame_count") or (len(labels) + 1))
+        counts.append(min(frame_count - 1, len(labels)))
+    total = sum(counts)
+    pairs = torch.empty((total, 6, image_size, image_size), dtype=torch.uint8)
+    actions = torch.empty((total, len(rows[0]["metadata"]["target_actions"][0])))
+    cursor = 0
+    for done, (row, count) in enumerate(zip(rows, counts, strict=True)):
+        if done % 100 == 0:
+            print(f"decoding {done}/{len(rows)} clips ({cursor} pairs)", flush=True)
+        frames = read_video_frames(root / row["target_video"])
+        clip_pairs = frame_pairs_from_clip(frames, image_size=image_size)[:count]
+        n = clip_pairs.shape[0]
+        pairs[cursor : cursor + n] = clip_pairs.mul_(255).round_().to(torch.uint8)
+        actions[cursor : cursor + n] = torch.as_tensor(
+            row["metadata"]["target_actions"], dtype=torch.float32
+        )[:n]
+        cursor += n
+    pairs, actions = pairs[:cursor], actions[:cursor]
+    torch.save({"pairs": pairs, "actions": actions, "image_size": image_size}, cache)
+    print(f"cached {tuple(pairs.shape)} -> {cache}", flush=True)
+    return pairs, actions
 
 
 def _augment_pairs(x: torch.Tensor) -> torch.Tensor:
@@ -136,7 +159,8 @@ def main(argv: list[str] | None = None) -> None:
     print(f"FramePairIDM parameters: {total / 1e6:.2f}M")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    eval_x_dev, eval_z_dev = eval_x.to(device), eval_z.to(device)
+    eval_x_dev = eval_x.to(device).float().div_(255)
+    eval_z_dev = eval_z.to(device)
     best_eval = float("inf")
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -146,7 +170,7 @@ def main(argv: list[str] | None = None) -> None:
         losses = []
         for start in range(0, len(perm), args.batch_size):
             idx = perm[start : start + args.batch_size]
-            x = train_x[idx].to(device, non_blocking=True)
+            x = train_x[idx].to(device, non_blocking=True).float().div_(255)
             z = train_z[idx].to(device, non_blocking=True)
             if args.augment:
                 x = _augment_pairs(x)
