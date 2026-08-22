@@ -142,12 +142,22 @@ optimizer/EMA 扫描在真实规模摊薄（1.4B 全参 ~20ms vs replay ~1.4s �
 `R = CFG/(2·tf)`。生产 lane：CFG ∈ {1,2}（droid curve guidance 0.0！），
 tf ∈ [0.25, 1.0] → **R ∈ [0.5, 4.0]**。
 
-**break-even 需要 R > c/f**：取最乐观的 c=10%、f=2.7%（480p）→ R > 3.7；
-取 c=26% → R > 9.6。**tf=0.25 ∧ CFG=2 的角落 R=4.0 刚好越过乐观界** ——
-原先「无 lane 能到」在该角落不再成立；其余 lane（tf ≥ 0.5 → R ≤ 2.0）仍然
-远够不着。240p（f=7.7%）时 break-even R > 1.3。**该角落要不要动 P1.5，
-用 `backward_mfu_probe --lora-rank`（现已按 FlopCounterMode 精确计数）在
-目标 run 的真实 shape 上量 c 与 R 再定,不要用本节的合成估计。**
+**break-even 需要 R > c/f —— c 已实测（2026-08-22，SD3.5 2.2B 真模型，
+`backward_mfu_probe --lora-rank 32`，逐 shape 双臂对测）**：
+
+| shape | c = (full step − LoRA step)/LoRA step |
+|---|---|
+| 256² | 21.5–22.6% |
+| 512² | 19.5–22.5% |
+| 1024² | 18.0%（该点与另一 GPU 任务有过重叠，作参考值） |
+
+**c ≈ 18–23%，靠近合成点 26%，乐观的 10% 不存在。** f=2.7%（480p）时
+break-even R > 6.7–8.5 —— **tf=0.25 ∧ CFG=2 角落的 R=4.0 够不着，
+当日早间「刚好越过乐观界」的口子用实测关闭**。所有生产 lane 均低于
+break-even；240p（f=7.7%）时界为 R > 2.3–3.0，仍高于多数 lane。
+**P1.5 作为速度杠杆的死刑维持原判，且不再有待测的角落。**
+（附注：counted FLOPs 同时验证了 LoRA step ≈ 2.2–2.3×fwd、全参 ≈ 3×fwd —— 
+`fix/mfu-exact-flop-count` 的核心命题成立。）
 
 **结论：P1.5 作为速度杠杆对生产分辨率的视频家族已经死了**；保留它的唯一
 理由是模型质量/容量（cosmos 转全参属于这类），那是另一根轴。
