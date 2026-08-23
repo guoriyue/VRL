@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 import torch
 
+import vrl.generation.execution.worker as worker_module
 from vrl.generation.execution.batch_memory import (
     AffinePeakFit,
     build_batch_memory_shadow,
@@ -218,6 +219,10 @@ def fake_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
     budget arithmetic asserts exact byte values, which no real GPU can pin
     (mem_get_info is machine- and load-dependent)."""
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    # The probe tests' arithmetic assumes no safety margin and (by default) a
+    # disabled knee; individual tests re-pin the knee where it IS the theorem.
+    monkeypatch.setattr(worker_module, "_PROBE_MEMORY_MARGIN", 0.0)
+    monkeypatch.setattr(worker_module, "_PROBE_KNEE_THRESHOLD", -1.0)
     monkeypatch.setattr(torch.cuda, "mem_get_info", lambda: (24 * GB, 32 * GB))
     monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
     monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
@@ -233,8 +238,6 @@ def test_probe_fits_confirms_and_truncates_steps(fake_cuda: None) -> None:
     result = core.probe_batch_size(
         _request(),
         max_samples=10,
-        margin=0.0,
-        knee_threshold=-1.0,  # disable the knee: this test pins the fit path
     )
 
     assert result.samples_per_generation_batch == 10
@@ -250,15 +253,17 @@ def test_probe_fits_confirms_and_truncates_steps(fake_cuda: None) -> None:
 
 
 @_EXACT_BYTES_NEED_A_FIXED_CARD
-def test_probe_knee_refuses_growth_without_throughput_gain(fake_cuda: None) -> None:
+def test_probe_knee_refuses_growth_without_throughput_gain(
+    fake_cuda: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     core = _probe_core(_ProbeExecutor())
 
-    # knee_threshold=2.0 can never be met -> settle at the fit anchor n=4.
+    # A 2.0 throughput-gain bar can never be met -> settle at the fit anchor n=4.
+    monkeypatch.setattr(worker_module, "_PROBE_KNEE_THRESHOLD", 2.0)
     result = core.probe_batch_size(
         _request(),
         max_samples=10,
-        margin=0.0,
-        knee_threshold=2.0,
     )
 
     assert result.samples_per_generation_batch == 4
@@ -271,8 +276,6 @@ def test_probe_bisects_when_confirm_ooms(fake_cuda: None) -> None:
     result = core.probe_batch_size(
         _request(),
         max_samples=10,
-        margin=0.0,
-        knee_threshold=-1.0,
     )
 
     # candidate 10 OOMs; bisection between known-good 4 and 10 lands on 6.
@@ -289,8 +292,6 @@ def test_probe_budgets_against_whole_phase_gpu(fake_cuda: None) -> None:
     result = core.probe_batch_size(
         _request(),
         max_samples=10,
-        margin=0.0,
-        knee_threshold=-1.0,
     )
 
     assert result.samples_per_generation_batch == 10

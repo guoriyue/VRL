@@ -25,6 +25,8 @@ from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 
+_NOOP_CB = lambda *args, **kwargs: None  # noqa: E731
+
 
 @pytest.fixture(autouse=True)
 def _isolate_cuda_parking_probes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -96,7 +98,9 @@ class _Executor:
 
 
 class _PipelinedExecutor(_Executor):
-    def forward_plan_pipelined(self, request: Any, sample_rows: Any, engine_plan: Any) -> Any:
+    def forward_plan_pipelined(
+        self, request: Any, sample_rows: Any, engine_plan: Any, *, completion_callback: Any
+    ) -> Any:
         return request, sample_rows, engine_plan
 
 
@@ -301,10 +305,12 @@ def test_parked_worker_rejects_execution_until_wake() -> None:
 
     core.sleep()
     with pytest.raises(RuntimeError, match=r"parked.*refusing execute_request_pipelined"):
-        core.execute_request_pipelined(request, object(), [])
+        core.execute_request_pipelined(request, object(), [], completion_callback=_NOOP_CB)
 
     core.wake()
-    assert core.execute_request_pipelined(request, "plan", ["rows"]) == (
+    assert core.execute_request_pipelined(
+        request, "plan", ["rows"], completion_callback=_NOOP_CB
+    ) == (
         request,
         ["rows"],
         "plan",
@@ -561,6 +567,8 @@ def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
             _request: Any,
             _sample_rows: Any,
             _engine_plan: Any,
+            *,
+            completion_callback: Any,
         ) -> Any:
             raise RuntimeError("CUDA out of memory")
 
@@ -577,7 +585,7 @@ def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
         policy_version=1,
     )
 
-    result = core.execute_request_pipelined(request, object(), [])
+    result = core.execute_request_pipelined(request, object(), [], completion_callback=_NOOP_CB)
 
     assert isinstance(result, PipelinedRequestOutOfMemory)
     assert model.reset_calls == 1
@@ -746,7 +754,9 @@ def test_generation_execution_does_not_reenter_one_shot_cumem_scope(
     engine_plan = object()
     sample_rows: list[Any] = []
 
-    result = core.execute_request_pipelined(request, engine_plan, sample_rows)
+    result = core.execute_request_pipelined(
+        request, engine_plan, sample_rows, completion_callback=_NOOP_CB
+    )
 
     assert result == (request, sample_rows, engine_plan)
     assert fake.pool_tags == ["vrl:generation:rollout-0:weights"]

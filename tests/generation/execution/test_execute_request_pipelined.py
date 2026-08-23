@@ -18,6 +18,8 @@ from vrl.generation.execution.types import (
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 
+_NOOP_CB = lambda *args, **kwargs: None  # noqa: E731 — sites that do not assert on it
+
 
 class _Model:
     def __init__(self, available_versions: set[int]) -> None:
@@ -82,7 +84,9 @@ def test_slot_mode_with_live_slot_activates_and_runs() -> None:
     ex = _Executor(model)
     core = _core(executor=ex, uses_slots=True, policy_version=9)
 
-    out = GenerationWorkerCore.execute_request_pipelined(core, _request(7), "plan", "rows")
+    out = GenerationWorkerCore.execute_request_pipelined(
+        core, _request(7), "plan", "rows", completion_callback=_NOOP_CB
+    )
 
     assert out == "GATHERED_OUTPUT"
     assert model.activated == [7]  # served from the REQUEST's version slot, not 9
@@ -115,7 +119,9 @@ def test_slot_mode_with_evicted_slot_raises_stale_discard_and_does_not_run() -> 
     core = _core(executor=ex, uses_slots=True, policy_version=9)
 
     with pytest.raises(StaleSlotDiscard):
-        GenerationWorkerCore.execute_request_pipelined(core, _request(7), "plan", "rows")
+        GenerationWorkerCore.execute_request_pipelined(
+            core, _request(7), "plan", "rows", completion_callback=_NOOP_CB
+        )
     assert ex.calls == []  # never ran => never trained off-policy
 
 
@@ -124,7 +130,9 @@ def test_non_slot_version_mismatch_raises_and_does_not_run() -> None:
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
     with pytest.raises(RuntimeError, match="policy_version mismatch"):
-        GenerationWorkerCore.execute_request_pipelined(core, _request(6), "plan", "rows")
+        GenerationWorkerCore.execute_request_pipelined(
+            core, _request(6), "plan", "rows", completion_callback=_NOOP_CB
+        )
     assert ex.calls == []
 
 
@@ -132,7 +140,9 @@ def test_non_slot_matching_version_runs() -> None:
     ex = _Executor(_Model(set()))
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
-    out = GenerationWorkerCore.execute_request_pipelined(core, _request(5), "plan", "rows")
+    out = GenerationWorkerCore.execute_request_pipelined(
+        core, _request(5), "plan", "rows", completion_callback=_NOOP_CB
+    )
     assert out == "GATHERED_OUTPUT"
     assert len(ex.calls) == 1
 
@@ -141,7 +151,9 @@ def test_no_expected_version_runs_unconditionally() -> None:
     ex = _Executor(_Model(set()))
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
-    out = GenerationWorkerCore.execute_request_pipelined(core, _request(None), "plan", "rows")
+    out = GenerationWorkerCore.execute_request_pipelined(
+        core, _request(None), "plan", "rows", completion_callback=_NOOP_CB
+    )
     assert out == "GATHERED_OUTPUT"
 
 
@@ -162,6 +174,7 @@ def test_cuda_oom_clears_worker_state_and_returns_typed_retry(monkeypatch) -> No
         _request(5),
         "plan",
         "rows",
+        completion_callback=_NOOP_CB,
     )
 
     assert result == PipelinedRequestOutOfMemory(
@@ -187,6 +200,7 @@ def test_non_oom_pipeline_error_propagates_without_cleanup(monkeypatch) -> None:
             _request(5),
             "plan",
             "rows",
+            completion_callback=_NOOP_CB,
         )
 
     assert cleanup_calls == []

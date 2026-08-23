@@ -14,11 +14,21 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.orchestration.prompt_collection import (
     PromptCollectionCleanupError,
-    collect_prompt_groups,
+)
+from vrl.rollouts.orchestration.prompt_collection import (
+    collect_prompt_groups as _collect_prompt_groups,
 )
 from vrl.rollouts.orchestration.types import RewardCollectionMode
+from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.data import PromptExample
 from vrl.trajectory import build_ar_discrete_trajectory
+
+
+def collect_prompt_groups(*, stats: RolloutStats | None = None, **kwargs):
+    """Test shim: production requires the accumulator (both real callers pass
+    one); tests that do not assert on stats hand in a throwaway."""
+
+    return _collect_prompt_groups(stats=stats if stats is not None else RolloutStats(), **kwargs)
 
 
 def _batch(prompts: list[str], group_size: int) -> RolloutBatch:

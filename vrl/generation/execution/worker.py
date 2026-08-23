@@ -37,6 +37,11 @@ from vrl.utils.cuda_memory import is_cuda_out_of_memory, release_cuda_memory
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
 
+# Batch-size probe tuning (SPRINT_chunk_size_probe). Fixed policy, not knobs:
+# production never varied them; tests steer via monkeypatch.
+_PROBE_MEMORY_MARGIN = 0.05
+_PROBE_KNEE_THRESHOLD = 0.05
+
 logger = init_logger(__name__)
 
 # The batch-size probe truncates each trial to a fixed handful of denoise steps:
@@ -313,8 +318,6 @@ class GenerationWorkerCore:
         request: Any,
         *,
         max_samples: int,
-        margin: float = 0.05,
-        knee_threshold: float = 0.05,
     ) -> BatchSizeProbeResult:
         """Startup batch-size probe (SPRINT_chunk_size_probe): pick the largest
         safe ``samples_per_generation_batch`` for this worker by running truncated real
@@ -438,7 +441,9 @@ class GenerationWorkerCore:
                 assert high.non_torch_bytes is not None
                 assert high.peak_bytes is not None
                 assert low.peak_bytes is not None
-                usable_bytes = int(budget_bytes * (1.0 - margin) - high.non_torch_bytes)
+                usable_bytes = int(
+                    budget_bytes * (1.0 - _PROBE_MEMORY_MARGIN) - high.non_torch_bytes
+                )
                 fit = AffinePeakFit.from_trials(
                     1,
                     low.peak_bytes,
@@ -464,7 +469,7 @@ class GenerationWorkerCore:
                         assert confirm.per_sample_s is not None
                         assert high.per_sample_s is not None
                         improvement = 1.0 - (confirm.per_sample_s / high.per_sample_s)
-                        if improvement < knee_threshold:
+                        if improvement < _PROBE_KNEE_THRESHOLD:
                             final = n_high
         return BatchSizeProbeResult(
             samples_per_generation_batch=int(final),
@@ -497,7 +502,7 @@ class GenerationWorkerCore:
         engine_plan: EnginePlan,
         sample_rows: Sequence[GenerationSampleRow],
         *,
-        completion_callback: BatchCompletionCallback | None = None,
+        completion_callback: BatchCompletionCallback,
     ) -> GenerationOutput | PipelinedRequestOutOfMemory:
         """Run ALL of a request's batches through the executor's software pipeline
         (``forward_plan_pipelined``) on THIS worker, so batch N+1's denoise overlaps
@@ -547,8 +552,6 @@ class GenerationWorkerCore:
                 "for per-request pipelined execution",
             )
         try:
-            if completion_callback is None:
-                return forward_plan_pipelined(request, sample_rows, engine_plan)
             return forward_plan_pipelined(
                 request,
                 sample_rows,

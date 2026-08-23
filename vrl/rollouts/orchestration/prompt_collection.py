@@ -44,7 +44,7 @@ async def collect_prompt_groups(
     group_size: int,
     runtime_debug: bool,
     policy_version: int | None,
-    stats: RolloutStats | None = None,
+    stats: RolloutStats,
     reward_mode: RewardCollectionMode | None = None,
 ) -> list[RolloutBatch]:
     """Collect every trainer prompt's sample group and return per-group batches.
@@ -228,49 +228,47 @@ async def collect_prompt_groups(
             ) from root_cause
         raise
 
-    if stats is not None:
-        # Per-call phases live on the unscored groups (collector writes the
-        # call-level score/build timings and reward inference timings on the
-        # first group only).
-        for unscored, _ in unscored_groups:
-            stats.add_phases(getattr(unscored, "phases", {}))
-            reward_timing_ms = getattr(unscored, "reward_timing_ms", {}) or {}
-            if reward_timing_ms:
-                standard_keys = {"latency_ms", "queue_wait_ms", "inference_ms"}
-                stats.fold_reward_timing(
-                    latency_ms=reward_timing_ms.get("latency_ms"),
-                    queue_wait_ms=reward_timing_ms.get("queue_wait_ms"),
-                    inference_ms=reward_timing_ms.get("inference_ms"),
-                    extra_ms={
-                        str(name): float(value)
-                        for name, value in reward_timing_ms.items()
-                        if name not in standard_keys and str(name).endswith("_ms")
-                    },
-                )
+    # Per-call phases live on the unscored groups (collector writes the
+    # call-level score/build timings and reward inference timings on the
+    # first group only).
+    for unscored, _ in unscored_groups:
+        stats.add_phases(getattr(unscored, "phases", {}))
+        reward_timing_ms = getattr(unscored, "reward_timing_ms", {}) or {}
+        if reward_timing_ms:
+            standard_keys = {"latency_ms", "queue_wait_ms", "inference_ms"}
+            stats.fold_reward_timing(
+                latency_ms=reward_timing_ms.get("latency_ms"),
+                queue_wait_ms=reward_timing_ms.get("queue_wait_ms"),
+                inference_ms=reward_timing_ms.get("inference_ms"),
+                extra_ms={
+                    str(name): float(value)
+                    for name, value in reward_timing_ms.items()
+                    if name not in standard_keys and str(name).endswith("_ms")
+                },
+            )
 
     all_batches: list[RolloutBatch] = []
     for batch, (_, remap) in zip(batches, unscored_groups, strict=True):
         global_prompt_indices = remap if isinstance(remap, list) else [remap]
         remap_group_ids_(batch, global_prompt_indices)
         all_batches.extend(split_batch_by_group(batch))
-    if stats is not None:
-        collection_wall_s = time.perf_counter() - collection_started
-        generation_wall_s = sum(end - start for start, end in generation_intervals)
-        reward_wall_s = sum(end - start for start, end in reward_intervals)
-        overlap_s = _interval_overlap_seconds(generation_intervals, reward_intervals)
-        stats.add_phases(
-            {
-                "collect.wall": collection_wall_s,
-                "collect.generation_wall": generation_wall_s,
-                "collect.reward_wall": reward_wall_s,
-                "collect.generation_reward_overlap": overlap_s,
-            },
-        )
-        stats.add_counter("collect.group_count", len(all_batches))
-        stats.add_counter(
-            "collect.sample_count",
-            sum(int(batch.rewards.shape[0]) for batch in all_batches),
-        )
+    collection_wall_s = time.perf_counter() - collection_started
+    generation_wall_s = sum(end - start for start, end in generation_intervals)
+    reward_wall_s = sum(end - start for start, end in reward_intervals)
+    overlap_s = _interval_overlap_seconds(generation_intervals, reward_intervals)
+    stats.add_phases(
+        {
+            "collect.wall": collection_wall_s,
+            "collect.generation_wall": generation_wall_s,
+            "collect.reward_wall": reward_wall_s,
+            "collect.generation_reward_overlap": overlap_s,
+        },
+    )
+    stats.add_counter("collect.group_count", len(all_batches))
+    stats.add_counter(
+        "collect.sample_count",
+        sum(int(batch.rewards.shape[0]) for batch in all_batches),
+    )
     return all_batches
 
 
