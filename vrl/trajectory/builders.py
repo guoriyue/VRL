@@ -17,6 +17,7 @@ from vrl.trajectory.types import (
 )
 from vrl.trajectory.validation import (
     TrajectoryValidator,
+    require_shape_prefix,
     tensor_ref,
 )
 from vrl.trajectory.views import RewardView
@@ -166,12 +167,12 @@ def build_chunk_autoregressive_denoise_trajectory(
         ("mask", mask),
         ("timesteps", timesteps),
     ):
-        _require_shape_prefix(
+        require_shape_prefix(
             name,
             value,
             (batch_size, chunk_count, transition_count),
         )
-    _require_shape_prefix(
+    require_shape_prefix(
         "finalized_chunk_latents",
         finalized_chunk_latents,
         (batch_size, chunk_count),
@@ -179,7 +180,7 @@ def build_chunk_autoregressive_denoise_trajectory(
     if kl is None:
         kl = torch.zeros_like(old_log_prob)
     else:
-        _require_shape_prefix(
+        require_shape_prefix(
             "kl",
             kl,
             (batch_size, chunk_count, transition_count),
@@ -716,15 +717,6 @@ def _chunk_denoise_shape(value: Any, batch_size: int) -> tuple[int, int]:
             "old_log_prob temporal_chunk and denoise_transition dimensions must be >= 1",
         )
     return chunk_count, transition_count
-
-
-def _require_shape_prefix(name: str, value: Any, expected: tuple[int, ...]) -> None:
-    shape = getattr(value, "shape", None)
-    if shape is None or len(shape) < len(expected):
-        raise ValueError(f"{name} must have leading dimensions {expected}")
-    actual = tuple(int(length) for length in shape[: len(expected)])
-    if actual != expected:
-        raise ValueError(f"{name} has leading dimensions {actual}, expected {expected}")
 
 
 def _chunk_replay_axes(

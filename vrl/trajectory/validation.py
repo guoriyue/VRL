@@ -298,8 +298,20 @@ def tensor_ref(segment: str, tensor: str) -> str:
     return f"{segment}.{tensor}"
 
 
+def require_shape_prefix(name: str, value: Any, expected: tuple[int, ...]) -> None:
+    """Require ``value.shape`` to start with the ``expected`` leading dimensions."""
+
+    shape = getattr(value, "shape", None)
+    if shape is None or len(shape) < len(expected):
+        raise ValueError(f"{name} must have leading dimensions {expected}")
+    actual = tuple(int(length) for length in shape[: len(expected)])
+    if actual != expected:
+        raise ValueError(f"{name} has leading dimensions {actual}, expected {expected}")
+
+
 __all__ = [
     "TrajectoryValidationError",
     "TrajectoryValidator",
+    "require_shape_prefix",
     "tensor_ref",
 ]
