@@ -1,6 +1,7 @@
 # SPRINT：Full-repo bloat audit（全库肿胀与死代码审计）
 
-状态：**planned（2026-08-22）**。审计本身已完成（7 条并行审计道覆盖全部 vrl/ + tests/ +
+状态：**in progress（2026-08-22）**：批次 0/1/4a 与批次 2/3 的主体已落地（执行日志见 §8.1），
+余项及缓做原因逐条记录在 §8.2。审计本身已完成（7 条并行审计道覆盖全部 vrl/ + tests/ +
 configs/，每条 finding 附 path:line 与 grep 证据，函数体已读后才下判定；6 条最高风险判定
 由主线复核确认）。本文档是结论与执行清单；执行为后续批次。
 
@@ -191,6 +192,56 @@ collector 内层计时 vs prompt_collection 恒开计时）归入 2-B 一并处�
 - 每批验收：`pytest`（受影响包全量）、`ruff check/format --check`（仅触碰文件）、
   config resolve 冒烟、`git diff --check`；删除项按"同源同生命周期"扩展清理并 grep import
   graph 确认无长期资产引用。
+
+## 8.1 执行日志（2026-08-22，同日完成）
+
+- **批次 0（P0）** `a6a21420`：B1 kill_engines、B3 pickapic 数据集标识下传、B4 cosmos
+  pretrained_kwargs、B5 extras 全量计数。B2 上游已自修（`3bbd0097` 带回归测试），划掉。
+  A1 静态裁决：**降级为"连贯的 opt-out"**——共享 helper docstring 点名 wan 并附实测证据，
+  失败模式是响的（strict dtype check），其他 family 上 FSDP+LoRA 前不预防性泛化。
+- **批次 1** `a6a21420`：全部幽灵/门面/死旋钮项。判定修正三条：`reward/phymotion.yaml` 与
+  causvid `wan_1_3b_ar.yaml` 不删（各自是对应 reward/family 的唯一布线，删除等于变相杀
+  family——那是独立决定）；`kling_overlap_gate.yaml` 不删（info sprint 明文"保留为对照"），
+  改修悬空指针 + 进 package-data；`EMAModuleWrapper.to()` 复活——`load_state_dict` 经
+  `self.to` 调它（审计 grep 模式漏了内部接收者）；reward client `timeout_s` 保留（三个真实
+  服务集成测试的合法实例级 seam）。fp8 facade 测试文件中三个**真实校验**测试保留，只删两个
+  mock 自证。附带：上游红着的架构测试顺手修复（idm_action_following 模块名对齐注册键）。
+- **批次 4a** `b73ee28c`：conflicts()/OptimizationReport 链、kling 锁集收缩（保留
+  model_factory + import_path——后者在 geneval 通用 loader 里有真读者，判定精化）、
+  precision legacy 循环、三个无牙墓碑测试。
+- **cosmos 接缝** `29a1908c`：两个常量 round-trip、runner 继承基类 + finalize/getattr 收敛、
+  安检 stub 去重、p2.5 set_num_steps 删除（base docstring 明示为 pipeline-less replay 设计）、
+  anima 双重 set_timesteps。判定精化：anima 的 set_num_steps override **必要**（其 base 是
+  raise NotImplementedError）。
+- **trainers 孪生** `db03886f`：`_run_replay_pass` 单体（只抽内层循环；两侧编排尾部差异是
+  实质的，强行合并会造神助手）、`all_reduce_sufficient_stats` 单归约（推导留在各调用者）、
+  标量集合原语参数化、`_ProcessGroupStrategy` mixin。
+- **批次 2 安全半** `519b5981`：probe 旋钮 → 模块常量 + monkeypatch、completion_callback
+  必填（替身补全契约面）、collect_prompt_groups stats 必填。
+- **rewards 收缩** `0b3896c0`：9 个 DiskArtifact 类 → ClassVar 声明块（零行为变化：
+  request_prefix 保留各自历史拼写）；geneval 走共享 import_from_path。
+- **测试去重** `7be85123`：Ray 测试 fakes 三件套 → `_helpers.py`、resources 两对 + 三重死
+  断言、drift-guard 组合冗余测试、strategy 自证测试、schema 三个手搭孪生。判定修正：
+  drift-guard 的单元测试保留（单元 vs 集成非重复）、auto-placement 对保留（默认态 vs 显式
+  态是两个定理）。
+
+## 8.2 余项与缓做原因
+
+| 项 | 缓做原因 |
+|---|---|
+| generation executor/weight_sync 的 remote-vs-local 双路径（2-A 核心） | 需要把 test_oom_split/test_engine 等替身迁移到 conftest 的包级真 Ray 集群上——独立的测试架构工程,不宜混入机械批次 |
+| `_sampling_fields_for_cfg` 三分支收敛 | 10+ 测试文件的 raw-mapping fixture 需逐个改为真 SamplingSection |
+| rewards Qwen judge 基类合并、tensor→PIL 统一路由 | 触碰打分行为面(两处已知语义漂移正是证据),必须先建 reward 数值回归门 |
+| `retain_artifacts`、reward client `_execute`/`_revalidate` 脚手架 | 低值;前者三个测试消费者需改断言路径 |
+| `robotics_discrimination.py` 迁往 scripts/eval | 机械但独立 |
+| models: sana `from_build`→super、wan `WanI2VReplayModel` MRO、cosmos3 `set_num_steps` | 中风险继承/MRO 变化,各需 tiny-model 回归确认(cosmos3 还需查 dynamic shifting) |
+| reward inference 映射 4→1 构造点 | `resources.py` 在 typed build 之前运行,需先确认调用序 |
+| `_OFFLINE_DPO_*_FIELDS` 派生/交叉校验、`lora.init` 双别名、precision `_select`→`cfg_path` | 用户可见 config 面(别名删除是 key 迁移)、`None`-vs-缺失语义差需逐调用点核对 |
+| 三份 lazy-export 表 → 共享工厂 | 公共 facade 行为须逐字节保持,含 torch-free import 契约测试 |
+| fp4/fp8 基类定理测试参数化、4 份复制的 reward function 测试文件 | 机械但量大;并入下一轮测试批次 |
+| scripts 长尾死 CLI flag(wan_robotics/videophy 等)、`--vbench-*` 决定、`init-dirs` | 各挂着 KEEP 脚本,逐个确认;vbench 需先确认 extra 是否装过 |
+| 制度补丁:dead-flag lint 进 `make verify` | 新工具;沉淀本次审计的"argparse flag × 全语料 grep"脚本 |
+| `test_wan_dpo_config.py:28-131` 迁往 tests/config | 纯搬移 |
 
 ## 9. References
 
