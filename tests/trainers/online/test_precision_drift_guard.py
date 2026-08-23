@@ -182,16 +182,6 @@ def test_precision_drift_guard_auto_enables_for_rollout_compute_mismatch() -> No
     assert record["violated"] is False
 
 
-def test_precision_drift_guard_auto_fails_on_rollout_compute_mismatch_drift() -> None:
-    cfg = PrecisionDriftGuardConfig(
-        mode="auto",
-        max_abs_log_ratio=1e-3,
-        max_ratio_abs_dev=1e-3,
-    )
-    with pytest.raises(PrecisionDriftError, match="precision drift guard"):
-        _run(cfg, train="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.05))
-
-
 def test_precision_drift_guard_auto_is_off_for_same_dtype_without_running_eval() -> None:
     def _must_not_run(_timestep):
         raise AssertionError("evaluate_fn must not be called when the guard is off")

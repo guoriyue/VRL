@@ -13,12 +13,12 @@ import torch
 import vrl.generation.ray.weight_sync as weight_sync_module
 import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
+from tests.generation.ray._helpers import engine as _engine
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
-from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.utils.lifecycle import RuntimePhase
@@ -47,13 +47,6 @@ def _runtime(
 ) -> RayGenerationRuntime:
     return RayGenerationRuntime(
         session=RayGenerationSession(executor, weight_sync, []),
-    )
-
-
-def _engine(worker_id: str, actor: Any) -> RayGenerationEngine:
-    return RayGenerationEngine(
-        worker_id,
-        [RayActorHandle(worker_id=worker_id, actor=actor)],
     )
 
 

@@ -665,44 +665,6 @@ def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
     assert resolved.lifecycle.release_rollout_before_reward is False
 
 
-def test_reward_shared_pool_derives_release_lifecycle_when_unset() -> None:
-    """Checks unset release flags derive to true for a shared reward pool."""
-    resolved = resolve_distributed_resources(
-        _cfg(
-            {
-                "visible_devices": [0, 1],
-                "trainer": {"devices": [0]},
-                "rollout": {"devices": [1]},
-                "reward": {"device": "gpu", "gpu_pool": "rollout"},
-            },
-        ),
-    )
-
-    assert set(resolved.reward_devices) & set(resolved.rollout_devices)
-    assert resolved.lifecycle.rollout_mode == "on_demand"
-    assert resolved.lifecycle.release_rollout_before_reward is True
-    assert resolved.lifecycle.release_reward_after_score is True
-
-
-def test_dedicated_reward_gpu_derives_resident_lifecycle_when_unset() -> None:
-    """Checks unset release flags derive to false when reward has its own GPU."""
-    resolved = resolve_distributed_resources(
-        _cfg(
-            {
-                "visible_devices": [0, 1, 2],
-                "trainer": {"devices": [0]},
-                "rollout": {"devices": [1]},
-                "reward": {"device": "gpu", "devices": [2]},
-            },
-        ),
-    )
-
-    assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
-    assert resolved.lifecycle.rollout_mode == "resident"
-    assert resolved.lifecycle.release_rollout_before_reward is False
-    assert resolved.lifecycle.release_reward_after_score is False
-
-
 def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
     """Fully disjoint trainer/rollout/reward GPUs -> every role resident, no handoff."""
     resolved = resolve_distributed_resources(
@@ -716,15 +678,12 @@ def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
         ),
     )
 
+    assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
     plan = resolved.lifecycle
     assert plan.rollout_mode == "resident"
-    assert plan.release_reward_after_score is False
     assert plan.release_rollout_before_train is False
     assert plan.release_rollout_before_reward is False
     assert plan.release_reward_after_score is False
-    # Flat flags mirror the plan (one derivation, no divergence).
-    assert resolved.lifecycle.rollout_mode == "resident"
-    assert resolved.lifecycle.release_reward_after_score is False
 
 
 def test_lifecycle_plan_on_demand_for_shared_reward() -> None:
@@ -740,6 +699,7 @@ def test_lifecycle_plan_on_demand_for_shared_reward() -> None:
         ),
     )
 
+    assert set(resolved.reward_devices) & set(resolved.rollout_devices)
     plan = resolved.lifecycle
     assert plan.rollout_mode == "on_demand"
     assert plan.release_rollout_before_train is False

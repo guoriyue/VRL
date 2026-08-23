@@ -8,26 +8,12 @@ from typing import Any
 
 import pytest
 
-from vrl.generation.execution.types import (
-    WorkerMemoryParkingSnapshot,
-)
+from tests.generation.ray._helpers import ResolvedRef as _ResolvedRef
+from tests.generation.ray._helpers import parking_snapshot as _parking_snapshot
 from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.ray.actor_group import RayActorHandle
-
-
-class _ResolvedRef:
-    def __init__(self, value: Any) -> None:
-        self.value = value
-
-    def __await__(self):
-        async def resolve() -> Any:
-            if isinstance(self.value, BaseException):
-                raise self.value
-            return self.value
-
-        return resolve().__await__()
 
 
 class _RemoteCall:
@@ -83,16 +69,6 @@ class _Ray:
         if actor is self.failed_actor:
             raise RuntimeError("kill failed")
         self.killed.append(actor)
-
-
-def _parking_snapshot(worker_id: str) -> WorkerMemoryParkingSnapshot:
-    return WorkerMemoryParkingSnapshot(
-        worker_id=worker_id,
-        backend="cpu_offload",
-        baseline_gpu_used_bytes=0,
-        loaded_gpu_used_bytes=1024,
-        residual_gpu_used_bytes=0,
-    )
 
 
 def _session(

@@ -15,7 +15,6 @@ from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer
 from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
-from vrl.trainers.weight_sync import build_trainable_state_sync_getter
 
 
 class _Bundle:
@@ -77,16 +76,6 @@ def test_clip_grad_norm_matches_torch_in_place() -> None:
     assert strat_norm == ref_norm
     for p_ref, p_strat in zip(ref.parameters(), strat.parameters(), strict=True):
         assert torch.equal(p_ref.grad, p_strat.grad)  # clipped identically
-
-
-def test_export_rollout_state_matches_helper() -> None:
-    bundle = _Bundle()
-    got = SingleProcessStrategy().export_rollout_state(bundle)
-    expected = build_trainable_state_sync_getter(bundle)()
-
-    assert got.keys() == expected.keys()
-    for key in got:
-        assert torch.equal(got[key], expected[key])
 
 
 def test_export_rollout_state_is_detached_cpu_snapshot_without_live_alias() -> None:

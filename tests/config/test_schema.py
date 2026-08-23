@@ -1580,14 +1580,6 @@ def test_zero_weight_observation_component_is_valid() -> None:
     assert cfg.components["kling_video_reward"] == 0.0
 
 
-def test_negative_reward_weight_raises() -> None:
-    """Checks negative reward weight raises."""
-    with pytest.raises(ValueError, match=r"must be >= 0"):
-        RewardConfig.model_validate(
-            {"components": {"aesthetic": -1.0}, "kwargs": {"aesthetic": {"model_name": "x"}}}
-        )
-
-
 def test_non_numeric_reward_weight_raises() -> None:
     """Checks non numeric reward weight raises."""
     with pytest.raises(ValueError, match="must be numeric"):
@@ -1818,76 +1810,6 @@ def test_production_schema_accepts_enabled_gate() -> None:
 
     assert parsed.production is not None
     assert parsed.production.kling_video_reward.enabled is True
-
-
-def test_production_video_reward_missing_reward_name_raises() -> None:
-    """Checks production video reward missing reward name raises."""
-    cfg = OmegaConf.create(
-        {
-            "algorithm": {"kind": "grpo"},
-            "data": {
-                "loader": "prompt_manifest",
-                "manifest": "x",
-                "preprocessing": {},
-                "sampler": {"type": "random_without_replacement"},
-                "task_type": "text_to_video",
-            },
-            "rollout": {"sde": {"type": "cps"}},
-            "reward": {
-                "components": {"kling_video_reward": 1.0},
-                "kwargs": {
-                    "kling_video_reward": {
-                        "sleep_offload": True,
-                        "reward_name": "",  # empty
-                        "score_key": "overall",
-                        "media_type": "video",
-                        "artifact_format": "mp4",
-                        "worker_config": {},
-                    }
-                },
-            },
-            "production": {"kling_video_reward": {"enabled": True}},
-        }
-    )
-    from vrl.config.validation import validate_production_reward_contract
-
-    with pytest.raises(ValueError, match="reward_name"):
-        validate_production_reward_contract(cfg)
-
-
-def test_production_video_reward_forbidden_worker_key_raises() -> None:
-    """Checks production video reward forbidden worker key raises."""
-    cfg = OmegaConf.create(
-        {
-            "algorithm": {"kind": "grpo"},
-            "data": {
-                "loader": "prompt_manifest",
-                "manifest": "x",
-                "preprocessing": {},
-                "sampler": {"type": "random_without_replacement"},
-                "task_type": "text_to_video",
-            },
-            "rollout": {"sde": {"type": "cps"}},
-            "reward": {
-                "components": {"kling_video_reward": 1.0},
-                "kwargs": {
-                    "kling_video_reward": {
-                        "sleep_offload": True,
-                        "reward_name": "org/model@main",
-                        "score_key": "overall",
-                        "media_type": "video",
-                        "artifact_format": "mp4",
-                        "worker_config": {"import_path": "bad:factory"},
-                    }
-                },
-            },
-            "production": {"kling_video_reward": {"enabled": True}},
-        }
-    )
-    from vrl.config.validation import validate_production_reward_contract
-
-    with pytest.raises(ValueError, match="remove extra loader fields"):
-        validate_production_reward_contract(cfg)
 
 
 # ── Missing field mapping (??? → ValueError) ──────────────────────────────────

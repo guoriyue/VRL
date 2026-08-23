@@ -10,16 +10,14 @@ from typing import Any, ClassVar
 
 import pytest
 
-from vrl.generation.execution.types import (
-    WorkerMemoryParkingSnapshot,
-)
-from vrl.generation.ray.engine import RayGenerationEngine
+from tests.generation.ray._helpers import ResolvedRef as _ResolvedRef
+from tests.generation.ray._helpers import engine as _engine
+from tests.generation.ray._helpers import parking_snapshot as _parking_snapshot
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationRequest
-from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorCallError, RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.runtime_errors import failure_identity_cause
@@ -128,13 +126,6 @@ class _ReleaseActor:
         return object()
 
 
-def _engine(worker_id, actor):
-    return RayGenerationEngine(
-        worker_id,
-        [RayActorHandle(worker_id=worker_id, actor=actor)],
-    )
-
-
 def _timeout_session(
     error: RayOperationTimeout,
 ) -> tuple[RayGenerationSession, _ReleaseActor]:
@@ -193,34 +184,6 @@ def _attach_active_session(
     runtime._installed_policy_version = policy_version
     runtime.current_policy_version = policy_version
     session.current_policy_version = policy_version
-
-
-def _parking_snapshot(
-    worker_id: str = "rollout-0",
-    *,
-    residual_bytes: int = 0,
-) -> WorkerMemoryParkingSnapshot:
-    return WorkerMemoryParkingSnapshot(
-        worker_id=worker_id,
-        backend="cpu_offload",
-        baseline_gpu_used_bytes=0,
-        loaded_gpu_used_bytes=1024,
-        residual_gpu_used_bytes=residual_bytes,
-        residual_bytes_limit=0,
-    )
-
-
-class _ResolvedRef:
-    def __init__(self, value: Any) -> None:
-        self.value = value
-
-    def __await__(self):
-        async def resolve() -> Any:
-            if isinstance(self.value, BaseException):
-                raise self.value
-            return self.value
-
-        return resolve().__await__()
 
 
 class _NeverRef:

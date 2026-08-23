@@ -10,7 +10,7 @@ from typing import Any, ClassVar
 import pytest
 
 import vrl.generation.ray.session as session_module
-from vrl.generation.ray.engine import RayGenerationEngine
+from tests.generation.ray._helpers import engine as _engine
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.pipeline_protocol import PipelinedProgressError
 from vrl.generation.ray.runtime import RayGenerationRuntime
@@ -24,13 +24,6 @@ from vrl.utils.lifecycle import (
     RuntimeLifecycleError,
     RuntimePhase,
 )
-
-
-def _engine(worker_id, actor):
-    return RayGenerationEngine(
-        worker_id,
-        [RayActorHandle(worker_id=worker_id, actor=actor)],
-    )
 
 
 def _runtime(
