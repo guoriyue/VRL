@@ -42,13 +42,13 @@ def get_reward(name: str) -> type[RewardFunction]:
 
 
 def _register_builtins() -> None:
-    from vrl.rewards.functions.action_following import ActionFollowingReward
     from vrl.rewards.functions.aesthetic import AestheticReward
     from vrl.rewards.functions.animereward_quality import AnimeRewardQualityReward
     from vrl.rewards.functions.codex_image_qa import CodexImageQAReward
     from vrl.rewards.functions.cosmos3_reasoner import Cosmos3ReasonerReward
     from vrl.rewards.functions.geneval import GenEvalReward
     from vrl.rewards.functions.hpsv3 import HPSv3Reward
+    from vrl.rewards.functions.idm_action_following import ActionFollowingReward
     from vrl.rewards.functions.image_sharpness import ImageSharpnessReward
     from vrl.rewards.functions.kling_video_reward import KlingVideoReward
     from vrl.rewards.functions.motion_dynamics import MotionDynamicsReward

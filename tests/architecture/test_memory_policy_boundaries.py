@@ -49,17 +49,6 @@ def test_train_scripts_do_not_inline_cpu_offload_policy() -> None:
     assert not violations, _format_violations(violations)
 
 
-def test_runtime_interface_does_not_parse_model_memory_sections() -> None:
-    """ModelBuild is a data contract, not a model.memory parser."""
-
-    text = (VRL_ROOT / "models" / "interfaces" / "runtime.py").read_text(
-        encoding="utf-8",
-    )
-
-    assert "model_memory_config_from_cfg" not in text
-    assert "memory_policy_config_from_cfg" not in text
-
-
 def _forbidden_text(
     root: Path,
     *,

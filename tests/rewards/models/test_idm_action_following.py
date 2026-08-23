@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.rewards.models.action_following import (
+from vrl.rewards.models.idm_action_following import (
     FramePairIDM,
     SpatialSoftmax,
     frame_pairs_from_clip,
@@ -75,7 +75,7 @@ def test_score_uses_min_of_pairs_and_targets() -> None:
 
 
 def test_checkpoint_roundtrip(tmp_path) -> None:
-    from vrl.rewards.models.action_following import load_idm_checkpoint
+    from vrl.rewards.models.idm_action_following import load_idm_checkpoint
 
     model = FramePairIDM(action_dim=7, width=16)
     path = tmp_path / "idm.pt"
@@ -99,7 +99,7 @@ def test_checkpoint_roundtrip(tmp_path) -> None:
 
 
 def test_artifact_worker_requires_target_actions() -> None:
-    from vrl.rewards.models.action_following import ActionFollowingIDMModel
+    from vrl.rewards.models.idm_action_following import ActionFollowingIDMModel
 
     class _Artifact:
         artifact_id = "a0"

@@ -359,19 +359,12 @@ def _parse_role(
 
 
 def _reject_legacy_keys(block: Any) -> None:
-    legacy_paths = (
-        "train",
-        "math",
-        "frozen",
-        "frozen_components",
-        "rollout_recipe",
-        "rollout.frozen_components",
-    )
-    present = [
-        f"precision.{path}"
-        for path in legacy_paths
-        if _select(block, path, _MISSING) is not _MISSING
-    ]
+    # Legacy dotted keys (precision.train/math/frozen/...) are already rejected
+    # upstream by require_no_unknown_keys, whose known set derives from
+    # PrecisionConfig's fields — a second hand-written list here could only
+    # rot. The one shape that walker cannot express stays: a scalar
+    # precision.rollout (the walker returns early on non-mappings).
+    present: list[str] = []
     rollout = _select(block, "rollout", None)
     if (
         rollout is not None

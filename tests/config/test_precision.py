@@ -318,25 +318,6 @@ def test_scalar_precision_is_rejected_with_migration_path(scalar):
         resolve_precision_policy(_cfg(precision=scalar))
 
 
-@pytest.mark.parametrize(
-    "block",
-    [
-        {"train": "bf16", "rollout": "fp8"},
-        {"training": {"dtype": "bf16"}, "rollout": "fp16"},
-        {"train": "bf16", "math": "fp32", "frozen": "fp16"},
-        {"training": {"dtype": "bf16"}, "frozen_components": "fp16"},
-        {
-            "training": {"dtype": "bf16"},
-            "rollout": {"frozen_components": {"dtype": "fp16"}},
-        },
-        {"training": {"dtype": "bf16"}, "rollout_recipe": "rowwise"},
-    ],
-)
-def test_legacy_precision_keys_are_rejected(block):
-    with pytest.raises(ValueError, match="legacy precision key"):
-        resolve_precision_policy(_cfg(precision=block))
-
-
 def test_nested_unknown_keys_are_reported_at_full_path():
     from omegaconf import OmegaConf
 

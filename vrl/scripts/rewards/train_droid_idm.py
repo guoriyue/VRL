@@ -7,7 +7,7 @@ vector" in whatever convention the manifest recorded — the reward compares in
 the same space, so the exact DROID action semantics never need pinning.
 
 The checkpoint is self-describing (arch width, action normalization, input
-size); ``vrl.rewards.models.action_following.load_idm_checkpoint`` is the one
+size); ``vrl.rewards.models.idm_action_following.load_idm_checkpoint`` is the one
 reader. Rebuild data with ``python -m vrl.scripts.data.setup
 video-world-targets`` if the manifests are missing.
 
@@ -24,7 +24,7 @@ from pathlib import Path
 
 import torch
 
-from vrl.rewards.models.action_following import FramePairIDM, frame_pairs_from_clip
+from vrl.rewards.models.idm_action_following import FramePairIDM, frame_pairs_from_clip
 from vrl.utils.media import read_video_frames
 
 _DEFAULT_MANIFEST_DIR = Path("data/external/video_world/manifests")

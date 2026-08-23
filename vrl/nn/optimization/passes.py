@@ -27,7 +27,7 @@ its replay drift through :data:`REQUEST_SCOPED_DRIFT_SOURCES` instead.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from vrl.utils.logging import init_logger
@@ -42,10 +42,6 @@ class PassResult:
     name: str
     applied: bool
     detail: str
-    # RL semantics, not log text: a pass that makes the rollout forward differ
-    # from the trainer's exact replay forward must be paired with a drift
-    # correction. ``OptimizationReport.drift_sources`` is the consumer.
-    introduces_replay_drift: bool
 
 
 @runtime_checkable
@@ -57,7 +53,6 @@ class OptimizationPass(Protocol):
     """
 
     name: str
-    introduces_replay_drift: bool
     # True when the pass REPLACES a policy core with a wrapper (compile) rather
     # than mutating its tree in place (quantization). A replaced root hides the
     # real module from ``requires_grad_`` / ``.to()``, which is why the device
@@ -66,21 +61,6 @@ class OptimizationPass(Protocol):
 
     def enabled(self, build: Any) -> bool:
         """Whether this build requests the pass."""
-        ...
-
-    def conflicts(self, build: Any) -> tuple[str, ...]:
-        """Feature names this pass cannot coexist with, given ``build``.
-
-        Ordering between passes is the tuple order below; THIS is the other
-        relation — features that must never both be on, in either order. They
-        are declared rather than checked ad hoc because the same conflict
-        otherwise gets rediscovered per feature: today ``compile`` is refused
-        against grad-checkpointing, FSDP2, and blockwise fp8 by three separate
-        hand-written guards in three different files.
-
-        Returns human-readable reasons (empty when compatible); the assembly
-        point turns a non-empty result into a loud failure.
-        """
         ...
 
     def apply(self, model: Any, build: Any) -> PassResult:
@@ -124,25 +104,11 @@ class QuantizationPass:
     """Swap large policy GEMMs to the configured low-precision scheme."""
 
     name: str = "quantization"
-    # Low-precision GEMMs make the rollout forward differ from the trainer's
-    # base-dtype replay forward.
-    introduces_replay_drift: bool = True
     # Swaps Linears inside the existing tree; the root object is unchanged.
     replaces_modules: bool = False
 
     def enabled(self, build: Any) -> bool:
         return getattr(getattr(build, "precision", None), "quantization", None) is not None
-
-    def conflicts(self, build: Any) -> tuple[str, ...]:
-        """None: a low-precision swap composes with every other rollout feature.
-
-        The one real fp8 conflict (blockwise x compile) is the COMPILE pass's,
-        not this one's -- the kernel is fine, it is only untraceable. Declared
-        there so the message names the thing to turn off.
-        """
-
-        del build
-        return ()
 
     def apply(self, model: Any, build: Any) -> PassResult:
         from vrl.models.loader import apply_rollout_quantization
@@ -155,7 +121,6 @@ class QuantizationPass:
             name=self.name,
             applied=bool(count),
             detail=f"{quantization.format}: {count} linears",
-            introduces_replay_drift=True,
         )
 
 
@@ -169,26 +134,11 @@ class CompilePass:
     """
 
     name: str = "compile"
-    introduces_replay_drift: bool = False
     # Wraps each root in an OptimizedModule, hiding the real module.
     replaces_modules: bool = True
 
     def enabled(self, build: Any) -> bool:
         return bool((getattr(build, "torch_compile", None) or {}).get("enable"))
-
-    def conflicts(self, build: Any) -> tuple[str, ...]:
-        """Nothing detectable from ``build`` alone.
-
-        Compile's real conflicts are all decided by config keys this object does
-        not carry (grad-checkpointing mode, training strategy, engine
-        topology), so they are all refused together at config load by
-        ``vrl.config.validation.compile_conflicts``. Keeping this method honest
-        — rather than probing for an attribute ``ModelBuild`` does not have — is
-        the point: a guard that cannot fire is worse than no guard.
-        """
-
-        del build
-        return ()
 
     def apply(self, model: Any, build: Any) -> PassResult:
         mode = build.torch_compile["mode"]
@@ -212,7 +162,6 @@ class CompilePass:
             name=self.name,
             applied=True,
             detail=f"mode={mode}",
-            introduces_replay_drift=False,
         )
 
 
@@ -232,8 +181,6 @@ class OffloadPass:
     """
 
     name: str = "offload"
-    # Streams the SAME weights through the SAME math; residency only.
-    introduces_replay_drift: bool = False
     # Registers hooks on the existing tree; the root object is unchanged.
     replaces_modules: bool = False
 
@@ -251,10 +198,6 @@ class OffloadPass:
         del build
         return True
 
-    def conflicts(self, build: Any) -> tuple[str, ...]:
-        del build
-        return ()
-
     def apply(self, model: Any, build: Any) -> PassResult:
         mode = getattr(getattr(build, "rollout", None), "pipeline_offload_mode", "none")
         requested = mode != "none"
@@ -269,7 +212,6 @@ class OffloadPass:
                 name=self.name,
                 applied=False,
                 detail="unsupported by family (none requested)",
-                introduces_replay_drift=False,
             )
         install(build)
         committed = bool(getattr(model, "uses_pipeline_cpu_offload", False))
@@ -286,7 +228,6 @@ class OffloadPass:
             name=self.name,
             applied=committed,
             detail=f"mode={mode}",
-            introduces_replay_drift=False,
         )
 
 
@@ -300,18 +241,11 @@ class VaeDecodeMemoryPass:
     """
 
     name: str = "vae_decode_memory"
-    # Tiling/slicing chunk the same decode math; the rollout LOG-PROBS, which are
-    # what replay reproduces, come from the denoise loop and never touch the VAE.
-    introduces_replay_drift: bool = False
     replaces_modules: bool = False
 
     def enabled(self, build: Any) -> bool:
         memory = getattr(build, "generation_memory", None)
         return getattr(memory, "vae_decode", None) is not None
-
-    def conflicts(self, build: Any) -> tuple[str, ...]:
-        del build
-        return ()
 
     def apply(self, model: Any, build: Any) -> PassResult:
         from vrl.models.steps.denoise.common.vae_decode_memory import (
@@ -327,7 +261,6 @@ class VaeDecodeMemoryPass:
             name=self.name,
             applied=True,
             detail=str(build.generation_memory.vae_decode),
-            introduces_replay_drift=False,
         )
 
 
@@ -350,29 +283,12 @@ REQUEST_SCOPED_DRIFT_SOURCES: dict[str, str] = {
 }
 
 
-@dataclass(slots=True)
-class OptimizationReport:
-    """Every pass's outcome for one rollout build."""
-
-    results: tuple[PassResult, ...] = field(default_factory=tuple)
-
-    @property
-    def applied(self) -> tuple[PassResult, ...]:
-        return tuple(result for result in self.results if result.applied)
-
-    @property
-    def drift_sources(self) -> tuple[str, ...]:
-        """Applied passes that make rollout diverge from the exact replay forward."""
-
-        return tuple(result.name for result in self.applied if result.introduces_replay_drift)
-
-
 def apply_rollout_optimizations(
     model: Any,
     build: Any,
     *,
     before_compile: Callable[[], None] | None = None,
-) -> OptimizationReport:
+) -> None:
     """Run every enabled rollout pass in dependency order.
 
     Call AFTER LoRA attachment and BEFORE offload-hook installation (see the
@@ -384,21 +300,15 @@ def apply_rollout_optimizations(
     master and its cache on GPU) but must not act on a compiled wrapper.
     """
 
-    enabled = tuple(o for o in ROLLOUT_PASSES if o.enabled(build))
-    # Conflicts before any mutation: an incompatible combination must fail with
-    # the model untouched, not half-transformed.
-    for optimization in enabled:
-        reasons = optimization.conflicts(build)
-        if reasons:
-            raise ValueError(
-                f"rollout pass {optimization.name!r} cannot run with {'; '.join(reasons)}",
-            )
+    # Cross-feature conflicts are refused at config load
+    # (vrl.config.validation.compile_conflicts): every conflict is decided by
+    # config keys this build object does not carry, so a per-pass conflicts()
+    # seam here could never fire — it existed and never did.
     # Each pass verifies its own EFFECT on the real modules (see
     # ``require_every_core_quantized`` and CompilePass.apply). There is no
     # coverage check here, because a pass reporting which roots it touched would
     # be certifying itself -- and a pass buggy enough to miss a root is exactly
     # the one whose self-report is wrong.
-    results: list[PassResult] = []
     seam_done = False
     for optimization in ROLLOUT_PASSES:
         # Fire the seam before the first REPLACING pass, whether or not it is
@@ -410,11 +320,9 @@ def apply_rollout_optimizations(
         if not optimization.enabled(build):
             continue
         result = optimization.apply(model, build)
-        results.append(result)
         logger.info("rollout pass %s applied (%s)", result.name, result.detail)
     if not seam_done and before_compile is not None:
         before_compile()  # no replacing pass registered at all
-    return OptimizationReport(tuple(results))
 
 
 def unguarded_drift_sources(sampling: Any, precision: Any) -> tuple[str, ...]:
@@ -463,7 +371,6 @@ __all__ = [
     "ROLLOUT_PASSES",
     "CompilePass",
     "OptimizationPass",
-    "OptimizationReport",
     "PassResult",
     "QuantizationPass",
     "apply_rollout_optimizations",

@@ -5,7 +5,7 @@ the trained DROID inverse-dynamics model. ``DiskArtifactRewardFunction`` is the
 transport capability boundary; this file only pins the IDM model factory and
 its defaults. Why the signal exists — and why it must pass the discrimination
 gate before driving GRPO — is documented in
-``vrl.rewards.models.action_following``.
+``vrl.rewards.models.idm_action_following``.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Any
 
 from vrl.rewards.base import DiskArtifactRewardFunction
 
-_ACTION_FOLLOWING_MODEL = "vrl.rewards.models.action_following:ActionFollowingIDMModel"
+_ACTION_FOLLOWING_MODEL = "vrl.rewards.models.idm_action_following:ActionFollowingIDMModel"
 
 
 class ActionFollowingReward(DiskArtifactRewardFunction):

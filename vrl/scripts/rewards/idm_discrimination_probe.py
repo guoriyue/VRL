@@ -30,7 +30,7 @@ from pathlib import Path
 import torch
 
 from vrl.rewards.evaluation.robotics_discrimination import build_discrimination_candidates
-from vrl.rewards.models.action_following import load_idm_checkpoint, score_action_following
+from vrl.rewards.models.idm_action_following import load_idm_checkpoint, score_action_following
 from vrl.utils.media import read_video_frames
 
 _DEFAULT_MANIFEST = Path("data/external/video_world/manifests/droid_targets_eval.jsonl")
