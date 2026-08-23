@@ -219,34 +219,29 @@ def replay_context_image_size(
     return height, width
 
 
-# Derived from the Protocol definitions (same pattern as the contract tests),
-# so a method add/rename auto-widens the runtime checks and error messages.
-_REPLAY_MODEL_METHODS = tuple(sorted(ReplayModel.__protocol_attrs__))
-_RUNTIME_MODEL_METHODS = tuple(sorted(RuntimeModel.__protocol_attrs__))
+def _require_protocol(value: Any, proto: Any, *, owner: str) -> Any:
+    """isinstance-or-raise shared by the boundary casts below; the method list
+    derives from the Protocol (same pattern as the contract tests), so a method
+    add/rename auto-widens the runtime checks and error messages."""
+
+    if isinstance(value, proto):
+        return value
+    methods = tuple(sorted(proto.__protocol_attrs__))
+    missing = _missing_callables(value, methods)
+    detail = f"; missing: {', '.join(missing)}" if missing else ""
+    raise TypeError(f"{owner} must satisfy {proto.__name__}({', '.join(methods)}){detail}")
 
 
 def require_replay_model(value: Any, *, owner: str = "model") -> ReplayModel:
     """Return ``value`` as a ReplayModel or fail at the replay boundary."""
 
-    if isinstance(value, ReplayModel):
-        return cast("ReplayModel", value)
-    missing = _missing_callables(value, _REPLAY_MODEL_METHODS)
-    detail = f"; missing: {', '.join(missing)}" if missing else ""
-    raise TypeError(
-        f"{owner} must satisfy ReplayModel({', '.join(_REPLAY_MODEL_METHODS)}){detail}",
-    )
+    return cast("ReplayModel", _require_protocol(value, ReplayModel, owner=owner))
 
 
 def require_runtime_model(value: Any, *, owner: str = "model") -> RuntimeModel:
     """Return ``value`` as a RuntimeModel or fail at the runtime boundary."""
 
-    if isinstance(value, RuntimeModel):
-        return cast("RuntimeModel", value)
-    missing = _missing_callables(value, _RUNTIME_MODEL_METHODS)
-    detail = f"; missing: {', '.join(missing)}" if missing else ""
-    raise TypeError(
-        f"{owner} must satisfy RuntimeModel({', '.join(_RUNTIME_MODEL_METHODS)}){detail}",
-    )
+    return cast("RuntimeModel", _require_protocol(value, RuntimeModel, owner=owner))
 
 
 def _missing_callables(value: Any, names: tuple[str, ...]) -> list[str]:
