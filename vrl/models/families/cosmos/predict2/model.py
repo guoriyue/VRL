@@ -45,7 +45,6 @@ from vrl.models.steps.denoise.common import (
     shared_replay_tensor,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
-from vrl.models.steps.denoise.common.tensors import require_tensor
 
 
 @dataclass(slots=True)
@@ -74,7 +73,7 @@ class CosmosPredict2DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
             condition_mask = extra["cond_mask"]
         else:
             embeds = request.negative_prompt_embeds
-            indicator = require_tensor(extra.get("uncond_indicator"), "uncond_indicator")
+            indicator = extra["uncond_indicator"]
             condition_mask = extra.get("uncond_mask")
         hidden_states, timestep = self._prepare_branch(
             latents=request.hidden_states,
@@ -168,6 +167,17 @@ class CosmosPredict2SamplingState(GuidedDiffusionSamplingStateBase):
     cond_indicator: Any
     uncond_indicator: Any
     fps: int
+
+    def __post_init__(self) -> None:
+        # Cosmos conditions each branch on its own indicator tensor, so the
+        # CFG invariant DiffusionBackboneInput proves for negative_prompt_embeds
+        # has an uncond-indicator twin that only this family knows about.
+        # Proving it here is why the uncond branch reads the key directly,
+        # like its cond twin one line above.
+        if self.do_cfg and self.uncond_indicator is None:
+            raise ValueError(
+                "Cosmos Predict2 CFG requires uncond_indicator; do_cfg=True was paired with None",
+            )
 
 
 class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBase):

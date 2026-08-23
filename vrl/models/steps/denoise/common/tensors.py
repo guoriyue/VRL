@@ -6,14 +6,6 @@ from typing import Any
 
 import torch
 
-
-def require_tensor(value: torch.Tensor | None, name: str) -> torch.Tensor:
-    """Fail fast when a CFG branch input that must exist is ``None``."""
-    if value is None:
-        raise ValueError(f"CFG branch requires {name}")
-    return value
-
-
 # -- replay-tensor batch helpers (Cosmos Predict2 / Predict2.5 / Anima) ------
 #
 # These resolve per-sample replay tensors during eval/replay reconstruction:
@@ -60,6 +52,5 @@ def shared_replay_tensor(
 __all__ = [
     "align_replay_tensor",
     "replay_tensor",
-    "require_tensor",
     "shared_replay_tensor",
 ]

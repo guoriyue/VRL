@@ -61,7 +61,6 @@ from vrl.models.steps.denoise.common import (
     pack_eval_timestep,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
-from vrl.models.steps.denoise.common.tensors import require_tensor
 from vrl.models.weight_utils import load_weights_into, validate_weights_for
 
 logger = logging.getLogger(__name__)
@@ -937,7 +936,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
 
         extra = request.extra
         condition = _batch_align_tensor(
-            require_tensor(extra.get("condition"), "condition"),
+            extra["condition"],
             request.hidden_states.shape[0],
         )
         # Channel-wise concat (mimics WanImageToVideoPipeline `__call__`:
@@ -951,7 +950,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         image_embeds = extra.get("image_embeds")
         if image_embeds is not None:
             extra_kwargs["encoder_hidden_states_image"] = _batch_align_tensor(
-                require_tensor(image_embeds, "image_embeds"),
+                image_embeds,
                 request.hidden_states.shape[0],
             )
 

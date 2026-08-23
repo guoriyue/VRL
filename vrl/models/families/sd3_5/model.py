@@ -51,7 +51,6 @@ from vrl.models.steps.denoise.common import (
     pack_eval_timestep,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
-from vrl.models.steps.denoise.common.tensors import require_tensor
 
 
 @dataclass
@@ -63,6 +62,17 @@ class SD3SamplingState(GuidedDiffusionSamplingStateBase):
     negative_prompt_embeds: torch.Tensor | None
     negative_pooled_prompt_embeds: torch.Tensor | None
     do_cfg: bool
+
+    def __post_init__(self) -> None:
+        # SD3.5 conditions on an embed AND a pooled embed, so the CFG
+        # invariant DiffusionBackboneInput proves for negative_prompt_embeds
+        # has a pooled twin that only this family knows about. Proving it here
+        # is why the uncond branch reads the key directly, like its cond twin.
+        if self.do_cfg and self.negative_pooled_prompt_embeds is None:
+            raise ValueError(
+                "SD3.5 CFG requires negative_pooled_prompt_embeds; "
+                "do_cfg=True was paired with None",
+            )
 
 
 class SD3_5Model(
@@ -204,10 +214,7 @@ class SD3_5Model(
             pooled = request.extra["pooled_prompt_embeds"]
         else:
             embeds = request.negative_prompt_embeds
-            pooled = require_tensor(
-                request.extra.get("negative_pooled_prompt_embeds"),
-                "negative_pooled_prompt_embeds",
-            )
+            pooled = request.extra["negative_pooled_prompt_embeds"]
         return DiffusionBranch(
             hidden_states=request.hidden_states,
             timestep=request.timestep,

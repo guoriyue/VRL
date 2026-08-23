@@ -39,10 +39,10 @@ class DiffusionBackboneInput:
 
         ``DiffusionBackboneCaller`` builds the uncond branch if and only if
         ``do_cfg``, so a CFG request without negative conditioning is
-        unusable. It used to be re-proven per family: eight uncond branches
-        raised through ``require_tensor`` while four producers silently
-        dropped the negatives they had just been asked to use. Rejecting the
-        pair here means the state cannot be built, so no consumer re-checks.
+        unusable. It used to be re-proven per family: every uncond branch
+        raised on its own while four producers silently dropped the negatives
+        they had just been asked to use. Rejecting the pair here means the
+        state cannot be built, so no consumer re-checks it.
         """
 
         if self.do_cfg and self.negative_prompt_embeds is None:
