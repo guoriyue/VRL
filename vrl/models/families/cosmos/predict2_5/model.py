@@ -42,7 +42,6 @@ from vrl.models.steps.denoise.common.lora import (
 from vrl.models.steps.denoise.common.lora import (
     freeze_checkpoint_owned_adapter_params as _freeze_checkpoint_owned_adapter_params,
 )
-from vrl.models.steps.denoise.common.tensors import require_tensor
 
 
 @dataclass(slots=True)
@@ -65,7 +64,7 @@ class CosmosPredict25DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
         extra = request.extra
         embeds = request.prompt_embeds
         if branch == "uncond":
-            embeds = require_tensor(request.negative_prompt_embeds, "negative_prompt_embeds")
+            embeds = request.negative_prompt_embeds
         hidden_states, timestep, gt_velocity = self._prepare_branch(
             latents=request.hidden_states,
             cond_latent=extra["cond_latent"],

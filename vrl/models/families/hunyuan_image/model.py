@@ -64,7 +64,6 @@ from vrl.models.steps.denoise.common import (
     pack_eval_timestep,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
-from vrl.models.steps.denoise.common.tensors import require_tensor
 
 
 @dataclass
@@ -125,10 +124,7 @@ class HunyuanImageModel(
             embeds_2 = request.extra["encoder_hidden_states_2"]
             mask_2 = request.extra["encoder_attention_mask_2"]
         else:
-            embeds = require_tensor(
-                request.negative_prompt_embeds,
-                "negative_prompt_embeds",
-            )
+            embeds = request.negative_prompt_embeds
             mask = request.extra["negative_encoder_attention_mask"]
             embeds_2 = request.extra["negative_encoder_hidden_states_2"]
             mask_2 = request.extra["negative_encoder_attention_mask_2"]

@@ -73,7 +73,7 @@ class CosmosPredict2DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
             indicator = extra["cond_indicator"]
             condition_mask = extra["cond_mask"]
         else:
-            embeds = require_tensor(request.negative_prompt_embeds, "negative_prompt_embeds")
+            embeds = request.negative_prompt_embeds
             indicator = require_tensor(extra.get("uncond_indicator"), "uncond_indicator")
             condition_mask = extra.get("uncond_mask")
         hidden_states, timestep = self._prepare_branch(

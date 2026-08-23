@@ -135,7 +135,7 @@ class WanT2VDiffusersModel(
         """Map Wan transformer kwargs into the shared backbone contract."""
         embeds = request.prompt_embeds
         if branch == "uncond":
-            embeds = require_tensor(request.negative_prompt_embeds, "negative_prompt_embeds")
+            embeds = request.negative_prompt_embeds
         return DiffusionBranch(
             hidden_states=request.hidden_states,
             timestep=request.timestep,
@@ -933,7 +933,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         """
         embeds = request.prompt_embeds
         if branch == "uncond":
-            embeds = require_tensor(request.negative_prompt_embeds, "negative_prompt_embeds")
+            embeds = request.negative_prompt_embeds
 
         extra = request.extra
         condition = _batch_align_tensor(

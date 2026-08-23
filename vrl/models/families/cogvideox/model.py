@@ -52,7 +52,6 @@ from vrl.models.steps.denoise.common import (
     pack_eval_timestep,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
-from vrl.models.steps.denoise.common.tensors import require_tensor
 
 
 def cogvideox_rotary_embeds(
@@ -140,13 +139,7 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         branch: str,
     ) -> DiffusionBranch:
         """Map CogVideoX transformer kwargs into the shared backbone contract."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-        else:
-            embeds = require_tensor(
-                request.negative_prompt_embeds,
-                "negative_prompt_embeds",
-            )
+        embeds = request.prompt_embeds if branch == "cond" else request.negative_prompt_embeds
         return DiffusionBranch(
             hidden_states=request.hidden_states,
             timestep=request.timestep,

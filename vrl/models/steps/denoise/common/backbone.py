@@ -15,7 +15,6 @@ from vrl.models.steps.denoise.common.cfg import (
     pack_batched_cfg,
     split_batched_cfg_output,
 )
-from vrl.models.steps.denoise.common.tensors import require_tensor
 
 DiffusionCFGMode = Literal["batched_cfg", "separate_cfg", "single_branch"]
 
@@ -29,9 +28,27 @@ class DiffusionBackboneInput:
     prompt_embeds: torch.Tensor
     guidance_scale: float
     do_cfg: bool
+    # Present exactly when ``do_cfg`` is set — proven in __post_init__ below, so
+    # no uncond branch re-checks it.
     negative_prompt_embeds: torch.Tensor | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     output_dtype: torch.dtype | None = None
+
+    def __post_init__(self) -> None:
+        """One home for the CFG conditioning invariant.
+
+        ``DiffusionBackboneCaller`` builds the uncond branch if and only if
+        ``do_cfg``, so a CFG request without negative conditioning is
+        unusable. It used to be re-proven per family: eight uncond branches
+        raised through ``require_tensor`` while four producers silently
+        dropped the negatives they had just been asked to use. Rejecting the
+        pair here means the state cannot be built, so no consumer re-checks.
+        """
+
+        if self.do_cfg and self.negative_prompt_embeds is None:
+            raise ValueError(
+                "CFG requires negative_prompt_embeds; do_cfg=True was paired with None",
+            )
 
 
 @dataclass(slots=True)
@@ -146,10 +163,7 @@ class EncoderAttentionMaskRunnerBase(DiffusionBackboneRunnerBase):
             embeds = request.prompt_embeds
             mask = request.extra.get("encoder_attention_mask")
         else:
-            embeds = require_tensor(
-                request.negative_prompt_embeds,
-                "negative_prompt_embeds",
-            )
+            embeds = request.negative_prompt_embeds
             mask = request.extra.get("negative_encoder_attention_mask")
         return DiffusionBranch(
             hidden_states=request.hidden_states,

@@ -46,7 +46,6 @@ from vrl.models.steps.denoise.common import (
     set_mu_shifted_timesteps,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
-from vrl.models.steps.denoise.common.tensors import require_tensor
 
 
 @dataclass
@@ -101,10 +100,7 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
             embeds = request.prompt_embeds
             mask = request.extra.get("encoder_hidden_states_mask")
         else:
-            embeds = require_tensor(
-                request.negative_prompt_embeds,
-                "negative_prompt_embeds",
-            )
+            embeds = request.negative_prompt_embeds
             mask = request.extra.get("negative_encoder_hidden_states_mask")
         extra_kwargs = {
             "encoder_hidden_states_mask": mask,

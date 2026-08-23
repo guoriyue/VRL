@@ -203,7 +203,7 @@ class SD3_5Model(
             embeds = request.prompt_embeds
             pooled = request.extra["pooled_prompt_embeds"]
         else:
-            embeds = require_tensor(request.negative_prompt_embeds, "negative_prompt_embeds")
+            embeds = request.negative_prompt_embeds
             pooled = require_tensor(
                 request.extra.get("negative_pooled_prompt_embeds"),
                 "negative_pooled_prompt_embeds",
