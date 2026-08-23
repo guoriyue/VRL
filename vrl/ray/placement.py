@@ -30,7 +30,6 @@ from typing import Any, Protocol
 
 from vrl.ray.dependencies import (
     current_gpu_ids,
-    current_node_ip,
     inspect_cluster,
     kill_actors,
     require_ray,
@@ -186,7 +185,6 @@ def actor_scheduling_strategy(
     placement_group: Any,
     *,
     bundle_index: int | None = None,
-    capture_child_tasks: bool = True,
 ) -> Any:
     """Build a placement-group scheduling strategy for one actor."""
 
@@ -195,7 +193,7 @@ def actor_scheduling_strategy(
     return PlacementGroupSchedulingStrategy(
         placement_group=placement_group,
         placement_group_bundle_index=bundle_index,
-        placement_group_capture_child_tasks=capture_child_tasks,
+        placement_group_capture_child_tasks=True,
     )
 
 
@@ -356,8 +354,8 @@ class RolePlacement:
 
 
 class _ProbeActor:
-    def node_and_gpus(self) -> tuple[str, tuple[int, ...]]:
-        return current_node_ip(), tuple(current_gpu_ids())
+    def gpus(self) -> tuple[int, ...]:
+        return tuple(current_gpu_ids())
 
 
 @dataclass(slots=True)
@@ -580,12 +578,9 @@ class GlobalRayPlacementOwner:
         pool.
         """
 
-        cpus: list[float] = []
         if bundle_index in self.layout.rollout_bundle_indices:
-            cpus.append(float(self.rollout_worker.cpus_per_worker))
-        if not cpus:
-            return 0.001
-        return max(cpus)
+            return float(self.rollout_worker.cpus_per_worker)
+        return 0.001
 
     def _probe_gpu_bundles(self, ray: Any, pg: Any) -> dict[int, int]:
         gpu_bundles = [
@@ -601,13 +596,12 @@ class GlobalRayPlacementOwner:
                     scheduling_strategy=actor_scheduling_strategy(
                         placement_group=pg,
                         bundle_index=bundle_index,
-                        capture_child_tasks=True,
                     ),
                 ).remote()
                 actors.append(actor)
             results = get_ray_refs(
                 ray,
-                [actor.node_and_gpus.remote() for actor in actors],
+                [actor.gpus.remote() for actor in actors],
                 operation="placement.gpu_metadata_probe",
                 timeout_s=_PLACEMENT_READY_TIMEOUT_S,
                 context=f"bundles={gpu_bundles}",
@@ -627,7 +621,7 @@ class GlobalRayPlacementOwner:
                 f"{len(actor_failures)} actor kill(s) failed",
             ) from actor_failures[0][1]
         probed: dict[int, int] = {}
-        for bundle_index, (_node_ip, gpu_ids) in zip(gpu_bundles, results, strict=True):
+        for bundle_index, gpu_ids in zip(gpu_bundles, results, strict=True):
             if not gpu_ids:
                 raise RuntimeError(
                     f"placement-group bundle {bundle_index} received no GPU",

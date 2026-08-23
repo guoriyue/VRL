@@ -97,7 +97,6 @@ class OnlineMetricRow:
     # intervals (gauge reduction; busy totals stay in collect.*_wall phases)
     # and cumulative backpressure reason durations/entries.
     continuous_batch_id: float = _csv_field(".1f", phase_key="continuous.batch_id")
-    continuous_active_batches: float = _csv_field(".1f", phase_key="continuous.active_batches")
     continuous_generation_queue_wait_s: float = _csv_field(
         ".4f", phase_key="continuous.generation_queue_wait_s"
     )

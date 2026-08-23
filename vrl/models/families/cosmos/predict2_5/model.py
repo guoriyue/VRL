@@ -198,7 +198,7 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
 
         kwargs: dict[str, Any] = {
             "torch_dtype": build.parameter_dtype,
-            **build.revision_kwargs,
+            **build.pretrained_kwargs,
         }
         revision = kwargs.get("revision")
         skip_text_encoder = bool((build.model_config or {}).get("skip_text_encoder", False))

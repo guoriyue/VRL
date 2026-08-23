@@ -6,8 +6,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-import torch
-
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.stats import RolloutStats
 from vrl.trajectory import trajectory_tensor_bytes
@@ -59,9 +57,10 @@ def estimate_batch_bytes(batch: RolloutBatch) -> int:
     payload: dict[str, Any] = {
         "rewards": batch.rewards,
         "group_ids": batch.group_ids,
-        "tensor_extras": tuple(
-            value for value in batch.extras.values() if isinstance(value, torch.Tensor)
-        ),
+        # extras whole: trajectory_tensor_bytes recurses mappings, so nested
+        # tensor payloads (reward_components) are counted. A top-level-only
+        # tensor filter silently undercounted exactly what extras carries.
+        "extras": batch.extras,
     }
     if batch.trajectory is not None:
         payload["trajectory"] = batch.trajectory

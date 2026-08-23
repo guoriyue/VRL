@@ -89,9 +89,13 @@ def test_byte_overflow_fails_before_mutation() -> None:
     assert [item.group_slot for item in queue.snapshot()] == [0]
 
 
-def test_batch_byte_estimate_counts_only_trainer_transport_tensors() -> None:
+def test_batch_byte_estimate_counts_nested_extras_tensors() -> None:
+    """extras payloads count even when nested (the production shape is
+    extras["reward_components"] = {name: tensor})."""
+
     batch = _item(group_slot=0, version=1).batch
     batch.extras["component"] = torch.zeros(3, dtype=torch.float64)
+    batch.extras["reward_components"] = {"aesthetic": torch.zeros(2)}
 
     expected = sum(
         tensor.element_size() * tensor.nelement()
@@ -99,6 +103,7 @@ def test_batch_byte_estimate_counts_only_trainer_transport_tensors() -> None:
             batch.rewards,
             batch.group_ids,
             batch.extras["component"],
+            batch.extras["reward_components"]["aesthetic"],
         )
     )
 
@@ -157,25 +162,4 @@ def test_stats_shape() -> None:
     queue.put(_item(group_slot=0, version=1, nbytes=4))
     stats = queue.stats()
     assert stats["ready_items"] == 1.0
-    assert stats["ready_groups"] == 1.0
-    assert stats["ready_batches"] == 1.0
     assert stats["ready_bytes"] == 4.0
-
-
-def test_stats_count_distinct_batch_identities() -> None:
-    """ready_batches counts finite prompt batches, not items or slots."""
-    queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(group_slot=0, version=1, batch_id=0))
-    queue.put(_item(group_slot=1, version=1, batch_id=0))
-    queue.put(_item(group_slot=0, version=2, batch_id=1))
-    assert queue.stats()["ready_batches"] == 2.0
-
-
-def test_ready_group_count_spans_policy_versions() -> None:
-    """Queue stats count group slots; version selection belongs to the consumer."""
-    queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(group_slot=0, version=1))
-    queue.put(_item(group_slot=0, version=2))
-    queue.put(_item(group_slot=1, version=2))
-
-    assert queue.stats()["ready_groups"] == 2.0

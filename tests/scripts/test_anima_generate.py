@@ -33,11 +33,7 @@ def test_generate_disables_empty_training_lora_for_inference() -> None:
     """Checks generate disables empty training LoRA for inference."""
     cfg = OmegaConf.create({"model": {"use_lora": True, "lora": {"path": ""}}})
 
-    generate._configure_lora_for_inference(
-        cfg,
-        lora_path="",
-        use_config_lora=False,
-    )
+    generate._configure_lora_for_inference(cfg, lora_path="")
 
     assert cfg.model.use_lora is False
 

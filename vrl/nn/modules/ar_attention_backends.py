@@ -26,12 +26,6 @@ def attention_backend_name(sampling: Mapping[str, Any]) -> str:
     return str(sampling.get("attention_backend", "vllm_paged"))
 
 
-def available_attention_backends() -> tuple[str, ...]:
-    """Return supported AR attention backend names."""
-
-    return _ATTENTION_BACKENDS
-
-
 def resolve_attention_backend(
     family: str,
     name: str,
@@ -52,7 +46,7 @@ def resolve_attention_backend(
     if name == "torch_native":
         return build_torch_native_backend(model, family=family)
     raise ValueError(
-        f"unknown attention backend {name!r}; registered={available_attention_backends()}",
+        f"unknown attention backend {name!r}; registered={_ATTENTION_BACKENDS}",
     )
 
 
@@ -98,7 +92,6 @@ def _lm_trunk(model: Any) -> Any:
 
 __all__ = [
     "attention_backend_name",
-    "available_attention_backends",
     "build_torch_native_backend",
     "build_vllm_attention_backend",
     "resolve_attention_backend",

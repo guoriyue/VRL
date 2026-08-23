@@ -12,7 +12,7 @@ import torch
 import torch.multiprocessing as mp
 from torch import nn
 
-from vrl.utils.model_diagnostics import trainable_state_digest
+from vrl.trainers.diagnostics import trainable_state_digest
 
 
 def test_trainable_state_digest_preserves_plain_tensor_digest() -> None:

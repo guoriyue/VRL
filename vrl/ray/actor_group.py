@@ -92,7 +92,6 @@ class RayActorGroup:
                     options["scheduling_strategy"] = actor_scheduling_strategy(
                         placement_group=placement_group,
                         bundle_index=bundle_index,
-                        capture_child_tasks=True,
                     )
                 actor = remote_worker.options(**options).remote(worker_id, worker_config)
                 actors.append(actor)

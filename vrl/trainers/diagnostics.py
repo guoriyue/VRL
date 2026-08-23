@@ -196,8 +196,11 @@ def tensor_stats(value: Any) -> dict[str, Any]:
     }
 
 
-def write_jsonl(path: str | Path, record: Mapping[str, Any]) -> None:
-    """Append one JSON object to a JSONL file."""
+def append_jsonl_record(path: str | Path, record: Mapping[str, Any]) -> None:
+    """Append one JSON object to a JSONL file.
+
+    Named against ``vrl.scripts.data.common.write_jsonl``, which *overwrites*
+    a file with many rows — same word, opposite semantics."""
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -220,8 +223,8 @@ def _json_safe(value: Any) -> Any:
 
 
 __all__ = [
+    "append_jsonl_record",
     "parameter_state_summary",
     "tensor_stats",
     "trainable_state_digest",
-    "write_jsonl",
 ]

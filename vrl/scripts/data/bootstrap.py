@@ -84,7 +84,11 @@ def resolve_experiment_dataset_plan(
                 "path": "(huggingface cache)",
                 "present": False,
                 "rows": 0,
-                "get": _setup_command(pickapic.image_setup_argv()),
+                "get": _setup_command(
+                    pickapic.image_setup_argv(
+                        str(data.get("dataset_name") or "") or None,
+                    ),
+                ),
             },
         )
     return {"loader": loader, "ready": ready, "steps": steps}

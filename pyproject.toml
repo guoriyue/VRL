@@ -91,17 +91,6 @@ ocr = [
     "paddlepaddle>=3.3.0",
     "python-Levenshtein>=0.27.0",
 ]
-pose = [
-    "huggingface-hub>=0.24.0",
-    "onnxruntime>=1.16.0",
-    "opencv-python>=4.8.0",
-]
-pose-gpu = [
-    "huggingface-hub>=0.24.0",
-    "onnxruntime-gpu>=1.24.0",
-    "nvidia-cudnn-cu12>=9.0.0",
-    "opencv-python>=4.8.0",
-]
 # OPTIONAL token-image accelerator (Janus-Pro, NextStep). Token families run in the
 # main env without this via sampling.attention_backend=torch_native; the extra
 # adds vLLM's internal KV/paged-attention kernels
@@ -155,8 +144,6 @@ conflicts = [
     # diffusers runtime even when the resolver can select matching versions.
     [{ extra = "ar-vllm" }, { extra = "cosmos" }],
     [{ extra = "ar-vllm" }, { extra = "reward" }],
-    # The CPU and GPU ONNX runtimes install the same shared libraries.
-    [{ extra = "pose" }, { extra = "pose-gpu" }],
 ]
 
 [tool.setuptools.packages.find]
@@ -164,6 +151,7 @@ include = ["vrl*"]
 
 [tool.setuptools.package-data]
 "vrl.config.presets" = ["**/*.yaml", "**/*.yml", "**/*.md"]
+"vrl.config.reward_service" = ["*.yaml"]
 "vrl.rewards.assets" = ["*.pth"]
 
 # ── Ruff ─────────────────────────────────────────────────────────

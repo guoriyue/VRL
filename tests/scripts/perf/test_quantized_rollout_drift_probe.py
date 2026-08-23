@@ -115,17 +115,25 @@ def test_precision_guard_preserves_quantization_as_role_execution_label(
     assert "PASSED" in capsys.readouterr().out
 
 
-def test_drift_probe_rejects_legacy_fp4_scheme() -> None:
-    with pytest.raises(ValueError, match="scheme must be fp8 or nvfp4"):
-        drift_probe.main(scheme="fp4")
+def test_drift_probe_rejects_legacy_fp4_scheme(monkeypatch, capsys) -> None:
+    """argparse choices own scheme validation now that the CLI is the only entry."""
+
+    monkeypatch.setattr("sys.argv", ["quantized_rollout_drift_probe", "--scheme", "fp4"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        drift_probe.main()
+
+    assert exc_info.value.code != 0
+    assert "fp8" in capsys.readouterr().err
 
 
 def test_explicit_nvfp4_probe_fails_when_hardware_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr("sys.argv", ["quantized_rollout_drift_probe", "--scheme", "nvfp4"])
     monkeypatch.setattr(drift_probe.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(drift_probe, "nvfp4_available", lambda: False)
 
     with pytest.raises(SystemExit) as exc_info:
-        drift_probe.main(scheme="nvfp4")
+        drift_probe.main()
 
     assert exc_info.value.code != 0
     assert "NVFP4-capable" in str(exc_info.value)

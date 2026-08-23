@@ -1,27 +1,11 @@
-"""Reusable attention layer contracts."""
+"""Reusable attention layer contracts.
 
-from vrl.nn.layers.attention.cache_rows import ARCacheRows, ar_concat_rows, ar_split_rows
-from vrl.nn.layers.attention.paged import (
-    ARAttentionBackend,
-    ARAttentionConfig,
-    ARAttentionPrefillInput,
-    ARAttentionPrefillOutput,
-    ARAttentionStepInput,
-    ARAttentionStepOutput,
-    ARAttentionUnavailable,
-    VllmPagedAttentionConfig,
-)
+Deliberately exports nothing: no production or test code imported this
+package root (all callers import the owning submodule directly), so the
+re-export facade bought no ergonomics while taxing import time and rotting
+independently of the submodules. Import from the owning module instead.
+"""
 
-__all__ = [
-    "ARAttentionBackend",
-    "ARAttentionConfig",
-    "ARAttentionPrefillInput",
-    "ARAttentionPrefillOutput",
-    "ARAttentionStepInput",
-    "ARAttentionStepOutput",
-    "ARAttentionUnavailable",
-    "ARCacheRows",
-    "VllmPagedAttentionConfig",
-    "ar_concat_rows",
-    "ar_split_rows",
-]
+from __future__ import annotations
+
+__all__: list[str] = []

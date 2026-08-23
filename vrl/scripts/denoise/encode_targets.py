@@ -59,8 +59,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default="preserve",
         help="On-disk latent dtype; bf16 reduces replicated trainer host memory.",
     )
-    parser.add_argument("--shard-index", type=int, default=0)
-    parser.add_argument("--num-shards", type=int, default=1)
     return parser
 
 
@@ -172,11 +170,6 @@ def main(argv: list[str] | None = None) -> None:
     examples = load_prompt_examples_from_config(cfg.data)
     if args.limit is not None:
         examples = examples[: int(args.limit)]
-    if args.num_shards < 1:
-        raise ValueError("--num-shards must be >= 1")
-    if not 0 <= args.shard_index < args.num_shards:
-        raise ValueError("--shard-index must be in [0, --num-shards)")
-    examples = examples[args.shard_index :: args.num_shards]
     if not examples:
         raise ValueError("the training manifest resolved to zero examples")
 

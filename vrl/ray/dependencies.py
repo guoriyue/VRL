@@ -54,18 +54,17 @@ class ClusterTopology:
     non_driver_gpus: float
 
 
-def inspect_cluster(ray: Any, *, driver_node_ip: str | None = None) -> ClusterTopology:
+def inspect_cluster(ray: Any) -> ClusterTopology:
     """Sum alive-node GPUs split by driver vs non-driver node.
 
-    Requires an initialized/attached Ray cluster. ``driver_node_ip`` defaults to
-    the current process's node ip; nodes matching it count as the driver/head.
+    Requires an initialized/attached Ray cluster. Nodes matching the current
+    process's node ip count as the driver/head.
     """
 
-    if driver_node_ip is None:
-        try:
-            driver_node_ip = current_node_ip()
-        except Exception:
-            driver_node_ip = None
+    try:
+        driver_node_ip: str | None = current_node_ip()
+    except Exception:
+        driver_node_ip = None
     driver_gpus = 0.0
     non_driver_gpus = 0.0
     for node in ray.nodes():

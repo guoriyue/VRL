@@ -51,12 +51,12 @@ def test_inspect_cluster_skips_dead_nodes(monkeypatch):
     assert topo.non_driver_gpus == 0.0
 
 
-def test_inspect_cluster_accepts_explicit_driver_ip():
-    """An explicit driver ip overrides autodetection, so a caller that already
-    knows the head node does not depend on this process being on it."""
+def test_inspect_cluster_counts_the_current_node_as_driver(monkeypatch):
+    """The driver is whichever node this process runs on; no second injection
+    seam exists (tests steer it exactly like production would experience it)."""
+    monkeypatch.setattr(dependencies, "current_node_ip", lambda: "10.0.0.2")
     topo = dependencies.inspect_cluster(
         fake_ray([node("10.0.0.1", 1.0), node("10.0.0.2", 1.0)]),
-        driver_node_ip="10.0.0.2",
     )
     assert topo.driver_gpus == 1.0
     assert topo.non_driver_gpus == 1.0

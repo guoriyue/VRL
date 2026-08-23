@@ -210,7 +210,7 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
             pipeline = Cosmos2VideoToWorldPipeline.from_pretrained(
                 build.model_name_or_path,
                 torch_dtype=build.parameter_dtype,
-                **build.revision_kwargs,
+                **build.pretrained_kwargs,
             )
         finally:
             _v2w_mod.CosmosSafetyChecker = _orig

@@ -7,7 +7,7 @@ cached ``Wan-AI/Wan2.2-I2V-A14B-Diffusers`` checkpoint, so we can eyeball base
 I2V quality before investing in a real runtime.
 
 Conditioning frames: by default we take the *first frame* of the existing T2V
-baseline clips under ``outputs/wan_phys_eval_AB/baseline`` and reuse the same 5
+baseline clips under a directory you provide via --baseline-dir and reuse the same 5
 physics prompts. That needs zero new input assets and makes the I2V output
 directly comparable to the T2V baseline.
 

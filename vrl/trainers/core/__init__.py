@@ -1,21 +1,11 @@
-"""Core trainer contracts — shared by online and offline trainers."""
+"""Core trainer contracts — import from vrl.trainers.core.types.
 
-from vrl.trainers.core.types import (
-    ContinuousRolloutConfig,
-    DebugConfig,
-    EMAConfig,
-    OptimConfig,
-    RolloutOrchestrationConfig,
-    TrainState,
-)
-from vrl.utils.profiling import TorchProfilerConfig
+Deliberately exports nothing: no production or test code imported this
+package root (all callers import the owning submodule directly), so the
+re-export facade bought no ergonomics while taxing import time and rotting
+independently of the submodules. Import from the owning module instead.
+"""
 
-__all__ = [
-    "ContinuousRolloutConfig",
-    "DebugConfig",
-    "EMAConfig",
-    "OptimConfig",
-    "RolloutOrchestrationConfig",
-    "TorchProfilerConfig",
-    "TrainState",
-]
+from __future__ import annotations
+
+__all__: list[str] = []

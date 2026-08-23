@@ -184,15 +184,10 @@ def _require_precision_guard(
     )
 
 
-def main(*, scheme: str | None = None, record_baseline: str | None = None) -> None:
-    # An explicit ``scheme`` means a programmatic caller (the fp8_rollout_drift_probe
-    # compatibility entry point), which has no argv of its own to parse.
-    if scheme is None:
-        args = _parse_args()
-        scheme = args.scheme
-        record_baseline = record_baseline or args.record_baseline
-    elif scheme not in {"fp8", "nvfp4"}:
-        raise ValueError(f"scheme must be fp8 or nvfp4; got {scheme!r}")
+def main() -> None:
+    args = _parse_args()
+    scheme = args.scheme
+    record_baseline = args.record_baseline
     if not torch.cuda.is_available():
         raise SystemExit("this probe needs a CUDA device with quantized GEMM support")
     if scheme == "nvfp4" and not nvfp4_available():

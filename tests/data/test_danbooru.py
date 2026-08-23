@@ -6,16 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from vrl.scripts.data import danbooru
-from vrl.scripts.data.danbooru import (
-    build_danbooru_safety_prompt_rows,
+from vrl.scripts.data.danbooru.anatomy import build_prompt_rows, split_prompt_rows
+from vrl.scripts.data.danbooru.assets import (
     build_positive_images,
-    build_prompt_rows,
-    build_safety_prompts,
     download_danbooru_images,
     hand_crop_rows,
     positive_image_rows,
-    split_prompt_rows,
+)
+from vrl.scripts.data.danbooru.config import DOMAIN, TEMPLATE_ID
+from vrl.scripts.data.danbooru.safety import (
+    build_danbooru_safety_prompt_rows,
+    build_safety_prompts,
     split_safety_prompt_rows,
 )
 
@@ -56,8 +57,8 @@ def test_build_prompt_rows_tracks_provenance_and_buckets(tmp_path: Path) -> None
     assert len(rows) == 2
     assert len(train_rows) == 1
     assert len(eval_rows) == 1
-    assert {row["metadata"]["domain"] for row in rows} == {danbooru.DOMAIN}
-    assert {row["metadata"]["template_id"] for row in rows} == {danbooru.TEMPLATE_ID}
+    assert {row["metadata"]["domain"] for row in rows} == {DOMAIN}
+    assert {row["metadata"]["template_id"] for row in rows} == {TEMPLATE_ID}
     assert {row["metadata"]["prompt_style"] for row in rows} == {"tag", "language"}
     assert any(row["prompt"].startswith("1girl, solo") for row in rows)
     assert any(row["prompt"].startswith("single anime boy") for row in rows)

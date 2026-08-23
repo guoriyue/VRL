@@ -76,7 +76,7 @@ def test_copy_ema_to_then_copy_temp_to_restores_exactly() -> None:
     ema.ema_parameters[0].fill_(3.0)
 
     original = param.detach().clone()
-    ema.copy_ema_to([param], store_temp=True)
+    ema.copy_ema_to([param])
     assert param.item() == pytest.approx(3.0)  # now holding EMA value
 
     ema.copy_temp_to([param])
@@ -92,7 +92,7 @@ def test_failed_ema_swap_restores_every_parameter_before_raising() -> None:
     ema.ema_parameters[1] = torch.ones(2)
 
     with pytest.raises(RuntimeError):
-        ema.copy_ema_to([first, second], store_temp=True)
+        ema.copy_ema_to([first, second])
 
     assert first.item() == pytest.approx(1.0)
     assert second.item() == pytest.approx(2.0)

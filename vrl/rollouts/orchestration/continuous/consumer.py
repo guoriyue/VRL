@@ -62,9 +62,9 @@ class ContinuousRolloutConsumer:
 
         deadline = time.monotonic() + float(wait_timeout_s)
         wait_start = time.perf_counter()
-        demand_snapshot = self.queue.snapshot()
-        ready_groups_at_demand = len({item.group_slot for item in demand_snapshot})
-        ready_batches_at_demand = len({item.batch_id for item in demand_snapshot})
+        ready_groups_at_demand = len(
+            {item.group_slot for item in self.queue.snapshot()},
+        )
         start_completed = producer_state.completed_count if producer_state else 0
         start_errors = producer_state.error_count if producer_state else 0
         while True:
@@ -86,7 +86,6 @@ class ContinuousRolloutConsumer:
                     current_version=current_version,
                     queue_wait_s=wait_s,
                     ready_groups_at_demand=ready_groups_at_demand,
-                    ready_batches_at_demand=ready_batches_at_demand,
                 )
             if time.monotonic() >= deadline:
                 raise TimeoutError(
@@ -225,7 +224,6 @@ class ContinuousRolloutConsumer:
         current_version: int | None,
         queue_wait_s: float,
         ready_groups_at_demand: int,
-        ready_batches_at_demand: int,
     ) -> RolloutIteration:
         batches: list[RolloutBatch] = []
         for index, item in enumerate(items):
@@ -258,7 +256,6 @@ class ContinuousRolloutConsumer:
                 # display/provenance-only in this sprint: identity in the
                 # metric row (selection consumes batch_id from Sprint 2 on).
                 "continuous.batch_id": float(items[0].batch_id),
-                "continuous.active_batches": float(ready_batches_at_demand),
                 # >1 means this update contains retried work (provenance for
                 # correlating reward/gradient anomalies with retries).
                 "continuous.max_attempt": float(max_attempt),

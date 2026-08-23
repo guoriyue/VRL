@@ -287,7 +287,7 @@ class RayGenerationLauncher:
             if session is not None:
                 session.force_close()
                 try:
-                    session.kill_workers()
+                    session.kill_engines()
                 except BaseException as cleanup_error:
                     error.add_note(
                         f"resident rollout startup cleanup also failed: {cleanup_error!r}",
@@ -309,7 +309,7 @@ def _validate_rank_gpu_ids(
     config: RayGenerationConfig,
     metadata: Sequence[RayActorHandle],
     *,
-    expected_gpu_ids: tuple[int, ...] | None = None,
+    expected_gpu_ids: tuple[int, ...],
 ) -> None:
     """Validate launched rank actors against the resolved rollout placement."""
 
@@ -326,10 +326,9 @@ def _validate_rank_gpu_ids(
 
     # The placement owner supplies the role's expected GPUs (empty under
     # cross-node, where the node-aware check applies instead).
-    expected = resources.rollout_devices if expected_gpu_ids is None else expected_gpu_ids
     validate_actor_gpu_ids(
         metadata,
-        expected_gpu_ids=expected,
+        expected_gpu_ids=expected_gpu_ids,
         role="generation",
         cross_node=resources.cross_node,
         driver_node_ip=driver_node_ip,

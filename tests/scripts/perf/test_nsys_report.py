@@ -13,7 +13,7 @@ import sqlite3
 
 import pytest
 
-from vrl.utils.nsys_report import (
+from vrl.scripts.perf.nsys_report import (
     analyze,
     clip_intervals,
     format_report,

@@ -10,7 +10,7 @@
 #
 #   CUDA_VISIBLE_DEVICES=3 \
 #     .venv/bin/vrl-reward-service \
-#       --config vrl/config/reward_service/videoscore2_overlap_gate.yaml
+#       --config vrl/config/reward_service/kling_overlap_gate.yaml
 #
 # CUDA_VISIBLE_DEVICES is how the physical disjointness is actually enforced;
 # `device: cuda:0` below is the device *within* that masked view. The wire

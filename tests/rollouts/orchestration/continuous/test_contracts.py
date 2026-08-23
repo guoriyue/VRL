@@ -1047,7 +1047,7 @@ async def test_consumer_rejects_mixed_batch_identities() -> None:
 
 @pytest.mark.asyncio
 async def test_iteration_carries_batch_identity_gauges() -> None:
-    """batch_id/active_batches thread from the ready items into the metric row."""
+    """batch_id/max_attempt thread from the ready items into the metric row."""
     queue = ContinuousRolloutQueue(max_items=8)
     queue.put(_item(group_slot=0, version=1, batch_id=3))
     queue.put(_item(group_slot=1, version=1, batch_id=3, attempt=2))
@@ -1056,7 +1056,6 @@ async def test_iteration_carries_batch_identity_gauges() -> None:
 
     phases = iteration.stats.as_phase_dict()
     assert phases["continuous.batch_id"] == pytest.approx(3.0)
-    assert phases["continuous.active_batches"] == pytest.approx(1.0)
     assert phases["continuous.max_attempt"] == pytest.approx(2.0)
 
 

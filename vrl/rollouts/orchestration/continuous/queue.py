@@ -38,20 +38,15 @@ class ContinuousRolloutQueue:
         return len(self._items)
 
     def stats(self) -> dict[str, float]:
-        group_slots = {item.group_slot for item in self._items}
-        batch_ids = {item.batch_id for item in self._items}
-        versions = {
-            item.rollout_policy_version
-            for item in self._items
-            if item.rollout_policy_version is not None
-        }
+        # Distinct-slot/batch/version counts are structurally constant while
+        # only one finite batch may be resident (set_prompt_batch refuses a
+        # replacement before the queue drains), so only the three quantities
+        # that can vary are reported. The lookahead sprint reintroduces
+        # batch-aware counts when two batches can actually coexist.
         oldest_age = max((item.age_s for item in self._items), default=0.0)
         return {
             "ready_items": float(len(self._items)),
-            "ready_groups": float(len(group_slots)),
-            "ready_batches": float(len(batch_ids)),
             "ready_bytes": float(self._bytes),
-            "ready_versions": float(len(versions)),
             "oldest_item_age_s": float(oldest_age),
         }
 

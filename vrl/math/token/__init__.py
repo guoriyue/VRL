@@ -1,19 +1,11 @@
-"""Autoregressive math shared by replay evaluators and training code."""
+"""Autoregressive math shared by replay evaluators and training code.
 
-from vrl.math.token.flow_matching import (
-    flow_logprob_at,
-    flow_sample_with_logprob,
-)
-from vrl.math.token.logprob import (
-    gather_categorical_log_probs,
-    require_positive_temperature,
-    top_k_top_p_filtering,
-)
+Deliberately exports nothing: no production or test code imported this
+package root (all callers import the owning submodule directly), so the
+re-export facade bought no ergonomics while taxing import time and rotting
+independently of the submodules. Import from the owning module instead.
+"""
 
-__all__ = [
-    "flow_logprob_at",
-    "flow_sample_with_logprob",
-    "gather_categorical_log_probs",
-    "require_positive_temperature",
-    "top_k_top_p_filtering",
-]
+from __future__ import annotations
+
+__all__: list[str] = []

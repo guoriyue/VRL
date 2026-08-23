@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.models.steps.denoise.common import (
+from vrl.models.steps.denoise.common.cfg import (
     DiffusionBranch,
     combine_cfg,
     pack_batched_cfg,

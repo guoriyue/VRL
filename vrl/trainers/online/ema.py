@@ -21,7 +21,7 @@ class EMAModuleWrapper:
         # after each optimizer step:
         ema.step(model.parameters(), global_step)
         # for evaluation:
-        ema.copy_ema_to(model.parameters(), store_temp=True)
+        ema.copy_ema_to(model.parameters())
         evaluate(model)
         ema.copy_temp_to(model.parameters())
     """
@@ -88,37 +88,34 @@ class EMAModuleWrapper:
             self.num_updates += 1
 
     def to(self, device: torch.device | None = None, dtype: torch.dtype | None = None) -> None:
-        """Move EMA parameters to a device/dtype."""
+        """Move EMA parameters to a device/dtype (load_state_dict restore path)."""
         self.device = device
         self.ema_parameters = [
             p.to(device=device, dtype=dtype) if p.is_floating_point() else p.to(device=device)
             for p in self.ema_parameters
         ]
 
-    def copy_ema_to(
-        self, parameters: Iterable[torch.nn.Parameter], store_temp: bool = True
-    ) -> None:
-        """Replace model parameters with EMA values; optionally save originals.
+    def copy_ema_to(self, parameters: Iterable[torch.nn.Parameter]) -> None:
+        """Replace model parameters with EMA values, saving the originals.
 
         A failed swap restores every parameter before propagating the error. The
         checkpoint path can therefore coordinate a rank-local failure before any
         peer enters its next collective without leaving this rank half-swapped.
         """
         parameters = list(parameters)
-        if store_temp:
-            # copy=True is required: plain .cpu() is a no-op when params already
-            # live on CPU, so detach() would share storage and the in-place copy_
-            # below would clobber the saved originals — copy_temp_to would then
-            # restore EMA values instead of the pre-swap weights. copy=True keeps
-            # the CPU-offload intent while guaranteeing an independent buffer.
-            # (DTensor params stage as CPU-local DTensors — same code path.)
-            self.temp_stored_parameters = [p.detach().to("cpu", copy=True) for p in parameters]
+        # copy=True is required: plain .cpu() is a no-op when params already
+        # live on CPU, so detach() would share storage and the in-place copy_
+        # below would clobber the saved originals — copy_temp_to would then
+        # restore EMA values instead of the pre-swap weights. copy=True keeps
+        # the CPU-offload intent while guaranteeing an independent buffer.
+        # (DTensor params stage as CPU-local DTensors — same code path.)
+        self.temp_stored_parameters = [p.detach().to("cpu", copy=True) for p in parameters]
 
         try:
             for ema_param, param in zip(self.ema_parameters, parameters, strict=True):
                 param.data.copy_(ema_param.to(param.device).data)
         except BaseException:
-            if store_temp and self.temp_stored_parameters is not None:
+            if self.temp_stored_parameters is not None:
                 try:
                     self.copy_temp_to(parameters)
                 except BaseException as restore_error:

@@ -18,6 +18,7 @@ from typing import Any
 from vrl.config.algorithm import resolve_kl_reward_coef
 from vrl.config.sampling_schema import SamplingSection
 from vrl.config.schema import (
+    SdeConfig,
     generation_request_rollout_fields,
     sampling_section_class_for_family,
 )
@@ -63,10 +64,10 @@ class RolloutCollectorConfig:
             allowed=generation_request_rollout_fields(),
         )
         sde_values = _cfg_mapping(cfg, "rollout.sde")
+        # Derived from the schema type per this module's own rule: a hand
+        # -written map silently drops any field SdeConfig gains later.
         for source_key, target_key in {
-            "type": "sde_type",
-            "window_size": "sde_window_size",
-            "window_range": "sde_window_range",
+            name: f"sde_{name}" for name in SdeConfig.model_fields
         }.items():
             if source_key in sde_values and sde_values[source_key] is not None:
                 request_sampling[target_key] = to_builtin_deep(sde_values[source_key])

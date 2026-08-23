@@ -548,7 +548,7 @@ def save_training_checkpoint(
             swap_failure: BaseException | None = None
             swapped = False
             try:
-                export_ema.copy_ema_to(trainable_parameters, store_temp=True)
+                export_ema.copy_ema_to(trainable_parameters)
                 swapped = True
             except BaseException as error:
                 swap_failure = error

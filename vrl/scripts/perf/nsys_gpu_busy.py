@@ -1,6 +1,6 @@
 """Trustworthy GPU-busy attribution from an nsys capture (CLI).
 
-Thin consumer of :mod:`vrl.utils.nsys_report`. Turns a captured ``.nsys-rep`` (or
+Thin consumer of :mod:`vrl.scripts.perf.nsys_report`. Turns a captured ``.nsys-rep`` (or
 exported ``.sqlite``) into the kernel-union GPU-busy fraction, the top idle gaps
 with their host/copy-engine breakdown, and per-NVTX-stage attribution — the
 analysis two prior sessions did by hand, now one command.
@@ -26,7 +26,7 @@ import json
 import sys
 from pathlib import Path
 
-from vrl.utils.nsys_report import analyze, format_report, report_to_dict
+from vrl.scripts.perf.nsys_report import analyze, format_report, report_to_dict
 
 
 def main(argv: list[str] | None = None) -> int:

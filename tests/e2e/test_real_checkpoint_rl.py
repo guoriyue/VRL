@@ -36,9 +36,9 @@ from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator,
     build_reward_function,
 )
+from vrl.trainers.diagnostics import trainable_state_digest
 from vrl.trainers.online import OnlineTrainer
 from vrl.utils.config import import_from_path
-from vrl.utils.model_diagnostics import trainable_state_digest
 
 RUN_REAL_ENV = "WM_RUN_REAL_MODEL_TESTS"
 CASE_FILTER_ENV = "WM_REAL_MODEL_RL_CASES"

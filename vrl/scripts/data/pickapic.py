@@ -31,9 +31,11 @@ def _cmd_pickapic(args: argparse.Namespace) -> None:
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise RuntimeError("datasets is required to populate Pick-a-Pic") from exc
 
-    dataset_name = args.dataset_name or (
-        "yuvalkirstain/pickapic_v2" if args.with_images else "yuvalkirstain/pickapic_v2_no_images"
-    )
+    # The original yuvalkirstain/pickapic_v2 (and *_no_images) repos were
+    # delisted from the Hub (404 as of 2026-06; recorded in
+    # presets/dataset/pickapic_v1.yaml). The config's data.dataset_name is the
+    # source of truth; this default only backstops direct CLI invocations.
+    dataset_name = args.dataset_name or "pickapic-anonymous/pickapic_v1"
     dataset = load_dataset(
         dataset_name,
         split=args.split,
@@ -51,8 +53,14 @@ def _cmd_pickapic(args: argparse.Namespace) -> None:
     )
 
 
-def image_setup_argv() -> tuple[str, ...]:
-    return (COMMAND_NAME, "--with-images")
+def image_setup_argv(dataset_name: str | None = None) -> tuple[str, ...]:
+    """Setup command for the bootstrap report; dataset identity comes from the
+    experiment config so the emitted command survives Hub delistings."""
+
+    argv: tuple[str, ...] = (COMMAND_NAME, "--with-images")
+    if dataset_name:
+        argv += ("--dataset-name", str(dataset_name))
+    return argv
 
 
 __all__ = ["image_setup_argv", "register"]

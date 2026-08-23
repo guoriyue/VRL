@@ -1316,7 +1316,7 @@ def test_ema_over_dtensor_params_updates_swaps_and_round_trips(cpu_process_group
 
     # Swap EMA weights in for eval, then restore the originals exactly.
     originals = [p.full_tensor().clone() for p in params]
-    ema.copy_ema_to(params, store_temp=True)
+    ema.copy_ema_to(params)
     for p, shadow in zip(params, after, strict=True):
         torch.testing.assert_close(p.full_tensor(), shadow)
     ema.copy_temp_to(params)

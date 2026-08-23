@@ -44,6 +44,12 @@ from vrl.rollouts.stats import (
     StatsSink,
 )
 from vrl.trainers.core.types import TrainState
+from vrl.trainers.diagnostics import (
+    append_jsonl_record,
+    parameter_state_summary,
+    tensor_stats,
+    trainable_state_digest,
+)
 from vrl.trainers.online.config import TrainerConfig
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.online.precision_guard import (
@@ -53,12 +59,6 @@ from vrl.trainers.online.precision_guard import (
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer, build_optimizer
 from vrl.trainers.strategy import SingleProcessStrategy, Strategy, TrainingMemoryState
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
-from vrl.utils.model_diagnostics import (
-    parameter_state_summary,
-    tensor_stats,
-    trainable_state_digest,
-    write_jsonl,
-)
 
 if TYPE_CHECKING:
     from vrl.algorithms.trajectory import AlgorithmAdapter
@@ -1650,7 +1650,7 @@ class OnlineTrainer:
             # the failing evidence before aborting so NaN/Inf cannot exploit a
             # false comparison and train a corrupted policy.
             if not _parity_passed and self._strategy.context.is_primary:
-                write_jsonl(
+                append_jsonl_record(
                     f"{cfg.output_dir}/training_debug.jsonl",
                     first_step_debug_record,
                 )
@@ -1749,9 +1749,7 @@ class OnlineTrainer:
                 cfg.precision_drift_guard,
                 training_precision=precision_metadata["training_precision"],
                 rollout_precision=precision_metadata["rollout_precision"],
-                math_precision=_precision_label(
-                    getattr(self.evaluator, "math_dtype", None) or torch.float32,
-                ),
+                math_precision=precision_metadata["math_precision"],
                 timestep_indices=train_indices,
                 evaluate_fn=_guard_evaluate,
                 metadata=precision_metadata,
@@ -1903,7 +1901,7 @@ class OnlineTrainer:
             )
             first_step_debug_record["post_step_global_step"] = int(self.state.global_step)
             if self._strategy.context.is_primary:
-                write_jsonl(
+                append_jsonl_record(
                     f"{cfg.output_dir}/training_debug.jsonl",
                     first_step_debug_record,
                 )
@@ -2017,7 +2015,7 @@ class OnlineTrainer:
             "driver_trainable_before_step": trainable_state_digest(self.model),
         }
         if self._strategy.context.is_primary:
-            write_jsonl(f"{cfg.output_dir}/training_debug.jsonl", record)
+            append_jsonl_record(f"{cfg.output_dir}/training_debug.jsonl", record)
         if not passed:
             raise RuntimeError(
                 "full first-step log-prob parity failed before optimizer step: "

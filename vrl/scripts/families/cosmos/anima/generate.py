@@ -104,14 +104,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--use-config-lora",
-        action="store_true",
-        help=(
-            "Respect cfg.model.use_lora even when cfg.model.lora.path is empty. "
-            "By default empty training LoRA configs are disabled for inference."
-        ),
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Resolve config, prompts, paths, and sampling settings without loading the model.",
@@ -133,9 +125,7 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("--limit must be >= 0")
 
     cfg = load_config(args.config, overrides=args.overrides)
-    _configure_lora_for_inference(
-        cfg, lora_path=args.lora_path, use_config_lora=args.use_config_lora
-    )
+    _configure_lora_for_inference(cfg, lora_path=args.lora_path)
     root = parse_config(cfg)
     precision = resolve_precision_policy(root)
     prompts = _load_prompts(args, cfg)
@@ -253,7 +243,6 @@ def _configure_lora_for_inference(
     cfg: DictConfig,
     *,
     lora_path: str,
-    use_config_lora: bool,
 ) -> None:
     model = cfg.get("model")
     if not isinstance(model, Mapping):
@@ -273,7 +262,7 @@ def _configure_lora_for_inference(
         return
 
     configured_path = str((lora or {}).get("path") or "").strip()
-    if bool(model.get("use_lora")) and not configured_path and not use_config_lora:
+    if bool(model.get("use_lora")) and not configured_path:
         logger.warning("Disabling empty training LoRA config for base-model inference")
         OmegaConf.update(cfg, "model.use_lora", False)
 

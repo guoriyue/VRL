@@ -1,27 +1,11 @@
-"""Reusable NN modules backed by model-executor layers and kernels."""
+"""Reusable NN modules backed by model-executor layers and kernels.
 
-from vrl.nn.modules.ar_attention_backends import (
-    attention_backend_name,
-    available_attention_backends,
-    build_torch_native_backend,
-    build_vllm_attention_backend,
-    resolve_attention_backend,
-)
-from vrl.nn.modules.ar_decoder import (
-    VllmDecoderPagedAttentionBackend,
-    VllmDecoderPagedSequenceState,
-)
-from vrl.nn.modules.torch_attention import (
-    TorchNativeDecoderAttentionBackend,
-)
+Deliberately exports nothing: no production or test code imported this
+package root (all callers import the owning submodule directly), so the
+re-export facade bought no ergonomics while taxing import time and rotting
+independently of the submodules. Import from the owning module instead.
+"""
 
-__all__ = [
-    "TorchNativeDecoderAttentionBackend",
-    "VllmDecoderPagedAttentionBackend",
-    "VllmDecoderPagedSequenceState",
-    "attention_backend_name",
-    "available_attention_backends",
-    "build_torch_native_backend",
-    "build_vllm_attention_backend",
-    "resolve_attention_backend",
-]
+from __future__ import annotations
+
+__all__: list[str] = []

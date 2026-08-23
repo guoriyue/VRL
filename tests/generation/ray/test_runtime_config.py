@@ -1016,13 +1016,13 @@ class _FactorySession:
         self.supports_non_draining_weight_sync = False
         self.close = AsyncMock()
         self.force_close_calls = 0
-        self.kill_workers_calls = 0
+        self.kill_engines_calls = 0
 
     def force_close(self) -> None:
         self.force_close_calls += 1
 
-    def kill_workers(self) -> None:
-        self.kill_workers_calls += 1
+    def kill_engines(self) -> None:
+        self.kill_engines_calls += 1
 
 
 def test_create_runtime_launches_resident_topology() -> None:
@@ -1078,7 +1078,7 @@ def test_create_runtime_kills_resident_session_when_monitor_start_fails() -> Non
         )
 
     assert expected_session.force_close_calls == 1
-    assert expected_session.kill_workers_calls == 1
+    assert expected_session.kill_engines_calls == 1
 
 
 def test_create_runtime_defers_on_demand_topology_launch() -> None:

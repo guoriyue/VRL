@@ -78,7 +78,9 @@ class RayRuntimeWeightSyncer(WeightSyncer):
         from vrl.utils.profiling import profile_range
 
         with profile_range("weight_sync.state_to_cpu"):
-            state = _cpu_state_dict(state_dict)
+            # to_cpu_snapshot: push() is exactly the "another thread may read
+            # later" case its docstring describes, so the copy is required.
+            state = to_cpu_snapshot(state_dict)
         async with self._push_lock:
             policy_version = self._next_policy_version
             with profile_range("weight_sync.push"):
@@ -192,18 +194,6 @@ def _trainable_parameter_names(module: Any, module_name: str) -> set[str]:
     if not names:
         raise ValueError(f"trainable module {module_name!r} has no trainable parameters")
     return names
-
-
-def _cpu_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
-    return {key: to_cpu(value) for key, value in state_dict.items()}
-
-
-def to_cpu(value: Any) -> Any:
-    return map_tensor_tree(
-        value,
-        lambda leaf: leaf.detach().cpu(),
-        is_leaf=lambda v: isinstance(v, torch.Tensor),
-    )
 
 
 def to_cpu_snapshot(value: Any) -> Any:
