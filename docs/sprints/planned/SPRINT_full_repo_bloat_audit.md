@@ -254,6 +254,46 @@ collector 内层计时 vs prompt_collection 恒开计时）归入 2-B 一并处�
   **负控是这个门的承重测试**:向真实脚本注入一个未消费 flag 必须报红，
   否则一个永远绿的门等于没有门——测试里用真 AST 扫描验证过。
 
+## 8.3 require* 家族审计（2026-08-22/23）
+
+87 个 `require*` 定义的全量分类，以及"能不能消掉 require"的结论。
+
+**不可行的两条路。**（a）统一成一个 `require(cond, msg)`：名字里的定理没了就 grep 不出来；
+仓库里信息量最低的正是最泛化的那个 `require(cfg, path)`。（b）靠类型注解替代：`make verify`
+只跑 ruff + config lint + dead-flags lint + config 测试，**没有任何类型检查器**，注解不被强制
+——`require_*` 就是本仓库运行时的类型系统。
+
+**可行的一条：在值诞生处验一次，而不是在每个使用处验。** 这不是新发明，是仓库已有的模式
+（`ContinuousRolloutConfig.__post_init__`、`TrajectorySignalBatch.__post_init__`、
+`WorkerMemoryParkingSnapshot.validate()`），只是有不变量没被纳入。
+
+| 类别 | 数量 | 处置 |
+|---|---|---|
+| `Any` 收窄成类型 | 22 | 减：在接收处验一次；注解本身不解决问题 |
+| `Optional` 收窄成值 | 3 | 可消：构造时钉住不变量 |
+| 原始 config / 用户输入 | 6 | **保留**，真边界 |
+| 已类型化、跨字段不变量 | 43 | 归属问题，逐个看 |
+| `requires_*` 谓词（返回 bool 不 raise） | 13 | 不是校验器，与本议题无关 |
+
+**已落地。** `require_tensor` 从 13 个调用点到 0，函数本身删除（`1aee1038` + `355d9339`）：
+同一条 CFG 不变量原先有三种处理——8 个 uncond 分支致命拒绝、4 个生产端静默丢弃、还有直接
+读的。`DiffusionBackboneInput.__post_init__` 归位主干，sd3_5 / cosmos-predict2 的 SamplingState
+归位各自的家族尾巴（pooled embeds / uncond indicator），wan 的两处则是逻辑上无法触发的检查
+（一处装箱自非可选字段，一处已被 `is not None` 守住）。另 `99edc1ad` 修正 Rule-1 身份穿线
+（`owner=type(self).__name__` × 6 → 类属性声明），并查出 causvid 的零时间步检查因继承默认值
+而空转。
+
+**试过并被证据否决：`RuntimeBundle.model` 提前到 `__post_init__`。** 字段已声明为
+`RuntimeModel`，两个消费点各自重验一次，看似该收敛。实测 14 个测试为**非重放关切**
+（VAE 显存策略、LoRA 构建）构造 bundle，其 model 本就不需要重放契约——把最严格消费者的契约
+提到构造时是过度约束。且与 CFG 那例不同：两个消费点处理方式一致、无分叉，检查本就发生在
+运行早期。**保持现状**。
+
+**剩余目标。** `DiffusionBackboneInput.extra: dict[str, Any]` 仍是"已类型化 state 字段 → 装箱
+进无类型袋子 → 类型被抹掉"的往返（Rule 4）；43 个 D 类里应逐个问"这条不变量属于哪个类型"。
+两者都不急，且都应遵循同一判据：**只有当不变量在构造处可判定、且现状存在分叉时才搬**——
+没有分叉的重验，搬家换不来正确性。
+
 ## 9. References
 
 - 审计道报告（7 份，本次会话产出，finding 坐标以本文档为准）
