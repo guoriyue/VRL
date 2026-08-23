@@ -19,6 +19,7 @@ from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutItem,
     ContinuousRolloutProducerState,
+    ContinuousRolloutSettings,
 )
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.rollouts.stats import RolloutStats
@@ -33,15 +34,14 @@ class ContinuousRolloutConsumer:
         *,
         queue: ContinuousRolloutQueue,
         staleness: StalenessPolicy,
-        # No default: ContinuousRolloutConfig (vrl.trainers.core.types) is the
-        # single source of this default; the owner passes settings.fail_fast_errors.
-        fail_fast_errors: int,
+        settings: ContinuousRolloutSettings,
     ) -> None:
         self.queue = queue
         self.staleness = staleness
         # Fresh-error count (with zero fresh completions) that ends the wait
-        # early with the producer's root cause. 0 disables fail-fast.
-        self.fail_fast_errors = max(0, int(fail_fast_errors))
+        # early with the producer's root cause. 0 disables fail-fast. Range
+        # validated once at the config boundary; trusted here.
+        self.fail_fast_errors = settings.fail_fast_errors
 
     async def drain_for_iteration(
         self,
@@ -62,9 +62,9 @@ class ContinuousRolloutConsumer:
 
         deadline = time.monotonic() + float(wait_timeout_s)
         wait_start = time.perf_counter()
-        ready_groups_at_demand = len(
-            {item.group_key for item in self.queue.snapshot()},
-        )
+        demand_snapshot = self.queue.snapshot()
+        ready_groups_at_demand = len({item.group_slot for item in demand_snapshot})
+        ready_batches_at_demand = len({item.batch_id for item in demand_snapshot})
         start_completed = producer_state.completed_count if producer_state else 0
         start_errors = producer_state.error_count if producer_state else 0
         while True:
@@ -86,6 +86,7 @@ class ContinuousRolloutConsumer:
                     current_version=current_version,
                     queue_wait_s=wait_s,
                     ready_groups_at_demand=ready_groups_at_demand,
+                    ready_batches_at_demand=ready_batches_at_demand,
                 )
             if time.monotonic() >= deadline:
                 raise TimeoutError(
@@ -185,8 +186,8 @@ class ContinuousRolloutConsumer:
     ) -> tuple[int | None, list[ContinuousRolloutItem]] | None:
         """Pop one complete, distinct-group, homogeneous-version batch."""
 
-        if int(min_groups) < 1:
-            raise ValueError("continuous min_groups must be >= 1")
+        # min_groups == len(prompts); the owner already rejected empty prompt
+        # lists at the API boundary, so no re-check here.
         self.validate_ready_versions(current_version=current_version)
 
         items = self.queue.snapshot()
@@ -196,8 +197,13 @@ class ContinuousRolloutConsumer:
                 "continuous ready prompt batch mixes policy versions "
                 f"{sorted(versions, key=lambda version: -1 if version is None else version)}",
             )
-        group_keys = [item.group_key for item in items]
-        if len(group_keys) != len(set(group_keys)):
+        batch_ids = {item.batch_id for item in items}
+        if len(batch_ids) > 1:
+            raise RuntimeError(
+                f"continuous ready prompt batch mixes batch identities {sorted(batch_ids)}",
+            )
+        group_slots = [item.group_slot for item in items]
+        if len(group_slots) != len(set(group_slots)):
             raise RuntimeError(
                 "continuous ready prompt batch contains duplicate group slots",
             )
@@ -219,6 +225,7 @@ class ContinuousRolloutConsumer:
         current_version: int | None,
         queue_wait_s: float,
         ready_groups_at_demand: int,
+        ready_batches_at_demand: int,
     ) -> RolloutIteration:
         batches: list[RolloutBatch] = []
         for index, item in enumerate(items):
@@ -230,6 +237,7 @@ class ContinuousRolloutConsumer:
 
         staleness = self.staleness.staleness(version, current_version)
         item_age_s = max((item.age_s for item in items), default=0.0)
+        max_attempt = max(item.attempt for item in items)
         stats = RolloutStats()
         stats.add_phase("continuous.queue_wait_s", float(queue_wait_s))
         # Merge the per-item collect stats (each collect call attached its
@@ -247,6 +255,13 @@ class ContinuousRolloutConsumer:
                 "continuous.stale_policy_versions": float(0 if staleness is None else staleness),
                 "continuous.item_age_s": float(item_age_s),
                 "continuous.ready_groups_at_demand": float(ready_groups_at_demand),
+                # display/provenance-only in this sprint: identity in the
+                # metric row (selection consumes batch_id from Sprint 2 on).
+                "continuous.batch_id": float(items[0].batch_id),
+                "continuous.active_batches": float(ready_batches_at_demand),
+                # >1 means this update contains retried work (provenance for
+                # correlating reward/gradient anomalies with retries).
+                "continuous.max_attempt": float(max_attempt),
             },
         )
         return RolloutIteration(batches=batches, stats=stats)

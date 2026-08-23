@@ -70,11 +70,9 @@ class _ContinuousOwnerRuntime:
         settings: ContinuousRolloutSettings,
     ) -> None:
         self.lifecycle = lifecycle
-        self.max_inflight_groups = int(settings.max_inflight_groups)
+        # The validated carrier travels whole; only derived values are unpacked.
+        self.settings = settings
         self.max_ready_bytes = int(settings.max_ready_bytes_mb) * _MB
-        self.wait_timeout_s = float(settings.wait_timeout_s)
-        self.queue_poll_interval_s = float(settings.queue_poll_interval_s)
-        self.fail_fast_errors = int(settings.fail_fast_errors)
         self.staleness = StalenessPolicy(
             max_stale_policy_versions=int(settings.max_stale_policy_versions),
         )
@@ -141,8 +139,8 @@ class _ContinuousOwnerRuntime:
             iteration = await self.consumer.drain_for_iteration(
                 min_groups=len(prompts),
                 current_version=current_version,
-                wait_timeout_s=self.wait_timeout_s,
-                poll_interval_s=self.queue_poll_interval_s,
+                wait_timeout_s=self.settings.wait_timeout_s,
+                poll_interval_s=self.settings.queue_poll_interval_s,
                 producer_state=self.producer.state,
             )
             self._installed_prompt_batch = None
@@ -209,7 +207,9 @@ class _ContinuousOwnerRuntime:
                 # update leaves the fleet's installed version unknown, so failure
                 # keeps admission closed and _run_command quarantines the owner.
                 if not non_draining:
-                    await producer.drain_prompt_batch(wait_timeout_s=self.wait_timeout_s)
+                    await producer.drain_prompt_batch(
+                        wait_timeout_s=self.settings.wait_timeout_s,
+                    )
                 await self.lifecycle.push_prepared_weights(prepared_weights, stats)
                 assert self.consumer is not None
                 self.consumer.validate_ready_versions(
@@ -348,15 +348,13 @@ class _ContinuousOwnerRuntime:
         self.consumer = ContinuousRolloutConsumer(
             queue=self.queue,
             staleness=self.staleness,
-            fail_fast_errors=self.fail_fast_errors,
+            settings=self.settings,
         )
         self.producer = ContinuousRolloutProducer(
             lifecycle=self.lifecycle,
             queue=self.queue,
             staleness=self.staleness,
-            max_inflight_groups=self.max_inflight_groups,
-            poll_interval_s=self.queue_poll_interval_s,
-            fail_fast_errors=self.fail_fast_errors,
+            settings=self.settings,
         )
         self.producer.set_prompt_batch(
             list(prompts),
@@ -397,6 +395,18 @@ class _ContinuousOwnerRuntime:
                 "continuous.producer_errors": float(state.error_count),
             },
         )
+        # Cumulative-since-start snapshots, like producer_submitted above:
+        # per-update deltas are computed offline from consecutive rows.
+        for reason, seconds in state.backpressure_seconds.items():
+            iteration.stats.observe_gauge(
+                f"continuous.backpressure_{reason}_s",
+                float(seconds),
+            )
+        for reason, entries in state.backpressure_entries.items():
+            iteration.stats.observe_gauge(
+                f"continuous.backpressure_{reason}_count",
+                float(entries),
+            )
 
 
 class ContinuousRolloutOwner:

@@ -38,7 +38,8 @@ class ContinuousRolloutQueue:
         return len(self._items)
 
     def stats(self) -> dict[str, float]:
-        group_keys = {item.group_key for item in self._items}
+        group_slots = {item.group_slot for item in self._items}
+        batch_ids = {item.batch_id for item in self._items}
         versions = {
             item.rollout_policy_version
             for item in self._items
@@ -47,7 +48,8 @@ class ContinuousRolloutQueue:
         oldest_age = max((item.age_s for item in self._items), default=0.0)
         return {
             "ready_items": float(len(self._items)),
-            "ready_groups": float(len(group_keys)),
+            "ready_groups": float(len(group_slots)),
+            "ready_batches": float(len(batch_ids)),
             "ready_bytes": float(self._bytes),
             "ready_versions": float(len(versions)),
             "oldest_item_age_s": float(oldest_age),

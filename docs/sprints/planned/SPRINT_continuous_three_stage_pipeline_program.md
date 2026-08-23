@@ -3,6 +3,9 @@
 状态：**planned（2026-07-21）**。当前尚未开始实施；首个执行项是
 [Stage contracts and baseline](SPRINT_continuous_stage_contracts_and_baseline.md)。
 
+> 修订 2026-08-22：`collect_prompt_batches` 已重命名为 `collect_prompt_groups`
+> （83148c9e），§1.1 的 overlap 能力描述按 continuous 生产路径的实际情况更正。
+
 ## 0. 结论先行
 
 四张 L4 的正确目标不是让 trainer、rollout、reward 三个模型在四张卡上反复换入换出，
@@ -35,8 +38,10 @@ trainer 只能读取已经完整打分的 batch。eval 不在这条热路径中�
 
 - `RolloutCollector.collect_unscored()` 已把 generation 的结果表示为 `UnscoredRollout`；
   `score_rollouts()` 已能接收多个 unscored group，一次调用 reward 并构造 trainer batch。
-- `collect_prompt_batches()` 已能在单次 collect 内做 generation/reward overlap，并且最多只拥有
-  一个 reward task，取消时会等待 reward cleanup。
+- `collect_prompt_groups()` 的 streaming 模式支持在单次 collect 内做 generation/reward
+  overlap，最多只拥有一个 reward task，取消时会等待 reward cleanup。但 continuous producer
+  显式传 `BATCHED_SERIAL` 且每 slot 只喂一个 prompt，该能力在 continuous 路径上未被使用
+  （`collect.generation_reward_overlap` 恒为 0）——气泡证据比原描述更硬。
 - continuous owner 已运行在独立线程和 event loop，trainer 的同步 forward/backward 不会阻塞
   producer cadence。
 - `ContinuousRolloutQueue` 只保存完整的 `RolloutBatch`，consumer 会验证同一 policy version、
@@ -49,7 +54,7 @@ trainer 只能读取已经完整打分的 batch。eval 不在这条热路径中�
 当前 producer 的一个 slot 调用：
 
 ```python
-batches = await collect_prompt_batches(...)
+batches = await collect_prompt_groups(...)
 ```
 
 这个 await 覆盖 generation、reward 和 batch build。只有三者全部完成，slot 才从
@@ -179,6 +184,9 @@ discarded_or_retried_groups
 artifact_live_count / bytes
 ```
 
+这是量的清单，不是 `RolloutStats` key 名；具体 key 与归约语义以 Sprint 0 §6 的表为准
+（其中 `trainer_wait_for_ready_s` 等量复用现有 `continuous.*` 指标，不新增别名）。
+
 GPU duty 是诊断指标，不是单独的通过条件。允许短暂 kernel launch、weight sync、checkpoint 和
 队列切换空隙；不能用无效工作、超窗 rollout 或重复 reward 把 utilization 数字填满。
 
@@ -232,7 +240,7 @@ GPU duty 是诊断指标，不是单独的通过条件。允许短暂 kernel lau
 - `vrl/rollouts/orchestration/prompt_collection.py`
 - `vrl/rollouts/orchestration/continuous/producer.py`
 - `vrl/rollouts/orchestration/continuous/owner.py`
-- `vrl/rollouts/orchestration/continuous/scheduler.py`
+- `vrl/rollouts/orchestration/continuous/schedule.py`
 - `vrl/rollouts/orchestration/continuous/queue.py`
 - `vrl/rollouts/orchestration/continuous/consumer.py`
 - `vrl/rewards/service/server.py`

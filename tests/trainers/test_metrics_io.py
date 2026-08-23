@@ -59,6 +59,18 @@ _EXPECTED_FIXED_COLUMNS = (
     "continuous_producer_completed",
     "continuous_producer_errors",
     "continuous_weight_sync_barrier_mode",
+    "continuous_batch_id",
+    "continuous_active_batches",
+    "continuous_generation_queue_wait_s",
+    "continuous_generation_service_s",
+    "continuous_reward_queue_wait_s",
+    "continuous_reward_service_s",
+    "continuous_backpressure_inflight_full_s",
+    "continuous_backpressure_inflight_full_count",
+    "continuous_backpressure_paused_s",
+    "continuous_backpressure_paused_count",
+    "continuous_backpressure_no_pending_s",
+    "continuous_backpressure_no_pending_count",
 )
 
 
@@ -116,6 +128,18 @@ def test_online_metric_row_uses_the_same_order_and_formats_as_header() -> None:
             "continuous.producer_completed": 37.1,
             "continuous.producer_errors": 38.1,
             "continuous.weight_sync_barrier_mode": 39.1,
+            "continuous.batch_id": 41.1,
+            "continuous.active_batches": 42.1,
+            "continuous.generation_queue_wait_s": 43.1,
+            "continuous.generation_service_s": 44.1,
+            "continuous.reward_queue_wait_s": 45.1,
+            "continuous.reward_service_s": 46.1,
+            "continuous.backpressure_inflight_full_s": 47.1,
+            "continuous.backpressure_inflight_full_count": 48.1,
+            "continuous.backpressure_paused_for_weight_sync_s": 49.1,
+            "continuous.backpressure_paused_for_weight_sync_count": 50.1,
+            "continuous.backpressure_no_pending_slots_s": 51.1,
+            "continuous.backpressure_no_pending_slots_count": 52.1,
         },
     )
     row = OnlineMetricRow.from_step_metrics(
@@ -165,6 +189,18 @@ def test_online_metric_row_uses_the_same_order_and_formats_as_header() -> None:
         "37.1",
         "38.1",
         "39.1",
+        "41.1",
+        "42.1",
+        "43.1000",
+        "44.1000",
+        "45.1000",
+        "46.1000",
+        "47.1000",
+        "48.1",
+        "49.1000",
+        "50.1",
+        "51.1000",
+        "52.1",
         "40.1000",
     ]
     assert math.isnan(float(values[-1]))
@@ -178,11 +214,15 @@ def test_continuous_phase_metrics_are_mapped_at_the_io_boundary() -> None:
             "continuous.lookahead_requested": 1.0,
             "continuous.producer_errors": 2.0,
             "continuous.weight_sync_barrier_mode": 1.0,
+            "continuous.batch_id": 5.0,
+            "continuous.backpressure_no_pending_slots_s": 7.5,
         },
     )
 
     row = OnlineMetricRow.from_step_metrics(0, metrics)
 
+    assert row.continuous_batch_id == pytest.approx(5.0)
+    assert row.continuous_backpressure_no_pending_s == pytest.approx(7.5)
     assert row.continuous_ready_groups_at_demand == pytest.approx(3.0)
     assert row.continuous_lookahead_requested == pytest.approx(1.0)
     assert row.continuous_producer_errors == pytest.approx(2.0)

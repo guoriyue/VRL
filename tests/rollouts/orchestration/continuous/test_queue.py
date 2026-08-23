@@ -16,19 +16,22 @@ from vrl.trajectory import build_ar_discrete_trajectory, trajectory_tensor_bytes
 
 
 def _item(
-    group_key: int,
+    group_slot: int,
     version: int | None,
     *,
     samples: int = 2,
     nbytes: int = 0,
+    batch_id: int = 0,
 ) -> ContinuousRolloutItem:
     batch = RolloutBatch(
         rewards=torch.zeros(samples),
         group_ids=torch.zeros(samples, dtype=torch.long),
     )
     return ContinuousRolloutItem(
-        group_key=group_key,
+        batch_id=batch_id,
+        group_slot=group_slot,
         rollout_policy_version=version,
+        attempt=1,
         batch=batch,
         nbytes=nbytes,
     )
@@ -44,7 +47,7 @@ def test_item_limit_changes_only_between_prompt_batches() -> None:
     queue.set_item_limit(2)
     assert queue.max_items == 2
 
-    queue.put(_item(group_key=0, version=1))
+    queue.put(_item(group_slot=0, version=1))
     with pytest.raises(RuntimeError, match="only between batches"):
         queue.set_item_limit(3)
     assert queue.max_items == 2
@@ -53,10 +56,10 @@ def test_item_limit_changes_only_between_prompt_batches() -> None:
 def test_snapshot_and_remove_are_pure_container_ops() -> None:
     """snapshot() reads FIFO order; remove() drops by identity and fixes bytes."""
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(group_key=0, version=1, nbytes=4))
-    queue.put(_item(group_key=1, version=1, nbytes=6))
+    queue.put(_item(group_slot=0, version=1, nbytes=4))
+    queue.put(_item(group_slot=1, version=1, nbytes=6))
     snap = queue.snapshot()
-    assert [item.group_key for item in snap] == [0, 1]
+    assert [item.group_slot for item in snap] == [0, 1]
 
     queue.remove([snap[0]])
     assert queue.size() == 1
@@ -65,29 +68,29 @@ def test_snapshot_and_remove_are_pure_container_ops() -> None:
 
 def test_item_count_overflow_fails_before_mutation() -> None:
     queue = ContinuousRolloutQueue(max_items=2)
-    queue.put(_item(group_key=0, version=1))
-    queue.put(_item(group_key=1, version=1))
+    queue.put(_item(group_slot=0, version=1))
+    queue.put(_item(group_slot=1, version=1))
 
     with pytest.raises(ValueError, match="item limit"):
-        queue.put(_item(group_key=2, version=1))
+        queue.put(_item(group_slot=2, version=1))
 
     assert queue.size() == 2
-    assert [item.group_key for item in queue.snapshot()] == [0, 1]
+    assert [item.group_slot for item in queue.snapshot()] == [0, 1]
 
 
 def test_byte_overflow_fails_before_mutation() -> None:
     queue = ContinuousRolloutQueue(max_items=100, max_bytes=10)
-    queue.put(_item(group_key=0, version=1, nbytes=6))
+    queue.put(_item(group_slot=0, version=1, nbytes=6))
 
     with pytest.raises(ValueError, match="byte limit"):
-        queue.put(_item(group_key=1, version=1, nbytes=6))
+        queue.put(_item(group_slot=1, version=1, nbytes=6))
 
     assert queue.stats()["ready_bytes"] == 6.0
-    assert [item.group_key for item in queue.snapshot()] == [0]
+    assert [item.group_slot for item in queue.snapshot()] == [0]
 
 
 def test_batch_byte_estimate_counts_only_trainer_transport_tensors() -> None:
-    batch = _item(group_key=0, version=1).batch
+    batch = _item(group_slot=0, version=1).batch
     batch.extras["component"] = torch.zeros(3, dtype=torch.float64)
 
     expected = sum(
@@ -151,18 +154,28 @@ def test_batch_byte_estimate_counts_trajectory_without_flat_aliases_twice() -> N
 def test_stats_shape() -> None:
     """Checks stats shape."""
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(group_key=0, version=1, nbytes=4))
+    queue.put(_item(group_slot=0, version=1, nbytes=4))
     stats = queue.stats()
     assert stats["ready_items"] == 1.0
     assert stats["ready_groups"] == 1.0
+    assert stats["ready_batches"] == 1.0
     assert stats["ready_bytes"] == 4.0
+
+
+def test_stats_count_distinct_batch_identities() -> None:
+    """ready_batches counts finite prompt batches, not items or slots."""
+    queue = ContinuousRolloutQueue(max_items=8)
+    queue.put(_item(group_slot=0, version=1, batch_id=0))
+    queue.put(_item(group_slot=1, version=1, batch_id=0))
+    queue.put(_item(group_slot=0, version=2, batch_id=1))
+    assert queue.stats()["ready_batches"] == 2.0
 
 
 def test_ready_group_count_spans_policy_versions() -> None:
     """Queue stats count group slots; version selection belongs to the consumer."""
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(group_key=0, version=1))
-    queue.put(_item(group_key=0, version=2))
-    queue.put(_item(group_key=1, version=2))
+    queue.put(_item(group_slot=0, version=1))
+    queue.put(_item(group_slot=0, version=2))
+    queue.put(_item(group_slot=1, version=2))
 
     assert queue.stats()["ready_groups"] == 2.0

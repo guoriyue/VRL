@@ -30,7 +30,10 @@ from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutCons
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
-from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutItem
+from vrl.rollouts.orchestration.continuous.types import (
+    ContinuousRolloutItem,
+    ContinuousRolloutSettings,
+)
 from vrl.rollouts.orchestration.prompt_collection import PromptCollectionCleanupError
 from vrl.rollouts.orchestration.types import RewardCollectionMode
 from vrl.rollouts.stats import RolloutStats
@@ -99,6 +102,26 @@ class _Lifecycle:
         del stats
 
 
+def _settings(
+    *,
+    max_inflight: int = 1,
+    poll_interval_s: float = 0.001,
+    fail_fast_errors: int = 3,
+) -> ContinuousRolloutSettings:
+    """Validated carrier for mechanism tests; staleness is injected separately
+    (tests deliberately pin zero-staleness boundaries via StalenessPolicy(0),
+    which production settings route to strict_on_policy instead)."""
+
+    return ContinuousRolloutSettings(
+        max_inflight_groups=max_inflight,
+        max_ready_bytes_mb=0,
+        max_stale_policy_versions=1,
+        wait_timeout_s=5.0,
+        queue_poll_interval_s=poll_interval_s,
+        fail_fast_errors=fail_fast_errors,
+    )
+
+
 def _producer(
     collector: Any,
     queue: ContinuousRolloutQueue,
@@ -117,9 +140,11 @@ def _producer(
         lifecycle=lifecycle or _Lifecycle(collector),
         queue=queue,
         staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
-        max_inflight_groups=max_inflight,
-        poll_interval_s=poll_interval_s,
-        fail_fast_errors=fail_fast_errors,
+        settings=_settings(
+            max_inflight=max_inflight,
+            poll_interval_s=poll_interval_s,
+            fail_fast_errors=fail_fast_errors,
+        ),
     )
     producer.set_prompt_batch(
         prompt_list,
@@ -196,7 +221,7 @@ async def test_collect_group_uses_one_batched_serial_reward_call(
     prompt_batch = producer._active_batch
     assert prompt_batch is not None
 
-    await producer._collect_group(prompt_batch=prompt_batch, slot=0)
+    await producer._collect_group(prompt_batch=prompt_batch, slot=0, admission_wait_s=0.0)
 
     assert captured["reward_mode"] is RewardCollectionMode.BATCHED_SERIAL
 
@@ -439,7 +464,7 @@ async def test_finite_prompt_batch_completes_each_slot_once_then_idles() -> None
         # The drain must admit p2 even though pause caught the batch with only
         # the first two slots live.
         await producer.drain_prompt_batch(wait_timeout_s=5.0)
-        assert {item.group_key for item in queue.snapshot()} == {0, 1, 2}
+        assert {item.group_slot for item in queue.snapshot()} == {0, 1, 2}
         assert collector.attempts == {"p0": 1, "p1": 1, "p2": 1}
         assert producer.state.submitted_count == 3
         assert producer.state.completed_count == 3
@@ -448,6 +473,65 @@ async def test_finite_prompt_batch_completes_each_slot_once_then_idles() -> None
         await asyncio.sleep(0.02)
         assert collector.attempts == {"p0": 1, "p1": 1, "p2": 1}
         assert producer.inflight_count == 0
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_backpressure_accrues_paused_then_starved_durations() -> None:
+    """The loop charges blocked time to the observed reason, with entry counts."""
+    collector = _FiniteCollector()
+    queue = ContinuousRolloutQueue(max_items=4)
+    producer = _producer(collector, queue, prompts=["p0"], max_inflight=2)
+
+    await producer.start()
+    try:
+        producer.pause_admission()
+        await _wait_until(
+            lambda: producer.state.backpressure_seconds.get("paused_for_weight_sync", 0.0) > 0.0,
+        )
+        assert producer.state.backpressure_entries["paused_for_weight_sync"] == 1.0
+
+        producer.resume_admission()
+        await producer.drain_prompt_batch(wait_timeout_s=5.0)
+        # Batch fully generated, nothing in flight, ready item unconsumed:
+        # the producer idles in the no_pending_slots starvation state.
+        await _wait_until(
+            lambda: producer.state.backpressure_seconds.get("no_pending_slots", 0.0) > 0.0,
+        )
+        assert producer.state.backpressure_entries["no_pending_slots"] >= 1.0
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_backpressure_accrues_inflight_full_while_slots_wait() -> None:
+    collector = _GatedCollector()
+    collector.allow_generate.clear()
+    queue = ContinuousRolloutQueue(max_items=4)
+    producer = _producer(
+        collector,
+        queue,
+        prompts=["p0", "p1"],
+        max_inflight=1,
+    )
+
+    await producer.start()
+    try:
+        await asyncio.wait_for(collector.generation_started.wait(), 5.0)
+        # p0 occupies the single in-flight slot while p1 stays pending.
+        await _wait_until(
+            lambda: producer.state.backpressure_seconds.get("inflight_full", 0.0) > 0.0,
+        )
+        assert producer.state.backpressure_entries["inflight_full"] >= 1.0
+        collector.allow_generate.set()
+        await producer.drain_prompt_batch(wait_timeout_s=5.0)
+        # p1 waited for p0's slot: its admission wait covers that blocked span.
+        waits = {
+            item.group_slot: item.stats.gauges["continuous.generation_queue_wait_s"]
+            for item in queue.snapshot()
+        }
+        assert waits[1] >= waits[0] >= 0.0
     finally:
         await producer.stop()
 
@@ -481,7 +565,18 @@ async def test_prompt_batch_freezes_version_and_options_across_serial_retry() ->
         assert producer.state.error_count == 1
         assert producer.state.submitted_count == 3
         assert producer.state.completed_count == 2
-        assert {item.group_key for item in queue.snapshot()} == {0, 1}
+        items = {item.group_slot: item for item in queue.snapshot()}
+        assert set(items) == {0, 1}
+        # Identity contract: a retry increments attempt but keeps the same
+        # batch_id + group_slot; the fresh slot stays at attempt 1.
+        assert {item.batch_id for item in items.values()} == {0}
+        assert items[0].attempt == 2
+        assert items[1].attempt == 1
+        # Each item carries its own admission-wait/service gauges (max-on-merge
+        # views of the per-slot intervals).
+        for item in items.values():
+            assert item.stats.gauges["continuous.generation_queue_wait_s"] >= 0.0
+            assert item.stats.gauges["continuous.generation_service_s"] >= 0.0
     finally:
         await producer.stop()
 
@@ -847,14 +942,19 @@ async def test_prompt_batch_fails_when_group_is_past_stale_window() -> None:
 
 
 def _item(
-    group_key: int,
+    group_slot: int,
     version: int | None,
     phase_times: dict[str, float] | None = None,
+    *,
+    batch_id: int = 0,
+    attempt: int = 1,
 ) -> ContinuousRolloutItem:
     return ContinuousRolloutItem(
-        group_key=group_key,
+        batch_id=batch_id,
+        group_slot=group_slot,
         rollout_policy_version=version,
-        batch=_batch(f"p{group_key}"),
+        attempt=attempt,
+        batch=_batch(f"p{group_slot}"),
         stats=RolloutStats(phase_seconds=dict(phase_times or {})),
     )
 
@@ -863,17 +963,25 @@ def _consumer(queue: ContinuousRolloutQueue, max_stale: int) -> ContinuousRollou
     return ContinuousRolloutConsumer(
         queue=queue,
         staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
-        fail_fast_errors=3,
+        settings=_settings(),
     )
 
 
-def test_producer_rejects_nonpositive_inflight_budget() -> None:
-    with pytest.raises(ValueError, match="max_inflight_groups"):
-        _producer(
-            _FiniteCollector(),
-            ContinuousRolloutQueue(max_items=1),
-            max_inflight=0,
-        )
+def test_out_of_range_knobs_are_rejected_at_the_config_boundary() -> None:
+    """Mechanisms trust the carrier; ContinuousRolloutConfig is the single
+    range validator (so a bad user knob fails at parse time, not mid-run)."""
+
+    from vrl.trainers.core.types import ContinuousRolloutConfig
+
+    for kwargs, message in (
+        ({"max_inflight_groups": 0}, "max_inflight_groups"),
+        ({"max_ready_bytes_mb": -1}, "max_ready_bytes_mb"),
+        ({"wait_timeout_s": 0.0}, "wait_timeout_s"),
+        ({"queue_poll_interval_s": 0.0}, "queue_poll_interval_s"),
+        ({"fail_fast_errors": -1}, "fail_fast_errors"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            ContinuousRolloutConfig(**kwargs)
 
 
 async def _drain(
@@ -895,8 +1003,8 @@ async def _drain(
 async def test_consumer_consumes_stale_items_within_bound() -> None:
     """max_stale=1 lets the trainer consume one-version-old groups."""
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(group_key=0, version=1))
-    queue.put(_item(group_key=1, version=1))
+    queue.put(_item(group_slot=0, version=1))
+    queue.put(_item(group_slot=1, version=1))
 
     iteration = await _drain(
         _consumer(queue, max_stale=1),
@@ -914,8 +1022,8 @@ async def test_consumer_consumes_stale_items_within_bound() -> None:
 async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
     """A finite batch fails instead of dropping slots it cannot regenerate."""
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(group_key=0, version=1))
-    queue.put(_item(group_key=1, version=1))
+    queue.put(_item(group_slot=0, version=1))
+    queue.put(_item(group_slot=1, version=1))
 
     with pytest.raises(RuntimeError, match="older than the policy window"):
         await _drain(
@@ -927,20 +1035,52 @@ async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_consumer_rejects_nonpositive_group_count() -> None:
-    with pytest.raises(ValueError, match="min_groups"):
-        await _drain(
-            _consumer(ContinuousRolloutQueue(max_items=1), max_stale=0),
-            min_groups=0,
-            current_version=1,
-        )
+async def test_consumer_rejects_mixed_batch_identities() -> None:
+    """One iteration must come from exactly one finite prompt batch."""
+    queue = ContinuousRolloutQueue(max_items=8)
+    queue.put(_item(group_slot=0, version=1, batch_id=0))
+    queue.put(_item(group_slot=1, version=1, batch_id=1))
+
+    with pytest.raises(RuntimeError, match="mixes batch identities"):
+        await _drain(_consumer(queue, max_stale=0), min_groups=2, current_version=1)
+
+
+@pytest.mark.asyncio
+async def test_iteration_carries_batch_identity_gauges() -> None:
+    """batch_id/active_batches thread from the ready items into the metric row."""
+    queue = ContinuousRolloutQueue(max_items=8)
+    queue.put(_item(group_slot=0, version=1, batch_id=3))
+    queue.put(_item(group_slot=1, version=1, batch_id=3, attempt=2))
+
+    iteration = await _drain(_consumer(queue, max_stale=0), min_groups=2, current_version=1)
+
+    phases = iteration.stats.as_phase_dict()
+    assert phases["continuous.batch_id"] == pytest.approx(3.0)
+    assert phases["continuous.active_batches"] == pytest.approx(1.0)
+    assert phases["continuous.max_attempt"] == pytest.approx(2.0)
+
+
+def test_item_ages_never_go_negative_under_a_skewed_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fake-clock gate (sprint §7): a receipt stamped 'in the future' clamps to
+    zero age instead of producing a negative interval."""
+    from vrl.rollouts.orchestration.continuous import types as continuous_types
+
+    item = _item(group_slot=0, version=1)
+    monkeypatch.setattr(
+        continuous_types.time,
+        "monotonic",
+        lambda: item.completed_at - 10.0,
+    )
+    assert item.age_s == 0.0
 
 
 @pytest.mark.asyncio
 async def test_consumer_rejects_duplicate_group_slots() -> None:
     queue = ContinuousRolloutQueue(max_items=2)
-    queue.put(_item(group_key=0, version=1))
-    queue.put(_item(group_key=0, version=1))
+    queue.put(_item(group_slot=0, version=1))
+    queue.put(_item(group_slot=0, version=1))
 
     with pytest.raises(RuntimeError, match="duplicate group slots"):
         await _drain(_consumer(queue, max_stale=0), min_groups=2, current_version=1)
@@ -949,8 +1089,8 @@ async def test_consumer_rejects_duplicate_group_slots() -> None:
 @pytest.mark.asyncio
 async def test_consumer_rejects_mixed_policy_versions() -> None:
     queue = ContinuousRolloutQueue(max_items=2)
-    queue.put(_item(group_key=0, version=1))
-    queue.put(_item(group_key=1, version=2))
+    queue.put(_item(group_slot=0, version=1))
+    queue.put(_item(group_slot=1, version=2))
 
     with pytest.raises(RuntimeError, match="mixes policy versions"):
         await _drain(_consumer(queue, max_stale=1), min_groups=2, current_version=2)
@@ -959,7 +1099,7 @@ async def test_consumer_rejects_mixed_policy_versions() -> None:
 @pytest.mark.asyncio
 async def test_consumer_rejects_future_policy_version() -> None:
     queue = ContinuousRolloutQueue(max_items=1)
-    queue.put(_item(group_key=0, version=2))
+    queue.put(_item(group_slot=0, version=2))
 
     with pytest.raises(RuntimeError, match="newer than the trainer policy"):
         await _drain(_consumer(queue, max_stale=0), min_groups=1, current_version=1)
@@ -985,13 +1125,13 @@ async def test_late_reward_batch_fails_under_non_draining_max_stale_0() -> None:
     consumer = ContinuousRolloutConsumer(
         queue=queue,
         staleness=StalenessPolicy(max_stale_policy_versions=0),
-        fail_fast_errors=3,
+        settings=_settings(),
     )
 
     # The late-reward group: produced (and stamped) under v1, but its reward
     # only lands AFTER the trainer has bumped to v2 (the non-draining barrier
     # did not wait for it). It enters the ready queue stamped at v1.
-    queue.put(_item(group_key=0, version=1))
+    queue.put(_item(group_slot=0, version=1))
     assert queue.size() == 1
 
     # Trainer is now at v2. Both the post-sync owner check and consumer selection
@@ -1010,14 +1150,14 @@ async def test_consumer_aggregates_item_phase_times() -> None:
     queue = ContinuousRolloutQueue(max_items=8)
     queue.put(
         _item(
-            group_key=0,
+            group_slot=0,
             version=1,
             phase_times={"collect.engine_generate": 1.5, "collect.reward_score": 0.5},
         ),
     )
     queue.put(
         _item(
-            group_key=1,
+            group_slot=1,
             version=1,
             phase_times={"collect.engine_generate": 2.5},
         ),

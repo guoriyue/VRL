@@ -16,8 +16,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _csv_field(format_spec: str | None = None) -> Any:
-    metadata = {} if format_spec is None else {"csv_format": format_spec}
+def _csv_field(format_spec: str | None = None, *, phase_key: str | None = None) -> Any:
+    """Declare one CSV column; ``phase_key`` names the ``phase_times`` entry it
+    is populated from so ``from_step_metrics`` derives the mapping instead of
+    hand-maintaining a field-name -> phases.get(...) twin per column."""
+
+    metadata: dict[str, Any] = {}
+    if format_spec is not None:
+        metadata["csv_format"] = format_spec
+    if phase_key is not None:
+        metadata["phase_key"] = phase_key
     return field(metadata=metadata)
 
 
@@ -54,19 +62,70 @@ class OnlineMetricRow:
     group_size: float = _csv_field(".2f")
     trained_prompt_num: int = _csv_field("d")
     # Strict on-policy runs leave these at zero. Continuous runs populate them
-    # from TrainStepMetrics.phase_times at this IO boundary.
-    continuous_stale_versions: float = _csv_field(".1f")
-    continuous_ready_groups_at_demand: float = _csv_field(".1f")
-    continuous_queue_wait_s: float = _csv_field(".4f")
-    continuous_item_age_s: float = _csv_field(".4f")
-    continuous_lookahead_requested: float = _csv_field(".1f")
-    continuous_weight_sync_pause_s: float = _csv_field(".4f")
-    continuous_producer_max_gap_s: float = _csv_field(".4f")
-    continuous_producer_submitted: float = _csv_field(".1f")
-    continuous_producer_completed: float = _csv_field(".1f")
-    continuous_producer_errors: float = _csv_field(".1f")
+    # from TrainStepMetrics.phase_times at this IO boundary; the phase_key
+    # metadata IS the mapping (from_step_metrics iterates it).
+    continuous_stale_versions: float = _csv_field(
+        ".1f", phase_key="continuous.stale_policy_versions"
+    )
+    continuous_ready_groups_at_demand: float = _csv_field(
+        ".1f", phase_key="continuous.ready_groups_at_demand"
+    )
+    continuous_queue_wait_s: float = _csv_field(".4f", phase_key="continuous.queue_wait_s")
+    continuous_item_age_s: float = _csv_field(".4f", phase_key="continuous.item_age_s")
+    continuous_lookahead_requested: float = _csv_field(
+        ".1f", phase_key="continuous.lookahead_requested"
+    )
+    continuous_weight_sync_pause_s: float = _csv_field(
+        ".4f", phase_key="continuous.weight_sync_pause_s"
+    )
+    continuous_producer_max_gap_s: float = _csv_field(
+        ".4f", phase_key="continuous.producer_max_tick_gap_s"
+    )
+    continuous_producer_submitted: float = _csv_field(
+        ".1f", phase_key="continuous.producer_submitted"
+    )
+    continuous_producer_completed: float = _csv_field(
+        ".1f", phase_key="continuous.producer_completed"
+    )
+    continuous_producer_errors: float = _csv_field(".1f", phase_key="continuous.producer_errors")
     # 0 = draining weight-sync barrier; 1 = non-draining versioned slots.
-    continuous_weight_sync_barrier_mode: float = _csv_field(".1f")
+    continuous_weight_sync_barrier_mode: float = _csv_field(
+        ".1f", phase_key="continuous.weight_sync_barrier_mode"
+    )
+    # Stage-contract columns (SPRINT_continuous_stage_contracts_and_baseline).
+    # Identity of the consumed iteration plus per-stage worst-observed
+    # intervals (gauge reduction; busy totals stay in collect.*_wall phases)
+    # and cumulative backpressure reason durations/entries.
+    continuous_batch_id: float = _csv_field(".1f", phase_key="continuous.batch_id")
+    continuous_active_batches: float = _csv_field(".1f", phase_key="continuous.active_batches")
+    continuous_generation_queue_wait_s: float = _csv_field(
+        ".4f", phase_key="continuous.generation_queue_wait_s"
+    )
+    continuous_generation_service_s: float = _csv_field(
+        ".4f", phase_key="continuous.generation_service_s"
+    )
+    continuous_reward_queue_wait_s: float = _csv_field(
+        ".4f", phase_key="continuous.reward_queue_wait_s"
+    )
+    continuous_reward_service_s: float = _csv_field(".4f", phase_key="continuous.reward_service_s")
+    continuous_backpressure_inflight_full_s: float = _csv_field(
+        ".4f", phase_key="continuous.backpressure_inflight_full_s"
+    )
+    continuous_backpressure_inflight_full_count: float = _csv_field(
+        ".1f", phase_key="continuous.backpressure_inflight_full_count"
+    )
+    continuous_backpressure_paused_s: float = _csv_field(
+        ".4f", phase_key="continuous.backpressure_paused_for_weight_sync_s"
+    )
+    continuous_backpressure_paused_count: float = _csv_field(
+        ".1f", phase_key="continuous.backpressure_paused_for_weight_sync_count"
+    )
+    continuous_backpressure_no_pending_s: float = _csv_field(
+        ".4f", phase_key="continuous.backpressure_no_pending_slots_s"
+    )
+    continuous_backpressure_no_pending_count: float = _csv_field(
+        ".1f", phase_key="continuous.backpressure_no_pending_slots_count"
+    )
     component_names: tuple[str, ...] = field(
         default=(),
         metadata={"csv_extension": True},
@@ -97,6 +156,11 @@ class OnlineMetricRow:
         """Flatten one nested trainer metric result exactly once at the IO boundary."""
 
         phases = getattr(metrics, "phase_times", None) or {}
+        phase_kwargs = {
+            item.name: float(phases.get(item.metadata["phase_key"], 0.0))
+            for item in fields(cls)
+            if "phase_key" in item.metadata
+        }
         names = tuple(component_names)
         _component_columns(names)
         current = getattr(metrics, "reward_components", None) or {}
@@ -132,46 +196,9 @@ class OnlineMetricRow:
             adv_zero_rate=metrics.adv_zero_rate,
             group_size=metrics.group_size,
             trained_prompt_num=metrics.trained_prompt_num,
-            continuous_stale_versions=phases.get(
-                "continuous.stale_policy_versions",
-                0.0,
-            ),
-            continuous_ready_groups_at_demand=phases.get(
-                "continuous.ready_groups_at_demand",
-                0.0,
-            ),
-            continuous_queue_wait_s=phases.get("continuous.queue_wait_s", 0.0),
-            continuous_item_age_s=phases.get("continuous.item_age_s", 0.0),
-            continuous_lookahead_requested=phases.get(
-                "continuous.lookahead_requested",
-                0.0,
-            ),
-            continuous_weight_sync_pause_s=phases.get(
-                "continuous.weight_sync_pause_s",
-                0.0,
-            ),
-            continuous_producer_max_gap_s=phases.get(
-                "continuous.producer_max_tick_gap_s",
-                0.0,
-            ),
-            continuous_producer_submitted=phases.get(
-                "continuous.producer_submitted",
-                0.0,
-            ),
-            continuous_producer_completed=phases.get(
-                "continuous.producer_completed",
-                0.0,
-            ),
-            continuous_producer_errors=phases.get(
-                "continuous.producer_errors",
-                0.0,
-            ),
-            continuous_weight_sync_barrier_mode=phases.get(
-                "continuous.weight_sync_barrier_mode",
-                0.0,
-            ),
             component_names=names,
             component_values=component_values,
+            **phase_kwargs,
         )
 
 
