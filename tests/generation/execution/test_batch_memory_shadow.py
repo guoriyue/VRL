@@ -219,10 +219,13 @@ def fake_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
     budget arithmetic asserts exact byte values, which no real GPU can pin
     (mem_get_info is machine- and load-dependent)."""
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    # The probe tests' arithmetic assumes no safety margin and (by default) a
-    # disabled knee; individual tests re-pin the knee where it IS the theorem.
+    # The probe tests' arithmetic assumes no safety margin and a knee that
+    # CANNOT fire: the knee compares wall-clock per-sample times, and on a
+    # loaded machine the micro-trials jitter by more than any finite factor —
+    # -inf is the only load-proof "disabled". The knee test re-pins its own
+    # threshold, because there the knee IS the theorem.
     monkeypatch.setattr(worker_module, "_PROBE_MEMORY_MARGIN", 0.0)
-    monkeypatch.setattr(worker_module, "_PROBE_KNEE_THRESHOLD", -1.0)
+    monkeypatch.setattr(worker_module, "_PROBE_KNEE_THRESHOLD", float("-inf"))
     monkeypatch.setattr(torch.cuda, "mem_get_info", lambda: (24 * GB, 32 * GB))
     monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
     monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
