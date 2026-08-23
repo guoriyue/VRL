@@ -122,12 +122,9 @@ class TrajectorySignalBuilder:
             getattr(log_prob, "device", None),
         )
 
-        self._validate_signal_shapes(
-            log_prob=log_prob,
-            old_log_prob=resolved_old,
-            mask=resolved_mask,
-            segment=segment_name,
-        )
+        # Shape theorems live on TrajectorySignalBatch.__post_init__ — every
+        # production consumer of this signal constructs one, so validating here
+        # too was a drifting duplicate of the same checks.
         return SegmentSignal(
             name=segment_name,
             distribution=segment.distribution,
@@ -210,29 +207,6 @@ class TrajectorySignalBuilder:
                 return selected
         return value
 
-    @classmethod
-    def _validate_signal_shapes(
-        cls,
-        *,
-        log_prob: Any,
-        old_log_prob: Any,
-        mask: Any,
-        segment: str,
-    ) -> None:
-        if not cls._same_shape(log_prob, old_log_prob):
-            raise RuntimeError(
-                "trajectory signal shape mismatch for segment "
-                f"{segment!r}: log_prob shape={cls._shape(log_prob)}, "
-                f"old_log_prob shape={cls._shape(old_log_prob)}. Evaluators must pass "
-                "step-level old_log_prob for per-step signals.",
-            )
-        if mask is not None and not cls._same_shape(log_prob, mask):
-            raise RuntimeError(
-                "trajectory signal mask shape mismatch for segment "
-                f"{segment!r}: log_prob shape={cls._shape(log_prob)}, "
-                f"mask shape={cls._shape(mask)}",
-            )
-
     @staticmethod
     def _same_shape(left: Any, right: Any) -> bool:
         left_shape = getattr(left, "shape", None)
@@ -240,13 +214,6 @@ class TrajectorySignalBuilder:
         if left_shape is None or right_shape is None:
             return True
         return tuple(left_shape) == tuple(right_shape)
-
-    @staticmethod
-    def _shape(value: Any) -> tuple[int, ...] | str:
-        shape = getattr(value, "shape", None)
-        if shape is None:
-            return "<unknown>"
-        return tuple(int(dim) for dim in shape)
 
 
 __all__ = ["TrajectorySignalBuilder"]

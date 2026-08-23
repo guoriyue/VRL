@@ -191,8 +191,8 @@ def test_signal_builder_rejects_mismatched_trajectory_mask() -> None:
     assert batch.trajectory is not None
     batch.trajectory.segments["image_tokens"].tensors["token_mask"].value = torch.ones(2, 1)
 
-    with pytest.raises(RuntimeError, match="trajectory signal mask shape mismatch"):
-        TrajectorySignalBuilder(batch).segment_signal(
+    with pytest.raises(ValueError, match="log_prob/mask shape mismatch"):
+        TrajectorySignalBuilder(batch).single_segment(
             segment_name="image_tokens",
             log_prob=torch.zeros(2, 2),
         )
