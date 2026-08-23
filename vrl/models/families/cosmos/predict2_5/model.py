@@ -65,9 +65,7 @@ class CosmosPredict25DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
         extra = request.extra
         embeds = request.prompt_embeds
         if branch == "uncond":
-            embeds = require_tensor(
-                request.negative_prompt_embeds, "Cosmos Predict2.5 negative_prompt_embeds"
-            )
+            embeds = require_tensor(request.negative_prompt_embeds, "negative_prompt_embeds")
         hidden_states, timestep, gt_velocity = self._prepare_branch(
             latents=request.hidden_states,
             cond_latent=extra["cond_latent"],

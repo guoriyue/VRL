@@ -35,16 +35,18 @@ from vrl.generation.steps.token import (
 )
 from vrl.models.interfaces.replay import (
     ReplayRequest,
-    require_replay_segments,
-    require_zero_replay_timestep,
+    ReplayRequestContract,
 )
 from vrl.models.peft_adapter import disable_adapter_on, peel_peft
 from vrl.models.weight_utils import load_weights_into
 from vrl.nn.quantization.targeting import LM_EXCLUDE
 
 
-class ARModelBase(nn.Module):
+class ARModelBase(ReplayRequestContract, nn.Module):
     """Shared model base for autoregressive families on the RL path."""
+
+    replay_segments: ClassVar[tuple[str, ...]] = ("image_tokens",)
+    replay_indexes_timesteps: ClassVar[bool] = False
 
     def vocab_head_split(self):
         """Separable final vocab projection, or None to replay eager logits.
@@ -184,9 +186,8 @@ class ARModelBase(nn.Module):
         returned dict, and own the embed + forward + wrap tail.
         """
 
-        owner = type(self).__name__
-        require_zero_replay_timestep(timestep_idx, owner=owner)
-        require_replay_segments(request, ("image_tokens",), owner=owner)
+        self.reject_replay_timestep_selection(timestep_idx)
+        self.reject_unsupported_replay_segments(request)
         from vrl.trajectory import TrajectoryResolver
 
         resolver = TrajectoryResolver.from_batch(batch)

@@ -187,7 +187,7 @@ def test_denoise_replay_rejects_unsupported_segment_selection(
     replay_cls = registered_replay_model_classes()[family]
     with pytest.raises(ValueError, match="supports segments"):
         replay_cls.replay_forward(
-            object(),
+            object.__new__(replay_cls),
             object(),
             timestep_idx=0,
             request=ReplayRequest(segment_names=("unsupported",)),
@@ -200,7 +200,7 @@ def test_grouped_or_multisegment_replay_rejects_nonzero_timestep(
 ) -> None:
     replay_cls = registered_replay_model_classes()[family]
     with pytest.raises(ValueError, match="timestep_idx must be 0"):
-        replay_cls.replay_forward(object(), object(), timestep_idx=1)
+        replay_cls.replay_forward(object.__new__(replay_cls), object(), timestep_idx=1)
 
 
 @pytest.mark.parametrize("family", ["causvid", "janus_pro", "janus_pro_r1"])
@@ -210,7 +210,7 @@ def test_grouped_or_multisegment_replay_rejects_unsupported_segment(
     replay_cls = registered_replay_model_classes()[family]
     with pytest.raises(ValueError, match="supports segments"):
         replay_cls.replay_forward(
-            object(),
+            object.__new__(replay_cls),
             object(),
             request=ReplayRequest(segment_names=("unsupported",)),
         )

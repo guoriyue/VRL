@@ -16,7 +16,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import torch
 
@@ -40,8 +40,6 @@ from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
     ReplaySegmentResult,
-    require_replay_segments,
-    require_zero_replay_timestep,
 )
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.precision import model_autocast
@@ -342,6 +340,11 @@ class _OfficialCausVidBackend:
 class _CausVidPolicyModel(LoraModelMixin, DiffusionModelBase):
     """Shared trainable causal transformer surface for rollout and replay."""
 
+    # Grouped replay: every [chunk, transition] action is replayed in ONE call,
+    # so there is no timestep axis to select (unlike the denoise-family default
+    # this class inherits).
+    replay_indexes_timesteps: ClassVar[bool] = False
+
     _lora_default_init_weights: Any = True
 
     def __init__(
@@ -435,12 +438,8 @@ class _CausVidPolicyModel(LoraModelMixin, DiffusionModelBase):
     ) -> ReplayResult:
         """Replay all ``[chunk, transition]`` actions in one grouped call."""
 
-        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
-        require_replay_segments(
-            request,
-            ("denoise",),
-            owner=type(self).__name__,
-        )
+        self.reject_replay_timestep_selection(timestep_idx)
+        self.reject_unsupported_replay_segments(request)
         from vrl.trajectory import TrajectoryResolver
 
         replay = TrajectoryResolver.from_batch(batch).replay_tensor_dict(

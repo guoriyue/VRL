@@ -21,9 +21,9 @@ import torch.nn as nn
 from vrl.generation.types import VideoGenerationRequest
 from vrl.models.interfaces import (
     ReplayRequest,
+    ReplayRequestContract,
     ReplayResult,
     ReplaySegmentResult,
-    require_replay_segments,
 )
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.peft_adapter import activate_adapter_on, disable_adapter_on
@@ -70,8 +70,10 @@ def _forward_step_with_autocast(fn: Any) -> Any:
     return wrapped
 
 
-class DiffusionModelBase(nn.Module, ABC):
+class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
     """Shared model base for diffusion families on the RL path."""
+
+    replay_segments: ClassVar[tuple[str, ...]] = ("denoise",)
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Run every concrete ``forward_step`` under its role precision.
@@ -173,11 +175,7 @@ class DiffusionModelBase(nn.Module, ABC):
         request: ReplayRequest | None = None,
     ) -> ReplayResult:
         """Rebuild diffusion sampling state and run one replay forward."""
-        require_replay_segments(
-            request,
-            ("denoise",),
-            owner=type(self).__name__,
-        )
+        self.reject_unsupported_replay_segments(request)
         replay_tensors, batch_context, latents = self._replay_inputs_for_step(
             batch,
             timestep_idx,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +172,51 @@ def require_zero_replay_timestep(timestep_idx: int, *, owner: str) -> None:
     if timestep_idx != 0:
         raise ValueError(
             f"{owner} replay has no timestep axis; timestep_idx must be 0, got {timestep_idx}",
+        )
+
+
+class ReplayRequestContract:
+    """Per-type replay request contract: which segments a model can replay and
+    whether it indexes a timestep axis.
+
+    Both were literals at each ``replay_forward`` call site with the model's own
+    ``type(self).__name__`` threaded in as ``owner=`` — the ownership signal
+    from the placement rules, since the type owns both facts. Declaring them
+    makes "what can this family replay?" answerable from the class header, and
+    the identity is read where it lives instead of passed around.
+
+    The two checks stay separate methods because they are separate theorems:
+    janus_pro's supported set is request-dependent (its R1 path validates a
+    different set than its default one), so it needs the segment check on its
+    own branch while the timestep check always runs.
+    """
+
+    # No default: a replay model that forgets to declare its segments raises
+    # AttributeError at the first validation instead of silently accepting any
+    # selection.
+    replay_segments: ClassVar[tuple[str, ...]]
+    # Denoise families index scheduler timesteps; token families replay one
+    # whole sequence and have no timestep axis to select.
+    replay_indexes_timesteps: ClassVar[bool] = True
+
+    def reject_replay_timestep_selection(self, timestep_idx: int) -> None:
+        """No-op for families that do index timesteps."""
+
+        if not self.replay_indexes_timesteps:
+            require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+
+    def reject_unsupported_replay_segments(
+        self,
+        request: ReplayRequest | None,
+        *,
+        segments: tuple[str, ...] | None = None,
+    ) -> None:
+        """``segments`` overrides the declared set for a request-dependent contract."""
+
+        require_replay_segments(
+            request,
+            self.replay_segments if segments is None else segments,
+            owner=type(self).__name__,
         )
 
 

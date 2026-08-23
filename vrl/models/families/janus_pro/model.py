@@ -54,8 +54,6 @@ from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
     ReplaySegmentResult,
-    require_replay_segments,
-    require_zero_replay_timestep,
     single_segment_result,
 )
 from vrl.models.peft_adapter import peel_peft
@@ -397,15 +395,14 @@ class JanusProModel(ARModelBase):
         Returns:
           ``ReplayResult`` with one or more segment payloads.
         """
-        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+        self.reject_replay_timestep_selection(timestep_idx)
         requested_segments = None if request is None else request.segment_names
         if requested_segments == ("image_tokens",):
             requested_segments = None
         if requested_segments is not None:
-            require_replay_segments(
+            self.reject_unsupported_replay_segments(
                 request,
-                JANUS_R1_SEGMENTS,
-                owner=type(self).__name__,
+                segments=JANUS_R1_SEGMENTS,
             )
             segments = {
                 name: ReplaySegmentResult(

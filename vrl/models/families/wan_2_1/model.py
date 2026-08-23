@@ -135,7 +135,7 @@ class WanT2VDiffusersModel(
         """Map Wan transformer kwargs into the shared backbone contract."""
         embeds = request.prompt_embeds
         if branch == "uncond":
-            embeds = require_tensor(request.negative_prompt_embeds, "Wan negative_prompt_embeds")
+            embeds = require_tensor(request.negative_prompt_embeds, "negative_prompt_embeds")
         return DiffusionBranch(
             hidden_states=request.hidden_states,
             timestep=request.timestep,
@@ -933,11 +933,11 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         """
         embeds = request.prompt_embeds
         if branch == "uncond":
-            embeds = require_tensor(request.negative_prompt_embeds, "Wan negative_prompt_embeds")
+            embeds = require_tensor(request.negative_prompt_embeds, "negative_prompt_embeds")
 
         extra = request.extra
         condition = _batch_align_tensor(
-            require_tensor(extra.get("condition"), "Wan condition"),
+            require_tensor(extra.get("condition"), "condition"),
             request.hidden_states.shape[0],
         )
         # Channel-wise concat (mimics WanImageToVideoPipeline `__call__`:
@@ -951,7 +951,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         image_embeds = extra.get("image_embeds")
         if image_embeds is not None:
             extra_kwargs["encoder_hidden_states_image"] = _batch_align_tensor(
-                require_tensor(image_embeds, "Wan image_embeds"),
+                require_tensor(image_embeds, "image_embeds"),
                 request.hidden_states.shape[0],
             )
 
