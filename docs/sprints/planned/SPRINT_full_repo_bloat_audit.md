@@ -240,8 +240,19 @@ collector 内层计时 vs prompt_collection 恒开计时）归入 2-B 一并处�
 | 三份 lazy-export 表 → 共享工厂 | 公共 facade 行为须逐字节保持,含 torch-free import 契约测试 |
 | fp4/fp8 基类定理测试参数化、4 份复制的 reward function 测试文件 | 机械但量大;并入下一轮测试批次 |
 | scripts 长尾死 CLI flag(wan_robotics/videophy 等)、`--vbench-*` 决定、`init-dirs` | 各挂着 KEEP 脚本,逐个确认;vbench 需先确认 extra 是否装过 |
-| 制度补丁:dead-flag lint 进 `make verify` | 新工具;沉淀本次审计的"argparse flag × 全语料 grep"脚本 |
 | `test_wan_dpo_config.py:28-131` 迁往 tests/config | 纯搬移 |
+
+### 已结清的 deferral
+
+- **制度补丁:dead-flag lint 进 `make verify`（2026-08-22 落地）。**
+  `vrl/scripts/lint/dead_flags.py` + `tests/scripts/test_dead_flag_lint.py`，
+  与 `vrl.config.lint` 并列进 gate。判据:flag 的 `dest` 在 `vrl/`+`tests/`
+  中无 `args.<dest>` 读取，且其 option 字符串不出现在 docs / Makefile / 其他
+  模块 → 死。当前 **350 个 flag 全部有消费者**（本次审计清理后的零态）。
+  `DYNAMIC_CONSUMERS` 是 `getattr(args, …)` 这类无法 grep 证明的显式登记口，
+  今天为空。
+  **负控是这个门的承重测试**:向真实脚本注入一个未消费 flag 必须报红，
+  否则一个永远绿的门等于没有门——测试里用真 AST 扫描验证过。
 
 ## 9. References
 

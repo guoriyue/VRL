@@ -24,5 +24,6 @@ verify:
 	CUDA_VISIBLE_DEVICES="" uv run --no-sync ruff check .
 	CUDA_VISIBLE_DEVICES="" uv run --no-sync ruff format --check .
 	CUDA_VISIBLE_DEVICES="" uv run --no-sync python -m vrl.config.lint
+	CUDA_VISIBLE_DEVICES="" uv run --no-sync python -m vrl.scripts.lint.dead_flags
 	CUDA_VISIBLE_DEVICES="" uv run --no-sync pytest tests/config -q
 	CUDA_VISIBLE_DEVICES="" uv run --no-sync pytest -m "not e2e and not slow_test" -q
