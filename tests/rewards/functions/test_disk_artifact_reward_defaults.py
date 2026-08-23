@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
-
 import pytest
 
 from vrl.rewards.functions.cosmos3_reasoner import Cosmos3ReasonerReward
@@ -48,16 +46,19 @@ class _Runtime:
         (PhyMotionReward, "phymotion", "overall"),
     ],
 )
-def test_concrete_reward_signature_owns_its_defaults(
+def test_concrete_reward_class_owns_its_defaults(
     reward_cls: type,
     reward_name: str,
     score_key: str,
 ) -> None:
-    parameters = inspect.signature(reward_cls).parameters
+    """Each disk reward is a declaration block: the class attributes ARE the
+    defaults (the forwarding __init__ copies were the rule-3 disease)."""
 
-    assert parameters["reward_name"].default == reward_name
-    assert parameters["score_key"].default == score_key
-    assert parameters["artifact_format"].default == "mp4"
+    assert reward_cls.default_reward_name == reward_name
+    assert reward_cls.default_score_key == score_key
+    assert reward_cls.default_artifact_format == "mp4"
+    assert reward_cls.model_factory
+    assert reward_cls.request_prefix and reward_cls.debug_basename
 
 
 @pytest.mark.parametrize("field", ["reward_name", "score_key"])

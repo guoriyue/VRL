@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from vrl.rewards.functions.kling_video_reward import (
-    _KLING_VIDEO_REWARD_MODEL,
     KlingVideoReward,
 )
 from vrl.rewards.functions.pickscore import PickScoreReward
@@ -69,7 +68,7 @@ def test_video_reward_derives_internal_model_factory_from_reward_name(tmp_path) 
     assert reward.scorer._worker_config == {
         "model_path": "",
         "dtype": "bfloat16",
-        "model_factory": _KLING_VIDEO_REWARD_MODEL,
+        "model_factory": KlingVideoReward.model_factory,
         "reward_model_name": "KlingTeam/VideoReward@main",
         "reward_model_version": "KlingTeam/VideoReward@main",
     }

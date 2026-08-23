@@ -11,13 +11,13 @@ external callable's signature and normalizes its result to a float.
 
 from __future__ import annotations
 
-import importlib
 import inspect
 from collections.abc import Callable
 from typing import Any
 
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.types import RewardSample
+from vrl.utils.config import import_from_path
 
 
 class GenEvalReward(RewardFunction):
@@ -66,12 +66,14 @@ class GenEvalReward(RewardFunction):
             raise RuntimeError(
                 "GenEvalReward requires an injected score_fn or reward.kwargs.geneval.import_path",
             )
-        module_name, separator, attribute_name = self.import_path.partition(":")
-        if not separator or not module_name or not attribute_name:
+        # Shared module:attribute loader (runtime.py uses the same one) —
+        # hand-walking the format here was form-5 duplication.
+        try:
+            score_fn = import_from_path(self.import_path)
+        except ValueError as error:
             raise ValueError(
                 "GenEval import_path must have the form 'module.submodule:function'",
-            )
-        score_fn = getattr(importlib.import_module(module_name), attribute_name)
+            ) from error
         if not callable(score_fn):
             raise TypeError(f"GenEval import_path target is not callable: {self.import_path}")
         self._scorer = score_fn

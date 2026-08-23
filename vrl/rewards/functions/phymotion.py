@@ -13,33 +13,17 @@ at a working PhyMotion install.
 
 from __future__ import annotations
 
-from typing import Any
-
 from vrl.rewards.base import DiskArtifactRewardFunction
-
-_PHYMOTION_MODEL = "vrl.rewards.models.phymotion:PhyMotionModel"
 
 
 class PhyMotionReward(DiskArtifactRewardFunction):
     """PhyMotion human-dynamics reward via an external scorer."""
 
-    def __init__(
-        self,
-        *,
-        reward_name: str = "phymotion",
-        score_key: str = "overall",
-        artifact_format: str = "mp4",
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(
-            model_factory=_PHYMOTION_MODEL,
-            request_prefix="phymotion",
-            debug_basename="phymotion",
-            reward_name=reward_name,
-            score_key=score_key,
-            artifact_format=artifact_format,
-            **kwargs,
-        )
+    model_factory = "vrl.rewards.models.phymotion:PhyMotionModel"
+    request_prefix = "phymotion"
+    debug_basename = "phymotion"
+    default_reward_name = "phymotion"
+    default_score_key = "overall"
 
 
 __all__ = ["PhyMotionReward"]

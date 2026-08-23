@@ -12,33 +12,17 @@ Switch to ``overall`` to also reward caption faithfulness.
 
 from __future__ import annotations
 
-from typing import Any
-
 from vrl.rewards.base import DiskArtifactRewardFunction
-
-_VIDEOCON_PHYSICS_MODEL = "vrl.rewards.models.videocon_physics:VideoConPhysicsModel"
 
 
 class VideoConPhysicsReward(DiskArtifactRewardFunction):
     """VideoCon-Physics reward scored from disk artifacts."""
 
-    def __init__(
-        self,
-        *,
-        reward_name: str = "videophysics/videocon_physics@main",
-        score_key: str = "physical_commonsense",
-        artifact_format: str = "mp4",
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(
-            model_factory=_VIDEOCON_PHYSICS_MODEL,
-            request_prefix="videocon-physics",
-            debug_basename="videocon_physics",
-            reward_name=reward_name,
-            score_key=score_key,
-            artifact_format=artifact_format,
-            **kwargs,
-        )
+    model_factory = "vrl.rewards.models.videocon_physics:VideoConPhysicsModel"
+    request_prefix = "videocon-physics"
+    debug_basename = "videocon_physics"
+    default_reward_name = "videophysics/videocon_physics@main"
+    default_score_key = "physical_commonsense"
 
 
 __all__ = ["VideoConPhysicsReward"]

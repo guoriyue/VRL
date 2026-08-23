@@ -11,33 +11,17 @@ which is why media is materialized to disk before scoring.
 
 from __future__ import annotations
 
-from typing import Any
-
 from vrl.rewards.base import DiskArtifactRewardFunction
-
-_ROBOTICS_VIDEO_REWARD_MODEL = "vrl.rewards.models.robotics_video_reward:RoboticsVideoRewardModel"
 
 
 class RoboticsVideoReward(DiskArtifactRewardFunction):
     """Robotics blend scored from integrity-checked video artifacts."""
 
-    def __init__(
-        self,
-        *,
-        reward_name: str = "robotics_video_reward",
-        score_key: str = "robotics_blend",
-        artifact_format: str = "mp4",
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(
-            model_factory=_ROBOTICS_VIDEO_REWARD_MODEL,
-            request_prefix="robotics-video-reward",
-            debug_basename="robotics_video_reward",
-            artifact_format=artifact_format,
-            reward_name=reward_name,
-            score_key=score_key,
-            **kwargs,
-        )
+    model_factory = "vrl.rewards.models.robotics_video_reward:RoboticsVideoRewardModel"
+    request_prefix = "robotics-video-reward"
+    debug_basename = "robotics_video_reward"
+    default_reward_name = "robotics_video_reward"
+    default_score_key = "robotics_blend"
 
 
 __all__ = ["RoboticsVideoReward"]

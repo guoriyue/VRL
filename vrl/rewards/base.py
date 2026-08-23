@@ -464,16 +464,26 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
     state transfers them to the debug/output owner instead.
     """
 
+    # Rule-3 collapse: concrete disk rewards differ only in these constants,
+    # so each subclass is a declaration block instead of a forwarding
+    # __init__. model_factory/request_prefix/debug_basename have no class
+    # default on purpose — a subclass that forgets them fails loudly at
+    # construction (AttributeError), not silently.
+    model_factory: ClassVar[str]
+    request_prefix: ClassVar[str]
+    debug_basename: ClassVar[str]
+    default_reward_name: ClassVar[str]
+    default_score_key: ClassVar[str]
+    default_artifact_format: ClassVar[str] = "mp4"
+    default_media_type: ClassVar[MediaType] = "video"
+
     def __init__(
         self,
         *,
-        model_factory: str,
-        request_prefix: str,
-        debug_basename: str,
-        artifact_format: str,
-        reward_name: str,
-        score_key: str,
-        media_type: MediaType = "video",
+        reward_name: str | None = None,
+        score_key: str | None = None,
+        artifact_format: str | None = None,
+        media_type: MediaType | None = None,
         artifact_dir: str = "outputs/reward_artifacts",
         debug_dir: str = "",
         device: str | None = None,
@@ -485,6 +495,14 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
     ) -> None:
         # Deferred: runtime.py imports this module (cycle guard).
         from vrl.rewards.runtime import build_reward_scorer
+
+        model_factory = self.model_factory
+        reward_name = self.default_reward_name if reward_name is None else reward_name
+        score_key = self.default_score_key if score_key is None else score_key
+        artifact_format = (
+            self.default_artifact_format if artifact_format is None else artifact_format
+        )
+        media_type = self.default_media_type if media_type is None else media_type
 
         artifact_store = DiskRewardArtifactStore(
             artifact_dir,
@@ -544,8 +562,8 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
             artifact_store=artifact_store,
             retain_artifacts=retain_artifacts,
             debug_dir=debug_dir,
-            request_prefix=request_prefix,
-            debug_basename=debug_basename,
+            request_prefix=self.request_prefix,
+            debug_basename=self.debug_basename,
         )
 
 

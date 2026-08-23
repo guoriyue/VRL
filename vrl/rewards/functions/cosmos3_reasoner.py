@@ -14,33 +14,17 @@ The judge needs a pre-remapped reasoner checkpoint (see the model module /
 
 from __future__ import annotations
 
-from typing import Any
-
 from vrl.rewards.base import DiskArtifactRewardFunction
-
-_COSMOS3_REASONER_MODEL = "vrl.rewards.models.cosmos3_reasoner:Cosmos3ReasonerRewardModel"
 
 
 class Cosmos3ReasonerReward(DiskArtifactRewardFunction):
     """Cosmos3-reasoner reward scored from disk artifacts."""
 
-    def __init__(
-        self,
-        *,
-        reward_name: str = "nvidia/Cosmos3-Nano",
-        score_key: str = "task_success",
-        artifact_format: str = "mp4",
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(
-            model_factory=_COSMOS3_REASONER_MODEL,
-            request_prefix="cosmos3_reasoner",
-            debug_basename="cosmos3_reasoner",
-            reward_name=reward_name,
-            score_key=score_key,
-            artifact_format=artifact_format,
-            **kwargs,
-        )
+    model_factory = "vrl.rewards.models.cosmos3_reasoner:Cosmos3ReasonerRewardModel"
+    request_prefix = "cosmos3_reasoner"
+    debug_basename = "cosmos3_reasoner"
+    default_reward_name = "nvidia/Cosmos3-Nano"
+    default_score_key = "task_success"
 
 
 __all__ = ["Cosmos3ReasonerReward"]
