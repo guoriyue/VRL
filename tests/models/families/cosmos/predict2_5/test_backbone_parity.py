@@ -50,7 +50,6 @@ def _state() -> CosmosPredict25SamplingState:
         width=4,
         num_frames=1,
         fps=16,
-        conditional_frame_timestep=0.1,
     )
 
 

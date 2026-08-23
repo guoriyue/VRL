@@ -2,6 +2,41 @@
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Iterator
+from typing import Any
+
+
+class NoOpCosmosSafetyChecker:
+    """Avoid loading guardrail weights in internal optimization diagnostics.
+
+    Both predict2 and predict2.5 pipelines instantiate a CosmosSafetyChecker
+    during from_pretrained; this stub satisfies the pipeline's surface without
+    downloading guardrail weights (identical hand-copies previously lived in
+    each family module).
+    """
+
+    def to(self, *_args: Any, **_kwargs: Any) -> NoOpCosmosSafetyChecker:
+        return self
+
+    def check_text_safety(self, _prompt: str) -> bool:
+        return True
+
+    def check_video_safety(self, video: Any) -> Any:
+        return video
+
+
+@contextlib.contextmanager
+def no_safety_checker(pipeline_module: Any) -> Iterator[None]:
+    """Swap the module's CosmosSafetyChecker for the stub during from_pretrained."""
+
+    original = pipeline_module.CosmosSafetyChecker
+    pipeline_module.CosmosSafetyChecker = NoOpCosmosSafetyChecker
+    try:
+        yield
+    finally:
+        pipeline_module.CosmosSafetyChecker = original
+
 
 class CosmosReplayForward:
     """Cosmos replay uses the real ``timestep_idx`` instead of a rebuilt index 0.
@@ -18,4 +53,4 @@ class CosmosReplayForward:
         return int(timestep_idx)
 
 
-__all__ = ["CosmosReplayForward"]
+__all__ = ["CosmosReplayForward", "NoOpCosmosSafetyChecker", "no_safety_checker"]

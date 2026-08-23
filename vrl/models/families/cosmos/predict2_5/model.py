@@ -10,7 +10,11 @@ from typing import Any, Literal
 import torch
 
 from vrl.generation.types import VideoGenerationRequest
-from vrl.models.families.cosmos import CosmosReplayForward
+from vrl.models.families.cosmos import (
+    CosmosReplayForward,
+    NoOpCosmosSafetyChecker,
+    no_safety_checker,
+)
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.peft_adapter import load_trainable_lora_adapter
 from vrl.models.steps.denoise import (
@@ -22,6 +26,7 @@ from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
+    DiffusionBackboneRunnerBase,
     DiffusionBranch,
     LatentDecodePlan,
     align_replay_tensor,
@@ -41,12 +46,15 @@ from vrl.models.steps.denoise.common.tensors import require_tensor
 
 
 @dataclass(slots=True)
-class CosmosPredict25DiffusionBackboneRunner:
+class CosmosPredict25DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
     """Map Cosmos Predict2.5 transformer kwargs into the shared backbone contract."""
 
     cfg_mode = "separate_cfg"
     cfg_base = "cond"
     sigma: torch.Tensor
+    # Compile-time constant of the reference pipeline, not a knob: nothing ever
+    # produced another value, so it does not travel through SamplingState or
+    # the replay batch_context.
     conditional_frame_timestep: float = 0.1
 
     def build_branch(
@@ -85,16 +93,6 @@ class CosmosPredict25DiffusionBackboneRunner:
     ) -> torch.Tensor:
         return branch.metadata["gt_velocity"] + raw_output * (1 - request.extra["cond_mask"])
 
-    def finalize_noise_pred(
-        self,
-        request: DiffusionBackboneInput,
-        combined: torch.Tensor,
-        cond: torch.Tensor,
-        uncond: torch.Tensor,
-    ) -> torch.Tensor:
-        del request, cond, uncond
-        return combined
-
     def _prepare_branch(
         self,
         *,
@@ -110,19 +108,6 @@ class CosmosPredict25DiffusionBackboneRunner:
         timestep = cond_indicator * condition_timestep + (1 - cond_indicator) * self.sigma
         gt_velocity = (latents - cond_latent) * cond_mask
         return hidden_states, timestep, gt_velocity
-
-
-class _NoOpCosmosSafetyChecker:
-    """Avoid loading guardrail weights in internal optimization diagnostics."""
-
-    def to(self, *_args: Any, **_kwargs: Any) -> _NoOpCosmosSafetyChecker:
-        return self
-
-    def check_text_safety(self, _prompt: str) -> bool:
-        return True
-
-    def check_video_safety(self, video: Any) -> Any:
-        return video
 
 
 def _load_pipeline_without_text_encoder(
@@ -158,7 +143,7 @@ def _load_pipeline_without_text_encoder(
         transformer=transformer,
         vae=vae,
         scheduler=scheduler,
-        safety_checker=_NoOpCosmosSafetyChecker(),
+        safety_checker=NoOpCosmosSafetyChecker(),
     )
 
 
@@ -175,7 +160,6 @@ class CosmosPredict25SamplingState(GuidedDiffusionSamplingStateBase):
     width: int
     num_frames: int
     fps: int
-    conditional_frame_timestep: float = 0.1
 
 
 class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
@@ -209,15 +193,11 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
                 revision=revision,
             )
         else:
-            orig_safety_checker = _predict_mod.CosmosSafetyChecker
-            _predict_mod.CosmosSafetyChecker = _NoOpCosmosSafetyChecker
-            try:
+            with no_safety_checker(_predict_mod):
                 pipeline = Cosmos2_5_PredictBasePipeline.from_pretrained(
                     build.model_name_or_path,
                     **kwargs,
                 )
-            finally:
-                _predict_mod.CosmosSafetyChecker = orig_safety_checker
         torch.set_grad_enabled(True)
         pipeline.set_progress_bar_config(disable=True)
         if hasattr(pipeline, "vae"):
@@ -431,10 +411,7 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         )
         output = DiffusionBackboneCaller(
             self.transformer,
-            CosmosPredict25DiffusionBackboneRunner(
-                sigma=sigma_t,
-                conditional_frame_timestep=state.conditional_frame_timestep,
-            ),
+            CosmosPredict25DiffusionBackboneRunner(sigma=sigma_t),
         )(
             DiffusionBackboneInput(
                 hidden_states=state.latents,
@@ -463,7 +440,6 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             "width": state.width,
             "num_frames": state.num_frames,
             "fps": state.fps,
-            "conditional_frame_timestep": state.conditional_frame_timestep,
         }
 
     def export_replay_tensors(self, state: CosmosPredict25SamplingState) -> dict[str, Any]:
@@ -513,7 +489,6 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             width=batch_context["width"],
             num_frames=batch_context["num_frames"],
             fps=batch_context["fps"],
-            conditional_frame_timestep=batch_context.get("conditional_frame_timestep", 0.1),
         )
 
     def diffusion_nft_prepare_transformer_input(
@@ -616,8 +591,9 @@ class CosmosPredict25ReplayModel(DiffusersReplayModelBase, CosmosPredict25Model)
     # torch_compile_transformer is inherited from DiffusionModelBase: it calls
     # self._set_transformer, which the replay base owns.
 
-    def set_num_steps(self, n: int) -> None:
-        self.scheduler.set_timesteps(n, device=self.device)
+    # set_num_steps is inherited from DiffusersPipelineModelBase: it reads
+    # self.scheduler (overridden below to this replay model's own scheduler)
+    # and UniPC has no dynamic shifting, so the base body is exact.
 
     # restore_eval_state is inherited from CosmosPredict25Model: it reads
     # ``self.scheduler``, which this replay model overrides to return its own

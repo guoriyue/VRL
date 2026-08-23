@@ -28,6 +28,8 @@ class _RecordingTransformer(nn.Module):
 
 
 class _Adapter:
+    cfg_normalization = False
+
     def __init__(self, *, cfg_mode: str, cfg_base: str = "uncond") -> None:
         self.cfg_mode = cfg_mode
         self.cfg_base = cfg_base

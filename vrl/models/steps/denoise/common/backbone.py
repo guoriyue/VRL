@@ -202,8 +202,8 @@ class DiffusionBackboneCaller:
             noise_pred_uncond,
             guidance_scale=request.guidance_scale,
             do_cfg=request.do_cfg,
-            base=getattr(self.runner, "cfg_base", "uncond"),
-            normalize=getattr(self.runner, "cfg_normalization", False),
+            base=self.runner.cfg_base,
+            normalize=self.runner.cfg_normalization,
         )
         noise_pred = self.runner.finalize_noise_pred(
             request,

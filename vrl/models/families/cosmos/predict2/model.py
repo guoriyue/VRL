@@ -25,7 +25,7 @@ from typing import Any, Literal
 import torch
 
 from vrl.generation.types import VideoGenerationRequest
-from vrl.models.families.cosmos import CosmosReplayForward
+from vrl.models.families.cosmos import CosmosReplayForward, no_safety_checker
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
@@ -36,6 +36,7 @@ from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
+    DiffusionBackboneRunnerBase,
     DiffusionBranch,
     LatentDecodePlan,
     align_replay_tensor,
@@ -48,12 +49,13 @@ from vrl.models.steps.denoise.common.tensors import require_tensor
 
 
 @dataclass(slots=True)
-class CosmosPredict2DiffusionBackboneRunner:
+class CosmosPredict2DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
     """Map Cosmos Predict2 transformer kwargs into the shared backbone contract."""
 
     cfg_mode = "separate_cfg"
     cfg_base = "cond"
     current_sigma: torch.Tensor
+    # Compile-time constant of the reference pipeline (see p2.5's twin note).
     sigma_conditioning: float = 0.0001
 
     @property
@@ -170,7 +172,6 @@ class CosmosPredict2SamplingState(GuidedDiffusionSamplingStateBase):
     cond_indicator: Any
     uncond_indicator: Any
     fps: int
-    sigma_conditioning: float = 0.0001
 
 
 class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBase):
@@ -194,26 +195,12 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
         import diffusers.pipelines.cosmos.pipeline_cosmos2_video2world as _v2w_mod
         from diffusers import Cosmos2VideoToWorldPipeline
 
-        class _PassthroughSafetyChecker:
-            def to(self, device: Any) -> _PassthroughSafetyChecker:
-                return self
-
-            def check_text_safety(self, prompt: str) -> bool:
-                return True
-
-            def check_video_safety(self, video: Any) -> Any:
-                return video
-
-        _orig = _v2w_mod.CosmosSafetyChecker
-        _v2w_mod.CosmosSafetyChecker = _PassthroughSafetyChecker  # type: ignore[assignment]
-        try:
+        with no_safety_checker(_v2w_mod):
             pipeline = Cosmos2VideoToWorldPipeline.from_pretrained(
                 build.model_name_or_path,
                 torch_dtype=build.parameter_dtype,
                 **build.pretrained_kwargs,
             )
-        finally:
-            _v2w_mod.CosmosSafetyChecker = _orig
 
         # diffusers from_pretrained disables grad globally — re-enable.
         torch.set_grad_enabled(True)
@@ -369,7 +356,6 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
             cond_indicator=cond_indicator,
             uncond_indicator=uncond_indicator,
             fps=request.fps or 16,
-            sigma_conditioning=0.0001,
         )
 
     # -- forward_step --------------------------------------------------
@@ -421,10 +407,7 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
 
         output = DiffusionBackboneCaller(
             self.transformer,
-            CosmosPredict2DiffusionBackboneRunner(
-                current_sigma=current_sigma,
-                sigma_conditioning=state.sigma_conditioning,
-            ),
+            CosmosPredict2DiffusionBackboneRunner(current_sigma=current_sigma),
         )(
             DiffusionBackboneInput(
                 hidden_states=state.latents,
@@ -463,7 +446,6 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
             "guidance_scale": state.guidance_scale,
             "cfg": state.do_cfg,
             "fps": state.fps,
-            "sigma_conditioning": state.sigma_conditioning,
         }
 
     def export_replay_tensors(
@@ -547,7 +529,6 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
                 "uncond_indicator",
             ),
             fps=batch_context["fps"],
-            sigma_conditioning=batch_context.get("sigma_conditioning", 0.0001),
         )
 
     # -- decode_latents ------------------------------------------------

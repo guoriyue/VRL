@@ -29,8 +29,6 @@ def build_anima_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     )
     scheduler.register_to_config(sigma_data=1.0, sigma_max=1.0)
     num_steps = build.num_steps
-    if num_steps is not None:
-        scheduler.set_timesteps(int(num_steps), device=build.device)
 
     model = AnimaReplayModel(
         transformer=load_anima_transformer(build),
