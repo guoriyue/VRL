@@ -149,6 +149,19 @@ collector 内层计时 vs prompt_collection 恒开计时）归入 2-B 一并处�
   `reward_overlap_benchmark` 的三个"断点续跑"flag 保留但须写进 docs/perf/README。
 - **rollouts**：continuous 的 Schedule/Owner/Runtime 三层各是真边界；
   `_interval_overlap_seconds` 是命名的非平凡算法。
+- **require 家族（第三遍，2026-08-22，三条新轴机械扫描后关闭）**：前两遍查的是
+  五形态必要性（形态 2/3 抽查）；本遍补上前两遍未覆盖的三轴，83 个定义全量：
+  ① **跨名同定理**（AST 归一化 body、剥错误文本、无行数阈值——短守卫不会漏）：
+  唯一命中组是 4 个 Protocol `...` stub（声明层，构造性误报），实现层零重复；
+  ② **异常类型学**：ValueError 32 / RuntimeError 12 / TypeError 4，每个稀有类型
+  语义正确（KeyError=映射取键、ImportError=懒导入边界、FileNotFoundError=文件、
+  NotImplementedError=不支持拓扑、domain error=wire 边界、SystemExit=CLI probe）
+  ——**统一成单一类型反而是倒退**，上层按语义类 catch；
+  ③ **消息悬空引用**：14 个 config 形 token，2 个标记均为误报（`ar_engine` 是
+  request 载荷键、`pipeline_offload_mode` 是内部派生字段）。
+  **除非新增定义，require 家族不再立审计。** 真正落地的统一是同批收养的四处
+  same-theorem 合并（sufficient-stats 归约、标量 collective、process-group mixin、
+  replay sweep），见对应提交。
 
 ## 6. 制度补丁（比单次清理更值钱的两条）
 

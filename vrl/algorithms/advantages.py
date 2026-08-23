@@ -5,6 +5,36 @@ from __future__ import annotations
 from typing import Any
 
 
+def all_reduce_sufficient_stats(values: Any) -> tuple[Any, Any, Any]:
+    """Cross-rank ``(Σx, Σx², n)`` in one SUM collective.
+
+    The one hand-copied reduction under three different theorems
+    (population std here, reward mean/std in the trainer, rollout mean in
+    Flash-GRPO): stack the sufficient statistics, move to the rank's GPU for
+    nccl (gloo handles CPU directly, e.g. in tests), reduce, hand back the
+    three tensors for the caller's own derivation. Single-rank returns the
+    local statistics so both branches share one formula. An empty local
+    tensor must NOT short-circuit before the collective: emptiness is
+    rank-local, so an empty rank contributes zeros instead.
+    """
+
+    import torch
+
+    stats = torch.stack(
+        [
+            values.sum(),
+            values.mul(values).sum(),
+            values.new_tensor(float(values.numel())),
+        ],
+    )
+    dist = torch.distributed
+    if dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
+        if dist.get_backend() == "nccl":
+            stats = stats.cuda()
+        dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+    return stats[0], stats[1], stats[2]
+
+
 def _population_std_across_ranks(rewards: Any) -> Any:
     """Population std of ``rewards`` over **all DDP ranks**, not just the local slice.
 
@@ -28,28 +58,7 @@ def _population_std_across_ranks(rewards: Any) -> Any:
 
     import torch
 
-    n = rewards.numel()
-    dist = torch.distributed
-    distributed = dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
-    if not distributed:
-        if n <= 1:
-            return rewards.new_tensor(0.0)
-        return rewards.std(unbiased=False)
-
-    # sum, sum-of-squares, count → reduced across ranks in one collective.
-    stats = torch.stack(
-        [
-            rewards.sum(),
-            rewards.mul(rewards).sum(),
-            rewards.new_tensor(float(n)),
-        ],
-    )
-    # NCCL collectives require GPU tensors; rewards may live on CPU (gloo handles
-    # CPU directly). Move to the rank's GPU for nccl, return std on rewards' device.
-    if dist.get_backend() == "nccl":
-        stats = stats.cuda()
-    dist.all_reduce(stats, op=dist.ReduceOp.SUM)
-    g_sum, g_sumsq, g_count = stats[0], stats[1], stats[2]
+    g_sum, g_sumsq, g_count = all_reduce_sufficient_stats(rewards)
     if g_count <= 1:
         return rewards.new_tensor(0.0)
     g_mean = g_sum / g_count

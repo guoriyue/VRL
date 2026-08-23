@@ -357,18 +357,10 @@ def _cross_rank_mean(values: Any) -> Any:
     emptiness is rank-local, so an empty rank contributes zeros instead.
     """
 
-    import torch
+    from vrl.algorithms.advantages import all_reduce_sufficient_stats
 
-    n = values.numel()
-    dist = torch.distributed
-    distributed = dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
-    if not distributed:
-        return values.mean() if n else values.new_tensor(0.0)
-    stats = torch.stack([values.sum(), values.new_tensor(float(n))])
-    if dist.get_backend() == "nccl":
-        stats = stats.cuda()
-    dist.all_reduce(stats, op=dist.ReduceOp.SUM)
-    return (stats[0] / stats[1].clamp_min(1.0)).to(values.device)
+    g_sum, _g_sumsq, g_count = all_reduce_sufficient_stats(values)
+    return (g_sum / g_count.clamp_min(1.0)).to(values.device)
 
 
 def _require_trust_region_signals(signals: Any, algorithm: str) -> Any:

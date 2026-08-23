@@ -311,6 +311,34 @@ class _TrainingStateParking:
         empty_cuda_cache()
 
 
+class _ProcessGroupStrategy:
+    """Shared behavior of strategies that own a torch process group.
+
+    barrier / cross-rank success reduction / process-group shutdown were
+    character-identical between FSDP and DDP; one home, next to the other
+    implementation mixins in this file.
+    """
+
+    context: DistributedTrainingContext
+
+    def all_ranks_succeeded(self, succeeded: bool) -> bool:
+        """Reduce a per-rank success flag to one answer shared by every rank."""
+
+        return _distributed_all_ranks_succeeded(self.context, succeeded)
+
+    def barrier(self) -> None:
+        import torch.distributed as dist
+
+        if dist.is_initialized():
+            dist.barrier()
+
+    def shutdown(self, *, restore_parked: bool = True) -> None:
+        del restore_parked
+        from vrl.trainers.fsdp import shutdown_training_process_group
+
+        shutdown_training_process_group()
+
+
 class _UnshardedStateStrategy:
     """Checkpoint and optimizer state for backends where no tensor is sharded.
 
@@ -573,7 +601,7 @@ def _trainable_module_handles(model: Any) -> list[tuple[str, Any, Any]]:
     return handles
 
 
-class FSDPStrategy(_TrainingStateParking):
+class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
     """FSDP2 (``fully_shard`` + DTensor) training behind the same seam.
 
     The model wraps once in ``prepare_model``; thereafter params/grads/optimizer
@@ -878,25 +906,8 @@ class FSDPStrategy(_TrainingStateParking):
         if failure is not None:
             raise failure
 
-    def all_ranks_succeeded(self, succeeded: bool) -> bool:
-        """Reduce a per-rank success flag to one answer shared by every rank."""
 
-        return _distributed_all_ranks_succeeded(self.context, succeeded)
-
-    def barrier(self) -> None:
-        import torch.distributed as dist
-
-        if dist.is_initialized():
-            dist.barrier()
-
-    def shutdown(self, *, restore_parked: bool = True) -> None:
-        del restore_parked
-        from vrl.trainers.fsdp import shutdown_training_process_group
-
-        shutdown_training_process_group()
-
-
-class DDPStrategy(_UnshardedStateStrategy):
+class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
     """DistributedDataParallel training behind the same seam.
 
     For a model that fits on one card (a 2B diffusion transformer + LoRA does), DDP
@@ -1016,23 +1027,6 @@ class DDPStrategy(_UnshardedStateStrategy):
 
     def restore_training_state(self, state: TrainingMemoryState) -> None:
         self.validate_training_state_parking()
-
-    def barrier(self) -> None:
-        import torch.distributed as dist
-
-        if dist.is_initialized():
-            dist.barrier()
-
-    def all_ranks_succeeded(self, succeeded: bool) -> bool:
-        """Reduce checkpoint-stage success across replicated trainer ranks."""
-
-        return _distributed_all_ranks_succeeded(self.context, succeeded)
-
-    def shutdown(self, *, restore_parked: bool = True) -> None:
-        del restore_parked
-        from vrl.trainers.fsdp import shutdown_training_process_group
-
-        shutdown_training_process_group()
 
 
 def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> Strategy:

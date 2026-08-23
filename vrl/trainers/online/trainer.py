@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 import torch.nn as nn
 
+from vrl.algorithms.advantages import all_reduce_sufficient_stats
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
@@ -79,26 +80,13 @@ def _global_reward_stats(rewards: Any) -> tuple[float, float]:
     (the writer-gating happens upstream), so the collective stays balanced.
     """
 
-    n = rewards.numel()
-    dist = torch.distributed
-    distributed = dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
-    if not distributed:
-        mean = rewards.mean().item() if n else 0.0
-        # unbiased=False to match the distributed branch below, which derives the
-        # std from summed sufficient statistics (a POPULATION std). Leaving the
-        # torch default (unbiased=True) would make the same config report a
-        # different reward_std at world_size 1 vs >1 — 15% apart on a 4-sample step.
-        std = rewards.std(unbiased=False).item() if n > 1 else 0.0
-        return mean, std
-    stats = torch.stack(
-        [rewards.sum(), rewards.mul(rewards).sum(), rewards.new_tensor(float(n))],
-    )
-    # NCCL collectives require GPU tensors, but rewards live on CPU; move stats to
-    # the rank's GPU for nccl (gloo handles CPU directly, e.g. in tests).
-    if dist.get_backend() == "nccl":
-        stats = stats.cuda()
-    dist.all_reduce(stats, op=dist.ReduceOp.SUM)
-    g_sum, g_sumsq, g_count = stats[0], stats[1], stats[2]
+    # Sufficient-statistics derivation on every path (a POPULATION std): one
+    # formula at world_size 1 and >1, so the same config reports the same
+    # reward_std either way (torch's unbiased default was 15% apart on a
+    # 4-sample step).
+    g_sum, g_sumsq, g_count = all_reduce_sufficient_stats(rewards)
+    if g_count < 1:
+        return 0.0, 0.0
     g_mean = g_sum / g_count
     mean = float(g_mean.item())
     if g_count <= 1:
@@ -504,43 +492,44 @@ def _training_sample_batches(
     return batches
 
 
-def _distributed_max_int(value: int, device: torch.device) -> int:
-    """Return the maximum integer value across training ranks."""
+def _all_reduce_scalar(
+    value: float,
+    *,
+    dtype: torch.dtype,
+    op: Any,
+    device: torch.device,
+) -> float:
+    """One scalar collective (nccl needs the tensor on the rank's GPU)."""
 
     dist = torch.distributed
     if not (dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1):
-        return int(value)
-    tensor = torch.tensor([int(value)], dtype=torch.int64)
+        return value
+    tensor = torch.tensor([value], dtype=dtype)
     if dist.get_backend() == "nccl":
         tensor = tensor.to(device)
-    dist.all_reduce(tensor, op=dist.ReduceOp.MAX)
-    return int(tensor.item())
+    dist.all_reduce(tensor, op=op)
+    return tensor.item()
+
+
+def _distributed_max_int(value: int, device: torch.device) -> int:
+    """Return the maximum integer value across training ranks."""
+
+    op = torch.distributed.ReduceOp.MAX
+    return int(_all_reduce_scalar(int(value), dtype=torch.int64, op=op, device=device))
 
 
 def _distributed_max_float(value: float, device: torch.device) -> float:
     """Return the maximum float across ranks without changing single-rank runs."""
 
-    dist = torch.distributed
-    if not (dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1):
-        return float(value)
-    tensor = torch.tensor([float(value)], dtype=torch.float64)
-    if dist.get_backend() == "nccl":
-        tensor = tensor.to(device)
-    dist.all_reduce(tensor, op=dist.ReduceOp.MAX)
-    return float(tensor.item())
+    op = torch.distributed.ReduceOp.MAX
+    return float(_all_reduce_scalar(float(value), dtype=torch.float64, op=op, device=device))
 
 
 def _distributed_all_true(value: bool, device: torch.device) -> bool:
-    """Return True only when every training rank reports True."""
+    """Return True only when every training rank reports True (MIN over {0,1})."""
 
-    dist = torch.distributed
-    if not (dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1):
-        return bool(value)
-    tensor = torch.tensor([int(bool(value))], dtype=torch.int32)
-    if dist.get_backend() == "nccl":
-        tensor = tensor.to(device)
-    dist.all_reduce(tensor, op=dist.ReduceOp.MIN)
-    return bool(tensor.item())
+    op = torch.distributed.ReduceOp.MIN
+    return bool(_all_reduce_scalar(int(bool(value)), dtype=torch.int32, op=op, device=device))
 
 
 def _distributed_parity_verdict(
@@ -1331,6 +1320,74 @@ class OnlineTrainer:
         self._update_had_training_work = False
         self._update_optimizer.zero_grad(set_to_none=True)
 
+    def _run_replay_pass(
+        self,
+        batches: list[Any],
+        advantages: Any,
+        *,
+        total_groups: int,
+        train_indices: list[int],
+        algorithm_adapter: Any,
+        agg: Any,
+        capture_initial_replay: bool,
+        defer_replay_tensors: bool,
+        timer: PhaseTimer | None = None,
+    ) -> None:
+        """One replay/backward sweep over the update's sample batches.
+
+        The single body behind both the streaming microbatch path and the
+        full-batch PPO-epoch path — the two hand-copies drifted once
+        (the all-filtered initial_replay crash), so the sweep lives here and
+        the callers keep only their own orchestration. ``timer`` is the
+        full-batch profiler; the streaming path times at a coarser grain.
+        """
+
+        cfg = self.config
+        loss_scale = int(total_groups) * len(train_indices)
+        samples_per_replay_batch = cfg.batch_plan.samples_per_replay_batch
+        for sample_batch in _balanced_training_sample_batches(
+            batches,
+            advantages,
+            samples_per_replay_batch,
+            self.device,
+        ):
+            group_batch = move_training_batch_to_device(
+                sample_batch.batch,
+                self.device,
+                defer_replay_tensors=defer_replay_tensors,
+            )
+            batch_adv = sample_batch.advantages.to(self.device)
+            self._backward_sft_regularizer(
+                group_batch,
+                loss_weight=sample_batch.loss_weight,
+                total_groups=total_groups,
+                is_dummy=sample_batch.is_dummy,
+                agg=agg,
+            )
+            for j in self._sample_batch_train_indices(
+                sample_batch,
+                train_indices,
+                cfg.timestep_selection,
+            ):
+                with timer.time("evaluate") if timer else contextlib.nullcontext():
+                    loss, metrics = self._compute_replay_loss(
+                        group_batch,
+                        batch_adv,
+                        j,
+                        algorithm_adapter=algorithm_adapter,
+                    )
+                    # Average across the complete optimizer target batch;
+                    # step evaluators retain the per-denoise-step surrogate.
+                    loss = loss * sample_batch.loss_weight / loss_scale
+                with timer.time("backward") if timer else contextlib.nullcontext():
+                    self._backward(loss)
+                if not sample_batch.is_dummy:
+                    agg.add(
+                        metrics,
+                        weight=sample_batch.loss_weight,
+                        capture_initial_replay=capture_initial_replay,
+                    )
+
     def backward_on_training_batch(
         self,
         batch: TrainingBatch,
@@ -1365,47 +1422,16 @@ class OnlineTrainer:
             cfg.timestep_fraction,
             cfg.timestep_selection,
         )
-        loss_scale = int(total_groups) * len(train_indices)
-        samples_per_replay_batch = cfg.batch_plan.samples_per_replay_batch
-        agg = self._update_agg_metrics
-        for sample_batch in _balanced_training_sample_batches(
+        self._run_replay_pass(
             batch.batches,
             batch.advantages,
-            samples_per_replay_batch,
-            self.device,
-        ):
-            group_batch = move_training_batch_to_device(
-                sample_batch.batch,
-                self.device,
-                defer_replay_tensors=defer,
-            )
-            batch_adv = sample_batch.advantages.to(self.device)
-            self._backward_sft_regularizer(
-                group_batch,
-                loss_weight=sample_batch.loss_weight,
-                total_groups=total_groups,
-                is_dummy=sample_batch.is_dummy,
-                agg=agg,
-            )
-            for j in self._sample_batch_train_indices(
-                sample_batch,
-                train_indices,
-                cfg.timestep_selection,
-            ):
-                loss, metrics = self._compute_replay_loss(
-                    group_batch,
-                    batch_adv,
-                    j,
-                    algorithm_adapter=algorithm_adapter,
-                )
-                loss = loss * sample_batch.loss_weight / loss_scale
-                self._backward(loss)
-                if not sample_batch.is_dummy:
-                    agg.add(
-                        metrics,
-                        weight=sample_batch.loss_weight,
-                        capture_initial_replay=True,
-                    )
+            total_groups=int(total_groups),
+            train_indices=train_indices,
+            algorithm_adapter=algorithm_adapter,
+            agg=self._update_agg_metrics,
+            capture_initial_replay=True,
+            defer_replay_tensors=defer,
+        )
 
     async def finish_optimizer_update(
         self,
@@ -1788,52 +1814,17 @@ class OnlineTrainer:
             # calls begin/backward/finish instead; interpreting the same count
             # again here would turn one target batch into several optimizer steps.
             capture_initial_replay = _ppo_epoch == 0
-            loss_scale = len(filtered_batches) * len(train_indices)
-
-            for sample_batch in _balanced_training_sample_batches(
+            self._run_replay_pass(
                 filtered_batches,
                 filtered_advs,
-                samples_per_replay_batch,
-                self.device,
-            ):
-                group_batch = move_training_batch_to_device(
-                    sample_batch.batch,
-                    self.device,
-                    defer_replay_tensors=defer_replay_tensor_move,
-                )
-                batch_adv = sample_batch.advantages.to(self.device)
-                self._backward_sft_regularizer(
-                    group_batch,
-                    loss_weight=sample_batch.loss_weight,
-                    total_groups=len(filtered_batches),
-                    is_dummy=sample_batch.is_dummy,
-                    agg=agg_metrics,
-                )
-                for j in self._sample_batch_train_indices(
-                    sample_batch,
-                    train_indices,
-                    cfg.timestep_selection,
-                ):
-                    with timer.time("evaluate"):
-                        loss, metrics = self._compute_replay_loss(
-                            group_batch,
-                            batch_adv,
-                            j,
-                            algorithm_adapter=algorithm_adapter,
-                        )
-                        # Average across the complete optimizer target batch;
-                        # step evaluators retain the per-denoise-step surrogate.
-                        loss = loss * sample_batch.loss_weight / loss_scale
-
-                    with timer.time("backward"):
-                        self._backward(loss)
-
-                    if not sample_batch.is_dummy:
-                        agg_metrics.add(
-                            metrics,
-                            weight=sample_batch.loss_weight,
-                            capture_initial_replay=capture_initial_replay,
-                        )
+                total_groups=len(filtered_batches),
+                train_indices=train_indices,
+                algorithm_adapter=algorithm_adapter,
+                agg=agg_metrics,
+                capture_initial_replay=capture_initial_replay,
+                defer_replay_tensors=defer_replay_tensor_move,
+                timer=timer,
+            )
 
             with timer.time("optim_step"):
                 if capture_initial_replay:
