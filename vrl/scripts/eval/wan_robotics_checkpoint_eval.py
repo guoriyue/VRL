@@ -16,8 +16,6 @@ import json
 import logging
 import math
 import os
-import random
-import statistics
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -34,6 +32,7 @@ from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.robotics_video_reward import RoboticsVideoRewardModel
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval._sampling import resolve_eval_sampling
+from vrl.scripts.eval._score_summary import summarize_paired_scores
 from vrl.scripts.eval.denoise_video_generation import generate_one_video
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
@@ -54,7 +53,6 @@ REPORT_SCHEMA_VERSION = 1
 DEFAULT_TARGETS = ("base", "5", "10", "15", "20")
 DEFAULT_BASE_SEED = 2_026_072_200
 DEFAULT_SEED_STRIDE = 1_000
-BOOTSTRAP_RESAMPLES = 2_000
 SCORE_KEYS = (
     "robotics_blend",
     "target_dino_similarity",
@@ -721,86 +719,26 @@ def _reward_worker_config(cfg: DictConfig, *, device: torch.device) -> dict[str,
 
 
 def summarize_scores(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Summarize absolute scores and paired checkpoint deltas from the base grid."""
+    """Summarize absolute scores and paired checkpoint deltas from the base grid.
 
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        grouped.setdefault(str(row["checkpoint_label"]), []).append(row)
-    absolute: dict[str, Any] = {}
-    for label, group in grouped.items():
-        absolute[label] = {
-            key: _distribution([float(row[f"r_{key}"]) for row in group]) for key in SCORE_KEYS
-        }
+    ``reference`` is a ground-truth calibration arm, not a checkpoint: it is
+    scored absolutely but never differenced, because its rows do not share the
+    generated grid.
+    """
 
-    base = {
-        (int(row["row_index"]), int(row["sample_index"])): row for row in grouped.get("base", [])
-    }
-    if not base:
-        raise ValueError("paired score summary requires base rows")
-    paired: dict[str, Any] = {}
-    for label, group in grouped.items():
-        if label in {"base", "reference"}:
-            continue
-        cells = {(int(row["row_index"]), int(row["sample_index"])): row for row in group}
-        if set(cells) != set(base):
-            raise ValueError(f"paired score grid differs for {label}")
-        paired[label] = {}
-        for key in SCORE_KEYS:
-            deltas = [
-                float(cells[cell][f"r_{key}"]) - float(base[cell][f"r_{key}"])
-                for cell in sorted(base)
-            ]
-            lower, upper = _bootstrap_mean_interval(deltas, label=label, score_key=key)
-            paired[label][key] = {
-                **_distribution(deltas),
-                "win_rate": sum(delta > 0 for delta in deltas) / len(deltas),
-                "tie_rate": sum(delta == 0 for delta in deltas) / len(deltas),
-                "bootstrap_95ci": [lower, upper],
-                "clear_improvement": lower > 0.0,
-            }
-
-    checkpoint_labels = [label for label in grouped if label not in {"base", "reference"}]
+    summary = summarize_paired_scores(
+        rows,
+        score_keys=SCORE_KEYS,
+        schema=REPORT_SCHEMA,
+        cell_keys=("row_index", "sample_index"),
+        unpaired_labels=("reference",),
+    )
+    absolute = summary["absolute"]
     best_label = max(
-        ["base", *checkpoint_labels],
+        [label for label in absolute if label != "reference"],
         key=lambda label: float(absolute[label]["robotics_blend"]["mean"]),
     )
-    return {
-        "absolute": absolute,
-        "paired_delta_from_base": paired,
-        "best_mean_robotics_blend": best_label,
-    }
-
-
-def _distribution(values: list[float]) -> dict[str, float | int]:
-    if not values:
-        raise ValueError("cannot summarize an empty score distribution")
-    std = statistics.pstdev(values) if len(values) > 1 else 0.0
-    return {
-        "count": len(values),
-        "mean": statistics.fmean(values),
-        "median": statistics.median(values),
-        "std": std,
-        "stderr": std / math.sqrt(len(values)),
-        "min": min(values),
-        "max": max(values),
-    }
-
-
-def _bootstrap_mean_interval(
-    values: list[float],
-    *,
-    label: str,
-    score_key: str,
-) -> tuple[float, float]:
-    seed_bytes = hashlib.sha256(f"{REPORT_SCHEMA}\0{label}\0{score_key}".encode()).digest()
-    rng = random.Random(int.from_bytes(seed_bytes[:8], "big"))
-    means = []
-    for _ in range(BOOTSTRAP_RESAMPLES):
-        means.append(statistics.fmean(values[rng.randrange(len(values))] for _ in values))
-    means.sort()
-    lower_index = int(0.025 * (len(means) - 1))
-    upper_index = int(0.975 * (len(means) - 1))
-    return means[lower_index], means[upper_index]
+    return {**summary, "best_mean_robotics_blend": best_label}
 
 
 def _json_sha256(value: Any) -> str:
