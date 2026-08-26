@@ -62,14 +62,21 @@ actor:
 
 algorithm:
   kind: flash_grpo        # rectified loss; the three mechanisms of arXiv:2605.15980
-  # The paper's 1e-3. FlashGRPOConfig already defaults to it, but
-  # recipe/online/denoise_grpo.yaml sets 1e-4 and a YAML value shadows a
-  # dataclass default, so the paper value only takes effect when written here.
-  # 1e-4 sits BELOW this recipe's rollout-vs-replay numeric drift: run50
-  # measured pre_update_clip_fraction=0.78 before a single weight update, i.e.
-  # the clip was gating on noise and randomly zeroing ~40% of the gradient.
-  # Watch that metric on update 1 — it must start near zero.
-  clip_ratio: 1.0e-3
+  # At ppo_epochs=1 the policy cannot move within an update, so the ratio
+  # deviates from 1 ONLY through rollout-vs-replay numeric drift: this knob is
+  # a drift rail, not a trust region (FlashGRPOConfig says so in as many
+  # words), and every clipped sample is signal thrown away for no trust-region
+  # benefit. It must therefore sit ABOVE the measured drift, which on this
+  # stack is larger than the paper's: bf16 replay against a COMPILED rollout
+  # measured ratio_abs_dev_max 1.95e-3 / logprob_abs_diff_max 2.15e-3 on the
+  # first update. The paper's 1e-3 left pre_update_clip_fraction at 0.51 —
+  # half the batch gated on noise — and the inherited 1e-4 (from
+  # recipe/online/denoise_grpo.yaml, which shadows the FlashGRPOConfig
+  # dataclass default) left it at 0.78. 1e-2 is 5x the observed max drift and
+  # still an order of magnitude under trainer.debug.max_abs_logprob_diff, the
+  # gate that catches a genuinely broken replay.
+  # Watch pre_update_clip_fraction on update 1: it must be near zero.
+  clip_ratio: 1.0e-2
   kl_coef: 0.0            # reference: no KL term; clip_ratio is the rail
   # Flash-GRPO normalizes with the std of the whole 96-sample update; under
   # FSDP this is the true cross-rank std (advantages.py all-reduces it).
@@ -109,7 +116,13 @@ rollout:
   # 96-sample update (24 distinct prompts, 4 samples each).
   prompts_per_batch: 6
   n_samples_per_prompt: 4
-  samples_per_generation_batch: 1
+  # Must cover a whole prompt group: the sde_window is drawn once per
+  # GENERATION REQUEST, so splitting a group across requests gives its samples
+  # different stochastic timesteps and the trainer refuses the batch
+  # (iso-temporal grouping, mechanism 2). Measured headroom at this geometry:
+  # baseline 14.1GB + ~3.0GB per concurrent sample = ~26GB against a 44GB
+  # budget.
+  samples_per_generation_batch: 4
   # The window machinery lives on the SDE branch of the denoise loop; wan's
   # family default is 'native', which bypasses it. 'native' is not merely a
   # different sampler here: it stores the scheduler's DETERMINISTIC step as the
