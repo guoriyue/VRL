@@ -73,6 +73,53 @@ def test_quantization_policy_rejects_nvfp4_recipe() -> None:
         QuantizationPolicy(format="nvfp4", recipe="rowwise")
 
 
+def _compile_scope_build(scope: str | None, *, rollout: bool) -> ModelBuild:
+    torch_compile: dict[str, Any] = {"enable": True, "mode": "default"}
+    if scope is not None:
+        torch_compile["scope"] = scope
+    return ModelBuild(
+        model_name_or_path="fake/repo",
+        revision=None,
+        device="cpu",
+        parameter_dtype=torch.float32,
+        family="sd3_5",
+        precision=RolePrecision("fp32", "tf32", outer_autocast=False),
+        model_config={"torch_compile": torch_compile},
+        rollout={"prompt_encoder_dtype": "fp32"} if rollout else None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("scope", "rollout_compiles", "replay_compiles"),
+    [
+        (None, True, True),  # absent scope means "all": today's behavior
+        ("all", True, True),
+        ("rollout", True, False),
+        ("replay", False, True),
+    ],
+)
+def test_torch_compile_property_resolves_scope_per_role(
+    scope: str | None,
+    rollout_compiles: bool,
+    replay_compiles: bool,
+) -> None:
+    """One knob, two builds: each role reads only its own compile decision."""
+
+    rollout_build = _compile_scope_build(scope, rollout=True)
+    replay_build = _compile_scope_build(scope, rollout=False)
+
+    expected = {"enable": True, "mode": "default"}
+    assert rollout_build.torch_compile == (expected if rollout_compiles else None)
+    assert replay_build.torch_compile == (expected if replay_compiles else None)
+
+
+def test_torch_compile_property_refuses_unknown_scope() -> None:
+    build = _compile_scope_build("trainer", rollout=False)
+
+    with pytest.raises(ValueError, match=r"torch_compile\.scope must be one of"):
+        _ = build.torch_compile
+
+
 def test_model_build_reconstructs_nested_rollout_payload() -> None:
     """The primitive Ray mapping becomes the typed one-layer rollout contract."""
 
