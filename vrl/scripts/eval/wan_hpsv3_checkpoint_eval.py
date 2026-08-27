@@ -120,6 +120,14 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--base-seed", type=int, default=DEFAULT_BASE_SEED)
     generate.add_argument("--device", default="auto")
     generate.add_argument(
+        "--denoise-mode",
+        default="native",
+        choices=("native", "sde"),
+        help="Sampler for the comparison. Default 'native' (deterministic) because that "
+        "is what inference deploys; the run's own rollout SDE settings are exploration "
+        "machinery, not an evaluation protocol.",
+    )
+    generate.add_argument(
         "--no-base",
         action="store_true",
         help="Skip the adapter-disabled arm (paired scoring then needs a base elsewhere).",
@@ -188,7 +196,15 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
     examples = load_prompt_manifest(args.prompts)[: args.limit]
     if len(examples) < args.limit:
         raise ValueError(f"manifest has {len(examples)} prompts, fewer than --limit {args.limit}")
+    # The eval pins its own sampler rather than inheriting the training rollout's.
+    # A GRPO rollout's SDE knobs describe EXPLORATION: this recipe makes exactly one
+    # of 20 steps stochastic (sde.window_size=1) and runs the rest as ODE, but the
+    # window never reaches the sampling dict, so inheriting denoise_mode='sde' would
+    # inject full noise at every step — a regime neither training nor deployment
+    # uses, and one that buried the weight difference under sampler noise (measured:
+    # absolute HPSv3 fell from +3.6 to -7.3 for the SAME base model).
     sampling = resolve_eval_sampling(cfg)
+    sampling["denoise_mode"] = str(args.denoise_mode)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     bundle = entry.build_rollout(build)

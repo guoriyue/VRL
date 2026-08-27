@@ -1,7 +1,8 @@
 # SPRINT: Flash-GRPO on Wan2.1-T2V-1.3B — 8 卡单机复现
 
-状态：**superseded — 改经 vrl 执行（2026-08-16）**。本文档保留为配方与算力分析的
-参考；执行路径已从"跑外部仓库"改为"跑 `vrl/` 自身"。
+状态：**已执行完毕（2026-08-27）**。执行路径经 vrl 自身（2026-08-16 的路线
+变更见 §0.-1），两轮 50-update 训练与配对评测的结论见 **§7.1**。本文档余下部分
+保留为配方与算力分析的参考。
 
 ## 0.-1 路线变更（2026-08-16）
 
@@ -699,11 +700,106 @@ ratio = torch.exp(log_prob - sample["log_probs"][:, 0, 0])
 - [x] PCIe 拓扑 → 4 卡全 `NODE`（单 NUMA node，无跨 socket；2026-08-16 实测）
 - [x] 4 卡配比 → vrl 路线：`prompts_per_batch=24` × `n_samples_per_prompt=4` = 96/update（§0.-1）
 - [x] HPSv3 单图/视频吞吐与显存 → §0.-1（16.0GiB 峰值；103ms/帧；96 样本 ~13 分钟）
-- [ ] Gate 0 单卡峰值显存（**训练**，含 rollout buffer）
-- [ ] 是否降档、降了哪些、最终实际配置值
-- [ ] 单 epoch wall-clock，据此外推总时长
-- [ ] reward server worker 数的最终取舍
-- [ ] Gate 1 首个评测点的 reward 值 vs 作者曲线
+- [x] Gate 0 单卡峰值显存（**训练**）→ 19.4GB（全量 gradient checkpointing +
+  逐样本流式 replay），生成相位 n=4 峰值 26.4GB，均在 44GB 预算内
+- [x] 是否降档、降了哪些、最终实际配置值 → 见 §7.1「最终配置」
+- [x] 单 update wall-clock → 坏配方 134 分钟 → 修正后 **44 分钟**（编译 rollout
+  −27% 生成，单步 SDE 把反传从 96 分钟压到几分钟）
+- [x] reward server worker 数的最终取舍 → 不用 HTTP server：相位轮转下 reward
+  与 rollout/trainer 分时共用同一张卡，rank-local 进程内加载
+- [x] Gate 1 首个评测点 → §7.1：peak checkpoint **+0.82** vs base（95% CI
+  [+0.35, +1.37]，48 配对样本胜率 69%）
+
+## 7.1 执行结论（2026-08-20 → 08-27，4×L40S）
+
+两轮各 50 update 的训练 + 三次固定 prompt 配对评测。评测协议：24 条留出 prompt
+× 2 样本 × 各臂共用种子、确定性采样、HPSv3 打分、48 个配对单元、bootstrap 95% CI。
+
+### 结果
+
+| 权重 | Δ `top_frame_mean` vs base | 95% CI | 胜率 |
+|---|---|---|---|
+| 坏配方 ckpt-42 | **−1.25** | [−1.85, −0.63] | 27% |
+| 修正 ckpt-18（峰值） | **+0.82** | [+0.35, +1.37] | 69% |
+| 修正 ckpt-50（终点） | +0.67 | [+0.01, +1.35] | 60% |
+
+`frame_mean` 与 `frame_min` 同向变化（peak 分别 +0.84 / +0.53），排除
+"最好的帧变好、最差的帧烂掉"的刷分模式 —— 与 §6.1 记录的 reward hacking 面对应。
+
+### 第一轮为什么退化 —— 四个缺陷，全部只有本配方会踩
+
+1. **rollout 是确定性的，却按随机分布算 log-prob。** `rollout.denoise_mode`
+   继承 wan 家族默认的 `native`：它把调度器的确定性一步存为 action，再用 SDE
+   提议密度给它打分。被求导的量是模型输出的固定二次型，不是任何抽样的对数密度，
+   `E[∇log π]=0` 不成立，负优势分支没有平衡点 —— 这是"在自己的目标上单调下坡"
+   的根因。已验证的旁证：`online_flash_grpo_kling_video_reward.yaml` 显式覆盖回
+   `sde` 并在注释里说明 native 会绕过 window 机制。
+2. **KL 项实际权重被放大约 7e4 倍。** `sde.type: cps` 的 log-prob 缺少
+   `1/(2σ²)` 归一化因子而 `compute_kl_divergence` 仍然除以它；且 cps 的
+   `std_dev_t` 取自 `sigma_prev`，在倒数第二步塌缩到 2.7e-3。`strided` 选步
+   恰好每个 update 都训练那一步。`compute_kl_divergence` 当时零测试覆盖。
+3. **信赖域量的是数值噪声。** `clip_ratio` 解析为 1e-4，低于本栈的
+   rollout↔replay 漂移：`pre_update_clip_fraction=0.78`（**任何权重更新之前**），
+   约 40% 梯度被随机清零。
+4. **论文的三个机制一个都没开。** `algorithm.kind` 是普通 `grpo`。
+
+**教训**：仓库里早已存在逐项对照论文、带 parity 测试的
+`online_flash_grpo_kling_video_reward.yaml`，其头注释写明"参考实现优化 HPSv3，
+但 vrl 无 HPSv3 集成，故改用 Kling"。HPSv3 集成落地后，正确动作是**在那份配方上
+换 reward**，而不是另起一份新配置。
+
+### 最终配置（与参考配方逐项一致，两处有意偏离）
+
+`denoise_mode: sde` · `sde.type: flow_grpo` · `window_size: 1` ·
+`window_range: [0,10]` · `noise_level: 1.0` · `timestep_selection: sde_window` ·
+`timestep_fraction: 1.0` · `kind: flash_grpo` · `lr: 1e-4` · `kl_coef: 0.0` ·
+EMA 0.9/8 · `samples_per_generation_batch: 4`（同温组要求：window 每次**生成请求**
+抽一次，一个 prompt 组拆到多次请求会让样本时间步不同，trainer 直接拒绝该 batch）。
+
+两处偏离及其依据：
+- `clip_ratio: 1e-2`（参考解析值 1e-4，其注释声称的 1e-3 被
+  `recipe/online/denoise_grpo.yaml` 遮蔽）。`ppo_epochs=1` 时策略在 update 内
+  不动，该值是**漂移护栏而非信赖域**，必须高于实测漂移：本栈
+  `ratio_abs_dev_max=1.95e-3`（编译 rollout vs eager replay 比参考实现漂移更大）。
+  1e-3 仍留下 0.51 的裁剪率，1e-2 才归零。
+- `torch_compile.scope: rollout`（FSDP2 + gradient checkpointing 禁止编译 replay）。
+
+### 评测本身的一个坑
+
+首次最终评测给出 base 绝对分 **−7.3**，而同一模型一周前测得 **+3.6**。原因是
+评测继承了训练配置的采样器：本配方 20 步中只有 1 步随机（`window_size=1`），但
+window 参数不进评测的 sampling dict，于是 20 步全部注入满噪声 —— 一个训练与部署
+都不存在的工况，权重差异被采样噪声淹没。
+
+> **评测必须自己钉住推理采样器。**复用训练配置看起来严谨，实则相反：训练配置
+> 里携带的是探索机制，不属于测量。
+
+`wan_hpsv3_checkpoint_eval.py` 现有显式 `--denoise-mode`，默认 `native`。重测的
+base 臂得分 +3.562，与一周前独立测量三位小数一致 —— 这既证实了链路确定性，也
+定位了 −7.3 纯属采样器。
+
+### 我们实际改善了什么
+
+base 分数与提升幅度的相关系数 **r = −0.479（t = −3.70，n=48）**：
+
+| base 表现 | n | 平均提升 | 胜率 |
+|---|---|---|---|
+| 低于均值 | 19 | **+2.02** | 16/19 |
+| 高于均值 | 29 | +0.04 | 17/29 |
+
+分数标准差 3.44 → 3.02，最高分 9.09 → 9.18。**收益几乎全部来自"救回失败案例"，
+对本来就好的 prompt 无改善** —— 训练得到的是"更少翻车"，不是"上限更高"。
+
+### 下一轮
+
+- **按留出集分数早停**：peak（ckpt-18）在三项指标上全面优于 final（ckpt-50），
+  一半预算花在吐回收益上。训练曲线的 5-update 滚动均值准确定位了峰值，可作早停
+  信号（但不能作结论）。
+- **lr 1e-4 → 3e-5**：18 个 update 即达峰并越过。
+- **加大 prompt batch**：24 条/update 的单点标准差 1.3，对效应量 0.8 而言噪声大于信号。
+- **目标本身**：HPSv3 逐帧打分且只取最好 30%，运动质量/时间一致性不可见、最差帧
+  免责。若要推高上限或改善运动，最低成本的一步是 `score_key: frame_mean`，其次
+  是与带时间维度的 reward（VideoScore2 / Kling VideoReward）加权组合。
 
 ## 8. 明确不做
 
