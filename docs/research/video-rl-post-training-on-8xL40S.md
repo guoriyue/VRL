@@ -6,7 +6,7 @@
 > **后续修订（2026-08-16）**：实际硬件定为 AWS `g6e.12xlarge` = **4 × L40S 48GB**。
 > 单卡规格不变，故本文的显存分析与选型结论**全部适用**；仅总算力与 wall-clock 减半。
 > 执行计划、4 卡配置改动、以及本文标为"最大未解缺口"的显存问题的实测结果，
-> 见 `docs/sprints/planned/SPRINT_flash_grpo_wan_8gpu_repro.md`。
+> 见 `docs/sprints/done/SPRINT_flash_grpo_wan_8gpu_repro.md`。
 > 目标：(a) 至少一篇能端到端复现的论文（训练+评测，复现出论文报告的趋势）；(b) 一个活跃维护的开源 RL 代码底座，方便在上面做自己的算法改动。**可复现性优先。**
 > 方法：6 个检索角度 → 23 个来源抓取 → 114 条断言 → 25 条进入三票对抗式验证 → 18 条确认、7 条否决。
 
@@ -531,7 +531,7 @@ Flash-GRPO 尤其如此：它从不说明其 8 卡节点的 GPU 型号或显存�
 > gradient checkpointing 默认已开。基座推理在单卡实测 **21.98GB**（训练几何），
 > 开 `enable_model_cpu_offload()` 后降至 **10.81GB**（仅慢 8%）。
 > 仍未解决的是**训练侧**峰值（反传激活 + rollout buffer），那是 sprint 的 Gate 0。
-> 细节见 `docs/sprints/planned/SPRINT_flash_grpo_wan_8gpu_repro.md` §3.2–3.3。
+> 细节见 `docs/sprints/done/SPRINT_flash_grpo_wan_8gpu_repro.md` §3.2–3.3。
 
 ### 🔴 方向 #4 完全未覆盖
 
