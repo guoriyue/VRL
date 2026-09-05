@@ -10,7 +10,6 @@ import pytest
 
 from tests.generation.ray._helpers import ResolvedRef as _ResolvedRef
 from tests.generation.ray._helpers import parking_snapshot as _parking_snapshot
-from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.ray.actor_group import RayActorHandle
@@ -107,8 +106,6 @@ async def test_session_owns_execution_and_delegates_weight_sync() -> None:
     assert executor.calls == []
     assert weight_sync.calls == [("weights", 7)]
     assert session.supports_non_draining_weight_sync is True
-    assert not hasattr(session, "lifecycle")
-    assert not isinstance(session, GenerationRuntime)
 
 
 @pytest.mark.asyncio
@@ -155,11 +152,6 @@ async def test_session_parking_failure_does_not_translate_or_close_resources() -
 
     assert session.engines[0].primary.actor is actor
     assert actor.release_policy.calls == 0
-
-
-def test_actor_handle_rejects_missing_actor() -> None:
-    with pytest.raises(ValueError, match="requires an actor"):
-        RayActorHandle(worker_id="rollout-0", actor=None)
 
 
 def test_session_rejects_duplicate_engine_ids() -> None:

@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
-
 import pytest
 
 from vrl.generation.bindings.token_autoregressive.executor import (
     ARBatchExecutorBase,
-    ARBatchInputs,
 )
 from vrl.generation.types import GenerationRequest
 
@@ -16,13 +13,6 @@ from vrl.generation.types import GenerationRequest
 class _Executor(ARBatchExecutorBase):
     family = "janus_pro"
     task = "ar_t2i"
-
-
-def test_chunk_inputs_do_not_duplicate_loop_shape() -> None:
-    names = {field.name for field in fields(ARBatchInputs)}
-
-    assert "max_new_tokens" not in names
-    assert "decode_dtype" not in names
 
 
 @pytest.mark.parametrize("ar_engine", [None, "native"])

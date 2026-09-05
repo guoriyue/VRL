@@ -53,35 +53,6 @@ def test_resident_runtime_tracks_only_worker_ownership() -> None:
     runtime = _runtime()
 
     assert runtime._owned_ranks == []
-    assert not hasattr(runtime, "_owned_actors")
-    assert not hasattr(runtime, "_placement_group")
-
-
-def test_deferred_runtime_requires_explicit_weight_sync_capability() -> None:
-    async def launch_session() -> RayGenerationSession:
-        return RayGenerationSession(SimpleNamespace(), None, [])
-
-    with pytest.raises(ValueError, match="explicit weight-sync capability"):
-        RayGenerationRuntime(
-            session=None,
-            session_factory=launch_session,
-        )
-
-
-def test_resident_runtime_rejects_weight_sync_capability_mismatch() -> None:
-    with pytest.raises(ValueError, match="does not match its launched session"):
-        RayGenerationRuntime(
-            session=RayGenerationSession(SimpleNamespace(), None, []),
-            supports_weight_sync=True,
-        )
-
-
-def test_colocated_runtime_requires_deferred_session_factory() -> None:
-    with pytest.raises(ValueError, match="requires a deferred session factory"):
-        RayGenerationRuntime(
-            session=RayGenerationSession(SimpleNamespace(), None, []),
-            colocated=True,
-        )
 
 
 async def _wait_for_shutdown_idle(runtime: RayGenerationRuntime) -> None:

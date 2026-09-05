@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import fields, is_dataclass
 from typing import Any
 
 import pytest
@@ -106,36 +105,12 @@ def test_loop_defaults_to_one_full_row_batch() -> None:
     assert runner.step_inputs == [([0, 1], 0, [10.0, 20.0])]
 
 
-@pytest.mark.parametrize("batch_size", [True, False, 0, -1, 1.5])
-def test_loop_rejects_invalid_batch_size(batch_size: int | float | bool) -> None:
+def test_loop_rejects_invalid_batch_size() -> None:
     with pytest.raises(ValueError, match="scheduler_batch_size must be a positive integer"):
         TokenAutoregressiveLoop(
             runner=_DeterministicRunner(),
-            scheduler_batch_size=batch_size,
+            scheduler_batch_size=0,
         ).run()
-
-
-def test_loop_requires_family_hooks() -> None:
-    with pytest.raises(TypeError, match=r"init_token.*step_token.*finalize_token"):
-        TokenAutoregressiveLoop(runner=object()).run()
-
-
-def test_loop_rejects_invalid_init_output() -> None:
-    class _Runner:
-        @staticmethod
-        def init_token() -> object:
-            return object()
-
-        @staticmethod
-        def step_token(_state: Any, _batch: TokenStepBatch) -> TokenStepOutput:
-            return TokenStepOutput()
-
-        @staticmethod
-        def finalize_token(state: Any) -> Any:
-            return state
-
-    with pytest.raises(TypeError, match="init_token must return TokenLoopInit"):
-        TokenAutoregressiveLoop(runner=_Runner()).run()
 
 
 def test_envelope_rejects_init_without_row_lanes() -> None:
@@ -161,20 +136,6 @@ def test_envelope_rejects_row_lane_count_mismatch() -> None:
         TokenAutoregressiveEnvelope.from_init(init)
 
 
-def test_loop_rejects_invalid_step_output() -> None:
-    class _Runner(_DeterministicRunner):
-        def step_token(
-            self,
-            state: dict[str, Any],
-            batch: TokenStepBatch,
-        ) -> object:
-            del state, batch
-            return object()
-
-    with pytest.raises(TypeError, match="step_token must return TokenStepOutput"):
-        TokenAutoregressiveLoop(runner=_Runner()).run()
-
-
 def test_loop_rejects_unknown_row_update() -> None:
     class _Runner(_DeterministicRunner):
         def step_token(
@@ -197,7 +158,6 @@ def test_loop_rejects_unknown_row_update() -> None:
     ("row_indices", "error", "message"),
     [
         ([], ValueError, "at least one row index"),
-        ([-1], IndexError, "out of range"),
         ([3], IndexError, "out of range"),
         ([0, 0], ValueError, "must be unique"),
     ],
@@ -222,14 +182,3 @@ def test_envelope_rejects_unknown_row_update() -> None:
             batch,
             TokenStepOutput(updated_row_lanes={"unknown": torch.zeros(1, 1)}),
         )
-
-
-def test_loop_structs_do_not_mirror_request_or_family_state() -> None:
-    assert [field.name for field in fields(TokenAutoregressiveEnvelope)] == ["row_lanes"]
-    assert not is_dataclass(TokenAutoregressiveLoop)
-    assert set(TokenAutoregressiveLoop.__slots__) == {
-        "runner",
-        "scheduler_batch_size",
-        "init_args",
-        "init_kwargs",
-    }

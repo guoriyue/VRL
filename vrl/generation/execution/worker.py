@@ -67,18 +67,7 @@ class GenerationWorkerCore:
         # None for single-rank engines. A spec makes this rank join its
         # engine's process group around the model lifetime (load -> release).
         self.rank_group = rank_group
-        if not isinstance(launch_contract, GenerationRuntimeLaunchContract):
-            raise TypeError(
-                "launch_contract must be a GenerationRuntimeLaunchContract, "
-                f"got {type(launch_contract).__name__}",
-            )
         self.launch_contract = launch_contract
-        if not isinstance(gatherer, GenerationBatchGatherer) or not callable(
-            getattr(gatherer, "gather_batches", None),
-        ):
-            raise TypeError(
-                f"gatherer must implement GenerationBatchGatherer, got {type(gatherer).__name__}",
-            )
         self.gatherer = gatherer
         from vrl.models.families.registry import get_model_family_entry
 

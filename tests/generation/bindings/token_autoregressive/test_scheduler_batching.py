@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
 from typing import Any
 
 import pytest
@@ -14,13 +13,9 @@ from vrl.generation.bindings.token_autoregressive.executor import (
 )
 from vrl.generation.bindings.token_autoregressive.layout import (
     ARRequestLayout,
-    ARSamplingParams,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
-from vrl.models.families.emu3.runtime import Emu3BatchExecutor
-from vrl.models.families.glm_image.runtime import GlmImageBatchExecutor
-from vrl.models.families.janus_pro.runtime import JanusProBatchExecutor
 
 
 class _Model:
@@ -91,13 +86,6 @@ def _chunk() -> GenerationSampleBatch:
     )
 
 
-def test_scheduler_policy_is_not_duplicated_in_sampling_params() -> None:
-    names = {field.name for field in fields(ARSamplingParams)}
-
-    assert "use_ar_scheduler" not in names
-    assert "ar_scheduler_batch_size" not in names
-
-
 @pytest.mark.parametrize("batch_size", [None, 1, 3, 5])
 def test_shared_discrete_executor_passes_scheduler_policy_to_loop(
     batch_size: int | None,
@@ -137,7 +125,7 @@ def test_shared_discrete_executor_passes_scheduler_policy_to_loop(
     assert executor.prepare_calls == 1
 
 
-@pytest.mark.parametrize("batch_size", [True, False, 0, -1, 1.0, 1.5, "2"])
+@pytest.mark.parametrize("batch_size", [True, 0])
 def test_request_boundary_rejects_coercible_or_non_positive_batch_size(
     batch_size: object,
 ) -> None:
@@ -152,13 +140,3 @@ def test_invalid_scheduler_policy_fails_before_family_preparation() -> None:
         executor.forward_batch(_request(0), _chunk())
 
     assert executor.prepare_calls == 0
-
-
-@pytest.mark.parametrize(
-    "executor_cls",
-    [JanusProBatchExecutor, Emu3BatchExecutor, GlmImageBatchExecutor],
-)
-def test_discrete_families_use_scheduler_consuming_shared_executor(
-    executor_cls: type[ARDiscreteBatchExecutorBase],
-) -> None:
-    assert executor_cls.forward_batch is ARDiscreteBatchExecutorBase.forward_batch

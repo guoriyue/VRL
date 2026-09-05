@@ -233,15 +233,6 @@ class RayGenerationLauncher:
                 "distributed.resources.rollout.* (num_gpus/devices) and that the "
                 "placement group was created before launch.",
             )
-        if not isinstance(config, RayGenerationConfig):
-            raise TypeError(
-                f"config must be a RayGenerationConfig, got {type(config).__name__}",
-            )
-        if not isinstance(launch_inputs, RayGenerationLaunchInputs):
-            raise TypeError(
-                "launch_inputs must be RayGenerationLaunchInputs, "
-                f"got {type(launch_inputs).__name__}",
-            )
         resources = config.resources
         worker = config.worker
         deferred = resources.lifecycle.rollout_mode == "on_demand"

@@ -86,18 +86,6 @@ class RayGenerationConfig:
     torch_profiler: TorchProfilerConfig | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.worker, RolloutWorkerConfig):
-            raise TypeError(
-                f"worker must be a RolloutWorkerConfig, got {type(self.worker).__name__}",
-            )
-        if self.torch_profiler is not None and not isinstance(
-            self.torch_profiler,
-            TorchProfilerConfig,
-        ):
-            raise TypeError(
-                "torch_profiler must be a TorchProfilerConfig or None, "
-                f"got {type(self.torch_profiler).__name__}",
-            )
         if self.resources.rollout_num_engines < 1:
             raise ValueError("distributed.resources.rollout.num_engines must be >= 1")
         if self.worker.pipelined and self.resources.rollout_num_engines != 1:

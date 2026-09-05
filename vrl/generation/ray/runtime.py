@@ -62,28 +62,11 @@ class RayGenerationRuntime:
             raise ValueError(
                 "Ray generation cannot start with both a session and a deferred factory",
             )
-        if colocated and session_factory is None:
-            raise ValueError(
-                "colocated Ray generation requires a deferred session factory",
-            )
-
         self._session = session
         self._session_factory = session_factory
         self._colocated = bool(colocated)
-        if session is None:
-            if supports_weight_sync is None:
-                raise ValueError(
-                    "deferred Ray generation requires an explicit weight-sync capability",
-                )
-        else:
-            session_supports_weight_sync = session.weight_sync is not None
-            if supports_weight_sync is None:
-                supports_weight_sync = session_supports_weight_sync
-            elif bool(supports_weight_sync) != session_supports_weight_sync:
-                raise ValueError(
-                    "Ray generation runtime weight-sync capability does not match "
-                    "its launched session",
-                )
+        if session is not None and supports_weight_sync is None:
+            supports_weight_sync = session.weight_sync is not None
         self._supports_weight_sync = bool(supports_weight_sync)
 
         self.lifecycle = RuntimeLifecycle(owner="rollout runtime")

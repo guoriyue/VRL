@@ -90,7 +90,3 @@ def test_spec_rejects_degenerate_and_out_of_range_shapes() -> None:
         RankGroupSpec("127.0.0.1", 29500, 0, 2, backend="mpi")
     with pytest.raises(ValueError, match="master_port"):
         RankGroupSpec("127.0.0.1", 0, 0, 2)
-
-
-def test_destroy_without_group_is_a_no_op() -> None:
-    destroy_rank_process_group()

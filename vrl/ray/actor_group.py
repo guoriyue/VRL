@@ -34,8 +34,6 @@ class RayActorHandle:
     def __post_init__(self) -> None:
         if not self.worker_id:
             raise ValueError("Ray actor handle worker_id must be non-empty")
-        if self.actor is None:
-            raise ValueError(f"Ray actor handle {self.worker_id!r} requires an actor")
 
 
 @dataclass(slots=True)

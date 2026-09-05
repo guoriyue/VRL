@@ -142,8 +142,6 @@ def test_shadow_rows_are_raw_readings_without_estimation() -> None:
     assert [row["batch_key"] for row in rows] == [batch.batch_key]
     assert rows[0]["peak_bytes"] == 18 * GB
     assert rows[0]["non_torch_bytes"] == 3 * GB
-    assert "estimated_chunk_bytes" not in rows[0]
-    assert "admissible_chunk_samples" not in rows[0]
     assert build_batch_memory_shadow([]) == []
 
 

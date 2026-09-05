@@ -91,18 +91,11 @@ class TokenAutoregressiveLoop:
             raise ValueError("scheduler_batch_size must be a positive integer")
 
     def run(self) -> Any:
-        self._require_hooks(("init_token", "step_token", "finalize_token"))
-
         init = call_with_supported_kwargs(
             self.runner.init_token,
             *self.init_args,
             **dict(self.init_kwargs or {}),
         )
-        if not isinstance(init, TokenLoopInit):
-            raise TypeError(
-                "token model runner init_token must return TokenLoopInit; "
-                f"got {type(init).__name__}",
-            )
         envelope = TokenAutoregressiveEnvelope.from_init(init)
         batch_size = self.scheduler_batch_size or init.row_count
 
@@ -113,21 +106,9 @@ class TokenAutoregressiveLoop:
                     position=position,
                 )
                 step_output = self.runner.step_token(init.state, step_batch)
-                if not isinstance(step_output, TokenStepOutput):
-                    raise TypeError(
-                        "token model runner step_token must return TokenStepOutput; "
-                        f"got {type(step_output).__name__}",
-                    )
                 envelope.apply_step_output(step_batch, step_output)
 
         return self.runner.finalize_token(init.state)
-
-    def _require_hooks(self, names: Sequence[str]) -> None:
-        missing = [name for name in names if not hasattr(self.runner, name)]
-        if missing:
-            raise TypeError(
-                "token-autoregressive loop requires model runner hooks: " + ", ".join(missing),
-            )
 
 
 def call_with_supported_kwargs(fn: Any, *args: Any, **kwargs: Any) -> Any:

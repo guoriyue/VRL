@@ -20,9 +20,6 @@ from vrl.generation.execution.sample_batches import (
     gather_replay_tensors,
     require_matching_batch_context,
 )
-from vrl.generation.execution.worker import GenerationWorkerCore
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
 
@@ -63,47 +60,6 @@ def test_chunk_executor_rejects_request_execution_without_gatherer() -> None:
 
     with pytest.raises(RuntimeError, match="requires an injected batch gatherer"):
         _Executor().gather_batches(request, request.sample_rows(), ["batch"])
-
-
-def test_chunk_gatherer_accepts_pure_object_without_forward_batch() -> None:
-    """Checks batch gatherer accepts pure object without forward batch plan."""
-    request = _request()
-    sample_rows = request.sample_rows()
-    gatherer = _PureGatherer()
-
-    assert isinstance(gatherer, GenerationBatchGatherer)
-    assert not hasattr(gatherer, "forward_batch")
-
-    output = gatherer.gather_batches(request, sample_rows, ["batch"])
-
-    assert output.output == ["batch"]
-
-
-def test_worker_core_rejects_invalid_launch_contract_at_process_boundary() -> None:
-    with pytest.raises(
-        TypeError,
-        match="launch_contract must be a GenerationRuntimeLaunchContract, got object",
-    ):
-        GenerationWorkerCore("worker-0", object(), _PureGatherer())
-
-
-@pytest.mark.parametrize(
-    "gatherer",
-    [object(), SimpleNamespace(gather_batches=object())],
-)
-def test_worker_core_rejects_invalid_gatherer_at_process_boundary(
-    gatherer: Any,
-) -> None:
-    with pytest.raises(TypeError, match="gatherer must implement GenerationBatchGatherer"):
-        GenerationWorkerCore(
-            "worker-0",
-            GenerationRuntimeLaunchContract(
-                family="test",
-                model_build={},
-                expected_model_identity={"schema": "test"},
-            ),
-            gatherer,
-        )
 
 
 def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:

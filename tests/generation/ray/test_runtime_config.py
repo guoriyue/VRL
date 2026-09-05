@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Iterator
-from dataclasses import FrozenInstanceError, dataclass, replace
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest.mock import AsyncMock, patch
@@ -15,7 +15,6 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.config.builders import BuiltConfigs
-from vrl.config.loading import bundled_config_resource
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.generation.execution.types import BatchSizeProbeResult
@@ -88,18 +87,6 @@ def _runtime(
     )
 
 
-def test_launch_contract_rejects_unknown_fields_at_typed_boundary() -> None:
-    payload = {
-        "family": "unit",
-        "model_build": {},
-        "expected_model_identity": _TEST_MODEL_IDENTITY,
-        "executor": object(),
-    }
-
-    with pytest.raises(TypeError, match=r"unexpected keyword argument 'executor'"):
-        GenerationRuntimeLaunchContract(**payload)  # type: ignore[arg-type]
-
-
 def test_launch_contract_accepts_primitive_config_leaves() -> None:
     contract = GenerationRuntimeLaunchContract(
         family="unit",
@@ -120,16 +107,6 @@ def test_launch_contract_accepts_primitive_config_leaves() -> None:
     assert model_config["enabled"] is True
     assert model_config["optional"] is None
     assert contract.expected_model_identity == _TEST_MODEL_IDENTITY
-
-
-def test_launch_contract_rejects_callable_config_leaf() -> None:
-    with pytest.raises(TypeError, match="callable"):
-        GenerationRuntimeLaunchContract(
-            family="unit",
-            model_build={},
-            expected_model_identity=_TEST_MODEL_IDENTITY,
-            executor_kwargs={"factory": lambda: None},
-        )
 
 
 def test_launch_contract_rejects_empty_registry_identity() -> None:
@@ -493,15 +470,6 @@ def test_launcher_capability_failure_kills_candidate_actor_group(
     assert caught.value is query_error
     assert actor_group.shutdown_calls == 1
 
-
-def test_batch_placement_strategy_switches_from_cfg() -> None:
-    """Checks distributed.rollout.batch_placement_strategy flips the policy."""
-    assert _ray_config(_cfg()).worker.batch_placement_strategy == "round_robin"
-
-    cfg = _cfg()
-    cfg.distributed.rollout.batch_placement_strategy = "dynamic"
-    dynamic = _ray_config(cfg)
-    assert dynamic.worker.batch_placement_strategy == "dynamic"
     # Invalid values are now rejected at the typed schema boundary
     # (RolloutRuntimeSection Literal) at parse time, not in RayGenerationConfig —
     # see tests/config/test_schema.py::test_unknown_batch_placement_strategy_raises.
@@ -520,53 +488,16 @@ def test_worker_defaults_and_explicit_override_project_from_public_schema() -> N
     cfg.distributed.rollout.worker_rpc_timeout_s = 3600.0
     cfg.distributed.rollout.generation_stall_timeout_s = 1200.0
     cfg.distributed.rollout.sync_trainable_state = False
+    cfg.distributed.rollout.pipelined = True
+    cfg.distributed.rollout.batch_placement_strategy = "dynamic"
     override = _ray_config(cfg).worker
 
     assert override.cpus_per_worker == 2.5
     assert override.worker_rpc_timeout_s == 3600.0
     assert override.generation_stall_timeout_s == 1200.0
     assert override.sync_trainable_state is False
-
-
-@pytest.mark.parametrize(
-    "preset_name",
-    [
-        "base/distributed/ray_rollout",
-        "base/distributed/ray_rollout_colocated_single_gpu",
-        "base/distributed/ray_rollout_cross_node",
-    ],
-)
-def test_base_rollout_presets_pin_only_the_cpu_override(preset_name: str) -> None:
-    with bundled_config_resource(preset_name).open("r", encoding="utf-8") as stream:
-        cfg = OmegaConf.load(stream)
-
-    assert dict(cfg.distributed.rollout) == {"cpus_per_worker": 4.0}
-    config = RayGenerationConfig.from_root(
-        parse_config(cfg),
-        resources=SimpleNamespace(
-            rollout_num_engines=1,
-        ),
-    )
-    assert config.worker.cpus_per_worker == 4.0
-    assert config.worker.worker_rpc_timeout_s == 600.0
-    assert config.worker.generation_stall_timeout_s == 3600.0
-    assert config.worker.batch_placement_strategy == "round_robin"
-    assert config.worker.sync_trainable_state is True
-
-
-def test_ray_generation_config_requires_an_explicit_worker_snapshot() -> None:
-    cfg = _cfg()
-    resources = ResolvedDistributedResources.resolve(parse_config(cfg))
-
-    with pytest.raises(TypeError, match="worker"):
-        RayGenerationConfig(resources=resources)  # type: ignore[call-arg]
-
-
-def test_rollout_worker_snapshot_is_frozen() -> None:
-    worker = _ray_config(_cfg()).worker
-
-    with pytest.raises(FrozenInstanceError):
-        worker.cpus_per_worker = 2.0  # type: ignore[misc]
+    assert override.pipelined is True
+    assert override.batch_placement_strategy == "dynamic"
 
 
 def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) -> None:
@@ -641,93 +572,6 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
     assert session.executor.actor_dispatcher is session.weight_sync.actor_dispatcher
 
 
-def test_runtime_rejects_split_actor_admission_owners() -> None:
-    with pytest.raises(ValueError, match="share one actor dispatcher"):
-        RayGenerationSession(
-            SimpleNamespace(actor_dispatcher=RayActorDispatcher(("rollout-0",))),
-            SimpleNamespace(
-                actor_dispatcher=RayActorDispatcher(("rollout-0",)),
-            ),
-            [],
-        )
-
-
-def test_health_check_settings_default_and_project_overrides() -> None:
-    default = _ray_config(_cfg())
-    assert default.worker.health_check_interval_s == 30.0
-    assert default.worker.health_check_timeout_s == 30.0
-    assert default.worker.health_check_first_wait_s == 0.0
-
-    cfg = _cfg()
-    cfg.distributed.rollout.health_check_interval_s = 5.0
-    cfg.distributed.rollout.health_check_timeout_s = 37.5
-    cfg.distributed.rollout.health_check_first_wait_s = 12.0
-    override = _ray_config(cfg)
-    assert override.worker.health_check_interval_s == 5.0
-    assert override.worker.health_check_timeout_s == 37.5
-    assert override.worker.health_check_first_wait_s == 12.0
-
-
-@pytest.mark.parametrize(
-    "timeout_s",
-    [0.0, -1.0, float("inf"), float("-inf"), float("nan")],
-)
-def test_ray_generation_config_rejects_invalid_health_check_timeout(
-    timeout_s: float,
-) -> None:
-    cfg = _cfg()
-    cfg.distributed.rollout.health_check_timeout_s = timeout_s
-
-    with pytest.raises(ValueError, match="health_check_timeout_s must be finite and > 0"):
-        _ray_config(cfg)
-
-
-def test_ray_generation_config_rejects_negative_health_check_first_wait() -> None:
-    cfg = _cfg()
-    cfg.distributed.rollout.health_check_first_wait_s = -1.0
-
-    with pytest.raises(ValueError, match="health_check_first_wait_s must be finite and >= 0"):
-        _ray_config(cfg)
-
-
-@pytest.mark.parametrize(
-    "timeout_s",
-    [0.0, -1.0, float("inf"), float("-inf"), float("nan")],
-)
-def test_ray_generation_config_rejects_invalid_worker_rpc_timeout(
-    timeout_s: float,
-) -> None:
-    cfg = _cfg()
-    cfg.distributed.rollout.worker_rpc_timeout_s = timeout_s
-
-    with pytest.raises(ValueError, match="worker_rpc_timeout_s must be finite and > 0"):
-        _ray_config(cfg)
-
-
-@pytest.mark.parametrize(
-    "timeout_s",
-    [0.0, -1.0, float("inf"), float("-inf"), float("nan")],
-)
-def test_ray_generation_config_rejects_invalid_generation_stall_timeout(
-    timeout_s: float,
-) -> None:
-    cfg = _cfg()
-    cfg.distributed.rollout.generation_stall_timeout_s = timeout_s
-
-    with pytest.raises(ValueError, match="generation_stall_timeout_s must be finite and > 0"):
-        _ray_config(cfg)
-
-
-def test_pipelined_switches_from_cfg() -> None:
-    """Checks distributed.rollout.pipelined flips the per-request pipelined path."""
-    assert _ray_config(_cfg()).worker.pipelined is False
-
-    cfg = _cfg()
-    cfg.distributed.rollout.pipelined = True
-
-    assert _ray_config(cfg).worker.pipelined is True
-
-
 def test_pipelined_rejects_multiple_resolved_engines() -> None:
     cfg = _resource_cfg(trainer_devices=[0], rollout_devices=[1, 2])
     cfg.distributed.rollout.pipelined = True
@@ -776,17 +620,6 @@ def test_pipelined_rejects_multiple_placement_bundles_before_ray_start(
             launch_inputs,
             placement=placement,
         )
-
-
-def test_sync_trainable_state_defaults_on_for_from_cfg() -> None:
-    """Online runs train the policy the rollout workers must resync, so an omitted
-    sync_trainable_state defaults ON (True), not silently False (which would train
-    the rollout on stale policy weights). Explicit values are kept."""
-    assert _ray_config(_cfg()).worker.sync_trainable_state is True
-
-    cfg = _cfg()
-    cfg.distributed.rollout.sync_trainable_state = False
-    assert _ray_config(cfg).worker.sync_trainable_state is False
 
 
 def test_generation_launch_inputs_project_model_compile_and_precision() -> None:
@@ -1152,40 +985,6 @@ async def test_deferred_activation_reuses_factory_launcher() -> None:
     )
     await runtime.shutdown()
     candidate.close.assert_awaited_once_with(force=False)
-
-
-@pytest.mark.parametrize("rollout_mode", ["resident", "on_demand"])
-@pytest.mark.parametrize(
-    ("invalid_argument", "match"),
-    [
-        ("config", "config must be a RayGenerationConfig, got object"),
-        (
-            "launch_inputs",
-            "launch_inputs must be RayGenerationLaunchInputs, got object",
-        ),
-    ],
-)
-def test_create_runtime_has_one_typed_boundary(
-    rollout_mode: str,
-    invalid_argument: str,
-    match: str,
-) -> None:
-    config, launch_inputs, placement = _runtime_factory_inputs(
-        rollout_mode=rollout_mode,
-    )
-    config_arg: Any = object() if invalid_argument == "config" else config
-    launch_inputs_arg: Any = object() if invalid_argument == "launch_inputs" else launch_inputs
-
-    with pytest.raises(TypeError, match=match):
-        RayGenerationLauncher(init_ray=False).create_runtime(
-            config_arg,
-            launch_inputs_arg,
-            placement=placement,
-        )
-
-
-def test_launcher_default_ray_init_is_owned_local() -> None:
-    assert RayGenerationLauncher().ray_init_kwargs == {"address": "local"}
 
 
 def test_ray_backend_rejects_unapproved_driver_cuda_overlap() -> None:

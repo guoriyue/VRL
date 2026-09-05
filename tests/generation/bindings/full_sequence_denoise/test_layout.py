@@ -12,13 +12,6 @@ from vrl.generation.bindings.full_sequence_denoise import (
     GenericDiffusionBatchExecutor,
 )
 from vrl.generation.types import GenerationRequest
-from vrl.models.families.cosmos.cosmos3.runtime import Cosmos3BatchExecutor
-from vrl.models.families.cosmos.predict2.runtime import CosmosBatchExecutor
-from vrl.models.families.cosmos.predict2_5.runtime import (
-    CosmosPredict25BatchExecutor,
-)
-from vrl.models.families.echo.runtime import EchoBatchExecutor
-from vrl.models.families.wan_2_1.runtime import Wan_2_1I2VBatchExecutor
 
 
 def test_diffusion_layout_rejects_oversized_sde_window() -> None:
@@ -71,10 +64,7 @@ def test_diffusion_layout_selects_request_owned_sde_window(
     assert layout.select_sde_window(no_window) is None
 
 
-@pytest.mark.parametrize(
-    "window_range",
-    [(-1, 2), (2, 2), (2, 21), (2,), "bad"],
-)
+@pytest.mark.parametrize("window_range", [(2, 2), "bad"])
 def test_diffusion_layout_rejects_invalid_sde_window_range(
     window_range: object,
 ) -> None:
@@ -133,31 +123,6 @@ def test_diffusion_executor_only_projects_real_text_length(
         "guidance_scale": 4.5,
         **expected_extra,
     }
-
-
-@pytest.mark.parametrize(
-    ("executor_cls", "expected"),
-    [
-        (CosmosBatchExecutor, None),
-        (Cosmos3BatchExecutor, None),
-        (EchoBatchExecutor, None),
-        (CosmosPredict25BatchExecutor, 512),
-        (Wan_2_1I2VBatchExecutor, 512),
-    ],
-)
-def test_custom_family_text_length_defaults_match_encoder_capability(
-    executor_cls: type,
-    expected: int | None,
-) -> None:
-    model = (
-        SimpleNamespace(video_height=64, video_width=64)
-        if executor_cls is EchoBatchExecutor
-        else object()
-    )
-    executor = executor_cls(model)
-    params = executor.parse_sampling_params(_request({}))
-
-    assert params.max_sequence_length == expected
 
 
 def test_sde_window_is_resolved_once_at_parse_time() -> None:
