@@ -342,7 +342,7 @@ def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
     assert run.total_epochs == 5
     assert run.save_freq == 1
     assert trainer.debug.first_step is True
-    assert trainer.debug.max_abs_logprob_diff == pytest.approx(1.0e-6)
+    assert trainer.replay_parity.max_abs_logprob_diff == pytest.approx(1.0e-6)
     assert trainer.precision_drift_guard.mode == "fail"
     assert trainer.precision_drift_guard.max_abs_log_ratio == pytest.approx(1.0e-6)
     assert trainer.precision_drift_guard.max_ratio_abs_dev == pytest.approx(1.0e-6)

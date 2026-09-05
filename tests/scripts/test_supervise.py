@@ -27,7 +27,7 @@ from vrl.scripts.supervise import (
 )
 from vrl.trainers.core.types import (
     ContinuousRolloutConfig,
-    DebugConfig,
+    ReplayParityConfig,
     RolloutOrchestrationConfig,
 )
 from vrl.trainers.metrics_io import (
@@ -637,21 +637,30 @@ def test_health_config_derives_strict_parity_limit_from_training_config() -> Non
     health = HealthGateConfig.from_cli(
         _health_args(),
         schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
-        debug=DebugConfig(max_abs_logprob_diff=0.004),
+        replay_parity=ReplayParityConfig(max_abs_logprob_diff=0.004),
     )
 
     assert health.continuous is None
     assert health.max_pre_update_logprob_diff == pytest.approx(0.004)
 
 
-def test_health_config_keeps_explicit_parity_override() -> None:
+def test_health_config_accepts_tighter_explicit_parity_override() -> None:
     health = HealthGateConfig.from_cli(
-        _health_args("--health-max-pre-update-logprob-diff", "0.02"),
+        _health_args("--health-max-pre-update-logprob-diff", "0.002"),
         schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
-        debug=DebugConfig(max_abs_logprob_diff=0.004),
+        replay_parity=ReplayParityConfig(max_abs_logprob_diff=0.004),
     )
 
-    assert health.max_pre_update_logprob_diff == pytest.approx(0.02)
+    assert health.max_pre_update_logprob_diff == pytest.approx(0.002)
+
+
+def test_health_config_rejects_wider_explicit_parity_override() -> None:
+    with pytest.raises(ValueError, match="cannot exceed"):
+        HealthGateConfig.from_cli(
+            _health_args("--health-max-pre-update-logprob-diff", "0.02"),
+            schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
+            replay_parity=ReplayParityConfig(max_abs_logprob_diff=0.004),
+        )
 
 
 @pytest.mark.parametrize(
@@ -670,7 +679,7 @@ def test_health_config_derives_continuous_metrics_from_training_schedule(
             schedule_mode="continuous",
             continuous=ContinuousRolloutConfig(max_stale_policy_versions=2),
         ),
-        debug=DebugConfig(),
+        replay_parity=ReplayParityConfig(),
     )
 
     assert health.continuous is not None
@@ -688,7 +697,7 @@ def test_health_config_accepts_a_continuous_schedule_on_its_own_defaults() -> No
     health = HealthGateConfig.from_cli(
         _health_args(),
         schedule=RolloutOrchestrationConfig(schedule_mode="continuous"),
-        debug=DebugConfig(),
+        replay_parity=ReplayParityConfig(),
     )
 
     assert health.continuous is not None
@@ -705,7 +714,7 @@ def test_health_config_rejects_stale_override_wider_than_training() -> None:
                 schedule_mode="continuous",
                 continuous=ContinuousRolloutConfig(max_stale_policy_versions=1),
             ),
-            debug=DebugConfig(),
+            replay_parity=ReplayParityConfig(),
         )
 
 
@@ -714,7 +723,7 @@ def test_health_config_rejects_stale_override_for_strict_schedule() -> None:
         HealthGateConfig.from_cli(
             _health_args("--health-max-stale-policy-versions", "0"),
             schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
-            debug=DebugConfig(),
+            replay_parity=ReplayParityConfig(),
         )
 
 

@@ -55,7 +55,8 @@ trainer:
   output_dir: outputs/sana_aesthetic_fullparam
   debug:
     first_step: true
-    # The corrected rollout/replay path is bit-exact. Keep a tiny diagnostic
+  replay_parity:
+    # The corrected rollout/replay path is bit-exact. Keep a tiny parity
     # allowance for future kernel revisions, still two orders tighter than the
     # algorithm's 1e-4 importance-ratio clip boundary.
     max_abs_logprob_diff: 1.0e-6

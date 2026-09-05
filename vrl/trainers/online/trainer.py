@@ -748,6 +748,10 @@ class OnlineTrainer:
         self._optimizer: torch.optim.Optimizer | None = None
         self._ema: EMAModuleWrapper | None = None
         self._rollout_weights_initialized = False
+        # This process must prove its own rollout/replay backend parity. The
+        # proof is intentionally absent from checkpoints because a resumed
+        # process may use different kernels, compilation, or batch geometry.
+        self._replay_parity_pending = True
         self.rollout_schedule = build_rollout_schedule(
             self.config.rollout_orchestration,
             collector=self.collector,
@@ -1639,7 +1643,7 @@ class OnlineTrainer:
             _ratio = torch.exp(_dbg_log_prob - _old_lp_0)
             _old_lp_first = _old_lp_0.reshape(-1)[0]
             _fresh_lp_first = _dbg_log_prob.reshape(-1)[0]
-            _parity_limit = float(cfg.debug.max_abs_logprob_diff)
+            _parity_limit = float(cfg.replay_parity.max_abs_logprob_diff)
             _local_parity_finite = bool(
                 torch.isfinite(_old_lp_0).all().item()
                 and torch.isfinite(_dbg_log_prob).all().item()
@@ -1686,22 +1690,13 @@ class OnlineTrainer:
                 },
                 "runtime_debug": _dbg_batch.context.get("runtime_debug"),
             }
-            # Replay parity is the ratio==1 invariant: with unchanged weights
-            # the fresh log-prob must reproduce the collection-time one. Persist
-            # the failing evidence before aborting so NaN/Inf cannot exploit a
-            # false comparison and train a corrupted policy.
+            # Persist a failing probe immediately: the mandatory full-update
+            # gate below owns enforcement, while this optional probe owns the
+            # tensor/provenance evidence needed to diagnose that failure.
             if not _parity_passed and self._strategy.context.is_primary:
                 append_jsonl_record(
                     f"{cfg.output_dir}/training_debug.jsonl",
                     first_step_debug_record,
-                )
-            if not _parity_passed:
-                raise RuntimeError(
-                    "first-step log-prob parity failed before optimizer step: "
-                    f"finite={_parity_finite}, max_abs_diff={_parity_max:.6g}, "
-                    f"limit={_parity_limit:.6g}. Replay does not reproduce rollout "
-                    "log-probs; check role precision, conditioning, and the "
-                    "scheduler domain.",
                 )
         elif cfg.debug.first_step and self.state.step == 0:
             # Non-evaluator algorithms (NFT) compute no log-prob ratio, so the
@@ -1986,7 +1981,7 @@ class OnlineTrainer:
         *,
         local_weight: float,
     ) -> InitialReplayStats:
-        """Return the global initial snapshot and validate it before optimizer.step."""
+        """Gate this process's first measured exact replay before optimizer.step."""
 
         cfg = self.config
         resolved, has_measurements = _distributed_initial_replay_stats(
@@ -1994,12 +1989,17 @@ class OnlineTrainer:
             local_weight=local_weight,
             device=self.device,
         )
+        correction = getattr(self.algorithm, "precision_correction", None)
+        intentional_correction = correction is not None and (
+            correction.tis_mode != "off"
+            or correction.rs_mode != "off"
+            or correction.recompute_old_logprob != "off"
+        )
         if (
-            not cfg.debug.first_step
-            or self.state.step != 0
-            or self.state.global_step != 0
+            not self._replay_parity_pending
             or self.evaluator is None
             or not self.algorithm.uses_evaluator
+            or intentional_correction
         ):
             return resolved
 
@@ -2008,10 +2008,10 @@ class OnlineTrainer:
         if not has_measurements:
             return resolved
 
-        limit = float(cfg.debug.max_abs_logprob_diff)
+        limit = float(cfg.replay_parity.max_abs_logprob_diff)
         passed = resolved.finite and resolved.logprob_abs_diff_max <= limit
         record = {
-            "event": "first_step_full_logprob_parity",
+            "event": "replay_parity_gate",
             "passed": passed,
             "finite": resolved.finite,
             "max_abs_diff": resolved.logprob_abs_diff_max,
@@ -2024,13 +2024,14 @@ class OnlineTrainer:
             append_jsonl_record(f"{cfg.output_dir}/training_debug.jsonl", record)
         if not passed:
             raise RuntimeError(
-                "full first-step log-prob parity failed before optimizer step: "
+                "replay parity failed before this process's first optimizer update: "
                 f"finite={resolved.finite}, "
                 f"max_abs_diff={resolved.logprob_abs_diff_max:.6g}, "
                 f"limit={limit:.6g}. The first-sample probe is insufficient; "
                 "align rollout/replay precision and batch shape or recompute "
                 "the old policy with the replay backend.",
             )
+        self._replay_parity_pending = False
         return resolved
 
     @property
@@ -2307,6 +2308,7 @@ class OnlineTrainer:
         # next Ray rollout. The policy version and worker state are runtime
         # concerns, not persisted as an initialized rollout flag.
         self._rollout_weights_initialized = False
+        self._replay_parity_pending = True
         self.rollout_schedule.reset()
 
     def _optimizer_parameter_manifest(self) -> list[dict[str, Any]]:

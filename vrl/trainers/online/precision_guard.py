@@ -2,8 +2,8 @@
 
 When rollout and replay use different role precision policies, the collection
 time logprob no longer equals the freshly recomputed replay logprob, so the GRPO
-importance ratio is != 1 at the very first step. This guard recomputes parity on
-the first training step (before any optimizer update) and either warns or fails,
+importance ratio is != 1 at the first real update. This guard recomputes parity
+before that optimizer update and either warns or fails,
 using the shared :func:`compute_logprob_mismatch_stats`.
 
 It is the enforcement side of the same fact the per-step mismatch metrics (P1)
@@ -139,7 +139,7 @@ def measure_precision_drift(
     evaluate_fn: Callable[[int], Any],
     metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Measure first-step precision drift without choosing process-wide failure.
+    """Measure first-update precision drift without choosing process-wide failure.
 
     ``evaluate_fn(timestep_idx)`` returns a ``TrajectorySignalBatch``-like object with
     ``.primary.log_prob`` (fresh replay) and ``.primary.old_log_prob`` (rollout

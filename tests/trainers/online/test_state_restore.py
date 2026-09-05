@@ -118,10 +118,31 @@ class TestOnlineTrainerResumeState:
         """Checks load state dict resets rollout weight initialization."""
         trainer = _make_resume_trainer()
         trainer._rollout_weights_initialized = True
+        trainer._replay_parity_pending = False
 
         trainer.load_state_dict({"step": 9, "global_step": 9}, strict=True)
 
         assert trainer._rollout_weights_initialized is False
+        assert trainer._replay_parity_pending is True
+
+    @pytest.mark.parametrize("strict", [True, False])
+    def test_resume_rechecks_parity_at_nonzero_training_step(self, strict: bool) -> None:
+        from vrl.algorithms.types import InitialReplayStats
+
+        trainer = _make_resume_trainer()
+        trainer._replay_parity_pending = False
+        assert "_replay_parity_pending" not in trainer.state_dict()
+
+        trainer.load_state_dict({"step": 4, "global_step": 4}, strict=strict)
+
+        with pytest.raises(RuntimeError, match="replay parity failed"):
+            trainer._validate_first_update_parity(
+                InitialReplayStats(logprob_abs_diff_max=0.02, finite=True),
+                local_weight=1.0,
+            )
+        assert trainer.state.step == 4
+        assert trainer.state.global_step == 4
+        assert trainer._replay_parity_pending is True
 
     def test_strict_resume_requires_master_optimizer_state_after_first_step(self) -> None:
         trainer = _make_resume_trainer()

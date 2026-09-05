@@ -139,10 +139,19 @@ def _diffusion_rollout_batch(
     )
 
 
-def _trajectory_signals(batch, log_prob, timestep_idx: int = 0):
+def _trajectory_signals(
+    batch,
+    log_prob,
+    timestep_idx: int = 0,
+    *,
+    old_log_prob=None,
+):
     from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 
-    old_log_prob = torch.full_like(log_prob, float(timestep_idx))
+    if old_log_prob is None:
+        # Most trainer fakes model an unchanged-policy replay. Tests that
+        # deliberately exercise mismatch must provide the behavior value.
+        old_log_prob = log_prob.detach().clone()
     mask = torch.ones_like(log_prob)
     return TrajectorySignalBatch(
         segments={

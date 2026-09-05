@@ -211,6 +211,23 @@ def test_precision_drift_guard_config_is_bridged_from_yaml():
     assert trainer_config.precision_drift_guard.max_abs_log_ratio == pytest.approx(0.02)
 
 
+def test_replay_parity_config_is_bridged_from_yaml() -> None:
+    cfg = _with_precision(
+        "sd3_5/online_grpo_ocr",
+        _plain_policy("bf16"),
+    )
+    cfg = OmegaConf.merge(
+        cfg,
+        OmegaConf.create(
+            {"trainer": {"replay_parity": {"max_abs_logprob_diff": 2.0e-4}}},
+        ),
+    )
+
+    trainer_config = build_configs(cfg).trainer
+
+    assert trainer_config.replay_parity.max_abs_logprob_diff == pytest.approx(2.0e-4)
+
+
 def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     """Mismatch + continuous-async diagnostics are written as regular CSV columns."""
     from types import SimpleNamespace

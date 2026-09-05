@@ -10,6 +10,7 @@ default is the single copy (base YAML must not restate it).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 
@@ -47,13 +48,22 @@ class EMAConfig:
 class DebugConfig:
     """Diagnostic toggles consumed by the trainer."""
 
-    # First-step log-prob round-trip check (collected old_lp vs fresh_lp).
+    # Rich first-step provenance for rollout/replay diagnosis and NFT probes.
     first_step: bool = field(default=False)
+
+
+@dataclass(slots=True)
+class ReplayParityConfig:
+    """Mandatory unchanged-policy rollout/replay parity threshold."""
+
     max_abs_logprob_diff: float = field(default=0.01)
 
     def __post_init__(self) -> None:
-        if float(self.max_abs_logprob_diff) < 0:
-            raise ValueError("trainer.debug.max_abs_logprob_diff must be >= 0")
+        limit = float(self.max_abs_logprob_diff)
+        if not math.isfinite(limit) or limit < 0:
+            raise ValueError(
+                "trainer.replay_parity.max_abs_logprob_diff must be finite and >= 0",
+            )
 
 
 @dataclass(slots=True)

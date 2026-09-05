@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any
 from vrl.trainers.metrics_io import online_metric_columns
 
 if TYPE_CHECKING:
-    from vrl.trainers.core.types import DebugConfig, RolloutOrchestrationConfig
+    from vrl.trainers.core.types import ReplayParityConfig, RolloutOrchestrationConfig
 
 from vrl.scripts.train import RUN_VERDICT_NAME, rank_run_verdict_name
 
@@ -172,7 +172,7 @@ class HealthGateConfig:
         args: argparse.Namespace,
         *,
         schedule: RolloutOrchestrationConfig,
-        debug: DebugConfig,
+        replay_parity: ReplayParityConfig,
     ) -> HealthGateConfig:
         """Reconcile operator CLI thresholds against the resolved training config.
 
@@ -209,8 +209,14 @@ class HealthGateConfig:
             )
 
         parity_limit = args.health_max_pre_update_logprob_diff
+        training_parity_limit = float(replay_parity.max_abs_logprob_diff)
         if parity_limit is None:
-            parity_limit = float(debug.max_abs_logprob_diff)
+            parity_limit = training_parity_limit
+        elif parity_limit > training_parity_limit:
+            raise ValueError(
+                "health max_pre_update_logprob_diff cannot exceed the training "
+                f"replay-parity limit ({parity_limit:g} > {training_parity_limit:g})",
+            )
 
         return cls(
             poll_seconds=args.health_poll_seconds,
@@ -868,7 +874,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=_bounded_number(float, 0),
         default=None,
         help="Maximum healthy pre-update log-probability difference. When omitted, "
-        "derive trainer.debug.max_abs_logprob_diff from the resolved training config.",
+        "derive trainer.replay_parity.max_abs_logprob_diff from the resolved "
+        "training config. An override may tighten, but not widen, that limit.",
     )
     parser.add_argument(
         "--health-max-stale-policy-versions",
@@ -950,7 +957,7 @@ def main(argv: list[str] | None = None) -> None:
             health = HealthGateConfig.from_cli(
                 args,
                 schedule=trainer.rollout_orchestration,
-                debug=trainer.debug,
+                replay_parity=trainer.replay_parity,
             )
         except (TypeError, ValueError) as error:
             parser.error(str(error))

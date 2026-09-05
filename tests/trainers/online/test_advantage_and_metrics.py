@@ -141,7 +141,12 @@ class TestAdvantageAndMetrics:
                     device=model.weight.device,
                 )
                 log_prob = old + self.calls / 1000.0 + model.weight.view(1) * 0.0
-                return _trajectory_signals(batch, log_prob, timestep_idx)
+                return _trajectory_signals(
+                    batch,
+                    log_prob,
+                    timestep_idx,
+                    old_log_prob=old,
+                )
 
         model = nn.Linear(1, 1, bias=False)
         _stamp_model_precision(model)
