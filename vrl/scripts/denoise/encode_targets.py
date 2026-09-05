@@ -1,4 +1,4 @@
-"""Encode a manifest's target videos into the ``data.sft_latents`` shard.
+"""Encode a manifest's clean target images or videos into ``data.sft_latents``.
 
 The GRPO diffusion-loss regularizer (``algorithm.sft_weight``, the
 Cosmos-Predict2.5 paper's anti-reward-hacking term) trains against CLEAN
@@ -14,9 +14,9 @@ experiment config rather than free-form arguments:
         --preview-out outputs/cosmos_predict25_sft_target_roundtrip.mp4
 
 Requires the family model to expose ``encode_video_to_latents`` and every
-manifest row to carry a ``target_video`` artifact. The shard is keyed by that
-stable artifact identity, not prompt text: real fine-tuning manifests may use
-the same instruction for several distinct target videos.
+manifest row to carry exactly one ``target_image`` or ``target_video`` artifact.
+The shard is keyed by that stable artifact identity, not prompt text: a
+fine-tuning manifest may use the same instruction for several clean targets.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--preview-out",
         default=None,
-        help="decode the first encoded target and write an mp4 round-trip preview",
+        help="decode the first target and write a PNG (image) or MP4 (video) preview",
     )
     parser.add_argument(
         "--storage-dtype",
@@ -59,26 +59,45 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default="preserve",
         help="On-disk latent dtype; bf16 reduces replicated trainer host memory.",
     )
+    parser.add_argument(
+        "overrides",
+        nargs="*",
+        help=(
+            "Ordered preset overlays (+reward=ocr +dataset=...) and OmegaConf "
+            "dotlist overrides (model.use_lora=false sampling.num_steps=40)."
+        ),
+    )
     return parser
 
 
-def _video_at_sampling_geometry(
+def _target_at_sampling_geometry(
     path: str,
     *,
+    media_type: str,
     height: int,
     width: int,
     num_frames: int,
 ) -> Any:
-    """Read a target video as ``[1, C, T, H, W]`` in [0,1] at the train shape."""
+    """Read a clean target as ``[1, C, T, H, W]`` at the training shape."""
 
     import torch.nn.functional as F
 
-    from vrl.utils.media import read_video_frames
+    from vrl.utils.media import read_image_as_frames, read_video_frames
 
-    frames = read_video_frames(path, num_frames=num_frames)  # [T,H,W,3] in [0,1]
+    if media_type == "target_image":
+        if num_frames != 1:
+            raise ValueError(
+                f"target image {path} cannot supervise a {num_frames}-frame run; "
+                "provide target_video instead of silently repeating one frame",
+            )
+        frames = read_image_as_frames(path)
+    elif media_type == "target_video":
+        frames = read_video_frames(path, num_frames=num_frames)
+    else:  # pragma: no cover - resolve_clean_target owns this closed set
+        raise ValueError(f"unsupported clean target field: {media_type}")
     if int(frames.shape[0]) != num_frames:
         raise ValueError(
-            f"target video {path} yielded {int(frames.shape[0])} frames, but the "
+            f"clean target {path} yielded {int(frames.shape[0])} frames, but the "
             f"training sampling geometry requires {num_frames}; rebuild the target "
             "clip at the training frame count instead of silently padding or "
             "interpolating supervision",
@@ -94,42 +113,41 @@ def _video_at_sampling_geometry(
     return video.permute(1, 0, 2, 3).unsqueeze(0)  # [1,3,T,H,W]
 
 
-def _resolve_target_videos(
+def _resolve_clean_targets(
     examples: list[Any],
     *,
     data_root: str | Path | None,
     allow_absolute: bool,
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, str]]:
     """Resolve and validate stable target identities before loading a model."""
 
     from vrl.trainers.data.artifacts import resolve_prompt_example_artifacts
+    from vrl.trainers.data.sft_latents import resolve_clean_target
 
-    targets: list[tuple[str, str]] = []
+    targets: list[tuple[str, str, str]] = []
     seen_target_keys: set[str] = set()
     for index, example in enumerate(examples):
-        target_key = str(getattr(example, "target_video", "") or "").strip()
-        if not target_key:
+        try:
+            target = resolve_clean_target(example)
+        except ValueError as exc:
+            raise ValueError(f"manifest row {index} ({example.prompt!r}): {exc}") from exc
+        if target.key in seen_target_keys:
             raise ValueError(
-                f"manifest row {index} ({example.prompt!r}) has no target_video; "
-                "the sft shard needs one clean video per training example",
+                f"manifest row {index} repeats clean target {target.key!r}; "
+                "the target artifact is the sft shard identity and must be unique",
             )
-        if target_key in seen_target_keys:
-            raise ValueError(
-                f"manifest row {index} repeats target_video {target_key!r}; "
-                "target_video is the sft shard identity and must be unique",
-            )
-        seen_target_keys.add(target_key)
+        seen_target_keys.add(target.key)
         resolved = resolve_prompt_example_artifacts(
             example,
             data_root=data_root,
             allow_absolute=allow_absolute,
         )
-        resolved_target = Path(resolved.target_video)
+        resolved_target = Path(str(getattr(resolved, target.field)))
         if not resolved_target.is_file():
             raise FileNotFoundError(
-                f"manifest row {index} target_video does not exist: {resolved_target}",
+                f"manifest row {index} {target.field} does not exist: {resolved_target}",
             )
-        targets.append((target_key, str(resolved_target)))
+        targets.append((target.key, str(resolved_target), target.field))
     return targets
 
 
@@ -149,7 +167,7 @@ def main(argv: list[str] | None = None) -> None:
     from vrl.trainers.data import load_prompt_examples_from_config
     from vrl.trainers.data.sft_latents import save_sft_latents
 
-    cfg = load_config(f"experiment/{args.experiment}")
+    cfg = load_config(f"experiment/{args.experiment}", overrides=args.overrides)
     root = parse_config(cfg)
     precision = resolve_precision_policy(root)
     if root.model is None:
@@ -177,7 +195,7 @@ def main(argv: list[str] | None = None) -> None:
     allow_absolute = bool(
         OmegaConf.select(cfg, "data.allow_absolute_artifact_paths", default=False),
     )
-    targets = _resolve_target_videos(
+    targets = _resolve_clean_targets(
         examples,
         data_root=data_root,
         allow_absolute=allow_absolute,
@@ -212,9 +230,10 @@ def main(argv: list[str] | None = None) -> None:
         "fp16": torch.float16,
         "fp32": torch.float32,
     }[args.storage_dtype]
-    for index, (target_key, target) in enumerate(targets):
-        video = _video_at_sampling_geometry(
+    for index, (target_key, target, media_type) in enumerate(targets):
+        video = _target_at_sampling_geometry(
             str(target),
+            media_type=media_type,
             height=height,
             width=width,
             num_frames=num_frames,
@@ -225,10 +244,18 @@ def main(argv: list[str] | None = None) -> None:
             stored = stored.to(dtype=storage_dtype)
         latents_by_target[target_key] = stored.cpu()
         if args.preview_out and index == 0:
-            from vrl.utils.media import write_mp4
+            from vrl.utils.media import write_mp4, write_png
 
             decoded = model.decode_latents(latents)
-            write_mp4(decoded, args.preview_out, fps=fps)
+            preview_path = Path(args.preview_out)
+            if media_type == "target_image":
+                if preview_path.suffix.lower() != ".png":
+                    raise ValueError("an image target round-trip preview must end in .png")
+                write_png(decoded[0], preview_path)
+            else:
+                if preview_path.suffix.lower() != ".mp4":
+                    raise ValueError("a video target round-trip preview must end in .mp4")
+                write_mp4(decoded, preview_path, fps=fps)
             logger.info("wrote first-target round-trip preview to %s", args.preview_out)
         logger.info(
             "[%d/%d] encoded %s -> %s",
