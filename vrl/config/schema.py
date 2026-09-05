@@ -15,7 +15,7 @@ import functools
 import math
 from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields
-from typing import Annotated, Any, ClassVar, Literal, get_args, get_type_hints
+from typing import Annotated, Any, Literal, get_args
 
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
@@ -23,14 +23,17 @@ from pydantic import (
     ConfigDict,
     Field,
     SerializeAsAny,
+    StrictBool,
+    StrictInt,
     ValidationError,
     ValidationInfo,
     field_validator,
     model_validator,
 )
 
+from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.algorithm import algorithm_config_class, resolve_kl_reward_coef
-from vrl.config.base import ConfigBase
+from vrl.config.base import ClosedConfigBase, ConfigBase
 from vrl.config.data import DataLoaderName, manifest_sources, resolve_data_loader
 from vrl.config.model_schema import ModelSection
 from vrl.config.precision import PrecisionConfig
@@ -46,8 +49,15 @@ from vrl.models.families.registry import FAMILY_REGISTRY, get_model_family_entry
 from vrl.ray.resources import (
     DistributedResourceConfig,
 )
+from vrl.trainers.core.types import (
+    DebugConfig,
+    EMAConfig,
+    OptimConfig,
+    PrecisionDriftGuardConfig,
+    ReplayParityConfig,
+    RolloutOrchestrationConfig,
+)
 from vrl.trainers.data.prompt_sampler import PromptSamplingStrategy
-from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trajectory.storage import TrajectoryStoragePolicy
 from vrl.utils.config import import_from_path
 from vrl.utils.profiling import TorchProfilerConfig
@@ -319,8 +329,9 @@ class RolloutConfig(ConfigBase):
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
-    n_samples_per_prompt: int | None = None
-    prompts_per_batch: int | None = None
+    # Strict: a bool is not a batch dimension (OnlineBatchPlan rejects it too).
+    n_samples_per_prompt: StrictInt | None = None
+    prompts_per_batch: StrictInt | None = None
     # reader: vrl/generation/bindings/full_sequence_denoise/layout.py
     # _parse_denoise_mode (request boundary).
     # Allowed set is the type; the layout guard stays for over-the-wire request dicts.
@@ -528,124 +539,63 @@ def _parse_sampling_section(
     return _revalidate_section(section_cls, payload, section="sampling")
 
 
-# ── Section key registries (values validated by their own layers) ────────────
+# ── actor / trainer sections ──────────────────────────────────────────────────
 
 
-@functools.cache
-def _online_runtime_section_shape(
-    section: Literal["actor", "trainer"],
-    owners: tuple[type[Any], ...] = (TrainerConfig, OnlineBatchPlan),
-) -> tuple[frozenset[str], dict[str, ConfigBlock]]:
-    """Derive one public section shape from online runtime YAML metadata."""
+class ActorSection(ClosedConfigBase):
+    """Public ``actor`` section: the online trainer's optimizer/loop knobs plus
+    the offline-DPO entrypoint's inputs.
 
-    known: set[str] = set()
-    children: dict[str, ConfigBlock] = {}
+    Nested blocks are typed with the runtime dataclass that consumes them, so
+    their keys, defaults, and range checks live once, on the consumer. Every
+    scalar is optional at this boundary; requiredness is decided by the
+    projection (``TrainerConfig.from_root``: a field without a default is
+    required) because one public section feeds more than one runtime owner.
+    """
 
-    for owner in owners:
-        hints = get_type_hints(owner)
-        for runtime_field in dataclass_fields(owner):
-            home = runtime_field.metadata.get("yaml")
-            if home is None:
-                raise AssertionError(
-                    f"{owner.__name__}.{runtime_field.name} does not declare "
-                    "field metadata {'yaml': ...}",
-                )
-            if home == "bridged":
-                continue
-            if not isinstance(home, str):
-                raise AssertionError(
-                    f"{owner.__name__}.{runtime_field.name} declares non-string "
-                    f"yaml home {home!r}",
-                )
-            top, _, nested_path = home.partition(".")
-            if top != section:
-                continue
-            if runtime_field.name in known:
-                raise AssertionError(
-                    f"{section}.{runtime_field.name} has multiple online runtime owners",
-                )
-            known.add(runtime_field.name)
-            if nested_path:
-                if nested_path != runtime_field.name:
-                    raise AssertionError(
-                        f"{owner.__name__}.{runtime_field.name} declares yaml home "
-                        f"{home!r}; nested runtime fields must use "
-                        f"{section}.{runtime_field.name}",
-                    )
-                children[runtime_field.name] = ConfigBlock(
-                    hints[runtime_field.name],
-                )
-
-    return frozenset(known), children
-
-
-class _OnlineRuntimeSection(ConfigBase):
-    """Retain derived runtime fields while dropping truly unknown extras."""
-
-    model_config = ConfigDict(extra="allow")
-    _yaml_section: ClassVar[Literal["actor", "trainer"]]
-
-    @model_validator(mode="before")
-    @classmethod
-    def _drop_unknown_extras(cls, value: Any) -> Any:
-        if not isinstance(value, Mapping):
-            return value
-        runtime_fields, _ = _online_runtime_section_shape(cls._yaml_section)
-        allowed = set(cls.model_fields) | runtime_fields
-        return {key: inner for key, inner in value.items() if str(key) in allowed}
-
-
-class TrainerSection(_OnlineRuntimeSection):
-    """Non-online trainer keys plus the offline-entrypoint transition boundary."""
-
-    _yaml_section = "trainer"
-
-    entrypoint: Any = None
-    total_epochs: Any = None
-    save_freq: Any = None
-    seed: Any = None
-    resume_from: Any = None
-    resume_strict: Any = None
+    optim: OptimConfig | None = None
+    ema: EMAConfig | None = None
+    timestep_fraction: float | None = None
+    drop_zero_advantage: StrictBool | None = None
+    max_norm: float | None = None
+    timestep_selection: Literal["strided", "random", "sde_window"] | None = None
+    ppo_epochs: StrictInt | None = None
+    # OnlineBatchPlan inputs: the microstep count or the microbatch size (the
+    # size derives the count); the plan is bridged, not stored here.
+    gradient_accumulation_steps: StrictInt | None = None
+    microbatch_size: StrictInt | None = None
+    samples_per_replay_batch: StrictInt | None = None
+    host_memory_budget_fraction: float | None = None
+    # reader: vrl/trainers/activation_checkpointing.py (bool: true=full, false=off)
+    gradient_checkpointing: Literal["off", "full", "selective"] | StrictBool | None = None
     # offline DPO entrypoint (vrl/scripts/families/wan_2_1/train_dpo.py)
-    checkpointing_steps: Any = None
-    log_interval: Any = None
-    max_train_steps: Any = None
+    prediction_type: str | None = None
+    scale_lr: StrictBool | None = None
+    train_batch_size: StrictInt | None = None
+    use_adafactor: StrictBool | None = None
 
 
-class ActorSection(_OnlineRuntimeSection):
-    """Non-online actor keys plus the offline-entrypoint transition boundary."""
+class TrainerSection(ClosedConfigBase):
+    """Public ``trainer`` section: run lifecycle/IO plus trainer-level policies."""
 
-    _yaml_section = "actor"
-
-    # Public size input from which OnlineBatchPlan derives its canonical
-    # gradient-accumulation count; it is intentionally not stored on that plan.
-    microbatch_size: Any = None
-    gradient_checkpointing: Any = None  # off | full | selective (or bool: true=full, false=off)
+    entrypoint: str | None = None
+    output_dir: str | None = None
+    total_epochs: StrictInt | None = None
+    save_freq: StrictInt | None = None
+    seed: StrictInt | None = None
+    resume_from: str | None = None
+    resume_strict: StrictBool | None = None
+    profile: StrictBool | None = None
+    debug: DebugConfig | None = None
+    replay_parity: ReplayParityConfig | None = None
+    precision_drift_guard: PrecisionDriftGuardConfig | None = None
+    precision_correction: PrecisionCorrectionConfig | None = None
+    rollout_orchestration: RolloutOrchestrationConfig | None = None
+    torch_profiler: TorchProfilerConfig | None = None
     # offline DPO entrypoint (vrl/scripts/families/wan_2_1/train_dpo.py)
-    prediction_type: Any = None
-    scale_lr: Any = None
-    train_batch_size: Any = None
-    use_adafactor: Any = None
-
-
-def _online_runtime_section_block(
-    section: Literal["actor", "trainer"],
-    public_section: type[ConfigBase],
-) -> ConfigBlock:
-    """Combine explicit boundary keys with runtime-owned online keys."""
-
-    explicit = ConfigBlock(public_section)
-    runtime_fields, runtime_children = _online_runtime_section_shape(section)
-    duplicates = explicit.known & runtime_fields
-    if duplicates:
-        names = ", ".join(sorted(duplicates))
-        raise AssertionError(
-            f"{public_section.__name__} duplicates online runtime field(s): {names}",
-        )
-    return ConfigBlock(
-        explicit.known | runtime_fields,
-        children={**explicit.children, **runtime_children},
-    )
+    checkpointing_steps: StrictInt | None = None
+    log_interval: StrictInt | None = None
+    max_train_steps: StrictInt | None = None
 
 
 # Entrypoint-specific schema boundary. These are the only shared actor/trainer
@@ -874,10 +824,9 @@ class ProductionSection(ConfigBase):
 class RootConfig(ConfigBase):
     """Top-level typed boundary for all training config sections.
 
-    Sections with leaf validation are modelled; trainer/actor/distributed are
-    key registries (values validated by builders / ray.resources); precision
-    is parsed by vrl.config.precision; cosmos by the cosmos entrypoint.
-    Anything else warns via ConfigBase.
+    model/sampling are family-selected; actor/trainer/precision are fully
+    typed sections; distributed is a key registry whose values are validated
+    by vrl.ray.resources. An unknown key anywhere fails at parse_config.
     """
 
     algorithm: Annotated[
@@ -909,14 +858,8 @@ class RootConfig(ConfigBase):
     # Per-component production gates; contract checks live in
     # vrl/config/validation.py validate_production_* (raw-cfg checks)
     production: ProductionSection | None = None
-    trainer: Annotated[
-        TrainerSection | None,
-        _online_runtime_section_block("trainer", TrainerSection),
-    ] = None
-    actor: Annotated[
-        ActorSection | None,
-        _online_runtime_section_block("actor", ActorSection),
-    ] = None
+    trainer: TrainerSection | None = None
+    actor: ActorSection | None = None
     distributed: DistributedSection | None = None
     # resolver: vrl/config/precision.py resolve_precision_policy(root.precision)
     precision: PrecisionConfig | None = None
@@ -1077,7 +1020,9 @@ def _extract_error_message(exc: ValidationError, *, section: str = "") -> str:
     # Missing required field — remap to repo-standard message format
     if error_type == "missing":
         return f"config missing required field: {loc}"
-    if error_type == "extra_forbidden":
+    # pydantic reports an unknown key on a stdlib dataclass field as an
+    # unexpected keyword argument; it is the same condition.
+    if error_type in ("extra_forbidden", "unexpected_keyword_argument"):
         return f"unknown {loc}"
     # Literal enum mismatch — reformat to "unknown {loc}={input!r}; expected ..."
     if error_type == "literal_error":
@@ -1116,12 +1061,14 @@ def parse_config(cfg: DictConfig) -> RootConfig:
 
 
 __all__ = [
+    "ActorSection",
     "AlgorithmConfig",
     "DataConfig",
     "ModelSection",
     "RewardConfig",
     "RolloutConfig",
     "RootConfig",
+    "TrainerSection",
     "generation_request_rollout_fields",
     "parse_config",
     "sampling_section_class_for_family",

@@ -101,6 +101,13 @@ def wan_forward(
     return out
 
 
+def _required_trainer_int(trainer_section: Any, name: str) -> int:
+    value = getattr(trainer_section, name)
+    if value is None:
+        raise ValueError(f"config missing required field: trainer.{name}")
+    return int(value)
+
+
 def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     """Run Wan-family Diffusion-DPO training driven by a merged YAML config."""
 
@@ -141,7 +148,9 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from vrl.trainers.metrics_io import prepare_metrics_csv
     from vrl.trainers.offline import OfflineDPOTrainer
 
-    trainer_cfg_yaml = cfg.trainer
+    trainer_section = built.root.trainer
+    if trainer_section is None:
+        raise ValueError("config missing required field: trainer")
     sampling = cfg.sampling
     data_cfg = cfg.data
 
@@ -152,8 +161,9 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         )
 
     precision = built.precision
-    train_batch_size = int(require(cfg, "actor.train_batch_size"))
-    trainer_cfg = build_offline_dpo_trainer_config(cfg, dpo_config)
+    trainer_cfg = build_offline_dpo_trainer_config(built.root, dpo_config)
+    assert built.root.actor is not None  # the builder required actor.train_batch_size
+    train_batch_size = int(built.root.actor.train_batch_size)
     resume_config = built.resume
     resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
     logger.info(format_distributed_resource_plan(resources))
@@ -181,7 +191,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     wan_model = bundle.model
     pipeline = bundle.raw_handle
 
-    enable_transformer_gradient_checkpointing(bundle, cfg)
+    enable_transformer_gradient_checkpointing(bundle, built.root)
 
     # 2. Encoders bound to the loaded pipeline
     num_frames = int(sampling.num_frames)
@@ -253,7 +263,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         restore_rng_state(resume_checkpoint.rng_state)
 
     # 5. Output dir + CSV log + resolved config snapshot
-    out_dir = Path(str(trainer_cfg_yaml.output_dir))
+    out_dir = Path(str(trainer_section.output_dir))
     out_dir.mkdir(parents=True, exist_ok=True)
     save_resolved_config(cfg, out_dir, resumed=resume_checkpoint is not None)
 
@@ -274,9 +284,9 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     )
 
     # 6. Training loop
-    max_train_steps = int(require(cfg, "trainer.max_train_steps"))
-    checkpointing_steps = int(require(cfg, "trainer.checkpointing_steps"))
-    log_interval = int(require(cfg, "trainer.log_interval"))
+    max_train_steps = _required_trainer_int(trainer_section, "max_train_steps")
+    checkpointing_steps = _required_trainer_int(trainer_section, "checkpointing_steps")
+    log_interval = _required_trainer_int(trainer_section, "log_interval")
 
     logger.info(
         "Starting Wan-1.3B DPO — %d steps, beta=%g, lr=%g, num_frames=%d",

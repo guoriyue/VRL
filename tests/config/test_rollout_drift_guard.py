@@ -98,7 +98,7 @@ def test_quantized_rollout_needs_no_extra_check() -> None:
 def test_explicit_expert_block_is_honored(expert_block: str) -> None:
     """The same escape hatch the precision-split default path respects.
 
-    ``OnlineTrainerConfig.from_cfg`` only fills these in when the user has not,
+    ``TrainerConfig.from_root`` only fills these in when the user has not,
     so an explicit block means the correction policy was chosen deliberately.
     """
 

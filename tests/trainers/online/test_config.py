@@ -9,6 +9,7 @@ from dataclasses import FrozenInstanceError, fields
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.config.schema import ActorSection, TrainerSection, parse_config
 from vrl.trainers.core.types import DebugConfig, OptimConfig, ReplayParityConfig
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
@@ -51,10 +52,11 @@ def test_trainer_config_does_not_mirror_controller_lifecycle() -> None:
 
 
 def test_replay_parity_is_a_correctness_config_not_a_debug_toggle() -> None:
-    trainer_fields = {trainer_field.name: trainer_field for trainer_field in fields(TrainerConfig)}
+    trainer_fields = {trainer_field.name for trainer_field in fields(TrainerConfig)}
 
     assert [debug_field.name for debug_field in fields(DebugConfig)] == ["first_step"]
-    assert trainer_fields["replay_parity"].metadata["yaml"] == "trainer.replay_parity"
+    assert "replay_parity" in trainer_fields
+    assert "replay_parity" in TrainerSection.model_fields
     assert ReplayParityConfig().max_abs_logprob_diff == pytest.approx(0.01)
 
 
@@ -64,17 +66,22 @@ def test_replay_parity_rejects_invalid_limits(limit: float) -> None:
         ReplayParityConfig(max_abs_logprob_diff=limit)
 
 
-def test_online_batch_plan_fields_declare_public_owners() -> None:
-    assert {
-        batch_field.name: batch_field.metadata.get("yaml")
-        for batch_field in fields(OnlineBatchPlan)
-    } == {
-        "prompts_per_batch": "rollout",
-        "n_samples_per_prompt": "rollout",
-        "gradient_accumulation_steps": "actor",
-        "samples_per_replay_batch": "actor",
-        "host_memory_budget_fraction": "actor",
-    }
+def test_trainer_config_fields_are_declared_by_exactly_one_public_section() -> None:
+    """The projection reads each field from the section that declares its name."""
+    bridged = {"batch_plan", "train_precision", "rollout_precision"}
+    for trainer_field in fields(TrainerConfig):
+        if trainer_field.name in bridged:
+            continue
+        owners = [
+            section
+            for section in (ActorSection, TrainerSection)
+            if trainer_field.name in section.model_fields
+        ]
+        assert len(owners) == 1, trainer_field.name
+    for plan_field in fields(OnlineBatchPlan):
+        if plan_field.name in ("prompts_per_batch", "n_samples_per_prompt"):
+            continue
+        assert plan_field.name in ActorSection.model_fields, plan_field.name
 
 
 def _public_batch_config(
@@ -83,14 +90,16 @@ def _public_batch_config(
     n_samples_per_prompt: object = 2,
     **actor: object,
 ):
-    return OmegaConf.create(
-        {
-            "rollout": {
-                "prompts_per_batch": prompts_per_batch,
-                "n_samples_per_prompt": n_samples_per_prompt,
+    return parse_config(
+        OmegaConf.create(
+            {
+                "rollout": {
+                    "prompts_per_batch": prompts_per_batch,
+                    "n_samples_per_prompt": n_samples_per_prompt,
+                },
+                "actor": actor,
             },
-            "actor": actor,
-        },
+        ),
     )
 
 
@@ -106,11 +115,11 @@ def _trainer_config(batch_plan: OnlineBatchPlan, *, ppo_epochs: int = 1) -> Trai
 
 
 def test_batch_plan_resolves_size_and_count_to_the_same_state() -> None:
-    size_only = OnlineBatchPlan.from_cfg(_public_batch_config(microbatch_size=4))
-    count_only = OnlineBatchPlan.from_cfg(
+    size_only = OnlineBatchPlan.from_root(_public_batch_config(microbatch_size=4))
+    count_only = OnlineBatchPlan.from_root(
         _public_batch_config(gradient_accumulation_steps=8),
     )
-    both = OnlineBatchPlan.from_cfg(
+    both = OnlineBatchPlan.from_root(
         _public_batch_config(
             microbatch_size=4,
             gradient_accumulation_steps=8,
@@ -124,7 +133,7 @@ def test_batch_plan_resolves_size_and_count_to_the_same_state() -> None:
 
 
 def test_unsplit_batch_plan_derives_the_full_batch_size() -> None:
-    plan = OnlineBatchPlan.from_cfg(_public_batch_config())
+    plan = OnlineBatchPlan.from_root(_public_batch_config())
 
     assert plan.gradient_accumulation_steps == 0
     assert plan.microbatch_size == 32
@@ -152,7 +161,7 @@ def test_batch_plan_rejects_invalid_public_geometry(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        OnlineBatchPlan.from_cfg(_public_batch_config(**actor))
+        OnlineBatchPlan.from_root(_public_batch_config(**actor))
 
 
 @pytest.mark.parametrize(
@@ -169,7 +178,7 @@ def test_batch_plan_rejects_non_positive_batch_dimensions(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        OnlineBatchPlan.from_cfg(_public_batch_config(**rollout))
+        OnlineBatchPlan.from_root(_public_batch_config(**rollout))
 
 
 def test_streaming_plan_requires_one_ppo_epoch() -> None:

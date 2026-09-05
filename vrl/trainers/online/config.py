@@ -20,39 +20,72 @@ from vrl.utils.profiling import TorchProfilerConfig
 
 if TYPE_CHECKING:
     from vrl.config.precision import PrecisionPolicy
+    from vrl.config.schema import RootConfig
+
+
+def _required_field_paths(cls: type[Any], path: str) -> list[str]:
+    """Public paths of ``cls``'s required fields (no default), under ``path``."""
+
+    return [
+        f"{path}.{f.name}"
+        for f in fields(cls)
+        if f.init and f.default is MISSING and f.default_factory is MISSING
+    ]
+
+
+def _null_key(section: Any, name: str, path: str) -> None:
+    """Explicit ``null`` is a misconfiguration; only absence means "use the default"."""
+
+    if section is not None and name in section.model_fields_set:
+        raise ValueError(f"config key {path} is null; delete the key or fill it")
 
 
 @dataclass(frozen=True, slots=True)
 class OnlineBatchPlan:
     """Canonical geometry and memory bounds for one online optimizer update."""
 
-    prompts_per_batch: int = field(metadata={"yaml": "rollout"})
-    n_samples_per_prompt: int = field(metadata={"yaml": "rollout"})
-    gradient_accumulation_steps: int = field(default=0, metadata={"yaml": "actor"})
-    samples_per_replay_batch: int = field(default=1, metadata={"yaml": "actor"})
-    host_memory_budget_fraction: float = field(default=0.0, metadata={"yaml": "actor"})
+    prompts_per_batch: int
+    n_samples_per_prompt: int
+    gradient_accumulation_steps: int = 0
+    samples_per_replay_batch: int = 1
+    host_memory_budget_fraction: float = 0.0
 
     @classmethod
-    def from_cfg(cls, cfg: Any) -> OnlineBatchPlan:
+    def required_public_paths(cls, root: RootConfig) -> list[str]:
+        """Public inputs with no value in ``root`` (the plan cannot be built)."""
+
+        rollout = root.rollout
+        return [
+            f"rollout.{name}"
+            for name in ("prompts_per_batch", "n_samples_per_prompt")
+            if rollout is None or getattr(rollout, name) is None
+        ]
+
+    @classmethod
+    def from_root(cls, root: RootConfig) -> OnlineBatchPlan:
         """Resolve public size/count inputs into one canonical optimizer batch plan."""
 
-        from vrl.config.validation import path_exists, require
-
+        missing = cls.required_public_paths(root)
+        if missing:
+            raise ValueError("config missing required key(s): " + ", ".join(missing))
+        rollout = root.rollout
+        actor = root.actor
+        assert rollout is not None
         base = cls(
-            prompts_per_batch=require(cfg, "rollout.prompts_per_batch"),
-            n_samples_per_prompt=require(cfg, "rollout.n_samples_per_prompt"),
+            prompts_per_batch=rollout.prompts_per_batch,
+            n_samples_per_prompt=rollout.n_samples_per_prompt,
         )
         prompts = base.prompts_per_batch
 
-        def optional_non_negative_int(path: str) -> int | None:
-            if not path_exists(cfg, path):
+        def optional_non_negative_int(name: str) -> int | None:
+            value = None if actor is None else getattr(actor, name)
+            if value is None:
                 return None
-            value = require(cfg, path)
-            parsed = require_exact_int(value, path=path, minimum=0)
+            parsed = require_exact_int(value, path=f"actor.{name}", minimum=0)
             return parsed if parsed > 0 else None
 
-        accumulation_steps = optional_non_negative_int("actor.gradient_accumulation_steps")
-        microbatch_size = optional_non_negative_int("actor.microbatch_size")
+        accumulation_steps = optional_non_negative_int("gradient_accumulation_steps")
+        microbatch_size = optional_non_negative_int("microbatch_size")
 
         active_accumulation = int(accumulation_steps or 0)
         active_microbatch = int(microbatch_size or 0)
@@ -78,10 +111,10 @@ class OnlineBatchPlan:
         }
         if active_accumulation > 0:
             payload["gradient_accumulation_steps"] = active_accumulation
-        for field_name in ("samples_per_replay_batch", "host_memory_budget_fraction"):
-            path = f"actor.{field_name}"
-            if path_exists(cfg, path):
-                payload[field_name] = require(cfg, path)
+        for name in ("samples_per_replay_batch", "host_memory_budget_fraction"):
+            value = None if actor is None else getattr(actor, name)
+            if value is not None:
+                payload[name] = value
         return cls(**payload)
 
     def __post_init__(self) -> None:
@@ -157,58 +190,43 @@ class TrainerConfig:
     design the experiment for the user. Fields with defaults are infra knobs;
     their default here is the single copy (base YAML must not restate it).
 
-    Each field also declares its YAML home in ``metadata={"yaml": ...}``:
-    a section name for scalars (the YAML key equals the field name), a dotted
-    section path for nested config dataclasses, or ``"bridged"`` for values
-    computed by ``TrainerConfig.from_cfg`` (the precision policy projects into
-    the two trainer-side precision fields). The builder derives the
-    whole layout from this metadata — there is no separate layout table to
-    maintain, and a field without metadata fails loudly at build time.
+    Every field is a projection of the public ``actor`` / ``trainer`` section
+    of the same name (``vrl.config.schema.ActorSection`` / ``TrainerSection``
+    own the YAML keys and types), except the three bridged fields computed by
+    :meth:`from_root`: ``batch_plan`` and the two precision labels.
     """
 
     # --- required: experiment-semantic decisions ---
-    optim: OptimConfig = field(metadata={"yaml": "actor.optim"})
-    batch_plan: OnlineBatchPlan = field(metadata={"yaml": "bridged"})
+    optim: OptimConfig
+    batch_plan: OnlineBatchPlan
     # Fraction of denoise timesteps that receive loss (gradient estimator
     # coverage) — an experiment decision, not a tuning knob.
-    timestep_fraction: float = field(metadata={"yaml": "actor"})
-    output_dir: str = field(metadata={"yaml": "trainer"})
+    timestep_fraction: float
+    output_dir: str
     # Whether zero-advantage samples enter the loss (they still carry KL
     # weight); changes the trained sample set.
-    drop_zero_advantage: bool = field(metadata={"yaml": "actor"})
+    drop_zero_advantage: bool
 
     # --- nested groups ---
-    ema: EMAConfig = field(default_factory=EMAConfig, metadata={"yaml": "actor.ema"})
-    debug: DebugConfig = field(
-        default_factory=DebugConfig,
-        metadata={"yaml": "trainer.debug"},
-    )
-    replay_parity: ReplayParityConfig = field(
-        default_factory=ReplayParityConfig,
-        metadata={"yaml": "trainer.replay_parity"},
-    )
+    ema: EMAConfig = field(default_factory=EMAConfig)
+    debug: DebugConfig = field(default_factory=DebugConfig)
+    replay_parity: ReplayParityConfig = field(default_factory=ReplayParityConfig)
     precision_drift_guard: PrecisionDriftGuardConfig = field(
         default_factory=PrecisionDriftGuardConfig,
-        metadata={"yaml": "trainer.precision_drift_guard"},
     )
     # Correction counterpart to the drift guard: truncated importance sampling
     # knobs, injected into the algorithm so they live at the trainer (precision)
     # level rather than in any algorithm's hyperparameters.
     precision_correction: PrecisionCorrectionConfig = field(
         default_factory=PrecisionCorrectionConfig,
-        metadata={"yaml": "trainer.precision_correction"},
     )
     rollout_orchestration: RolloutOrchestrationConfig = field(
         default_factory=RolloutOrchestrationConfig,
-        metadata={"yaml": "trainer.rollout_orchestration"},
     )
-    torch_profiler: TorchProfilerConfig = field(
-        default_factory=TorchProfilerConfig,
-        metadata={"yaml": "trainer.torch_profiler"},
-    )
+    torch_profiler: TorchProfilerConfig = field(default_factory=TorchProfilerConfig)
 
     # --- gradient ---
-    max_norm: float = field(default=1.0, metadata={"yaml": "actor"})
+    max_norm: float = 1.0
 
     # How the trained denoise-step subset is chosen each update: "strided"
     # (fixed evenly-spaced steps, default), "random" (DanceGRPO — a fresh
@@ -218,114 +236,88 @@ class TrainerConfig:
     # rollout.sde.window_size > 0). "strided"/"random" have no effect when
     # timestep_fraction == 1; "sde_window" ignores timestep_fraction entirely,
     # so it must be left at 1.0.
-    timestep_selection: str = field(default="strided", metadata={"yaml": "actor"})
+    timestep_selection: str = "strided"
 
     # --- PPO/GRPO loop ---
-    ppo_epochs: int = field(default=1, metadata={"yaml": "actor"})
+    ppo_epochs: int = 1
 
     # --- precision (bridged from the unified precision policy) ---
     # Replay/training execution signature (for example fp16+no-autocast).
     # Empty -> fp32 ("no"). Production bridges the resolved public role; legacy
     # consumers extract its base dtype instead of re-resolving execution policy.
-    train_precision: str = field(default="", metadata={"yaml": "bridged"})
+    train_precision: str = ""
     # Rollout execution signature (for example bf16 or bf16+fp8). Empty ->
     # treated as the training precision. The drift guard compares the two to
     # decide whether to enforce parity without adding rollout-only build fields
     # to TrainerConfig.
-    rollout_precision: str = field(default="", metadata={"yaml": "bridged"})
+    rollout_precision: str = ""
 
-    # --- lifecycle ---
     # --- profiling ---
-    profile: bool = field(default=False, metadata={"yaml": "trainer"})
+    profile: bool = False
 
     @classmethod
-    def from_cfg(
+    def from_root(
         cls,
-        cfg: Any,
+        root: RootConfig,
         *,
         precision: PrecisionPolicy | None = None,
     ) -> TrainerConfig:
-        """Slice merged YAML into ``TrainerConfig``.
+        """Project the parsed ``actor`` / ``trainer`` sections into ``TrainerConfig``.
 
-        The layout is derived from each field's ``metadata={"yaml": ...}`` on this
-        dataclass (section name for scalars, dotted path for nested sections,
-        "bridged" for constructor-computed values), and requiredness from the
-        field defaults — the dataclass is the single declaration of both. Missing
-        required keys across sections and scalars are collected and reported
-        together with full YAML paths.
+        Each field is read from the public section that declares its name;
+        requiredness comes from the field defaults, so the dataclass is the
+        single declaration of both. Missing required keys across sections are
+        collected and reported together with full YAML paths.
         """
 
         from vrl.config.precision import resolve_precision_policy
-        from vrl.config.validation import (
-            path_exists,
-            require,
-            section_payload_and_missing,
-            validate_yaml_home,
-        )
+        from vrl.config.schema import ActorSection, TrainerSection
+
+        sections = {"actor": root.actor, "trainer": root.trainer}
+        section_fields = {
+            "actor": ActorSection.model_fields,
+            "trainer": TrainerSection.model_fields,
+        }
+        bridged = {"batch_plan", "train_precision", "rollout_precision"}
 
         hints = get_type_hints(cls)
         payload: dict[str, Any] = {}
-        missing: list[str] = []
-
-        # ``batch_plan`` is bridged because its public inputs span rollout and actor.
-        # Derive its required public paths from the plan fields so missing-key
-        # reporting cannot drift when the typed plan changes.
-        for plan_field in fields(OnlineBatchPlan):
-            home = plan_field.metadata.get("yaml")
-            if home is None:
-                raise AssertionError(
-                    f"OnlineBatchPlan.{plan_field.name} does not declare its YAML home "
-                    "(field metadata {'yaml': ...})",
-                )
-            validate_yaml_home(plan_field.name, home, owner="OnlineBatchPlan")
-            path = f"{home}.{plan_field.name}"
-            if (
-                plan_field.default is MISSING
-                and plan_field.default_factory is MISSING
-                and not path_exists(cfg, path)
-            ):
-                missing.append(path)
-
+        missing = OnlineBatchPlan.required_public_paths(root)
         for f in fields(cls):
-            if not f.init:
+            if not f.init or f.name in bridged:
                 continue
-            home = f.metadata.get("yaml")
-            if home is None:
+            owners = [
+                name for name, model_fields in section_fields.items() if f.name in model_fields
+            ]
+            if len(owners) != 1:
                 raise AssertionError(
-                    f"{cls.__name__}.{f.name} does not declare its YAML home "
-                    "(field metadata {'yaml': ...})",
+                    f"{cls.__name__}.{f.name} must be declared by exactly one public "
+                    f"section (ActorSection / TrainerSection); found {owners}",
                 )
-            if home == "bridged":
+            section_name = owners[0]
+            section = sections[section_name]
+            path = f"{section_name}.{f.name}"
+            value = None if section is None else getattr(section, f.name)
+            required = f.default is MISSING and f.default_factory is MISSING
+            if value is None:
+                _null_key(section, f.name, path)
+                if required:
+                    field_type = hints[f.name]
+                    nested = (
+                        _required_field_paths(field_type, path) if is_dataclass(field_type) else []
+                    )
+                    missing.extend(nested or [path])
                 continue
-            validate_yaml_home(f.name, home, owner=cls.__name__)
-            field_cls = hints[f.name]
-            if is_dataclass(field_cls):
-                section_payload, section_missing = section_payload_and_missing(
-                    field_cls,
-                    cfg,
-                    home,
-                )
-                if section_missing:
-                    missing.extend(section_missing)
-                else:
-                    payload[f.name] = field_cls(**section_payload)
-            else:
-                path = f"{home}.{f.name}"
-                if path_exists(cfg, path):
-                    payload[f.name] = require(cfg, path)
-                elif f.default is MISSING and f.default_factory is MISSING:
-                    missing.append(path)
+            payload[f.name] = value
 
         if missing:
             raise ValueError("config missing required key(s): " + ", ".join(sorted(missing)))
 
         # Resolve the public policy once; trainer fields are its runtime projection.
         if precision is None:
-            from vrl.config.schema import parse_config
-
-            precision = resolve_precision_policy(parse_config(cfg).precision)
+            precision = resolve_precision_policy(root.precision)
         payload.update(
-            batch_plan=OnlineBatchPlan.from_cfg(cfg),
+            batch_plan=OnlineBatchPlan.from_root(root),
             train_precision=precision.training.label,
             rollout_precision=precision.rollout.label,
         )
@@ -337,9 +329,10 @@ class TrainerConfig:
             from vrl.config.builders import build_precision_split_safety_configs
 
             correction, guard = build_precision_split_safety_configs()
-            if not path_exists(cfg, "trainer.precision_correction"):
+            explicit = set() if root.trainer is None else root.trainer.model_fields_set
+            if "precision_correction" not in explicit:
                 payload["precision_correction"] = correction
-            if not path_exists(cfg, "trainer.precision_drift_guard"):
+            if "precision_drift_guard" not in explicit:
                 payload["precision_drift_guard"] = guard
 
         return cls(**payload)

@@ -10,7 +10,7 @@ from vrl.algorithms.dpo import DiffusionDPOConfig
 from vrl.config.builders import build_offline_dpo_trainer_config
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
-from vrl.config.schema import RootConfig
+from vrl.config.schema import RootConfig, parse_config
 from vrl.scripts.families.wan_2_1.train_dpo import train_wan_2_1_dpo
 
 
@@ -20,7 +20,7 @@ def _resolved_trainer_config(overrides: list[str] | None = None):
         overrides=overrides,
     )
     return build_offline_dpo_trainer_config(
-        cfg,
+        parse_config(cfg),
         DiffusionDPOConfig(beta=123.0, sft_weight=0.25),
     )
 

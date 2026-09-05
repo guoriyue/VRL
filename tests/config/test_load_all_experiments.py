@@ -30,6 +30,7 @@ from vrl.config.loading import (
     list_bundled_configs,
     load_config,
 )
+from vrl.config.schema import parse_config
 from vrl.config.validation import (
     optional_none,
     validate_reward_config,
@@ -102,7 +103,7 @@ def test_trainer_config_from_cfg_reports_all_missing_required_keys() -> None:
     from vrl.trainers.online.config import TrainerConfig
 
     with pytest.raises(ValueError) as exc:
-        TrainerConfig.from_cfg(cfg)
+        TrainerConfig.from_root(parse_config(cfg))
 
     message = str(exc.value)
     for path in (
@@ -114,17 +115,6 @@ def test_trainer_config_from_cfg_reports_all_missing_required_keys() -> None:
         "rollout.n_samples_per_prompt",
     ):
         assert path in message
-
-
-def test_typo_yaml_home_is_rejected() -> None:
-    """A metadata address naming an unknown top-level section fails loudly."""
-    from vrl.config.validation import validate_yaml_home
-
-    validate_yaml_home("save_freq", "trainer", owner="TrainerConfig")  # known section: ok
-    validate_yaml_home("optim", "actor.optim", owner="TrainerConfig")  # dotted path: ok
-
-    with pytest.raises(AssertionError, match=r"trainerx"):
-        validate_yaml_home("save_freq", "trainerx", owner="TrainerConfig")
 
 
 def test_config_groups_are_not_flattened() -> None:
@@ -771,7 +761,7 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devi
     )
     from vrl.trainers.online.config import TrainerConfig
 
-    trainer = TrainerConfig.from_cfg(cfg)
+    trainer = TrainerConfig.from_root(parse_config(cfg))
     assert trainer.batch_plan.microbatch_size == 1
     assert trainer.batch_plan.gradient_accumulation_steps == 2
     assert trainer.batch_plan.host_memory_budget_fraction == pytest.approx(0.98)

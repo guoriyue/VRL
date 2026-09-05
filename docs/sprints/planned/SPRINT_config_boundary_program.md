@@ -1,6 +1,6 @@
 # SPRINT PROGRAM: Config boundary — type it once, then delete the machinery that existed because it wasn't
 
-状态：**in progress（2026-09-05 审计；S0 门已就位；S1、S2 done，S3 起逐个落地）**
+状态：**in progress（2026-09-05 审计；S0 门已就位；S1–S3 done，S4 起逐个落地）**
 
 前置（全部 done，本 program 是它们的收官）：[[SPRINT_config_unknown_key_warning]]、
 [[SPRINT_config_as_signatures]]、[[SPRINT_config_argument_ownership_and_resolution]]、
@@ -192,17 +192,31 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
   `parse_config(...).precision`（走同一道门），"两种输入形状必须一致"的 8 个用例随 `_select`
   一起消失（只剩一种形状），改为一个"resolver 拒绝非 section 输入"的负向用例。
 
-### S3 — actor / trainer 定型（program 里最重的一步）
+### S3 — actor / trainer 定型（**done**；snapshot diff 为空）
 
-`ActorSection` / `TrainerSection` 改成真 model：`optim: OptimSection`、`ema: EmaSection`、
-`debug`、`precision_drift_guard`、`precision_correction`、`rollout_orchestration`、
-`torch_profiler` 各一个 pydantic 子 model，必填字段用 pydantic required 表达（torch 签名语义
-保留：无默认=必填）。`TrainerConfig.from_root(root)` 成为字段对字段投影；
-`OnlineBatchPlan.from_root` 同理。删：`metadata={"yaml": ...}` 全部、
-`_online_runtime_section_shape`、`_OnlineRuntimeSection`、`section_payload_and_missing`、
-`validate_yaml_home`、`dataclass_field_names`、`_OFFLINE_DPO_*_FIELDS`（离线 DPO 改为自己的
-`OfflineDpoActorSection`/`TrainerSection` 变体，由 `algorithm.kind` 选择，与 model/sampling 的
-family-select 同款机制）。
+- `ActorSection` / `TrainerSection` 改成真 model（`ClosedConfigBase`）：每个标量一个显式
+  typed 字段（`StrictInt`/`StrictBool`/`Literal`），**嵌套块直接用消费它的运行时 dataclass 作
+  类型**（`optim: OptimConfig`、`ema: EMAConfig`、`debug`、`precision_drift_guard`、
+  `precision_correction`、`rollout_orchestration`、`torch_profiler`）——pydantic 原生校验
+  stdlib dataclass（未知 key、缺必填、`__post_init__` 全部在 parse 时触发），所以嵌套块的
+  key/默认值/范围检查只在 dataclass 上写一次，不再复制成第二个 pydantic model。
+- 必填语义留在运行时 dataclass（无默认=必填，torch 签名语义）：`TrainerConfig.from_root` 按
+  "字段名属于哪个 section"投影（名字由 `ActorSection`/`TrainerSection` 拥有，投影派生，
+  不再有 `metadata={"yaml": ...}`），缺失一次性汇总报完整路径（`actor.optim.lr` 等粒度保留）；
+  显式 `null` 仍拒绝（`model_fields_set`）。`OnlineBatchPlan.from_root` 同理。
+- 删：yaml-metadata 布局引擎全部——`_online_runtime_section_shape`、`_OnlineRuntimeSection`
+  （`extra="allow"` + `_drop_unknown_extras`）、`_online_runtime_section_block`、
+  `section_payload_and_missing`、`validate_yaml_home`；`schema.py` 不再 import
+  `vrl.trainers.online.config`（依赖方向反过来：投影 import schema）。
+- `build_offline_dpo_trainer_config(root, dpo)`：读 typed `root.actor`；"adafactor 下显式设了
+  AdamW-only 键"改为"值偏离默认"判定（dataclass 无 fields_set；偏离默认才是真 footgun）。
+  `train_dpo.py` 的 `actor.*`/`trainer.*` 读全部改 typed。
+- 顺带：`rollout.prompts_per_batch` / `n_samples_per_prompt` 改 `StrictInt`（bool 不是 batch
+  维度，原来靠 `require_exact_int` 在 plan 里拒；现在 parse 即拒）；`_extract_error_message`
+  把 pydantic 对 dataclass 字段的 `unexpected_keyword_argument` 也映射成 `unknown <path>`。
+- **保留**：`_OFFLINE_DPO_{ACTOR,TRAINER}_FIELDS` + `_validate_offline_dpo_surface`——它是
+  "离线入口消费哪些键"的刻意隔离表，与 model/sampling 的 family-select 不同（离线只有一个
+  变体），做成 kind-select 变体是为形状一致而加机器，不做。
 
 ### S4 — distributed / data / rollout 定型
 
