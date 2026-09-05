@@ -20,11 +20,12 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
 
 import torch
 
-from vrl.utils.config import cfg_get
+if TYPE_CHECKING:
+    from vrl.config.schema import RootConfig
 
 # torchrun / env-launcher contract. Source of truth for the keys the fsdp context
 # parses; the missing-env error lists exactly these.
@@ -71,7 +72,7 @@ def _require_env_int(env: Mapping[str, str], key: str) -> int:
 
 
 def resolve_training_context(
-    cfg: Any,
+    root: RootConfig,
     *,
     device: torch.device,
     env: Mapping[str, str] | None = None,
@@ -88,9 +89,9 @@ def resolve_training_context(
     """
 
     env = os.environ if env is None else env
-    distributed = cfg_get(cfg, "distributed", {})
-    training = cfg_get(distributed, "training", {})
-    strategy = str(cfg_get(training, "strategy", "single_process"))
+    distributed = root.distributed
+    training = None if distributed is None else distributed.training
+    strategy = "single_process" if training is None else str(training.strategy)
 
     if strategy == "single_process":
         return DistributedTrainingContext(
@@ -107,8 +108,9 @@ def resolve_training_context(
         rank = _require_env_int(env, "RANK")
         local_rank = _require_env_int(env, "LOCAL_RANK")
         world_size = _require_env_int(env, "WORLD_SIZE")
-        num_nodes = int(cfg_get(training, "num_nodes", 1))
-        gpus_per_node = int(cfg_get(training, "gpus_per_node", 1))
+        assert training is not None  # strategy came from it
+        num_nodes = int(training.num_nodes)
+        gpus_per_node = int(training.gpus_per_node)
         expected = num_nodes * gpus_per_node
         if world_size != expected:
             raise ValueError(

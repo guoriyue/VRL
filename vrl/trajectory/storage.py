@@ -45,6 +45,8 @@ def trajectory_storage_policy_from_cfg(value: object) -> TrajectoryStoragePolicy
 
     if value is None:
         return TrajectoryStoragePolicy()
+    if isinstance(value, TrajectoryStoragePolicy):
+        return value
     value = to_builtin_deep(value)
     if isinstance(value, Mapping):
         return TrajectoryStoragePolicy(

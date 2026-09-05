@@ -22,7 +22,7 @@ from tests import ci_envs
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
-from vrl.config.schema import RootConfig
+from vrl.config.schema import RootConfig, parse_config
 from vrl.generation import GenerationOutput, GenerationRequest
 from vrl.generation.execution.planner import EnginePlan
 from vrl.models.dtypes import resolve_torch_dtype
@@ -599,7 +599,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 build_reward_function(
                     resolve_reward_inputs(
                         built,
-                        resolve_distributed_resources(cfg),
+                        resolve_distributed_resources(parse_config(cfg)),
                         trainer_device=device,
                     ),
                 )

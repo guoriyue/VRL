@@ -1,6 +1,6 @@
 # SPRINT PROGRAM: Config boundary — type it once, then delete the machinery that existed because it wasn't
 
-状态：**in progress（2026-09-05 审计；S0 门已就位；S1–S3 done，S4 起逐个落地）**
+状态：**in progress（2026-09-05 审计；S0 门已就位；S1–S4 done，S5 起逐个落地）**
 
 前置（全部 done，本 program 是它们的收官）：[[SPRINT_config_unknown_key_warning]]、
 [[SPRINT_config_as_signatures]]、[[SPRINT_config_argument_ownership_and_resolution]]、
@@ -218,15 +218,32 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
   "离线入口消费哪些键"的刻意隔离表，与 model/sampling 的 family-select 不同（离线只有一个
   变体），做成 kind-select 变体是为形状一致而加机器，不做。
 
-### S4 — distributed / data / rollout 定型
+### S4 — distributed / data / rollout 定型（**done**；snapshot diff 为空；决策 B 已由 owner 批准）
 
-`distributed.resources` 直接以 `DistributedResourceConfig`（转 pydantic 或保持 dataclass 由
-pydantic 包一层）为 section 类型；`_distributed_resource_config_from_cfg` 删除，
-`resolve_distributed_resources(root)`。**决策点 B**：该函数测试 90 处调用（多数 `(cfg)` 传
-DictConfig）；一次 sed 改 `(parse_config(cfg))` 或加一个 test-only fixture，两者都可，需要
-owner 选。`DataConfig` 的 `preprocessing`/`sampler` 手写 `ConfigBlock` 元组 → 子 model；
-`max_train_samples`/`allow_absolute_artifact_paths`/`artifact_data_root`/`source_report` 等
-`Any` 定型。`rollout.torch_profiler`/`trajectory_storage` 同理。
+- `distributed.resources: DistributedResourceConfig | None`——消费它的 dataclass 直接做 section
+  类型（与 S3 同款），pydantic 在 parse 时构造/校验；`gpu_pool` / `reward.device` /
+  `reward.gpu_pool` 改 `Literal`，坏词在 parse 报 `unknown distributed.resources.<role>.<key>=...`。
+  删 `_distributed_resource_config_from_cfg` 与三个 `_parse_*_pool/_device` 手写解析器；
+  `resolve_distributed_resources(root)` 只吃 typed root，reward inference 回退改读
+  `RewardRuntimeConfig.from_cfg(root.reward)`；`reward_inference_configs_from_cfg`（raw walk）删除。
+  测试 120 处调用点由脚本机械包上 `parse_config(...)`（14 个文件）；顺带清出 3 处测试 fixture
+  里早已不存在的 `distributed.reward` 假 key 和一个被 builder 拒绝的 `sleep_offload` 假 kwarg
+  ——它们此前能过，只因为旧路径根本不校验。
+- `data.preprocessing` / `data.sampler` → `DataPreprocessingSection` / `DataSamplerSection`
+  （手写 `ConfigBlock` 元组删除）；`DataConfig` 其余 `Any` 全部定型（`StrictInt`/`StrictBool`/
+  `str`）；validator 的 `key in dict` 改为 `is None`。
+- `rollout`：`window_size`/`window_range`/`return_prev_sample_mean`/`cache_ref_noise_pred` 定型；
+  `torch_profiler: TorchProfilerConfig | None`、`trajectory_storage: TrajectoryStoragePolicy | None`
+  ——collector 的 flat 投影跳过 dataclass 值（原来靠"是 dict 就跳过"），
+  `trajectory_storage_policy_from_cfg` 接受已构造的 policy。
+- 读方全部改 typed：`resolve_training_context(root)`、`resolve_gradient_checkpointing_mode(root)`、
+  `compile_conflicts(root)`、`validate_production_*(root)`、`train.py`（`resolve_train_target` /
+  `_verdict_dir` / rank-local 收窄）、`train_dpo.py` 的 data/sampling 读、`online.py` 的
+  preprocessing/sampler 读、`prompts.py` 的 `image_field`/`caption_field` 缺省。
+- `train.py` 的最后一处 `force_add` 消失：rank-local 收窄只改 env，物理 GPU 序号作为
+  `distributed.resources.visible_devices=[N]` **loader override** 重新 load——没有 load 之后的树改写。
+- `vrl/run.py` 两处 `resolve_distributed_resources(cfg)` 改传 `built.root`：`resolve_online_run` 里
+  raw `cfg` 现在只剩 `build_configs(cfg)` 一处消费。
 
 ### S5 — 拆机器
 

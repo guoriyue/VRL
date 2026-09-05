@@ -187,6 +187,34 @@ _algorithm_config_variant_blocks: tuple[ConfigBlock, ...] = tuple(
 # ── Data section ──────────────────────────────────────────────────────────────
 
 
+class DataPreprocessingSection(ClosedConfigBase):
+    """``data.preprocessing``: loader-side sample shaping.
+
+    readers: DataConfig._validate_data, vrl/trainers/data/prompts.py
+    load_prompt_examples_from_config, the offline DPO entrypoint, and the
+    i2v/v2w reference-image checks in the online recipe.
+    """
+
+    resolution: StrictInt | None = None
+    random_crop: StrictBool | None = None
+    horizontal_flip: StrictBool | None = None
+    format: str | None = None
+    image_field: str | None = None
+    caption_field: str | None = None
+    conditioning: str | None = None
+    reference_image: str | None = None
+
+
+class DataSamplerSection(ClosedConfigBase):
+    """``data.sampler``: prompt-batch sampling (online) or DataLoader knobs (offline)."""
+
+    # PromptSamplingStrategy value; validated by DataConfig for the prompt loaders.
+    type: str | None = None
+    shuffle: StrictBool | None = None
+    drop_last: StrictBool | None = None
+    dataloader_num_workers: StrictInt | None = None
+
+
 class DataConfig(ConfigBase):
     loader: DataLoaderName | None = None
     # A path, or a {manifest path: prompt count} mixture whose keys are file
@@ -195,28 +223,10 @@ class DataConfig(ConfigBase):
     # Draw seed for a manifest mixture, required whenever one is declared: every
     # rank draws the mixture itself and then indexes into it.
     # reader: load_prompt_examples_from_config
-    mix_seed: int | None = None
+    mix_seed: StrictInt | None = None
     eval_manifest: str | None = None
-    # readers: _validate_data + loader tooling
-    preprocessing: Annotated[
-        dict[str, Any] | None,
-        ConfigBlock(
-            (
-                "resolution",
-                "random_crop",
-                "horizontal_flip",
-                "format",
-                "image_field",
-                "caption_field",
-                "conditioning",
-                "reference_image",
-            )
-        ),
-    ] = None
-    sampler: Annotated[
-        dict[str, Any] | None,
-        ConfigBlock(("type", "shuffle", "drop_last", "dataloader_num_workers")),
-    ] = None
+    preprocessing: DataPreprocessingSection | None = None
+    sampler: DataSamplerSection | None = None
     dataset_name: str | None = None
     split: str | None = None
     cache_dir: str | None = None
@@ -224,25 +234,26 @@ class DataConfig(ConfigBase):
     # (algorithm.sft_weight > 0): {target image/video -> VAE latents} written by
     # vrl/scripts/denoise/encode_targets.py. reader: run_online_recipe.
     sft_latents: str | None = None
-    max_train_samples: Any = None
+    max_train_samples: StrictInt | None = None
     task_type: str | None = None
-    # Key registry: consumed by data/eval tooling, not validated here.
-    allow_absolute_artifact_paths: Any = None
-    artifact_data_root: Any = None
-    source_report: Any = None
+    # readers: data/eval tooling and the production Kling gate (validation.py).
+    allow_absolute_artifact_paths: StrictBool | None = None
+    artifact_data_root: str | None = None
+    source_report: str | None = None
 
     @model_validator(mode="after")
     def _validate_data(self) -> DataConfig:
+        preprocessing = self.preprocessing
         self.loader = resolve_data_loader(
             self.loader,
-            (self.preprocessing or {}).get("format"),
+            None if preprocessing is None else preprocessing.format,
         )
         if self.loader == "prompt_manifest":
             if not self.manifest:
                 raise ValueError("config missing required field: data.manifest")
             if len(manifest_sources(self.manifest)) > 1 and self.mix_seed is None:
                 raise ValueError("config missing required field: data.mix_seed")
-            if self.preprocessing is None:
+            if preprocessing is None:
                 raise ValueError("config missing required field: data.preprocessing")
             self._validate_sampler_type()
 
@@ -256,34 +267,33 @@ class DataConfig(ConfigBase):
                 )
             if not self.eval_manifest:
                 raise ValueError("config missing required field: data.eval_manifest")
-            if self.preprocessing is None:
+            if preprocessing is None:
                 raise ValueError("config missing required field: data.preprocessing")
             for field in ("format", "image_field", "caption_field", "conditioning"):
-                if field not in self.preprocessing:
+                if getattr(preprocessing, field) is None:
                     raise ValueError(f"config missing required field: data.preprocessing.{field}")
             self._validate_sampler_type()
 
         if self.loader == "pickapic_preference":
             for field in ("dataset_name", "split", "cache_dir"):
-                # Allow empty strings (matches require()'s semantics — only None/absent is invalid)
+                # Allow empty strings (only None/absent is invalid)
                 if getattr(self, field) is None:
                     raise ValueError(f"config missing required field: data.{field}")
-            if self.preprocessing is None:
+            if preprocessing is None:
                 raise ValueError("config missing required field: data.preprocessing")
             for field in ("resolution", "random_crop", "horizontal_flip"):
-                if field not in self.preprocessing:
+                if getattr(preprocessing, field) is None:
                     raise ValueError(f"config missing required field: data.preprocessing.{field}")
-            sampler = self.sampler or {}
+            sampler = self.sampler
             for field in ("shuffle", "drop_last", "dataloader_num_workers"):
-                if field not in sampler:
+                if sampler is None or getattr(sampler, field) is None:
                     raise ValueError(f"config missing required field: data.sampler.{field}")
 
         return self
 
     def _validate_sampler_type(self) -> None:
         """Shared sampler.type check for the prompt-manifest loaders."""
-        sampler = self.sampler or {}
-        sampler_type = str(sampler.get("type", "")) if "type" in sampler else ""
+        sampler_type = "" if self.sampler is None else str(self.sampler.type or "")
         if not sampler_type:
             raise ValueError("config missing required field: data.sampler.type")
         try:
@@ -309,8 +319,10 @@ class SdeConfig(ConfigBase):
     word ``sde``."""
 
     type: Literal["flow_grpo", "ddim", "cps"]
-    window_size: Any = None
-    window_range: Any = None
+    # reader: vrl/generation/bindings/full_sequence_denoise/layout.py, which
+    # owns the range/size checks against num_steps at the request boundary.
+    window_size: StrictInt | None = None
+    window_range: list[int] | None = None
 
 
 class RolloutConfig(ConfigBase):
@@ -341,14 +353,14 @@ class RolloutConfig(ConfigBase):
     )
     # reader: vrl/generation/bindings/full_sequence_denoise/layout.py — opt-in to storing
     # each denoise step's rollout proposal mean for trust-region replay.
-    return_prev_sample_mean: Any = Field(
+    return_prev_sample_mean: StrictBool | None = Field(
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
     # reader: vrl/generation/bindings/full_sequence_denoise/layout.py — opt-in to caching
     # the frozen reference (LoRA-disabled) noise_pred at collect, so KL replay never
     # reruns the ref forward. Lossless: replay applies the same sde_step_with_logprob.
-    cache_ref_noise_pred: Any = Field(
+    cache_ref_noise_pred: StrictBool | None = Field(
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
@@ -360,8 +372,8 @@ class RolloutConfig(ConfigBase):
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
-    torch_profiler: Annotated[Any, ConfigBlock(TorchProfilerConfig)] = None
-    trajectory_storage: Annotated[Any, ConfigBlock(TrajectoryStoragePolicy)] = Field(
+    torch_profiler: TorchProfilerConfig | None = None
+    trajectory_storage: TrajectoryStoragePolicy | None = Field(
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
@@ -791,10 +803,9 @@ class RolloutRuntimeSection(ConfigBase):
 class DistributedSection(ConfigBase):
     """Key registry for distributed.*; values validated by vrl.ray.resources."""
 
-    # reader: vrl/ray/resources.py resolve_distributed_resources. Known keys
-    # derive from the consuming dataclass (nested role blocks auto-nest), so a
-    # new field never needs a hand-list update here.
-    resources: Annotated[Any, ConfigBlock(DistributedResourceConfig)] = None
+    # reader: vrl/ray/resources.py resolve_distributed_resources(root); the
+    # consuming dataclass is the section type, so pydantic validates it here.
+    resources: DistributedResourceConfig | None = None
     # reader: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
     # runtime knobs). batch_placement_strategy / sync_trainable_state Literals reject
     # bad values here at parse time. Colocation lives in resources.rollout.gpu_pool.
@@ -1064,6 +1075,8 @@ __all__ = [
     "ActorSection",
     "AlgorithmConfig",
     "DataConfig",
+    "DataPreprocessingSection",
+    "DataSamplerSection",
     "ModelSection",
     "RewardConfig",
     "RolloutConfig",

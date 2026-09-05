@@ -24,7 +24,6 @@ from vrl.config.schema import (
     _extract_error_message,
     parse_config,
 )
-from vrl.utils.config import cfg_path
 
 _MISSING = object()
 _REQUIRED = object()
@@ -93,30 +92,34 @@ def validate_reward_config(cfg: DictConfig) -> RewardConfig:
         raise ValueError(_extract_error_message(exc)) from exc
 
 
-def validate_production_kling_video_reward_config(cfg: DictConfig) -> None:
+def validate_production_kling_video_reward_config(root: RootConfig) -> None:
     """Production Kling VideoReward gate: structural contract + path existence."""
-    validate_production_reward_contract(cfg)
-    for path_name in ("data.manifest", "data.eval_manifest", "data.source_report"):
-        value = str(require(cfg, path_name)).strip()
+    validate_production_reward_contract(root)
+    data = root.data
+    for name in ("manifest", "eval_manifest", "source_report"):
+        value = str((getattr(data, name) if data is not None else None) or "").strip()
         if not value:
-            raise ValueError(f"config missing required field: {path_name}")
+            raise ValueError(f"config missing required field: data.{name}")
         if not Path(value).exists():
-            raise ValueError(f"{path_name} does not exist: {value}")
-    task_type = str(OmegaConf.select(cfg, "data.task_type", default="") or "")
+            raise ValueError(f"data.{name} does not exist: {value}")
+    assert data is not None
+    task_type = str(data.task_type or "")
     if task_type == "video2world":
-        _validate_video_world_production_data(cfg)
+        _validate_video_world_production_data(root)
     if task_type == "image_to_video":
-        _validate_image_to_video_production_data(cfg)
+        _validate_image_to_video_production_data(root)
 
 
-def validate_production_reward_contract(cfg: DictConfig) -> None:
+def validate_production_reward_contract(root: RootConfig) -> None:
     """Structural production contract for the Kling VideoReward.
 
-    Reads the raw cfg directly — per-reward config knowledge deliberately does
-    not live in the schema (rewards own their contracts at construction; this
-    gate exists because production misconfiguration is unrecoverable mid-run).
+    Reads the reward kwargs mapping directly — per-reward config knowledge
+    deliberately does not live in the schema (rewards own their contracts at
+    construction; this gate exists because production misconfiguration is
+    unrecoverable mid-run).
     """
-    vr_kwargs = OmegaConf.select(cfg, "reward.kwargs.kling_video_reward") or {}
+    reward = root.reward
+    vr_kwargs = (reward.kwargs.get("kling_video_reward") if reward is not None else None) or {}
     if str(vr_kwargs.get("media_type", "")) != "video":
         raise ValueError(
             "production.kling_video_reward requires "
@@ -140,7 +143,7 @@ def validate_production_reward_contract(cfg: DictConfig) -> None:
             "model directly; "
             f"remove extra loader fields: {', '.join(forbidden)}",
         )
-    task_type = str(OmegaConf.select(cfg, "data.task_type", default="") or "")
+    task_type = str((root.data.task_type if root.data is not None else None) or "")
     if task_type not in {"text_to_video", "image_to_video", "video2world"}:
         raise ValueError(
             "production.kling_video_reward requires "
@@ -148,23 +151,25 @@ def validate_production_reward_contract(cfg: DictConfig) -> None:
         )
 
 
-def _validate_video_world_production_data(cfg: DictConfig) -> None:
+def _validate_video_world_production_data(root: RootConfig) -> None:
     from vrl.trainers.data.artifacts import validate_source_backed_video_world_manifest_pair
 
-    data_root = str(OmegaConf.select(cfg, "data.artifact_data_root", default="") or "").strip()
+    data = root.data
+    assert data is not None
+    data_root = str(data.artifact_data_root or "").strip()
     kwargs = {"data_root": data_root} if data_root else {}
-    reward_components = OmegaConf.select(cfg, "reward.components", default={}) or {}
+    reward_components = root.reward.components if root.reward is not None else {}
     # The target-clip-reading reward is target_dino_similarity (successor to the deleted
     # pixel-L1 target_video_similarity); it consumes metadata['target_video'], so its
     # presence is what makes target clips a hard manifest requirement.
     require_target_video = "target_dino_similarity" in reward_components
     validate_source_backed_video_world_manifest_pair(
-        str(require(cfg, "data.manifest")),
-        str(require(cfg, "data.eval_manifest")),
+        str(data.manifest),
+        str(data.eval_manifest),
         require_target_video=require_target_video,
         **kwargs,
     )
-    _validate_video_world_source_report(Path(str(require(cfg, "data.source_report"))))
+    _validate_video_world_source_report(Path(str(data.source_report)))
 
 
 def _validate_video_world_source_report(path: Path) -> None:
@@ -194,27 +199,29 @@ def _validate_video_world_source_report(path: Path) -> None:
         raise ValueError("data.source_report must include a non-empty validation_summary")
 
 
-def _validate_image_to_video_production_data(cfg: DictConfig) -> None:
-    data_root = str(OmegaConf.select(cfg, "data.artifact_data_root", default="") or "").strip()
+def _validate_image_to_video_production_data(root: RootConfig) -> None:
+    data = root.data
+    assert data is not None
+    data_root = str(data.artifact_data_root or "").strip()
     if not data_root:
         raise ValueError("config missing required field: data.artifact_data_root")
-    preprocessing = OmegaConf.select(cfg, "data.preprocessing", default={}) or {}
-    image_field = str(preprocessing.get("image_field", "image"))
-    caption_field = str(preprocessing.get("caption_field", "caption"))
+    preprocessing = data.preprocessing
+    image_field = str((preprocessing.image_field if preprocessing else None) or "image")
+    caption_field = str((preprocessing.caption_field if preprocessing else None) or "caption")
     train_count = _validate_image_to_video_manifest(
-        Path(str(require(cfg, "data.manifest"))),
+        Path(str(data.manifest)),
         data_root=Path(data_root),
         image_field=image_field,
         caption_field=caption_field,
     )
     eval_count = _validate_image_to_video_manifest(
-        Path(str(require(cfg, "data.eval_manifest"))),
+        Path(str(data.eval_manifest)),
         data_root=Path(data_root),
         image_field=image_field,
         caption_field=caption_field,
     )
     _validate_image_to_video_source_report(
-        Path(str(require(cfg, "data.source_report"))),
+        Path(str(data.source_report)),
         train_count=train_count,
         eval_count=eval_count,
     )
@@ -334,12 +341,12 @@ def validate_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPoli
     # recipe that needs checkpointing, FSDP, or a multi-rank engine.
     require_compile_compatible(root)
     require_guarded_rollout_drift(cfg, precision)
-    if bool(OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)):
-        validate_production_kling_video_reward_config(cfg)
+    if root.production is not None and root.production.kling_video_reward.enabled:
+        validate_production_kling_video_reward_config(root)
     return root, precision
 
 
-def compile_conflicts(cfg: DictConfig) -> tuple[str, ...]:
+def compile_conflicts(root: RootConfig) -> tuple[str, ...]:
     """Every feature this config turns on that cannot coexist with torch.compile.
 
     ONE home for the compile compatibility matrix. Each of these was discovered
@@ -352,10 +359,11 @@ def compile_conflicts(cfg: DictConfig) -> tuple[str, ...]:
     Returns one message per conflict (empty when compatible). The blockwise-fp8
     conflict is deliberately NOT here: it is caught in ``vrl.models.loader``
     where the resolved quantization recipe lives, and this function is given
-    only the raw config.
+    only the parsed config.
     """
 
-    if not bool(cfg_path(cfg, "model.torch_compile.enable", False)):
+    compile_block = root.model.torch_compile if root.model is not None else None
+    if compile_block is None or not bool(compile_block.enable):
         return ()
 
     # Each conflict below binds one build role, so the matrix honors
@@ -364,7 +372,6 @@ def compile_conflicts(cfg: DictConfig) -> tuple[str, ...]:
     # one. The (block, role) decision is owned by the typed build contract.
     from vrl.models.interfaces.runtime import torch_compile_for_role
 
-    compile_block = cfg_path(cfg, "model.torch_compile", None)
     compiles_replay = torch_compile_for_role(compile_block, "replay") is not None
     compiles_rollout = torch_compile_for_role(compile_block, "rollout") is not None
 
@@ -375,7 +382,7 @@ def compile_conflicts(cfg: DictConfig) -> tuple[str, ...]:
     # already does automatic selective recompute.
     from vrl.trainers.activation_checkpointing import resolve_gradient_checkpointing_mode
 
-    checkpointing = resolve_gradient_checkpointing_mode(cfg)
+    checkpointing = resolve_gradient_checkpointing_mode(root)
     if compiles_replay and checkpointing != "off":
         conflicts.append(
             f"actor.gradient_checkpointing={checkpointing!r}: torch.compile traces "
@@ -386,10 +393,13 @@ def compile_conflicts(cfg: DictConfig) -> tuple[str, ...]:
             "trainer eager while the rollout policy compiles.",
         )
 
+    distributed = root.distributed
+    training = None if distributed is None else distributed.training
+    strategy = "single_process" if training is None else str(training.strategy)
     # Inductor graph capture is unsound with FSDP2's reshard-after-forward
     # all-gathers. Previously only caught when the strategy was built, which is
     # after config load, so a bad recipe surfaced later than it needed to.
-    if compiles_replay and str(cfg_path(cfg, "distributed.training.strategy", "")) == "fsdp":
+    if compiles_replay and strategy == "fsdp":
         conflicts.append(
             "distributed.training.strategy=fsdp: torch.compile (inductor graph "
             "capture) is unsound with FSDP2 fully_shard's reshard-after-forward "
@@ -403,14 +413,11 @@ def compile_conflicts(cfg: DictConfig) -> tuple[str, ...]:
     # mutating a module inductor has already traced. sd3_5 declares BOTH
     # supports_torch_compile and a sequence_parallel_installer, so this is
     # reachable from config -- and it had no gate at all before.
-    gpus_per_engine = cfg_path(
-        cfg,
-        "distributed.resources.rollout.gpus_per_engine",
-        1,
-    )
-    if compiles_rollout and gpus_per_engine is not None and int(gpus_per_engine) > 1:
+    resources = None if distributed is None else distributed.resources
+    gpus_per_engine = 1 if resources is None else int(resources.rollout.gpus_per_engine)
+    if compiles_rollout and gpus_per_engine > 1:
         conflicts.append(
-            f"distributed.resources.rollout.gpus_per_engine={int(gpus_per_engine)}: "
+            f"distributed.resources.rollout.gpus_per_engine={gpus_per_engine}: "
             "sequence parallelism installs attention processors and forward hooks "
             "on the policy core AFTER the model is built and compiled, mutating "
             "the module torch.compile already traced.",
@@ -419,10 +426,10 @@ def compile_conflicts(cfg: DictConfig) -> tuple[str, ...]:
     return tuple(conflicts)
 
 
-def require_compile_compatible(cfg: DictConfig) -> None:
+def require_compile_compatible(root: RootConfig) -> None:
     """Refuse a config that enables torch.compile beside an incompatible feature."""
 
-    conflicts = compile_conflicts(cfg)
+    conflicts = compile_conflicts(root)
     if not conflicts:
         return
     joined = "\n  - ".join(conflicts)

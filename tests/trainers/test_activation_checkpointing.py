@@ -5,6 +5,7 @@ import logging
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.config.schema import parse_config
 from vrl.trainers.activation_checkpointing import (
     enable_transformer_gradient_checkpointing,
 )
@@ -14,7 +15,7 @@ def _config(mode: str | bool):
     return OmegaConf.create(
         {
             "actor": {"gradient_checkpointing": mode},
-            "model": {"torch_compile": {"enable": False}},
+            "model": {"family": "sd3_5", "torch_compile": {"enable": False}},
         },
     )
 
@@ -27,12 +28,12 @@ def test_absent_gradient_checkpointing_defaults_to_off() -> None:
     cfg = OmegaConf.create(
         {
             "actor": {},
-            "model": {"torch_compile": {"enable": False}},
+            "model": {"family": "sd3_5", "torch_compile": {"enable": False}},
         },
     )
     bundle = type("_Bundle", (), {"trainable_modules": {"transformer": _Transformer()}})()
 
-    enable_transformer_gradient_checkpointing(bundle, cfg)
+    enable_transformer_gradient_checkpointing(bundle, parse_config(cfg))
 
 
 @pytest.mark.parametrize("mode", ["off", False])
@@ -43,7 +44,7 @@ def test_gradient_checkpointing_off_skips_trainable_modules(mode: str | bool) ->
 
     bundle = type("_Bundle", (), {"trainable_modules": {"transformer": _Transformer()}})()
 
-    enable_transformer_gradient_checkpointing(bundle, _config(mode))
+    enable_transformer_gradient_checkpointing(bundle, parse_config(_config(mode)))
 
 
 @pytest.mark.parametrize("mode", ["full", True])
@@ -56,7 +57,7 @@ def test_full_gradient_checkpointing_uses_the_native_method(mode: str | bool) ->
 
     bundle = type("_Bundle", (), {"trainable_modules": {"transformer": _Transformer()}})()
 
-    enable_transformer_gradient_checkpointing(bundle, _config(mode))
+    enable_transformer_gradient_checkpointing(bundle, parse_config(_config(mode)))
 
     assert calls == [{}]
 
@@ -70,7 +71,7 @@ def test_selective_gradient_checkpointing_passes_a_custom_function() -> None:
 
     bundle = type("_Bundle", (), {"trainable_modules": {"transformer": _Transformer()}})()
 
-    enable_transformer_gradient_checkpointing(bundle, _config("selective"))
+    enable_transformer_gradient_checkpointing(bundle, parse_config(_config("selective")))
 
     assert len(calls) == 1
     assert callable(calls[0]["gradient_checkpointing_func"])
@@ -93,7 +94,7 @@ def test_selective_gradient_checkpointing_reports_legacy_full_fallback(
     )()
 
     with caplog.at_level(logging.WARNING):
-        enable_transformer_gradient_checkpointing(bundle, _config("selective"))
+        enable_transformer_gradient_checkpointing(bundle, parse_config(_config("selective")))
 
     assert calls == 1
     assert "falling back to full checkpointing" in caplog.text

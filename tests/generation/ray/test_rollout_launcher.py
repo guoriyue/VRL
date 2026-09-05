@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from vrl.config.schema import parse_config
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import BatchPayload
 from vrl.generation.ray.config import RayGenerationConfig, RolloutWorkerConfig
@@ -131,18 +132,19 @@ def test_create_runtime_rejects_missing_rollout_placement() -> None:
     from vrl.ray.resources import resolve_distributed_resources
 
     resolved = resolve_distributed_resources(
-        OmegaConf.create(
-            {
-                "distributed": {
-                    "resources": {
-                        "visible_devices": [],
-                        "trainer": {"num_gpus": 0},
-                        "rollout": {"num_gpus": 0, "num_engines": 1},
+        parse_config(
+            OmegaConf.create(
+                {
+                    "distributed": {
+                        "resources": {
+                            "visible_devices": [],
+                            "trainer": {"num_gpus": 0},
+                            "rollout": {"num_gpus": 0, "num_engines": 1},
+                        },
+                        "rollout": {},
                     },
-                    "rollout": {},
-                    "reward": {},
                 },
-            },
+            )
         ),
     )
     with pytest.raises(ValueError, match="rollout placement"):
@@ -165,18 +167,19 @@ def _cpu_rollout_owner(
     from vrl.ray.resources import resolve_distributed_resources
 
     resolved = resolve_distributed_resources(
-        OmegaConf.create(
-            {
-                "distributed": {
-                    "resources": {
-                        "visible_devices": [],
-                        "trainer": {"num_gpus": 0},
-                        "rollout": {"num_gpus": 0, "num_engines": 1},
+        parse_config(
+            OmegaConf.create(
+                {
+                    "distributed": {
+                        "resources": {
+                            "visible_devices": [],
+                            "trainer": {"num_gpus": 0},
+                            "rollout": {"num_gpus": 0, "num_engines": 1},
+                        },
+                        "rollout": {},
                     },
-                    "rollout": {},
-                    "reward": {},
                 },
-            },
+            )
         ),
     )
     owner = GlobalRayPlacementOwner(resolved, worker or _worker_config())

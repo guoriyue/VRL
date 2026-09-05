@@ -101,11 +101,10 @@ def wan_forward(
     return out
 
 
-def _required_trainer_int(trainer_section: Any, name: str) -> int:
-    value = getattr(trainer_section, name)
+def _required(value: Any, path: str) -> Any:
     if value is None:
-        raise ValueError(f"config missing required field: trainer.{name}")
-    return int(value)
+        raise ValueError(f"config missing required field: {path}")
+    return value
 
 
 def train_wan_2_1_dpo(cfg: DictConfig) -> None:
@@ -130,7 +129,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from torch.utils.data import DataLoader
 
     from vrl.algorithms.dpo import DiffusionDPOConfig
-    from vrl.config.validation import optional_none, require
     from vrl.models.dtypes import resolve_torch_dtype
     from vrl.ray.resources import format_distributed_resource_plan
     from vrl.trainers.activation_checkpointing import enable_transformer_gradient_checkpointing
@@ -151,8 +149,10 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     trainer_section = built.root.trainer
     if trainer_section is None:
         raise ValueError("config missing required field: trainer")
-    sampling = cfg.sampling
-    data_cfg = cfg.data
+    sampling = _required(built.root.sampling, "sampling")
+    data_cfg = _required(built.root.data, "data")
+    preprocessing = _required(data_cfg.preprocessing, "data.preprocessing")
+    sampler = _required(data_cfg.sampler, "data.sampler")
 
     dpo_config = built.algorithm
     if not isinstance(dpo_config, DiffusionDPOConfig):
@@ -204,8 +204,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     # 3. Data — Pick-a-Pic v2 preference pairs
     # `data.preprocessing.resolution: 0` means "fall back to sampling.height";
-    # `require` ensures the key is declared, the `or` keeps that semantic.
-    resolution = int(require(cfg, "data.preprocessing.resolution")) or int(sampling.height)
+    # the schema requires the key for this loader, the `or` keeps that semantic.
+    resolution = int(preprocessing.resolution) or int(sampling.height)
     logger.info(
         "Loading Pick-a-Pic from %s split=%s",
         data_cfg.dataset_name,
@@ -214,19 +214,19 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     ds = load_pickapic(
         split=str(data_cfg.split),
         cache_dir=str(data_cfg.cache_dir) or None,
-        max_samples=optional_none(cfg, "data.max_train_samples"),
+        max_samples=data_cfg.max_train_samples,
         resolution=resolution,
-        random_crop=bool(require(cfg, "data.preprocessing.random_crop")),
-        no_hflip=not bool(require(cfg, "data.preprocessing.horizontal_flip")),
+        random_crop=bool(preprocessing.random_crop),
+        no_hflip=not bool(preprocessing.horizontal_flip),
         dataset_name=str(data_cfg.dataset_name),
     )
     dataloader = DataLoader(
         ds,
         batch_size=train_batch_size,
-        shuffle=bool(require(cfg, "data.sampler.shuffle")),
-        num_workers=int(require(cfg, "data.sampler.dataloader_num_workers")),
+        shuffle=bool(sampler.shuffle),
+        num_workers=int(sampler.dataloader_num_workers),
         collate_fn=collate_preference,
-        drop_last=bool(require(cfg, "data.sampler.drop_last")),
+        drop_last=bool(sampler.drop_last),
     )
     logger.info("Loaded %d preference pairs", len(ds))
 
@@ -284,9 +284,11 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     )
 
     # 6. Training loop
-    max_train_steps = _required_trainer_int(trainer_section, "max_train_steps")
-    checkpointing_steps = _required_trainer_int(trainer_section, "checkpointing_steps")
-    log_interval = _required_trainer_int(trainer_section, "log_interval")
+    max_train_steps = int(_required(trainer_section.max_train_steps, "trainer.max_train_steps"))
+    checkpointing_steps = int(
+        _required(trainer_section.checkpointing_steps, "trainer.checkpointing_steps"),
+    )
+    log_interval = int(_required(trainer_section.log_interval, "trainer.log_interval"))
 
     logger.info(
         "Starting Wan-1.3B DPO — %d steps, beta=%g, lr=%g, num_frames=%d",
@@ -300,7 +302,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     # nothing extra. The decision is fixed for the run, so resolve it once.
     adapter_exports = build_adapter_exports(
         bundle,
-        use_lora=bool(require(cfg, "model.use_lora")),
+        use_lora=bool(built.root.model.use_lora),
     )
 
     step = resume_checkpoint.next_step if resume_checkpoint is not None else 0

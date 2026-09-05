@@ -144,7 +144,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
     cfg = _load_run_config(args.run_dir)
     root = parse_config(cfg)
     device = resolve_eval_device(args.device)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     dtype = resolve_eval_dtype(
         "auto",
         root,

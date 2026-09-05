@@ -13,6 +13,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from tests.ray._helpers import fake_ray, node
+from vrl.config.schema import parse_config
 from vrl.ray import dependencies, placement
 from vrl.ray.resources import resolve_distributed_resources
 
@@ -31,24 +32,26 @@ def _resources():
     """The real resolver, not a namespace with one attribute on it.
 
     ``cross_node_preflight``'s second argument is always
-    ``resolve_distributed_resources(cfg)`` output in production. Standing in a
+    ``resolve_distributed_resources(parse_config(cfg))`` output in production. Standing in a
     ``SimpleNamespace(rollout_num_gpus=...)`` skipped the entire cross_node
     config -> resolution chain, so a resolution change that produced the wrong
     rollout GPU budget could not fail this test. Costs ~0.13ms resolved.
     """
 
     return resolve_distributed_resources(
-        OmegaConf.create(
-            {
-                "distributed": {
-                    "resources": {
-                        "visible_devices": "auto",
-                        "cross_node": True,
-                        "trainer": {"num_gpus": 1},
-                        "rollout": {"num_gpus": 1, "num_engines": 1},
+        parse_config(
+            OmegaConf.create(
+                {
+                    "distributed": {
+                        "resources": {
+                            "visible_devices": "auto",
+                            "cross_node": True,
+                            "trainer": {"num_gpus": 1},
+                            "rollout": {"num_gpus": 1, "num_engines": 1},
+                        },
                     },
                 },
-            },
+            )
         ),
     )
 

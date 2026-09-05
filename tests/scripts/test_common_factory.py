@@ -245,7 +245,7 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     reward = build_reward_function(
         resolve_reward_inputs(
             built,
-            resolve_distributed_resources(cfg),
+            resolve_distributed_resources(parse_config(cfg)),
             trainer_device="cuda:0",
         ),
     )
@@ -374,7 +374,7 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     reward = build_reward_function(
         resolve_reward_inputs(
             built,
-            resolve_distributed_resources(cfg),
+            resolve_distributed_resources(parse_config(cfg)),
             trainer_device="cuda:0",
         ),
     )
@@ -567,7 +567,7 @@ def test_http_reward_accepts_torchrun_rank_local_device(monkeypatch) -> None:
                     },
                 },
             ),
-            resolve_distributed_resources(cfg),
+            resolve_distributed_resources(parse_config(cfg)),
             trainer_device="cuda:0",
         ),
     )
@@ -624,7 +624,7 @@ def test_shared_reward_capability_fails_before_component_construction(monkeypatc
         build_reward_function(
             resolve_reward_inputs(
                 _built_reward({"geneval": 1.0}, {"geneval": {}}),
-                resolve_distributed_resources(cfg),
+                resolve_distributed_resources(parse_config(cfg)),
                 trainer_device="cuda:0",
             ),
         )
@@ -658,7 +658,7 @@ def test_shared_reward_preflight_consumes_resolved_inference(
     )
 
     validate_reward_memory_parking(
-        resources=resolve_distributed_resources(_shared_reward_cfg("aesthetic")),
+        resources=resolve_distributed_resources(parse_config(_shared_reward_cfg("aesthetic"))),
         built=built,
     )
 
@@ -737,7 +737,7 @@ def test_shared_reward_topology_automatically_enables_parking(monkeypatch) -> No
     reward = build_reward_function(
         resolve_reward_inputs(
             _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
-            resolve_distributed_resources(cfg),
+            resolve_distributed_resources(parse_config(cfg)),
             trainer_device="cuda:0",
         ),
     )
@@ -779,7 +779,7 @@ def test_shared_reward_accepts_rank_local_cuda_after_physical_placement(
     reward = build_reward_function(
         resolve_reward_inputs(
             _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
-            resolve_distributed_resources(cfg),
+            resolve_distributed_resources(parse_config(cfg)),
             trainer_device="cuda:0",
         ),
     )
@@ -816,7 +816,7 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
     cfg = _shared_reward_cfg("aesthetic")
     shared = resolve_reward_inputs(
         _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
-        resolve_distributed_resources(cfg),
+        resolve_distributed_resources(parse_config(cfg)),
     )
     assert shared.device == "cuda:0"
 
@@ -836,7 +836,7 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
     # A CPU-only reward reservation wins even when the trainer runs on CUDA.
     cpu_reward = resolve_reward_inputs(
         _built_reward({"ocr": 1.0}, {"ocr": {}}),
-        resolve_distributed_resources(cpu_cfg),
+        resolve_distributed_resources(parse_config(cpu_cfg)),
         trainer_device="cuda:0",
     )
     assert cpu_reward.device == "cpu"

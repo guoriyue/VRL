@@ -16,7 +16,7 @@ docs/sprints/parked/SPRINT_training_mfu_selective_checkpointing.md (P0 results).
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch.utils.checkpoint import (
@@ -25,7 +25,9 @@ from torch.utils.checkpoint import (
     create_selective_checkpoint_contexts,
 )
 
-from vrl.utils.config import cfg_path
+if TYPE_CHECKING:
+    from vrl.config.schema import RootConfig
+
 
 logger = logging.getLogger(__name__)
 
@@ -84,17 +86,17 @@ def _normalize_gradient_checkpointing(value: Any) -> str:
     )
 
 
-def resolve_gradient_checkpointing_mode(cfg: Any) -> str:
+def resolve_gradient_checkpointing_mode(root: RootConfig) -> str:
     """The recipe's effective checkpointing mode: off | full | selective.
 
     The public actor key is the source of truth. Absence means off.
     """
 
-    enabled = cfg_path(cfg, "actor.gradient_checkpointing", None)
+    enabled = root.actor.gradient_checkpointing if root.actor is not None else None
     return _normalize_gradient_checkpointing(enabled)
 
 
-def require_compile_checkpointing_compatible(cfg: Any) -> None:
+def require_compile_checkpointing_compatible(root: RootConfig) -> None:
     """Refuse compiling the replay policy combined with grad-checkpointing.
 
     compile + manual checkpointing collide: torch.compile traces
@@ -108,12 +110,14 @@ def require_compile_checkpointing_compatible(cfg: Any) -> None:
     time (where config tests see it), not as a cryptic mid-run dynamo crash.
     """
 
-    mode = resolve_gradient_checkpointing_mode(cfg)
+    mode = resolve_gradient_checkpointing_mode(root)
     if mode == "off":
         return
     from vrl.models.interfaces.runtime import torch_compile_for_role
 
-    if torch_compile_for_role(cfg_path(cfg, "model.torch_compile", None), "replay"):
+    if torch_compile_for_role(
+        (root.model.torch_compile if root.model is not None else None), "replay"
+    ):
         raise ValueError(
             f"actor.gradient_checkpointing={mode!r} cannot combine with compiling "
             "the replay policy: torch.compile traces torch.utils.checkpoint into "
@@ -125,7 +129,7 @@ def require_compile_checkpointing_compatible(cfg: Any) -> None:
         )
 
 
-def enable_transformer_gradient_checkpointing(bundle: Any, cfg: Any) -> None:
+def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> None:
     """Enable transformer gradient checkpointing while preserving family policy.
 
     Mode is off | full | selective (see ``_normalize_gradient_checkpointing``).
@@ -135,10 +139,10 @@ def enable_transformer_gradient_checkpointing(bundle: Any, cfg: Any) -> None:
     never silently, so the run log states what it actually got.
     """
 
-    mode = resolve_gradient_checkpointing_mode(cfg)
+    mode = resolve_gradient_checkpointing_mode(root)
     if mode == "off":
         return
-    require_compile_checkpointing_compatible(cfg)
+    require_compile_checkpointing_compatible(root)
 
     trainable_modules = getattr(bundle, "trainable_modules", None) or {
         "transformer": bundle.model.transformer,

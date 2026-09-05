@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field, replace
-from typing import Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from vrl.config.reward_inference import (
-    RewardInferenceConfig,
-    reward_inference_configs_from_cfg,
-)
-from vrl.utils.config import cfg_get, to_builtin_deep
+from vrl.config.reward_inference import RewardInferenceConfig
+from vrl.utils.config import to_builtin_deep
+
+if TYPE_CHECKING:
+    from vrl.config.schema import RootConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +66,7 @@ class RolloutResourceConfig(RoleResourceConfig):
     # Sharing needs no separate consent flag: it is declared either by a pool
     # word ("trainer") or by hand-pinning intersecting ``devices`` sets, and the
     # resolved sharing plan is announced in the startup resource receipt.
-    gpu_pool: str = "auto"
+    gpu_pool: Literal["auto", "trainer", "dedicated"] = "auto"
 
     # Engine replica count (the data-parallel degree). A GPU fleet grants
     # ``gpus_per_engine`` GPUs to each engine, so the count derives from the
@@ -182,9 +182,9 @@ class RewardResourceConfig:
 
     role: ClassVar[str] = "reward"
 
-    device: str = "trainer"
+    device: Literal["trainer", "cpu", "gpu"] = "trainer"
     devices: list[int] | str = "auto"
-    gpu_pool: str = "auto"
+    gpu_pool: Literal["auto", "rollout", "dedicated"] = "auto"
 
     @property
     def key_prefix(self) -> str:
@@ -371,7 +371,7 @@ _MISSING = object()
 
 
 def resolve_distributed_resources(
-    cfg: Any,
+    root: RootConfig,
     *,
     reward_inference: dict[str, RewardInferenceConfig] | None = None,
 ) -> ResolvedDistributedResources:
@@ -384,12 +384,22 @@ def resolve_distributed_resources(
     ``reward_inference`` is the already-resolved per-component deployment map
     (``BuiltConfigs.reward.inference_configs``); training scripts pass it so the
     reward inference is resolved once at config-build time. When omitted (e.g.
-    isolated resource tests) it falls back to resolving from ``cfg``.
+    isolated resource tests) it is resolved from ``root.reward``.
     """
 
-    config = _distributed_resource_config_from_cfg(cfg)
+    distributed = root.distributed
+    config = (
+        distributed.resources
+        if distributed is not None and distributed.resources is not None
+        else DistributedResourceConfig()
+    )
     if reward_inference is None:
-        reward_inference = reward_inference_configs_from_cfg(cfg)
+        if root.reward is None:
+            reward_inference = {}
+        else:
+            from vrl.config.builders import RewardRuntimeConfig
+
+            reward_inference = RewardRuntimeConfig.from_cfg(root.reward).inference_configs
     local_reward_configured = any(
         inference.kind == "in_process" for inference in reward_inference.values()
     )
@@ -398,10 +408,10 @@ def resolve_distributed_resources(
         # inherited reward presets here instead of creating a phantom local GPU
         # or CPU bundle; the HTTP runtime is a driver-side client.
         config = replace(config, reward=RewardResourceConfig())
-    training = cfg_get(cfg_get(cfg, "distributed", {}), "training", {})
-    training_strategy = str(cfg_get(training, "strategy", "single_process"))
-    training_world_size = int(cfg_get(training, "num_nodes", 1)) * int(
-        cfg_get(training, "gpus_per_node", 1),
+    training = None if distributed is None else distributed.training
+    training_strategy = "single_process" if training is None else str(training.strategy)
+    training_world_size = (
+        1 if training is None else int(training.num_nodes) * int(training.gpus_per_node)
     )
     if config.cross_node:
         visible_devices = _resolve_cross_node_visible_devices(config)
@@ -613,42 +623,6 @@ def format_distributed_resource_plan(resolved: ResolvedDistributedResources) -> 
         f",reward_after_score:{resolved.lifecycle.release_reward_after_score}",
     ]
     return "Distributed resources: " + " ".join(parts)
-
-
-def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig:
-    distributed = cfg_get(cfg, "distributed", {})
-    resources = cfg_get(distributed, "resources", {})
-    trainer_node = cfg_get(resources, "trainer", {})
-    rollout_node = cfg_get(resources, "rollout", {})
-    reward_node = cfg_get(resources, "reward", _MISSING)
-    rollout_gpu_pool = _parse_rollout_gpu_pool(rollout_node)
-
-    trainer = RoleResourceConfig(
-        num_gpus=cfg_get(trainer_node, "num_gpus", "auto"),
-        devices=_parse_devices(cfg_get(trainer_node, "devices", "auto")),
-    )
-    rollout = RolloutResourceConfig(
-        num_gpus=cfg_get(rollout_node, "num_gpus", "auto"),
-        devices=_parse_devices(cfg_get(rollout_node, "devices", "auto")),
-        num_engines=cfg_get(rollout_node, "num_engines", "auto"),
-        gpus_per_engine=int(cfg_get(rollout_node, "gpus_per_engine", 1)),
-        gpu_pool=rollout_gpu_pool,
-    )
-    if reward_node is _MISSING:
-        reward = RewardResourceConfig()
-    else:
-        reward = RewardResourceConfig(
-            device=_parse_reward_device(reward_node),
-            devices=_parse_devices(cfg_get(reward_node, "devices", "auto")),
-            gpu_pool=_parse_reward_gpu_pool(reward_node),
-        )
-    return DistributedResourceConfig(
-        visible_devices=_parse_devices(cfg_get(resources, "visible_devices", "auto")),
-        trainer=trainer,
-        rollout=rollout,
-        reward=reward,
-        cross_node=bool(cfg_get(resources, "cross_node", False)),
-    )
 
 
 def _resolve_cross_node_visible_devices(
@@ -920,58 +894,6 @@ def _validate_reward_overlap(
             f"reward={list(devices)} trainer={list(trainer_devices)} "
             f"rollout={list(rollout_devices)}",
         )
-
-
-def _parse_rollout_gpu_pool(rollout_node: Any) -> str:
-    """Resolve the rollout GPU pool.
-
-    Single authoritative grammar (mirrors ``reward.gpu_pool``):
-    ``distributed.resources.rollout.gpu_pool`` = ``auto|trainer|dedicated``.
-    ``trainer`` always means on-demand phase handoff; sharing memory persistently is
-    no longer a supported topology.
-    """
-
-    new_pool = cfg_get(rollout_node, "gpu_pool", _MISSING)
-
-    pool = "auto"
-    if new_pool is not _MISSING:
-        pool = str(to_builtin_deep(new_pool)).strip().lower()
-        if pool not in {"auto", "trainer", "dedicated"}:
-            raise ValueError(
-                "distributed.resources.rollout.gpu_pool must be 'auto', 'trainer', "
-                f"or 'dedicated', got {new_pool!r}",
-            )
-    return pool
-
-
-def _parse_reward_device(reward_node: Any) -> str:
-    """Resolve ``distributed.resources.reward.device``: trainer|cpu|gpu."""
-
-    device = cfg_get(reward_node, "device", _MISSING)
-    if device is _MISSING:
-        return "trainer"
-    value = str(to_builtin_deep(device)).strip().lower()
-    if value not in {"trainer", "cpu", "gpu"}:
-        raise ValueError(
-            "distributed.resources.reward.device must be 'trainer', 'cpu', "
-            f"or 'gpu', got {device!r}",
-        )
-    return value
-
-
-def _parse_reward_gpu_pool(reward_node: Any) -> str:
-    """Resolve ``distributed.resources.reward.gpu_pool``: auto|rollout|dedicated."""
-
-    gpu_pool = cfg_get(reward_node, "gpu_pool", _MISSING)
-    if gpu_pool is _MISSING:
-        return "auto"
-    value = str(to_builtin_deep(gpu_pool)).strip().lower()
-    if value not in {"auto", "rollout", "dedicated"}:
-        raise ValueError(
-            "distributed.resources.reward.gpu_pool must be 'auto', 'rollout', "
-            f"or 'dedicated', got {gpu_pool!r}",
-        )
-    return value
 
 
 def _parse_devices(value: Any) -> list[int] | str:

@@ -203,7 +203,7 @@ def _resource_cfg(
 def _ray_config(cfg: Any) -> RayGenerationConfig:
     return RayGenerationConfig.from_cfg(
         cfg,
-        resources=resolve_distributed_resources(cfg),
+        resources=resolve_distributed_resources(parse_config(cfg)),
     )
 
 
@@ -556,7 +556,7 @@ def test_base_rollout_presets_pin_only_the_cpu_override(preset_name: str) -> Non
 
 def test_ray_generation_config_requires_an_explicit_worker_snapshot() -> None:
     cfg = _cfg()
-    resources = resolve_distributed_resources(cfg)
+    resources = resolve_distributed_resources(parse_config(cfg))
 
     with pytest.raises(TypeError, match="worker"):
         RayGenerationConfig(resources=resources)  # type: ignore[call-arg]
@@ -735,7 +735,7 @@ def test_pipelined_rejects_multiple_resolved_engines() -> None:
     with pytest.raises(ValueError, match="requires exactly one rollout engine"):
         RayGenerationConfig.from_cfg(
             cfg,
-            resources=resolve_distributed_resources(cfg),
+            resources=resolve_distributed_resources(parse_config(cfg)),
         )
 
 
@@ -753,7 +753,7 @@ def test_pipelined_rejects_multiple_placement_bundles_before_ray_start(
     }
     config = RayGenerationConfig.from_cfg(
         cfg,
-        resources=resolve_distributed_resources(cfg),
+        resources=resolve_distributed_resources(parse_config(cfg)),
     )
     entry = get_model_family_entry("sd3_5")
     launch_inputs = RayGenerationLaunchInputs(

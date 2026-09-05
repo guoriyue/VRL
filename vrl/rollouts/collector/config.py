@@ -12,7 +12,7 @@ schema field flows through without a second vocabulary to update.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass
 from typing import Any
 
 from vrl.config.algorithm import resolve_kl_reward_coef
@@ -112,7 +112,9 @@ def _merge_flat_section_values(
         if name not in allowed:
             continue
         normalized = to_builtin_deep(value)
-        if isinstance(normalized, dict):
+        # Nested blocks (sde, trajectory_storage, torch_profiler) have their own
+        # projection or no wire presence at all; only scalars flatten here.
+        if isinstance(normalized, dict) or is_dataclass(normalized):
             continue
         if name in values:
             raise ValueError(

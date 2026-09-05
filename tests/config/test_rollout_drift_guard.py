@@ -19,6 +19,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.config.precision import PrecisionConfig, resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.config.validation import require_guarded_rollout_drift
 
 
@@ -131,7 +132,7 @@ def test_check_runs_inside_validate_training_config() -> None:
 def _compile_cfg(**overrides) -> OmegaConf:
     """A config with compile on and nothing else set, plus ``overrides``."""
 
-    base = {"model": {"torch_compile": {"enable": True}}}
+    base = {"model": {"family": "sd3_5", "torch_compile": {"enable": True}}}
     base.update(overrides)
     return OmegaConf.create(base)
 
@@ -139,7 +140,7 @@ def _compile_cfg(**overrides) -> OmegaConf:
 def test_compile_alone_has_no_conflicts() -> None:
     from vrl.config.validation import compile_conflicts
 
-    assert compile_conflicts(_compile_cfg()) == ()
+    assert compile_conflicts(parse_config(_compile_cfg())) == ()
 
 
 def test_compile_off_never_conflicts() -> None:
@@ -148,7 +149,7 @@ def test_compile_off_never_conflicts() -> None:
 
     cfg = OmegaConf.create(
         {
-            "model": {"torch_compile": {"enable": False}},
+            "model": {"family": "sd3_5", "torch_compile": {"enable": False}},
             "actor": {"gradient_checkpointing": True},
             "distributed": {
                 "training": {"strategy": "fsdp"},
@@ -157,7 +158,7 @@ def test_compile_off_never_conflicts() -> None:
         },
     )
 
-    assert compile_conflicts(cfg) == ()
+    assert compile_conflicts(parse_config(cfg)) == ()
 
 
 @pytest.mark.parametrize(
@@ -174,7 +175,7 @@ def test_compile_off_never_conflicts() -> None:
 def test_each_incompatible_feature_is_reported(overrides: dict, expected: str) -> None:
     from vrl.config.validation import compile_conflicts
 
-    conflicts = compile_conflicts(_compile_cfg(**overrides))
+    conflicts = compile_conflicts(parse_config(_compile_cfg(**overrides)))
 
     assert len(conflicts) == 1
     assert expected in conflicts[0]
@@ -185,12 +186,14 @@ def test_several_conflicts_are_reported_together() -> None:
     from vrl.config.validation import compile_conflicts
 
     conflicts = compile_conflicts(
-        _compile_cfg(
-            actor={"gradient_checkpointing": True},
-            distributed={
-                "training": {"strategy": "fsdp"},
-                "resources": {"rollout": {"gpus_per_engine": 2}},
-            },
+        parse_config(
+            _compile_cfg(
+                actor={"gradient_checkpointing": True},
+                distributed={
+                    "training": {"strategy": "fsdp"},
+                    "resources": {"rollout": {"gpus_per_engine": 2}},
+                },
+            )
         ),
     )
 
@@ -202,9 +205,11 @@ def test_require_compile_compatible_raises_with_every_reason() -> None:
 
     with pytest.raises(ValueError) as excinfo:
         require_compile_compatible(
-            _compile_cfg(
-                actor={"gradient_checkpointing": True},
-                distributed={"training": {"strategy": "fsdp"}},
+            parse_config(
+                _compile_cfg(
+                    actor={"gradient_checkpointing": True},
+                    distributed={"training": {"strategy": "fsdp"}},
+                )
             ),
         )
     message = str(excinfo.value)
@@ -232,7 +237,7 @@ def test_rollout_scope_releases_trainer_conflicts() -> None:
         distributed={"training": {"strategy": "fsdp"}},
     )
 
-    assert compile_conflicts(cfg) == ()
+    assert compile_conflicts(parse_config(cfg)) == ()
 
 
 def test_rollout_scope_keeps_rollout_conflicts() -> None:
@@ -243,7 +248,7 @@ def test_rollout_scope_keeps_rollout_conflicts() -> None:
         distributed={"resources": {"rollout": {"gpus_per_engine": 2}}},
     )
 
-    conflicts = compile_conflicts(cfg)
+    conflicts = compile_conflicts(parse_config(cfg))
     assert len(conflicts) == 1
     assert "gpus_per_engine=2" in conflicts[0]
 
@@ -256,7 +261,7 @@ def test_replay_scope_releases_rollout_conflicts() -> None:
         distributed={"resources": {"rollout": {"gpus_per_engine": 2}}},
     )
 
-    assert compile_conflicts(cfg) == ()
+    assert compile_conflicts(parse_config(cfg)) == ()
 
 
 def test_replay_scope_keeps_trainer_conflicts() -> None:
@@ -264,7 +269,7 @@ def test_replay_scope_keeps_trainer_conflicts() -> None:
 
     cfg = _scoped_compile_cfg("replay", actor={"gradient_checkpointing": True})
 
-    conflicts = compile_conflicts(cfg)
+    conflicts = compile_conflicts(parse_config(cfg))
     assert len(conflicts) == 1
     assert "gradient_checkpointing" in conflicts[0]
 
@@ -273,7 +278,7 @@ def test_unknown_compile_scope_is_refused_at_config_load() -> None:
     from vrl.config.validation import compile_conflicts
 
     with pytest.raises(ValueError, match=r"torch_compile\.scope must be one of"):
-        compile_conflicts(_scoped_compile_cfg("trainer"))
+        compile_conflicts(parse_config(_scoped_compile_cfg("trainer")))
 
 
 def test_fsdp_conflict_is_now_caught_at_config_load() -> None:

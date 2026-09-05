@@ -828,7 +828,7 @@ async def run_online_recipe(
     data_config = built.root.data
     if family_entry.task in {"i2v", "v2w"}:
         preprocessing = data_config.preprocessing if data_config is not None else None
-        conditioning = (preprocessing or {}).get("conditioning")
+        conditioning = preprocessing.conditioning if preprocessing is not None else None
         if conditioning != "reference_image":
             raise ValueError(
                 f"{family_entry.family} requires data.preprocessing.conditioning=reference_image",
@@ -869,7 +869,9 @@ async def run_online_recipe(
         require_reference_images(
             examples,
             manifest_path=Path(str(data_config.manifest or "manifest")),
-            default_reference_image=(data_config.preprocessing or {}).get("reference_image"),
+            default_reference_image=(
+                data_config.preprocessing.reference_image if data_config.preprocessing else None
+            ),
         )
     # Derive the per-rank resume verdict the trainer/weight-syncer read below. Kept
     # after the checkpoint-identity preflight so an incompatible checkpoint fails
@@ -1066,7 +1068,7 @@ async def run_online_recipe(
             prompts_per_rank=rank_batch,
             num_replicas=training_context.world_size,
             rank=training_context.rank,
-            strategy=str(data_config.sampler["type"]),
+            strategy=str(data_config.sampler.type),
         )
         for epoch in range(start_epoch, run_config.total_epochs):
             indices = prompt_sampler.sample(epoch=epoch)

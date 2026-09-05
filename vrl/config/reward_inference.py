@@ -8,8 +8,6 @@ from dataclasses import dataclass, fields
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from vrl.utils.config import cfg_get
-
 
 def validate_http_origin(url: str, *, context: str) -> str:
     """Validate one operator-service origin URL and return it normalized.
@@ -103,28 +101,8 @@ def parse_reward_inference_config(
     return RewardInferenceConfig(**payload)
 
 
-def reward_inference_configs_from_cfg(cfg: Any) -> dict[str, RewardInferenceConfig]:
-    """Resolve every configured component's deployment before GPU placement."""
-
-    reward = cfg_get(cfg, "reward", None)
-    components = cfg_get(reward, "components", {}) if reward is not None else {}
-    inference = cfg_get(reward, "inference", {}) if reward is not None else {}
-    if not isinstance(components, Mapping):
-        return {}
-    inference = inference if isinstance(inference, Mapping) else {}
-    resolved: dict[str, RewardInferenceConfig] = {}
-    for raw_name in components:
-        name = str(raw_name)
-        resolved[name] = parse_reward_inference_config(
-            cfg_get(inference, name, None),
-            context=f"reward.inference.{name}",
-        )
-    return resolved
-
-
 __all__ = [
     "RewardInferenceConfig",
     "parse_reward_inference_config",
-    "reward_inference_configs_from_cfg",
     "validate_http_origin",
 ]

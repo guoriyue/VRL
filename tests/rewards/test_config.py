@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import pytest
 
+from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.reward_inference import (
     RewardInferenceConfig,
     parse_reward_inference_config,
-    reward_inference_configs_from_cfg,
 )
+from vrl.config.schema import RewardConfig
 
 
 def test_in_process_is_the_default() -> None:
@@ -77,7 +78,9 @@ def test_component_inference_configs_resolve_independently() -> None:
         },
     }
 
-    resolved = reward_inference_configs_from_cfg(cfg)
+    resolved = RewardRuntimeConfig.from_cfg(
+        RewardConfig.model_validate(cfg["reward"])
+    ).inference_configs
 
     assert resolved["ocr"].kind == "in_process"
     assert resolved["videoscore2"] == RewardInferenceConfig(

@@ -470,7 +470,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         entry,
         root,
         resolve_eval_device(args.device),
-        precision=resolve_precision_policy(root),
+        precision=resolve_precision_policy(root.precision),
         for_rollout=True,
     )
     for target in targets[1:]:
@@ -556,7 +556,8 @@ async def score_images(
     import torch
     from PIL import Image
 
-    from vrl.config.reward_inference import reward_inference_configs_from_cfg
+    from vrl.config.builders import RewardRuntimeConfig
+    from vrl.config.schema import RewardConfig
     from vrl.rewards.base import DiskArtifactRewardFunction
     from vrl.rewards.functions.registry import MultiReward, _register_builtins, get_reward
     from vrl.rewards.types import REWARD_GROUP_ID_METADATA_KEY, RewardSample
@@ -579,7 +580,9 @@ async def score_images(
         device=plan.reward_device,
         reward_kwargs=kwargs,
         memory_parking_required=False,
-        inference_configs=reward_inference_configs_from_cfg({"reward": plan.reward}),
+        inference_configs=RewardRuntimeConfig.from_cfg(
+            RewardConfig.model_validate(plan.reward),
+        ).inference_configs,
     )
     by_key = {
         (row["checkpoint_label"], row["prompt_index"], row["sample_index"]): row for row in rows

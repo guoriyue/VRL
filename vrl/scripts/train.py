@@ -17,9 +17,12 @@ import os
 import signal
 from collections.abc import Awaitable, MutableMapping
 from types import FrameType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
+
+if TYPE_CHECKING:
+    from vrl.config.schema import RootConfig
 
 
 async def train_online(cfg: DictConfig) -> None:
@@ -30,13 +33,12 @@ async def train_online(cfg: DictConfig) -> None:
     await run_online_recipe(cfg)
 
 
-def resolve_train_target(cfg: DictConfig) -> str:
-    """Return the validated training callable import path declared by ``cfg``."""
+def resolve_train_target(root: RootConfig) -> str:
+    """Return the validated training callable import path declared by ``root``."""
 
-    try:
-        import_path = cfg.trainer.entrypoint
-    except Exception as exc:
-        raise ValueError("config missing required field: trainer.entrypoint") from exc
+    import_path = root.trainer.entrypoint if root.trainer is not None else None
+    if import_path is None:
+        raise ValueError("config missing required field: trainer.entrypoint")
     if not isinstance(import_path, str) or not import_path.strip():
         raise ValueError("trainer.entrypoint must be a non-empty import path")
     return import_path.strip()
@@ -55,12 +57,14 @@ def _import_callable(import_path: str) -> Any:
 def run_config(cfg: DictConfig) -> Any:
     """Run the family trainer selected by ``cfg``."""
 
-    trainer = _import_callable(resolve_train_target(cfg))
+    from vrl.config.schema import parse_config
+
+    trainer = _import_callable(resolve_train_target(parse_config(cfg)))
     return trainer(cfg)
 
 
 def _narrow_rank_local_cuda_visibility(
-    cfg: DictConfig,
+    root: RootConfig,
     *,
     environ: MutableMapping[str, str] | None = None,
 ) -> str | None:
@@ -72,20 +76,11 @@ def _narrow_rank_local_cuda_visibility(
     that this rank's physical card is logical ``cuda:0``.
     """
 
-    strategy = str(
-        OmegaConf.select(
-            cfg,
-            "distributed.training.strategy",
-            default="single_process",
-        ),
-    )
-    rollout_pool = str(
-        OmegaConf.select(
-            cfg,
-            "distributed.resources.rollout.gpu_pool",
-            default="auto",
-        ),
-    )
+    distributed = root.distributed
+    training = None if distributed is None else distributed.training
+    resources = None if distributed is None else distributed.resources
+    strategy = "single_process" if training is None else str(training.strategy)
+    rollout_pool = "auto" if resources is None else str(resources.rollout.gpu_pool)
     if strategy not in {"ddp", "fsdp"} or rollout_pool != "trainer":
         return None
 
@@ -98,13 +93,7 @@ def _narrow_rank_local_cuda_visibility(
     try:
         local_rank = int(local_rank_raw)
         world_size = int(world_size_raw)
-        configured_local_world_size = int(
-            OmegaConf.select(
-                cfg,
-                "distributed.training.gpus_per_node",
-                default=1,
-            ),
-        )
+        configured_local_world_size = 1 if training is None else int(training.gpus_per_node)
         local_world_size = int(
             environment.get("LOCAL_WORLD_SIZE", str(configured_local_world_size)),
         )
@@ -162,16 +151,7 @@ def _narrow_rank_local_cuda_visibility(
             f"CUDA device ordinals, got {selected!r}",
         ) from exc
     environment["CUDA_VISIBLE_DEVICES"] = selected
-    # Torch sees one logical cuda:0 after the mask, while Ray reports the original
-    # physical ID from ray.get_gpu_ids(). Keep the resource plan in Ray's physical
-    # ordinal space so placement probing and worker validation agree.
-    OmegaConf.update(
-        cfg,
-        "distributed.resources.visible_devices",
-        [physical_device],
-        force_add=True,
-    )
-    return selected
+    return str(physical_device)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -226,6 +206,7 @@ async def _run_async_trainer(result: Awaitable[Any]) -> signal.Signals | None:
 
 def main(argv: list[str] | None = None) -> None:
     from vrl.config.loading import load_config
+    from vrl.config.schema import parse_config
 
     logging.basicConfig(
         level=logging.INFO,
@@ -234,14 +215,26 @@ def main(argv: list[str] | None = None) -> None:
 
     args = build_parser().parse_args(argv)
     cfg = load_config(args.config, overrides=args.overrides)
-    verdict_dir = _verdict_dir(cfg)
+    root = parse_config(cfg)
+    verdict_dir = _verdict_dir(root)
     try:
-        selected_cuda = _narrow_rank_local_cuda_visibility(cfg)
+        selected_cuda = _narrow_rank_local_cuda_visibility(root)
         if selected_cuda is not None:
             logging.getLogger(__name__).info(
                 "Rank-local CUDA visibility: LOCAL_RANK=%s physical_device=%s logical_device=0",
                 os.environ.get("LOCAL_RANK", "0"),
                 selected_cuda,
+            )
+            # Torch sees one logical cuda:0 after the mask, while Ray reports the
+            # original physical ID from ray.get_gpu_ids(). Keep the resource plan
+            # in Ray's physical ordinal space so placement probing and worker
+            # validation agree — as a loader override, not a post-load edit.
+            cfg = load_config(
+                args.config,
+                overrides=[
+                    *args.overrides,
+                    f"distributed.resources.visible_devices=[{int(selected_cuda)}]",
+                ],
             )
         result = run_config(cfg)
         received_signal: signal.Signals | None = None
@@ -256,10 +249,8 @@ def main(argv: list[str] | None = None) -> None:
     write_run_verdict(verdict_dir)
 
 
-def _verdict_dir(cfg: DictConfig) -> str | None:
-    from vrl.utils.config import cfg_path
-
-    output_dir = str(cfg_path(cfg, "trainer.output_dir", "") or "").strip()
+def _verdict_dir(root: RootConfig) -> str | None:
+    output_dir = str((root.trainer.output_dir if root.trainer is not None else None) or "").strip()
     return output_dir or None
 
 

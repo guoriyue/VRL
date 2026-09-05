@@ -1557,7 +1557,7 @@ def test_valid_sampler_types_are_accepted(sampler_type: str) -> None:
         preprocessing={"format": "text"},
         sampler={"type": sampler_type},
     )
-    assert data.sampler["type"] == sampler_type
+    assert data.sampler.type == sampler_type
 
 
 def test_unknown_sampler_type_raises() -> None:
@@ -1761,7 +1761,7 @@ def test_production_video_reward_structural_rules() -> None:
     from vrl.config.validation import validate_production_reward_contract
 
     parse_config(cfg)  # schema parse stays clean
-    validate_production_reward_contract(cfg)
+    validate_production_reward_contract(parse_config(cfg))
 
 
 def test_production_video_reward_accepts_image_to_video_task_type() -> None:

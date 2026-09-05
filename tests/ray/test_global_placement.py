@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.config.schema import parse_config
 from vrl.ray import dependencies as ray_dependencies
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import BundleLayout, GlobalRayPlacementOwner, RolePlacement
@@ -46,7 +47,7 @@ def _resolve(resources: dict):
     # Release scheduling is derived from topology, so only the resources block is
     # needed to pin a placement plan.
     return resolve_distributed_resources(
-        OmegaConf.create({"distributed": {"resources": resources}}),
+        parse_config(OmegaConf.create({"distributed": {"resources": resources}})),
     )
 
 

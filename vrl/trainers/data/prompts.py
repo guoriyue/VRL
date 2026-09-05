@@ -219,8 +219,8 @@ def load_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
         return load_prompt_mixture(sources, seed=int(mix_seed))
 
     if loader == "prompt_image_manifest":
-        image_field = str(cfg_get(preprocessing, "image_field", "image"))
-        caption_field = str(cfg_get(preprocessing, "caption_field", "caption"))
+        image_field = str(cfg_get(preprocessing, "image_field", None) or "image")
+        caption_field = str(cfg_get(preprocessing, "caption_field", None) or "caption")
         task_type = str(cfg_get(data_cfg, "task_type", None) or "image_to_video")
         return load_prompt_image_manifest(
             manifest,
