@@ -662,6 +662,10 @@ def test_reward_samples_preserve_prompt_identity_and_metadata() -> None:
         "request-0:sample:1",
     ]
     assert all(sample.metadata["target_text"] == "caption" for sample in samples)
+    assert [sample.metadata["reward_group_id"] for sample in samples] == [
+        "request-0:prompt:0",
+        "request-0:prompt:1",
+    ]
     assert not any(
         hasattr(sample, name)
         for sample in samples
@@ -681,13 +685,13 @@ def test_collector_uses_one_reward_call_and_splits_scores_per_group() -> None:
 
     async def _collect_groups():
         first = await collector.collect_unscored(
-            ["g0"],
+            ["same prompt"],
             group_size=2,
             metadata={"target_text": "group-0"},
             policy_version=4,
         )
         second = await collector.collect_unscored(
-            ["g1"],
+            ["same prompt"],
             group_size=3,
             metadata={"target_text": "group-1"},
             policy_version=5,
@@ -698,7 +702,7 @@ def test_collector_uses_one_reward_call_and_splits_scores_per_group() -> None:
 
     assert len(reward_runtime.calls) == 1
     call = reward_runtime.calls[0]
-    assert call["prompts"] == ["g0", "g0", "g1", "g1", "g1"]
+    assert call["prompts"] == ["same prompt"] * 5
     assert [metadata["target_text"] for metadata in call["metadata"]] == [
         "group-0",
         "group-0",
@@ -707,6 +711,11 @@ def test_collector_uses_one_reward_call_and_splits_scores_per_group() -> None:
         "group-1",
     ]
     assert len(set(call["sample_ids"])) == 5
+    reward_group_ids = [metadata["reward_group_id"] for metadata in call["metadata"]]
+    assert len(set(reward_group_ids[:2])) == 1
+    assert len(set(reward_group_ids[2:])) == 1
+    assert reward_group_ids[0] != reward_group_ids[2]
+    assert all(group_id.endswith(":prompt:0") for group_id in reward_group_ids)
     assert first.rewards.tolist() == [0.0, 1.0]
     assert second.rewards.tolist() == [2.0, 3.0, 4.0]
 

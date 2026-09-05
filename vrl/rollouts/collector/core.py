@@ -226,8 +226,15 @@ class RolloutCollector:
         trajectory_storage_policy = self.config.trajectory_storage
         builders = []
         for rollout in unscored:
+            reward_metadata = dict(rollout.collector_request.metadata)
+            policy_version = rollout.collector_request.request.policy_version
+            if policy_version is not None:
+                # The scorer owns rollout audit artifacts before the trainer has
+                # an epoch number. Policy version is the stable update identity
+                # across supervisor resume; keep it beside the scored media.
+                reward_metadata["rollout_policy_version"] = int(policy_version)
             context = RolloutBatchBuildContext(
-                metadata=dict(rollout.collector_request.metadata),
+                metadata=reward_metadata,
                 # Collector/continuous-owner output is host-owned. The trainer
                 # moves the completed batch to its device later; creating reward
                 # tensors here on the trainer GPU would race backward.
