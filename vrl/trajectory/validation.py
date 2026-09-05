@@ -98,7 +98,6 @@ class TrajectoryValidator:
             self.validate_reward_view(view)
 
         self._reject_runtime_state(batch.context, "TrajectoryBatch.context")
-        self._reject_runtime_state(batch.metrics.values, "TrajectoryBatch.metrics.values")
         return batch
 
     def validate_reward_view(self, view: RewardView) -> RewardView:
@@ -180,10 +179,6 @@ class TrajectoryValidator:
                     ref = tensor_ref(segment.name, ref)
                 if ref not in self.tensor_refs:
                     self._fail(f"ReplayInput {replay.name!r} references unknown tensor {ref!r}")
-            self._reject_runtime_state(
-                replay.metadata,
-                f"ReplayInput {segment.name}.{replay.name}.metadata",
-            )
 
         self._reject_runtime_state(
             segment.metadata,
@@ -199,10 +194,6 @@ class TrajectoryValidator:
             tensor.value,
             f"TrajectoryTensor {segment_name}.{tensor.name}.value",
             allow_tensor_like=True,
-        )
-        self._reject_runtime_state(
-            tensor.metadata,
-            f"TrajectoryTensor {segment_name}.{tensor.name}.metadata",
         )
 
         seen: set[str] = set()

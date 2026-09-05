@@ -66,7 +66,6 @@ class TrajectoryAxis:
     name: str
     kind: AxisKind
     length: int | None = None
-    metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -83,7 +82,6 @@ class TrajectoryTensor:
     value: Any
     axes: tuple[str, ...]
     role: TensorRole
-    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -98,7 +96,6 @@ class ReplayInput:
 
     name: str
     tensor_refs: tuple[str, ...] = ()
-    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -127,18 +124,13 @@ class TrajectorySegment:
 
 
 @dataclass(slots=True)
-class TrajectoryMetrics:
-    """Serializable non-structural annotations about a trajectory record."""
-
-    # Telemetry/provenance-only; structural facts are derived from TrajectoryBatch.
-    values: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
 class TrajectoryBatch:
     """First-class trajectory record emitted by generation runtimes."""
 
     request_id: str
+    # display/provenance-only: the request identity this record was built from.
+    # Behavior keys off ``request_id`` (batch joins) and the segments/views; the
+    # family/task tokens are carried so a serialized record names its origin.
     family: str
     task: str
     sample_rows: list[GenerationSampleRow]
@@ -146,7 +138,6 @@ class TrajectoryBatch:
     segments: dict[str, TrajectorySegment]
     primary_segment: str | None = None
     reward_views: dict[str, RewardView] = field(default_factory=dict)
-    metrics: TrajectoryMetrics = field(default_factory=TrajectoryMetrics)
     context: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -166,7 +157,6 @@ __all__ = [
     "TensorRole",
     "TrajectoryAxis",
     "TrajectoryBatch",
-    "TrajectoryMetrics",
     "TrajectorySegment",
     "TrajectoryTensor",
 ]

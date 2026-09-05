@@ -45,7 +45,6 @@ if TYPE_CHECKING:
     from vrl.trajectory.types import TensorRole as TensorRole
     from vrl.trajectory.types import TrajectoryAxis as TrajectoryAxis
     from vrl.trajectory.types import TrajectoryBatch as TrajectoryBatch
-    from vrl.trajectory.types import TrajectoryMetrics as TrajectoryMetrics
     from vrl.trajectory.types import TrajectorySegment as TrajectorySegment
     from vrl.trajectory.types import TrajectoryTensor as TrajectoryTensor
     from vrl.trajectory.validation import TrajectoryValidationError as TrajectoryValidationError
@@ -64,7 +63,6 @@ _PUBLIC_EXPORTS = {
     "TensorRole": ("vrl.trajectory.types", "TensorRole"),
     "TrajectoryAxis": ("vrl.trajectory.types", "TrajectoryAxis"),
     "TrajectoryBatch": ("vrl.trajectory.types", "TrajectoryBatch"),
-    "TrajectoryMetrics": ("vrl.trajectory.types", "TrajectoryMetrics"),
     "TrajectoryResolver": ("vrl.trajectory.resolver", "TrajectoryResolver"),
     "TrajectoryResolverError": ("vrl.trajectory.resolver", "TrajectoryResolverError"),
     "TrajectorySegment": ("vrl.trajectory.types", "TrajectorySegment"),

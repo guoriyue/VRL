@@ -44,7 +44,6 @@ def test_move_preserves_derived_structure_and_provenance() -> None:
     assert moved is not trajectory
     assert len(moved.sample_rows) == 2
     assert _axis_lengths(moved) == {"sample": 2, "token": 2}
-    assert moved.metrics.values == {"source": "fixture"}
     for tensor in moved.segments["image_tokens"].tensors.values():
         assert tensor.value.device.type == "cpu"
 
@@ -80,5 +79,4 @@ def _trajectory(
         uncond_attention_mask=torch.ones_like(prompt_input_ids),
         context={},
     )
-    trajectory.metrics.values = {"source": "fixture"}
     return trajectory

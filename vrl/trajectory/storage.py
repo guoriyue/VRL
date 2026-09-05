@@ -71,7 +71,6 @@ def apply_trajectory_storage_policy(
     for segment in batch.segments.values():
         for tensor in segment.tensors.values():
             tensor.value = _apply_value_policy(tensor.value, policy)
-    batch.metrics.values = _apply_value_policy(batch.metrics.values, policy)
     return batch
 
 
@@ -124,7 +123,6 @@ def _tensor_bytes(value: object, *, seen: set[int]) -> int:
         for segment in value.segments.values():
             for tensor in segment.tensors.values():
                 total += _tensor_bytes(tensor.value, seen=seen)
-        total += _tensor_bytes(value.metrics.values, seen=seen)
         return total
 
     if _is_torch_tensor(value):

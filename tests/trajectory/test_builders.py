@@ -10,7 +10,6 @@ from vrl.generation.types import GenerationRequest
 from vrl.trajectory import (
     TrajectoryBatch,
     TrajectoryValidationError,
-    TrajectoryValidator,
     build_ar_continuous_trajectory,
     build_ar_discrete_trajectory,
     build_ar_multisegment_trajectory,
@@ -24,11 +23,10 @@ def _axis_lengths(trajectory: TrajectoryBatch) -> dict[str, int]:
     return {name: axis.length for name, axis in trajectory.axes.items() if axis.length is not None}
 
 
-def test_all_builders_derive_structure_without_metric_copies() -> None:
+def test_all_builders_derive_structure() -> None:
     for name, trajectory, expected_axis_lengths in _structural_trajectories():
         assert len(trajectory.sample_rows) == expected_axis_lengths["sample"], name
         assert _axis_lengths(trajectory) == expected_axis_lengths, name
-        assert trajectory.metrics.values == {}, name
 
 
 def test_builder_rejects_tensor_rows_that_disagree_with_sample_rows() -> None:
@@ -52,17 +50,6 @@ def test_builder_rejects_tensor_rows_that_disagree_with_sample_rows() -> None:
             uncond_attention_mask=torch.ones(2, 3, dtype=torch.long),
             context={},
         )
-
-
-def test_metrics_values_keep_provenance_validation_without_structural_ownership() -> None:
-    trajectory = _structural_trajectories()[0][1]
-
-    trajectory.metrics.values = {"source": "unit-test"}
-    assert TrajectoryValidator(trajectory).validate_batch() is trajectory
-
-    trajectory.metrics.values = {"runtime": object()}
-    with pytest.raises(TrajectoryValidationError, match="runtime-only state"):
-        TrajectoryValidator(trajectory).validate_batch()
 
 
 def test_diffusion_replay_extras_only_declare_sample_axis_when_sample_aligned() -> None:

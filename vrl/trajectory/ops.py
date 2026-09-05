@@ -14,7 +14,6 @@ from vrl.generation.types import GenerationSampleRow
 from vrl.trajectory.device import move_value_to_device
 from vrl.trajectory.types import (
     TrajectoryBatch,
-    TrajectoryMetrics,
     TrajectorySegment,
     TrajectoryTensor,
 )
@@ -43,7 +42,6 @@ def select_trajectory_batch(data: Any, selector: Any) -> Any:
             else tensor.value
         ),
         axes_sample_length=count,
-        metrics_values=_select_value(data.metrics.values, selector, len(data.sample_rows)),
         context=_select_value(data.context, selector, len(data.sample_rows)),
     )
 
@@ -64,7 +62,6 @@ def move_trajectory_batch(data: Any, device: Any) -> Any:
         sample_rows=list(data.sample_rows),
         tensor_value_fn=lambda tensor: move_value_to_device(tensor.value, device),
         axes_sample_length=data.axes["sample"].length,
-        metrics_values=move_value_to_device(data.metrics.values, device),
         context=move_value_to_device(data.context, device),
     )
 
@@ -78,7 +75,6 @@ def _rebuild_trajectory(
     sample_rows: list[GenerationSampleRow],
     tensor_value_fn: Any,
     axes_sample_length: int | None,
-    metrics_values: dict[str, Any],
     context: dict[str, Any],
 ) -> TrajectoryBatch:
     axes = {
@@ -97,7 +93,6 @@ def _rebuild_trajectory(
                     value=tensor_value_fn(tensor),
                     axes=tensor.axes,
                     role=tensor.role,
-                    metadata=dict(tensor.metadata),
                 )
                 for tensor_name, tensor in segment.tensors.items()
             },
@@ -117,7 +112,6 @@ def _rebuild_trajectory(
         segments=segments,
         primary_segment=data.primary_segment,
         reward_views=dict(data.reward_views),
-        metrics=TrajectoryMetrics(values=metrics_values),
         context=context,
     )
     return TrajectoryValidator(out).validate_batch()
