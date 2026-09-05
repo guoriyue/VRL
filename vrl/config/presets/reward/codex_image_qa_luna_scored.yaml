@@ -1,0 +1,20 @@
+# GPT-5.6 Luna reward with durable visual-audit artifacts.
+#
+# This output policy stays separate from the Luna identity overlay so short
+# probes do not retain hundreds of images by default. Long runs opt in here and
+# preserve the exact underlying rollout pixels and their Luna scores, rather
+# than regenerating approximations. The review montage combines the full group;
+# Luna itself still scores the configured four-image grid chunks.
+defaults:
+  - /reward/codex_image_qa_luna
+  - _self_
+
+reward:
+  components:
+    codex_image_qa: 1.0
+  kwargs:
+    codex_image_qa:
+      # Restate the inherited base default so scored experiments can tune this
+      # declared leaf without bypassing the reward-group boundary.
+      images_per_call: 4
+      scored_rollout_dir: ${trainer.output_dir}/scored_rollouts

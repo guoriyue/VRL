@@ -1,0 +1,28 @@
+# GPT-5.6 Luna provenance overlay for the Codex-CLI image-quality judge.
+#
+# This intentionally overrides only process identity. Experiments retain the
+# base reward's batching and timeout policy and own their domain-specific rubric.
+# Ignoring user config prevents a local default model, plugin, or profile from
+# silently changing the judge; Codex authentication remains available.
+reward:
+  components:
+    codex_image_qa: 1.0
+  kwargs:
+    codex_image_qa:
+      command:
+        - codex
+        - exec
+        - --ignore-user-config
+        - --ephemeral
+        - --model
+        - gpt-5.6-luna
+        - --config
+        - 'model_reasoning_effort="medium"'
+        - --sandbox
+        - read-only
+        - --skip-git-repo-check
+        - --image
+        - "{image_path}"
+        - --output-last-message
+        - "{output_path}"
+        - "-"
