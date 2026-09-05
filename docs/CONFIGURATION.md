@@ -124,18 +124,19 @@ or relabeling another. None of these files saves another model checkpoint.
 
 ## Compose an independent evaluation policy
 
-The quality evaluator continues to load generator identity and sampling from
-the run's recorded config. Its separate evaluation policy can now be assembled
-without a training-experiment YAML:
+The shared image checkpoint evaluator loads generator identity and sampling
+from the run's recorded config. Compose its rewards and held-out data at launch,
+without creating a model/reward-specific evaluator or training-experiment YAML:
 
 ```bash
-python -m vrl.scripts.eval.anima_codex_quality_checkpoint_eval \
+python -m vrl.scripts.eval.image_checkpoint_eval \
   --run-dir outputs/anima_color_light_composed \
   --eval-policy-config reward/codex_image_qa \
   --eval-policy-override +reward=codex_image_qa_anime_color_light \
   --eval-policy-override +reward=codex_image_qa_luna \
   --eval-policy-override +dataset=anima_color_light_ddrl \
-  --prompts-per-bucket-style 6 \
+  --strata bucket prompt_style --per-stratum 6 \
+  --samples-per-prompt 2 --seed 91000 \
   --checkpoint candidate=outputs/anima_color_light_composed/checkpoint-final \
   --dry-run
 ```
@@ -144,7 +145,51 @@ This requires the recorded run/checkpoint and evaluation data to exist. Policy
 overrides affect only held-out data and judging; they cannot silently replace
 the evaluated generator or sampling settings. If no policy config is supplied,
 overrides apply to a copy of the saved run config. Resolved judging/data content
-is still hashed, and overlay arguments are recorded in policy provenance.
+is recorded in the evaluation protocol, together with input hashes. Prompt
+metadata is passed through to the selected rewards, including OCR, tagging,
+and object-count targets; reward choice is not hardcoded in the evaluator.
+Scores retain every component and the weighted `r_total`. A batched judge must
+use `images_per_call=1` for independent judgments or enough cells for all arms
+(base plus checkpoints). If a reward declares `expected_group_size`, it must
+match that arm count. Set these through `--eval-policy-override` as needed;
+the evaluator rejects incompatible training group settings before generation
+instead of silently changing the judging protocol. Nested reward recording
+destinations are removed so scoring cannot append to a training debug archive.
+
+With no checkpoint selector, all complete checkpoints are discovered by their
+recorded epoch, deduplicating `checkpoint-final`. Use `--epochs 4,8,16` for a
+subset or repeat `--checkpoint LABEL=PATH` for explicit candidates. Base is
+always generated first. This entrypoint supports registered full-sequence,
+native-step text-to-image denoisers, not reference-conditioned or autoregressive
+models. SANA's frozen official-solver benchmark and the video-specific benchmark
+protocols remain separate: sharing statistics must not change their sampling.
+
+Each evaluation writes `images/` and a content-bound `generation_manifest.json`.
+If scoring fails after generation finishes, rerunning the same command reuses
+the verified images without loading the generator. A successful run atomically
+publishes `report/` containing scores, `summary.json`, `curve.csv`, `curve.png`,
+blinded contact sheets and a separate `blind_key.json`. Completed reports cannot
+be overwritten. Changed settings or an incomplete generation require a new
+`--output-dir`; older Anima-specific archives are not silently migrated.
+
+For a new plot of existing scores, no generator or reward model is needed:
+
+```bash
+python -m vrl.scripts.eval.score_report \
+  --scores outputs/anima_color_light_composed/checkpoint_evaluation/report/scores.jsonl \
+  --score-key codex_image_qa \
+  --output-dir outputs/color_light_curve
+```
+
+The model-independent input is JSONL with `checkpoint_label`, integer `epoch`,
+`prompt_index`, `sample_index`, `seed`, `prompt`, and `r_<component>` scores.
+Checkpoint arms must share the exact prompt/sample/seed grid. The report first
+averages samples within each prompt, then bootstraps prompt means and paired
+deltas against base. Multiple seeds of one prompt are not independent prompts.
+Image statistics and seed-diversity curves are diagnostics, not quality rewards;
+higher saturation, brightness, or pixel distance is not automatically better.
+Human review is still needed, particularly when evaluation reuses a training
+reward. Historical video reports retain their original per-cell statistics.
 
 ## Reproducibility and historical presets
 
