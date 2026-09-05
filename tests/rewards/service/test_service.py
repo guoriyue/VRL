@@ -909,7 +909,7 @@ def test_service_requires_explicit_existing_absolute_artifact_roots(tmp_path) ->
 
 
 def test_cli_config_rejects_unknown_top_level_keys_but_keeps_worker_config_open() -> None:
-    with pytest.raises(ValueError, match="unsupported reward service config keys"):
+    with pytest.raises(ValueError, match=r"reward service config: unknown typo"):
         RewardServiceConfig.from_mapping({"artifact_roots": ["/tmp"], "typo": True})
     parsed = RewardServiceConfig.from_mapping(
         {
@@ -919,7 +919,9 @@ def test_cli_config_rejects_unknown_top_level_keys_but_keeps_worker_config_open(
     )
     assert parsed.worker_config == {"model_specific_knob": 7}
     assert parsed.generation_overlap_safe is False
-    with pytest.raises(TypeError, match="must be a boolean"):
+    with pytest.raises(
+        ValueError, match=r"generation_overlap_safe: Input should be a valid boolean"
+    ):
         RewardServiceConfig.from_mapping(
             {
                 "artifact_roots": ["/tmp"],

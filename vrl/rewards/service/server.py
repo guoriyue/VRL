@@ -23,12 +23,14 @@ import time
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
+from pydantic import ConfigDict, Field, StrictBool, StrictInt, ValidationError, field_validator
 
+from vrl.config.base import ConfigBase
 from vrl.rewards.launch_contract import RewardRuntimeLaunchContract
 from vrl.rewards.service.owner import RewardScorerOwner
 from vrl.rewards.service.protocol import (
@@ -66,47 +68,52 @@ class _RequestRecord:
     task: asyncio.Task[_Reply]
 
 
-@dataclass(frozen=True, slots=True)
-class RewardServiceConfig:
-    """Typed CLI config; ``worker_config`` remains model-factory-owned."""
+class RewardServiceConfig(ConfigBase):
+    """Typed service config (``vrl/config/reward_service/*.yaml``).
+
+    The same closed-section contract as the training schema: every top-level
+    key is a declared field and an unknown one fails by name.
+    ``worker_config`` stays an open mapping — its vocabulary is owned by the
+    reward model factory it is handed to.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     host: str = "127.0.0.1"
-    port: int = 8300
+    port: StrictInt = 8300
     model_name: str = ""
     model_version: str = ""
     artifact_roots: tuple[str, ...] = ()
-    worker_config: dict[str, Any] = field(default_factory=dict)
-    max_concurrency: int = 1
-    max_pending_requests: int = 8
-    max_cached_requests: int = 1024
-    max_request_bytes: int = 16 * 1024 * 1024
+    worker_config: dict[str, Any] = Field(default_factory=dict)
+    max_concurrency: StrictInt = 1
+    max_pending_requests: StrictInt = 8
+    max_cached_requests: StrictInt = 1024
+    max_request_bytes: StrictInt = 16 * 1024 * 1024
     # Operator attestation for GPU services. CPU services are inferred safe by
     # _load_service because they execute no accelerator work beside generation.
-    generation_overlap_safe: bool = False
+    generation_overlap_safe: StrictBool = False
+
+    @field_validator("artifact_roots", mode="before")
+    @classmethod
+    def _roots_as_tuple(cls, value: Any) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            return (value,)
+        if isinstance(value, Sequence):
+            return tuple(str(root) for root in value)
+        raise ValueError("reward service artifact_roots must be a list of paths")
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> RewardServiceConfig:
-        payload = dict(value)
-        allowed = {config_field.name for config_field in fields(cls)}
-        unknown = sorted(set(payload) - allowed)
-        if unknown:
-            raise ValueError(f"unsupported reward service config keys: {unknown}")
-        roots = payload.get("artifact_roots") or ()
-        if isinstance(roots, str):
-            roots = (roots,)
-        elif isinstance(roots, Sequence):
-            roots = tuple(str(root) for root in roots)
-        else:
-            raise TypeError("reward service artifact_roots must be a list of paths")
-        worker_config = payload.get("worker_config") or {}
-        if not isinstance(worker_config, Mapping):
-            raise TypeError("reward service worker_config must be a mapping")
-        generation_overlap_safe = payload.get("generation_overlap_safe", False)
-        if not isinstance(generation_overlap_safe, bool):
-            raise TypeError("reward service generation_overlap_safe must be a boolean")
-        payload["artifact_roots"] = roots
-        payload["worker_config"] = dict(worker_config)
-        return cls(**payload)
+        """Validate one loaded YAML mapping with the repo's config error text."""
+
+        from vrl.config.schema import _extract_error_message
+
+        try:
+            return cls.model_validate(dict(value))
+        except ValidationError as exc:
+            raise ValueError(f"reward service config: {_extract_error_message(exc)}") from exc
 
 
 class RewardService:

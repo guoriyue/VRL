@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from vrl import run
 from vrl.config.builders import RewardRuntimeConfig
@@ -446,8 +446,11 @@ def _build_protocol(
     base_seed: int,
     seed_stride: int,
 ) -> dict[str, Any]:
-    train_path = Path(str(cfg.data.manifest)).expanduser().resolve()
-    eval_path = Path(str(cfg.data.eval_manifest)).expanduser().resolve()
+    root = parse_config(cfg)
+    if root.data is None or root.model is None:
+        raise ValueError("training run config needs data and model sections")
+    train_path = Path(str(root.data.manifest)).expanduser().resolve()
+    eval_path = Path(str(root.data.eval_manifest)).expanduser().resolve()
     train_examples = load_prompt_manifest(train_path)
     eval_examples = load_prompt_manifest(eval_path)
     selected = select_strict_examples(train_examples, eval_examples, limit=limit)
@@ -455,8 +458,8 @@ def _build_protocol(
         "resolved_config": {"path": str(config_path), "sha256": sha256_file(config_path)},
         "model": {
             "family": "wan_2_1",
-            "path": str(cfg.model.path),
-            "revision": str(OmegaConf.select(cfg, "model.revision", default="")),
+            "path": str(root.model.path),
+            "revision": str(root.model.revision or ""),
         },
         "training_manifest": {
             "path": str(train_path),
@@ -479,7 +482,7 @@ def _build_protocol(
             "samples_per_prompt": samples_per_prompt,
             "formula": "base_seed + sample_index * seed_stride + eval_row_index",
         },
-        "sampling": resolve_eval_sampling(parse_config(cfg)),
+        "sampling": resolve_eval_sampling(root),
     }
 
 

@@ -74,6 +74,13 @@ class RolloutCollectorConfig:
             if sampling is not None
             else frozenset(),
         )
+        teacache = getattr(sampling, "teacache", None)
+        if teacache is not None:
+            # Bool flows as-is; the mapping form is the section minus unset keys, so
+            # TeaCacheConfig.from_sampling sees exactly what the YAML declared.
+            request_sampling["teacache"] = (
+                teacache if isinstance(teacache, bool) else _section_values(teacache)
+            )
         hyperparameters = algorithm.hyperparameters if algorithm is not None else None
         train_segments = getattr(hyperparameters, "train_segments", None)
         if train_segments is not None:

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
@@ -152,8 +152,8 @@ def main(argv: list[str] | None = None) -> None:
         cfg = load_config(args.config, overrides=[*overrides, *lora_overrides])
     root = parse_config(cfg)
     precision = resolve_precision_policy(root.precision)
-    prompts = _load_prompts(args, cfg)
-    manifest_path = _resolve_manifest_path(args, cfg)
+    prompts = _load_prompts(args, root)
+    manifest_path = _resolve_manifest_path(args, root)
     if args.limit:
         prompts = prompts[: args.limit]
     if not prompts:
@@ -179,7 +179,7 @@ def main(argv: list[str] | None = None) -> None:
         parameter_dtype_override=dtype,
     )
     model_identity = resolve_checkpoint_model_identity(build)
-    lora_path = str(OmegaConf.select(cfg, "model.lora.path", default="") or "")
+    lora_path = str((root.model.lora.path if root.model.lora is not None else None) or "")
     lora_hashes = {
         "lora_weights_sha256": _lora_artifact_sha256(
             lora_path,
@@ -227,7 +227,7 @@ def main(argv: list[str] | None = None) -> None:
         "model_identity": model_identity,
         "generation_policy": _generation_policy(build, precision),
         "model": {
-            "use_lora": bool(cfg.model.use_lora),
+            "use_lora": bool(root.model.use_lora),
             # Training presets declare lora rank/alpha/target_modules without a
             # path (nothing trained yet), so this key is genuinely absent.
             "lora_path": lora_path,
@@ -318,13 +318,13 @@ def main(argv: list[str] | None = None) -> None:
         rows,
         out_dir,
         anchor_source=(
-            "anima_lora_synthetic" if bool(cfg.model.use_lora) else "anima_base_synthetic"
+            "anima_lora_synthetic" if bool(root.model.use_lora) else "anima_base_synthetic"
         ),
     )
     print(json.dumps({"total_images": len(rows), "output_dir": str(out_dir)}, indent=2))
 
 
-def _load_prompts(args: argparse.Namespace, cfg: DictConfig) -> list[PromptExample]:
+def _load_prompts(args: argparse.Namespace, root: RootConfig) -> list[PromptExample]:
     prompts = [
         PromptExample(prompt=str(prompt).strip()) for prompt in args.prompt if str(prompt).strip()
     ]
@@ -335,16 +335,21 @@ def _load_prompts(args: argparse.Namespace, cfg: DictConfig) -> list[PromptExamp
             for line in path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         )
-    manifest_path = _resolve_manifest_path(args, cfg)
+    manifest_path = _resolve_manifest_path(args, root)
     if manifest_path:
         prompts.extend(load_prompt_manifest(manifest_path))
     return prompts
 
 
-def _resolve_manifest_path(args: argparse.Namespace, cfg: DictConfig) -> Path | None:
+def _resolve_manifest_path(args: argparse.Namespace, root: RootConfig) -> Path | None:
     manifest_path = args.manifest
     if args.eval_manifest:
-        manifest_path = str(OmegaConf.select(cfg, "data.eval_manifest", default=cfg.data.manifest))
+        data = root.data
+        if data is None or not (data.eval_manifest or data.manifest):
+            raise ValueError(
+                "--eval-manifest needs data.eval_manifest (or data.manifest) in the config"
+            )
+        manifest_path = str(data.eval_manifest or data.manifest)
     if not manifest_path:
         return None
     return Path(manifest_path).expanduser().resolve()

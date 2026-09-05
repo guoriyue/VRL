@@ -624,6 +624,13 @@ def _load_configs(
 
 
 def _from_dataclass(cls: Any, values: Mapping[str, Any]) -> Any:
+    """Project one block of the upstream ``model_config.json`` onto our dataclass.
+
+    Unknown keys are dropped deliberately: this is a third-party checkpoint
+    artifact whose vocabulary upstream may extend at any time, not a VRL
+    config surface (those are closed and fail on unknown keys).
+    """
+
     allowed = {field.name for field in fields(cls)}
     return cls(**{key: value for key, value in dict(values).items() if key in allowed})
 

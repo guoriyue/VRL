@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.config.precision import PrecisionConfig, resolve_precision_policy
+from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.config.validation import require_guarded_rollout_drift
 
@@ -27,6 +27,7 @@ def _cfg(**overrides) -> OmegaConf:
     """A minimal config carrying only what the drift check reads."""
 
     base = {
+        "model": {"family": "sd3_5"},
         "precision": {
             "float32_precision": "tf32",
             "training": {"dtype": "bf16"},
@@ -34,12 +35,11 @@ def _cfg(**overrides) -> OmegaConf:
         },
     }
     base.update(overrides)
-    return OmegaConf.create(base)
+    return parse_config(OmegaConf.create(base))
 
 
-def _precision(cfg) -> object:
-    section = PrecisionConfig.model_validate(OmegaConf.to_container(cfg.precision, resolve=True))
-    return resolve_precision_policy(section)
+def _precision(root) -> object:
+    return resolve_precision_policy(root.precision)
 
 
 def test_teacache_without_any_correction_is_refused() -> None:
@@ -103,10 +103,12 @@ def test_explicit_expert_block_is_honored(expert_block: str) -> None:
     so an explicit block means the correction policy was chosen deliberately.
     """
 
-    cfg = _cfg(
-        sampling={"teacache": True},
-        trainer={expert_block: {"mode": "warn"}},
-    )
+    # Each expert block's own vocabulary (the parsed root rejects a foreign key).
+    explicit = {
+        "precision_drift_guard": {"mode": "warn"},
+        "precision_correction": {"tis_mode": "truncate"},
+    }[expert_block]
+    cfg = _cfg(sampling={"teacache": True}, trainer={expert_block: explicit})
 
     require_guarded_rollout_drift(cfg, _precision(cfg))
 

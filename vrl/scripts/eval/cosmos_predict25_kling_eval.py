@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> None:
     cfg = load_config(args.config, overrides=args.overrides)
     root = parse_config(cfg)
     precision = resolve_precision_policy(root.precision)
-    prompts = _load_prompts(args, cfg)
+    prompts = _load_prompts(args, root)
     if args.limit:
         prompts = prompts[: args.limit]
     if not prompts:
@@ -177,7 +177,7 @@ def main(argv: list[str] | None = None) -> None:
         "samples_per_prompt": int(args.samples_per_prompt),
         "seed": int(args.seed),
         "sampling": sampling,
-        "score_key": _score_key(args, cfg),
+        "score_key": _score_key(args, root),
         "keep_model_between_checkpoints": keep_model_between_checkpoints,
     }
     (output_dir / "run_config.json").write_text(
@@ -202,7 +202,7 @@ def main(argv: list[str] | None = None) -> None:
         print(json.dumps({"output_dir": str(output_dir), "videos": len(generated)}, indent=2))
         return
 
-    score_key = _score_key(args, cfg)
+    score_key = _score_key(args, root)
     rows = _score_generated_videos(generated, cfg, score_key=score_key)
     write_scores(rows, output_dir)
     summary = _summarize_scores(rows)
@@ -213,11 +213,18 @@ def main(argv: list[str] | None = None) -> None:
     print(json.dumps({"output_dir": str(output_dir), "summary": summary}, indent=2))
 
 
-def _load_prompts(args: argparse.Namespace, cfg: DictConfig) -> list[str]:
+def _load_prompts(args: argparse.Namespace, root: RootConfig) -> list[str]:
     prompts = [str(prompt).strip() for prompt in args.prompt if str(prompt).strip()]
     if args.eval_manifest:
-        manifest = str(OmegaConf.select(cfg, "data.eval_manifest", default=cfg.data.manifest))
-        prompts.extend(example.prompt for example in load_prompt_manifest(manifest))
+        data = root.data
+        if data is None or not (data.eval_manifest or data.manifest):
+            raise ValueError(
+                "--eval-manifest needs data.eval_manifest (or data.manifest) in the config"
+            )
+        prompts.extend(
+            example.prompt
+            for example in load_prompt_manifest(str(data.eval_manifest or data.manifest))
+        )
     if args.manifest:
         prompts.extend(example.prompt for example in load_prompt_manifest(args.manifest))
     return prompts
@@ -428,15 +435,11 @@ def _score_generated_videos(
     return rows
 
 
-def _score_key(args: argparse.Namespace, cfg: DictConfig) -> str:
-    return str(
-        args.score_key
-        or OmegaConf.select(
-            cfg,
-            "reward.kwargs.kling_video_reward.score_key",
-            default="overall_reward",
-        ),
-    )
+def _score_key(args: argparse.Namespace, root: RootConfig) -> str:
+    kwargs = (
+        root.reward.kwargs.get("kling_video_reward") if root.reward is not None else None
+    ) or {}
+    return str(args.score_key or kwargs.get("score_key") or "overall_reward")
 
 
 def _artifact_id(video: GeneratedVideo) -> str:

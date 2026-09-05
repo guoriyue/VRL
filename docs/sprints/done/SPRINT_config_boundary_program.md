@@ -1,6 +1,6 @@
 # SPRINT PROGRAM: Config boundary — type it once, then delete the machinery that existed because it wasn't
 
-状态：**in progress（2026-09-05 审计；S0 门已就位；S1–S5、S6a done，S6b 进行中）**
+状态：**done（2026-09-05 审计并当日落地 S1–S6；八个 commit，每个都过 S0 门）**
 
 前置（全部 done，本 program 是它们的收官）：[[SPRINT_config_unknown_key_warning]]、
 [[SPRINT_config_as_signatures]]、[[SPRINT_config_argument_ownership_and_resolution]]、
@@ -315,7 +315,7 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
 - 测试：Anima / Kling / frame-prefix 的 main-path fixture 补上 sampling 块（它们之前靠脚本
   默认值才跑得起来——正是决策 C 要消灭的那种默认）。
 
-### S6b — 外围 YAML 与 TeaCache（进行中）
+### S6b — 外围 YAML 与 TeaCache（**done**）
 
 - `RewardServiceConfig` 改 pydantic `ConfigBase`（forbid、frozen；`worker_config` 保持开放），
   `from_mapping` 用同一个 `_extract_error_message` 报错。
@@ -326,6 +326,31 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
 - TeaCache：`sampling.teacache: bool | TeaCacheSection` 进 `DenoiseImageSamplingSection`（功能从
   YAML 可达），collector 把 bool / mapping 两种形式投到 request；`require_guarded_rollout_drift(root)`
   改读 typed root——S5b 留下的最后一处 raw 读关闭。
+
+## 3.1 收官对账（2026-09-05）
+
+| 指标 | 审计时 | 落地后 |
+|---|---|---|
+| 点路径读法（`OmegaConf.select` / `cfg_get` / `cfg_path` / `require` / `optional_none` / `path_exists`） | 6 种、245 处 | 1 处（`unified_reward_video` 读 rubric 文件——不是配置） |
+| 裸 `OmegaConf.to_container` | 19 处 | 10 处（全在 load / persist / wire 边界） |
+| unknown-key 判定机制 | 6 处、3 种政策 | 1 种：pydantic `extra="forbid"`，一句 `unknown a.b, c.d` |
+| `RootConfig` 里 `Any` 字段 | 31 | 1（`algorithm.hyperparameters`，按 `kind` 选出的 dataclass） |
+| 只为 walker 存在的机器 | walker / `ConfigBlock` / `OPEN` / lint code sweep / yaml-metadata 布局引擎 / 六个幽灵 precision dataclass | 全部删除（`vrl/config/unknown_keys.py` 整个文件消失） |
+| `vrl/` 净行数 | — | −762（+1194 / −1956） |
+
+`parse_config` 之后 raw `DictConfig` 只剩三种合法去处：`build_configs(cfg)` 入口、
+`save_resolved_config(cfg)` 持久化、`prepare_model_config_for_training_resume` 对源树的那一次
+显式编辑（与 root 同步）。
+
+**留给后来者的 backlog（不在本 program 范围）**：
+- `sampling_schema.py` 各 family section 的 37 个标量仍是 `Any = None`——值类型由各 family 的
+  request boundary 校验；把它们收成 `StrictInt`/`float`/`Literal` 是同款机械活，但要逐 family 核对
+  request 层的宽容语义（例如 `guidance_scale` 允许 int）。
+- `require_guarded_rollout_drift` 现在读 typed root，但 `unguarded_drift_sources` 仍以 dict 为接口
+  （它同时服务 wire 侧）；若以后 TeaCache 之外再加 request 级近似，考虑让它直接吃
+  `SamplingSection`。
+- `vrl/scripts/eval/sana_aesthetic_report.normalize_run_config` 仍持有一台手写递归 dict differ
+  （`_first_config_difference`）——它比较的是两份 resolved dict，与 schema 无关，故未动。
 
 ## 4. 明确不做
 

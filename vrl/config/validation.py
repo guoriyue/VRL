@@ -282,7 +282,7 @@ def validate_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPoli
     # torch_compile.enable=true default can silently flip compile on underneath a
     # recipe that needs checkpointing, FSDP, or a multi-rank engine.
     require_compile_compatible(root)
-    require_guarded_rollout_drift(cfg, precision)
+    require_guarded_rollout_drift(root, precision)
     if root.production is not None and root.production.kling_video_reward.enabled:
         validate_production_kling_video_reward_config(root)
     return root, precision
@@ -380,7 +380,7 @@ def require_compile_compatible(root: RootConfig) -> None:
     )
 
 
-def require_guarded_rollout_drift(cfg: DictConfig, precision: PrecisionPolicy) -> None:
+def require_guarded_rollout_drift(root: RootConfig, precision: PrecisionPolicy) -> None:
     """Refuse a rollout approximation that no drift correction will cover.
 
     Quantization needs no check here: it changes the rollout precision label, so
@@ -396,20 +396,18 @@ def require_guarded_rollout_drift(cfg: DictConfig, precision: PrecisionPolicy) -
     """
 
     from vrl.nn.optimization import unguarded_drift_sources
-    from vrl.utils.config import to_builtin_deep
 
-    sampling = OmegaConf.select(cfg, "sampling", default=None)
+    sampling = root.sampling
     sources = unguarded_drift_sources(
-        to_builtin_deep(sampling) if sampling is not None else None,
+        sampling.model_dump(mode="python", exclude_none=True) if sampling is not None else None,
         precision,
     )
     if not sources:
         return
     # The same escape hatch the precision-split path honors: an explicit expert
     # block means the user has chosen the correction policy deliberately.
-    if OmegaConf.select(cfg, "trainer.precision_drift_guard", default=None) is not None:
-        return
-    if OmegaConf.select(cfg, "trainer.precision_correction", default=None) is not None:
+    explicit = set() if root.trainer is None else root.trainer.model_fields_set
+    if "precision_drift_guard" in explicit or "precision_correction" in explicit:
         return
     raise ValueError(
         f"sampling enables {', '.join(sources)}, which makes the rollout log-probs "
