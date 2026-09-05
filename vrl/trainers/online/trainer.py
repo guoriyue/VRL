@@ -700,7 +700,7 @@ class OnlineTrainer:
         # (importance-ratio algorithms hold a `precision_correction` slot).
         if hasattr(algorithm, "precision_correction"):
             algorithm.precision_correction = config.precision_correction
-        # Clean fine-tuning latents ({target_video -> [C,T,H,W]}) for the GRPO
+        # Clean fine-tuning latents ({target artifact -> [C,T,H,W]}) for the GRPO
         # diffusion-loss regularizer; the recipe loads data.sft_latents and the
         # config layer already rejected sft_weight>0 without it.
         self._sft_latents = dict(sft_latents) if sft_latents else None
@@ -2096,19 +2096,15 @@ class OnlineTrainer:
         import torch.nn.functional as F
 
         from vrl.math.denoise.flow_matching import diffusion_pretraining_pair
+        from vrl.trainers.data.sft_latents import resolve_clean_target
         from vrl.trajectory import TrajectoryResolver
 
         assert self._sft_latents is not None  # ctor validated
         reward_metadata = group_batch.context.get("reward_metadata", {})
-        target_key = str(reward_metadata.get("target_video", "") or "").strip()
-        if not target_key:
-            raise ValueError(
-                "the sft regularizer needs batch.context.reward_metadata.target_video "
-                "to identify the clean target latent; this collector did not attach it",
-            )
+        target_key = resolve_clean_target(reward_metadata).key
         if target_key not in self._sft_latents:
             raise ValueError(
-                f"data.sft_latents has no entry for target_video {target_key!r}; "
+                f"data.sft_latents has no entry for clean target {target_key!r}; "
                 "re-encode the shard over the full training manifest",
             )
         scheduler = getattr(self.evaluator, "scheduler", None)
@@ -2157,7 +2153,7 @@ class OnlineTrainer:
         noise = torch.randn_like(x0)
         noisy, target = diffusion_pretraining_pair(scheduler, x0, noise, t)
         values = self.model.replay_forward_with_latents(group_batch, step_idx, noisy)
-        model_pred = values["noise_pred"]
+        model_pred = self.model.diffusion_pretraining_prediction(values)
         return self._sft_weight * F.mse_loss(model_pred.float(), target.float())
 
     def _shared_sft_step_index(self, num_steps: int) -> int:
