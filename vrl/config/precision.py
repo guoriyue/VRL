@@ -31,7 +31,7 @@ from typing import Any, Literal, cast, get_args
 
 from pydantic import StrictBool, field_validator, model_validator
 
-from vrl.config.base import ClosedConfigBase
+from vrl.config.base import ConfigBase
 
 Float32Precision = Literal["ieee", "tf32"]
 
@@ -222,7 +222,7 @@ class PrecisionPolicy:
 # ── Public YAML sections ──────────────────────────────────────────────────────
 
 
-class QuantizationConfig(ClosedConfigBase):
+class QuantizationConfig(ConfigBase):
     """``quantization`` block of one role: a format plus an optional recipe."""
 
     format: str
@@ -236,7 +236,7 @@ class QuantizationConfig(ClosedConfigBase):
         return self
 
 
-class TrainingPrecisionConfig(ClosedConfigBase):
+class TrainingPrecisionConfig(ConfigBase):
     dtype: str
     outer_autocast: StrictBool = True
     quantization: QuantizationConfig | None = None
@@ -247,7 +247,7 @@ class TrainingPrecisionConfig(ClosedConfigBase):
         return _normalize_plain_dtype(value, path="precision.training.dtype")
 
 
-class PromptEncodersPrecisionConfig(ClosedConfigBase):
+class PromptEncodersPrecisionConfig(ConfigBase):
     dtype: str
 
     @field_validator("dtype", mode="before")
@@ -256,7 +256,7 @@ class PromptEncodersPrecisionConfig(ClosedConfigBase):
         return _normalize_plain_dtype(value, path="precision.rollout.prompt_encoders.dtype")
 
 
-class RolloutPrecisionConfig(ClosedConfigBase):
+class RolloutPrecisionConfig(ConfigBase):
     """Rollout-role overrides; every omitted key inherits the training role."""
 
     dtype: str | None = None
@@ -272,7 +272,7 @@ class RolloutPrecisionConfig(ClosedConfigBase):
         return _normalize_plain_dtype(value, path="precision.rollout.dtype")
 
 
-class DiffusionMathPrecisionConfig(ClosedConfigBase):
+class DiffusionMathPrecisionConfig(ConfigBase):
     dtype: str
 
     @field_validator("dtype", mode="before")
@@ -281,7 +281,7 @@ class DiffusionMathPrecisionConfig(ClosedConfigBase):
         return _normalize_plain_dtype(value, path="precision.diffusion_math.dtype")
 
 
-class PrecisionConfig(ClosedConfigBase):
+class PrecisionConfig(ConfigBase):
     """Top-level ``precision`` section."""
 
     float32_precision: Float32Precision

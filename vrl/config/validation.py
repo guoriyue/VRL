@@ -9,7 +9,6 @@ must not enter the Pydantic schema.
 from __future__ import annotations
 
 import json
-from dataclasses import fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -82,14 +81,11 @@ def validate_reward_config(cfg: DictConfig) -> RewardConfig:
     """Validate reward component shape and model-backed reward kwargs."""
     if "reward" not in cfg:
         raise ValueError("config missing required field: reward")
-    from vrl.config.unknown_keys import require_no_unknown_keys
-
-    require_no_unknown_keys(cfg.reward, section="reward")
     reward_raw = OmegaConf.to_container(cfg.reward, resolve=True, throw_on_missing=True) or {}
     try:
         return RewardConfig.model_validate(reward_raw)
     except ValidationError as exc:
-        raise ValueError(_extract_error_message(exc)) from exc
+        raise ValueError(_extract_error_message(exc, section="reward")) from exc
 
 
 def validate_production_kling_video_reward_config(root: RootConfig) -> None:
@@ -478,14 +474,7 @@ def require_guarded_rollout_drift(cfg: DictConfig, precision: PrecisionPolicy) -
     )
 
 
-def dataclass_field_names(cls: type[Any]) -> set[str]:
-    if not is_dataclass(cls):
-        raise TypeError(f"{cls!r} must be a dataclass type")
-    return {field.name for field in fields(cls) if field.init}
-
-
 __all__ = [
-    "dataclass_field_names",
     "optional_none",
     "path_exists",
     "require",

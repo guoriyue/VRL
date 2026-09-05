@@ -6,16 +6,14 @@ from pydantic import BaseModel, ConfigDict
 
 
 class ConfigBase(BaseModel):
-    """Typed public section whose unknown keys are reported by the tree walker."""
+    """Typed public section: every key is a declared field.
 
-    model_config = ConfigDict(extra="ignore")
-
-
-class ClosedConfigBase(ConfigBase):
-    """Fully typed section: every key is a declared field, so pydantic itself
-    rejects unknown ones (the tree walker still names them first)."""
+    ``extra="forbid"`` is the whole unknown-key mechanism — a typo, a removed
+    key, and a never-seen key all fail at ``parse_config`` with the same
+    ``unknown <dotted.path>`` message (see ``_extract_error_message``).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
 
-__all__ = ["ClosedConfigBase", "ConfigBase"]
+__all__ = ["ConfigBase"]

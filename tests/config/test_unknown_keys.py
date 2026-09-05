@@ -1,91 +1,30 @@
-"""Whole-tree unknown-key walker: every depth, one mechanism."""
+"""Unknown keys fail at parse_config, at every depth, with one message."""
 
 from __future__ import annotations
-
-import dataclasses
 
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.config.unknown_keys import find_unknown_keys, require_no_unknown_keys
-from vrl.utils.profiling import TorchProfilerConfig
+from tests.config.helpers import unknown_keys
+from vrl.config.schema import parse_config
 
 
 def test_required_blocks_do_not_hide_unknown_keys_during_structural_lint() -> None:
+    """A ``???`` value is a launch-time decision; the key beside it is still checked."""
+    from vrl.config.lint import experiment_parse_error
+
     cfg = OmegaConf.create({"reward": "???", "data": "???", "unknown_section": "???"})
-
-    assert find_unknown_keys(cfg) == ["unknown_section"]
-    assert OmegaConf.is_missing(cfg, "reward")
-    assert OmegaConf.is_missing(cfg, "data")
-
-
-def test_config_block_known_keys_derive_from_dataclass_fields() -> None:
-    """The mechanism must not maintain a second dataclass field allow-list."""
-    from vrl.config.unknown_keys import ConfigBlock
-
-    assert ConfigBlock(TorchProfilerConfig).known == frozenset(
-        field.name for field in dataclasses.fields(TorchProfilerConfig)
+    assert experiment_parse_error(cfg) == "unknown unknown_section"
+    assert experiment_parse_error(OmegaConf.create({"reward": "???", "data": "???"})) is None
+    assert (
+        experiment_parse_error(
+            OmegaConf.create({"model": {"family": "sd3_5"}, "actor": {"optim": {"lr": "???"}}}),
+        )
+        is None
     )
-
-
-def test_model_nested_keys_derive_from_public_section_types() -> None:
-    """Shared model blocks must not maintain separate hand-written key tuples."""
-    from vrl.config.model_schema import (
-        MODEL_MEMORY_SECTIONS,
-        LoraSection,
-        ModelExecutorSection,
-        ModelMemorySection,
-        ModelSection,
-        TorchCompileSection,
-        VaeDecodeMemorySection,
-    )
-    from vrl.config.unknown_keys import ConfigBlock
-
-    block = ConfigBlock(ModelSection)
-
-    assert block.children["lora"].known == frozenset(LoraSection.model_fields)
-    assert block.children["memory"].known == frozenset(ModelMemorySection.model_fields)
-    assert tuple(ModelMemorySection.model_fields) == MODEL_MEMORY_SECTIONS
-    assert block.children["torch_compile"].known == frozenset(
-        TorchCompileSection.model_fields,
-    )
-    assert block.children["executor"].known == frozenset(
-        ModelExecutorSection.model_fields,
-    )
-    assert block.children["memory"].children["vae_decode"].known == frozenset(
-        VaeDecodeMemorySection.model_fields,
-    )
-
-
-@pytest.mark.parametrize("section", ["actor", "trainer"])
-def test_online_section_blocks_derive_from_their_typed_sections(section: str) -> None:
-    """The walker's actor/trainer blocks come from the pydantic sections, and a
-    field typed with a runtime dataclass nests that dataclass's own keys."""
-    import typing
-
-    from vrl.config.schema import ActorSection, TrainerSection
-    from vrl.config.unknown_keys import ConfigBlock, _root_block
-
-    public_section = {"actor": ActorSection, "trainer": TrainerSection}[section]
-    block = _root_block().children[section]
-
-    assert isinstance(block, ConfigBlock)
-    assert block.known == frozenset(public_section.model_fields)
-    for name, model_field in public_section.model_fields.items():
-        nested = [
-            candidate
-            for candidate in typing.get_args(model_field.annotation)
-            if dataclasses.is_dataclass(candidate)
-        ]
-        if nested:
-            assert block.children[name].known == frozenset(
-                f.name for f in dataclasses.fields(nested[0])
-            )
 
 
 def test_typed_online_sections_keep_derived_fields_and_reject_unknown_extras() -> None:
-    from vrl.config.schema import parse_config
-
     parsed = parse_config(
         OmegaConf.create(
             {
@@ -112,9 +51,11 @@ def test_typed_online_sections_keep_derived_fields_and_reject_unknown_extras() -
 
 
 def test_unknown_keys_are_found_at_every_depth() -> None:
-    """Typos at top level, section level, and nested blocks are all named."""
+    """Typos at top level, section level, nested models, and nested runtime
+    dataclasses are all named together, sorted."""
     cfg = OmegaConf.create(
         {
+            "model": {"family": "sd3_5"},
             "samplng": {"num_steps": 10},
             "sampling": {"num_stps": 5},
             "rollout": {"sde": {"type": "flow_grpo", "window_sze": 3}},
@@ -127,8 +68,7 @@ def test_unknown_keys_are_found_at_every_depth() -> None:
             },
         },
     )
-    unknown = find_unknown_keys(cfg)
-    assert unknown == [
+    assert unknown_keys(cfg) == [
         "actor.mixed_precision",
         "actor.optim.allow_tf32",
         "actor.optim.lrr",
@@ -157,7 +97,7 @@ def test_open_blocks_accept_arbitrary_keys() -> None:
             },
         },
     )
-    assert find_unknown_keys(cfg) == []
+    assert unknown_keys(cfg) == []
 
 
 @pytest.mark.parametrize("removed_key", ["enabld", "report_path"])
@@ -173,9 +113,7 @@ def test_production_gate_is_closed(removed_key: str) -> None:
         },
     )
 
-    assert find_unknown_keys(cfg) == [
-        f"production.kling_video_reward.{removed_key}",
-    ]
+    assert unknown_keys(cfg) == [f"production.kling_video_reward.{removed_key}"]
 
 
 def test_production_enabled_is_a_known_key() -> None:
@@ -183,7 +121,7 @@ def test_production_enabled_is_a_known_key() -> None:
         {"production": {"kling_video_reward": {"enabled": True}}},
     )
 
-    assert find_unknown_keys(cfg) == []
+    assert unknown_keys(cfg) == []
 
 
 @pytest.mark.parametrize(
@@ -200,8 +138,8 @@ def test_online_update_memory_keys_are_owned_by_actor(
     actor_cfg = OmegaConf.create({"actor": {field_name: value}})
     rollout_cfg = OmegaConf.create({"rollout": {field_name: value}})
 
-    assert find_unknown_keys(actor_cfg) == []
-    assert find_unknown_keys(rollout_cfg) == [f"rollout.{field_name}"]
+    assert unknown_keys(actor_cfg) == []
+    assert unknown_keys(rollout_cfg) == [f"rollout.{field_name}"]
 
 
 @pytest.mark.parametrize(
@@ -240,25 +178,11 @@ def test_chunk_autoregressive_model_keys_are_registered(
 ) -> None:
     cfg = OmegaConf.create({"model": {"family": family, **model_values}})
 
-    assert find_unknown_keys(cfg) == []
+    assert unknown_keys(cfg) == []
 
 
-def test_require_no_unknown_keys_fails_loud() -> None:
-    cfg = OmegaConf.create({"model": {"family": "sana"}, "rolout": {"n": 1}})
-    with pytest.raises(ValueError, match=r"unknown rolout"):
-        require_no_unknown_keys(cfg)
-    require_no_unknown_keys(OmegaConf.create({"model": {"family": "sana"}}))
+def test_all_experiment_configs_parse() -> None:
+    """Anti-rot: every shipped experiment must parse through the typed schema."""
+    from vrl.config.lint import experiment_parse_failures
 
-
-def test_every_config_path_read_by_code_is_registered() -> None:
-    """Anti-rot: cfg paths the code reads must exist in the known-key tree."""
-    from vrl.config.lint import unregistered_code_paths
-
-    assert unregistered_code_paths() == []
-
-
-def test_all_experiment_configs_have_zero_unknown_keys() -> None:
-    """Anti-rot: every shipped experiment must load with zero unknown keys."""
-    from vrl.config.lint import unknown_yaml_keys
-
-    assert unknown_yaml_keys() == {}
+    assert experiment_parse_failures() == {}

@@ -9,19 +9,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import ConfigDict, Field
+from pydantic import Field
 
 from vrl.config.base import ConfigBase
 from vrl.models.checkpoint_identity import checkpoint_identity_metadata
 
 
-class _ClosedModelSection(ConfigBase):
-    """Fail-closed base for the public ``model`` configuration subtree."""
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class LoraSection(_ClosedModelSection):
+class LoraSection(ConfigBase):
     """Shared adapter inputs consumed by ``ModelBuild.lora``."""
 
     rank: int | None = Field(
@@ -58,14 +52,14 @@ class LoraSection(_ClosedModelSection):
     )
 
 
-class VaeDecodeMemorySection(_ClosedModelSection):
+class VaeDecodeMemorySection(ConfigBase):
     """VAE decode memory switches consumed by the decode-memory policy."""
 
     tiling: bool | None = None
     slicing: bool | None = None
 
 
-class ModelMemorySection(_ClosedModelSection):
+class ModelMemorySection(ConfigBase):
     """Target-keyed generation memory configuration."""
 
     vae_decode: VaeDecodeMemorySection | None = None
@@ -77,7 +71,7 @@ class ModelMemorySection(_ClosedModelSection):
 MODEL_MEMORY_SECTIONS: tuple[str, ...] = tuple(ModelMemorySection.model_fields)
 
 
-class TorchCompileSection(_ClosedModelSection):
+class TorchCompileSection(ConfigBase):
     """Transformer compile inputs consumed by ``ModelBuild.torch_compile``."""
 
     enable: bool | None = None
@@ -88,7 +82,7 @@ class TorchCompileSection(_ClosedModelSection):
     scope: str | None = None
 
 
-class ModelExecutorSection(_ClosedModelSection):
+class ModelExecutorSection(ConfigBase):
     """Shared ``GenericDiffusionBatchExecutor`` constructor inputs."""
 
     num_frames: int | None = None
@@ -97,7 +91,7 @@ class ModelExecutorSection(_ClosedModelSection):
     batch_passthrough_keys: list[str] | None = None
 
 
-class ModelSection(_ClosedModelSection):
+class ModelSection(ConfigBase):
     """Keys shared by every registered model family."""
 
     family: str = Field(

@@ -9,15 +9,13 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import ConfigDict, field_validator
+from pydantic import field_validator
 
 from vrl.config.base import ConfigBase
 
 
 class SamplingSection(ConfigBase):
-    """Fail-closed base for family-selected public sampling configuration."""
-
-    model_config = ConfigDict(extra="forbid")
+    """Base for family-selected public sampling configuration."""
 
 
 class DenoiseImageSamplingSection(SamplingSection):

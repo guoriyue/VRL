@@ -6,19 +6,14 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
-from vrl.config.algorithm import algorithm_config_class
 from vrl.config.precision import (
     PrecisionPolicy,
 )
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.config.schema import RewardConfig, RootConfig
-from vrl.config.validation import (
-    dataclass_field_names,
-    require,
-    validate_training_config,
-)
+from vrl.config.validation import validate_training_config
 
 if TYPE_CHECKING:
     from vrl.algorithms.dpo import DiffusionDPOConfig
@@ -139,19 +134,6 @@ def build_precision_split_safety_configs() -> tuple[
     )
 
 
-def _dataclass_payload(cls: type[Any], node: DictConfig) -> dict[str, Any]:
-    raw = OmegaConf.to_container(node, resolve=True, throw_on_missing=True) or {}
-    if not isinstance(raw, dict):
-        raise ValueError(f"{cls.__name__} config must be a mapping")
-    allowed = dataclass_field_names(cls)
-    ignored_keys = {"kind", "kl_reward_coef"}
-    unknown = sorted(set(raw) - allowed - ignored_keys)
-    if unknown:
-        fields_text = ", ".join(f"algorithm.{key}" for key in unknown)
-        raise ValueError(f"unknown {cls.__name__} config field(s): {fields_text}")
-    return {key: value for key, value in raw.items() if key in allowed}
-
-
 def build_offline_dpo_trainer_config(
     root: RootConfig,
     dpo_config: DiffusionDPOConfig,
@@ -221,16 +203,6 @@ def build_offline_dpo_trainer_config(
     )
 
 
-def build_algorithm_config(cfg: DictConfig):
-    """Dispatch on ``algorithm.kind`` and return the typed algorithm config."""
-
-    if "algorithm" not in cfg:
-        raise ValueError("config missing `algorithm` section")
-    kind = str(require(cfg, "algorithm.kind"))
-    cls = algorithm_config_class(kind)
-    return cls(**_dataclass_payload(cls, cfg.algorithm))
-
-
 def build_configs(cfg: DictConfig) -> BuiltConfigs:
     """Bundle typed configs for downstream training scripts."""
 
@@ -246,7 +218,9 @@ def build_configs(cfg: DictConfig) -> BuiltConfigs:
     # runtime consumers receive one truthful model tree.
     prepare_model_config_for_training_resume(cfg, resume)
     root, precision = validate_training_config(cfg)
-    algorithm = build_algorithm_config(cfg)
+    if root.algorithm is None:
+        raise ValueError("config missing `algorithm` section")
+    algorithm = root.algorithm.hyperparameters
     is_offline_dpo = root.algorithm is not None and root.algorithm.kind == "diffusion_dpo"
     trainer = None if is_offline_dpo else TrainerConfig.from_root(root, precision=precision)
     reward = RewardRuntimeConfig.from_cfg(root.reward) if root.reward is not None else None
@@ -268,7 +242,6 @@ def build_configs(cfg: DictConfig) -> BuiltConfigs:
 __all__ = [
     "BuiltConfigs",
     "RewardRuntimeConfig",
-    "build_algorithm_config",
     "build_configs",
     "build_offline_dpo_trainer_config",
 ]

@@ -22,7 +22,6 @@ from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
 from vrl.algorithms.grpo.token import TokenGRPOConfig
 from vrl.config.builders import (
     RewardRuntimeConfig,
-    build_algorithm_config,
     build_configs,
 )
 from vrl.config.loading import (
@@ -801,7 +800,7 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
     }
     for name, expected_type in examples.items():
         cfg = load_config(f"experiment/{name}")
-        algo_cfg = build_algorithm_config(cfg)
+        algo_cfg = parse_config(cfg).algorithm.hyperparameters
         assert isinstance(algo_cfg, expected_type)
 
 
@@ -819,7 +818,7 @@ def test_janus_experiments_declare_the_exact_runtime_family() -> None:
 
 
 def test_algorithm_dispatch_is_stable_per_kind() -> None:
-    """build_algorithm_config is the single dispatch: same recipe -> same type.
+    """AlgorithmConfig.kind is the single dispatch: same recipe -> same type.
 
     Replaces the old mirror dict that re-copied the builder's own kind->class
     map and only asserted "dispatch == a copy of dispatch". The
@@ -832,8 +831,8 @@ def test_algorithm_dispatch_is_stable_per_kind() -> None:
         "wan_2_1/offline_dpo_pickapic",
     ):
         cfg = load_config(f"experiment/{name}")
-        first = build_algorithm_config(cfg)
-        second = build_algorithm_config(cfg)
+        first = parse_config(cfg).algorithm.hyperparameters
+        second = parse_config(cfg).algorithm.hyperparameters
         assert type(first) is type(second)
 
 
@@ -1367,11 +1366,11 @@ def test_invalid_algorithm_kind_fails_fast() -> None:
     """Checks invalid algorithm kind fails fast."""
     cfg = OmegaConf.create({"algorithm": {"kind": "grpo", "adv_estimator": "dpo"}})
     with pytest.raises(ValueError, match="adv_estimator"):
-        build_algorithm_config(cfg)
+        parse_config(cfg)
 
     cfg = OmegaConf.create({"algorithm": {"kind": "qpo"}})
-    with pytest.raises(ValueError, match="unsupported algorithm kind"):
-        build_algorithm_config(cfg)
+    with pytest.raises(ValueError, match=r"unknown algorithm\.kind"):
+        parse_config(cfg)
 
 
 def test_unknown_algorithm_config_fields_fail_fast() -> None:
@@ -1379,7 +1378,7 @@ def test_unknown_algorithm_config_fields_fail_fast() -> None:
     cfg = OmegaConf.create({"algorithm": {"kind": "grpo", "unknown_knob": 1}})
 
     with pytest.raises(ValueError, match=r"algorithm\.unknown_knob"):
-        build_algorithm_config(cfg)
+        parse_config(cfg)
 
 
 def test_missing_drop_zero_advantage_fails_fast() -> None:

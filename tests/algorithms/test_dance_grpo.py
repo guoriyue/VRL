@@ -103,9 +103,11 @@ def test_dance_grpo_builds_a_plain_grpo_config() -> None:
 
     from vrl.algorithms.grpo.continuous import GRPOConfig
     from vrl.algorithms.grpo.token import TokenGRPOConfig
-    from vrl.config.builders import build_algorithm_config
+    from vrl.config.schema import AlgorithmConfig
 
     cfg = OmegaConf.create({"algorithm": {"kind": "dance_grpo", "clip_ratio": 0.2}})
-    built = build_algorithm_config(cfg)
+    built = AlgorithmConfig.model_validate(
+        OmegaConf.to_container(cfg.algorithm, resolve=True),
+    ).hyperparameters
     assert isinstance(built, GRPOConfig)
     assert not isinstance(built, TokenGRPOConfig)  # not the token variant

@@ -1,6 +1,6 @@
 # SPRINT PROGRAM: Config boundary — type it once, then delete the machinery that existed because it wasn't
 
-状态：**in progress（2026-09-05 审计；S0 门已就位；S1–S4 done，S5 起逐个落地）**
+状态：**in progress（2026-09-05 审计；S0 门已就位；S1–S4 done，S5a done，S5b 进行中）**
 
 前置（全部 done，本 program 是它们的收官）：[[SPRINT_config_unknown_key_warning]]、
 [[SPRINT_config_as_signatures]]、[[SPRINT_config_argument_ownership_and_resolution]]、
@@ -245,14 +245,37 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
 - `vrl/run.py` 两处 `resolve_distributed_resources(cfg)` 改传 `built.root`：`resolve_online_run` 里
   raw `cfg` 现在只剩 `build_configs(cfg)` 一处消费。
 
-### S5 — 拆机器
+### S5a — 拆 walker（**done**；snapshot diff 为空）
 
-S2–S4 后全树 `extra="forbid"`：删 `unknown_keys.py`、`lint.py` code sweep（保留 yaml sweep
-的 CLI 壳，或整个并入 `tests/config`）、`cfg_get`/`cfg_path`/`require`/`optional_none`/
-`path_exists`；`_extract_error_message` 收缩为一个 pydantic `loc` 格式化器（"config missing
-required field: a.b.c" 与 "unknown a.b.c" 两条文案由 loc 直出，无需 `_revalidate_section`
-再前缀）。`tests/config/test_unknown_keys.py` 里 walker 专属用例删除，"拼错 key 报完整路径"
-用例迁到 `test_schema.py` 断 pydantic 输出。
+- `algorithm` 是最后一个靠 walker 的 `select`/`variants` 才能判 unknown-key 的 section。改成
+  `AlgorithmConfig(kind, kl_reward_coef, hyperparameters)`：一个 before-validator 按 `kind` 选运行时
+  dataclass，把其余 key 交给 pydantic `TypeAdapter(dataclass)` 校验（类型、必填、`__post_init__`；
+  未知 key 用 dataclass 的 init 字段集判——**独立 TypeAdapter 对 stdlib dataclass 默认忽略多余 key**，
+  这是本步实测出的一个坑），构造好的实例放进 `hyperparameters`。`build_algorithm_config` /
+  `_dataclass_payload`（含它的 `ignored_keys = {"kind","kl_reward_coef"}` hack）删除，
+  `BuiltConfigs.algorithm = root.algorithm.hyperparameters`。
+- `ConfigBase` 改 `extra="forbid"`，`ClosedConfigBase` / `_ClosedModelSection` 合并消失。
+- **删 `vrl/config/unknown_keys.py` 整个文件**（walker、`ConfigBlock`、`OPEN`、`select`/`variants`）
+  和 schema 里为它而生的 `_model_section_block*` / `_sampling_section_known_fields` /
+  `*_variant_classes` / `Annotated[..., ConfigBlock(...)]`。unknown-key 现在只有一个机制：
+  pydantic `extra_forbid` + dataclass 字段的 `unexpected_keyword_argument`，由
+  `_extract_error_message` 汇总成同一句 `unknown a.b, c.d`（全部一次报出、排序——和 walker 的
+  UX 一致）。
+- `lint.py` 的 code sweep（AST 扫 `cfg_get`/`require`/`select` 点路径）删除——没有点路径可扫了；
+  CLI 保留，只做 "全部实验 parse 通过" 一件事（Makefile / CI 入口不变）。
+- 测试：`tests/config/test_unknown_keys.py` 重写为 parse 语义（walker 专属的 ConfigBlock 派生
+  用例删除）；`test_schema.py` 里 48 处 `find_unknown_keys(cfg)` 通过 `tests/config/helpers.unknown_keys`
+  （从 parse 报错反解 key 列表）保持断言原样；算法段测试改直接校验 `AlgorithmConfig`
+  （其中两个参数值本来就不合法——`add_kl_coefficient=0.2` 给 bool 字段、`segment_weights=[1.0]`
+  给 dict 字段——旧路径从不校验值）。
+
+### S5b — 拆访问器（进行中）
+
+删 `cfg_get` / `cfg_path` / `require` / `optional_none` / `path_exists`，剩余读方全部改 typed
+attribute；`resolve_training_resume_config(root)`、`RayGenerationConfig.from_root`、
+`RolloutCollectorConfig.from_root`、`load_prompt_examples_from_config(DataConfig)`、
+`build_train_launch(root)`、perf 脚本 `prepare_sampling_state(model, root)`、
+`torch_compile_for_role` 只认 `Mapping | TorchCompileSection`。
 
 ### S6 — 脚本层与外围
 

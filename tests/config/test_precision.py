@@ -9,6 +9,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from tests.config.helpers import unknown_keys
 from tests.config.test_load_all_experiments import (
     _experiment_names,
     _load_experiment_for_static_validation,
@@ -287,8 +288,6 @@ def test_scalar_precision_is_rejected_with_migration_path(scalar):
 def test_nested_unknown_keys_are_reported_at_full_path():
     from omegaconf import OmegaConf
 
-    from vrl.config.unknown_keys import find_unknown_keys
-
     block = _plain_precision()
     block["rollout"]["quantization"] = {
         "format": "fp8",
@@ -296,7 +295,7 @@ def test_nested_unknown_keys_are_reported_at_full_path():
         "typo": True,
     }
     block["forward"] = "fp16"
-    unknown = find_unknown_keys(OmegaConf.create({"precision": block}))
+    unknown = unknown_keys(OmegaConf.create({"precision": block}))
     assert unknown == [
         "precision.forward",
         "precision.rollout.quantization.typo",
@@ -306,11 +305,9 @@ def test_nested_unknown_keys_are_reported_at_full_path():
 def test_prompt_encoder_keys_are_derived_from_precision_config_sections():
     from omegaconf import OmegaConf
 
-    from vrl.config.unknown_keys import find_unknown_keys
-
     block = _plain_precision()
     block["rollout"]["prompt_encoders"] = {"dtype": "fp16"}
-    assert find_unknown_keys(OmegaConf.create({"precision": block})) == []
+    assert unknown_keys(OmegaConf.create({"precision": block})) == []
 
 
 # -- removed legacy config --------------------------------------------

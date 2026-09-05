@@ -8,6 +8,7 @@ from dataclasses import fields
 import pytest
 from omegaconf import OmegaConf
 
+from tests.config.helpers import unknown_keys
 from vrl.config.model_schema import (
     LoraSection,
     ModelExecutorSection,
@@ -157,18 +158,13 @@ def test_unknown_algorithm_kind_raises() -> None:
         parse_config(cfg)
 
 
-def test_unknown_algorithm_keys_warn_and_load() -> None:
-    """Removed keys, typos, and never-seen keys all warn — none of them raise."""
-    from vrl.config.unknown_keys import find_unknown_keys
+def test_unknown_algorithm_keys_are_rejected_together() -> None:
+    """Removed keys, typos, and never-seen keys: one error naming all of them."""
 
     cfg = OmegaConf.create(
         {"algorithm": {"kind": "grpo", "adv_estimator": "dpo", "future_field": True}}
     )
-    algo = AlgorithmConfig.model_validate(OmegaConf.to_container(cfg.algorithm, resolve=True))
-    assert algo.kind == "grpo"  # loads fine
-    unknown = find_unknown_keys(cfg)
-    assert "algorithm.adv_estimator" in unknown
-    assert "algorithm.future_field" in unknown
+    assert unknown_keys(cfg) == ["algorithm.adv_estimator", "algorithm.future_field"]
 
 
 @pytest.mark.parametrize(
@@ -176,10 +172,10 @@ def test_unknown_algorithm_keys_warn_and_load() -> None:
     [
         ("grpo", "flow_kl_use_dt", True),
         ("dance_grpo", "sft_weight", 0.1),
-        ("flow_dppo", "add_kl_coefficient", 0.2),
+        ("flow_dppo", "add_kl_coefficient", False),
         ("grpo_guard", "clip_ratio", 0.2),
         ("token_grpo", "kl_estimator", "k1"),
-        ("token_grpo_multisegment", "segment_weights", [1.0]),
+        ("token_grpo_multisegment", "segment_weights", {"a": 1.0}),
         ("diffusion_dpo", "beta", 5000.0),
         ("diffusion_nft", "nft_beta", 0.1),
     ],
@@ -189,10 +185,12 @@ def test_algorithm_keys_derive_from_selected_runtime_config(
     field: str,
     value: object,
 ) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
+    """The section accepts exactly the selected dataclass's fields, typed, and
+    hands back the built dataclass (cross-field rules are the root's job)."""
 
-    cfg = OmegaConf.create({"algorithm": {"kind": kind, field: value}})
-    assert find_unknown_keys(cfg) == []
+    section = AlgorithmConfig.model_validate({"kind": kind, field: value})
+    assert section.kind == kind
+    assert getattr(section.hyperparameters, field) == value
 
 
 @pytest.mark.parametrize(
@@ -200,17 +198,14 @@ def test_algorithm_keys_derive_from_selected_runtime_config(
     [("grpo", "beta"), ("diffusion_dpo", "clip_ratio")],
 )
 def test_algorithm_keys_are_scoped_to_selected_kind(kind: str, foreign_field: str) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
-
-    cfg = OmegaConf.create({"algorithm": {"kind": kind, foreign_field: 1}})
-    assert find_unknown_keys(cfg) == [f"algorithm.{foreign_field}"]
+    with pytest.raises(ValueError, match=rf"unknown algorithm\.{foreign_field}"):
+        AlgorithmConfig.model_validate({"kind": kind, foreign_field: 1})
 
 
 def test_algorithm_unknown_key_selector_defers_invalid_kind_to_schema() -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = OmegaConf.create({"algorithm": {"kind": "qpo", "future_field": 1}})
-    assert find_unknown_keys(cfg) == ["algorithm.future_field"]
+    assert unknown_keys(cfg) == ["algorithm.future_field"]
 
 
 def test_algorithm_dispatch_covers_schema_kind_vocabulary() -> None:
@@ -465,7 +460,6 @@ def test_unknown_training_strategy_raises() -> None:
 
 def test_training_keys_are_registered_not_unknown() -> None:
     """distributed.training.* keys are known to the unknown-key walker."""
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = _minimal_grpo_cfg(
         distributed={
@@ -476,7 +470,7 @@ def test_training_keys_are_registered_not_unknown() -> None:
             }
         }
     )
-    unknown = find_unknown_keys(cfg)
+    unknown = unknown_keys(cfg)
     assert not [k for k in unknown if k.startswith("distributed.training")]
 
 
@@ -485,7 +479,6 @@ def test_training_keys_are_registered_not_unknown() -> None:
 
 def test_wan_model_keys_are_scoped_to_wan_family() -> None:
     """Wan trainable-topology/offload keys are accepted only for Wan families."""
-    from vrl.config.unknown_keys import find_unknown_keys
 
     wan_cfg = OmegaConf.create(
         {
@@ -497,7 +490,7 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
             },
         },
     )
-    assert find_unknown_keys(wan_cfg) == []
+    assert unknown_keys(wan_cfg) == []
 
     alias_cfg = OmegaConf.create(
         {
@@ -509,7 +502,7 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
             },
         },
     )
-    assert find_unknown_keys(alias_cfg) == []
+    assert unknown_keys(alias_cfg) == []
 
     sd3_cfg = OmegaConf.create(
         {
@@ -522,7 +515,7 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
             },
         },
     )
-    assert find_unknown_keys(sd3_cfg) == [
+    assert unknown_keys(sd3_cfg) == [
         "model.boundary_ratio",
         "model.offload_mode",
         "model.trainable_transformers",
@@ -531,7 +524,6 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
 
 @pytest.mark.parametrize("family", ["wan_2_1", "wan_2_1_i2v", "wan", "wan_i2v"])
 def test_wan_boundary_ratio_is_source_derived_not_public_config(family: str) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = OmegaConf.create(
         {
@@ -543,7 +535,7 @@ def test_wan_boundary_ratio_is_source_derived_not_public_config(family: str) -> 
         },
     )
 
-    assert find_unknown_keys(cfg) == ["model.boundary_ratio"]
+    assert unknown_keys(cfg) == ["model.boundary_ratio"]
     with pytest.raises(ValueError, match=r"unknown model\.boundary_ratio"):
         parse_config(cfg)
 
@@ -557,7 +549,6 @@ def test_janus_keys_and_aliases_select_shared_family_section(
     family: str,
     trust_remote_code: bool,
 ) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg_data: dict[str, object] = {
         "model": {
@@ -575,7 +566,7 @@ def test_janus_keys_and_aliases_select_shared_family_section(
         )
     cfg = OmegaConf.create(cfg_data)
 
-    assert find_unknown_keys(cfg) == []
+    assert unknown_keys(cfg) == []
     parsed = parse_config(cfg)
     assert isinstance(parsed.model, JanusProModelSection)
     assert parsed.model.trust_remote_code is trust_remote_code
@@ -590,11 +581,10 @@ def test_janus_keys_are_unknown_for_shared_token_sibling(
     field: str,
     value: object,
 ) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = OmegaConf.create({"model": {"family": "emu3", field: value}})
 
-    assert find_unknown_keys(cfg) == [f"model.{field}"]
+    assert unknown_keys(cfg) == [f"model.{field}"]
 
 
 @pytest.mark.parametrize("family", ["nextstep_1", "nextstep"])
@@ -603,7 +593,6 @@ def test_nextstep_keys_and_alias_select_family_section(
     family: str,
     freeze_vae: bool,
 ) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     payload = {
         "freeze_vae": freeze_vae,
@@ -612,7 +601,7 @@ def test_nextstep_keys_and_alias_select_family_section(
     }
     cfg = OmegaConf.create({"model": {"family": family, **payload}})
 
-    assert find_unknown_keys(cfg) == []
+    assert unknown_keys(cfg) == []
     parsed = parse_config(cfg)
     assert isinstance(parsed.model, NextStep1ModelSection)
     assert parsed.model.freeze_vae is freeze_vae
@@ -622,11 +611,10 @@ def test_nextstep_keys_and_alias_select_family_section(
 
 @pytest.mark.parametrize("field", ["freeze_vae", "vae_path", "vae_revision"])
 def test_nextstep_keys_are_unknown_for_shared_token_sibling(field: str) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = OmegaConf.create({"model": {"family": "emu3", field: "unexpected"}})
 
-    assert find_unknown_keys(cfg) == [f"model.{field}"]
+    assert unknown_keys(cfg) == [f"model.{field}"]
 
 
 def test_unknown_wan_offload_mode_raises() -> None:
@@ -674,7 +662,6 @@ def test_cosmos_predict25_keys_and_alias_select_family_section(
     family: str,
     skip_text_encoder: bool,
 ) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = OmegaConf.create(
         {
@@ -685,7 +672,7 @@ def test_cosmos_predict25_keys_and_alias_select_family_section(
         },
     )
 
-    assert find_unknown_keys(cfg) == []
+    assert unknown_keys(cfg) == []
     parsed = parse_config(cfg)
     assert isinstance(parsed.model, CosmosPredict25ModelSection)
     assert parsed.model.skip_text_encoder is skip_text_encoder
@@ -693,7 +680,6 @@ def test_cosmos_predict25_keys_and_alias_select_family_section(
 
 
 def test_cosmos_predict25_key_is_unknown_for_shared_predict2() -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = OmegaConf.create(
         {
@@ -704,7 +690,7 @@ def test_cosmos_predict25_key_is_unknown_for_shared_predict2() -> None:
         },
     )
 
-    assert find_unknown_keys(cfg) == ["model.skip_text_encoder"]
+    assert unknown_keys(cfg) == ["model.skip_text_encoder"]
 
 
 @pytest.mark.parametrize(
@@ -712,7 +698,6 @@ def test_cosmos_predict25_key_is_unknown_for_shared_predict2() -> None:
     ["cosmos-predict2-anima", "anima", "cosmos_anima"],
 )
 def test_cosmos_anima_keys_and_aliases_select_family_section(family: str) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = OmegaConf.create(
         {
@@ -725,7 +710,7 @@ def test_cosmos_anima_keys_and_aliases_select_family_section(family: str) -> Non
         },
     )
 
-    assert find_unknown_keys(cfg) == []
+    assert unknown_keys(cfg) == []
     parsed = parse_config(cfg)
     assert isinstance(parsed.model, CosmosAnimaModelSection)
     assert parsed.model.scheduler_shift == 3.0
@@ -733,7 +718,6 @@ def test_cosmos_anima_keys_and_aliases_select_family_section(family: str) -> Non
 
 
 def test_cosmos_anima_key_is_unknown_for_shared_predict2() -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = OmegaConf.create(
         {
@@ -744,12 +728,11 @@ def test_cosmos_anima_key_is_unknown_for_shared_predict2() -> None:
         },
     )
 
-    assert find_unknown_keys(cfg) == ["model.scheduler_shift"]
+    assert unknown_keys(cfg) == ["model.scheduler_shift"]
 
 
 @pytest.mark.parametrize("family", ["llamagen", "llamagen_t2i"])
 def test_llamagen_keys_and_alias_select_family_section(family: str) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     payload = {
         "gpt_ckpt": "custom-gpt.pt",
@@ -761,7 +744,7 @@ def test_llamagen_keys_and_alias_select_family_section(family: str) -> None:
     }
     cfg = OmegaConf.create({"model": {"family": family, **payload}})
 
-    assert find_unknown_keys(cfg) == []
+    assert unknown_keys(cfg) == []
     parsed = parse_config(cfg)
     assert isinstance(parsed.model, LlamaGenModelSection)
     assert parsed.model is not None
@@ -781,11 +764,10 @@ def test_llamagen_keys_and_alias_select_family_section(family: str) -> None:
     ],
 )
 def test_llamagen_keys_are_unknown_for_shared_token_sibling(field: str) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = OmegaConf.create({"model": {"family": "emu3", field: "unexpected"}})
 
-    assert find_unknown_keys(cfg) == [f"model.{field}"]
+    assert unknown_keys(cfg) == [f"model.{field}"]
 
 
 @pytest.mark.parametrize(
@@ -827,11 +809,10 @@ def test_family_owned_denoise_keys_select_their_public_sections(
     section_cls: type[ModelSection],
     payload: dict[str, object],
 ) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = OmegaConf.create({"model": {"family": family, **payload}})
 
-    assert find_unknown_keys(cfg) == []
+    assert unknown_keys(cfg) == []
     parsed = parse_config(cfg)
     assert type(parsed.model) is section_cls
     assert parsed.model is not None
@@ -871,11 +852,10 @@ def test_family_owned_denoise_keys_are_unknown_for_shared_sibling(
     field: str,
     value: object,
 ) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = OmegaConf.create({"model": {"family": "sd3_5", field: value}})
 
-    assert find_unknown_keys(cfg) == [f"model.{field}"]
+    assert unknown_keys(cfg) == [f"model.{field}"]
 
 
 def test_model_family_aliases_select_their_canonical_section_classes() -> None:
@@ -982,7 +962,6 @@ def test_model_subtree_typos_fail_closed_with_complete_paths(
     model_fragment: dict[str, object],
     path: str,
 ) -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = OmegaConf.create(
         {
@@ -993,7 +972,7 @@ def test_model_subtree_typos_fail_closed_with_complete_paths(
         },
     )
 
-    assert find_unknown_keys(cfg) == [path]
+    assert unknown_keys(cfg) == [path]
     with pytest.raises(ValueError) as error:
         parse_config(cfg)
     assert str(error.value) == f"unknown {path}"
@@ -1158,7 +1137,6 @@ def test_rollout_keys_are_registered_not_unknown() -> None:
 
     Colocation lives at distributed.resources.rollout.gpu_pool=trainer, so the
     removed distributed.rollout.colocate block is correctly an unknown key."""
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = _minimal_grpo_cfg(
         distributed={
@@ -1175,12 +1153,11 @@ def test_rollout_keys_are_registered_not_unknown() -> None:
             }
         }
     )
-    unknown = find_unknown_keys(cfg)
+    unknown = unknown_keys(cfg)
     assert not [k for k in unknown if k.startswith("distributed.rollout")]
 
 
 def test_retired_sync_actor_inflight_knob_is_unknown() -> None:
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = _minimal_grpo_cfg(
         distributed={
@@ -1190,7 +1167,7 @@ def test_retired_sync_actor_inflight_knob_is_unknown() -> None:
         },
     )
 
-    assert find_unknown_keys(cfg) == [
+    assert unknown_keys(cfg) == [
         "distributed.rollout.max_inflight_chunks_per_worker",
     ]
 
@@ -1346,7 +1323,6 @@ def test_rollout_generation_stall_timeout_must_be_finite_and_positive(
 
 def test_reward_resident_overlap_is_not_a_resource_key() -> None:
     """Same-GPU reward/rollout residency is not a public resource topology knob."""
-    from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = _minimal_grpo_cfg(
         distributed={
@@ -1358,7 +1334,7 @@ def test_reward_resident_overlap_is_not_a_resource_key() -> None:
         },
     )
 
-    assert "distributed.resources.reward.resident_overlap" in find_unknown_keys(cfg)
+    assert "distributed.resources.reward.resident_overlap" in unknown_keys(cfg)
 
 
 # ── Data loader discriminator ─────────────────────────────────────────────────
@@ -1893,7 +1869,7 @@ def test_diffusion_dpo_sft_weight_does_not_require_online_latents_shard() -> Non
     )
     del cfg.rollout
     parsed = parse_config(cfg)
-    assert parsed.algorithm.sft_weight == pytest.approx(0.1)
+    assert parsed.algorithm.hyperparameters.sft_weight == pytest.approx(0.1)
 
 
 @pytest.mark.parametrize(

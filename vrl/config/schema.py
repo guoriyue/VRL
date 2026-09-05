@@ -2,9 +2,8 @@
 
 OmegaConf handles YAML defaults, interpolation, and CLI overrides.
 Pydantic validates the fully-resolved, merged container after OmegaConf finishes.
-Unknown YAML keys fail here, before Pydantic runs, through the single
-whole-tree walker in vrl.config.unknown_keys — a typo, a dead key, and a
-removed legacy key all get the same treatment: one error naming the dotted
+Every section is a closed pydantic model, so an unknown YAML key — a typo, a
+dead key, a removed legacy key — fails here with one error naming the dotted
 path. ``parse_config`` is the one seam, so every entrypoint that parses a
 config (training, eval, perf, encode tools) gets the same gate.
 """
@@ -15,7 +14,7 @@ import functools
 import math
 from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields
-from typing import Annotated, Any, Literal, get_args
+from typing import Any, Literal
 
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
@@ -25,6 +24,7 @@ from pydantic import (
     SerializeAsAny,
     StrictBool,
     StrictInt,
+    TypeAdapter,
     ValidationError,
     ValidationInfo,
     field_validator,
@@ -33,7 +33,7 @@ from pydantic import (
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.algorithm import algorithm_config_class, resolve_kl_reward_coef
-from vrl.config.base import ClosedConfigBase, ConfigBase
+from vrl.config.base import ConfigBase
 from vrl.config.data import DataLoaderName, manifest_sources, resolve_data_loader
 from vrl.config.model_schema import ModelSection
 from vrl.config.precision import PrecisionConfig
@@ -42,10 +42,9 @@ from vrl.config.reward_inference import (
     parse_reward_inference_config,
 )
 from vrl.config.sampling_schema import SamplingSection
-from vrl.config.unknown_keys import OPEN, ConfigBlock, require_no_unknown_keys
 from vrl.generation.execution.types import BatchPlacementStrategy
 from vrl.models.families.names import normalize_model_family
-from vrl.models.families.registry import FAMILY_REGISTRY, get_model_family_entry
+from vrl.models.families.registry import get_model_family_entry
 from vrl.ray.resources import (
     DistributedResourceConfig,
 )
@@ -66,19 +65,17 @@ from vrl.utils.profiling import TorchProfilerConfig
 
 
 class RewardConfig(ConfigBase):
-    model_config = ConfigDict(extra="ignore", arbitrary_types_allowed=True)
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     # reward names are user-chosen — open by design
-    components: Annotated[dict[str, Any], OPEN]
+    components: dict[str, Any]
     # each reward's kwargs contract is owned and validated by the reward class
     # itself at construction (vrl/rewards/), same as model families — the
     # config layer does not duplicate per-reward knowledge
-    kwargs: Annotated[dict[str, Any], OPEN] = Field(default_factory=dict)
+    kwargs: dict[str, Any] = Field(default_factory=dict)
     # Per-component transport/deployment, keyed by the same user-chosen names.
     # A component without an entry executes in-process.
-    inference: Annotated[dict[str, RewardInferenceConfig], OPEN] = Field(
-        default_factory=dict,
-    )
+    inference: dict[str, RewardInferenceConfig] = Field(default_factory=dict)
 
     @field_validator("inference", mode="before")
     @classmethod
@@ -128,6 +125,16 @@ class RewardConfig(ConfigBase):
 
 
 class AlgorithmConfig(ConfigBase):
+    """Public ``algorithm`` section.
+
+    ``kind`` selects the runtime hyper-parameter dataclass
+    (``vrl.config.algorithm.algorithm_config_class``); every other YAML key is
+    validated against that dataclass — unknown keys, missing required fields,
+    its ``__post_init__`` — and the built instance lands in ``hyperparameters``.
+    ``kl_reward_coef`` is collector-owned rather than an algorithm field, so it
+    stays on the section.
+    """
+
     kind: Literal[
         "grpo",
         "dance_grpo",
@@ -139,14 +146,13 @@ class AlgorithmConfig(ConfigBase):
         "diffusion_dpo",
         "diffusion_nft",
     ]
-
-    # The only algorithm hyper-parameter the cross-field validator reads.
-    # Every other key is derived from, and validated against, the runtime
-    # dataclass selected by ``kind``.
-    sft_weight: Any = None
     # Collector-owned diffusion reward-shaping coefficient. Token trajectories
     # do not carry the per-step KL tensor needed to consume a positive value.
     kl_reward_coef: float | None = None
+    # The runtime dataclass selected by ``kind`` (e.g. GRPOConfig), built from
+    # the remaining keys of this section. ``build_configs`` hands it to the
+    # trainer as ``BuiltConfigs.algorithm``.
+    hyperparameters: Any = None
 
     @field_validator("kl_reward_coef", mode="before")
     @classmethod
@@ -155,39 +161,39 @@ class AlgorithmConfig(ConfigBase):
             return None
         return resolve_kl_reward_coef(value)
 
-
-@functools.cache
-def _algorithm_config_block(cls: type[Any]) -> ConfigBlock:
-    # kind selects the dataclass; kl_reward_coef is collector-owned and its
-    # trajectory compatibility is validated at the root boundary below.
-    known = {field.name for field in dataclass_fields(cls)} | {"kind", "kl_reward_coef"}
-    return ConfigBlock(known)
-
-
-def _algorithm_config_block_for_unknown_keys(mapping: Mapping[str, Any]) -> ConfigBlock:
-    kind = str(mapping.get("kind") or "")
-    try:
-        cls = algorithm_config_class(kind)
-    except ValueError:
-        # Unknown-key reporting runs before schema validation. Let the Literal
-        # produce the authoritative invalid-kind error instead of failing here.
-        return ConfigBlock(AlgorithmConfig)
-    return _algorithm_config_block(cls)
-
-
-_algorithm_config_variant_blocks: tuple[ConfigBlock, ...] = tuple(
-    _algorithm_config_block(cls)
-    for cls in dict.fromkeys(
-        algorithm_config_class(kind)
-        for kind in get_args(AlgorithmConfig.model_fields["kind"].annotation)
-    )
-)
+    @model_validator(mode="before")
+    @classmethod
+    def _select_hyperparameters(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(value)
+        try:
+            hyper_cls = algorithm_config_class(str(payload.get("kind")))
+        except ValueError:
+            return payload  # the ``kind`` Literal reports the authoritative error
+        section = {key: payload[key] for key in ("kind", "kl_reward_coef") if key in payload}
+        rest = {key: inner for key, inner in payload.items() if key not in section}
+        prebuilt = rest.pop("hyperparameters", None)
+        if isinstance(prebuilt, hyper_cls) and not rest:
+            return {**section, "hyperparameters": prebuilt}
+        if isinstance(prebuilt, Mapping):
+            rest = {**dict(prebuilt), **rest}
+        # A stdlib dataclass validated on its own ignores extra keys; the
+        # dataclass's init fields are the complete vocabulary for this kind.
+        unknown = sorted(set(rest) - {f.name for f in dataclass_fields(hyper_cls) if f.init})
+        if unknown:
+            raise ValueError("unknown " + ", ".join(f"algorithm.{key}" for key in unknown))
+        try:
+            hyperparameters = TypeAdapter(hyper_cls).validate_python(rest)
+        except ValidationError as exc:
+            raise ValueError(_extract_error_message(exc, section="algorithm")) from exc
+        return {**section, "hyperparameters": hyperparameters}
 
 
 # ── Data section ──────────────────────────────────────────────────────────────
 
 
-class DataPreprocessingSection(ClosedConfigBase):
+class DataPreprocessingSection(ConfigBase):
     """``data.preprocessing``: loader-side sample shaping.
 
     readers: DataConfig._validate_data, vrl/trainers/data/prompts.py
@@ -205,7 +211,7 @@ class DataPreprocessingSection(ClosedConfigBase):
     reference_image: str | None = None
 
 
-class DataSamplerSection(ClosedConfigBase):
+class DataSamplerSection(ConfigBase):
     """``data.sampler``: prompt-batch sampling (online) or DataLoader knobs (offline)."""
 
     # PromptSamplingStrategy value; validated by DataConfig for the prompt loaders.
@@ -218,8 +224,8 @@ class DataSamplerSection(ClosedConfigBase):
 class DataConfig(ConfigBase):
     loader: DataLoaderName | None = None
     # A path, or a {manifest path: prompt count} mixture whose keys are file
-    # paths chosen by the recipe (hence OPEN). reader: manifest_sources.
-    manifest: Annotated[str | dict[str, Any] | None, OPEN] = None
+    # paths chosen by the recipe (an open mapping). reader: manifest_sources.
+    manifest: str | dict[str, Any] | None = None
     # Draw seed for a manifest mixture, required whenever one is declared: every
     # rank draws the mixture itself and then indexes into it.
     # reader: load_prompt_examples_from_config
@@ -419,30 +425,6 @@ def _model_section_class_for_family(family: Any) -> type[ModelSection]:
     return _model_section_class_from_path(entry.model_section_cls)
 
 
-_model_section_variant_classes: tuple[type[ModelSection], ...] = tuple(
-    dict.fromkeys(
-        _model_section_class_from_path(entry.model_section_cls)
-        for entry in FAMILY_REGISTRY.values()
-    )
-)
-
-
-@functools.cache
-def _model_section_block(cls: type[ModelSection]) -> ConfigBlock:
-    return ConfigBlock(cls)
-
-
-def _model_section_block_for_unknown_keys(mapping: Mapping[str, Any]) -> ConfigBlock:
-    try:
-        section_cls = _model_section_class_for_family(mapping.get("family"))
-    except ValueError:
-        # Unknown-key reporting precedes structural validation. Keep the walker
-        # useful while RootConfig emits the authoritative missing/unknown-family
-        # error instead of silently selecting a permissive fallback.
-        section_cls = ModelSection
-    return _model_section_block(section_cls)
-
-
 def _revalidate_section[SectionT: ConfigBase](
     section_cls: type[SectionT],
     payload: Any,
@@ -507,28 +489,6 @@ def sampling_section_class_for_family(family: Any) -> type[SamplingSection]:
     return _sampling_section_class_from_path(entry.sampling_section_cls)
 
 
-_sampling_section_variant_classes: tuple[type[SamplingSection], ...] = tuple(
-    dict.fromkeys(
-        _sampling_section_class_from_path(entry.sampling_section_cls)
-        for entry in FAMILY_REGISTRY.values()
-    )
-)
-
-
-def _sampling_section_known_fields() -> tuple[str, ...]:
-    """Derive the unknown-key inventory from every registered concrete schema."""
-
-    return tuple(
-        sorted(
-            {
-                name
-                for section_cls in _sampling_section_variant_classes
-                for name in section_cls.model_fields
-            },
-        ),
-    )
-
-
 def _parse_sampling_section(
     value: Any,
     *,
@@ -554,7 +514,7 @@ def _parse_sampling_section(
 # ── actor / trainer sections ──────────────────────────────────────────────────
 
 
-class ActorSection(ClosedConfigBase):
+class ActorSection(ConfigBase):
     """Public ``actor`` section: the online trainer's optimizer/loop knobs plus
     the offline-DPO entrypoint's inputs.
 
@@ -587,7 +547,7 @@ class ActorSection(ClosedConfigBase):
     use_adafactor: StrictBool | None = None
 
 
-class TrainerSection(ClosedConfigBase):
+class TrainerSection(ConfigBase):
     """Public ``trainer`` section: run lifecycle/IO plus trainer-level policies."""
 
     entrypoint: str | None = None
@@ -840,32 +800,14 @@ class RootConfig(ConfigBase):
     by vrl.ray.resources. An unknown key anywhere fails at parse_config.
     """
 
-    algorithm: Annotated[
-        AlgorithmConfig | None,
-        ConfigBlock(
-            AlgorithmConfig,
-            select=_algorithm_config_block_for_unknown_keys,
-            variants=_algorithm_config_variant_blocks,
-        ),
-    ] = None
+    algorithm: AlgorithmConfig | None = None
     data: DataConfig | None = None
     reward: RewardConfig | None = None
     rollout: RolloutConfig | None = None
-    model: Annotated[
-        SerializeAsAny[ModelSection] | None,
-        ConfigBlock(
-            ModelSection,
-            select=_model_section_block_for_unknown_keys,
-            variants=_model_section_variant_classes,
-        ),
-    ] = None
-    sampling: Annotated[
-        SerializeAsAny[SamplingSection] | None,
-        ConfigBlock(
-            _sampling_section_known_fields(),
-            variants=_sampling_section_variant_classes,
-        ),
-    ] = None
+    # Family-selected: the ``model.family`` picks the concrete section class
+    # (``_parse_model_section``); sampling follows the model's family.
+    model: SerializeAsAny[ModelSection] | None = None
+    sampling: SerializeAsAny[SamplingSection] | None = None
     # Per-component production gates; contract checks live in
     # vrl/config/validation.py validate_production_* (raw-cfg checks)
     production: ProductionSection | None = None
@@ -922,7 +864,7 @@ class RootConfig(ConfigBase):
         # The SFT term belongs to continuous diffusion GRPO and offline
         # Diffusion-DPO. Validate the numeric domain and algorithm ownership
         # here so an inherited token-GRPO field cannot silently become a no-op.
-        raw_sft_weight = getattr(algo, "sft_weight", None)
+        raw_sft_weight = getattr(algo.hyperparameters, "sft_weight", None)
         if raw_sft_weight is not None:
             try:
                 sft_weight = float(raw_sft_weight)
@@ -1014,27 +956,46 @@ class RootConfig(ConfigBase):
 # ── Parse boundary ────────────────────────────────────────────────────────────
 
 
+_UNKNOWN_KEY_ERRORS = ("extra_forbidden", "unexpected_keyword_argument")
+
+
 def _extract_error_message(exc: ValidationError, *, section: str = "") -> str:
     """Extract a clean ValueError message from a Pydantic ValidationError.
 
     ``section`` re-anchors a bare section payload (a family-selected ``model``
     or ``sampling`` class validated on its own) to its public YAML path, so the
     location always reads ``<section>.<field>``.
+
+    Unknown keys take precedence and are reported all at once, sorted — a typo,
+    a removed key, and a never-seen key get the same ``unknown a.b, c.d`` line
+    whether pydantic saw them as ``extra_forbidden`` on a model, as an
+    unexpected keyword on a stdlib dataclass field, or already folded into a
+    nested section's own message. Otherwise the first error is reported.
     """
-    first = exc.errors(include_url=False)[0]
+    errors = exc.errors(include_url=False)
+
+    def location(error: Any) -> str:
+        parts = [str(p) for p in error["loc"]]
+        if section:
+            parts.insert(0, section)
+        return ".".join(parts)
+
+    unknown: set[str] = set()
+    for error in errors:
+        if error["type"] in _UNKNOWN_KEY_ERRORS:
+            unknown.add(location(error))
+        elif error["msg"].startswith("Value error, unknown ") and "; expected" not in error["msg"]:
+            unknown.update(error["msg"][len("Value error, unknown ") :].split(", "))
+    if unknown:
+        return "unknown " + ", ".join(sorted(unknown))
+
+    first = errors[0]
     error_type = first["type"]
     msg = first["msg"]
-    parts = [str(p) for p in first["loc"]]
-    if section:
-        parts.insert(0, section)
-    loc = ".".join(parts)
+    loc = location(first)
     # Missing required field — remap to repo-standard message format
     if error_type == "missing":
         return f"config missing required field: {loc}"
-    # pydantic reports an unknown key on a stdlib dataclass field as an
-    # unexpected keyword argument; it is the same condition.
-    if error_type in ("extra_forbidden", "unexpected_keyword_argument"):
-        return f"unknown {loc}"
     # Literal enum mismatch — reformat to "unknown {loc}={input!r}; expected ..."
     if error_type == "literal_error":
         input_val = first.get("input", "")
@@ -1052,10 +1013,9 @@ def parse_config(cfg: DictConfig) -> RootConfig:
     """Validate a fully-merged, resolved DictConfig through the typed schema.
 
     OmegaConf resolves interpolations and enforces ??? missing-value semantics;
-    the unknown-key walker rejects keys no consumer reads; Pydantic validates
-    structure, enum discriminators, and cross-field rules.
+    Pydantic validates structure (every section is closed, so unknown keys fail
+    here), enum discriminators, and cross-field rules.
     """
-    require_no_unknown_keys(cfg)
     try:
         raw = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
     except MissingMandatoryValue as exc:

@@ -415,12 +415,9 @@ def test_grpo_guard_requires_old_prev_sample_mean() -> None:
     [("flow_dppo", FlowDPPOConfig), ("grpo_guard", GRPOGuardConfig)],
 )
 def test_kind_builds_the_right_config(kind: str, expected: type) -> None:
-    from omegaconf import OmegaConf
+    from vrl.config.schema import AlgorithmConfig
 
-    from vrl.config.builders import build_algorithm_config
-
-    cfg = OmegaConf.create({"algorithm": {"kind": kind}})
-    assert isinstance(build_algorithm_config(cfg), expected)
+    assert isinstance(AlgorithmConfig(kind=kind).hyperparameters, expected)
 
 
 def test_trust_region_algorithms_request_kl_intermediates() -> None:
