@@ -212,12 +212,12 @@ def build_configs(cfg: DictConfig) -> BuiltConfigs:
     )
     from vrl.trainers.online.config import TrainerConfig
 
-    resume = resolve_training_resume_config(cfg)
-    # A full checkpoint, not model.lora.path, owns trainable state on resume.
-    # Normalize the raw source before typed parsing so persisted config and all
-    # runtime consumers receive one truthful model tree.
-    prepare_model_config_for_training_resume(cfg, resume)
     root, precision = validate_training_config(cfg)
+    resume = resolve_training_resume_config(root)
+    # A full checkpoint, not model.lora.path, owns trainable state on resume.
+    # Clear it in both the parsed root and the merged source so persisted
+    # config and all runtime consumers receive one truthful model tree.
+    prepare_model_config_for_training_resume(cfg, root, resume)
     if root.algorithm is None:
         raise ValueError("config missing `algorithm` section")
     algorithm = root.algorithm.hyperparameters

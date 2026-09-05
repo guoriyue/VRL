@@ -1,19 +1,17 @@
 """Validation and required-access helpers for merged training configs.
 
 Structural validation flows through parse_config() -> RootConfig (schema.py).
-This module owns the dotted-path access helpers (require / optional_none /
-path_exists) and the production gates whose file-existence and manifest checks
-must not enter the Pydantic schema.
+This module owns the gates that read the parsed root: the torch.compile
+compatibility matrix, the rollout drift guard, and the production Kling gate
+whose file-existence and manifest checks must not enter the Pydantic schema.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
-from omegaconf import DictConfig, ListConfig, OmegaConf
-from omegaconf.errors import MissingMandatoryValue
+from omegaconf import DictConfig, OmegaConf
 from pydantic import ValidationError
 
 from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
@@ -23,58 +21,6 @@ from vrl.config.schema import (
     _extract_error_message,
     parse_config,
 )
-
-_MISSING = object()
-_REQUIRED = object()
-
-
-def _select_field(cfg: DictConfig, path: str, *, on_none: Any) -> Any:
-    """Resolve a dotted path, sharing the missing/None/container handling.
-
-    ``require`` and ``optional_none`` differ only in what happens when the
-    resolved node is ``None``: pass the ``_REQUIRED`` sentinel to reject it
-    like a missing field, or any other value to return it.
-    """
-    try:
-        node = OmegaConf.select(cfg, path, default=_MISSING, throw_on_missing=True)
-    except MissingMandatoryValue as exc:
-        missing_path = getattr(exc, "full_key", path) or path
-        raise ValueError(f"config missing required field: {missing_path}") from exc
-    if node is _MISSING:
-        raise ValueError(f"config missing required field: {path}")
-    if node is None:
-        if on_none is _REQUIRED:
-            raise ValueError(f"config missing required field: {path} (got None)")
-        return on_none
-    if isinstance(node, (DictConfig, ListConfig)):
-        return OmegaConf.to_container(node, resolve=True, throw_on_missing=True)
-    return node
-
-
-def require(cfg: DictConfig, path: str) -> Any:
-    """Fetch a required dotted path from a config.
-
-    YAML should declare experiment-owned required values with ``???``. This
-    helper keeps a stable repo-level error message around OmegaConf's missing
-    value semantics.
-    """
-    return _select_field(cfg, path, on_none=_REQUIRED)
-
-
-def optional_none(cfg: DictConfig, path: str) -> Any | None:
-    """Fetch a dotted path that may explicitly be ``null``."""
-    return _select_field(cfg, path, on_none=None)
-
-
-def path_exists(cfg: DictConfig, path: str) -> bool:
-    """Return true if a dotted path is present, even when its value is ``???``."""
-    keys = path.split(".")
-    node: Any = cfg
-    for key in keys:
-        if not isinstance(node, DictConfig) or key not in node:
-            return False
-        node = node[key]
-    return True
 
 
 def validate_reward_config(cfg: DictConfig) -> RewardConfig:
@@ -475,9 +421,6 @@ def require_guarded_rollout_drift(cfg: DictConfig, precision: PrecisionPolicy) -
 
 
 __all__ = [
-    "optional_none",
-    "path_exists",
-    "require",
     "validate_production_kling_video_reward_config",
     "validate_production_reward_contract",
     "validate_reward_config",

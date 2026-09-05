@@ -10,6 +10,7 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 from tests.quality.preview import build_preview_request, write_preview_image
+from vrl.config.schema import parse_config
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trainers.data.prompts import PromptExample
@@ -28,12 +29,15 @@ def test_preview_request_uses_real_prompt_overrides_and_one_sample(
             family="sana",
             task="t2i",
         ),
-        config=RolloutCollectorConfig.from_cfg(
-            OmegaConf.create(
-                {
-                    "rollout": {"samples_per_generation_batch": configured_chunk_size},
-                    "sampling": {"num_steps": 10, "guidance_scale": 4.5},
-                },
+        config=RolloutCollectorConfig.from_root(
+            parse_config(
+                OmegaConf.create(
+                    {
+                        "model": {"family": "sana"},
+                        "rollout": {"samples_per_generation_batch": configured_chunk_size},
+                        "sampling": {"num_steps": 10, "guidance_scale": 4.5},
+                    },
+                )
             ),
         ),
     )

@@ -584,7 +584,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             device,
             dtype,
         )
-        collector_config = RolloutCollectorConfig.from_cfg(cfg)
+        collector_config = RolloutCollectorConfig.from_root(parse_config(cfg))
         if case.synthetic_replay_rollout:
             collector = _SyntheticDiffusionReplayCollector(
                 model=bundle.model,

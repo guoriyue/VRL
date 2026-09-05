@@ -61,7 +61,7 @@ def main(argv=None) -> None:
 
     # make_step_fn parks frozen encoders/VAE on CPU and returns a closure that runs
     # one denoise forward + SDE step (the exact rollout inner loop).
-    step_fn = make_step_fn(runtime, cfg)
+    step_fn = make_step_fn(runtime, root)
 
     # Extra warmup when compiling so the (slow) first compiled call is excluded.
     for i in range(args.warmup + (4 if args.compile else 0)):

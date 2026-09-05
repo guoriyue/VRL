@@ -1,33 +1,26 @@
-"""Rollout config projection from user YAML configs.
+"""Rollout config projection from the parsed public config.
 
 The one place validated public config becomes generation-request wire state:
 ``RolloutCollectorConfig`` splits the ``rollout``/``sampling`` sections into
 the per-request sampling payload and the collector-local knobs (KL reward
 coefficient, trajectory storage policy). Projection is fail-closed — accepted
 keys are derived from the schema types (``generation_request_rollout_fields``,
-per-family ``SamplingSection``), never from a hand-maintained list, so a new
-schema field flows through without a second vocabulary to update.
+the family-selected ``SamplingSection``), never from a hand-maintained list, so
+a new schema field flows through without a second vocabulary to update.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field, is_dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vrl.config.algorithm import resolve_kl_reward_coef
-from vrl.config.sampling_schema import SamplingSection
-from vrl.config.schema import (
-    SdeConfig,
-    generation_request_rollout_fields,
-    sampling_section_class_for_family,
-)
-from vrl.models.families.registry import FAMILY_REGISTRY
-from vrl.trajectory import (
-    TrajectoryStoragePolicy,
-    trajectory_storage_policy_from_cfg,
-)
-from vrl.utils.config import cfg_path, to_builtin_deep
+from vrl.config.schema import SdeConfig, generation_request_rollout_fields
+from vrl.trajectory import TrajectoryStoragePolicy
+
+if TYPE_CHECKING:
+    from vrl.config.base import ConfigBase
+    from vrl.config.schema import RootConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,39 +46,44 @@ class RolloutCollectorConfig:
         return sampling
 
     @classmethod
-    def from_cfg(cls, cfg: Any) -> RolloutCollectorConfig:
-        """Project validated public fields into collector-local and request state."""
+    def from_root(cls, root: RootConfig) -> RolloutCollectorConfig:
+        """Project the parsed public sections into collector-local and request state."""
+
+        rollout = root.rollout
+        sampling = root.sampling
+        algorithm = root.algorithm
 
         request_sampling: dict[str, Any] = {}
         _merge_flat_section_values(
             request_sampling,
-            cfg,
+            rollout,
             "rollout",
             allowed=generation_request_rollout_fields(),
         )
-        sde_values = _cfg_mapping(cfg, "rollout.sde")
+        sde_values = _section_values(rollout.sde) if rollout is not None else {}
         # Derived from the schema type per this module's own rule: a hand
         # -written map silently drops any field SdeConfig gains later.
-        for source_key, target_key in {
-            name: f"sde_{name}" for name in SdeConfig.model_fields
-        }.items():
-            if source_key in sde_values and sde_values[source_key] is not None:
-                request_sampling[target_key] = to_builtin_deep(sde_values[source_key])
+        for name in SdeConfig.model_fields:
+            if sde_values.get(name) is not None:
+                request_sampling[f"sde_{name}"] = sde_values[name]
         _merge_flat_section_values(
             request_sampling,
-            cfg,
+            sampling,
             "sampling",
-            allowed=_sampling_fields_for_cfg(cfg),
+            allowed=frozenset(type(sampling).model_fields)
+            if sampling is not None
+            else frozenset(),
         )
-        train_segments = cfg_path(cfg, "algorithm.train_segments", None)
+        hyperparameters = algorithm.hyperparameters if algorithm is not None else None
+        train_segments = getattr(hyperparameters, "train_segments", None)
         if train_segments is not None:
-            request_sampling["train_segments"] = to_builtin_deep(train_segments)
+            request_sampling["train_segments"] = train_segments
         kl_reward_coef = resolve_kl_reward_coef(
-            cfg_path(cfg, "algorithm.kl_reward_coef", None),
+            algorithm.kl_reward_coef if algorithm is not None else None,
         )
-        trajectory_storage = trajectory_storage_policy_from_cfg(
-            cfg_path(cfg, "rollout.trajectory_storage", None),
-        )
+        trajectory_storage = (
+            rollout.trajectory_storage if rollout is not None else None
+        ) or TrajectoryStoragePolicy()
         has_sde_values = any(
             name in request_sampling
             for name in ("sde_type", "sde_window_size", "sde_window_range")
@@ -99,73 +97,34 @@ class RolloutCollectorConfig:
         )
 
 
+def _section_values(section: ConfigBase | None) -> dict[str, Any]:
+    """The keys a parsed section was actually given, as plain python values."""
+
+    if section is None:
+        return {}
+    return section.model_dump(mode="python", exclude_none=True, exclude_unset=True)
+
+
 def _merge_flat_section_values(
     values: dict[str, Any],
-    cfg: Any,
-    section: str,
+    section: ConfigBase | None,
+    name: str,
     *,
     allowed: frozenset[str],
 ) -> None:
-    section_values = _cfg_mapping(cfg, section)
-    for key, value in section_values.items():
-        name = str(key)
-        if name not in allowed:
+    for key, value in _section_values(section).items():
+        if key not in allowed:
             continue
-        normalized = to_builtin_deep(value)
         # Nested blocks (sde, trajectory_storage, torch_profiler) have their own
         # projection or no wire presence at all; only scalars flatten here.
-        if isinstance(normalized, dict) or is_dataclass(normalized):
+        if isinstance(value, dict) or is_dataclass(value):
             continue
-        if name in values:
+        if key in values:
             raise ValueError(
-                f"rollout request key {name!r} has multiple config owners; "
-                f"remove the duplicate from {section}",
+                f"rollout request key {key!r} has multiple config owners; "
+                f"remove the duplicate from {name}",
             )
-        values[name] = normalized
-
-
-def _cfg_mapping(cfg: Any, path: str) -> dict[str, Any]:
-    value = cfg_path(cfg, path, _MISSING)
-    if value is _MISSING or value is None:
-        return {}
-    model_dump = getattr(value, "model_dump", None)
-    if callable(model_dump):
-        raw = model_dump(
-            mode="python",
-            exclude_none=True,
-            exclude_unset=True,
-        )
-        if isinstance(raw, dict):
-            return {str(key): inner for key, inner in raw.items()}
-        raise ValueError(f"{path} config must be a mapping")
-    value = to_builtin_deep(value)
-    if isinstance(value, Mapping):
-        return {str(key): inner for key, inner in value.items()}
-    raise ValueError(f"{path} config must be a mapping")
-
-
-def _sampling_fields_for_cfg(cfg: Any) -> frozenset[str]:
-    """Select request keys from typed state while retaining the raw adapter."""
-
-    sampling = cfg_path(cfg, "sampling", _MISSING)
-    if isinstance(sampling, SamplingSection):
-        return frozenset(type(sampling).model_fields)
-
-    family = cfg_path(cfg, "model.family", None)
-    if family is not None and str(family).strip():
-        return frozenset(sampling_section_class_for_family(family).model_fields)
-
-    # Tests and public adapters may still project a raw sampling-only mapping.
-    # Derive that compatibility surface from registered schemas so it cannot
-    # drift into a second hand-maintained vocabulary.
-    return frozenset(
-        name
-        for entry in FAMILY_REGISTRY.values()
-        for name in sampling_section_class_for_family(entry.family).model_fields
-    )
-
-
-_MISSING = object()
+        values[key] = value
 
 
 __all__ = [

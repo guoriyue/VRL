@@ -312,12 +312,12 @@ def resolve_online_run(cfg: DictConfig) -> ResolvedOnlineRun:
         built.root,
         reward_inference=built.reward.inference_configs if built.reward else None,
     )
-    generation = RayGenerationConfig.from_cfg(
+    generation = RayGenerationConfig.from_root(
         built.root,
         resources=resources,
     )
     device = torch.device(resources.trainer_torch_device)
-    collector = RolloutCollectorConfig.from_cfg(built.root)
+    collector = RolloutCollectorConfig.from_root(built.root)
     return ResolvedOnlineRun(
         built=built,
         family=family,

@@ -70,11 +70,11 @@ def _build_model(root, device, dtype, *, precision):
     return runtime.model
 
 
-def _measure(model, cfg, device, dtype, threshold):
+def _measure(model, root, device, dtype, threshold):
     """Return (rollout_logp, replay_logp, skip_ratio) for one threshold (None=off)."""
 
-    num_steps = int(cfg.sampling.num_steps)
-    state = prepare_sampling_state(model, cfg)
+    num_steps = int(root.sampling.num_steps)
+    state = prepare_sampling_state(model, root)
     teacache = (
         TeaCacheState(TeaCacheConfig.from_sampling({"threshold": threshold}), num_steps)
         if threshold is not None
@@ -139,7 +139,7 @@ def _measure(model, cfg, device, dtype, threshold):
     )
 
 
-def _diagnose(model, cfg, device, dtype):
+def _diagnose(model, root, device, dtype):
     """Per-step exact-denoise change profile = the structural TeaCache ceiling.
 
     Reports rel-L1 between consecutive EXACT noise_preds. A step whose noise_pred
@@ -150,8 +150,8 @@ def _diagnose(model, cfg, device, dtype):
     better signal (P0.2) cannot help.
     """
 
-    num_steps = int(cfg.sampling.num_steps)
-    state = prepare_sampling_state(model, cfg)
+    num_steps = int(root.sampling.num_steps)
+    state = prepare_sampling_state(model, root)
     gen = torch.Generator(device=device).manual_seed(0)
     preds: list[torch.Tensor] = []
     lat_rel: list[float] = []
@@ -218,7 +218,7 @@ def main(argv=None):
     model = _build_model(root, device, dtype, precision=precision)
 
     if args.diagnose:
-        _diagnose(model, cfg, device, dtype)
+        _diagnose(model, root, device, dtype)
         return
 
     thresholds = [None] + [float(x) for x in args.thresholds.split(",") if x.strip()]
@@ -228,7 +228,7 @@ def main(argv=None):
     )
     print("-" * 80)
     for thr in thresholds:
-        rollout_lp, replay_lp, skip = _measure(model, cfg, device, dtype, thr)
+        rollout_lp, replay_lp, skip = _measure(model, root, device, dtype, thr)
         stats = compute_logprob_mismatch_stats(fresh_log_prob=replay_lp, old_log_prob=rollout_lp)
         name = "baseline(no teacache)" if thr is None else f"teacache(thr={thr})"
         print(

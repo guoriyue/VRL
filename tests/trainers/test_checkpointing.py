@@ -10,6 +10,7 @@ from safetensors.torch import load_file, save_file
 from torch import nn
 
 from vrl.config.precision import RolePrecision
+from vrl.config.schema import parse_config
 from vrl.models.interfaces.runtime import RuntimeBundle, register_checkpoint_owned_state
 from vrl.models.steps.denoise.base import DiffusionModelBase
 from vrl.models.steps.token.base import ARModelBase
@@ -50,14 +51,14 @@ def test_resume_strict_uses_checkpoint_policy(
     trainer = {} if value is None else {"resume_strict": value}
     cfg = OmegaConf.create({"trainer": trainer})
 
-    assert resolve_training_resume_config(cfg).strict is expected
+    assert resolve_training_resume_config(parse_config(cfg)).strict is expected
 
 
 def test_resume_strict_rejects_string_truthiness() -> None:
     cfg = OmegaConf.create({"trainer": {"resume_strict": "false"}})
 
-    with pytest.raises(TypeError, match="must be a boolean"):
-        resolve_training_resume_config(cfg)
+    with pytest.raises(ValueError, match=r"trainer\.resume_strict"):
+        parse_config(cfg)
 
 
 @pytest.mark.parametrize(
@@ -72,7 +73,7 @@ def test_resume_config_resolves_fresh_and_checkpoint_paths(
         {"trainer": {"resume_from": resume_from, "resume_strict": False}},
     )
 
-    resolved = resolve_training_resume_config(cfg)
+    resolved = resolve_training_resume_config(parse_config(cfg))
 
     assert resolved.checkpoint_path == expected_path
     assert resolved.strict is False
@@ -81,17 +82,21 @@ def test_resume_config_resolves_fresh_and_checkpoint_paths(
 def test_nonstrict_resume_clears_the_warm_start_adapter_path() -> None:
     cfg = OmegaConf.create(
         {
-            "model": {"lora": {"path": "/tmp/warm-start"}},
+            "model": {"family": "sd3_5", "lora": {"path": "/tmp/warm-start"}},
             "trainer": {"resume_from": "/tmp/checkpoint-4", "resume_strict": False},
         },
     )
+    root = parse_config(cfg)
 
-    prepare_model_config_for_training_resume(
+    assert prepare_model_config_for_training_resume(
         cfg,
-        resolve_training_resume_config(cfg),
+        root,
+        resolve_training_resume_config(root),
     )
 
     assert cfg.model.lora.path == ""
+    assert root.model is not None and root.model.lora is not None
+    assert root.model.lora.path == ""
 
 
 def test_training_checkpoint_round_trips_trainer_and_owned_state(tmp_path) -> None:

@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 from vrl.trainers.metrics_io import online_metric_columns
 
 if TYPE_CHECKING:
+    from vrl.config.schema import RootConfig
     from vrl.trainers.core.types import ReplayParityConfig, RolloutOrchestrationConfig
 
 from vrl.scripts.train import RUN_VERDICT_NAME, rank_run_verdict_name
@@ -773,7 +774,7 @@ def _bounded_number(cast: type, minimum: float, *, exclusive: bool = False) -> A
 
 
 def build_train_launch(
-    cfg: Any,
+    root: RootConfig,
     *,
     config: str,
     overrides: list[str],
@@ -781,30 +782,20 @@ def build_train_launch(
 ) -> TrainLaunch:
     """Build the one-host trainer launcher implied by the resolved strategy."""
 
-    from vrl.utils.config import cfg_path
-
     executable = python_executable or sys.executable
     train_args = ("--config", config, *overrides)
-    strategy = str(
-        cfg_path(
-            cfg,
-            "distributed.training.strategy",
-            "single_process",
-        ),
-    )
+    distributed = root.distributed
+    training = None if distributed is None else distributed.training
+    strategy = "single_process" if training is None else str(training.strategy)
     if strategy not in {"ddp", "fsdp"}:
         return TrainLaunch(
             command=(executable, "-m", "vrl.scripts.train", *train_args),
             expected_world_size=1,
         )
 
-    try:
-        num_nodes = int(cfg_path(cfg, "distributed.training.num_nodes", 1))
-        gpus_per_node = int(cfg_path(cfg, "distributed.training.gpus_per_node", 1))
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            "distributed.training.num_nodes and gpus_per_node must be integers",
-        ) from exc
+    assert training is not None  # strategy came from it
+    num_nodes = int(training.num_nodes)
+    gpus_per_node = int(training.gpus_per_node)
     if num_nodes < 1 or gpus_per_node < 1:
         raise ValueError(
             "distributed.training.num_nodes and gpus_per_node must be >= 1",
@@ -954,16 +945,17 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     from vrl.config.loading import load_config
-    from vrl.utils.config import cfg_path
+    from vrl.config.schema import parse_config
 
     cfg = load_config(args.config, overrides=args.overrides)
-    output_dir = str(cfg_path(cfg, "trainer.output_dir", "") or "").strip()
+    root = parse_config(cfg)
+    output_dir = str((root.trainer.output_dir if root.trainer is not None else None) or "").strip()
     if not output_dir:
         raise SystemExit("supervise requires trainer.output_dir in the resolved config")
     try:
         _require_single_supervisor_owner()
         launch = build_train_launch(
-            cfg,
+            root,
             config=args.config,
             overrides=args.overrides,
         )

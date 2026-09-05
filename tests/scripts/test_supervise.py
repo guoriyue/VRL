@@ -17,6 +17,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.algorithms.types import InitialReplayStats, TrainStepMetrics
+from vrl.config.schema import parse_config
 from vrl.scripts.supervise import (
     HEALTH_VERDICT_NAME,
     ContinuousHealthPolicy,
@@ -381,7 +382,7 @@ def test_build_train_launch_keeps_single_process_direct() -> None:
     )
 
     launch = build_train_launch(
-        cfg,
+        parse_config(cfg),
         config="experiment/unit",
         overrides=["trainer.seed=7"],
         python_executable="/venv/python",
@@ -413,7 +414,7 @@ def test_build_train_launch_uses_one_host_torchrun(strategy: str) -> None:
     )
 
     launch = build_train_launch(
-        cfg,
+        parse_config(cfg),
         config="experiment/cosmos",
         overrides=["trainer.total_epochs=2"],
         python_executable="/venv/python",
@@ -451,7 +452,7 @@ def test_build_train_launch_rejects_unowned_multi_node_rendezvous() -> None:
 
     with pytest.raises(ValueError, match="rendezvous"):
         build_train_launch(
-            cfg,
+            parse_config(cfg),
             config="experiment/cosmos",
             overrides=[],
         )

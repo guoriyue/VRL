@@ -6,13 +6,16 @@ import math
 import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from vrl.config.schema import RootConfig
 
 from vrl.generation.execution.types import BatchPlacementStrategy
 from vrl.ray.resources import (
     ResolvedDistributedResources,
 )
-from vrl.utils.config import cfg_get, plain_mapping, to_builtin_deep
+from vrl.utils.config import to_builtin_deep
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
 
@@ -106,36 +109,25 @@ class RayGenerationConfig:
             )
 
     @classmethod
-    def from_cfg(
+    def from_root(
         cls,
-        cfg: Any,
+        root: RootConfig,
         *,
         resources: ResolvedDistributedResources,
     ) -> RayGenerationConfig:
         """Build Ray execution settings using the run's resolved resources."""
-        distributed = cfg_get(cfg, "distributed", {})
-        rollout = cfg_get(distributed, "rollout", {})
-        public_rollout = cfg_get(cfg, "rollout", {})
-        profiler_section = cfg_get(public_rollout, "torch_profiler", None)
-        if profiler_section is None:
-            torch_profiler = None
-        elif isinstance(profiler_section, TorchProfilerConfig):
-            torch_profiler = replace(profiler_section)
-        else:
-            torch_profiler = TorchProfilerConfig(
-                **plain_mapping(
-                    profiler_section,
-                    field_name="rollout.torch_profiler",
-                ),
-            )
+        distributed = root.distributed
+        rollout_runtime = distributed.rollout if distributed is not None else None
+        profiler_section = root.rollout.torch_profiler if root.rollout is not None else None
+        torch_profiler = None if profiler_section is None else replace(profiler_section)
         if torch_profiler is not None:
-            output_dir = cfg_get(cfg_get(cfg, "trainer", {}), "output_dir", None)
+            output_dir = root.trainer.output_dir if root.trainer is not None else None
             if output_dir is not None:
                 torch_profiler.output_dir = str(output_dir)
 
         return cls(
             resources=resources,
-            worker=RolloutWorkerConfig.from_public_section(rollout),
+            worker=RolloutWorkerConfig.from_public_section(rollout_runtime),
             torch_profiler=torch_profiler,
         )
 

@@ -40,8 +40,8 @@ def _ray_config(*, colocated: bool) -> RayGenerationConfig:
             },
         },
     )
-    return RayGenerationConfig.from_cfg(
-        cfg,
+    return RayGenerationConfig.from_root(
+        parse_config(cfg),
         resources=resolve_distributed_resources(parse_config(cfg)),
     )
 

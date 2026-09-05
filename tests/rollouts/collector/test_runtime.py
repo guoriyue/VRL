@@ -10,6 +10,7 @@ import torch
 from omegaconf import OmegaConf
 
 from tests.rollouts.collector._helpers import collect_scored
+from vrl.config.schema import parse_config
 from vrl.generation import (
     GenerationInput,
     GenerationOutput,
@@ -317,7 +318,7 @@ def test_nextstep_noise_level_reaches_generation_request_from_rollout_owner() ->
     cfg = OmegaConf.create({"rollout": {"noise_level": 0.37}})
     builder = GenerationRequestBuilder(
         entry=get_model_family_entry("nextstep_1"),
-        config=RolloutCollectorConfig.from_cfg(cfg),
+        config=RolloutCollectorConfig.from_root(parse_config(cfg)),
     )
 
     request = builder.build(["draw text"], group_size=1).request

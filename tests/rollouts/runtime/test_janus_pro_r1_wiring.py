@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from vrl.config.loading import load_config
+from vrl.config.schema import parse_config
 from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.runtime import RewardFunctionRuntime
@@ -53,7 +54,7 @@ def test_r1_train_segments_derive_from_algorithm_config() -> None:
     cfg.algorithm.train_segments.initial_image = False
     cfg.algorithm.train_segments.selfcheck_text = True
 
-    rollout = RolloutCollectorConfig.from_cfg(cfg)
+    rollout = RolloutCollectorConfig.from_root(parse_config(cfg))
 
     assert rollout.request_sampling.get("train_segments") == {
         "initial_image": False,

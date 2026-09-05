@@ -7,13 +7,15 @@ import random
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from vrl.config.schema import DataConfig
 
 from torch.utils.data import Dataset
 
-from vrl.config.data import manifest_sources, resolve_data_loader
+from vrl.config.data import manifest_sources
 from vrl.generation import GenerationInput
-from vrl.utils.config import cfg_get
 
 
 @dataclass
@@ -196,40 +198,33 @@ def load_prompt_image_manifest(
     )
 
 
-def load_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
-    """Resolve ``data.loader`` and load examples from ``data.manifest``."""
+def load_prompt_examples_from_config(data: DataConfig) -> list[PromptExample]:
+    """Load examples the way the parsed ``data`` section declares."""
 
-    raw_loader = cfg_get(data_cfg, "loader", None)
-    preprocessing = cfg_get(data_cfg, "preprocessing", {}) or {}
-    loader = resolve_data_loader(
-        raw_loader,
-        cfg_get(preprocessing, "format", None),
-    )
-    manifest = cfg_get(data_cfg, "manifest", None)
+    manifest = data.manifest
     if not manifest:
         raise ValueError("config missing required field: data.manifest")
+    preprocessing = data.preprocessing
 
-    if loader == "prompt_manifest":
+    if data.loader == "prompt_manifest":
         sources = manifest_sources(manifest)
         if len(sources) == 1 and next(iter(sources.values())) is None:
             return load_prompt_manifest(next(iter(sources)))
-        mix_seed = cfg_get(data_cfg, "mix_seed", None)
-        if mix_seed is None:
+        if data.mix_seed is None:
             raise ValueError("config missing required field: data.mix_seed")
-        return load_prompt_mixture(sources, seed=int(mix_seed))
+        return load_prompt_mixture(sources, seed=int(data.mix_seed))
 
-    if loader == "prompt_image_manifest":
-        image_field = str(cfg_get(preprocessing, "image_field", None) or "image")
-        caption_field = str(cfg_get(preprocessing, "caption_field", None) or "caption")
-        task_type = str(cfg_get(data_cfg, "task_type", None) or "image_to_video")
+    if data.loader == "prompt_image_manifest":
+        image_field = str((preprocessing.image_field if preprocessing else None) or "image")
+        caption_field = str((preprocessing.caption_field if preprocessing else None) or "caption")
         return load_prompt_image_manifest(
             manifest,
             image_field=image_field,
             caption_field=caption_field,
-            default_task_type=task_type,
+            default_task_type=str(data.task_type or "image_to_video"),
         )
 
-    raise ValueError(f"unknown data.loader={loader!r}")
+    raise ValueError(f"unknown data.loader={data.loader!r}")
 
 
 class JsonlPromptDataset(Dataset):

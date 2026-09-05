@@ -31,7 +31,6 @@ from vrl.config.loading import (
 )
 from vrl.config.schema import parse_config
 from vrl.config.validation import (
-    optional_none,
     validate_reward_config,
     validate_training_config,
 )
@@ -1429,7 +1428,7 @@ def test_dpo_allows_explicit_null_max_train_samples() -> None:
     cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
     cfg.data.max_train_samples = None
 
-    assert optional_none(cfg, "data.max_train_samples") is None
+    assert parse_config(cfg).data.max_train_samples is None
     validate_training_config(cfg)
 
 

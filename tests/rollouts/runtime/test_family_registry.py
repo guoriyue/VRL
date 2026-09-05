@@ -660,6 +660,7 @@ def test_family_aliases_resolve_to_canonical_entries() -> None:
 def test_rollout_config_is_projected_from_yaml() -> None:
     cfg = OmegaConf.create(
         {
+            "model": {"family": "wan_2_1"},
             "sampling": {
                 "width": 1280,
                 "height": 704,
@@ -679,11 +680,11 @@ def test_rollout_config_is_projected_from_yaml() -> None:
                 },
                 "trajectory_storage": {"device": "cpu", "dtype": "float16"},
             },
-            "algorithm": {"kl_reward_coef": 0.25},
+            "algorithm": {"kind": "grpo", "kl_reward_coef": 0.25},
         },
     )
 
-    rollout = RolloutCollectorConfig.from_cfg(cfg)
+    rollout = RolloutCollectorConfig.from_root(parse_config(cfg))
 
     assert rollout.request_sampling["width"] == 1280
     assert rollout.request_sampling["num_steps"] == 35
@@ -714,7 +715,7 @@ def test_typed_collector_projects_only_the_selected_sampling_schema() -> None:
         ),
     )
 
-    rollout = RolloutCollectorConfig.from_cfg(root)
+    rollout = RolloutCollectorConfig.from_root(root)
 
     assert rollout.request_sampling == {
         "attention_backend": "torch_native",
@@ -722,18 +723,26 @@ def test_typed_collector_projects_only_the_selected_sampling_schema() -> None:
     }
 
 
-def test_raw_collector_adapter_derives_fields_from_present_family() -> None:
-    cfg = OmegaConf.create(
-        {
-            "model": {"family": "glm_image"},
-            "sampling": {
-                "attention_backend": "torch_native",
-                "image_height": 256,
-            },
-        },
-    )
+def test_request_sampling_is_the_family_section_vocabulary() -> None:
+    """The request keys are exactly the family's sampling fields: a key another
+    family owns is rejected at parse, not silently dropped by the projection."""
+    with pytest.raises(ValueError, match=r"unknown sampling\.attention_backend"):
+        parse_config(
+            OmegaConf.create(
+                {
+                    "model": {"family": "glm_image"},
+                    "sampling": {"attention_backend": "torch_native", "image_height": 256},
+                },
+            ),
+        )
 
-    rollout = RolloutCollectorConfig.from_cfg(cfg)
+    rollout = RolloutCollectorConfig.from_root(
+        parse_config(
+            OmegaConf.create(
+                {"model": {"family": "glm_image"}, "sampling": {"image_height": 256}}
+            ),
+        ),
+    )
 
     assert rollout.request_sampling == {"image_height": 256}
 
@@ -741,7 +750,7 @@ def test_raw_collector_adapter_derives_fields_from_present_family() -> None:
 def test_cosmos_predict2_recipe_keeps_request_and_reward_fps_at_16() -> None:
     cfg = load_config("experiment/cosmos_predict2/online_grpo_v2w_reference_480p")
     root = parse_config(cfg)
-    collector_config = RolloutCollectorConfig.from_cfg(root)
+    collector_config = RolloutCollectorConfig.from_root(root)
     collector_request = GenerationRequestBuilder(
         entry=get_model_family_entry("cosmos-predict2"),
         config=collector_config,
@@ -769,6 +778,7 @@ def test_request_fps_override_updates_reward_metadata() -> None:
 def test_request_sampling_projects_only_generation_owned_rollout_values() -> None:
     cfg = OmegaConf.create(
         {
+            "model": {"family": "wan_2_1"},
             "sampling": {"width": 1280, "num_frames": 93, "fps": 16},
             "rollout": {
                 "n_samples_per_prompt": 4,
@@ -776,11 +786,11 @@ def test_request_sampling_projects_only_generation_owned_rollout_values() -> Non
                 "samples_per_generation_batch": 8,
                 "sde": {"type": "flow_grpo", "window_range": [0, 10]},
             },
-            "algorithm": {"kl_reward_coef": 0.0},
+            "algorithm": {"kind": "grpo", "kl_reward_coef": 0.0},
         },
     )
 
-    rollout = RolloutCollectorConfig.from_cfg(cfg)
+    rollout = RolloutCollectorConfig.from_root(parse_config(cfg))
     sampling = rollout.generation_sampling()
 
     assert sampling["width"] == 1280

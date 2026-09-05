@@ -405,7 +405,9 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
 
     assert "samples_per_generation_batch" not in inputs.launch_contract.executor_kwargs
     assert (
-        RolloutCollectorConfig.from_cfg(cfg).request_sampling["samples_per_generation_batch"]
+        RolloutCollectorConfig.from_root(parse_config(cfg)).request_sampling[
+            "samples_per_generation_batch"
+        ]
         == "auto"
     )
 
@@ -492,7 +494,10 @@ def test_executor_kwargs_use_configured_chunk_size() -> None:
     assert isinstance(inputs, RayGenerationLaunchInputs)
     assert "samples_per_generation_batch" not in inputs.launch_contract.executor_kwargs
     assert (
-        RolloutCollectorConfig.from_cfg(cfg).request_sampling["samples_per_generation_batch"] == 8
+        RolloutCollectorConfig.from_root(parse_config(cfg)).request_sampling[
+            "samples_per_generation_batch"
+        ]
+        == 8
     )
 
 

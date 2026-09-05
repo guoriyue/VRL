@@ -42,43 +42,6 @@ def plain_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
     raise TypeError(f"{field_name} must be a mapping")
 
 
-_MISSING = object()
-
-
-def cfg_get(node: Any, key: str, default: Any = None) -> Any:
-    """Read one key from a config node of unknown shape.
-
-    Works across the mix of node types the config layer passes around — a
-    ``Mapping``/``DictConfig`` (has ``.get``), a plain object/dataclass/namespace
-    (attribute access), or a subscriptable. Tries ``.get`` -> ``[]`` -> attribute,
-    returning ``default`` when ``node`` is ``None`` or the key is absent.
-    """
-
-    if node is None:
-        return default
-    getter = getattr(node, "get", None)
-    if callable(getter):
-        try:
-            return getter(key, default)
-        except TypeError:
-            pass
-    try:
-        return node[key]
-    except (KeyError, IndexError, TypeError):
-        pass
-    return getattr(node, key, default)
-
-
-def cfg_path(node: Any, path: str, default: Any = None) -> Any:
-    """Resolve a dotted ``a.b.c`` path through nested config nodes via :func:`cfg_get`."""
-
-    for key in path.split("."):
-        node = cfg_get(node, key, _MISSING)
-        if node is _MISSING:
-            return default
-    return node
-
-
 def require_exact_int(value: object, *, path: str, minimum: int | None = None) -> int:
     """Validate an exact-integer config boundary and return the value.
 
@@ -129,8 +92,6 @@ def import_from_path(path: str) -> Any:
 
 
 __all__ = [
-    "cfg_get",
-    "cfg_path",
     "import_from_path",
     "plain_mapping",
     "require_exact_int",

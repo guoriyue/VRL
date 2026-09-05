@@ -183,19 +183,23 @@ def torch_compile_for_role(
     leave a guard reading the raw ``enable`` key and vetoing a role it does
     not bind.
 
-    ``block`` is whatever shape the caller's layer holds — a plain mapping
-    (``model_config``), a ``DictConfig`` (raw config), or the typed pydantic
-    ``TorchCompileSection`` (RootConfig) — read through ``cfg_get``.
+    ``block`` is the typed ``TorchCompileSection`` (RootConfig) or the plain
+    mapping ``ModelBuild.model_config`` carries across the process boundary;
+    a mapping is validated into the section first so both read one way.
     """
 
-    from vrl.utils.config import cfg_get
+    from vrl.config.model_schema import TorchCompileSection
 
-    if not cfg_get(block, "enable", False):
+    if block is None:
         return None
-    scope = require_torch_compile_scope(cfg_get(block, "scope", None) or "all")
+    if isinstance(block, Mapping):
+        block = TorchCompileSection.model_validate(dict(block))
+    if not block.enable:
+        return None
+    scope = require_torch_compile_scope(block.scope or "all")
     if scope not in ("all", role):
         return None
-    return {"enable": True, "mode": cfg_get(block, "mode", None) or "default"}
+    return {"enable": True, "mode": block.mode or "default"}
 
 
 @dataclass

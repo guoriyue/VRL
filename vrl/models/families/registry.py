@@ -309,7 +309,6 @@ class ModelFamilyEntry:
         from vrl.config.precision import PrecisionPolicy
         from vrl.config.schema import RootConfig
         from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
-        from vrl.utils.config import cfg_path
 
         if not isinstance(root, RootConfig):
             raise TypeError(
@@ -404,14 +403,9 @@ class ModelFamilyEntry:
                 isinstance(self.family_build, DenoiseFamilyBuild)
                 and self.family_build.replay_cls is not None
                 and not for_rollout
-                and str(
-                    cfg_path(
-                        root,
-                        "distributed.training.strategy",
-                        "single_process",
-                    ),
-                )
-                == "fsdp"
+                and root.distributed is not None
+                and root.distributed.training is not None
+                and root.distributed.training.strategy == "fsdp"
             ),
         )
 

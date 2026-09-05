@@ -1,6 +1,6 @@
 # SPRINT PROGRAM: Config boundary — type it once, then delete the machinery that existed because it wasn't
 
-状态：**in progress（2026-09-05 审计；S0 门已就位；S1–S4 done，S5a done，S5b 进行中）**
+状态：**in progress（2026-09-05 审计；S0 门已就位；S1–S5 done，S6 待做）**
 
 前置（全部 done，本 program 是它们的收官）：[[SPRINT_config_unknown_key_warning]]、
 [[SPRINT_config_as_signatures]]、[[SPRINT_config_argument_ownership_and_resolution]]、
@@ -269,13 +269,28 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
   （其中两个参数值本来就不合法——`add_kl_coefficient=0.2` 给 bool 字段、`segment_weights=[1.0]`
   给 dict 字段——旧路径从不校验值）。
 
-### S5b — 拆访问器（进行中）
+### S5b — 拆访问器（**done**；snapshot diff 为空）
 
-删 `cfg_get` / `cfg_path` / `require` / `optional_none` / `path_exists`，剩余读方全部改 typed
-attribute；`resolve_training_resume_config(root)`、`RayGenerationConfig.from_root`、
-`RolloutCollectorConfig.from_root`、`load_prompt_examples_from_config(DataConfig)`、
-`build_train_launch(root)`、perf 脚本 `prepare_sampling_state(model, root)`、
-`torch_compile_for_role` 只认 `Mapping | TorchCompileSection`。
+- `cfg_get` / `cfg_path`（`vrl/utils/config.py`）、`require` / `optional_none` / `path_exists` /
+  `_select_field`（`vrl/config/validation.py`）、`_set_cfg_path`（checkpointing）全部删除。
+  `vrl/` 里不再有任何"给定点路径、在不知形状的节点上找值"的函数。
+- 剩余读方逐个改 typed attribute：`resolve_training_resume_config(root)`；
+  `prepare_model_config_for_training_resume(cfg, root, resume)` 同时清 parsed root 与 merged cfg
+  里的 `model.lora.path`（两个真相源不再可能不一致），`build_configs` 因此先 parse 再算 resume；
+  `RayGenerationConfig.from_root`、`RolloutCollectorConfig.from_root`（`_cfg_mapping` /
+  `_sampling_fields_for_cfg` 的 raw-dict 分支删除：sampling 字段集就是 `type(root.sampling).model_fields`）；
+  `load_prompt_examples_from_config(DataConfig)`（不再重算 loader——DataConfig 已经算过）；
+  `build_train_launch(root)` + supervise main parse；perf 脚本 `prepare_sampling_state(model, root)`
+  （`frame_count` 幽灵别名随之消失）；`torch_compile_for_role` 只认 `TorchCompileSection` 或
+  wire 上的 plain mapping（mapping 先 `model_validate` 成 section，两条路读同一个属性）；
+  registry / strategy / quality preview 的三处 `cfg_path` 改属性。
+- 测试：构造函数改名 + 参数包 `parse_config(...)`（同 S4 的机械脚本）；`test_setup.py` 的
+  prompt-loader 用例改喂 `DataConfig`——顺带暴露 3 个 fixture 本来就不满足 loader 契约
+  （缺 `sampler.type` / `eval_manifest` / `conditioning`），旧鸭子路径从不检查。
+- **未做（有据）**：`require_guarded_rollout_drift(cfg, precision)` 仍读 raw cfg。原因：它判断的
+  `sampling.teacache` **不在任何 family 的 SamplingSection 里**，也没有 preset 用它——TeaCache 从
+  YAML 根本不可达，只有测试用 raw dict 喂得进去。这是 S6 的一个决策：给 sampling section 加
+  `teacache` 字段（让功能可达）或删掉这条 guard 分支。
 
 ### S6 — 脚本层与外围
 

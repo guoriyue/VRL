@@ -22,7 +22,6 @@ import torch
 from torch import nn
 
 from vrl.trainers.distributed import DistributedTrainingContext
-from vrl.utils.config import cfg_path
 from vrl.utils.cuda_memory import empty_cuda_cache
 
 if TYPE_CHECKING:
@@ -1094,7 +1093,8 @@ def _assert_fsdp_config_supported(config: RootConfig) -> None:
 
     from vrl.models.interfaces.runtime import torch_compile_for_role
 
-    if torch_compile_for_role(cfg_path(config, "model.torch_compile", None), "replay"):
+    compile_block = config.model.torch_compile if config.model is not None else None
+    if torch_compile_for_role(compile_block, "replay"):
         raise NotImplementedError(
             "distributed.training.strategy=fsdp cannot compile the replay policy: "
             "torch.compile (inductor graph capture) is unsound with FSDP2 "

@@ -683,7 +683,7 @@ class TrainingSection(ConfigBase):
 class RolloutRuntimeSection(ConfigBase):
     """distributed.rollout: rollout runtime knobs (engine level and rank level).
 
-    reader: vrl/generation/ray/config.py RayGenerationConfig.from_cfg. Release
+    reader: vrl/generation/ray/config.py RayGenerationConfig.from_root. Release
     scheduling and colocation are NOT declared here: colocation lives in
     distributed.resources.rollout.gpu_pool=trainer (mirrors reward.gpu_pool),
     and release scheduling is derived from GPU topology.
@@ -766,7 +766,7 @@ class DistributedSection(ConfigBase):
     # reader: vrl/ray/resources.py resolve_distributed_resources(root); the
     # consuming dataclass is the section type, so pydantic validates it here.
     resources: DistributedResourceConfig | None = None
-    # reader: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
+    # reader: vrl/generation/ray/config.py RayGenerationConfig.from_root (worker
     # runtime knobs). batch_placement_strategy / sync_trainable_state Literals reject
     # bad values here at parse time. Colocation lives in resources.rollout.gpu_pool.
     rollout: RolloutRuntimeSection | None = None

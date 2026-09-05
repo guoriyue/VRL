@@ -97,7 +97,7 @@ def test_prepare_sampling_state_uses_only_real_sequence_length_sources(
     }
     if sampling_max_sequence_length is not None:
         sampling["max_sequence_length"] = sampling_max_sequence_length
-    model_config: dict[str, object] = {"family": "cosmos-predict2-anima"}
+    model_config: dict[str, object] = {"family": "wan_2_1"}
     if executor_max_sequence_length is not None:
         model_config["executor"] = {
             "max_sequence_length": executor_max_sequence_length,
@@ -122,7 +122,7 @@ def test_prepare_sampling_state_uses_only_real_sequence_length_sources(
 
     model = CapturingModel()
 
-    assert prepare_sampling_state(model, cfg) == "prepared"
+    assert prepare_sampling_state(model, parse_config(cfg)) == "prepared"
     assert model.encode_kwargs is not None
     assert model.request is not None
     if expected is None:

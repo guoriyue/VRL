@@ -8,6 +8,7 @@ import pytest
 from omegaconf import OmegaConf
 from PIL import Image
 
+from vrl.config.schema import DataConfig
 from vrl.scripts.data import bootstrap, common, danbooru, setup, video_world
 from vrl.trainers.data import load_prompt_examples_from_config, load_prompt_manifest
 from vrl.trainers.data.artifacts import (
@@ -16,12 +17,20 @@ from vrl.trainers.data.artifacts import (
 )
 
 
+def _data_config(payload: dict) -> DataConfig:
+    """A parsed ``data`` section; the prompt loaders require a sampler type."""
+
+    payload = dict(payload)
+    payload.setdefault("sampler", {"type": "random_without_replacement"})
+    return DataConfig.model_validate(payload)
+
+
 def test_runtime_data_loader_derives_plain_prompt_manifest(tmp_path: Path) -> None:
     manifest = tmp_path / "prompts.txt"
     manifest.write_text("a red fox\n", encoding="utf-8")
 
     examples = load_prompt_examples_from_config(
-        OmegaConf.create(
+        _data_config(
             {
                 "manifest": str(manifest),
                 "preprocessing": {"format": "text"},
@@ -41,13 +50,15 @@ def test_runtime_data_loader_derives_image_prompt_manifest(tmp_path: Path) -> No
     )
 
     examples = load_prompt_examples_from_config(
-        OmegaConf.create(
+        _data_config(
             {
                 "manifest": str(manifest),
+                "eval_manifest": str(manifest),
                 "preprocessing": {
                     "format": "image_caption_jsonl",
                     "image_field": "image",
                     "caption_field": "caption",
+                    "conditioning": "reference_image",
                 },
             },
         ),
@@ -71,7 +82,7 @@ def test_runtime_data_loader_mixes_manifests_by_declared_counts(tmp_path: Path) 
     safety = _write_prompts(tmp_path / "safety.jsonl", [f"safety {i}" for i in range(50)])
 
     examples = load_prompt_examples_from_config(
-        OmegaConf.create(
+        _data_config(
             {
                 "loader": "prompt_manifest",
                 "manifest": {str(anatomy): 8, str(safety): 2},
@@ -99,7 +110,7 @@ def test_runtime_data_loader_mixture_is_seed_reproducible(tmp_path: Path) -> Non
             "mix_seed": seed,
             "preprocessing": {"format": "jsonl"},
         }
-        return [e.prompt for e in load_prompt_examples_from_config(OmegaConf.create(data))]
+        return [e.prompt for e in load_prompt_examples_from_config(_data_config(data))]
 
     assert load(7) == load(7)
     assert load(7) != load(8)
@@ -112,7 +123,7 @@ def test_runtime_data_loader_requires_a_seed_for_a_mixture(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match=r"data\.mix_seed"):
         load_prompt_examples_from_config(
-            OmegaConf.create(
+            _data_config(
                 {
                     "loader": "prompt_manifest",
                     "manifest": {str(anatomy): 2, str(safety): 1},
@@ -160,16 +171,14 @@ def test_for_experiment_plan_covers_every_mixture_source(tmp_path: Path) -> None
 
 
 def test_runtime_data_loader_rejects_explicit_format_conflict() -> None:
-    data = OmegaConf.create(
-        {
-            "loader": "prompt_manifest",
-            "manifest": "unused.jsonl",
-            "preprocessing": {"format": "image_caption_jsonl"},
-        },
-    )
-
     with pytest.raises(ValueError, match=r"requires.*prompt_image_manifest"):
-        load_prompt_examples_from_config(data)
+        _data_config(
+            {
+                "loader": "prompt_manifest",
+                "manifest": "unused.jsonl",
+                "preprocessing": {"format": "image_caption_jsonl"},
+            },
+        )
 
 
 def test_video_world_bridge_rows_match_cosmos_consumer(

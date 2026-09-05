@@ -485,8 +485,8 @@ def _install_common_fakes(
     monkeypatch.setattr(online, "validate_reward_memory_parking", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         resolved_run.RolloutCollectorConfig,
-        "from_cfg",
-        staticmethod(lambda cfg: object()),
+        "from_root",
+        staticmethod(lambda root: object()),
     )
     monkeypatch.setattr(online, "build_reward_runtime", lambda *args, **kwargs: reward)
     monkeypatch.setattr(

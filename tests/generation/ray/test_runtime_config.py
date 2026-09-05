@@ -201,8 +201,8 @@ def _resource_cfg(
 
 
 def _ray_config(cfg: Any) -> RayGenerationConfig:
-    return RayGenerationConfig.from_cfg(
-        cfg,
+    return RayGenerationConfig.from_root(
+        parse_config(cfg),
         resources=resolve_distributed_resources(parse_config(cfg)),
     )
 
@@ -541,8 +541,8 @@ def test_base_rollout_presets_pin_only_the_cpu_override(preset_name: str) -> Non
         cfg = OmegaConf.load(stream)
 
     assert dict(cfg.distributed.rollout) == {"cpus_per_worker": 4.0}
-    config = RayGenerationConfig.from_cfg(
-        cfg,
+    config = RayGenerationConfig.from_root(
+        parse_config(cfg),
         resources=SimpleNamespace(
             rollout_num_engines=1,
         ),
@@ -733,8 +733,8 @@ def test_pipelined_rejects_multiple_resolved_engines() -> None:
     cfg.distributed.rollout.pipelined = True
 
     with pytest.raises(ValueError, match="requires exactly one rollout engine"):
-        RayGenerationConfig.from_cfg(
-            cfg,
+        RayGenerationConfig.from_root(
+            parse_config(cfg),
             resources=resolve_distributed_resources(parse_config(cfg)),
         )
 
@@ -751,8 +751,8 @@ def test_pipelined_rejects_multiple_placement_bundles_before_ray_start(
         "pipelined": True,
         "sync_trainable_state": False,
     }
-    config = RayGenerationConfig.from_cfg(
-        cfg,
+    config = RayGenerationConfig.from_root(
+        parse_config(cfg),
         resources=resolve_distributed_resources(parse_config(cfg)),
     )
     entry = get_model_family_entry("sd3_5")

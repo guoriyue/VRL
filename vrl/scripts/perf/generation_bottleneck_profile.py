@@ -134,9 +134,9 @@ def main(argv=None):
         print("torch.compile(default) the transformer ...", flush=True)
         model.torch_compile_transformer("default")
     if args.e2e:
-        run_e2e(runtime, cfg, device)
+        run_e2e(runtime, root, device)
         return
-    step_fn = make_step_fn(runtime, cfg)
+    step_fn = make_step_fn(runtime, root)
 
     # extra warmup when compiling so the (slow) first compiled call is excluded
     for i in range(args.warmup + (3 if args.compile else 0)):

@@ -11,7 +11,6 @@ from vrl.generation.types import DenoiseRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.interfaces import RuntimeBundle
 from vrl.scripts.perf.common.diffusion_benchmark import DIFFUSION_BENCHMARK_PROMPT
-from vrl.utils.config import cfg_path
 
 if TYPE_CHECKING:
     from vrl.config.precision import PrecisionPolicy
@@ -37,13 +36,14 @@ def build_runtime(
     return entry.build_rollout(build)
 
 
-def prepare_sampling_state(model, cfg):
+def prepare_sampling_state(model, root):
     """Encode the shared prompt and prepare the model's sampling state."""
 
-    sampling = cfg.sampling
-    max_sequence_length = cfg_path(cfg, "sampling.max_sequence_length")
+    sampling = root.sampling
+    max_sequence_length = getattr(sampling, "max_sequence_length", None)
     if max_sequence_length is None:
-        max_sequence_length = cfg_path(cfg, "model.executor.max_sequence_length")
+        executor = root.model.executor if root.model is not None else None
+        max_sequence_length = executor.max_sequence_length if executor is not None else None
     if max_sequence_length is not None:
         max_sequence_length = int(max_sequence_length)
     encode_kwargs = {
@@ -55,7 +55,7 @@ def prepare_sampling_state(model, cfg):
         negative_prompt=None,
         width=int(sampling.width),
         height=int(sampling.height),
-        frame_count=int(sampling.get("num_frames", sampling.get("frame_count", 1))),
+        frame_count=int(getattr(sampling, "num_frames", None) or 1),
         num_steps=int(sampling.num_steps),
         guidance_scale=float(sampling.guidance_scale),
         seed=0,
@@ -68,12 +68,12 @@ def prepare_sampling_state(model, cfg):
     return model.prepare_sampling(request, prompt)
 
 
-def make_step_fn(runtime: RuntimeBundle, cfg):
+def make_step_fn(runtime: RuntimeBundle, root):
     """Return a closure for one production denoise step."""
 
     model = runtime.model
-    sampling = cfg.sampling
-    state = prepare_sampling_state(model, cfg)
+    sampling = root.sampling
+    state = prepare_sampling_state(model, root)
     move_frozen = getattr(model, "move_frozen_components", None)
     if callable(move_frozen):
         move_frozen(torch.device("cpu"))
@@ -97,12 +97,12 @@ def make_step_fn(runtime: RuntimeBundle, cfg):
     return one_step
 
 
-def _e2e_once(runtime: RuntimeBundle, cfg):
+def _e2e_once(runtime: RuntimeBundle, root):
     """One full image: encode -> prepare -> N denoise steps -> VAE decode."""
 
     model = runtime.model
-    sampling = cfg.sampling
-    state = prepare_sampling_state(model, cfg)
+    sampling = root.sampling
+    state = prepare_sampling_state(model, root)
     with torch.no_grad():
         for step_idx in range(int(sampling.num_steps)):
             noise_pred = model.forward_step(state, step_idx)["noise_pred"]
@@ -119,21 +119,21 @@ def _e2e_once(runtime: RuntimeBundle, cfg):
         return model.decode_latents(state.latents)
 
 
-def run_e2e(runtime: RuntimeBundle, cfg, device):
+def run_e2e(runtime: RuntimeBundle, root, device):
     """Time full end-to-end image latency (encode+denoise+decode)."""
 
     iters = 3
     warmup = 2
-    sampling = cfg.sampling
+    sampling = root.sampling
     for _ in range(warmup):
-        _e2e_once(runtime, cfg)
+        _e2e_once(runtime, root)
     torch.cuda.synchronize(device)
     torch.cuda.reset_peak_memory_stats(device)
     times = []
     for _ in range(iters):
         torch.cuda.synchronize(device)
         t0 = time.time()
-        _e2e_once(runtime, cfg)
+        _e2e_once(runtime, root)
         torch.cuda.synchronize(device)
         times.append((time.time() - t0) * 1000.0)
     times.sort()

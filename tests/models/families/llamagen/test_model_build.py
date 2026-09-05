@@ -228,7 +228,7 @@ def test_llamagen_collector_request_derives_omitted_topology_from_model() -> Non
     root = parse_config(
         load_config("experiment/llamagen/online_grpo_pickscore_validation"),
     )
-    collector_config = RolloutCollectorConfig.from_cfg(root)
+    collector_config = RolloutCollectorConfig.from_root(root)
     request = (
         GenerationRequestBuilder(
             entry=get_model_family_entry("llamagen"),

@@ -94,13 +94,15 @@ def generate_rollout_preview(
     from vrl.models.interfaces.replay import require_runtime_model
     from vrl.rollouts.collector.config import RolloutCollectorConfig
     from vrl.trainers.data import load_prompt_examples_from_config
-    from vrl.utils.config import cfg_path, import_from_path, to_builtin_deep
+    from vrl.utils.config import import_from_path, to_builtin_deep
 
     validated = validate_training_config(cfg)
     root = validated.root
     if root.model is None:
         raise ValueError("rollout preview requires model configuration")
-    resume_from = str(cfg_path(cfg, "trainer.resume_from", "") or "").strip()
+    resume_from = str(
+        (root.trainer.resume_from if root.trainer is not None else None) or ""
+    ).strip()
     if resume_from:
         raise ValueError(
             "rollout preview does not restore trainer.resume_from checkpoints; "
@@ -148,7 +150,7 @@ def generate_rollout_preview(
 
     request_builder = GenerationRequestBuilder(
         entry=entry,
-        config=RolloutCollectorConfig.from_cfg(root),
+        config=RolloutCollectorConfig.from_root(root),
     )
     items: list[dict[str, Any]] = []
     for index, example in enumerate(examples):
@@ -183,7 +185,7 @@ def generate_rollout_preview(
         "task": entry.task,
         "model": {
             "path": str(build.model_name_or_path),
-            "revision": cfg_path(cfg, "model.revision", None),
+            "revision": root.model.revision,
         },
         "precision": {
             "parameter_dtype": dtype_to_wire_name(build.parameter_dtype),

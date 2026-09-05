@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -23,7 +23,11 @@ from vrl.trainers.weight_sync import (
     to_cpu_snapshot,
 )
 from vrl.utils.artifacts import sha256_file
-from vrl.utils.config import cfg_get, cfg_path
+
+if TYPE_CHECKING:
+    from omegaconf import DictConfig
+
+    from vrl.config.schema import RootConfig
 
 logger = logging.getLogger(__name__)
 
@@ -824,19 +828,15 @@ def load_training_checkpoint(path: str | Path) -> TrainingCheckpoint:
     )
 
 
-def resolve_training_resume_config(cfg: Any) -> TrainingResumeConfig:
+def resolve_training_resume_config(root: RootConfig) -> TrainingResumeConfig:
     """Resolve the public checkpoint inputs once at the config-build boundary."""
 
-    resume_from = str(cfg_path(cfg, "trainer.resume_from", "") or "").strip()
-    value = cfg_path(cfg, "trainer.resume_strict", None)
-    strict = DEFAULT_CHECKPOINT_STRICT if value is None else value
-    if not isinstance(strict, bool):
-        raise TypeError(
-            f"trainer.resume_strict must be a boolean, got {type(strict).__name__}: {strict!r}",
-        )
+    trainer = root.trainer
+    resume_from = str((trainer.resume_from if trainer is not None else None) or "").strip()
+    strict = trainer.resume_strict if trainer is not None else None
     return TrainingResumeConfig(
         checkpoint_path=resume_from or None,
-        strict=strict,
+        strict=DEFAULT_CHECKPOINT_STRICT if strict is None else strict,
     )
 
 
@@ -851,31 +851,37 @@ def load_training_checkpoint_for_resume(
 
 
 def prepare_model_config_for_training_resume(
-    cfg: Any,
+    cfg: DictConfig,
+    root: RootConfig,
     resume: TrainingResumeConfig,
-) -> None:
+) -> bool:
     """Remove warm-start adapter paths when doing full training resume.
 
     Full resume restores ``RuntimeBundle.trainable_modules`` from
     ``checkpoint.pt``. Loading an unrelated ``model.lora.path`` before that can
     silently alter adapter structure, so strict mode rejects the combination.
     Runs on the resolved policy rather than a loaded checkpoint so the config
-    build normalizes the model tree before any checkpoint I/O happens.
+    build normalizes the model tree before any checkpoint I/O happens. Both
+    sources are cleared — the parsed ``root`` every runtime consumer reads and
+    the merged ``cfg`` that ``save_resolved_config`` persists — so the two
+    cannot disagree. Returns whether a path was cleared.
     """
 
     if resume.checkpoint_path is None:
-        return
-    strict = resume.strict
-    lora_path = cfg_path(cfg, "model.lora.path", None)
-    if lora_path is None:
-        return
-    text = str(lora_path or "").strip()
-    if text and strict:
+        return False
+    lora = root.model.lora if root.model is not None else None
+    if lora is None or lora.path is None:
+        return False
+    if str(lora.path).strip() and resume.strict:
         raise ValueError(
             "trainer.resume_from cannot be combined with model.lora.path; "
             "checkpoint.pt is the resume source of truth",
         )
-    _set_cfg_path(cfg, "model.lora.path", "")
+    from omegaconf import OmegaConf
+
+    lora.path = ""
+    OmegaConf.update(cfg, "model.lora.path", "")
+    return True
 
 
 def restore_training_checkpoint(
@@ -1757,22 +1763,6 @@ def _non_negative_int(value: Any, field: str) -> int:
     if parsed < 0:
         raise ValueError(f"{field} must be >= 0, got {parsed}")
     return parsed
-
-
-_MISSING = object()
-
-
-def _set_cfg_path(cfg: Any, path: str, value: Any) -> None:
-    node = cfg
-    keys = path.split(".")
-    for key in keys[:-1]:
-        node = cfg_get(node, key, _MISSING)
-        if node is _MISSING:
-            return
-    try:
-        node[keys[-1]] = value
-    except TypeError:
-        setattr(node, keys[-1], value)
 
 
 __all__ = [
