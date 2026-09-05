@@ -3,8 +3,8 @@
 A rubric-driven LLM judge: write rollout images to temporary PNGs, render the
 command/prompt placeholders, run the ``codex exec`` subprocess (timeout + error
 handling), then parse the judge output. Absolute mode returns clamped ``[0, 1]``
-scores. Scored rollout images and their judge outputs can be retained for
-visual audit across training restarts.
+scores. Reference-listwise mode compares one complete rollout group with its
+frozen base anchor and returns categorical rewards in ``[-2, 2]``.
 
 Restored 2026-08-22 (removed in 51c78968) and adapted to the current
 score_batch/InProcessRewardScorer interface. Judge calls fan out over a thread
@@ -20,9 +20,13 @@ import subprocess
 import tempfile
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from vrl.rewards.types import REWARD_GROUP_ID_METADATA_KEY
+from vrl.utils.artifacts import resolve_artifact_path
 from vrl.utils.media import write_png
 
 DEFAULT_PROMPT_TEMPLATE = """You are a strict image-text alignment judge.
@@ -69,6 +73,64 @@ Text prompt: {prompt}
 """
 
 
+class _ReferenceIntegrity(StrEnum):
+    PASS = "pass"
+    REGRESS = "regress"
+
+
+class _ReferencePreference(StrEnum):
+    STRONG_LOSS = "strong_loss"
+    LOSS = "loss"
+    TIE = "tie"
+    WIN = "win"
+    STRONG_WIN = "strong_win"
+
+    @property
+    def reward(self) -> float:
+        match self:
+            case _ReferencePreference.STRONG_LOSS:
+                return -2.0
+            case _ReferencePreference.LOSS:
+                return -1.0
+            case _ReferencePreference.TIE:
+                return 0.0
+            case _ReferencePreference.WIN:
+                return 1.0
+            case _ReferencePreference.STRONG_WIN:
+                return 2.0
+
+    @property
+    def is_win(self) -> bool:
+        return self in {
+            _ReferencePreference.WIN,
+            _ReferencePreference.STRONG_WIN,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _ReferenceVerdict:
+    candidate_id: str
+    integrity: _ReferenceIntegrity
+    preference: _ReferencePreference
+
+
+@dataclass(frozen=True, slots=True)
+class _CandidateGroup:
+    group_id: str
+    prompt: str
+    candidate_indices: tuple[int, ...]
+    candidate_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ReferenceGroup:
+    group_id: str
+    prompt: str
+    reference_path: Path
+    candidate_indices: tuple[int, ...]
+    candidate_ids: tuple[str, ...]
+
+
 class CodexImageQARewardModel:
     """RewardModel returning one ``codex_image_qa`` score per rollout artifact.
 
@@ -76,8 +138,10 @@ class CodexImageQARewardModel:
     and ``{output_schema_path}`` placeholders. The rendered prompt is sent to
     stdin by default. Native ``codex exec`` commands automatically receive the
     generated ``--output-schema`` argument; compatible commands can opt in with
-    the schema-path placeholder. Optional metadata targets and scored-rollout
-    persistence preserve the exact target, generated pixels, and judge scores.
+    the schema-path placeholder. ``comparison_mode=reference_listwise`` adds a
+    frozen base image to the judge montage but never to the returned rollout
+    rows; its categorical rewards are therefore in ``[-2, 2]`` rather than the
+    legacy absolute mode's ``[0, 1]``.
     """
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
@@ -100,6 +164,36 @@ class CodexImageQARewardModel:
         self.images_per_call = max(1, int(cfg.get("images_per_call", 1)))
         self.tile_size = max(64, int(cfg.get("tile_size", 256)))
         self.grid_prompt_template = cfg.get("grid_prompt_template", DEFAULT_GRID_PROMPT_TEMPLATE)
+        self.comparison_mode = str(cfg.get("comparison_mode", "absolute")).strip()
+        if self.comparison_mode not in {
+            "absolute",
+            "reference_listwise",
+        }:
+            raise ValueError(
+                "Codex image-QA comparison_mode must be 'absolute' or 'reference_listwise', "
+                f"got {self.comparison_mode!r}",
+            )
+        self.reference_data_root = str(cfg.get("reference_data_root", "")).strip()
+        self.expected_group_size = int(cfg.get("expected_group_size", 0))
+        self.reference_prompt_template = str(cfg.get("reference_prompt_template", ""))
+        if self.comparison_mode == "reference_listwise":
+            if not self.reference_data_root:
+                raise ValueError(
+                    "reference_listwise Codex image-QA requires reference_data_root",
+                )
+            if self.expected_group_size < 2:
+                raise ValueError(
+                    "reference_listwise Codex image-QA requires expected_group_size >= 2",
+                )
+            if self.images_per_call != self.expected_group_size:
+                raise ValueError(
+                    "reference_listwise Codex image-QA requires images_per_call "
+                    "to equal expected_group_size so a rollout group is never chunked",
+                )
+            if not self.reference_prompt_template.strip():
+                raise ValueError(
+                    "reference_listwise Codex image-QA requires reference_prompt_template",
+                )
         scored_rollout_dir = str(cfg.get("scored_rollout_dir", "")).strip()
         self.scored_rollout_dir = Path(scored_rollout_dir) if scored_rollout_dir else None
         self._saved_batch_index = _next_saved_batch_index(self.scored_rollout_dir)
@@ -108,7 +202,9 @@ class CodexImageQARewardModel:
         artifacts = list(artifacts)
         if not artifacts:
             return []
-        if self.images_per_call > 1:
+        if self.comparison_mode == "reference_listwise":
+            scores = self._score_batch_reference_listwise(artifacts)
+        elif self.images_per_call > 1:
             scores = self._score_batch_grid(artifacts)
         else:
             workers = min(self.max_concurrency, len(artifacts))
@@ -187,6 +283,255 @@ class CodexImageQARewardModel:
             )
             staging_dir.replace(final_dir)
         self._saved_batch_index += 1
+
+    def _score_batch_reference_listwise(
+        self,
+        artifacts: list[Any],
+    ) -> list[dict[str, float]]:
+        """Score complete rollout groups against one frozen base reference.
+
+        Every group is judged twice with the 3x3 cell order mirrored. Stable
+        cell ids let the parser restore candidate identity; a directional
+        disagreement becomes a tie. If neither pass finds a consensus candidate
+        that beats the reference without an integrity regression, the whole
+        group's optimization reward is exactly zero.
+        """
+
+        groups = self._reference_groups(artifacts)
+        jobs = [(group, reverse) for group in groups for reverse in (False, True)]
+
+        def run_job(
+            job: tuple[_ReferenceGroup, bool],
+        ) -> tuple[str, bool, dict[str, _ReferenceVerdict]]:
+            group, reverse = job
+            return (
+                group.group_id,
+                reverse,
+                self._score_reference_pass(artifacts, group, reverse=reverse),
+            )
+
+        workers = min(self.max_concurrency, len(jobs))
+        if workers <= 1:
+            pass_results = [run_job(job) for job in jobs]
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                pass_results = list(pool.map(run_job, jobs))
+
+        verdicts_by_pass = {
+            (group_id, reverse): verdicts for group_id, reverse, verdicts in pass_results
+        }
+        scores: list[dict[str, float] | None] = [None] * len(artifacts)
+        for group in groups:
+            forward = verdicts_by_pass[(group.group_id, False)]
+            mirrored = verdicts_by_pass[(group.group_id, True)]
+            consensus = {
+                candidate_id: _consensus_reference_verdict(
+                    forward[candidate_id],
+                    mirrored[candidate_id],
+                )
+                for candidate_id in group.candidate_ids
+            }
+            improvements = {
+                candidate_id: (
+                    verdict.preference.reward
+                    if verdict.integrity is _ReferenceIntegrity.PASS and verdict.preference.is_win
+                    else 0.0
+                )
+                for candidate_id, verdict in consensus.items()
+            }
+            group_active = any(reward > 0.0 for reward in improvements.values())
+            for candidate_id, artifact_index in zip(
+                group.candidate_ids,
+                group.candidate_indices,
+                strict=True,
+            ):
+                verdict = consensus[candidate_id]
+                relative_reward = (
+                    -2.0
+                    if verdict.integrity is _ReferenceIntegrity.REGRESS
+                    else verdict.preference.reward
+                )
+                scores[artifact_index] = {
+                    # GRPO mean-centers this value. Keeping non-winners at zero
+                    # ensures a tied candidate cannot become positive merely
+                    # because several worse candidates pulled the group mean down.
+                    "codex_image_qa": improvements[candidate_id] if group_active else 0.0,
+                    "codex_image_qa_group_active": float(group_active),
+                    "codex_image_qa_integrity_pass": float(
+                        verdict.integrity is _ReferenceIntegrity.PASS,
+                    ),
+                    "codex_image_qa_mirror_agreement": float(
+                        forward[candidate_id] == mirrored[candidate_id],
+                    ),
+                    "codex_image_qa_relative": relative_reward,
+                }
+
+        ordered_scores: list[dict[str, float]] = []
+        for artifact_index, score_map in enumerate(scores):
+            if score_map is None:
+                raise RuntimeError(
+                    "reference-listwise scoring did not produce a result for "
+                    f"artifact index {artifact_index}",
+                )
+            ordered_scores.append(score_map)
+        return ordered_scores
+
+    def _candidate_groups(self, artifacts: list[Any]) -> list[_CandidateGroup]:
+        grouped_indices: dict[str, list[int]] = {}
+        for artifact_index, artifact in enumerate(artifacts):
+            raw_group_id = artifact.metadata.get(REWARD_GROUP_ID_METADATA_KEY)
+            if not isinstance(raw_group_id, str) or not raw_group_id.strip():
+                raise ValueError(
+                    f"{self.comparison_mode.replace('_', '-')} Codex image-QA artifact "
+                    f"{artifact.artifact_id!r} is missing non-empty "
+                    f"metadata[{REWARD_GROUP_ID_METADATA_KEY!r}]",
+                )
+            grouped_indices.setdefault(raw_group_id, []).append(artifact_index)
+
+        groups: list[_CandidateGroup] = []
+        for group_id, candidate_indices_list in grouped_indices.items():
+            if len(candidate_indices_list) != self.expected_group_size:
+                raise ValueError(
+                    f"{self.comparison_mode.replace('_', '-')} group {group_id!r} has "
+                    f"{len(candidate_indices_list)} candidates; expected "
+                    f"{self.expected_group_size}",
+                )
+            group_artifacts = [artifacts[index] for index in candidate_indices_list]
+            generation_prompts = {
+                str(getattr(artifact, "prompt", "")) for artifact in group_artifacts
+            }
+            if len(generation_prompts) != 1:
+                raise ValueError(
+                    f"{self.comparison_mode.replace('_', '-')} group {group_id!r} "
+                    "mixes generation prompts",
+                )
+            judge_targets = {self._prompt_for_artifact(artifact) for artifact in group_artifacts}
+            if len(judge_targets) != 1:
+                raise ValueError(
+                    f"{self.comparison_mode.replace('_', '-')} group {group_id!r} "
+                    "mixes metadata-derived judge targets",
+                )
+            candidate_indices = tuple(candidate_indices_list)
+            groups.append(
+                _CandidateGroup(
+                    group_id=group_id,
+                    prompt=next(iter(judge_targets)),
+                    candidate_indices=candidate_indices,
+                    candidate_ids=tuple(
+                        f"C{position + 1}" for position in range(len(candidate_indices))
+                    ),
+                ),
+            )
+        return groups
+
+    def _reference_groups(self, artifacts: list[Any]) -> list[_ReferenceGroup]:
+        groups: list[_ReferenceGroup] = []
+        for candidate_group in self._candidate_groups(artifacts):
+            group_artifacts = [artifacts[index] for index in candidate_group.candidate_indices]
+            target_images = {
+                str(artifact.metadata.get("target_image", "") or "").strip()
+                for artifact in group_artifacts
+            }
+            if "" in target_images:
+                raise ValueError(
+                    f"reference-listwise group {candidate_group.group_id!r} has no target_image",
+                )
+            if len(target_images) != 1:
+                raise ValueError(
+                    "reference-listwise group "
+                    f"{candidate_group.group_id!r} mixes target_image values",
+                )
+            target_image = next(iter(target_images))
+            reference_path = resolve_artifact_path(
+                target_image,
+                data_root=self.reference_data_root,
+                allow_absolute=False,
+            )
+            if not reference_path.is_file():
+                raise FileNotFoundError(
+                    f"reference-listwise target image does not exist: {reference_path}",
+                )
+            groups.append(
+                _ReferenceGroup(
+                    group_id=candidate_group.group_id,
+                    prompt=candidate_group.prompt,
+                    reference_path=reference_path,
+                    candidate_indices=candidate_group.candidate_indices,
+                    candidate_ids=candidate_group.candidate_ids,
+                ),
+            )
+        return groups
+
+    def _score_reference_pass(
+        self,
+        artifacts: list[Any],
+        group: _ReferenceGroup,
+        *,
+        reverse: bool,
+    ) -> dict[str, _ReferenceVerdict]:
+        """Run one stable-id ordering of a reference-listwise comparison."""
+
+        from PIL import Image
+
+        with Image.open(group.reference_path) as source:
+            reference = source.convert("RGB")
+        labeled_media = [("R", reference)]
+        labeled_media.extend(
+            (candidate_id, artifacts[index].as_media())
+            for candidate_id, index in zip(
+                group.candidate_ids,
+                group.candidate_indices,
+                strict=True,
+            )
+        )
+        if reverse:
+            labeled_media.reverse()
+
+        response_contract = json.dumps(
+            {
+                "candidates": [
+                    {
+                        "id": candidate_id,
+                        "integrity": _ReferenceIntegrity.PASS.value,
+                        "preference": _ReferencePreference.TIE.value,
+                    }
+                    for candidate_id in group.candidate_ids
+                ],
+            },
+            separators=(",", ":"),
+        )
+        prompt_text = _render_prompt_template(
+            self.reference_prompt_template,
+            prompt=group.prompt,
+            count=len(group.candidate_ids),
+            response_contract=response_contract,
+        )
+        with tempfile.TemporaryDirectory(prefix="vrl-codex-image-qa-reference-") as tmp:
+            tmp_path = Path(tmp)
+            image_path = tmp_path / "grid.png"
+            output_path = tmp_path / "judge_output.txt"
+            output_schema_path = tmp_path / "output_schema.json"
+            _compose_grid(
+                [media for _, media in labeled_media],
+                self.tile_size,
+                image_path,
+                labels=[label for label, _ in labeled_media],
+            )
+            _write_reference_output_schema(output_schema_path, group.candidate_ids)
+            command = _render_command(
+                self.command,
+                image_path=image_path,
+                output_path=output_path,
+                output_schema_path=output_schema_path,
+                prompt=group.prompt,
+            )
+            output_text = self._run_command(
+                command,
+                stdin_text=prompt_text if self.pass_prompt_stdin else "",
+                output_path=output_path,
+                workdir=tmp_path,
+            )
+        return _extract_reference_verdicts(output_text, group.candidate_ids)
 
     def _score_batch_grid(self, artifacts: list[Any]) -> list[dict[str, float]]:
         """Group by prompt, tile each group into montages, one CLI call per tile.
@@ -414,6 +759,47 @@ def _write_output_schema(path: Path, *, count: int | None = None) -> None:
     path.write_text(json.dumps(schema, separators=(",", ":")), encoding="utf-8")
 
 
+def _write_reference_output_schema(
+    path: Path,
+    candidate_ids: Sequence[str],
+) -> None:
+    """Write the exact structured contract for one reference comparison."""
+
+    candidate_ids = tuple(candidate_ids)
+    if not candidate_ids or len(set(candidate_ids)) != len(candidate_ids):
+        raise ValueError("reference candidate ids must be non-empty and unique")
+    verdict = {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string", "enum": list(candidate_ids)},
+            "integrity": {
+                "type": "string",
+                "enum": [member.value for member in _ReferenceIntegrity],
+            },
+            "preference": {
+                "type": "string",
+                "enum": [member.value for member in _ReferencePreference],
+            },
+        },
+        "required": ["id", "integrity", "preference"],
+        "additionalProperties": False,
+    }
+    schema = {
+        "type": "object",
+        "properties": {
+            "candidates": {
+                "type": "array",
+                "items": verdict,
+                "minItems": len(candidate_ids),
+                "maxItems": len(candidate_ids),
+            },
+        },
+        "required": ["candidates"],
+        "additionalProperties": False,
+    }
+    path.write_text(json.dumps(schema, separators=(",", ":")), encoding="utf-8")
+
+
 def _next_saved_batch_index(root: Path | None) -> int:
     """Continue after complete batches when a supervised run resumes."""
 
@@ -430,8 +816,14 @@ def _next_saved_batch_index(root: Path | None) -> int:
     return max(indices, default=-1) + 1
 
 
-def _compose_grid(medias: list[Any], tile: int, out_path: Path) -> None:
-    """Downscale each media to a ``tile`` square and tile into a numbered montage."""
+def _compose_grid(
+    medias: Sequence[Any],
+    tile: int,
+    out_path: Path,
+    *,
+    labels: Sequence[str] | None = None,
+) -> None:
+    """Downscale media and tile it into a montage with stable visible labels."""
 
     import math
 
@@ -441,6 +833,13 @@ def _compose_grid(medias: list[Any], tile: int, out_path: Path) -> None:
 
     imgs = [to_pil_image(m).convert("RGB").resize((tile, tile), Image.LANCZOS) for m in medias]
     n = len(imgs)
+    resolved_labels = tuple(str(index + 1) for index in range(n))
+    if labels is not None:
+        resolved_labels = tuple(str(label) for label in labels)
+        if len(resolved_labels) != n:
+            raise ValueError(
+                f"Codex image-QA montage label/media mismatch: {len(resolved_labels)} != {n}",
+            )
     cols = math.ceil(math.sqrt(n))
     rows = math.ceil(n / cols)
     pad = 2
@@ -448,13 +847,12 @@ def _compose_grid(medias: list[Any], tile: int, out_path: Path) -> None:
         "RGB", (cols * tile + (cols + 1) * pad, rows * tile + (rows + 1) * pad), "white"
     )
     draw = ImageDraw.Draw(canvas)
-    for i, img in enumerate(imgs):
+    for i, (img, label) in enumerate(zip(imgs, resolved_labels, strict=True)):
         r, c = divmod(i, cols)
         x = pad + c * (tile + pad)
         y = pad + r * (tile + pad)
         canvas.paste(img, (x, y))
-        label = str(i + 1)
-        # High-contrast cell number in the top-left corner.
+        # Stable ids survive mirrored cell order and restore candidate identity.
         draw.rectangle([x, y, x + 9 * len(label) + 6, y + 18], fill="black")
         draw.text((x + 3, y + 3), label, fill="white")
     canvas.save(out_path, format="PNG")
@@ -479,6 +877,81 @@ def _extract_grid_scores(text: str, count: int) -> list[float]:
             f"Expected {count} grid scores, got {len(scores)} in output: {text!r}",
         )
     return [_score_from_value(score) for score in scores]
+
+
+def _extract_reference_verdicts(
+    text: str,
+    candidate_ids: Sequence[str],
+) -> dict[str, _ReferenceVerdict]:
+    """Parse a complete, uniquely identified reference-comparison response."""
+
+    candidate_ids = tuple(candidate_ids)
+    try:
+        value = json.loads(text.strip())
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Cannot parse reference-listwise Codex image-QA output: {text!r}",
+        ) from exc
+    if not isinstance(value, dict) or set(value) != {"candidates"}:
+        raise ValueError("reference-listwise output must contain only 'candidates'")
+    rows = value["candidates"]
+    if not isinstance(rows, list) or len(rows) != len(candidate_ids):
+        observed = len(rows) if isinstance(rows, list) else type(rows).__name__
+        raise ValueError(
+            "reference-listwise output candidate count mismatch: "
+            f"expected {len(candidate_ids)}, got {observed}",
+        )
+
+    parsed: dict[str, _ReferenceVerdict] = {}
+    expected_ids = set(candidate_ids)
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"id", "integrity", "preference"}:
+            raise ValueError(
+                "each reference-listwise candidate must contain exactly "
+                "'id', 'integrity', and 'preference'",
+            )
+        candidate_id = row["id"]
+        if not isinstance(candidate_id, str) or candidate_id not in expected_ids:
+            raise ValueError(f"unexpected reference-listwise candidate id: {candidate_id!r}")
+        if candidate_id in parsed:
+            raise ValueError(f"duplicate reference-listwise candidate id: {candidate_id!r}")
+        try:
+            parsed[candidate_id] = _ReferenceVerdict(
+                candidate_id=candidate_id,
+                integrity=_ReferenceIntegrity(row["integrity"]),
+                preference=_ReferencePreference(row["preference"]),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid reference-listwise verdict for {candidate_id!r}: {row!r}",
+            ) from exc
+
+    missing_ids = expected_ids.difference(parsed)
+    if missing_ids:
+        raise ValueError(
+            f"reference-listwise output is missing candidate ids: {sorted(missing_ids)}",
+        )
+    return {candidate_id: parsed[candidate_id] for candidate_id in candidate_ids}
+
+
+def _consensus_reference_verdict(
+    forward: _ReferenceVerdict,
+    mirrored: _ReferenceVerdict,
+) -> _ReferenceVerdict:
+    """Keep exact mirror agreement; convert every order-sensitive result to a tie."""
+
+    if forward.candidate_id != mirrored.candidate_id:
+        raise ValueError(
+            "cannot combine reference verdicts for different candidates: "
+            f"{forward.candidate_id!r} != {mirrored.candidate_id!r}",
+        )
+    if forward == mirrored:
+        return forward
+    return _ReferenceVerdict(
+        candidate_id=forward.candidate_id,
+        integrity=_ReferenceIntegrity.PASS,
+        preference=_ReferencePreference.TIE,
+    )
 
 
 def _render_prompt_template(
