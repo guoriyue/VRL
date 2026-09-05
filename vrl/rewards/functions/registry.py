@@ -43,6 +43,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.animereward_quality import AnimeRewardQualityReward
     from vrl.rewards.functions.codex_image_qa import CodexImageQAReward
     from vrl.rewards.functions.cosmos3_reasoner import Cosmos3ReasonerReward
+    from vrl.rewards.functions.countgd_person_count import CountGDPersonCountReward
     from vrl.rewards.functions.geneval import GenEvalReward
     from vrl.rewards.functions.grounded_ocr import GroundedOCRReward
     from vrl.rewards.functions.hpsv3 import HPSv3Reward
@@ -67,6 +68,7 @@ def _register_builtins() -> None:
             "animereward_quality": AnimeRewardQualityReward,
             "image_sharpness": ImageSharpnessReward,
             "codex_image_qa": CodexImageQAReward,
+            "countgd_person_count": CountGDPersonCountReward,
             "geneval": GenEvalReward,
             "grounded_ocr": GroundedOCRReward,
             "nsfw_safety": NSFWSafetyReward,
