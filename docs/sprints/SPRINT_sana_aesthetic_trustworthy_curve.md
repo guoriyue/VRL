@@ -271,12 +271,13 @@ publish every five updates, while the scientific evaluator remains fixed to
 
 ### 3.6 Repository-wide effect of the hardened gate (2026-07-11)
 
-- `debug.first_step` changed from warning when the first chunk's mean exceeded
-  `0.01` to failing before the optimizer when the first pass's full maximum
-  exceeds `debug.max_abs_logprob_diff` (default `0.01`). Roughly 25 non-SANA
-  presets enable this gate. Bit-exact families are unaffected; a family with a
-  measured benign maximum above the threshold must justify a family-specific
-  threshold instead of disabling the gate.
+- Evaluator-backed exact replay now fails before this process's first real
+  optimizer update when the full pass maximum exceeds
+  `trainer.replay_parity.max_abs_logprob_diff` (default `0.01`). The gate is
+  mandatory and re-runs after resume; `debug.first_step` only adds detailed
+  provenance. Bit-exact families are unaffected; a family with a measured
+  benign maximum above the threshold must justify a family-specific threshold
+  instead of disabling the gate.
 - Older SD3 flow-GRPO FP32 recipes combined FP32 training with FP16 frozen
   components but accidentally inherited FP16 autocast from `prompt_embeds`.
   Current `precision.training.dtype=fp32` disables autocast and runs a real FP32
