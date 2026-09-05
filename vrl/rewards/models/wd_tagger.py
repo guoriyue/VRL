@@ -1,19 +1,12 @@
-"""Tag adherence reward: WD14 tagger recall over the prompt's own danbooru tags.
+"""WD tagger recall over general tags supplied in artifact metadata.
 
-Every judge-based quality reward tried on this policy was too noisy to drive
-GRPO (test-retest rank correlation 0.1-0.5, ties on ~60% of prompts), so most of the
-within-group advantage it produced was noise. Tag adherence on NSFW prompts is,
-by contrast, a measured weakness with a verifiable target: base-model recall
-0.913 with only 61% of images matching every requested tag, versus 0.98 / 81%
-on SFW prompts. Scoring the prompt's own tags with a deterministic tagger gives
-a zero-noise signal — the same image always gets the same score — and a
-headroom the policy can actually close.
+The score measures requested-tag recall, not extra tags, full prompt semantics,
+or aesthetics. Repeatable predictions do not make the tagger ground truth or
+establish that optimizing its score improves generated images.
 
-Preprocessing (white square pad, 448 bicubic, RGB->BGR, raw 0-255 floats) is a
-verbatim copy of imgutils' ``_prepare_image_for_tagging`` because the headroom
-baseline above was measured through imgutils; any drift here would silently
-move the target the reward is validated against. The tagger is loaded directly
-through onnxruntime so the reward carries no extra dependency.
+Preprocessing preserves the existing imgutils-compatible white padding, bicubic
+resize, BGR order, and raw 0-255 scale. The model loads through onnxruntime
+without requiring imgutils.
 """
 
 from __future__ import annotations
@@ -32,7 +25,7 @@ WD14_INPUT_SIZE = 448
 _GENERAL_CATEGORY = 0
 
 
-class TagAdherenceRewardModel:
+class WDTaggerRewardModel:
     """Per-artifact recall of requested tags in ``[0, 1]`` (higher = more adherent)."""
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
@@ -40,10 +33,12 @@ class TagAdherenceRewardModel:
         self._model_repo = str(cfg.get("model_repo", "SmilingWolf/wd-swinv2-tagger-v3"))
         self._model_file = str(cfg.get("model_file", "model.onnx"))
         self._tags_file = str(cfg.get("tags_file", "selected_tags.csv"))
-        self._threshold = _validate_probability("threshold", cfg.get("threshold", 0.35))
+        self._threshold = float(cfg.get("threshold", 0.35))
+        if not 0.0 <= self._threshold <= 1.0:
+            raise ValueError("threshold must satisfy 0.0 <= threshold <= 1.0")
         self._metadata_key = str(cfg.get("metadata_key", "adherence_tags"))
         if not self._metadata_key:
-            raise ValueError("tag_adherence metadata_key must be non-empty")
+            raise ValueError("wd_tagger metadata_key must be non-empty")
         self._providers = list(cfg.get("providers") or ["CPUExecutionProvider"])
         # Test seam: a callable returning per-image ``{tag: prob}`` bypasses onnxruntime.
         self._tagger: Callable[[list[Any]], Sequence[Mapping[str, float]]] | None = cfg.get(
@@ -60,7 +55,7 @@ class TagAdherenceRewardModel:
         wanted = [self._wanted_tags(artifact) for artifact in artifacts]
         images = [_artifact_image(artifact) for artifact in artifacts]
         return [
-            {"tag_adherence": self._recall(tags, probs)}
+            {"wd_tagger": self._recall(tags, probs)}
             for tags, probs in zip(wanted, self.tag_images(images), strict=True)
         ]
 
@@ -76,7 +71,7 @@ class TagAdherenceRewardModel:
             results = self._tagger(images)
             if len(results) != len(images):
                 raise ValueError(
-                    "tag_adherence tagger returned wrong number of results: "
+                    "wd_tagger tagger returned wrong number of results: "
                     f"got {len(results)}, expected {len(images)}",
                 )
             return [{str(tag): float(prob) for tag, prob in result.items()} for result in results]
@@ -121,14 +116,14 @@ class TagAdherenceRewardModel:
         raw = artifact.metadata.get(self._metadata_key)
         if isinstance(raw, str) or not isinstance(raw, (list, tuple, set, frozenset)):
             raise ValueError(
-                f"tag_adherence requires metadata[{self._metadata_key!r}] to be a "
+                f"wd_tagger requires metadata[{self._metadata_key!r}] to be a "
                 f"non-empty list of tag strings on artifact {artifact.artifact_id!r}, "
                 f"got {type(raw).__name__}",
             )
         wanted = {str(tag).strip().lower() for tag in raw if str(tag).strip()}
         if not wanted:
             raise ValueError(
-                f"tag_adherence requires a non-empty metadata[{self._metadata_key!r}] "
+                f"wd_tagger requires a non-empty metadata[{self._metadata_key!r}] "
                 f"tag list on artifact {artifact.artifact_id!r}",
             )
         return wanted
@@ -175,11 +170,4 @@ def _artifact_image(artifact: Any) -> Image.Image:
     return to_pil_image(frames[frames.shape[0] // 2])
 
 
-def _validate_probability(name: str, value: float) -> float:
-    out = float(value)
-    if not 0.0 <= out <= 1.0:
-        raise ValueError(f"{name} must satisfy 0.0 <= {name} <= 1.0")
-    return out
-
-
-__all__ = ["WD14_INPUT_SIZE", "TagAdherenceRewardModel", "prepare_wd14_input"]
+__all__ = ["WD14_INPUT_SIZE", "WDTaggerRewardModel", "prepare_wd14_input"]

@@ -100,6 +100,27 @@ found detector-only gains under optimization. Audit held-out images before
 using this signal for training; zero-count rewards can also reward missed
 detections. Checkpoint/runtime pins and the 0.23 detection threshold are unchanged.
 
+## WD tagger
+
+Select `+reward=wd_tagger` with any reward-neutral generator recipe. The default
+model is `SmilingWolf/wd-swinv2-tagger-v3`, loaded in-process on CPU. Each prompt
+row must supply the general tags to check, using the model's `selected_tags.csv`
+vocabulary:
+
+```json
+{"prompt": "A smiling girl with long hair.", "metadata": {"adherence_tags": ["long_hair", "smile"]}}
+```
+
+The `wd_tagger` score is the fraction of requested tags detected at the configured
+threshold (default 0.35). It does not penalize extra tags or measure full prompt
+understanding, spatial relationships, or aesthetics. A repeatable tagger can
+still misclassify images; validate its predictions on the intended data before
+training. Character and rating tags are not scored.
+
+`wd_tagger` replaces the old `tag_adherence` component, preset, and score key;
+update existing launch overrides accordingly. The `adherence_tags` metadata
+field and scoring behavior are unchanged.
+
 ## Video Score Keys
 
 Do not treat every video reward's default score as an orthogonal training

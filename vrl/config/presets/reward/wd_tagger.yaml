@@ -1,0 +1,19 @@
+# WD SwinV2 v3 requested general-tag recall, scored on CPU.
+# Every prompt row must supply non-empty `metadata.adherence_tags` using the
+# model's selected_tags.csv vocabulary. This does not score full prompt
+# semantics, extra tags, or aesthetics.
+distributed:
+  resources:
+    reward:
+      # onnxruntime CPU provider; keep it off the trainer GPU.
+      device: cpu
+
+reward:
+  components:
+    wd_tagger: 1.0
+  kwargs:
+    wd_tagger:
+      model_repo: SmilingWolf/wd-swinv2-tagger-v3
+      # Preserve the existing general-tag detection threshold.
+      threshold: 0.35
+      metadata_key: adherence_tags

@@ -56,11 +56,11 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.phymotion import PhyMotionReward
     from vrl.rewards.functions.pickscore import PickScoreReward
     from vrl.rewards.functions.robotics_video_reward import RoboticsVideoReward
-    from vrl.rewards.functions.tag_adherence import TagAdherenceReward
     from vrl.rewards.functions.target_dino_similarity import TargetDinoSimilarityReward
     from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
     from vrl.rewards.functions.videocon_physics import VideoConPhysicsReward
     from vrl.rewards.functions.videoscore2 import VideoScore2Reward
+    from vrl.rewards.functions.wd_tagger import WDTaggerReward
 
     _REWARD_REGISTRY.update(
         {
@@ -75,7 +75,7 @@ def _register_builtins() -> None:
             "nsfw_safety": NSFWSafetyReward,
             "ocr": OCRReward,
             "pickscore": PickScoreReward,
-            "tag_adherence": TagAdherenceReward,
+            "wd_tagger": WDTaggerReward,
             # Future Reward suite (SPRINT_future_reward): DINOv2 perceptual anchor + RAFT
             # motion guard. They replaced the deleted pixel-L1 target_video_similarity (it was
             # reward-hackable, see S1). The IDM action-following signal is designed in S3 but

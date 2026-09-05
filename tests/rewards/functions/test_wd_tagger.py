@@ -1,4 +1,4 @@
-"""Tests for the WD14 tag adherence reward."""
+"""Tests for the WD tagger requested-tag recall reward."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from vrl.rewards.functions.tag_adherence import TagAdherenceReward
-from vrl.rewards.models.tag_adherence import prepare_wd14_input
+from vrl.rewards.functions.wd_tagger import WDTaggerReward
+from vrl.rewards.models.wd_tagger import prepare_wd14_input
 from vrl.rewards.types import RewardSample
 
 _WANTED = ["long_hair", "lingerie", "smile"]
@@ -33,9 +33,9 @@ def _image() -> Image.Image:
 
 
 @pytest.mark.asyncio
-async def test_tag_adherence_reward_scores_recall_over_wanted_tags() -> None:
+async def test_wd_tagger_reward_scores_recall_over_wanted_tags() -> None:
     """Checks tag adherence reward scores recall over wanted tags."""
-    reward = TagAdherenceReward(
+    reward = WDTaggerReward(
         threshold=0.35,
         tagger=lambda images: [{"long_hair": 0.9, "smile": 0.5, "lingerie": 0.1}] * len(images),
     )
@@ -46,9 +46,9 @@ async def test_tag_adherence_reward_scores_recall_over_wanted_tags() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tag_adherence_reward_threshold_is_inclusive() -> None:
+async def test_wd_tagger_reward_threshold_is_inclusive() -> None:
     """Checks tag adherence reward threshold is inclusive."""
-    reward = TagAdherenceReward(
+    reward = WDTaggerReward(
         threshold=0.5,
         tagger=lambda images: [{"long_hair": 0.5, "smile": 0.4999, "lingerie": 0.0}] * len(images),
     )
@@ -59,9 +59,9 @@ async def test_tag_adherence_reward_threshold_is_inclusive() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tag_adherence_reward_matches_case_insensitively_and_ignores_extras() -> None:
+async def test_wd_tagger_reward_matches_case_insensitively_and_ignores_extras() -> None:
     """Checks tag adherence reward matches case insensitively and ignores extras."""
-    reward = TagAdherenceReward(
+    reward = WDTaggerReward(
         threshold=0.35,
         tagger=lambda images: (
             [
@@ -77,9 +77,9 @@ async def test_tag_adherence_reward_matches_case_insensitively_and_ignores_extra
 
 
 @pytest.mark.asyncio
-async def test_tag_adherence_reward_score_batch_preserves_order() -> None:
+async def test_wd_tagger_reward_score_batch_preserves_order() -> None:
     """Checks tag adherence reward score_batch preserves order."""
-    reward = TagAdherenceReward(
+    reward = WDTaggerReward(
         threshold=0.35,
         tagger=lambda images: [
             {"long_hair": 0.9, "lingerie": 0.9, "smile": 0.9},
@@ -96,19 +96,19 @@ async def test_tag_adherence_reward_score_batch_preserves_order() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tags", [None, []])
-async def test_tag_adherence_reward_rejects_missing_or_empty_tags(tags: list[str] | None) -> None:
+async def test_wd_tagger_reward_rejects_missing_or_empty_tags(tags: list[str] | None) -> None:
     """Checks tag adherence reward rejects missing or empty tags instead of scoring 0."""
-    reward = TagAdherenceReward(tagger=lambda images: [{}] * len(images))
+    reward = WDTaggerReward(tagger=lambda images: [{}] * len(images))
 
     with pytest.raises(ValueError, match="adherence_tags"):
         await reward.score(_sample(_image(), tags=tags))
 
 
 @pytest.mark.parametrize("threshold", [1.5, -0.1])
-def test_tag_adherence_reward_rejects_invalid_threshold(threshold: float) -> None:
+def test_wd_tagger_reward_rejects_invalid_threshold(threshold: float) -> None:
     """Checks tag adherence reward rejects invalid threshold."""
     with pytest.raises(ValueError, match="threshold"):
-        TagAdherenceReward(threshold=threshold, tagger=lambda images: [])
+        WDTaggerReward(threshold=threshold, tagger=lambda images: [])
 
 
 def test_prepare_wd14_input_pads_white_resizes_and_swaps_to_bgr() -> None:
