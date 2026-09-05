@@ -254,12 +254,7 @@ def test_base_generation_never_reads_a_training_checkpoint(
             "precision": {"float32_precision": "ieee", "training": {"dtype": "fp32"}},
         },
     )
-    target = checkpoint_eval.CheckpointTarget(
-        label="base",
-        epoch=0,
-        path=None,
-        provenance={"checkpoint_loaded": False},
-    )
+    target = checkpoint_eval.CheckpointTarget.base()
     protocol = {
         "selected_examples": [
             {

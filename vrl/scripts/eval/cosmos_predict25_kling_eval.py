@@ -29,6 +29,7 @@ from vrl.scripts.eval.denoise_generation import (
 )
 from vrl.scripts.eval.score_report import write_scores
 from vrl.trainers.checkpointing import (
+    CheckpointTarget,
     load_training_checkpoint,
     read_checkpoint_meta,
     restore_model_checkpoint,
@@ -39,14 +40,6 @@ from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.media import write_mp4
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class CheckpointTarget:
-    """One checkpoint label/path pair from the CLI."""
-
-    label: str
-    path: Path
 
 
 @dataclass(frozen=True, slots=True)

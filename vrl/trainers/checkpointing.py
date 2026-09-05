@@ -9,7 +9,7 @@ import re
 import shutil
 import tempfile
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -22,6 +22,7 @@ from vrl.trainers.weight_sync import (
     require_trainable_modules,
     to_cpu_snapshot,
 )
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.config import cfg_get, cfg_path
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,54 @@ CHECKPOINT_META_NAME = "checkpoint_meta.json"
 # Strict restore is the checkpoint protocol default, independent of any
 # particular trainer implementation.
 DEFAULT_CHECKPOINT_STRICT = True
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointTarget:
+    """One published checkpoint selected for loading, or the base model.
+
+    Evaluation scripts pick comparison arms by ``label``; ``path=None`` is the
+    untouched base model. ``meta`` is the published ``checkpoint_meta.json``
+    (empty for the base arm) so callers validate family / epoch / LoRA
+    agreement against it instead of re-reading the directory, and ``epoch``
+    is its ``completed_epoch``.
+    """
+
+    label: str
+    path: Path | None
+    epoch: int = 0
+    meta: dict[str, Any] = field(default_factory=dict)
+    # Digest of checkpoint.pt captured at selection, so a long evaluation can
+    # detect the checkpoint being rewritten underneath it (opt-in: hashing a
+    # multi-GB payload is not free).
+    checkpoint_sha256: str | None = None
+
+    @classmethod
+    def base(cls, label: str = "base") -> CheckpointTarget:
+        return cls(label=label, path=None)
+
+    @classmethod
+    def load(cls, path: str | Path, *, label: str, digest: bool = False) -> CheckpointTarget:
+        """Pin one complete checkpoint directory and read its published metadata."""
+
+        resolved = Path(path).expanduser().resolve()
+        if not is_complete_checkpoint(resolved):
+            raise ValueError(f"missing or incomplete checkpoint: {resolved}")
+        meta = dict(read_checkpoint_meta(resolved))
+        epoch = meta.get("completed_epoch")
+        if type(epoch) is not int or epoch < 0:
+            raise ValueError(
+                f"checkpoint completed_epoch must be a non-negative integer: {resolved}",
+            )
+        return cls(
+            label=label,
+            path=resolved,
+            epoch=epoch,
+            meta=meta,
+            checkpoint_sha256=(
+                sha256_file(resolved / TRAINING_CHECKPOINT_NAME) if digest else None
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1733,6 +1782,7 @@ __all__ = [
     "LORA_WEIGHTS_NAME",
     "TRAINING_CHECKPOINT_NAME",
     "AdapterExport",
+    "CheckpointTarget",
     "TrainingCheckpoint",
     "TrainingResumeConfig",
     "build_adapter_exports",

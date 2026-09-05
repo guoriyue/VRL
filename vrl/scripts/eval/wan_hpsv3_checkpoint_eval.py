@@ -52,9 +52,8 @@ from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.denoise_generation import generate_one_video, seed_for
 from vrl.scripts.eval.score_report import summarize_paired_scores, write_scores
 from vrl.trainers.checkpointing import (
-    is_complete_checkpoint,
+    CheckpointTarget,
     load_training_checkpoint,
-    read_checkpoint_meta,
     restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
@@ -71,14 +70,6 @@ BASE_LABEL = "base"
 # top_frame_mean; the other two exist to expose reward hacking (see module doc).
 SCORE_KEYS = ("top_frame_mean", "frame_mean", "frame_min")
 DEFAULT_BASE_SEED = 2_026_082_500
-
-
-@dataclass(frozen=True, slots=True)
-class CheckpointTarget:
-    """One evaluation arm: a label and the checkpoint it restores (None = base)."""
-
-    label: str
-    path: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,14 +163,12 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
 
     # Preflight every checkpoint against the runtime identity BEFORE paying for
     # model construction: a mismatched arm should fail in seconds, not after the
-    # pipeline is resident on the GPU.
+    # pipeline is resident on the GPU. CLI parsing only resolved label/path;
+    # pinning the published metadata happens here, once, for every arm.
+    targets = [CheckpointTarget.load(target.path, label=target.label) for target in targets]
     for target in targets:
-        if target.path is None:
-            continue
-        if not is_complete_checkpoint(target.path):
-            raise ValueError(f"incomplete checkpoint: {target.path}")
         validate_checkpoint_meta_compatibility(
-            read_checkpoint_meta(target.path),
+            target.meta,
             family=entry.family,
             expected_model_identity=identity,
             strict=True,
@@ -227,11 +216,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
         "sampling": sampling,
         "arms": [BASE_LABEL] * (not args.no_base) + [target.label for target in targets],
         "checkpoints": {
-            target.label: {
-                "path": str(target.path),
-                "meta": read_checkpoint_meta(target.path),
-            }
-            for target in targets
+            target.label: {"path": str(target.path), "meta": target.meta} for target in targets
         },
     }
     _write_json(args.output_dir / "provenance.json", provenance)

@@ -36,11 +36,9 @@ from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.denoise_generation import generate_one_video
 from vrl.scripts.eval.score_report import summarize_paired_scores
 from vrl.trainers.checkpointing import (
-    TRAINING_CHECKPOINT_NAME,
-    is_complete_checkpoint,
+    CheckpointTarget,
     load_checkpoint_state,
     load_training_checkpoint,
-    read_checkpoint_meta,
 )
 from vrl.trainers.data import PromptExample, load_prompt_manifest
 from vrl.utils.artifacts import resolve_artifact_path, sha256_file
@@ -63,16 +61,6 @@ SCORE_KEYS = (
     "kling_motion_quality",
     "kling_overall_reward",
 )
-
-
-@dataclass(frozen=True, slots=True)
-class CheckpointTarget:
-    """One base/checkpoint model selected from the evaluated run."""
-
-    label: str
-    epoch: int
-    path: Path | None
-    provenance: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,7 +271,9 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
         "target": {
             "label": target.label,
             "epoch": target.epoch,
-            **target.provenance,
+            "path": None if target.path is None else str(target.path),
+            "checkpoint_loaded": target.path is not None,
+            "checkpoint_meta": target.meta,
         },
         "execution": {"device": str(device)},
         "sample_count": len(generated),
@@ -408,12 +398,7 @@ def _load_run(run_dir_arg: Path) -> tuple[Path, DictConfig, Path]:
 def _resolve_target(run_dir: Path, raw_value: str) -> CheckpointTarget:
     value = str(raw_value).strip().lower()
     if value in {"base", "baseline", "0", "checkpoint-0"}:
-        return CheckpointTarget(
-            label="base",
-            epoch=0,
-            path=None,
-            provenance={"source": "resolved_config_base_model", "checkpoint_loaded": False},
-        )
+        return CheckpointTarget.base()
     if value.startswith("checkpoint-"):
         value = value.removeprefix("checkpoint-")
     try:
@@ -425,30 +410,16 @@ def _resolve_target(run_dir: Path, raw_value: str) -> CheckpointTarget:
     if epoch <= 0:
         raise ValueError(f"checkpoint epoch must be > 0, got {epoch}")
     path = (run_dir / f"checkpoint-{epoch}").resolve()
-    if not is_complete_checkpoint(path):
-        raise ValueError(f"checkpoint is missing or incomplete: {path}")
-    meta = read_checkpoint_meta(path)
-    if str(meta.get("family", "")) != "wan_2_1":
+    target = CheckpointTarget.load(path, label=f"checkpoint-{epoch}")
+    if str(target.meta.get("family", "")) != "wan_2_1":
         raise ValueError(f"checkpoint family is not wan_2_1: {path}")
-    if meta.get("uses_lora") is not False:
+    if target.meta.get("uses_lora") is not False:
         raise ValueError(f"checkpoint must declare uses_lora=false: {path}")
-    if int(meta.get("completed_epoch", -1)) != epoch:
+    if target.epoch != epoch:
         raise ValueError(
-            f"checkpoint epoch disagrees with directory: {path} "
-            f"completed_epoch={meta.get('completed_epoch')!r}",
+            f"checkpoint epoch disagrees with directory: {path} completed_epoch={target.epoch!r}",
         )
-    checkpoint_file = path / TRAINING_CHECKPOINT_NAME
-    return CheckpointTarget(
-        label=f"checkpoint-{epoch}",
-        epoch=epoch,
-        path=path,
-        provenance={
-            "path": str(path),
-            "checkpoint_file": str(checkpoint_file),
-            "checkpoint_bytes": checkpoint_file.stat().st_size,
-            "checkpoint_meta": meta,
-        },
-    )
+    return target
 
 
 def _validate_loaded_checkpoint(checkpoint: Any, target: CheckpointTarget) -> None:
@@ -456,7 +427,7 @@ def _validate_loaded_checkpoint(checkpoint: Any, target: CheckpointTarget) -> No
         raise ValueError("base target must not load a checkpoint")
     if str(checkpoint.payload.get("family", "")) != "wan_2_1":
         raise ValueError(f"checkpoint payload family is not wan_2_1: {target.path}")
-    if checkpoint.meta != target.provenance["checkpoint_meta"]:
+    if checkpoint.meta != target.meta:
         raise RuntimeError(f"checkpoint metadata changed during evaluation: {target.path}")
     if checkpoint.next_epoch != target.epoch:
         raise ValueError(
