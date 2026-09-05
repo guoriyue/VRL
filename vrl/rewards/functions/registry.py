@@ -44,6 +44,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.codex_image_qa import CodexImageQAReward
     from vrl.rewards.functions.cosmos3_reasoner import Cosmos3ReasonerReward
     from vrl.rewards.functions.geneval import GenEvalReward
+    from vrl.rewards.functions.grounded_ocr import GroundedOCRReward
     from vrl.rewards.functions.hpsv3 import HPSv3Reward
     from vrl.rewards.functions.idm_action_following import ActionFollowingReward
     from vrl.rewards.functions.image_sharpness import ImageSharpnessReward
@@ -67,6 +68,7 @@ def _register_builtins() -> None:
             "image_sharpness": ImageSharpnessReward,
             "codex_image_qa": CodexImageQAReward,
             "geneval": GenEvalReward,
+            "grounded_ocr": GroundedOCRReward,
             "nsfw_safety": NSFWSafetyReward,
             "ocr": OCRReward,
             "pickscore": PickScoreReward,
