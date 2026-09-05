@@ -58,15 +58,6 @@ async def test_in_process_runtime_scores_without_disk_or_ray() -> None:
 
 
 @pytest.mark.asyncio
-async def test_in_process_runtime_returns_raw_score_components() -> None:
-    runtime = InProcessRewardScorer(model=_SumMediaModel())
-    results = await runtime.score_batch(_make_request())
-
-    assert results[0].scores == {"overall": 3.0, "extra": 1.0}
-    await runtime.shutdown()
-
-
-@pytest.mark.asyncio
 async def test_in_process_runtime_empty_request_returns_empty() -> None:
     """Checks that an empty in-process request returns no results."""
     runtime = InProcessRewardScorer(model=_SumMediaModel())

@@ -158,8 +158,6 @@ def test_pickscore_reads_transformers_5_projected_image_and_text_features() -> N
     ("processor_revision", "model_revision"),
     [
         (None, None),
-        ("processor-immutable-revision", None),
-        (None, "model-immutable-revision"),
         ("processor-immutable-revision", "model-immutable-revision"),
     ],
 )

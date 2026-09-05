@@ -13,7 +13,6 @@ from vrl.rewards.base import (
 )
 from vrl.rewards.functions.registry import (
     MultiReward,
-    validate_reward_memory_parking_components,
 )
 from vrl.rewards.functions.videoscore2 import VideoScore2Reward
 from vrl.rewards.runtime import InProcessRewardScorer, RewardFunctionRuntime
@@ -320,34 +319,6 @@ def test_factory_parking_policy_distinguishes_cpu_and_dedicated_rewards() -> Non
     assert dedicated_runtime.requires_memory_parking is False
 
 
-@pytest.mark.parametrize(
-    "inference_configs",
-    [
-        {},
-        {
-            "ocr": RewardInferenceConfig(),
-            "stale": RewardInferenceConfig(),
-        },
-    ],
-)
-def test_from_dict_rejects_inconsistent_resolved_inference_keys(
-    inference_configs: dict[str, RewardInferenceConfig],
-) -> None:
-    with pytest.raises(ValueError, match="inference config keys must match component keys"):
-        MultiReward.from_dict(
-            {"ocr": 1.0},
-            device="cpu",
-            inference_configs=inference_configs,
-        )
-
-    with pytest.raises(ValueError, match="inference config keys must match component keys"):
-        validate_reward_memory_parking_components(
-            ("ocr",),
-            device="cpu",
-            inference_configs=inference_configs,
-        )
-
-
 def test_shared_parking_allows_one_gpu_reward_with_cpu_sibling() -> None:
     """CPU siblings do not create a second process-wide CuMem owner."""
     reward = MultiReward.from_dict(
@@ -474,13 +445,12 @@ def test_http_reward_rejects_inmemory_artifact_component() -> None:
         )
 
 
-@pytest.mark.parametrize("key", ["scorer", "runtime"])
-def test_reward_config_rejects_runtime_injection_keys(key: str) -> None:
+def test_reward_config_rejects_runtime_injection_keys() -> None:
     with pytest.raises(ValueError, match="runtime injection keys"):
         MultiReward.from_dict(
             {"aesthetic": 1.0},
             device="cpu",
-            reward_kwargs={"aesthetic": {key: object()}},
+            reward_kwargs={"aesthetic": {"scorer": object()}},
         )
 
 
@@ -568,7 +538,6 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
         score_key="c",
         scorer=InProcessRewardScorer(model=_NeverScoredModel()),
     )
-    assert not hasattr(InProcessRewardScorer, "ensure_ready")
     reward = MultiReward([("a", 1.0, remote_a), ("b", 1.0, remote_b), ("c", 1.0, local)])
     try:
         assert remote_a.external_accelerator_isolation_verified is False

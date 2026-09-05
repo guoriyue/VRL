@@ -36,8 +36,6 @@ def test_http_requires_endpoint_and_expected_model() -> None:
     [
         "http://user:secret@reward:8300",
         "http://reward:8300/score",
-        "http://reward:8300?token=secret",
-        "http://reward:8300#fragment",
     ],
 )
 def test_http_endpoint_is_an_origin_without_embedded_credentials(

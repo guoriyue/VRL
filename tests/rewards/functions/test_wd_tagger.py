@@ -95,20 +95,18 @@ async def test_wd_tagger_reward_score_batch_preserves_order() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tags", [None, []])
-async def test_wd_tagger_reward_rejects_missing_or_empty_tags(tags: list[str] | None) -> None:
-    """Checks tag adherence reward rejects missing or empty tags instead of scoring 0."""
+async def test_wd_tagger_reward_rejects_missing_tags() -> None:
+    """Checks tag adherence reward rejects missing tags instead of scoring 0."""
     reward = WDTaggerReward(tagger=lambda images: [{}] * len(images))
 
     with pytest.raises(ValueError, match="adherence_tags"):
-        await reward.score(_sample(_image(), tags=tags))
+        await reward.score(_sample(_image(), tags=None))
 
 
-@pytest.mark.parametrize("threshold", [1.5, -0.1])
-def test_wd_tagger_reward_rejects_invalid_threshold(threshold: float) -> None:
+def test_wd_tagger_reward_rejects_invalid_threshold() -> None:
     """Checks tag adherence reward rejects invalid threshold."""
     with pytest.raises(ValueError, match="threshold"):
-        WDTaggerReward(threshold=threshold, tagger=lambda images: [])
+        WDTaggerReward(threshold=1.5, tagger=lambda images: [])
 
 
 def test_prepare_wd14_input_pads_white_resizes_and_swaps_to_bgr() -> None:

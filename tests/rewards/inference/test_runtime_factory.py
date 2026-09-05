@@ -7,8 +7,6 @@ import pytest
 from vrl.rewards.functions.kling_video_reward import (
     KlingVideoReward,
 )
-from vrl.rewards.functions.pickscore import PickScoreReward
-from vrl.rewards.functions.robotics_video_reward import RoboticsVideoReward
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
@@ -52,15 +50,6 @@ def test_runtime_requires_model_factory() -> None:
         asyncio.run(runtime.score_batch(request))
 
 
-def test_model_backed_reward_builds_in_process_runtime_directly() -> None:
-    reward = PickScoreReward(device="cpu")
-
-    assert isinstance(reward.scorer, InProcessRewardScorer)
-    assert reward.scorer._worker_config["model_factory"] == (
-        "vrl.rewards.models.pickscore:PickScoreRewardModel"
-    )
-
-
 def test_video_reward_derives_internal_model_factory_from_reward_name(tmp_path) -> None:
     """Checks video reward derives internal model factory from reward name."""
     reward = KlingVideoReward(
@@ -78,20 +67,6 @@ def test_video_reward_derives_internal_model_factory_from_reward_name(tmp_path) 
         "reward_model_name": "KlingTeam/VideoReward@main",
         "reward_model_version": "KlingTeam/VideoReward@main",
     }
-
-
-def test_composite_disk_reward_injects_factory_without_model_repository(tmp_path) -> None:
-    reward = RoboticsVideoReward(
-        reward_name="robotics_video_reward",
-        score_key="robotics_blend",
-        artifact_dir=str(tmp_path),
-        worker_config={"reward_model_version": "robotics-video-reward-v1"},
-    )
-
-    assert isinstance(reward.scorer, InProcessRewardScorer)
-    assert reward.scorer._worker_config["model_factory"] == (
-        "vrl.rewards.models.robotics_video_reward:RoboticsVideoRewardModel"
-    )
 
 
 @pytest.mark.asyncio

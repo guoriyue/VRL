@@ -30,8 +30,6 @@ class RewardSample:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.sample_id, str):
-            raise TypeError("RewardSample.sample_id must be a str")
         if not self.sample_id:
             raise ValueError("RewardSample.sample_id must be non-empty")
 

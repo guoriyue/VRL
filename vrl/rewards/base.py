@@ -211,19 +211,10 @@ class InferenceRewardFunction(RewardFunction):
         normalized_score_key = str(score_key).strip()
         if not normalized_score_key:
             raise ValueError("score_key must be non-empty")
-        if not isinstance(scorer, RewardScorer):
-            raise TypeError(
-                "scorer must implement the complete RewardScorer protocol "
-                "(score_batch/shutdown plus the two capability flags)",
-            )
         if artifact_store is None:
             # In-memory media is the default transport; the disk base injects
             # the file-backed store.
             artifact_store = InMemoryRewardArtifactStore()
-        if not isinstance(artifact_store, RewardArtifactStore):
-            raise TypeError(
-                "artifact_store must implement materialize/release/retain",
-            )
         self.reward_name = normalized_reward_name
         self.score_key = normalized_score_key
         selected_score_keys = tuple(part.strip() for part in normalized_score_key.split("+"))

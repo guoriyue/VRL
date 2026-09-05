@@ -180,21 +180,11 @@ class MultiReward(RewardFunction):
         reward_kwargs = reward_kwargs or {}
         configured_weights = {name: float(weight) for name, weight in score_dict.items()}
         reward_classes = {name: get_reward(name) for name in configured_weights}
-        if inference_configs is None:
-            resolved_inference_configs: Mapping[str, RewardInferenceConfig] = {
-                name: RewardInferenceConfig() for name in configured_weights
-            }
-        else:
-            component_names = set(configured_weights)
-            inference_names = set(inference_configs)
-            if inference_names != component_names:
-                missing = sorted(component_names - inference_names)
-                unknown = sorted(inference_names - component_names)
-                raise ValueError(
-                    "reward inference config keys must match component keys; "
-                    f"missing={missing}, unknown={unknown}",
-                )
-            resolved_inference_configs = inference_configs
+        resolved_inference_configs: Mapping[str, RewardInferenceConfig] = (
+            {name: RewardInferenceConfig() for name in configured_weights}
+            if inference_configs is None
+            else inference_configs
+        )
         if memory_parking_required:
             validate_reward_memory_parking_components(
                 tuple(reward_classes),
@@ -339,15 +329,6 @@ def validate_reward_memory_parking_components(
     kwargs_by_name = reward_kwargs or {}
     if inference_configs is None:
         inference_configs = {name: RewardInferenceConfig() for name in names}
-    component_names = set(names)
-    inference_names = set(inference_configs)
-    if inference_names != component_names:
-        missing = sorted(component_names - inference_names)
-        unknown = sorted(inference_names - component_names)
-        raise ValueError(
-            "reward inference config keys must match component keys; "
-            f"missing={missing}, unknown={unknown}",
-        )
     gpu_components = [
         name
         for name in names

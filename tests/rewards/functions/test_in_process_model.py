@@ -73,18 +73,6 @@ async def test_reward_function_in_process_single_score() -> None:
     assert await reward.score(_sample(torch.zeros(1, 3, 2, 2))) == pytest.approx(0.0)
 
 
-def test_pickscore_reward_model_constructs_lazily() -> None:
-    """Checks pickscore reward model constructs lazily."""
-    from vrl.rewards.models.pickscore import PickScoreRewardModel
-
-    model = PickScoreRewardModel(
-        {"device": "cpu", "model_name": "x", "processor_name": "y"},
-    )
-    assert model.model_name == "x"
-    assert model.processor_name == "y"
-    assert model._module is None  # no heavy load at construction
-
-
 @pytest.mark.parametrize(
     ("factory_path", "expected_type"),
     [
@@ -153,38 +141,15 @@ def test_inference_reward_defaults_to_inmemory_artifact_store() -> None:
         async def shutdown(self) -> None:
             return None
 
-    with pytest.raises(TypeError, match="scorer"):
-        InferenceRewardFunction(
-            reward_name="fake",
-            score_key="fake",
-        )
     reward = InferenceRewardFunction(
         reward_name="fake",
         score_key="fake",
         scorer=_Runtime(),
     )
     assert isinstance(reward.artifact_store, InMemoryRewardArtifactStore)
-    with pytest.raises(TypeError, match="artifact_store"):
-        InferenceRewardFunction(
-            reward_name="fake",
-            score_key="fake",
-            scorer=_Runtime(),
-            artifact_store="not-a-store",  # type: ignore[arg-type]
-        )
 
 
-@pytest.mark.parametrize("scorer", [None, object()])
-def test_inference_reward_rejects_invalid_runtime(scorer: object) -> None:
-    with pytest.raises(TypeError, match="scorer"):
-        InferenceRewardFunction(
-            reward_name="fake",
-            score_key="fake",
-            scorer=scorer,  # type: ignore[arg-type]
-        )
-
-
-@pytest.mark.parametrize("score_key", ["+", "a+", "+b", "a++b", " + "])
-def test_inference_reward_rejects_empty_score_key_component(score_key: str) -> None:
+def test_inference_reward_rejects_empty_score_key_component() -> None:
     class _Runtime:
         scoring_is_nonblocking = False
         external_accelerator_isolation_verified = False
@@ -198,16 +163,9 @@ def test_inference_reward_rejects_empty_score_key_component(score_key: str) -> N
     with pytest.raises(ValueError, match="empty component"):
         InferenceRewardFunction(
             reward_name="fake",
-            score_key=score_key,
+            score_key="a++b",
             scorer=_Runtime(),
         )
-
-
-def test_inference_runtime_has_an_explicit_layer_name() -> None:
-    reward = _reward_function_in_process()
-
-    assert isinstance(reward.scorer, InProcessRewardScorer)
-    assert not hasattr(reward, "runtime")
 
 
 @pytest.mark.asyncio

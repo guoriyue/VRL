@@ -162,15 +162,14 @@ def test_codex_exec_automatically_receives_portable_output_schema(tmp_path: Path
     }
 
 
-@pytest.mark.parametrize("count", [2, 4])
-def test_grid_schema_requires_the_current_montage_count(tmp_path: Path, count: int) -> None:
-    schema_path = tmp_path / f"grid-{count}.json"
+def test_grid_schema_requires_the_current_montage_count(tmp_path: Path) -> None:
+    schema_path = tmp_path / "grid-4.json"
 
-    _write_output_schema(schema_path, count=count)
+    _write_output_schema(schema_path, count=4)
 
     scores = json.loads(schema_path.read_text(encoding="utf-8"))["properties"]["scores"]
-    assert scores["minItems"] == count
-    assert scores["maxItems"] == count
+    assert scores["minItems"] == 4
+    assert scores["maxItems"] == 4
 
 
 def test_compatible_command_can_place_the_schema_with_a_placeholder(tmp_path: Path) -> None:

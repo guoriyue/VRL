@@ -36,8 +36,6 @@ class RewardInferenceArtifact:
     def __post_init__(self) -> None:
         if not self.artifact_id:
             raise ValueError("RewardInferenceArtifact.artifact_id is required")
-        if not isinstance(self.sample_id, str):
-            raise TypeError("RewardInferenceArtifact.sample_id must be a str")
         if not self.sample_id:
             raise ValueError("RewardInferenceArtifact.sample_id must be non-empty")
         if not self.path and self.media is None:
