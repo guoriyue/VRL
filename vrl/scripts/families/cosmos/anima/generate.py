@@ -20,11 +20,12 @@ from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import get_model_family_entry
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.scripts.eval._device import resolve_eval_device
-from vrl.scripts.eval.denoise_generation import generate_images, generator_runtime_identity
-from vrl.scripts.families.cosmos.anima.generation_protocol import (
-    ANIMA_GENERATION_SCHEMA,
-    AnimaSampling,
+from vrl.scripts.eval.denoise_generation import (
+    GeneratorRuntimeIdentity,
+    ImageSampling,
+    generate_images,
 )
+from vrl.scripts.families.cosmos.anima.generation_protocol import ANIMA_GENERATION_SCHEMA
 from vrl.trainers.data import PromptExample, load_prompt_manifest
 from vrl.utils.artifacts import sha256_file
 
@@ -185,6 +186,7 @@ def main(argv: list[str] | None = None) -> None:
         ),
     }
     lora_checkpoint = _lora_checkpoint_provenance(lora_path, model_identity)
+    generator_runtime = GeneratorRuntimeIdentity.capture()
 
     metadata = {
         "schema": ANIMA_GENERATION_SCHEMA,
@@ -199,7 +201,7 @@ def main(argv: list[str] | None = None) -> None:
             "device": str(device),
             "dtype": str(dtype).removeprefix("torch."),
         },
-        "generator_runtime": generator_runtime_identity(),
+        "generator_runtime": generator_runtime.to_record(),
         "prompt_source": {
             "manifest_path": str(manifest_path) if manifest_path else "",
             "manifest_sha256": sha256_file(manifest_path) if manifest_path else "",
@@ -241,7 +243,7 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("Building Anima runtime on device=%s dtype=%s", device, dtype)
     bundle = entry.build_rollout(build)
     loaded_identity = resolve_checkpoint_model_identity(build)
-    loaded_generator_runtime = generator_runtime_identity()
+    loaded_generator_runtime = GeneratorRuntimeIdentity.capture()
     loaded_lora_hashes = {
         "lora_weights_sha256": _lora_artifact_sha256(
             lora_path,
@@ -255,7 +257,7 @@ def main(argv: list[str] | None = None) -> None:
     loaded_lora_checkpoint = _lora_checkpoint_provenance(lora_path, loaded_identity)
     if (
         loaded_identity != model_identity
-        or loaded_generator_runtime != metadata["generator_runtime"]
+        or loaded_generator_runtime != generator_runtime
         or loaded_lora_checkpoint != lora_checkpoint
         or any(loaded_lora_hashes[key] != metadata["model"][key] for key in loaded_lora_hashes)
     ):
@@ -461,9 +463,9 @@ def _configure_lora_for_inference(
         OmegaConf.update(cfg, "model.use_lora", False)
 
 
-def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> AnimaSampling:
+def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> ImageSampling:
     num_steps = int(args.steps or OmegaConf.select(cfg, "sampling.num_steps", default=20))
-    return AnimaSampling(
+    return ImageSampling(
         width=int(args.width or OmegaConf.select(cfg, "sampling.width", default=512)),
         height=int(args.height or OmegaConf.select(cfg, "sampling.height", default=512)),
         num_steps=num_steps,

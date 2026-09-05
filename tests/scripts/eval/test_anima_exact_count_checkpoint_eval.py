@@ -214,7 +214,7 @@ def test_generation_archive_does_not_own_exact_count_target(tmp_path: Path) -> N
 
     archive = AnimaGenerationArchive.load(generation_dir)
 
-    assert archive.protocol.generator_runtime["vrl_python_tree_sha256"] == "a" * 64
+    assert archive.protocol.generator_runtime.vrl_python_tree_sha256 == "a" * 64
     assert all("expected_people" not in cell.reward_metadata for cell in archive.cells)
 
 
@@ -240,7 +240,7 @@ def test_pixel_pairing_ignores_device_ordinal_and_broad_tree_hash(tmp_path: Path
     protocol = AnimaPixelPairingProtocol.from_generation_protocol(base.protocol)
 
     assert protocol.execution_device_type == "cuda"
-    assert "vrl_python_tree_sha256" not in protocol.generator_runtime
+    assert protocol.generator_packages == {"torch": "2.11.0", "diffusers": "0.39.0"}
     validate_paired_generation_archives(base, checkpoint)
 
 
@@ -336,7 +336,7 @@ def test_codex_backend_requires_expected_people_target(
                     "vrl_python_tree_sha256": "b" * 64,
                 },
             },
-            "generator_runtime",
+            "generator_packages",
         ),
     ],
 )

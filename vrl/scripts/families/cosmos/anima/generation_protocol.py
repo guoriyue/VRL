@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
@@ -13,59 +12,11 @@ from typing import Any
 from PIL import Image
 
 from vrl.models.checkpoint_identity import MODEL_IDENTITY_SCHEMA
+from vrl.scripts.eval.denoise_generation import GeneratorRuntimeIdentity, ImageSampling
 from vrl.utils.artifacts import sha256_file
 
 ANIMA_GENERATION_SCHEMA = "vrl.anima-generation/v1"
 ANIMA_ANCHOR_MANIFEST_SCHEMA = "vrl.anima-anchor-manifest/v1"
-
-
-@dataclass(frozen=True, slots=True)
-class AnimaSampling:
-    """Resolved sampling values shared by generation and evaluation archives."""
-
-    width: int
-    height: int
-    num_steps: int
-    guidance_scale: float
-    max_sequence_length: int
-
-    def __post_init__(self) -> None:
-        for name in ("width", "height", "num_steps", "max_sequence_length"):
-            value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-                raise ValueError(f"Anima sampling {name} must be a positive integer")
-        guidance_scale = self.guidance_scale
-        if (
-            isinstance(guidance_scale, bool)
-            or not isinstance(guidance_scale, (int, float))
-            or not math.isfinite(guidance_scale)
-            or guidance_scale < 0
-        ):
-            raise ValueError("Anima sampling guidance_scale must be finite and >= 0")
-        object.__setattr__(self, "guidance_scale", float(guidance_scale))
-
-    @classmethod
-    def from_mapping(
-        cls,
-        value: Mapping[str, Any] | Any,
-        *,
-        what: str = "Anima sampling",
-    ) -> AnimaSampling:
-        """Parse one fail-closed persisted sampling record."""
-
-        if not isinstance(value, Mapping):
-            raise TypeError(f"{what} must be a mapping")
-        expected = {field.name for field in fields(cls)}
-        missing = sorted(expected - set(value))
-        unknown = sorted(set(value) - expected)
-        if missing or unknown:
-            raise ValueError(f"invalid {what} fields: missing={missing} unknown={unknown}")
-        return cls(**{name: value[name] for name in expected})
-
-    def to_record(self) -> dict[str, int | float]:
-        """Serialize with keys derived from the typed source of truth."""
-
-        return {field.name: getattr(self, field.name) for field in fields(self)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,14 +44,20 @@ class AnimaGenerationProtocol:
     prompt_count: int
     samples_per_prompt: int
     base_seed: int
-    sampling: AnimaSampling
+    sampling: ImageSampling
     negative_prompt: str
-    execution: dict[str, Any]
-    generator_runtime: dict[str, Any]
-    prompt_source: dict[str, Any]
+    # The persisted ``execution`` mapping has exactly these two keys; the
+    # device string keeps its ordinal so causal audits can name the card.
+    execution_device: str
+    execution_dtype: str
+    generator_runtime: GeneratorRuntimeIdentity
+    use_lora: bool
+    # Schema-derived records compared whole, never probed by key here:
+    # ``model_identity`` is ``resolve_checkpoint_model_identity``'s output
+    # (fields come from the family's model section) and ``generation_policy``
+    # is the generator's projection of its resolved build/precision.
     model_identity: dict[str, Any]
     generation_policy: dict[str, Any]
-    model: dict[str, Any]
 
     @classmethod
     def from_mapping(
@@ -114,7 +71,7 @@ class AnimaGenerationProtocol:
             raise ValueError(
                 f"unsupported Anima generation schema in {directory}: {value.get('schema')!r}",
             )
-        sampling = AnimaSampling.from_mapping(
+        sampling = ImageSampling.from_mapping(
             value.get("sampling"),
             what=f"Anima generation sampling in {directory}",
         )
@@ -131,22 +88,11 @@ class AnimaGenerationProtocol:
                     f"Anima generation execution.{key} in {directory} must be a non-empty string",
                 )
 
-        generator_runtime = _require_mapping(value, "generator_runtime", directory)
-        runtime_python = generator_runtime.get("python")
-        runtime_packages = generator_runtime.get("packages")
-        runtime_tree = generator_runtime.get("vrl_python_tree_sha256")
-        if (
-            not isinstance(runtime_python, str)
-            or not runtime_python
-            or not isinstance(runtime_packages, Mapping)
-            or not runtime_packages
-        ):
-            raise ValueError(
-                f"Anima generator runtime in {directory} requires Python and packages",
-            )
-        _require_sha256(runtime_tree, what=f"Anima generator runtime in {directory}")
+        generator_runtime = GeneratorRuntimeIdentity.from_mapping(
+            value.get("generator_runtime"),
+            what=f"Anima generator runtime in {directory}",
+        )
 
-        prompt_source = _require_mapping(value, "prompt_source", directory)
         generation_policy = _require_mapping(value, "generation_policy", directory)
         if not generation_policy:
             raise ValueError(f"Anima generation policy in {directory} must not be empty")
@@ -183,19 +129,16 @@ class AnimaGenerationProtocol:
             base_seed=_run_config_int(value, "base_seed", directory, positive=False),
             sampling=sampling,
             negative_prompt=negative_prompt,
-            execution=dict(execution),
-            generator_runtime={
-                **dict(generator_runtime),
-                "packages": dict(runtime_packages),
-            },
-            prompt_source=dict(prompt_source),
+            execution_device=execution["device"],
+            execution_dtype=execution["dtype"],
+            generator_runtime=generator_runtime,
+            use_lora=use_lora,
             model_identity={
                 "schema": identity_schema,
                 "sources": dict(sources),
                 "build": dict(build),
             },
             generation_policy=dict(generation_policy),
-            model=dict(model),
         )
 
     @property
@@ -219,11 +162,12 @@ class AnimaPixelPairingProtocol:
     prompt_count: int
     samples_per_prompt: int
     base_seed: int
-    sampling: AnimaSampling
+    sampling: ImageSampling
     negative_prompt: str
     execution_device_type: str
     execution_dtype: str
-    generator_runtime: dict[str, Any]
+    generator_python: str
+    generator_packages: dict[str, str | None]
     generation_policy: dict[str, Any]
     base_model_identity: dict[str, Any]
 
@@ -235,9 +179,9 @@ class AnimaPixelPairingProtocol:
         """Exclude placement and broad provenance that cannot change pixels."""
 
         runtime = protocol.generator_runtime
-        # The broad tree includes reward and evaluator files that never participate
-        # in generation. Causal audits bind it separately; paired image evaluation
-        # uses the narrower pixel-producing runtime identity.
+        # The broad tree hash includes reward and evaluator files that never
+        # participate in generation. Causal audits bind it separately; paired
+        # image evaluation uses the narrower pixel-producing runtime identity.
         return cls(
             prompt_count=protocol.prompt_count,
             samples_per_prompt=protocol.samples_per_prompt,
@@ -246,12 +190,10 @@ class AnimaPixelPairingProtocol:
             negative_prompt=protocol.negative_prompt,
             # Device ordinals are placement, but the backend changes generation
             # numerics and therefore remains part of the paired-pixel protocol.
-            execution_device_type=protocol.execution["device"].partition(":")[0].lower(),
-            execution_dtype=protocol.execution["dtype"],
-            generator_runtime={
-                "python": runtime["python"],
-                "packages": dict(runtime["packages"]),
-            },
+            execution_device_type=protocol.execution_device.partition(":")[0].lower(),
+            execution_dtype=protocol.execution_dtype,
+            generator_python=runtime.python,
+            generator_packages=dict(runtime.packages),
             generation_policy=dict(protocol.generation_policy),
             base_model_identity=protocol.base_model_identity,
         )
@@ -291,7 +233,7 @@ class AnimaGenerationArchive:
             anchor_path=anchor_path,
             directory=directory,
             expected_source=(
-                "anima_lora_synthetic" if protocol.model["use_lora"] else "anima_base_synthetic"
+                "anima_lora_synthetic" if protocol.use_lora else "anima_base_synthetic"
             ),
         )
         return cls(
@@ -358,7 +300,7 @@ def validate_paired_generation_archives(
 def _load_cells(
     metadata_path: Path,
     directory: Path,
-    sampling: AnimaSampling,
+    sampling: ImageSampling,
 ) -> list[AnimaGenerationCell]:
     persisted_fields = {field.name for field in fields(AnimaGenerationCell)} - {
         "image_sha256",
@@ -623,16 +565,6 @@ def _run_config_int(
     return result
 
 
-def _require_sha256(value: Any, *, what: str) -> str:
-    if (
-        not isinstance(value, str)
-        or len(value) != 64
-        or any(character not in "0123456789abcdef" for character in value)
-    ):
-        raise ValueError(f"{what} requires a lowercase hexadecimal vrl_python_tree_sha256")
-    return value
-
-
 def _read_json_mapping(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(f"JSON file does not exist: {path}")
@@ -649,6 +581,5 @@ __all__ = [
     "AnimaGenerationCell",
     "AnimaGenerationProtocol",
     "AnimaPixelPairingProtocol",
-    "AnimaSampling",
     "validate_paired_generation_archives",
 ]

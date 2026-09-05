@@ -20,7 +20,7 @@ import os
 import random
 import tempfile
 from collections import defaultdict
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,95 +28,46 @@ from typing import TYPE_CHECKING, Any
 from omegaconf import OmegaConf
 
 from vrl.scripts.eval.denoise_generation import (
+    GeneratorRuntimeIdentity,
+    ImageSampling,
     generate_images,
-    generator_runtime_identity,
     seed_for,
 )
 from vrl.utils.artifacts import sha256_file
 
 if TYPE_CHECKING:
     from vrl.run import ResolvedModel
+    from vrl.trainers.checkpointing import CheckpointTarget
     from vrl.trainers.data import PromptExample
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class CheckpointTarget:
-    """One explicitly identified base/checkpoint comparison arm."""
+def load_target(value: str, *, uses_lora: bool) -> CheckpointTarget:
+    """Parse one ``label=path`` (or bare path) arm and pin its checkpoint."""
 
-    label: str
-    epoch: int
-    path: Path | None
-    meta: dict[str, Any]
-    checkpoint_sha256: str | None = None
+    from vrl.trainers.checkpointing import LORA_WEIGHTS_NAME, CheckpointTarget
 
-    @classmethod
-    def load(cls, value: str, *, uses_lora: bool) -> CheckpointTarget:
-        from vrl.trainers.checkpointing import (
-            LORA_WEIGHTS_NAME,
-            TRAINING_CHECKPOINT_NAME,
-            is_complete_checkpoint,
-            read_checkpoint_meta,
+    label, separator, raw_path = value.partition("=")
+    path = Path(raw_path if separator else value).expanduser().resolve()
+    if path.name == LORA_WEIGHTS_NAME:
+        path = path.parent
+    label = label.strip() if separator else path.name
+    if (
+        label == "base"
+        or not label
+        or any(
+            not (character.isascii() and (character.isalnum() or character in "_-"))
+            for character in label
         )
-
-        label, separator, raw_path = value.partition("=")
-        path = Path(raw_path if separator else value).expanduser().resolve()
-        if path.name == LORA_WEIGHTS_NAME:
-            path = path.parent
-        label = label.strip() if separator else path.name
-        if (
-            label == "base"
-            or not label
-            or any(
-                not (character.isascii() and (character.isalnum() or character in "_-"))
-                for character in label
-            )
-        ):
-            raise ValueError(
-                "checkpoint labels must use letters, digits, '_' or '-'; base is reserved"
-            )
-        if not is_complete_checkpoint(path):
-            raise ValueError(f"missing or incomplete checkpoint: {path}")
-        meta = dict(read_checkpoint_meta(path))
-        epoch = meta.get("completed_epoch")
-        if type(epoch) is not int or epoch < 0:
-            raise ValueError(f"checkpoint completed_epoch must be a non-negative integer: {path}")
-        if meta.get("uses_lora") is not uses_lora:
-            raise ValueError(f"checkpoint uses_lora differs from the run model: {path}")
-        return cls(label, epoch, path, meta, sha256_file(path / TRAINING_CHECKPOINT_NAME))
-
-
-@dataclass(frozen=True, slots=True)
-class ImageSampling:
-    """Resolved image request; independent of generator family and reward."""
-
-    width: int
-    height: int
-    num_steps: int
-    guidance_scale: float
-    max_sequence_length: int
-
-    @classmethod
-    def from_config(cls, cfg: Mapping[str, Any]) -> ImageSampling:
-        values = {
-            name: cfg.get(name) for name in ("width", "height", "num_steps", "guidance_scale")
-        }
-        values["max_sequence_length"] = cfg.get("max_sequence_length", 128)
-        if values["max_sequence_length"] is None:
-            values["max_sequence_length"] = 128
-        for name in ("width", "height", "num_steps", "max_sequence_length"):
-            if type(values[name]) is not int or values[name] < 1:
-                raise ValueError(f"sampling.{name} must be a positive integer")
-        guidance = values["guidance_scale"]
-        if (
-            isinstance(guidance, bool)
-            or not isinstance(guidance, (int, float))
-            or not math.isfinite(guidance)
-            or guidance < 0
-        ):
-            raise ValueError("sampling.guidance_scale must be finite and non-negative")
-        return cls(**values)
+    ):
+        raise ValueError(
+            "checkpoint labels must use letters, digits, '_' or '-'; base is reserved"
+        )
+    target = CheckpointTarget.load(path, label=label, digest=True)
+    if target.meta.get("uses_lora") is not uses_lora:
+        raise ValueError(f"checkpoint uses_lora differs from the run model: {path}")
+    return target
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,13 +99,15 @@ class EvaluationPlan:
     config_sha256: str
     manifest_sha256: str
     training_reward_components: tuple[str, ...]
-    runtime_identity: dict[str, Any] = field(default_factory=generator_runtime_identity)
+    runtime_identity: GeneratorRuntimeIdentity = field(
+        default_factory=GeneratorRuntimeIdentity.capture,
+    )
 
     def record(self) -> dict[str, Any]:
         return {
             "schema": "vrl.image-checkpoint-evaluation/v1",
             "model_identity": self.resolved_model.identity,
-            "generator_runtime": self.runtime_identity,
+            "generator_runtime": self.runtime_identity.to_record(),
             "config_sha256": self.config_sha256,
             "manifest_sha256": self.manifest_sha256,
             "targets": [
@@ -225,7 +178,7 @@ class EvaluationPlan:
             or any(target.path is None for target in self.targets[1:])
         ):
             raise ValueError("generate the base arm before restoring any checkpoint")
-        if generator_runtime_identity() != self.runtime_identity:
+        if GeneratorRuntimeIdentity.capture() != self.runtime_identity:
             raise ValueError("generator runtime changed after preflight")
         bundle = self.resolved_model.materialize(context="image checkpoint evaluation")
         model = bundle.model.eval()
@@ -406,7 +359,7 @@ def discover_targets(
     epochs: Sequence[int] = (),
     uses_lora: bool,
 ) -> tuple[CheckpointTarget, ...]:
-    from vrl.trainers.checkpointing import is_complete_checkpoint
+    from vrl.trainers.checkpointing import CheckpointTarget, is_complete_checkpoint
 
     if checkpoint_specs and epochs:
         raise ValueError("--checkpoint and --epochs are mutually exclusive")
@@ -415,13 +368,13 @@ def discover_targets(
     ):
         raise ValueError("--epochs must contain unique non-negative integers")
     if checkpoint_specs:
-        targets = [CheckpointTarget.load(value, uses_lora=uses_lora) for value in checkpoint_specs]
+        targets = [load_target(value, uses_lora=uses_lora) for value in checkpoint_specs]
     else:
         by_epoch: dict[int, CheckpointTarget] = {}
         for path in sorted(run_dir.glob("checkpoint-*")):
             if not path.is_dir() or not is_complete_checkpoint(path):
                 continue
-            target = CheckpointTarget.load(str(path), uses_lora=uses_lora)
+            target = load_target(str(path), uses_lora=uses_lora)
             previous = by_epoch.get(target.epoch)
             if previous is None or target.label == "checkpoint-final":
                 by_epoch[target.epoch] = target
@@ -432,7 +385,7 @@ def discover_targets(
         targets = [by_epoch[epoch] for epoch in sorted(epochs or by_epoch)]
     if not targets or len({target.label for target in targets}) != len(targets):
         raise ValueError("select at least one checkpoint with unique labels")
-    return (CheckpointTarget("base", 0, None, {}), *targets)
+    return (CheckpointTarget.base(), *targets)
 
 
 def select_prompts(

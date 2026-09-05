@@ -113,7 +113,7 @@ def test_explicit_lora_export_uses_parent_checkpoint_and_rejects_wrong_mode(tmp_
     assert (targets[1].label, targets[1].epoch, targets[1].path) == ("candidate", 7, path)
     assert targets[1].checkpoint_sha256 == checkpoint_eval.sha256_file(path / "checkpoint.pt")
     with pytest.raises(ValueError, match="uses_lora"):
-        checkpoint_eval.CheckpointTarget.load(str(path), uses_lora=False)
+        checkpoint_eval.load_target(str(path), uses_lora=False)
     with pytest.raises(ValueError, match="mutually exclusive"):
         checkpoint_eval.discover_targets(
             tmp_path, checkpoint_specs=(str(path),), epochs=(7,), uses_lora=True

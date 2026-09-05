@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+import math
 import platform
+from collections.abc import Mapping
+from dataclasses import dataclass, fields
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -25,48 +28,153 @@ if TYPE_CHECKING:
     from vrl.models.steps.denoise.base import DiffusionModelBase, DiffusionSamplingStateBase
 
 
-class ImageSampling(Protocol):
-    """Sampling values consumed by native stepwise image generation."""
+@dataclass(frozen=True, slots=True)
+class ImageSampling:
+    """Resolved image sampling values shared by generation and evaluation.
 
-    @property
-    def width(self) -> int: ...
+    One type serves the checkpoint evaluators and the Anima generation archive:
+    ``from_config`` reads a run's ``sampling`` section (``max_sequence_length``
+    defaults to 128 there), ``from_mapping`` re-reads a persisted record and
+    fails closed on missing or unknown keys, and ``to_record`` writes it back
+    with keys derived from the fields.
+    """
 
-    @property
-    def height(self) -> int: ...
+    width: int
+    height: int
+    num_steps: int
+    guidance_scale: float
+    max_sequence_length: int
 
-    @property
-    def num_steps(self) -> int: ...
+    def __post_init__(self) -> None:
+        for name in ("width", "height", "num_steps", "max_sequence_length"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"sampling.{name} must be a positive integer")
+        guidance_scale = self.guidance_scale
+        if (
+            isinstance(guidance_scale, bool)
+            or not isinstance(guidance_scale, (int, float))
+            or not math.isfinite(guidance_scale)
+            or guidance_scale < 0
+        ):
+            raise ValueError("sampling.guidance_scale must be finite and non-negative")
+        object.__setattr__(self, "guidance_scale", float(guidance_scale))
 
-    @property
-    def guidance_scale(self) -> float: ...
+    @classmethod
+    def from_config(cls, cfg: Mapping[str, Any]) -> ImageSampling:
+        """Read a run config's ``sampling`` section; text length defaults to 128."""
 
-    @property
-    def max_sequence_length(self) -> int: ...
+        max_sequence_length = cfg.get("max_sequence_length")
+        return cls(
+            width=cfg.get("width"),
+            height=cfg.get("height"),
+            num_steps=cfg.get("num_steps"),
+            guidance_scale=cfg.get("guidance_scale"),
+            max_sequence_length=128 if max_sequence_length is None else max_sequence_length,
+        )
+
+    @classmethod
+    def from_mapping(
+        cls,
+        value: Mapping[str, Any] | Any,
+        *,
+        what: str = "sampling",
+    ) -> ImageSampling:
+        """Parse one fail-closed persisted sampling record."""
+
+        if not isinstance(value, Mapping):
+            raise TypeError(f"{what} must be a mapping")
+        expected = {field.name for field in fields(cls)}
+        missing = sorted(expected - set(value))
+        unknown = sorted(set(value) - expected)
+        if missing or unknown:
+            raise ValueError(f"invalid {what} fields: missing={missing} unknown={unknown}")
+        return cls(**{name: value[name] for name in expected})
+
+    def to_record(self) -> dict[str, int | float]:
+        """Serialize with keys derived from the typed source of truth."""
+
+        return {field.name: getattr(self, field.name) for field in fields(self)}
 
 
-def generator_runtime_identity() -> dict[str, Any]:
-    """Bind paired archives to the generator code and core package versions."""
+@dataclass(frozen=True, slots=True)
+class GeneratorRuntimeIdentity:
+    """Bind paired archives to the generator code and core package versions.
 
-    package_root = Path(__file__).resolve().parents[2]
-    digest = hashlib.sha256()
-    for path in sorted(package_root.rglob("*.py")):
-        relative = path.relative_to(package_root).as_posix()
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
+    ``capture()`` is the only producer; archives re-read it with
+    ``from_mapping`` and compare whole values, so a runtime drift between
+    preflight and generation, or between two paired archives, fails closed.
+    """
 
-    versions: dict[str, str | None] = {}
-    for package in ("torch", "diffusers", "transformers", "peft", "safetensors"):
+    python: str
+    packages: dict[str, str | None]
+    # Digest over every vrl/**/*.py file. Broader than what produces pixels
+    # (reward and evaluator code count too), so paired evaluation compares only
+    # ``python`` + ``packages`` and leaves this to causal audits.
+    vrl_python_tree_sha256: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.python, str) or not self.python:
+            raise ValueError("generator runtime python must be a non-empty string")
+        if not isinstance(self.packages, Mapping) or not self.packages:
+            raise ValueError("generator runtime packages must be a non-empty mapping")
+        digest = self.vrl_python_tree_sha256
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ValueError(
+                "generator runtime requires a lowercase hexadecimal vrl_python_tree_sha256",
+            )
+        object.__setattr__(self, "packages", dict(self.packages))
+
+    @classmethod
+    def capture(cls) -> GeneratorRuntimeIdentity:
+        package_root = Path(__file__).resolve().parents[2]
+        digest = hashlib.sha256()
+        for path in sorted(package_root.rglob("*.py")):
+            relative = path.relative_to(package_root).as_posix()
+            digest.update(relative.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+
+        versions: dict[str, str | None] = {}
+        for package in ("torch", "diffusers", "transformers", "peft", "safetensors"):
+            try:
+                versions[package] = importlib.metadata.version(package)
+            except importlib.metadata.PackageNotFoundError:
+                versions[package] = None
+        return cls(
+            python=platform.python_version(),
+            packages=versions,
+            vrl_python_tree_sha256=digest.hexdigest(),
+        )
+
+    @classmethod
+    def from_mapping(
+        cls,
+        value: Mapping[str, Any] | Any,
+        *,
+        what: str = "generator runtime",
+    ) -> GeneratorRuntimeIdentity:
+        """Parse one fail-closed persisted runtime record."""
+
+        if not isinstance(value, Mapping):
+            raise TypeError(f"{what} must be a mapping")
+        expected = {field.name for field in fields(cls)}
+        missing = sorted(expected - set(value))
+        unknown = sorted(set(value) - expected)
+        if missing or unknown:
+            raise ValueError(f"invalid {what} fields: missing={missing} unknown={unknown}")
         try:
-            versions[package] = importlib.metadata.version(package)
-        except importlib.metadata.PackageNotFoundError:
-            versions[package] = None
-    return {
-        "vrl_python_tree_sha256": digest.hexdigest(),
-        "python": platform.python_version(),
-        "packages": versions,
-    }
+            return cls(**{name: value[name] for name in expected})
+        except ValueError as error:
+            raise ValueError(f"{what}: {error}") from error
+
+    def to_record(self) -> dict[str, Any]:
+        return {field.name: getattr(self, field.name) for field in fields(self)}
 
 
 def seed_for(
@@ -200,10 +308,10 @@ def video_to_cthw(video: torch.Tensor) -> torch.Tensor:
 
 
 __all__ = [
+    "GeneratorRuntimeIdentity",
     "ImageSampling",
     "generate_images",
     "generate_one_video",
-    "generator_runtime_identity",
     "seed_for",
     "video_to_cthw",
 ]
