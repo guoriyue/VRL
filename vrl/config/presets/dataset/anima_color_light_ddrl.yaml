@@ -1,0 +1,13 @@
+# Unified color-and-light dataset: 256 training prompts and 96 formal eval prompts.
+# Generate all clean anchors and their latent shard from the canonical train
+# manifest; the old 64-image canary assets are not a complete training source.
+data:
+  loader: prompt_manifest
+  manifest: data/external/anima/color_light/anchor_manifest.jsonl
+  eval_manifest: datasets/anima/color_light/eval_prompts.jsonl
+  artifact_data_root: data/external/anima/color_light
+  sft_latents: data/external/anima/color_light/sft_latents_bf16.pt
+  preprocessing:
+    format: jsonl
+  sampler:
+    type: sequential_window
