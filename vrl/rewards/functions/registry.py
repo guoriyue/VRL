@@ -43,7 +43,9 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.animereward_quality import AnimeRewardQualityReward
     from vrl.rewards.functions.codex_image_qa import CodexImageQAReward
     from vrl.rewards.functions.cosmos3_reasoner import Cosmos3ReasonerReward
+    from vrl.rewards.functions.countgd_person_count import CountGDPersonCountReward
     from vrl.rewards.functions.geneval import GenEvalReward
+    from vrl.rewards.functions.grounded_ocr import GroundedOCRReward
     from vrl.rewards.functions.hpsv3 import HPSv3Reward
     from vrl.rewards.functions.idm_action_following import ActionFollowingReward
     from vrl.rewards.functions.image_sharpness import ImageSharpnessReward
@@ -54,6 +56,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.phymotion import PhyMotionReward
     from vrl.rewards.functions.pickscore import PickScoreReward
     from vrl.rewards.functions.robotics_video_reward import RoboticsVideoReward
+    from vrl.rewards.functions.tag_adherence import TagAdherenceReward
     from vrl.rewards.functions.target_dino_similarity import TargetDinoSimilarityReward
     from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
     from vrl.rewards.functions.videocon_physics import VideoConPhysicsReward
@@ -66,10 +69,13 @@ def _register_builtins() -> None:
             "animereward_quality": AnimeRewardQualityReward,
             "image_sharpness": ImageSharpnessReward,
             "codex_image_qa": CodexImageQAReward,
+            "countgd_person_count": CountGDPersonCountReward,
             "geneval": GenEvalReward,
+            "grounded_ocr": GroundedOCRReward,
             "nsfw_safety": NSFWSafetyReward,
             "ocr": OCRReward,
             "pickscore": PickScoreReward,
+            "tag_adherence": TagAdherenceReward,
             # Future Reward suite (SPRINT_future_reward): DINOv2 perceptual anchor + RAFT
             # motion guard. They replaced the deleted pixel-L1 target_video_similarity (it was
             # reward-hackable, see S1). The IDM action-following signal is designed in S3 but

@@ -1,7 +1,12 @@
 # Reward Configuration Guide
 
-Reward configs are single-component building blocks. Experiment configs may
-compose them with `reward.components` and override per-component
+Reward configs are reusable building blocks, not generator-specific reward
+implementations. Select them at launch with `+reward=...` over a reward-neutral
+execution recipe; do not add one experiment YAML for every model/reward/dataset
+combination. Multiple selections merge in command order. See
+[runtime composition](../../../../docs/CONFIGURATION.md).
+
+Experiment runs may compose them with `reward.components` and override per-component
 `reward.kwargs.<component>.score_key` when a compound recipe needs a narrower
 signal than the base reward default.
 
@@ -9,7 +14,8 @@ signal than the base reward default.
 
 Reward execution is selected per component. `in_process` is the default and is
 the only supported heavy-reward mode when trainer, rollout, and reward share one
-GPU. An operator-owned service uses typed transport config:
+GPU. An operator-owned service uses typed transport config in the
+`reward.inference` section, keyed by component name:
 
 ```yaml
 reward:
@@ -18,18 +24,25 @@ reward:
   kwargs:
     videoscore2:
       artifact_dir: /shared/vrl/reward_artifacts
-      inference:
-        kind: http
-        endpoint: http://reward.internal:8300
-        timeout_s: 1800
-        expected_model: videoscore2-v1
+  inference:
+    videoscore2:
+      kind: http
+      endpoint: http://reward.internal:8300
+      timeout_s: 1800
+      expected_model: videoscore2-v1
+      expected_model_version: VideoScore2@pinned-revision
 ```
+
+`reward.kwargs.<component>` holds constructor arguments only; transport config
+never nests inside it.
 
 Do not put `worker_config`, `device`, or parking fields on an HTTP component.
 Those belong to the standalone service config. HTTP scoring currently uses
 integrity-checked shared-filesystem paths, so the trainer and service must see
 the same absolute `artifact_dir`. External-only rewards receive no local Ray
-resource bundle. If a transport failure leaves the remote request state
+resource bundle. `expected_model` is required; set `expected_model_version` for
+fixed reward protocols so preflight also rejects a same-name service running a
+different checkpoint, revision, or threshold. If a transport failure leaves the remote request state
 unknown, VRL retains that request's artifacts for operator cleanup rather than
 deleting files that the service may still be reading.
 

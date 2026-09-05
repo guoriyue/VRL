@@ -12,3 +12,22 @@ reward:
     ocr: 1.0
   kwargs:
     ocr:
+      # Keep the historical Flow-GRPO OCR model family unless an experiment
+      # pre-registers a qualified engine as part of its reward semantics.
+      engine_profile: flow_grpo_compat
+      # Experiments may opt into auditable OCR frames without inventing a
+      # reward-only leaf outside this reusable config boundary.
+      debug_dir: null
+      # Preserve Flow-GRPO's whole-image text concatenation by default. Exact
+      # single-token curricula can opt into one complete detected line.
+      text_selection: all_text
+      # Flow-GRPO compatibility default. Exact-text curricula should disable
+      # this because arbitrary surrounding garbage otherwise earns 1.0.
+      substring_full_credit: true
+      # Optional exact-text contract: reject other high-confidence detected
+      # alphanumeric lines after selecting the best complete target line.
+      exclusive_alphanumeric_lines: false
+      extra_line_min_confidence: 0.5
+      # Natural-scene curricula may penalize only additional target-like lines
+      # while continuing to allow unrelated contextual text.
+      near_duplicate_min_similarity: null

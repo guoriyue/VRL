@@ -1,0 +1,35 @@
+{
+  "schema": "vrl.vocabulary-source/v1",
+  "id": "esdb_en_us_50_2026_02_25_7_10",
+  "source": {
+    "name": "English Speller Database (ESDB, formerly SCOWL)",
+    "url": "https://github.com/en-wl/wordlist",
+    "release": "rel-2026.02.25",
+    "commit": "7e99edab8e32f9f9ea2b15f249ca8d4d67237410"
+  },
+  "extraction": {
+    "command": "./scowl --db scowl.db word-list 50 A 1 --deaccent --categories= --wo-poses=abbr --wo-pos-classes=person,surname,place,name,demonym,trademark,upper,name?,upper?,abbr? --wo-usage-notes=offensive-1,offensive-2,offensive-3,vulgar-1,vulgar-2,vulgar-3 | grep -E '^[a-z]{7,10}$' | LC_ALL=C sort -u",
+    "dictionary_size": 50,
+    "spelling": "A",
+    "variant_level": 1,
+    "ascii_lowercase_only": true,
+    "min_chars": 7,
+    "max_chars": 10
+  },
+  "counts_by_length": {
+    "7": 9564,
+    "8": 10096,
+    "9": 8915,
+    "10": 7110
+  },
+  "artifacts": {
+    "words": {
+      "path": "datasets/vocabularies/esdb_en_us_50_2026_02_25_7_10/words.txt",
+      "sha256": "481f04a74dfc3ebe6832eeb7a3db6e5f3e09aeec1fba971d6dfb803ec270033c"
+    },
+    "license": {
+      "path": "datasets/vocabularies/esdb_en_us_50_2026_02_25_7_10/LICENSE.txt",
+      "sha256": "090575a131b4260926c7a6b30a90aca0f5db5fbb5c46778e0c5855227bf6ebc3"
+    }
+  }
+}
