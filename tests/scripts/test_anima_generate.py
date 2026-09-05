@@ -454,6 +454,12 @@ def test_generate_records_the_batch_seed_for_every_sample(monkeypatch, tmp_path)
         for line in (output_dir / "metadata.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert [row["seed"] for row in rows] == [37, 37]
+    assert {path.name for path in output_dir.iterdir()} == {
+        "images",
+        "run_config.json",
+        "metadata.jsonl",
+        "anchor_manifest.jsonl",
+    }
     assert [row["prompt_metadata"] for row in rows] == [
         {"bucket": "sign"},
         {"bucket": "sign"},

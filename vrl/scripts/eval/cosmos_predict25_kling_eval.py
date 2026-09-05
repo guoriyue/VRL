@@ -23,7 +23,7 @@ from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 from vrl.scripts.eval._device import resolve_eval_device, resolve_eval_dtype
 from vrl.scripts.eval._kling_reward import resolve_kling_worker_config
 from vrl.scripts.eval._sampling import resolve_eval_sampling
-from vrl.scripts.eval.denoise_video_generation import (
+from vrl.scripts.eval.denoise_generation import (
     generate_one_video,
     seed_for,
 )

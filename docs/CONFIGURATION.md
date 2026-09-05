@@ -107,6 +107,21 @@ semantics. Optional debug artifacts use
 interpolation). Retired Anima OCR datasets and qualification rules are historical
 experiment evidence, not additional requirements for the shared OCR reward.
 
+## Anima generation outputs
+
+The standalone Anima generator writes one reusable archive, not a debug dump:
+
+- `images/*.png`: generated images.
+- `run_config.json`: model/adapter identity, sampling settings, and runtime provenance.
+- `metadata.jsonl`: image-to-prompt mapping, batch seeds, and reward metadata for evaluation.
+- `anchor_manifest.jsonl`: the same images as clean targets for the SFT encoder and DDRL datasets.
+
+Paired evaluation reads and checks this archive, and the target encoder consumes
+the anchor manifest. The duplicate `metadata.csv` export has been removed;
+`metadata.jsonl` is the canonical image index. Existing archives remain readable.
+Output-directory ownership checks prevent one generation run from overwriting
+or relabeling another. None of these files saves another model checkpoint.
+
 ## Compose an independent evaluation policy
 
 The quality evaluator continues to load generator identity and sampling from

@@ -3,40 +3,32 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import hashlib
-import importlib.metadata
 import json
 import logging
-import platform
 from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
-from PIL import Image
 
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
 from vrl.config.schema import parse_config
-from vrl.generation.types import VideoGenerationRequest
 from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import get_model_family_entry
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.scripts.eval._device import resolve_eval_device
+from vrl.scripts.eval.denoise_generation import generate_images, generator_runtime_identity
 from vrl.scripts.families.cosmos.anima.generation_protocol import (
     ANIMA_GENERATION_SCHEMA,
     AnimaSampling,
 )
 from vrl.trainers.data import PromptExample, load_prompt_manifest
 from vrl.utils.artifacts import sha256_file
-from vrl.utils.media import to_pil_image
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_NEGATIVE_PROMPT = "worst quality, low quality, score_1, score_2, score_3, artist name"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -93,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-sequence-length", type=int, default=0)
     parser.add_argument(
         "--negative-prompt",
-        default=_DEFAULT_NEGATIVE_PROMPT,
+        default="worst quality, low quality, score_1, score_2, score_3, artist name",
         help="Negative prompt used when CFG is enabled.",
     )
     parser.add_argument(
@@ -417,36 +409,6 @@ def _lora_checkpoint_provenance(
     }
 
 
-def generator_runtime_identity() -> dict[str, Any]:
-    """Bind paired archives to the generator code and core package versions."""
-
-    versions: dict[str, str | None] = {}
-    for package in ("torch", "diffusers", "transformers", "peft", "safetensors"):
-        try:
-            versions[package] = importlib.metadata.version(package)
-        except importlib.metadata.PackageNotFoundError:
-            versions[package] = None
-    return {
-        "vrl_python_tree_sha256": _vrl_python_tree_sha256(),
-        "python": platform.python_version(),
-        "packages": versions,
-    }
-
-
-def _vrl_python_tree_sha256() -> str:
-    """Hash every repository Python source that can participate in generation."""
-
-    package_root = Path(__file__).resolve().parents[4]
-    digest = hashlib.sha256()
-    for path in sorted(package_root.rglob("*.py")):
-        relative = path.relative_to(package_root).as_posix()
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
-
-
 def _generation_policy(build: ModelBuild, precision: PrecisionPolicy) -> dict[str, Any]:
     """Project the resolved rollout behavior that can change generated pixels."""
 
@@ -517,66 +479,19 @@ def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> AnimaSamplin
     )
 
 
-def generate_images(
-    model: Any,
-    *,
-    prompt: str,
-    negative_prompt: str,
-    seed: int,
-    samples_per_prompt: int,
-    sampling: AnimaSampling,
-    torch: Any,
-) -> list[Image.Image]:
-    """Generate one reproducible image batch through the native Anima runtime."""
-
-    prompts = [prompt] * samples_per_prompt
-    negative_prompts = [negative_prompt] * samples_per_prompt
-    encoded = model.encode_prompt(
-        prompts,
-        negative_prompts,
-        max_sequence_length=sampling.max_sequence_length,
-        guidance_scale=sampling.guidance_scale,
-    )
-    request = VideoGenerationRequest(
-        negative_prompt=negative_prompt,
-        width=sampling.width,
-        height=sampling.height,
-        frame_count=1,
-        num_steps=sampling.num_steps,
-        guidance_scale=sampling.guidance_scale,
-        seed=int(seed),
-    )
-    state = model.prepare_sampling(request, encoded)
-    with torch.no_grad():
-        for step_idx, timestep in enumerate(state.timesteps):
-            step_output = model.forward_step(state, step_idx)
-            state.latents = state.scheduler.step(
-                step_output["noise_pred"].float(),
-                timestep,
-                state.latents.float(),
-                return_dict=False,
-            )[0]
-    decoded = model.decode_latents(state.latents)
-    return [to_pil_image(image) for image in decoded]
-
-
 def _write_metadata(
     rows: list[dict[str, Any]],
     out_dir: Path,
     *,
     anchor_source: str,
 ) -> None:
+    """Persist the evaluation index and its SFT-compatible target projection."""
+
     jsonl_path = out_dir / "metadata.jsonl"
     jsonl_path.write_text(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
         encoding="utf-8",
     )
-    csv_path = out_dir / "metadata.csv"
-    with csv_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
-
     # The same generation run can directly become synthetic clean-data
     # supervision. Paths stay relative to the chosen artifact root (out_dir),
     # while run_config.json pins the model, sampling, and negative prompt that

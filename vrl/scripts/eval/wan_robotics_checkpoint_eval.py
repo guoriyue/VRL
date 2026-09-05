@@ -33,7 +33,7 @@ from vrl.rewards.models.robotics_video_reward import RoboticsVideoRewardModel
 from vrl.scripts.data.common import write_jsonl
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval._sampling import resolve_eval_sampling
-from vrl.scripts.eval.denoise_video_generation import generate_one_video
+from vrl.scripts.eval.denoise_generation import generate_one_video
 from vrl.scripts.eval.score_report import summarize_paired_scores
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
