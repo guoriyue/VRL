@@ -1,11 +1,15 @@
-"""Resolve reproducible Anima held-out evaluation inputs and preflight records."""
+"""Generate and verify reusable Anima held-out image grids."""
 
 from __future__ import annotations
 
+import contextlib
+import gc
 import hashlib
 import json
 import logging
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -62,6 +66,26 @@ class EvalPrompt:
     # Display/provenance-only dimensions of the balanced prompt protocol.
     bucket: str
     prompt_style: str
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedImage:
+    """One exact generated cell before reward scoring."""
+
+    checkpoint_label: str
+    epoch: int
+    prompt_index: int
+    # Display/provenance-only copy of the selected manifest row.
+    manifest_index: int
+    sample_index: int
+    seed: int
+    prompt: str
+    # Display/provenance-only prompt strata.
+    bucket: str
+    prompt_style: str
+    path: Path
+    # Integrity binding used both by retry validation and scored sample output.
+    image_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -492,6 +516,109 @@ def _resolve_luna_config(cfg: DictConfig, *, arm_count: int) -> dict[str, Any]:
     return worker_config
 
 
+def _generate_curve(
+    protocol: EvaluationProtocol,
+    output_dir: Path,
+) -> list[GeneratedImage]:
+    import torch
+
+    from vrl.scripts.families.cosmos.anima.generate import generate_images
+    from vrl.trainers.checkpointing import load_training_checkpoint, restore_model_checkpoint
+    from vrl.utils.cuda_memory import release_cuda_memory
+
+    bundle = protocol.resolved_model.materialize(context="Anima held-out evaluation")
+    model = bundle.model.eval()
+    generated: list[GeneratedImage] = []
+    checkpoint_read = False
+    try:
+        for target in protocol.targets:
+            if target.path is None:
+                if checkpoint_read:
+                    raise RuntimeError("base generation must precede every checkpoint restore")
+            else:
+                checkpoint = load_training_checkpoint(target.path)
+                if checkpoint.next_epoch != target.epoch:
+                    raise ValueError(
+                        f"checkpoint progress changed during evaluation: {target.path} "
+                        f"next_epoch={checkpoint.next_epoch}, expected={target.epoch}",
+                    )
+                restore_model_checkpoint(
+                    checkpoint,
+                    bundle=bundle,
+                    family="cosmos-predict2-anima",
+                    expected_model_identity=protocol.resolved_model.identity,
+                    strict=True,
+                )
+                del checkpoint
+                gc.collect()
+                checkpoint_read = True
+
+            arm_dir = output_dir / "images" / target.label
+            arm_dir.mkdir(parents=True, exist_ok=True)
+            adapter_context = (
+                model.disable_adapter() if target.path is None else contextlib.nullcontext()
+            )
+            with adapter_context:
+                for prompt in protocol.prompts:
+                    for sample_index in range(SAMPLES_PER_PROMPT):
+                        seed = _sample_seed(prompt.prompt_index, sample_index)
+                        logger.info(
+                            "Generating arm=%s prompt=%d sample=%d seed=%d",
+                            target.label,
+                            prompt.prompt_index,
+                            sample_index,
+                            seed,
+                        )
+                        images = generate_images(
+                            model,
+                            prompt=prompt.prompt,
+                            negative_prompt=protocol.negative_prompt,
+                            seed=seed,
+                            samples_per_prompt=1,
+                            sampling=protocol.sampling,
+                            torch=torch,
+                        )
+                        if len(images) != 1:
+                            raise RuntimeError(f"Anima generation returned {len(images)} images")
+                        path = output_dir / _image_relative_path(
+                            target.label,
+                            prompt.prompt_index,
+                            sample_index,
+                        )
+                        images[0].save(path, format="PNG")
+                        generated.append(
+                            GeneratedImage(
+                                checkpoint_label=target.label,
+                                epoch=target.epoch,
+                                prompt_index=prompt.prompt_index,
+                                manifest_index=prompt.manifest_index,
+                                sample_index=sample_index,
+                                seed=seed,
+                                prompt=prompt.prompt,
+                                bucket=prompt.bucket,
+                                prompt_style=prompt.prompt_style,
+                                path=path.resolve(),
+                                image_sha256=sha256_file(path),
+                            ),
+                        )
+                        del images
+    finally:
+        del model, bundle
+        release_cuda_memory()
+    expected = len(protocol.targets) * len(protocol.prompts) * SAMPLES_PER_PROMPT
+    if len(generated) != expected:
+        raise RuntimeError(f"generated image count mismatch: {len(generated)} != {expected}")
+    return generated
+
+
+def _sample_seed(prompt_index: int, sample_index: int) -> int:
+    return BASE_SEED + prompt_index * SAMPLES_PER_PROMPT + sample_index
+
+
+def _image_relative_path(label: str, prompt_index: int, sample_index: int) -> Path:
+    return Path("images") / label / f"prompt{prompt_index:04d}_sample{sample_index:02d}.png"
+
+
 def _evaluation_protocol_record(protocol: EvaluationProtocol) -> dict[str, Any]:
     """Return the exact generation/scoring contract bound to persisted stages."""
 
@@ -548,6 +675,256 @@ def _protocol_sha256(protocol: EvaluationProtocol) -> str:
     return _sha256_json(_evaluation_protocol_record(protocol))
 
 
+def _write_generation_stage(
+    protocol: EvaluationProtocol,
+    generated: list[GeneratedImage],
+    output_dir: Path,
+) -> None:
+    """Commit a complete, content-addressed image grid as the retry boundary."""
+
+    _validate_owned_output_tree(output_dir)
+    by_key = {
+        (image.checkpoint_label, image.prompt_index, image.sample_index): image
+        for image in generated
+    }
+    if len(by_key) != len(generated):
+        raise ValueError("generated stage contains duplicate arm/prompt/sample cells")
+
+    rows: list[dict[str, Any]] = []
+    expected_paths: set[Path] = set()
+    for target in protocol.targets:
+        for prompt in protocol.prompts:
+            for sample_index in range(SAMPLES_PER_PROMPT):
+                key = (target.label, prompt.prompt_index, sample_index)
+                image = by_key.get(key)
+                if image is None:
+                    raise ValueError(f"generated stage is missing cell {key!r}")
+                expected_metadata = (
+                    target.epoch,
+                    prompt.manifest_index,
+                    _sample_seed(prompt.prompt_index, sample_index),
+                    prompt.prompt,
+                    prompt.bucket,
+                    prompt.prompt_style,
+                )
+                actual_metadata = (
+                    image.epoch,
+                    image.manifest_index,
+                    image.seed,
+                    image.prompt,
+                    image.bucket,
+                    image.prompt_style,
+                )
+                if actual_metadata != expected_metadata:
+                    raise ValueError(f"generated cell {key!r} has inconsistent protocol metadata")
+                relative_path = _image_relative_path(*key)
+                expected_path = (output_dir / relative_path).resolve()
+                if not expected_path.is_relative_to(output_dir.resolve()):
+                    raise ValueError(f"generated image escapes output directory: {expected_path}")
+                if image.path.resolve() != expected_path:
+                    raise ValueError(
+                        f"generated cell {key!r} has unexpected path: {image.path}",
+                    )
+                _validate_generated_png(
+                    expected_path,
+                    expected_sha256=image.image_sha256,
+                    expected_size=(
+                        protocol.sampling.width,
+                        protocol.sampling.height,
+                    ),
+                )
+                expected_paths.add(relative_path)
+                rows.append(
+                    {
+                        "checkpoint_label": target.label,
+                        "prompt_index": prompt.prompt_index,
+                        "sample_index": sample_index,
+                        "path": relative_path.as_posix(),
+                        "sha256": image.image_sha256,
+                    },
+                )
+    if len(rows) != len(generated):
+        raise ValueError(
+            f"generated stage has unexpected cells: {len(generated)} != {len(rows)}",
+        )
+    _validate_exact_image_set(output_dir, expected_paths)
+    protocol_record = _evaluation_protocol_record(protocol)
+    _write_json(
+        output_dir / GENERATION_MANIFEST_NAME,
+        {
+            "schema": GENERATION_MANIFEST_SCHEMA,
+            "protocol_sha256": _sha256_json(protocol_record),
+            "protocol": protocol_record,
+            "image_count": len(rows),
+            "images": rows,
+        },
+    )
+
+
+def _load_generation_stage(
+    protocol: EvaluationProtocol,
+    output_dir: Path,
+) -> list[GeneratedImage]:
+    """Load a prior image grid only after proving it matches this protocol."""
+
+    _validate_owned_output_tree(output_dir)
+    manifest_path = output_dir / GENERATION_MANIFEST_NAME
+    if not manifest_path.is_file():
+        raise FileNotFoundError(
+            "existing evaluation output has no complete generation stage; "
+            f"use a fresh --output-dir instead of mixing partial files: {output_dir}",
+        )
+    manifest = _read_json_object(manifest_path)
+    if manifest.get("schema") != GENERATION_MANIFEST_SCHEMA:
+        raise ValueError(f"unsupported generation manifest schema: {manifest_path}")
+    current_protocol = _evaluation_protocol_record(protocol)
+    stored_protocol = manifest.get("protocol")
+    if not isinstance(stored_protocol, dict):
+        raise TypeError(f"generation manifest protocol must be a mapping: {manifest_path}")
+    stored_sha256 = str(manifest.get("protocol_sha256", ""))
+    if stored_sha256 != _sha256_json(stored_protocol):
+        raise ValueError(f"generation manifest protocol hash is invalid: {manifest_path}")
+    if stored_sha256 != _sha256_json(current_protocol) or stored_protocol != current_protocol:
+        raise ValueError(
+            "existing generated images belong to a different evaluation protocol; "
+            "use a fresh --output-dir",
+        )
+
+    raw_rows = manifest.get("images")
+    if not isinstance(raw_rows, list):
+        raise TypeError(f"generation manifest images must be a list: {manifest_path}")
+    expected_count = len(protocol.targets) * len(protocol.prompts) * SAMPLES_PER_PROMPT
+    if type(manifest.get("image_count")) is not int or manifest["image_count"] != expected_count:
+        raise ValueError(
+            f"generation manifest image_count must be {expected_count}: {manifest_path}",
+        )
+    if len(raw_rows) != expected_count:
+        raise ValueError(
+            f"generation manifest has {len(raw_rows)} rows; expected {expected_count}",
+        )
+
+    rows_by_key: dict[tuple[str, int, int], dict[str, Any]] = {}
+    for row in raw_rows:
+        if not isinstance(row, dict):
+            raise TypeError(f"generation manifest image rows must be mappings: {manifest_path}")
+        label = row.get("checkpoint_label")
+        prompt_index = row.get("prompt_index")
+        sample_index = row.get("sample_index")
+        if (
+            not isinstance(label, str)
+            or type(prompt_index) is not int
+            or type(sample_index) is not int
+        ):
+            raise TypeError(f"generation manifest cell identity is invalid: {row!r}")
+        key = (label, prompt_index, sample_index)
+        if key in rows_by_key:
+            raise ValueError(f"generation manifest contains duplicate cell {key!r}")
+        rows_by_key[key] = row
+
+    generated: list[GeneratedImage] = []
+    expected_paths: set[Path] = set()
+    for target in protocol.targets:
+        for prompt in protocol.prompts:
+            for sample_index in range(SAMPLES_PER_PROMPT):
+                key = (target.label, prompt.prompt_index, sample_index)
+                row = rows_by_key.get(key)
+                if row is None:
+                    raise ValueError(f"generation manifest is missing cell {key!r}")
+                relative_path = _image_relative_path(*key)
+                if row.get("path") != relative_path.as_posix():
+                    raise ValueError(f"generation manifest cell {key!r} has an invalid path")
+                image_sha256 = row.get("sha256")
+                if not _is_sha256(image_sha256):
+                    raise ValueError(f"generation manifest cell {key!r} has an invalid SHA-256")
+                image_path = (output_dir / relative_path).resolve()
+                if not image_path.is_relative_to(output_dir.resolve()):
+                    raise ValueError(f"generation image escapes output directory: {image_path}")
+                _validate_generated_png(
+                    image_path,
+                    expected_sha256=image_sha256,
+                    expected_size=(
+                        protocol.sampling.width,
+                        protocol.sampling.height,
+                    ),
+                )
+                expected_paths.add(relative_path)
+                generated.append(
+                    GeneratedImage(
+                        checkpoint_label=target.label,
+                        epoch=target.epoch,
+                        prompt_index=prompt.prompt_index,
+                        manifest_index=prompt.manifest_index,
+                        sample_index=sample_index,
+                        seed=_sample_seed(prompt.prompt_index, sample_index),
+                        prompt=prompt.prompt,
+                        bucket=prompt.bucket,
+                        prompt_style=prompt.prompt_style,
+                        path=image_path,
+                        image_sha256=image_sha256,
+                    ),
+                )
+    if len(rows_by_key) != len(generated):
+        raise ValueError("generation manifest contains cells outside the registered grid")
+    _validate_exact_image_set(output_dir, expected_paths)
+    return generated
+
+
+def _validate_generated_png(
+    path: Path,
+    *,
+    expected_sha256: str,
+    expected_size: tuple[int, int],
+) -> None:
+    from PIL import Image
+
+    if not path.is_file():
+        raise FileNotFoundError(f"generated image is missing: {path}")
+    actual_sha256 = sha256_file(path)
+    if actual_sha256 != expected_sha256:
+        raise ValueError(
+            f"generated image hash mismatch for {path}: {actual_sha256} != {expected_sha256}",
+        )
+    try:
+        with Image.open(path) as image:
+            size = image.size
+            image_format = image.format
+            image.verify()
+    except Exception as exc:
+        raise ValueError(f"generated image is not a valid PNG: {path}") from exc
+    if size != expected_size:
+        raise ValueError(f"generated image size mismatch for {path}: {size} != {expected_size}")
+    if image_format != "PNG":
+        raise ValueError(f"generated image format mismatch for {path}: {image_format} != PNG")
+
+
+def _validate_exact_image_set(output_dir: Path, expected_paths: set[Path]) -> None:
+    image_dir = output_dir / "images"
+    actual_paths = {
+        path.relative_to(output_dir) for path in image_dir.rglob("*") if path.is_file()
+    }
+    if actual_paths != expected_paths:
+        missing = sorted(str(path) for path in expected_paths - actual_paths)
+        extra = sorted(str(path) for path in actual_paths - expected_paths)
+        raise ValueError(
+            f"generated image set is not exact: missing={missing}, extra={extra}",
+        )
+
+
+def _validate_owned_output_tree(output_dir: Path) -> None:
+    """Reject links or nodes that escape the evaluator-owned output tree."""
+
+    if output_dir.is_symlink():
+        raise ValueError(f"evaluation output directory must not be a symlink: {output_dir}")
+    if not output_dir.is_dir():
+        raise NotADirectoryError(f"evaluation output is not a directory: {output_dir}")
+    root = output_dir.resolve()
+    for path in output_dir.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"evaluation output tree must not contain symlinks: {path}")
+        if not path.resolve().is_relative_to(root):
+            raise ValueError(f"evaluation output path escapes its owner: {path}")
+
+
 def _preflight_record(protocol: EvaluationProtocol) -> dict[str, Any]:
     return {
         "run_dir": str(protocol.run_dir),
@@ -584,3 +961,48 @@ def _sha256_json(value: Any) -> str:
         sort_keys=True,
     ).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read JSON object: {path}") from exc
+    if not isinstance(value, dict):
+        raise TypeError(f"JSON file must contain an object: {path}")
+    return value
+
+
+def _write_json(path: Path, value: Any) -> None:
+    _write_text_atomic(path, json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def _write_text_atomic(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
