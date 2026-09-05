@@ -85,10 +85,9 @@ class DistributedExecutionPlanner:
             raise ValueError("DistributedExecutionPlanner engine IDs must be unique")
         engine_plan = EnginePlan.from_request(request)
         bind_at_plan_time = self.strategy == "round_robin"
-        steps = request.sampling.get("num_steps") or request.sampling.get(
-            "max_new_tokens",
-        )
-        cost_per_sample = max(1, int(steps or 1))
+        # Diffusion requests carry num_steps; AR requests cost one unit per
+        # sample (no request key names their token budget).
+        cost_per_sample = max(1, int(request.sampling.get("num_steps") or 1))
         assignments: list[DeviceAssignment] = []
         for idx, batch in enumerate(engine_plan.sample_batches):
             engine_id = engine_ids[idx % len(engine_ids)] if bind_at_plan_time else None
