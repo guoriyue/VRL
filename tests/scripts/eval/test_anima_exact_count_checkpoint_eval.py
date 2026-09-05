@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 
 import pytest
+from omegaconf import OmegaConf
 from PIL import Image
 
+from vrl.rewards.models.countgd_person_count import CountGDPersonCountModel
 from vrl.scripts.eval import anima_exact_count_checkpoint_eval as checkpoint_eval
 from vrl.scripts.families.cosmos.anima.generation_protocol import (
     ANIMA_GENERATION_SCHEMA,
@@ -13,6 +15,7 @@ from vrl.scripts.families.cosmos.anima.generation_protocol import (
     AnimaPixelPairingProtocol,
     validate_paired_generation_archives,
 )
+from vrl.utils.artifacts import sha256_file
 
 
 def _write_archive(
@@ -104,6 +107,55 @@ def _write_archive(
         encoding="utf-8",
     )
     return root
+
+
+def test_complete_report_binds_png_grid_and_keeps_blind_key_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_dir = _write_archive(tmp_path / "base", color=(10, 20, 30))
+    checkpoint_dir = _write_archive(tmp_path / "checkpoint", color=(30, 20, 10))
+    model = CountGDPersonCountModel.__new__(CountGDPersonCountModel)
+    model.prepare_for_inference = lambda: None
+    model.count_people = lambda artifact: artifact.metadata["expected_people"]
+    monkeypatch.setattr(
+        checkpoint_eval,
+        "_build_countgd_reward_model",
+        lambda **_kwargs: (model, {"backend": "countgd-test"}),
+    )
+    output_dir = tmp_path / "report"
+
+    summary = checkpoint_eval.create_report(
+        base_dir=base_dir,
+        checkpoint_dir=checkpoint_dir,
+        checkpoint_label="candidate",
+        config=None,
+        reward_backend="countgd",
+        output_dir=output_dir,
+        progress_every=16,
+    )
+
+    score_rows = [
+        json.loads(line)
+        for line in (output_dir / "scores.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(score_rows) == 4
+    assert all(row["image_sha256"] == sha256_file(Path(row["image_path"])) for row in score_rows)
+    assert summary["sources"]["base"]["grid_digest"]["cells"] == 2
+    assert summary["sources"]["base"]["grid_digest"]["schema"].endswith("/v1")
+    assert (
+        summary["sources"]["base"]["grid_digest"]["sha256"]
+        != summary["sources"]["candidate"]["grid_digest"]["sha256"]
+    )
+    assert summary["sources"]["base"]["anchor_manifest"]["schema"].endswith("/v1")
+
+    manifest = json.loads(
+        (output_dir / "contact_sheets" / "manifest.jsonl").read_text(encoding="utf-8"),
+    )
+    assert manifest["prompt"].startswith("An anime illustration")
+    assert manifest["expected_people"] == 4
+    blind_key = json.loads((output_dir / "blind_key.json").read_text(encoding="utf-8"))
+    assert set(blind_key["arm_mappings"][0]) == {"prompt_index", "cell_to_arm"}
 
 
 @pytest.mark.parametrize("partial", ["metadata.jsonl", "anchor_manifest.jsonl"])
@@ -238,3 +290,71 @@ def test_exact_count_target_must_match_prompt_metadata(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match=r"conflicting prompt_metadata\.expected_people"):
         checkpoint_eval._bind_exact_count_arm(archive, label="base")
+
+
+def test_codex_backend_requires_expected_people_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class WrongTargetModel:
+        comparison_mode = "exact_count"
+        prompt_metadata_key = "other_target"
+
+        def __init__(self, _worker_config: object) -> None:
+            pass
+
+    monkeypatch.setattr(
+        checkpoint_eval,
+        "load_config",
+        lambda _source: OmegaConf.create(
+            {"reward": {"kwargs": {"codex_image_qa": {}}}},
+        ),
+    )
+    monkeypatch.setattr(checkpoint_eval, "CodexImageQARewardModel", WrongTargetModel)
+
+    with pytest.raises(ValueError, match="prompt_metadata_key='expected_people'"):
+        checkpoint_eval._build_reward_model("unused-config")
+
+
+@pytest.mark.parametrize(
+    ("run_config_updates", "mismatched_field"),
+    [
+        ({"negative_prompt": "different negative prompt"}, "negative_prompt"),
+        (
+            {
+                "generator_runtime": {
+                    "python": "3.12.2",
+                    "packages": {"torch": "999.0", "diffusers": "0.39.0"},
+                    "vrl_python_tree_sha256": "b" * 64,
+                },
+            },
+            "generator_runtime",
+        ),
+    ],
+)
+def test_report_rejects_mismatched_pixel_protocol(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run_config_updates: dict[str, object],
+    mismatched_field: str,
+) -> None:
+    base_dir = _write_archive(tmp_path / "base", color=(10, 20, 30))
+    checkpoint_dir = _write_archive(
+        tmp_path / "checkpoint",
+        color=(30, 20, 10),
+        run_config_updates=run_config_updates,
+    )
+    monkeypatch.setattr(
+        checkpoint_eval,
+        "_build_countgd_reward_model",
+        lambda **_kwargs: pytest.fail("scoring must not start for an unpaired protocol"),
+    )
+
+    with pytest.raises(ValueError, match=rf"protocol differs.*{mismatched_field}"):
+        checkpoint_eval.create_report(
+            base_dir=base_dir,
+            checkpoint_dir=checkpoint_dir,
+            checkpoint_label="candidate",
+            config=None,
+            reward_backend="countgd",
+            output_dir=tmp_path / "report",
+        )
