@@ -397,6 +397,118 @@ def test_binary_guard_rejects_incomplete_groups_and_mixed_prompts(tmp_path: Path
         model.score_batch(mixed_prompts)
 
 
+def test_exact_count_compares_typed_target_with_two_observed_counts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import vrl.rewards.models.codex_image_qa as codex_image_qa
+
+    model = CodexImageQARewardModel(
+        {
+            "command": ["unused-judge", "{output_schema_path}"],
+            "comparison_mode": "exact_count",
+            "images_per_call": 8,
+            "expected_group_size": 8,
+            "exact_count_prompt_template": (
+                "Count {count}. Target: {prompt}. Return {response_contract}"
+            ),
+            "prompt_metadata_key": "expected_people",
+            "max_concurrency": 1,
+            "tile_size": 64,
+        },
+    )
+    artifacts = _reference_artifacts(tmp_path)
+    for artifact in artifacts:
+        artifact.metadata["expected_people"] = 4
+
+    def response(
+        counts: dict[str, int],
+        *,
+        ambiguous: set[str] | None = None,
+        reverse_rows: bool = False,
+    ) -> str:
+        ambiguous = ambiguous or set()
+        candidate_ids = [f"C{index + 1}" for index in range(8)]
+        if reverse_rows:
+            candidate_ids.reverse()
+        return json.dumps(
+            {
+                "candidates": [
+                    {
+                        "id": candidate_id,
+                        "observed_count": counts.get(candidate_id, 4),
+                        "unambiguous": candidate_id not in ambiguous,
+                    }
+                    for candidate_id in candidate_ids
+                ],
+            },
+        )
+
+    responses = iter(
+        [
+            response({"C3": 5}, ambiguous={"C4"}),
+            response({"C2": 3}, reverse_rows=True),
+        ],
+    )
+    observed_labels: list[tuple[str, ...]] = []
+    observed_media_means: list[tuple[float, ...]] = []
+    observed_prompts: list[str] = []
+
+    def compose_grid(medias, _tile, out_path, *, labels=None):
+        observed_labels.append(tuple(labels or ()))
+        observed_media_means.append(tuple(float(media.mean()) for media in medias))
+        out_path.write_bytes(b"grid")
+
+    def run_command(command, *, stdin_text, output_path, workdir):
+        del output_path, workdir
+        schema = json.loads(Path(command[1]).read_text(encoding="utf-8"))
+        properties = schema["properties"]["candidates"]["items"]["properties"]
+        assert properties["observed_count"] == {
+            "type": "integer",
+            "minimum": 0,
+        }
+        assert properties["unambiguous"] == {"type": "boolean"}
+        observed_prompts.append(stdin_text)
+        return next(responses)
+
+    monkeypatch.setattr(codex_image_qa, "_compose_grid", compose_grid)
+    monkeypatch.setattr(model, "_run_command", run_command)
+
+    scores = model.score_batch(artifacts)
+
+    assert [score["codex_image_qa"] for score in scores] == [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+    ]
+    assert scores[1]["codex_image_qa_observed_forward"] == 4.0
+    assert scores[1]["codex_image_qa_observed_reverse"] == 3.0
+    assert scores[2]["codex_image_qa_mirror_agreement"] == 0.0
+    assert scores[3]["codex_image_qa_unambiguous_forward"] == 0.0
+    assert all(score["codex_image_qa_target"] == 4.0 for score in scores)
+    assert observed_labels == [
+        ("C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8"),
+        ("C8", "C7", "C6", "C5", "C4", "C3", "C2", "C1"),
+    ]
+    assert observed_media_means[1] == tuple(reversed(observed_media_means[0]))
+    assert all("Target: 4" in prompt for prompt in observed_prompts)
+    assert all('"observed_count":0' in prompt for prompt in observed_prompts)
+
+    original = artifacts[0]
+    artifacts[0] = replace(original, prompt="a different generation prompt")
+    with pytest.raises(ValueError, match="mixes generation prompts"):
+        model._candidate_groups(artifacts)
+    artifacts[0] = original
+    artifacts[0].metadata.pop("expected_people")
+    with pytest.raises(ValueError, match=r"missing metadata\['expected_people'\]"):
+        model._candidate_groups(artifacts)
+
+
 def test_binary_guard_propagates_judge_failures(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

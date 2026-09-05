@@ -5,8 +5,9 @@ command/prompt placeholders, run the ``codex exec`` subprocess (timeout + error
 handling), then parse the judge output. Absolute mode returns clamped ``[0, 1]``
 scores. Reference-listwise mode compares one complete rollout group with its
 frozen base anchor and returns categorical rewards in ``[-2, 2]``.
-Binary-guard mode requires two order-mirrored passes before returning a
-reward of one.
+Binary-guard and exact-count modes require two order-mirrored passes before
+returning a reward of one. Exact-count keeps the judge's observed integer
+separate from the metadata-owned target so prose cannot satisfy the reward.
 
 Restored 2026-08-22 (removed in 51c78968) and adapted to the current
 score_batch/InProcessRewardScorer interface. Judge calls fan out over a thread
@@ -136,6 +137,13 @@ class _BinaryGuardVerdict:
 
 
 @dataclass(frozen=True, slots=True)
+class _ExactCountVerdict:
+    candidate_id: str
+    observed_count: int
+    unambiguous: bool
+
+
+@dataclass(frozen=True, slots=True)
 class _CandidateGroup:
     group_id: str
     prompt: str
@@ -164,6 +172,9 @@ class CodexImageQARewardModel:
     rows; its categorical rewards are therefore in ``[-2, 2]`` rather than the
     legacy absolute mode's ``[0, 1]``. ``comparison_mode=binary_guard`` scores
     complete rollout groups twice and accepts only order-invariant passes.
+    ``comparison_mode=exact_count`` additionally requires the judge to report
+    the observed integer; code, rather than the judge, compares it with the
+    metadata-derived target.
     """
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
@@ -191,16 +202,18 @@ class CodexImageQARewardModel:
             "absolute",
             "reference_listwise",
             "binary_guard",
+            "exact_count",
         }:
             raise ValueError(
                 "Codex image-QA comparison_mode must be 'absolute', "
-                "'reference_listwise', or 'binary_guard', "
+                "'reference_listwise', 'binary_guard', or 'exact_count', "
                 f"got {self.comparison_mode!r}",
             )
         self.reference_data_root = str(cfg.get("reference_data_root", "")).strip()
         self.expected_group_size = int(cfg.get("expected_group_size", 0))
         self.reference_prompt_template = str(cfg.get("reference_prompt_template", ""))
         self.binary_guard_prompt_template = str(cfg.get("binary_guard_prompt_template", ""))
+        self.exact_count_prompt_template = str(cfg.get("exact_count_prompt_template", ""))
         if self.comparison_mode == "reference_listwise":
             if not self.reference_data_root:
                 raise ValueError(
@@ -233,6 +246,24 @@ class CodexImageQARewardModel:
                 raise ValueError(
                     "binary_guard Codex image-QA requires binary_guard_prompt_template",
                 )
+        if self.comparison_mode == "exact_count":
+            if self.expected_group_size < 2:
+                raise ValueError(
+                    "exact_count Codex image-QA requires expected_group_size >= 2",
+                )
+            if self.images_per_call != self.expected_group_size:
+                raise ValueError(
+                    "exact_count Codex image-QA requires images_per_call to equal "
+                    "expected_group_size so a rollout group is never chunked",
+                )
+            if not self.prompt_metadata_key:
+                raise ValueError(
+                    "exact_count Codex image-QA requires prompt_metadata_key",
+                )
+            if not self.exact_count_prompt_template.strip():
+                raise ValueError(
+                    "exact_count Codex image-QA requires exact_count_prompt_template",
+                )
         scored_rollout_dir = str(cfg.get("scored_rollout_dir", "")).strip()
         self.scored_rollout_dir = Path(scored_rollout_dir) if scored_rollout_dir else None
         self._saved_batch_index = _next_saved_batch_index(self.scored_rollout_dir)
@@ -245,6 +276,8 @@ class CodexImageQARewardModel:
             scores = self._score_batch_reference_listwise(artifacts)
         elif self.comparison_mode == "binary_guard":
             scores = self._score_batch_binary_guard(artifacts)
+        elif self.comparison_mode == "exact_count":
+            scores = self._score_batch_exact_count(artifacts)
         elif self.images_per_call > 1:
             scores = self._score_batch_grid(artifacts)
         else:
@@ -454,6 +487,168 @@ class CodexImageQARewardModel:
                 workdir=tmp_path,
             )
         return _extract_binary_guard_verdicts(output_text, group.candidate_ids)
+
+    def _score_batch_exact_count(
+        self,
+        artifacts: list[Any],
+    ) -> list[dict[str, float]]:
+        """Reward only mirrored, unambiguous agreement with the typed target."""
+
+        groups = self._candidate_groups(artifacts)
+        targets: dict[str, int] = {}
+        for group in groups:
+            try:
+                target = int(group.prompt)
+            except ValueError as exc:
+                raise ValueError(
+                    f"exact-count group {group.group_id!r} target must be an integer, "
+                    f"got {group.prompt!r}",
+                ) from exc
+            if str(target) != group.prompt or target < 1:
+                raise ValueError(
+                    f"exact-count group {group.group_id!r} target must be a canonical "
+                    f"positive integer, got {group.prompt!r}",
+                )
+            targets[group.group_id] = target
+
+        jobs = [(group, reverse) for group in groups for reverse in (False, True)]
+
+        def run_job(
+            job: tuple[_CandidateGroup, bool],
+        ) -> tuple[str, bool, dict[str, _ExactCountVerdict]]:
+            group, reverse = job
+            return (
+                group.group_id,
+                reverse,
+                self._score_exact_count_pass(artifacts, group, reverse=reverse),
+            )
+
+        workers = min(self.max_concurrency, len(jobs))
+        if workers <= 1:
+            pass_results = [run_job(job) for job in jobs]
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                pass_results = list(pool.map(run_job, jobs))
+
+        verdicts_by_pass = {
+            (group_id, reverse): verdicts for group_id, reverse, verdicts in pass_results
+        }
+        scores: list[dict[str, float] | None] = [None] * len(artifacts)
+        for group in groups:
+            target = targets[group.group_id]
+            forward = verdicts_by_pass[(group.group_id, False)]
+            reverse = verdicts_by_pass[(group.group_id, True)]
+            for candidate_id, artifact_index in zip(
+                group.candidate_ids,
+                group.candidate_indices,
+                strict=True,
+            ):
+                forward_verdict = forward[candidate_id]
+                reverse_verdict = reverse[candidate_id]
+                forward_pass = (
+                    forward_verdict.unambiguous and forward_verdict.observed_count == target
+                )
+                reverse_pass = (
+                    reverse_verdict.unambiguous and reverse_verdict.observed_count == target
+                )
+                consensus = forward_pass and reverse_pass
+                scores[artifact_index] = {
+                    "codex_image_qa": float(consensus),
+                    "codex_image_qa_forward": float(forward_pass),
+                    "codex_image_qa_reverse": float(reverse_pass),
+                    "codex_image_qa_consensus": float(consensus),
+                    "codex_image_qa_mirror_agreement": float(
+                        forward_verdict == reverse_verdict,
+                    ),
+                    "codex_image_qa_observed_forward": float(
+                        forward_verdict.observed_count,
+                    ),
+                    "codex_image_qa_observed_reverse": float(
+                        reverse_verdict.observed_count,
+                    ),
+                    "codex_image_qa_target": float(target),
+                    "codex_image_qa_unambiguous_forward": float(
+                        forward_verdict.unambiguous,
+                    ),
+                    "codex_image_qa_unambiguous_reverse": float(
+                        reverse_verdict.unambiguous,
+                    ),
+                }
+
+        ordered_scores: list[dict[str, float]] = []
+        for artifact_index, score_map in enumerate(scores):
+            if score_map is None:
+                raise RuntimeError(
+                    "exact-count scoring did not produce a result for "
+                    f"artifact index {artifact_index}",
+                )
+            ordered_scores.append(score_map)
+        return ordered_scores
+
+    def _score_exact_count_pass(
+        self,
+        artifacts: list[Any],
+        group: _CandidateGroup,
+        *,
+        reverse: bool,
+    ) -> dict[str, _ExactCountVerdict]:
+        """Collect observed counts while stable ids preserve candidate identity."""
+
+        labeled_media = list(
+            zip(
+                group.candidate_ids,
+                (artifacts[index].as_media() for index in group.candidate_indices),
+                strict=True,
+            ),
+        )
+        if reverse:
+            labeled_media.reverse()
+
+        response_contract = json.dumps(
+            {
+                "candidates": [
+                    {
+                        "id": candidate_id,
+                        "observed_count": 0,
+                        "unambiguous": False,
+                    }
+                    for candidate_id in group.candidate_ids
+                ],
+            },
+            separators=(",", ":"),
+        )
+        prompt_text = _render_prompt_template(
+            self.exact_count_prompt_template,
+            prompt=group.prompt,
+            count=len(group.candidate_ids),
+            response_contract=response_contract,
+        )
+        with tempfile.TemporaryDirectory(prefix="vrl-codex-image-qa-exact-count-") as tmp:
+            tmp_path = Path(tmp)
+            image_path = tmp_path / "grid.png"
+            output_path = tmp_path / "judge_output.txt"
+            output_schema_path = tmp_path / "output_schema.json"
+            _compose_grid(
+                [media for _, media in labeled_media],
+                self.tile_size,
+                image_path,
+                labels=[label for label, _ in labeled_media],
+            )
+            _write_exact_count_output_schema(output_schema_path, group.candidate_ids)
+            command = _render_command(
+                self.command,
+                image_path=image_path,
+                output_path=output_path,
+                output_schema_path=output_schema_path,
+                prompt=group.prompt,
+            )
+            output_text = self._run_command(
+                command,
+                stdin_text=prompt_text if self.pass_prompt_stdin else "",
+                output_path=output_path,
+                workdir=tmp_path,
+            )
+        return _extract_exact_count_verdicts(output_text, group.candidate_ids)
 
     def _score_batch_reference_listwise(
         self,
@@ -1010,6 +1205,41 @@ def _write_binary_guard_output_schema(
     path.write_text(json.dumps(schema, separators=(",", ":")), encoding="utf-8")
 
 
+def _write_exact_count_output_schema(
+    path: Path,
+    candidate_ids: Sequence[str],
+) -> None:
+    """Write the exact structured contract for one observed-count pass."""
+
+    candidate_ids = tuple(candidate_ids)
+    if not candidate_ids or len(set(candidate_ids)) != len(candidate_ids):
+        raise ValueError("exact-count candidate ids must be non-empty and unique")
+    verdict = {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string", "enum": list(candidate_ids)},
+            "observed_count": {"type": "integer", "minimum": 0},
+            "unambiguous": {"type": "boolean"},
+        },
+        "required": ["id", "observed_count", "unambiguous"],
+        "additionalProperties": False,
+    }
+    schema = {
+        "type": "object",
+        "properties": {
+            "candidates": {
+                "type": "array",
+                "items": verdict,
+                "minItems": len(candidate_ids),
+                "maxItems": len(candidate_ids),
+            },
+        },
+        "required": ["candidates"],
+        "additionalProperties": False,
+    }
+    path.write_text(json.dumps(schema, separators=(",", ":")), encoding="utf-8")
+
+
 def _next_saved_batch_index(root: Path | None) -> int:
     """Continue after complete batches when a supervised run resumes."""
 
@@ -1199,6 +1429,70 @@ def _extract_binary_guard_verdicts(
     if missing_ids:
         raise ValueError(
             f"binary-guard output is missing candidate ids: {sorted(missing_ids)}",
+        )
+    return {candidate_id: parsed[candidate_id] for candidate_id in candidate_ids}
+
+
+def _extract_exact_count_verdicts(
+    text: str,
+    candidate_ids: Sequence[str],
+) -> dict[str, _ExactCountVerdict]:
+    """Parse complete observed counts without interpreting generation prose."""
+
+    candidate_ids = tuple(candidate_ids)
+    try:
+        value = json.loads(text.strip())
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Cannot parse exact-count Codex image-QA output: {text!r}",
+        ) from exc
+    if not isinstance(value, dict) or set(value) != {"candidates"}:
+        raise ValueError("exact-count output must contain only 'candidates'")
+    rows = value["candidates"]
+    if not isinstance(rows, list) or len(rows) != len(candidate_ids):
+        observed = len(rows) if isinstance(rows, list) else type(rows).__name__
+        raise ValueError(
+            "exact-count output candidate count mismatch: "
+            f"expected {len(candidate_ids)}, got {observed}",
+        )
+
+    parsed: dict[str, _ExactCountVerdict] = {}
+    expected_ids = set(candidate_ids)
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {
+            "id",
+            "observed_count",
+            "unambiguous",
+        }:
+            raise ValueError(
+                "each exact-count candidate must contain exactly 'id', "
+                "'observed_count', and 'unambiguous'",
+            )
+        candidate_id = row["id"]
+        if not isinstance(candidate_id, str) or candidate_id not in expected_ids:
+            raise ValueError(f"unexpected exact-count candidate id: {candidate_id!r}")
+        if candidate_id in parsed:
+            raise ValueError(f"duplicate exact-count candidate id: {candidate_id!r}")
+        observed_count = row["observed_count"]
+        unambiguous = row["unambiguous"]
+        if type(observed_count) is not int or observed_count < 0:
+            raise ValueError(
+                f"invalid exact-count observed_count for {candidate_id!r}: {observed_count!r}",
+            )
+        if type(unambiguous) is not bool:
+            raise ValueError(
+                f"invalid exact-count unambiguous value for {candidate_id!r}: {unambiguous!r}",
+            )
+        parsed[candidate_id] = _ExactCountVerdict(
+            candidate_id=candidate_id,
+            observed_count=observed_count,
+            unambiguous=unambiguous,
+        )
+
+    missing_ids = expected_ids.difference(parsed)
+    if missing_ids:
+        raise ValueError(
+            f"exact-count output is missing candidate ids: {sorted(missing_ids)}",
         )
     return {candidate_id: parsed[candidate_id] for candidate_id in candidate_ids}
 
