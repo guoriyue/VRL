@@ -58,6 +58,7 @@ class HttpRewardScorer:
         *,
         timeout_s: float | None = None,
         expected_model: str | None = None,
+        expected_model_version: str | None = None,
     ) -> None:
         from vrl.config.reward_inference import (
             RewardInferenceConfig,
@@ -69,15 +70,20 @@ class HttpRewardScorer:
                 raise ValueError(
                     "HttpRewardScorer requires inference.kind=http",
                 )
-            if timeout_s is not None or expected_model is not None:
+            if (
+                timeout_s is not None
+                or expected_model is not None
+                or expected_model_version is not None
+            ):
                 raise ValueError(
-                    "timeout_s/expected_model are owned by the RewardInferenceConfig; "
-                    "do not also pass them as keyword arguments",
+                    "timeout_s/expected_model/expected_model_version are owned by the "
+                    "RewardInferenceConfig; do not also pass them as keyword arguments",
                 )
             # Validated and normalized by the config's own __post_init__.
             service_url = service.endpoint
             timeout_s = service.timeout_s
             expected_model = service.expected_model
+            expected_model_version = service.expected_model_version
         else:
             service_url = validate_http_origin(
                 str(service),
@@ -85,12 +91,16 @@ class HttpRewardScorer:
             )
             timeout_s = 1800.0 if timeout_s is None else timeout_s
             expected_model = "" if expected_model is None else expected_model
+            expected_model_version = (
+                "" if expected_model_version is None else expected_model_version
+            )
         if timeout_s <= 0:
             raise ValueError("reward service timeout_s must be > 0")
 
         self._base_url = service_url
         self._timeout = aiohttp.ClientTimeout(total=float(timeout_s))
         self._expected_model = str(expected_model).strip()
+        self._expected_model_version = str(expected_model_version).strip()
         self._session: aiohttp.ClientSession | None = None
         self._session_loop: asyncio.AbstractEventLoop | None = None
         self._session_lock = asyncio.Lock()
@@ -248,6 +258,20 @@ class HttpRewardScorer:
                     details={
                         "expected_model": self._expected_model,
                         "actual_model": info.model_name,
+                        "actual_version": info.model_version,
+                    },
+                )
+            if self._expected_model_version and info.model_version != self._expected_model_version:
+                raise RemoteRewardServiceError(
+                    RewardServiceErrorCode.BAD_REQUEST.value,
+                    "reward service model version mismatch: "
+                    f"expected={self._expected_model_version!r}, "
+                    f"actual={info.model_version!r}",
+                    retryable=False,
+                    details={
+                        "expected_model": self._expected_model,
+                        "actual_model": info.model_name,
+                        "expected_version": self._expected_model_version,
                         "actual_version": info.model_version,
                     },
                 )

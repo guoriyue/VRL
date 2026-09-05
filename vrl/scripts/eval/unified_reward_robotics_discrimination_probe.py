@@ -86,6 +86,7 @@ async def _score_anchor(
         artifact_id = f"anchor-{anchor_index}:{name}"
         artifact = RewardInferenceArtifact(
             artifact_id=artifact_id,
+            sample_id=artifact_id,
             path=str(path),
             prompt=prompt,
             size_bytes=path.stat().st_size,

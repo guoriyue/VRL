@@ -78,6 +78,7 @@ def _run_shard(args: argparse.Namespace) -> None:
             model(
                 RewardInferenceArtifact(
                     artifact_id=path.stem,
+                    sample_id=path.stem,
                     path=str(path.resolve()),
                     prompt=_PROMPT,
                 ),

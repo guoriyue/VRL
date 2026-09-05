@@ -655,6 +655,10 @@ def _build_scoring_artifacts(
                 f"{row['checkpoint_label']}-r{int(row['row_index']):04d}"
                 f"-s{int(row['sample_index']):02d}"
             ),
+            sample_id=(
+                f"{row['checkpoint_label']}-r{int(row['row_index']):04d}"
+                f"-s{int(row['sample_index']):02d}"
+            ),
             path=str(path),
             prompt=str(row["prompt"]),
             size_bytes=int(row["bytes"]),
@@ -681,6 +685,7 @@ def _build_scoring_artifacts(
             artifacts.append(
                 RewardInferenceArtifact(
                     artifact_id=f"reference-r{int(selected['row_index']):04d}",
+                    sample_id=f"reference-r{int(selected['row_index']):04d}",
                     path=str(target_path),
                     prompt=str(selected["prompt"]),
                     size_bytes=target_path.stat().st_size,

@@ -17,6 +17,7 @@ def test_inline_uint8_video_reaches_reward_as_original_normalized_pixels() -> No
     )
     artifact = RewardInferenceArtifact(
         artifact_id="inline-uint8-video",
+        sample_id="sample-inline-uint8-video",
         path="",
         media=video,
     )

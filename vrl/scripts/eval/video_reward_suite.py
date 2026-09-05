@@ -217,6 +217,7 @@ def _score_kling(
         for video in videos:
             artifact = RewardInferenceArtifact(
                 artifact_id=video.stem,
+                sample_id=video.stem,
                 path=str(video),
                 prompt=prompts[video],
             )
@@ -338,6 +339,7 @@ def _score_reward_model(
         for video in videos:
             artifact = RewardInferenceArtifact(
                 artifact_id=video.stem,
+                sample_id=video.stem,
                 path=str(video),
                 prompt=prompts[video],
             )

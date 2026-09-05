@@ -58,6 +58,7 @@ def test_kling_video_reward_requires_materialized_artifact_path() -> None:
     model.use_norm = True
     artifact = RewardInferenceArtifact(
         artifact_id="a0",
+        sample_id="sample-0",
         path="",
         media=object(),
         prompt="prompt",
