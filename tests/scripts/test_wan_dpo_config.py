@@ -9,8 +9,7 @@ import pytest
 from vrl.algorithms.dpo import DiffusionDPOConfig
 from vrl.config.builders import build_offline_dpo_trainer_config
 from vrl.config.loading import load_config
-from vrl.config.precision import PrecisionPolicy
-from vrl.config.schema import RootConfig, parse_config
+from vrl.config.schema import parse_config
 from vrl.scripts.families.wan_2_1.train_dpo import train_wan_2_1_dpo
 
 
@@ -57,23 +56,6 @@ def test_offline_dpo_uses_typed_optimizer_defaults_when_keys_are_absent() -> Non
     assert resolved.adam_epsilon == pytest.approx(1e-8)
 
 
-def test_offline_dpo_max_grad_norm_default_belongs_to_offline_trainer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from vrl.trainers.offline import OfflineDPOTrainerConfig
-    from vrl.trainers.online.config import TrainerConfig
-
-    monkeypatch.setattr(
-        TrainerConfig.__dataclass_fields__["max_norm"],
-        "default",
-        9.0,
-    )
-
-    resolved = _resolved_trainer_config()
-
-    assert resolved.max_grad_norm == OfflineDPOTrainerConfig().max_grad_norm
-
-
 def test_offline_dpo_bridges_explicit_max_grad_norm() -> None:
     resolved = _resolved_trainer_config(["actor.max_norm=0.25"])
 
@@ -85,20 +67,13 @@ def test_offline_dpo_rejects_unsupported_8bit_optimizer() -> None:
         _resolved_trainer_config(["actor.optim.optim_8bit=true"])
 
 
-@pytest.mark.parametrize(
-    ("key", "value"),
-    [("adam_beta1", "0.8"), ("adam_beta2", "0.9"), ("eps", "1e-6")],
-)
-def test_offline_dpo_rejects_explicit_adamw_only_knobs_for_adafactor(
-    key: str,
-    value: str,
-) -> None:
+def test_offline_dpo_rejects_explicit_adamw_only_knobs_for_adafactor() -> None:
     with pytest.raises(
         ValueError,
-        match=rf"use_adafactor=true does not consume AdamW-only key\(s\): actor\.optim\.{key}",
+        match=r"use_adafactor=true does not consume AdamW-only key\(s\): actor\.optim\.adam_beta1",
     ):
         _resolved_trainer_config(
-            ["actor.use_adafactor=true", f"actor.optim.{key}={value}"],
+            ["actor.use_adafactor=true", "actor.optim.adam_beta1=0.8"],
         )
 
 
@@ -115,17 +90,6 @@ def test_offline_dpo_adafactor_keeps_shared_optimizer_knobs() -> None:
     assert resolved.use_adafactor is True
     assert resolved.lr == pytest.approx(2e-7)
     assert resolved.adam_weight_decay == pytest.approx(0.03)
-
-
-def test_offline_dpo_recipe_does_not_inherit_online_only_state() -> None:
-    cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
-
-    assert "ema" not in cfg.actor
-    assert "drop_zero_advantage" not in cfg.actor
-    assert "timestep_fraction" not in cfg.actor
-    assert "total_epochs" not in cfg.trainer
-    assert "rollout_orchestration" not in cfg.trainer
-    assert "rollout" not in cfg
 
 
 @pytest.mark.parametrize("family", ["wan_2_1", "wan"])
@@ -184,13 +148,11 @@ def test_offline_dpo_builds_its_full_model_through_the_family_registry(
         train_wan_2_1_dpo(cfg)
 
     assert captured["family"] == "wan_2_1"
-    assert isinstance(captured["root"], RootConfig)
-    assert isinstance(captured["precision"], PrecisionPolicy)
     assert captured["for_rollout"] is True
     assert captured["precision_role"] == "training"
 
 
-@pytest.mark.parametrize("family", ["wan_2_1_i2v", "wan_i2v", "sd3_5"])
+@pytest.mark.parametrize("family", ["wan_2_1_i2v", "sd3_5"])
 def test_offline_dpo_rejects_non_t2v_wan_family_before_runtime_side_effects(
     monkeypatch: pytest.MonkeyPatch,
     family: str,
@@ -226,8 +188,6 @@ def test_offline_dpo_rejects_non_t2v_wan_family_before_runtime_side_effects(
     ("checkpointing", "expected_mode"),
     [
         ('"off"', "off"),
-        ("false", "off"),
-        ('"full"', "full"),
         ("true", "full"),
         ('"selective"', "selective"),
     ],

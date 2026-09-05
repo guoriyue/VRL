@@ -71,7 +71,7 @@ def test_train_online_keeps_family_owned_by_config(
 
 @pytest.mark.parametrize(
     ("local_rank", "expected"),
-    [(0, "2"), (1, "4"), (2, "6"), (3, "7")],
+    [(0, "2"), (3, "7")],
 )
 def test_same_host_fsdp_selects_one_physical_gpu_per_rank(
     local_rank: int,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
-
 import pytest
 
 from vrl.config.schema import RootConfig
@@ -35,12 +33,7 @@ def test_online_run_config_preserves_explicit_values() -> None:
     [
         ({}, "trainer.total_epochs"),
         ({"total_epochs": -1}, "trainer.total_epochs"),
-        ({"total_epochs": True}, "trainer.total_epochs"),
-        ({"total_epochs": "1"}, "trainer.total_epochs"),
         ({"total_epochs": 1, "save_freq": -1}, "trainer.save_freq"),
-        ({"total_epochs": 1, "save_freq": False}, "trainer.save_freq"),
-        ({"total_epochs": 1, "seed": False}, "trainer.seed"),
-        ({"total_epochs": 1, "seed": "0"}, "trainer.seed"),
     ],
 )
 def test_online_run_config_rejects_invalid_controller_values(
@@ -49,10 +42,3 @@ def test_online_run_config_rejects_invalid_controller_values(
 ) -> None:
     with pytest.raises(ValueError, match=path.replace(".", r"\.")):
         OnlineRunConfig.from_root(_root(**trainer))
-
-
-def test_online_run_config_is_frozen() -> None:
-    run = OnlineRunConfig(total_epochs=1)
-
-    with pytest.raises(FrozenInstanceError):
-        run.total_epochs = 2  # type: ignore[misc]

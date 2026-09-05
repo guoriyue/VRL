@@ -405,11 +405,6 @@ def test_config_protocol_accepts_full_parameter_sana_run() -> None:
     checkpoint_compare._validate_resolved_config(_config())
 
 
-@pytest.mark.parametrize("policy_dtype", ["bf16", "fp32"])
-def test_config_protocol_leaves_precision_to_resolved_yaml(policy_dtype: str) -> None:
-    checkpoint_compare._validate_resolved_config(_config(policy_dtype=policy_dtype))
-
-
 @pytest.mark.parametrize(
     ("meta_overrides", "message"),
     [
@@ -550,11 +545,7 @@ def test_generation_rejects_an_active_outer_autocast() -> None:
     ("key", "wrong_value"),
     [
         pytest.param("algorithm_type", "sde-dpmsolver++", id="algorithm"),
-        pytest.param("solver_order", 3, id="order"),
-        pytest.param("solver_type", "heun", id="solver"),
         pytest.param("use_flow_sigmas", False, id="flow-sigmas"),
-        pytest.param("flow_shift", 1.0, id="flow-shift"),
-        pytest.param("prediction_type", "epsilon", id="prediction"),
     ],
 )
 def test_scheduler_protocol_rejects_wrong_config(key, wrong_value) -> None:

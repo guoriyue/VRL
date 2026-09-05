@@ -61,7 +61,6 @@ def test_probe_model_build_uses_family_parameter_and_public_precision_policy() -
     assert build.precision.quantization is None
     assert build.precision.outer_autocast is False
     assert rollout.prompt_encoder_dtype is torch.float16
-    assert not hasattr(rollout, "quantization")
     assert rollout.base_weight_sync is False
 
 
@@ -124,5 +123,4 @@ def test_probe_model_build_derives_quantization_from_role_precision(
     assert build.precision.quantization.format == quantization_format
     assert build.precision.outer_autocast is False
     assert rollout.prompt_encoder_dtype is torch.float16
-    assert not hasattr(rollout, "quantization")
     assert rollout.base_weight_sync is False

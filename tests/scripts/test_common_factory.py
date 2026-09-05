@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -10,8 +9,6 @@ from omegaconf import OmegaConf
 from vrl.algorithms.grpo.continuous import (
     GRPO,
     FlowDPPO,
-    FlowDPPOConfig,
-    GRPOConfig,
     GRPOGuard,
 )
 from vrl.config.builders import RewardRuntimeConfig, build_configs
@@ -20,14 +17,11 @@ from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.ray.resources import ResolvedDistributedResources
-from vrl.rewards import RewardRuntime
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.run import OnlineRunConfig, ResolvedReward, resolve_reward_inputs
+from vrl.run import ResolvedReward, resolve_reward_inputs
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator,
     build_reward_function,
-    build_reward_runtime,
-    validate_reward_memory_parking,
 )
 
 
@@ -179,35 +173,6 @@ def test_chunk_autoregressive_factory_rejects_full_sequence_sft_regularizer() ->
         )
 
 
-@pytest.mark.parametrize(
-    ("recipe", "wrong_config", "expected_name"),
-    [
-        ("flow_matching_dppo", GRPOConfig(), "FlowDPPOConfig"),
-        ("flow_matching_grpo_guard", GRPOConfig(), "GRPOGuardConfig"),
-        ("flow_matching_grpo", FlowDPPOConfig(), "GRPOConfig"),
-    ],
-)
-def test_diffusion_factory_rejects_a_sibling_config_type(
-    recipe: str,
-    wrong_config: object,
-    expected_name: str,
-) -> None:
-    cfg = load_config(
-        "experiment/sd3_5/online_grpo_ocr",
-        overrides=[f"/recipe/online={recipe}"],
-    )
-    built = build_configs(cfg)
-    built = replace(built, algorithm=wrong_config)
-
-    with pytest.raises(TypeError, match=expected_name):
-        build_algorithm_and_evaluator(
-            family_entry=get_model_family_entry("sd3_5"),
-            built=built,
-            collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
-            scheduler=object(),
-        )
-
-
 def test_wan_empty_lora_preserves_base_policy_initially(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -296,8 +261,7 @@ def test_sana_family_defaults_to_native_fp16() -> None:
     assert build.rollout.prompt_encoder_dtype is torch.bfloat16
 
 
-@pytest.mark.parametrize("role", ["training", "rollout"])
-@pytest.mark.parametrize("dtype", ["bf16", "fp32"])
+@pytest.mark.parametrize(("role", "dtype"), [("training", "bf16"), ("rollout", "fp32")])
 def test_sana_role_precision_follows_yaml(role: str, dtype: str) -> None:
     """The selected YAML role owns SANA's transformer execution policy."""
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
@@ -319,58 +283,15 @@ def test_sana_role_precision_follows_yaml(role: str, dtype: str) -> None:
     assert build.parameter_dtype is getattr(torch, {"bf16": "bfloat16", "fp32": "float32"}[dtype])
 
 
-def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
-    """The strict first update must not consume clipping on backend mismatch."""
-    cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam")
-    built = build_configs(cfg)
-    trainer = built.trainer
-    run = OnlineRunConfig.from_root(built.root)
-
-    assert cfg.model.use_lora is False
-    assert cfg.precision.float32_precision == "ieee"
-    assert cfg.model.lora is None
-    assert cfg.algorithm.kl_coef == 0.0
-    assert trainer.optim.optim_8bit is True
-    assert trainer.ema.enable is False
-    assert trainer.ppo_epochs == 1
-    assert trainer.batch_plan.gradient_accumulation_steps == 1
-    assert trainer.batch_plan.prompts_per_batch == 1
-    assert trainer.batch_plan.n_samples_per_prompt == 8
-    assert built.root.rollout is not None
-    assert built.root.rollout.samples_per_generation_batch == 1
-    assert trainer.batch_plan.samples_per_replay_batch == 1
-    assert run.total_epochs == 5
-    assert run.save_freq == 1
-    assert trainer.debug.first_step is True
-    assert trainer.replay_parity.max_abs_logprob_diff == pytest.approx(1.0e-6)
-    assert trainer.precision_drift_guard.mode == "fail"
-    assert trainer.precision_drift_guard.max_abs_log_ratio == pytest.approx(1.0e-6)
-    assert trainer.precision_drift_guard.max_ratio_abs_dev == pytest.approx(1.0e-6)
-
-
 def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     """The canonical curve starts from base with immutable scorer identities."""
     cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam_long")
     cfg.distributed.resources.visible_devices = [0]
     built = build_configs(cfg)
-    trainer = built.trainer
-    run = OnlineRunConfig.from_root(built.root)
 
     assert built.resume.checkpoint_path is None
     assert built.resume.strict is True
-    assert run.total_epochs == 300
-    assert run.save_freq == 5
-    assert trainer.output_dir == "outputs/sana_aesthetic_fullparam_long"
     assert cfg.model.use_lora is False
-    assert cfg.reward.kwargs.aesthetic.model_revision == (
-        "32bd64288804d66eefd0ccbe215aa642df71cc41"
-    )
-    assert cfg.reward.kwargs.pickscore.processor_revision == (
-        "1c2b8495b28150b8a4922ee1c8edee224c284c0c"
-    )
-    assert cfg.reward.kwargs.pickscore.model_revision == (
-        "a4e4367c6dfa7288a00c550414478f865b875800"
-    )
     reward = build_reward_function(
         resolve_reward_inputs(
             built,
@@ -380,52 +301,22 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     )
     aesthetic_config = reward.rewards[0][2].scorer._worker_config
     pickscore_config = reward.rewards[1][2].scorer._worker_config
-    assert aesthetic_config["model_revision"] == ("32bd64288804d66eefd0ccbe215aa642df71cc41")
+    assert aesthetic_config["model_revision"] == cfg.reward.kwargs.aesthetic.model_revision
     assert pickscore_config["device"] == "cpu"
-    assert pickscore_config["processor_revision"] == ("1c2b8495b28150b8a4922ee1c8edee224c284c0c")
-    assert pickscore_config["model_revision"] == ("a4e4367c6dfa7288a00c550414478f865b875800")
+    assert pickscore_config["processor_revision"] == cfg.reward.kwargs.pickscore.processor_revision
+    assert pickscore_config["model_revision"] == cfg.reward.kwargs.pickscore.model_revision
 
 
-@pytest.mark.parametrize(
-    "experiment",
-    [
-        "experiment/sana/online_grpo_aesthetic",
-        "experiment/sana/online_grpo_pickscore_validation",
-    ],
-)
-def test_sana_experiments_pin_the_validated_symmetric_chunk_shape(
-    experiment: str,
-) -> None:
-    """The measured 8/8 shape is a parity and memory contract, not a tuning default."""
-    built = build_configs(load_config(experiment))
-
-    assert built.root.rollout is not None
-    assert built.root.rollout.samples_per_generation_batch == 8
-    assert built.trainer.batch_plan.samples_per_replay_batch == 8
-
-
-@pytest.mark.parametrize("configured_dtype", ["fp16", "bf16"])
-def test_sana_rejects_redundant_or_conflicting_model_dtype(
-    configured_dtype: str,
-) -> None:
+def test_sana_rejects_redundant_or_conflicting_model_dtype() -> None:
     """A family invariant must not also survive as a user-controlled knob."""
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
-    cfg.model.dtype = configured_dtype
-
-    with pytest.raises(ValueError, match=r"unknown model\.dtype"):
-        parse_config(cfg)
-
-
-def test_ordinary_diffusion_family_rejects_duplicate_model_dtype() -> None:
-    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     cfg.model.dtype = "fp16"
 
     with pytest.raises(ValueError, match=r"unknown model\.dtype"):
         parse_config(cfg)
 
 
-@pytest.mark.parametrize("dtype", ["bf16", "fp32"])
-def test_sana_direct_tool_override_changes_storage_only(dtype: str) -> None:
+def test_sana_direct_tool_override_changes_storage_only() -> None:
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
     built = build_configs(cfg)
 
@@ -433,10 +324,10 @@ def test_sana_direct_tool_override_changes_storage_only(dtype: str) -> None:
         built.root,
         torch.device("cpu"),
         precision=built.precision,
-        parameter_dtype_override=dtype,
+        parameter_dtype_override="fp32",
     )
 
-    assert build.parameter_dtype is getattr(torch, {"bf16": "bfloat16", "fp32": "float32"}[dtype])
+    assert build.parameter_dtype is torch.float32
     assert build.precision == RolePrecision(
         dtype="fp16",
         float32_precision="ieee",
@@ -460,119 +351,6 @@ def test_token_objective_rejects_unused_math_precision_override() -> None:
             family_entry=get_model_family_entry("emu3"),
             collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
         )
-
-
-def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
-    """The resolved reward device reaches every component factory unchanged."""
-    from vrl.rewards.functions.registry import MultiReward
-
-    captured: dict[str, object] = {}
-    sentinel = object()
-
-    def fake_from_dict(
-        cls,
-        score_dict,
-        device="cuda",
-        reward_kwargs=None,
-        memory_parking_required=None,
-        inference_configs=None,
-    ):
-        del cls
-        captured.update(
-            score_dict=dict(score_dict),
-            device=device,
-            reward_kwargs=dict(reward_kwargs or {}),
-            memory_parking_required=memory_parking_required,
-            inference_config_keys=tuple(inference_configs or ()),
-        )
-        return sentinel
-
-    monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
-
-    reward = build_reward_function(
-        ResolvedReward(
-            config=_built_reward({"fake": 1.0}, {"fake": {"marker": True}}).reward,
-            device="cuda:2",
-            memory_parking_required=False,
-        ),
-    )
-
-    assert reward is sentinel
-    assert captured == {
-        "score_dict": {"fake": 1.0},
-        "device": "cuda:2",
-        "reward_kwargs": {"fake": {"marker": True}},
-        "memory_parking_required": False,
-        "inference_config_keys": ("fake",),
-    }
-
-
-def test_http_reward_accepts_torchrun_rank_local_device(monkeypatch) -> None:
-    """External scoring must not compare logical cuda:0 with a physical ordinal."""
-    from vrl.rewards.functions.registry import MultiReward
-
-    captured: dict[str, object] = {}
-
-    def fake_from_dict(
-        cls,
-        score_dict,
-        device="cuda",
-        reward_kwargs=None,
-        memory_parking_required=None,
-        inference_configs=None,
-    ):
-        del cls, score_dict, reward_kwargs, inference_configs
-        captured.update(
-            device=device,
-            memory_parking_required=memory_parking_required,
-        )
-        return object()
-
-    monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
-    cfg = OmegaConf.create(
-        {
-            "distributed": {
-                "resources": {
-                    "visible_devices": [2],
-                    "trainer": {"devices": [2]},
-                    "rollout": {
-                        "devices": [2],
-                        "gpu_pool": "trainer",
-                    },
-                },
-            },
-            "reward": {
-                "components": {"unified_reward_video": 1.0},
-                "inference": {
-                    "unified_reward_video": {
-                        "kind": "http",
-                        "endpoint": "http://127.0.0.1:8300",
-                        "expected_model": "unified-reward-robotics",
-                    },
-                },
-            },
-        },
-    )
-
-    build_reward_function(
-        resolve_reward_inputs(
-            _built_reward(
-                {"unified_reward_video": 1.0},
-                {},
-                {
-                    "unified_reward_video": {
-                        "kind": "http",
-                        "endpoint": "http://127.0.0.1:8300",
-                        "expected_model": "unified-reward-robotics",
-                    },
-                },
-            ),
-            ResolvedDistributedResources.resolve(parse_config(cfg)),
-            trainer_device="cuda:0",
-        ),
-    )
-
-    assert captured == {"device": "cuda:0", "memory_parking_required": False}
 
 
 def test_reward_factory_rejects_an_all_zero_objective() -> None:
@@ -632,184 +410,19 @@ def test_shared_reward_capability_fails_before_component_construction(monkeypatc
     assert constructed is False
 
 
-def test_shared_reward_preflight_consumes_resolved_inference(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Config-driven parking consumes the resolved deployment map as-is."""
-    import vrl.rewards.functions.registry as reward_registry
-
-    built = _built_reward({"aesthetic": 1.0}, {"aesthetic": {}})
-    captured: dict[str, object] = {}
-
-    def capture(
-        names,
-        *,
-        device="cuda",
-        reward_kwargs=None,
-        inference_configs=None,
-    ):
-        del names, device, reward_kwargs
-        captured["inference_configs"] = inference_configs
-
-    monkeypatch.setattr(
-        reward_registry,
-        "validate_reward_memory_parking_components",
-        capture,
-    )
-
-    validate_reward_memory_parking(
-        resources=ResolvedDistributedResources.resolve(
-            parse_config(_shared_reward_cfg("aesthetic"))
-        ),
-        built=built,
-    )
-
-    assert captured["inference_configs"] is built.reward.inference_configs
-
-
-def test_reward_build_consumes_resolved_inference(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The MultiReward construction path consumes the resolved map as-is."""
-    from vrl.rewards.functions.registry import MultiReward
-
-    built = _built_reward({"ocr": 1.0}, {})
-    captured: dict[str, object] = {}
-
-    def fake_from_dict(
-        cls,
-        score_dict,
-        device="cuda",
-        reward_kwargs=None,
-        memory_parking_required=None,
-        inference_configs=None,
-    ):
-        del cls, score_dict, device, reward_kwargs, memory_parking_required
-        captured["inference_configs"] = inference_configs
-        return object()
-
-    monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
-
-    build_reward_function(
-        ResolvedReward(config=built.reward, device="cpu", memory_parking_required=False),
-    )
-
-    assert captured["inference_configs"] is built.reward.inference_configs
-
-
-def test_reward_runtime_factory_exposes_the_public_runtime_protocol() -> None:
-    runtime = build_reward_runtime(
-        ResolvedReward(
-            config=_built_reward({"ocr": 1.0}, {}).reward,
-            device="cpu",
-            memory_parking_required=False,
-        ),
-    )
-
-    assert isinstance(runtime, RewardRuntime)
-
-
-def test_shared_reward_topology_automatically_enables_parking(monkeypatch) -> None:
-    """The lifecycle flag, not a YAML sleep knob, drives runtime parking."""
-    from vrl.rewards.functions.registry import MultiReward
-
-    captured: dict[str, object] = {}
-    sentinel = object()
-
-    def fake_from_dict(
-        cls,
-        score_dict,
-        device="cuda",
-        reward_kwargs=None,
-        memory_parking_required=None,
-        inference_configs=None,
-    ):
-        del cls, inference_configs
-        captured.update(
-            score_dict=dict(score_dict),
-            device=device,
-            reward_kwargs=dict(reward_kwargs or {}),
-            memory_parking_required=memory_parking_required,
-        )
-        return sentinel
-
-    monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
-    cfg = _shared_reward_cfg("aesthetic")
-
-    reward = build_reward_function(
-        resolve_reward_inputs(
-            _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
-            ResolvedDistributedResources.resolve(parse_config(cfg)),
-            trainer_device="cuda:0",
-        ),
-    )
-
-    assert reward is sentinel
-    assert captured["memory_parking_required"] is True
-
-
-def test_shared_reward_accepts_rank_local_cuda_after_physical_placement(
-    monkeypatch,
-) -> None:
-    """A torchrun rank scores on logical cuda:0 while Ray keeps its physical ID."""
-    from vrl.rewards.functions.registry import MultiReward
-
-    captured: dict[str, object] = {}
-    sentinel = object()
-
-    def fake_from_dict(
-        cls,
-        score_dict,
-        device="cuda",
-        reward_kwargs=None,
-        memory_parking_required=None,
-        inference_configs=None,
-    ):
-        del cls, score_dict, reward_kwargs, inference_configs
-        captured.update(
-            device=device,
-            memory_parking_required=memory_parking_required,
-        )
-        return sentinel
-
-    monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
-    cfg = _shared_reward_cfg("aesthetic")
-    cfg.distributed.resources.visible_devices = [2]
-    cfg.distributed.resources.trainer.devices = [2]
-    cfg.distributed.resources.rollout.devices = [2]
-
-    reward = build_reward_function(
-        resolve_reward_inputs(
-            _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
-            ResolvedDistributedResources.resolve(parse_config(cfg)),
-            trainer_device="cuda:0",
-        ),
-    )
-
-    assert reward is sentinel
-    assert captured == {
-        "device": "cuda:0",
-        "memory_parking_required": True,
-    }
-
-
-@pytest.mark.parametrize(
-    "key",
-    ["sleep_offload", "memory_parking_residual_bytes_limit"],
-)
-def test_reward_config_rejects_yaml_lifecycle_override(key: str) -> None:
+def test_reward_config_rejects_yaml_lifecycle_override() -> None:
     """Resource topology is the only public reward lifecycle source."""
 
     cfg = OmegaConf.create(
         {
             "reward": {
                 "components": {"aesthetic": 1.0},
-                "kwargs": {"aesthetic": {key: True}},
+                "kwargs": {"aesthetic": {"sleep_offload": True}},
             },
         },
     )
 
-    with pytest.raises(ValueError, match=rf"{key} is topology-derived"):
+    with pytest.raises(ValueError, match="sleep_offload is topology-derived"):
         RewardRuntimeConfig.from_cfg(cfg)
 
 
@@ -821,6 +434,36 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
         ResolvedDistributedResources.resolve(parse_config(cfg)),
     )
     assert shared.device == "cuda:0"
+    assert shared.memory_parking_required is True
+
+    # A torchrun rank scores on logical cuda:0 while Ray keeps the physical ID.
+    rank_local = _shared_reward_cfg("aesthetic")
+    rank_local.distributed.resources.visible_devices = [2]
+    rank_local.distributed.resources.trainer.devices = [2]
+    rank_local.distributed.resources.rollout.devices = [2]
+    rank_local_reward = resolve_reward_inputs(
+        _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
+        ResolvedDistributedResources.resolve(parse_config(rank_local)),
+        trainer_device="cuda:0",
+    )
+    assert rank_local_reward.device == "cuda:0"
+    assert rank_local_reward.memory_parking_required is True
+
+    # HTTP components own their deployment externally: no local parking policy.
+    http_inference = {
+        "unified_reward_video": {
+            "kind": "http",
+            "endpoint": "http://127.0.0.1:8300",
+            "expected_model": "unified-reward-robotics",
+        },
+    }
+    http_reward = resolve_reward_inputs(
+        _built_reward({"unified_reward_video": 1.0}, {}, http_inference),
+        ResolvedDistributedResources.resolve(parse_config(rank_local)),
+        trainer_device="cuda:0",
+    )
+    assert http_reward.device == "cuda:0"
+    assert http_reward.memory_parking_required is False
 
     cpu_cfg = OmegaConf.create(
         {

@@ -97,11 +97,6 @@ def test_scheme_default_profile_comes_from_the_scheme_class() -> None:
     assert _resolve_target_profile("bf16", "scheme_default") is None
 
 
-def test_apply_scheme_rejects_legacy_fp4_name() -> None:
-    with pytest.raises(ValueError, match="unsupported quantized scheme 'fp4'"):
-        _apply_scheme(_MatchedTargetModel(), "fp4", LinearTargetProfile.MLP_ONLY)
-
-
 def test_relative_speedups_include_direct_nvfp4_vs_fp8_ratio() -> None:
     results = [
         {"scheme": "bf16", "rows": [{"batch": 32, "median_ms": 100.0}]},

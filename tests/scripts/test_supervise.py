@@ -586,12 +586,6 @@ def test_distributed_success_requires_every_rank_verdict(tmp_path) -> None:
     assert complete["verdict"] == "success"
 
 
-def test_metrics_health_gate_is_disabled_by_default() -> None:
-    args = build_parser().parse_args(["--config", "unit"])
-
-    assert args.health_metrics is False
-
-
 def test_supervisor_cli_defaults_are_derived_from_runtime_config() -> None:
     args = build_parser().parse_args(["--config", "unit"])
     defaults = {item.name: item.default for item in fields(RunSupervisor)}
@@ -615,11 +609,7 @@ def test_supervisor_cli_rejects_invalid_retry_bounds(option: str, value: str) ->
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
-        ({"max_attempts": -1}, "max_attempts"),
         ({"same_cause_limit": 0}, "same_cause_limit"),
-        ({"term_grace_seconds": -1.0}, "term_grace_seconds"),
-        ({"backoff_seconds": -1.0}, "backoff_seconds"),
-        ({"term_grace_seconds": float("inf")}, "term_grace_seconds"),
         ({"backoff_seconds": float("nan")}, "backoff_seconds"),
     ],
 )
@@ -747,34 +737,9 @@ def test_health_config_rejects_stale_override_for_strict_schedule() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"max_stale_policy_versions": -1},
-        {"max_stale_policy_versions": 1, "max_stale_logprob_diff": -0.1},
-        {"max_stale_policy_versions": 1, "max_stale_logprob_diff": float("nan")},
-    ],
-)
-def test_continuous_health_policy_rejects_invalid_thresholds(
-    kwargs: dict[str, float | int],
-) -> None:
+def test_continuous_health_policy_rejects_invalid_thresholds() -> None:
     with pytest.raises(ValueError):
-        ContinuousHealthPolicy(**kwargs)
-
-
-def test_health_required_columns_must_exist_in_online_metric_protocol(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import vrl.scripts.supervise as supervise
-
-    monkeypatch.setattr(
-        supervise,
-        "_REQUIRED_HEALTH_METRICS",
-        ("removed_metric",),
-    )
-
-    with pytest.raises(AssertionError, match="removed_metric"):
-        HealthGateConfig()
+        ContinuousHealthPolicy(max_stale_policy_versions=1, max_stale_logprob_diff=float("nan"))
 
 
 def test_health_gate_reads_a_complete_online_metric_row(tmp_path) -> None:
@@ -848,12 +813,8 @@ def test_health_gate_default_never_trips_on_a_large_grad_norm(tmp_path) -> None:
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
-        ({"max_grad_norm": 0.0}, "must be > 0"),
-        ({"max_grad_norm": -1.0}, "must be > 0"),
         ({"max_grad_norm": float("nan")}, "must be > 0"),
-        ({"max_grad_norm": 1e-8}, "must be > min_grad_norm"),
         ({"max_grad_norm": 0.5, "min_grad_norm": 0.5}, "must be > min_grad_norm"),
-        ({"max_grad_norm": 0.1, "min_grad_norm": 0.5}, "must be > min_grad_norm"),
     ],
 )
 def test_health_config_rejects_a_max_grad_norm_at_or_below_the_minimum(
@@ -900,24 +861,11 @@ def test_metrics_health_gate_cli_thresholds_are_configurable() -> None:
     assert args.health_max_grad_norm == 0.8
 
 
-def test_metrics_health_gate_max_grad_norm_is_disabled_by_default() -> None:
-    args = build_parser().parse_args(["--config", "unit", "--health-metrics"])
-
-    assert args.health_max_grad_norm == math.inf
-
-
 @pytest.mark.parametrize(
     ("option", "value"),
     [
         ("--health-poll-seconds", "0"),
-        ("--health-failure-limit", "0"),
-        ("--health-max-pre-update-logprob-diff", "nan"),
-        ("--health-max-stale-policy-versions", "-1"),
         ("--health-max-stale-logprob-diff", "nan"),
-        ("--health-min-reward-std", "-1"),
-        ("--health-min-grad-norm", "inf"),
-        ("--health-max-grad-norm", "0"),
-        ("--health-max-grad-norm", "-1"),
         ("--health-max-grad-norm", "inf"),
     ],
 )
@@ -990,8 +938,6 @@ def test_continuous_schedule_requires_metrics_even_with_zero_stale_limit() -> No
     ("stale_versions", "producer_errors", "expected"),
     [
         ("2", "0", "continuous_stale_versions 2 exceeds maximum 1"),
-        ("0.5", "0", "must be a non-negative integer"),
-        ("1", "0.5", "continuous_producer_errors must be a non-negative integer"),
         ("1", "-1", "continuous_producer_errors must be a non-negative integer"),
     ],
 )

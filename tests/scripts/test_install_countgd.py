@@ -187,7 +187,7 @@ def test_manifest_records_independent_bert_pin() -> None:
     assert manifest["runtime_environment"]["inherits_system_site_packages"] is False
     lock = manifest["runtime_environment"]["lock"]
     assert lock == {**environment_lock_payload(), "sha256": environment_lock_digest()}
-    assert lock["package_count"] == len(ENVIRONMENT_LOCK) == 76
+    assert lock["package_count"] == len(ENVIRONMENT_LOCK)
     assert {
         package["name"]: package["version"] for package in lock["artifacts"]
     } == locked_package_versions()

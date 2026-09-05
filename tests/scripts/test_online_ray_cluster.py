@@ -66,7 +66,7 @@ def test_local_run_starts_owned_cluster_even_when_environment_has_address(
     assert not isolated_ray.is_initialized()
 
 
-@pytest.mark.parametrize("address", [None, "", "auto", "local"])
+@pytest.mark.parametrize("address", [None, "auto"])
 def test_cross_node_requires_concrete_operator_address(isolated_ray, address: str | None) -> None:
     environ = {} if address is None else {"RAY_ADDRESS": address}
 

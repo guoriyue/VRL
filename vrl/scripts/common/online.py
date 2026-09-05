@@ -288,30 +288,6 @@ class _OnlineRecipeLifecycle:
         return False
 
 
-def _require_supported_online_strategy(context: DistributedTrainingContext) -> None:
-    """Fail-fast when the online recipe cannot yet drive the resolved strategy.
-
-    Both multi-rank strategies ride the same per-rank-local symmetric-colocated
-    path (SPRINT_symmetric_colocated_ddp.md / SPRINT_multi_gpu_training.md Phase 4):
-    each torchrun rank runs its own local Ray + local colocated rollout on its 1
-    GPU, draws a DISJOINT prompt slice, and the recipe writes IO from rank0 only.
-    ``ddp`` replicates the full module and all-reduces gradients; ``fsdp`` shards
-    params/grads/optimizer as DTensor and the per-layer all-gather / reduce-scatter
-    crosses ranks instead. The export seam already gathers a full, unwrapped,
-    policy-facing state on every rank (FSDPStrategy.export_rollout_state, via DCP
-    get_model_state_dict(full_state_dict=True)), so rollout weight sync and
-    checkpointing are identical to single-process from the recipe's point of view.
-    Only a genuinely unsupported strategy reaches the raise below.
-    """
-
-    if context.strategy not in {"single_process", "ddp", "fsdp"}:
-        raise NotImplementedError(
-            f"distributed.training.strategy={context.strategy!r} is not supported by "
-            "run_online_recipe. Use single_process, ddp, or fsdp "
-            "(SPRINT_multi_gpu_training.md / SPRINT_symmetric_colocated_ddp.md).",
-        )
-
-
 def _require_supported_distributed_rollout_topology(
     context: DistributedTrainingContext,
     resources: ResolvedDistributedResources,
@@ -746,20 +722,7 @@ async def run_online_recipe(
 ) -> None:
     """Run a family online training job through shared recipe glue."""
 
-    provided_examples: list[PromptExample] | None = None
-    if prompt_examples is not None:
-        if isinstance(prompt_examples, str | bytes) or not isinstance(
-            prompt_examples,
-            Sequence,
-        ):
-            raise TypeError("prompt_examples must be a sequence of PromptExample objects")
-        provided_examples = list(prompt_examples)
-        for index, example in enumerate(provided_examples):
-            if not isinstance(example, PromptExample):
-                raise TypeError(
-                    "prompt_examples must contain only PromptExample objects; "
-                    f"item {index} is {type(example).__name__}",
-                )
+    provided_examples = None if prompt_examples is None else list(prompt_examples)
 
     resolved = resolve_online_run(cfg)
     _preflight_production_video_reward(resolved.built.root)
@@ -805,7 +768,6 @@ async def run_online_recipe(
     # strategies the online recipe can't yet drive end-to-end, before building the
     # model / Ray runtime.
     training_context = DistributedTrainingContext.from_root(built.root, device=device)
-    _require_supported_online_strategy(training_context)
     _require_supported_distributed_rollout_topology(training_context, resources)
     # Construct the strategy before any model or Ray actor. Shared-GPU on-demand
     # execution needs complete trainer-state parking; distributed strategies must

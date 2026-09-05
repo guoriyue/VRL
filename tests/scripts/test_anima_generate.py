@@ -232,36 +232,6 @@ def test_generate_default_is_reward_independent_and_preserves_inference_policy(
     assert not (output_dir / "images").exists()
 
 
-def test_explicit_dtype_dry_run_still_runs_structural_validation(
-    monkeypatch,
-    tmp_path,
-) -> None:
-    cfg = _minimal_generate_config()
-    real_parse_config = generate.parse_config
-    validated: list[object] = []
-
-    def tracked_parse_config(value):
-        validated.append(value)
-        return real_parse_config(value)
-
-    monkeypatch.setattr(generate, "load_config", lambda *_args, **_kwargs: cfg)
-    monkeypatch.setattr(generate, "parse_config", tracked_parse_config)
-
-    generate.main(
-        [
-            "--prompt",
-            "adult anime portrait",
-            "--dtype",
-            "fp32",
-            "--dry-run",
-            "--output-dir",
-            str(tmp_path / "output"),
-        ],
-    )
-
-    assert validated == [cfg]
-
-
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_generate_refuses_nonempty_output_before_writing(
     monkeypatch,

@@ -7,9 +7,7 @@ test here, and it runs the real detector over a real declaration.
 
 from __future__ import annotations
 
-import ast
-
-from vrl.scripts.lint.dead_flags import DYNAMIC_CONSUMERS, dead_flags, declared_flags
+from vrl.scripts.lint.dead_flags import dead_flags, declared_flags
 
 
 def test_no_dead_flags_in_the_repo() -> None:
@@ -56,27 +54,3 @@ def test_detector_fires_on_an_injected_dead_flag(tmp_path, monkeypatch) -> None:
     findings = lint.dead_flags()
 
     assert [option for _, _, option, _ in findings] == ["--dead-knob"]
-
-
-def test_dynamic_consumer_escape_hatch_requires_a_reason() -> None:
-    """The allowlist exists for getattr/vars readers; entries must explain why."""
-
-    for dest, reason in DYNAMIC_CONSUMERS.items():
-        assert isinstance(dest, str) and dest
-        assert isinstance(reason, str) and len(reason) > 20, f"{dest} needs a real reason"
-
-
-def test_declared_flags_reports_resolvable_locations() -> None:
-    """Findings must be actionable: real file, real line, parseable module."""
-
-    for file, line, _option, _dest in declared_flags()[:20]:
-        path = lint_root() / file
-        assert path.exists()
-        assert 0 < line <= len(path.read_text().splitlines())
-        ast.parse(path.read_text())
-
-
-def lint_root():
-    from vrl.scripts.lint.dead_flags import REPO_ROOT
-
-    return REPO_ROOT

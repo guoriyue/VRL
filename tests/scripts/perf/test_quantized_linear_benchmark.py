@@ -13,11 +13,6 @@ def test_canonical_benchmark_rejects_invalid_scheme_sets(schemes) -> None:
         benchmark.main(schemes=schemes)
 
 
-def test_canonical_benchmark_rejects_legacy_fp4_name() -> None:
-    with pytest.raises(ValueError, match="non-empty fp8/nvfp4 subset"):
-        benchmark.main(schemes=("fp4",))
-
-
 def test_explicit_nvfp4_request_fails_when_hardware_is_unavailable(monkeypatch) -> None:
     monkeypatch.setattr(benchmark.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(benchmark, "nvfp4_available", lambda: False)

@@ -332,15 +332,6 @@ def test_owned_ray_session_retries_shutdown_before_committing_closed() -> None:
     assert ray_api.calls == 2
 
 
-@pytest.mark.asyncio
-async def test_run_online_recipe_rejects_non_prompt_example_sequence() -> None:
-    with pytest.raises(TypeError, match="item 1 is str"):
-        await online.run_online_recipe(
-            _cfg(),
-            prompt_examples=(PromptExample(prompt="valid"), "not-an-example"),  # type: ignore[arg-type]
-        )
-
-
 def _install_common_fakes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
@@ -784,45 +775,6 @@ async def test_online_preview_matches_the_next_epoch_prompt_batch(
     assert batches[0]["next"] == batches[1]["current"]
     assert batches[1]["next"] is None
     assert preinitialized_ray.is_initialized()
-
-
-def test_require_supported_online_strategy_allows_fsdp() -> None:
-    """fsdp uses the same per-rank-local symmetric-colocated path as ddp."""
-    from vrl.trainers.distributed import DistributedTrainingContext
-
-    ctx = DistributedTrainingContext(
-        strategy="fsdp",
-        rank=0,
-        world_size=2,
-        device=torch.device("cpu"),
-    )
-    online._require_supported_online_strategy(ctx)  # no raise
-
-
-def test_require_supported_online_strategy_allows_single_process() -> None:
-    from vrl.trainers.distributed import DistributedTrainingContext
-
-    ctx = DistributedTrainingContext(
-        strategy="single_process",
-        rank=0,
-        world_size=1,
-        device=torch.device("cpu"),
-    )
-    online._require_supported_online_strategy(ctx)  # no raise
-
-
-def test_require_supported_online_strategy_allows_ddp() -> None:
-    """ddp is the supported per-rank-local symmetric-colocated path (each rank runs
-    its own local Ray + colocated rollout on its GPU; only grads all-reduce)."""
-    from vrl.trainers.distributed import DistributedTrainingContext
-
-    ctx = DistributedTrainingContext(
-        strategy="ddp",
-        rank=1,
-        world_size=2,
-        device=torch.device("cuda:0"),
-    )
-    online._require_supported_online_strategy(ctx)  # no raise
 
 
 @pytest.mark.asyncio

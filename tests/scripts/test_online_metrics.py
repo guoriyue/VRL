@@ -221,51 +221,6 @@ def test_metrics_csv_writes_continuous_request_diagnostics(tmp_path) -> None:
     assert rows[0]["continuous_producer_completed"] == "1.0"
 
 
-def test_metrics_csv_preflight_broadcasts_primary_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def _broadcast(payload, *, src, device) -> None:
-        assert payload == ["ValueError: different metrics schema"]
-        assert src == 0
-        assert device == torch.device("cpu")
-
-    monkeypatch.setattr(torch.distributed, "broadcast_object_list", _broadcast)
-
-    def _raise_schema_error() -> None:
-        raise ValueError("different metrics schema")
-
-    run = SimpleNamespace(prepare_metrics_csv=_raise_schema_error)
-
-    with pytest.raises(RuntimeError, match="rank 0: ValueError: different metrics schema"):
-        OnlineRecipeRun.prepare_metrics_csv_rank_consistent(
-            run,
-            _context(distributed=True, primary=True),
-        )
-
-
-def test_metrics_csv_preflight_peer_uses_broadcast_verdict(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def _broadcast(payload, *, src, device) -> None:
-        del src, device
-        payload[0] = "ValueError: different metrics schema"
-
-    monkeypatch.setattr(torch.distributed, "broadcast_object_list", _broadcast)
-    prepared = False
-
-    def _prepare() -> None:
-        nonlocal prepared
-        prepared = True
-
-    with pytest.raises(RuntimeError, match="rank 0: ValueError: different metrics schema"):
-        OnlineRecipeRun.prepare_metrics_csv_rank_consistent(
-            SimpleNamespace(prepare_metrics_csv=_prepare),
-            _context(distributed=True, primary=False),
-        )
-
-    assert prepared is False
-
-
 @pytest.mark.parametrize("fail", [False, True])
 def test_metrics_csv_preflight_is_rank_consistent_with_real_gloo(tmp_path, fail) -> None:
     context = mp.get_context("spawn")

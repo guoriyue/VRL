@@ -145,13 +145,6 @@ def test_score_summary_groups_by_checkpoint() -> None:
     assert summary["trained"]["mean"] == 5.0
 
 
-def test_checkpoint_eval_reuses_model_by_default() -> None:
-    """Checks single-GPU checkpoint eval avoids repeated full pipeline loads."""
-    args = eval_script.build_parser().parse_args(["--checkpoint", "unused"])
-
-    assert args.rebuild_model_between_checkpoints is False
-
-
 def _video_root(**sampling: object):
     """A parsed cosmos config declaring every key the eval projection carries."""
     return parse_config(

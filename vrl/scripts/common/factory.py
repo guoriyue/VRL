@@ -35,10 +35,6 @@ def build_reward_function(reward: ResolvedReward) -> RewardFunction:
     policy. YAML selects transport, not lifecycle behavior.
     """
 
-    if not isinstance(reward, ResolvedReward):
-        raise TypeError(
-            f"reward must be a ResolvedReward, got {type(reward).__name__}",
-        )
     config = reward.config
     if not any(weight > 0 for weight in config.weights.values()):
         raise ValueError("At least one reward component must have weight > 0.")
@@ -142,29 +138,8 @@ def build_algorithm_and_evaluator(
         # trainer's random timestep selection + multi-reward); flow_dppo /
         # grpo_guard are trust-region variants whose loss reads the rollout
         # proposal mean (sampling.return_prev_sample_mean).
-        from vrl.algorithms.grpo.continuous import (
-            GRPO,
-            FlashGRPO,
-            FlashGRPOConfig,
-            FlowDPPO,
-            FlowDPPOConfig,
-            GRPOConfig,
-            GRPOGuard,
-            GRPOGuardConfig,
-        )
+        from vrl.algorithms.grpo.continuous import GRPO, FlashGRPO, FlowDPPO, GRPOGuard
 
-        expected_config_type = {
-            "grpo": GRPOConfig,
-            "dance_grpo": GRPOConfig,
-            "flash_grpo": FlashGRPOConfig,
-            "flow_dppo": FlowDPPOConfig,
-            "grpo_guard": GRPOGuardConfig,
-        }[kind]
-        if not isinstance(algorithm_config, expected_config_type):
-            raise TypeError(
-                f"{family_entry.family} {kind} expects {expected_config_type.__name__}, got "
-                f"{type(algorithm_config).__name__}",
-            )
         is_chunk_autoregressive = (
             family_entry.policy_semantics.generation_regime == "chunk_autoregressive"
         )
@@ -245,13 +220,8 @@ def build_algorithm_and_evaluator(
         )
 
     if kind == "token_grpo":
-        from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
+        from vrl.algorithms.grpo.token import TokenGRPO
 
-        if not isinstance(algorithm_config, TokenGRPOConfig):
-            raise TypeError(
-                f"{family_entry.family} token GRPO expects TokenGRPOConfig, got "
-                f"{type(algorithm_config).__name__}",
-            )
         if family_entry.policy_semantics.action_distribution == "continuous":
             from vrl.rollouts.evaluators.token import ContinuousTokenLogProbEvaluator
 
@@ -271,20 +241,12 @@ def build_algorithm_and_evaluator(
         )
 
     if kind == "token_grpo_multisegment":
-        from vrl.algorithms.grpo.multisegment import (
-            MultiSegmentTokenGRPO,
-            MultiSegmentTokenGRPOConfig,
-        )
+        from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPO
         from vrl.rollouts.evaluators.token import MultiSegmentTokenLogProbEvaluator
 
         if family_entry.family != "janus_pro_r1":
             raise ValueError(
                 "token_grpo_multisegment currently requires model family janus_pro_r1",
-            )
-        if not isinstance(algorithm_config, MultiSegmentTokenGRPOConfig):
-            raise TypeError(
-                "multi-segment token GRPO expects MultiSegmentTokenGRPOConfig, "
-                f"got {type(algorithm_config).__name__}",
             )
         segment_flags = dict(algorithm_config.train_segments or {})
         enabled_segments = tuple(name for name, enabled in segment_flags.items() if bool(enabled))
@@ -299,17 +261,8 @@ def build_algorithm_and_evaluator(
         )
 
     if kind == "diffusion_nft":
-        from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
-        from vrl.algorithms.grpo.token import TokenGRPOConfig
+        from vrl.algorithms.diffusion_nft import DiffusionNFT
 
-        if not isinstance(algorithm_config, DiffusionNFTConfig) or isinstance(
-            algorithm_config,
-            TokenGRPOConfig,
-        ):
-            raise TypeError(
-                f"{family_entry.family} DiffusionNFT expects DiffusionNFTConfig, got "
-                f"{type(algorithm_config).__name__}",
-            )
         return AlgorithmEvaluatorPair(
             algorithm=DiffusionNFT(algorithm_config),
             evaluator=None,
