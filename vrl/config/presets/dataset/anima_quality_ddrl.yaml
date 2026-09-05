@@ -1,0 +1,17 @@
+# Reviewed natural-language canary paired with synthetic clean anchors
+# generated once by the untouched Anima base. The generated manifest and latent
+# shard live together under data/external so their relative target_image keys
+# remain stable across generation, offline encoding, and trainer replay.
+data:
+  loader: prompt_manifest
+  manifest: data/external/anima/quality_v1/anchor_manifest.jsonl
+  eval_manifest: datasets/anima/quality_v1/eval_prompts.jsonl
+  artifact_data_root: data/external/anima/quality_v1
+  sft_latents: data/external/anima/quality_v1/sft_latents_bf16.pt
+  preprocessing:
+    format: jsonl
+  sampler:
+    # The committed manifest is round-robin ordered across sixteen quality
+    # buckets. Four consecutive prompts therefore form a deterministic,
+    # non-duplicated stratum, and sixteen updates consume all 64 rows once.
+    type: sequential_window

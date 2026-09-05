@@ -315,7 +315,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="cosmos_anima",
-        config="experiment/anima_preview3/online_grpo_aesthetic",
+        config="experiment/anima_preview3/online_grpo",
         family="cosmos-predict2-anima",
         prompt="anime portrait of a small white sign that says RL",
         checkpoints=(
@@ -327,6 +327,9 @@ CASES: tuple[RealCheckpointCase, ...] = (
             ),
         ),
         overrides=(
+            "+reward=aesthetic",
+            "+dataset=drawbench_train_192",
+            "actor.optim.lr=1.0e-5",
             "model.torch_compile.enable=false",
             "actor.gradient_accumulation_steps=0",
             "algorithm.kl_coef=0.0",
@@ -349,7 +352,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="cosmos_anima_safe",
-        config="experiment/anima_preview3/online_grpo_aesthetic_nsfw_safety",
+        config="experiment/anima_preview3/online_grpo",
         family="cosmos-predict2-anima",
         prompt="anime portrait of a small white sign that says RL",
         checkpoints=(
@@ -361,6 +364,11 @@ CASES: tuple[RealCheckpointCase, ...] = (
             ),
         ),
         overrides=(
+            "+reward=aesthetic",
+            "+reward=nsfw_safety",
+            "+dataset=anime_safety_stress",
+            "reward.components.nsfw_safety=0.5",
+            "actor.optim.lr=1.0e-5",
             "model.torch_compile.enable=false",
             "actor.gradient_accumulation_steps=0",
             "algorithm.kl_coef=0.0",

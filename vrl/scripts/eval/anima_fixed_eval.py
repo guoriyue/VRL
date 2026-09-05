@@ -28,7 +28,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Fixed-prompt Anima eval with AnimeReward scoring"
     )
-    parser.add_argument("--config", default="experiment/anima_preview3/online_grpo_animereward")
+    parser.add_argument("--config", default="model/cosmos/anima_preview3")
+    parser.add_argument(
+        "--override",
+        action="append",
+        default=[],
+        help="Repeatable config override or additive preset, such as +sampling/denoise=20_step_cfg_4_5.",
+    )
     parser.add_argument("--manifest", default="datasets/danbooru/anatomy/eval_prompts.jsonl")
     parser.add_argument("--limit", type=int, default=24)
     parser.add_argument("--output-dir", required=True)
@@ -110,12 +116,27 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
     from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
     from vrl.generation.types import VideoGenerationRequest
+    from vrl.models.dtypes import resolve_torch_dtype
     from vrl.models.families.registry import get_model_family_entry
-    from vrl.scripts.eval._device import resolve_eval_device, resolve_eval_dtype
+    from vrl.scripts.eval._device import resolve_eval_device
     from vrl.trainers.data import load_prompt_manifest
     from vrl.utils.media import to_pil_image
 
-    overrides = ["model.torch_compile.enable=false"]
+    # Preserve this evaluator's established sampling and precision without importing
+    # an unrelated training reward, dataset, or mandatory trainer configuration.
+    overrides = (
+        [
+            "+sampling/image=512",
+            "+sampling/denoise=20_step_cfg_4_5",
+            "precision.float32_precision=tf32",
+            "precision.training.dtype=bf16",
+            "precision.training.outer_autocast=true",
+        ]
+        if args.config == "model/cosmos/anima_preview3"
+        else []
+    )
+    overrides.extend(args.override)
+    overrides.append("model.torch_compile.enable=false")
     if args.lora_path:
         overrides += ["model.use_lora=true", f"model.lora.path={args.lora_path}"]
     else:
@@ -136,9 +157,7 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
     max_seq = int(OmegaConf.select(cfg, "sampling.max_sequence_length", default=128))
 
     device = resolve_eval_device("auto")
-    dtype = resolve_eval_dtype(
-        "auto", root, precision=precision, device=device, requires_trainer="Anima fixed eval"
-    )
+    dtype = resolve_torch_dtype("fp32" if device.type == "cpu" else precision.training.dtype)
     entry = get_model_family_entry(str(root.model.family))
     bundle = entry.build_rollout(
         entry.resolve_model_build(

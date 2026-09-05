@@ -145,59 +145,81 @@ def test_every_registry_entry_has_pickle_safe_ray_launch_inputs(
 
 
 @pytest.mark.parametrize(
-    ("experiment", "family", "expected_gatherer"),
+    ("experiment", "family", "expected_gatherer", "overrides"),
     [
-        ("sd3_5/online_grpo_ocr", "sd3_5", DiffusionBatchGatherer),
+        ("sd3_5/online_grpo_ocr", "sd3_5", DiffusionBatchGatherer, ()),
         (
             "sana/online_grpo_aesthetic",
             "sana",
             DiffusionBatchGatherer,
+            (),
         ),
-        ("wan_2_1/online_grpo_ocr", "wan_2_1", DiffusionBatchGatherer),
+        ("wan_2_1/online_grpo_ocr", "wan_2_1", DiffusionBatchGatherer, ()),
         (
             "wan_2_1/online_grpo_kling_video_reward",
             "wan_2_1",
             DiffusionBatchGatherer,
+            (),
         ),
         (
             "wan_2_1/online_grpo_physics_i2v",
             "wan_2_1_i2v",
             DiffusionBatchGatherer,
+            (),
         ),
         (
             "wan_2_1/online_grpo_i2v_smoke_single_gpu",
             "wan_2_1_i2v",
             DiffusionBatchGatherer,
+            (),
         ),
         (
             "cosmos_predict2/online_grpo_kling_video_reward",
             "cosmos-predict2",
             DiffusionBatchGatherer,
+            (),
         ),
         (
-            "anima_preview3/online_grpo_aesthetic",
+            "anima_preview3/online_grpo",
             "cosmos-predict2-anima",
             DiffusionBatchGatherer,
+            (
+                "+reward=aesthetic",
+                "+dataset=drawbench_train_192",
+                "actor.optim.lr=1.0e-5",
+                "trainer.output_dir=outputs/test_anima_launch_inputs",
+            ),
         ),
         (
-            "anima_preview3/online_grpo_aesthetic_nsfw_safety",
+            "anima_preview3/online_grpo",
             "cosmos-predict2-anima",
             DiffusionBatchGatherer,
+            (
+                "+reward=aesthetic",
+                "+reward=nsfw_safety",
+                "+dataset=anime_safety_stress",
+                "reward.components.nsfw_safety=0.5",
+                "actor.optim.lr=1.0e-5",
+                "trainer.output_dir=outputs/test_anima_safe_launch_inputs",
+            ),
         ),
         (
             "janus_pro/online_grpo_ocr",
             "janus_pro",
             ARDiscreteBatchGatherer,
+            (),
         ),
         (
             "janus_pro/online_r1_grpo_ocr",
             "janus_pro_r1",
             JanusProR1GenerationBatchGatherer,
+            (),
         ),
         (
             "nextstep_1/online_grpo_ocr",
             "nextstep_1",
             NextStep1GenerationBatchGatherer,
+            (),
         ),
     ],
 )
@@ -205,11 +227,13 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     experiment: str,
     family: str,
     expected_gatherer: type,
+    overrides: tuple[str, ...],
 ) -> None:
     """Checks rollout runtime inputs are serializable and registry-backed."""
     cfg = load_config(
         f"experiment/{experiment}",
         overrides=[
+            *overrides,
             "distributed.resources.visible_devices=[]",
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",
@@ -387,28 +411,40 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
 
 
 @pytest.mark.parametrize(
-    ("experiment", "family"),
+    ("experiment", "family", "overrides"),
     [
-        ("sd3_5/online_grpo_ocr", "sd3_5"),
-        ("wan_2_1/online_grpo_ocr", "wan_2_1"),
-        ("wan_2_1/online_grpo_physics_i2v", "wan_2_1_i2v"),
-        ("wan_2_1/online_grpo_i2v_smoke_single_gpu", "wan_2_1_i2v"),
-        ("cosmos_predict2/online_grpo_kling_video_reward", "cosmos-predict2"),
+        ("sd3_5/online_grpo_ocr", "sd3_5", ()),
+        ("wan_2_1/online_grpo_ocr", "wan_2_1", ()),
+        ("wan_2_1/online_grpo_physics_i2v", "wan_2_1_i2v", ()),
+        ("wan_2_1/online_grpo_i2v_smoke_single_gpu", "wan_2_1_i2v", ()),
+        ("cosmos_predict2/online_grpo_kling_video_reward", "cosmos-predict2", ()),
         (
             "cosmos_predict2_5/online_nft_kling_video_reward",
             "cosmos-predict2.5",
+            (),
         ),
-        ("anima_preview3/online_grpo_aesthetic", "cosmos-predict2-anima"),
+        (
+            "anima_preview3/online_grpo",
+            "cosmos-predict2-anima",
+            (
+                "+reward=aesthetic",
+                "+dataset=drawbench_train_192",
+                "actor.optim.lr=1.0e-5",
+                "trainer.output_dir=outputs/test_anima_compile_inputs",
+            ),
+        ),
     ],
 )
 def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
     experiment: str,
     family: str,
+    overrides: tuple[str, ...],
 ) -> None:
     """Checks model.torch_compile is the single compile source for rollout workers."""
     cfg = load_config(
         f"experiment/{experiment}",
         overrides=[
+            *overrides,
             "distributed.resources.visible_devices=[]",
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",

@@ -1,0 +1,18 @@
+# Adult-only NSFW prompt set for the tag-adherence objective (2026-09-03).
+#
+# Built from datasets/danbooru/safety by dropping every row that lacks the
+# `adult` tag or carries a youth-coded context tag (`school_uniform` and
+# similar), then attaching `metadata.adherence_tags`: the prompt's requested
+# tags restricted to the WD14 vocabulary and to categories the tagger is
+# validated on (hair, eyes, clothing/underwear, body state, pose/framing,
+# expression, setting). Sexual-act and explicit-anatomy tags are deliberately
+# excluded from the reward target in v1 because tagger accuracy on generated
+# images for those tags is unvalidated. Train 1649 rows / eval 170 rows.
+data:
+  loader: prompt_manifest
+  manifest: datasets/danbooru/safety/train_c_adherence.jsonl
+  eval_manifest: datasets/danbooru/safety/eval_c_adherence.jsonl
+  preprocessing:
+    format: jsonl
+  sampler:
+    type: random_without_replacement

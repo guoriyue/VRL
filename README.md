@@ -183,7 +183,7 @@ table and isolation notes below call out environments that must remain separate:
 | Token-autoregressive families (Janus-Pro / NextStep) | `.[cosmos]` | transformers/peft model runtime (vLLM accel is separate — see note) |
 | OCR reward (the validated quickstart) | `.[ocr]` | paddleocr |
 | Video / VLM reward (Kling, VideoScore2, UnifiedReward) | `.[reward]` | transformers≥5.13, qwen-vl-utils, opencv |
-| Pose / motion / anatomy eval | `.[pose]` (CPU) · `.[pose-gpu]` (GPU) | onnxruntime + opencv |
+| CPU tag inference | `.[detection]` | pinned CPU onnxruntime |
 | Dataset prep (video-world, pickapic) | `.[data]` | datasets, pyarrow, av |
 | Fixed video-eval suite (VBench) | dedicated `.[videoeval]` environment | vbench 0.1.5 |
 | Full-param 8-bit Adam (Cosmos trustworthy-curve recipe) | `.[optim8bit]` | bitsandbytes (int8 Adam state, RL-safe) |
@@ -232,6 +232,8 @@ it serves both full-sequence denoise and token-autoregressive families, not just
 > hid misconfiguration. `pyproject.toml` still declares `ar-vllm` conflicting with
 > `cosmos`/`reward` for ABI reasons, so install it into the run env directly
 > (`pip install "vllm>=0.21.0,<0.22" --no-deps`) rather than via the extra.
+> The core environment declares `pyzmq`, which vLLM imports while initializing
+> this allocator even though VRL does not use vLLM's distributed serving path.
 
 > **`videoeval` also requires its own environment.** VBench 0.1.5 pins
 > `transformers==4.33.2`, while `cosmos` and `reward` require Transformers 5.13+
@@ -264,14 +266,37 @@ pip install -e ".[cosmos,ocr]"
 vrl-train --config experiment/sd3_5/online_grpo_ocr
 ```
 
-`--config` accepts a bundled config name (no extension) or an absolute YAML path;
-trailing args are OmegaConf dotlist overrides (`vrl-train --help`):
+`--config` accepts a bundled config name (no extension) or an absolute YAML path.
+Trailing arguments compose independent presets with `+group=option` and set
+individual values with OmegaConf dotlist overrides (`vrl-train --help`):
 
 ```bash
 # shorter smoke run
 vrl-train --config experiment/sd3_5/online_grpo_ocr \
     trainer.total_epochs=2 trainer.seed=0
 ```
+
+For a new combination, use a reward/data-neutral execution recipe rather than
+adding another model-by-reward experiment YAML:
+
+Anima has only two execution templates: `online_grpo` (LoRA) and
+`online_grpo_fullparam`. Neither selects rewards or data; compose those at launch.
+
+```bash
+python -m vrl.scripts.train \
+    --config experiment/anima_preview3/online_grpo \
+    +reward=ocr +dataset=ocr \
+    actor.optim.lr=1e-5 trainer.total_epochs=2 \
+    trainer.output_dir=outputs/anima_ocr_composed
+```
+
+This demonstrates composition, not a recommended Anima training recipe. The
+standard OCR dataset must be available at the paths declared by `dataset/ocr`.
+The same arguments work with `python -m vrl.scripts.supervise`. Preset overlays
+merge in order; ordinary dotlist values apply last. `+reward=` is additive, not
+replacement: multiple different reward presets produce a multi-reward config.
+See [runtime configuration composition](docs/CONFIGURATION.md) for independent
+judge/rubric selection, evaluation, and historical recipe migration.
 
 Within the first few epochs you should see optimizer steps and a **non-flat**
 `reward_mean`. A flat reward is a bug, not a result (see Status Policy). Every

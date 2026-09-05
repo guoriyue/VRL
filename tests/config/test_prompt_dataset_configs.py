@@ -21,7 +21,13 @@ from vrl.rewards.functions.registry import _register_builtins, get_reward
 
 # Dataset groups whose independent loadability we pin. Each is a reusable
 # building block consumed by one or more experiment YAMLs.
-DATASET_GROUPS = ("ocr", "geneval", "pickscore_sfw", "videophy_i2v", "pickapic_v2")
+DATASET_GROUPS = (
+    "ocr",
+    "geneval",
+    "pickscore_sfw",
+    "videophy_i2v",
+    "pickapic_v2",
+)
 
 
 def _load_bundled_raw(name: str):

@@ -1,0 +1,63 @@
+{
+  "schema": "vrl.anima-color-light-prompts/v3",
+  "train_prompt_count": 256,
+  "eval_prompt_count": 96,
+  "development_prompt_count": 32,
+  "train_prompts_per_bucket": 16,
+  "eval_prompts_per_bucket": 6,
+  "development_prompts_per_bucket": 2,
+  "prompts_per_update": 4,
+  "axes": [
+    {
+      "name": "palette_intent",
+      "buckets": [
+        "palette_harmony",
+        "palette_separation",
+        "specified_hues",
+        "warm_cool_balance"
+      ]
+    },
+    {
+      "name": "value_exposure",
+      "buckets": [
+        "soft_diffuse_light",
+        "shadow_detail",
+        "highlight_rolloff",
+        "low_light_exposure"
+      ]
+    },
+    {
+      "name": "lighting_consistency",
+      "buckets": [
+        "mixed_light_sources",
+        "directional_key_light",
+        "rim_backlight",
+        "atmospheric_light"
+      ]
+    },
+    {
+      "name": "material_response",
+      "buckets": [
+        "skin_tone_constancy",
+        "material_color_response",
+        "reflections_transparency",
+        "neon_emissive"
+      ]
+    }
+  ],
+  "prompt_contract": {
+    "prompt_style": "natural_language",
+    "source": "codex_curated",
+    "required_term": "anime",
+    "min_words": 30,
+    "max_words": 75,
+    "min_sentences": 2,
+    "max_sentences": 3,
+    "forbidden_phrases": [
+      "8k",
+      "best quality",
+      "masterpiece",
+      "perfect lighting"
+    ]
+  }
+}

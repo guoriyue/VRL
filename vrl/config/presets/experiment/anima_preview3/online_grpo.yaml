@@ -1,0 +1,55 @@
+# Anima LoRA execution contract, independent of reward and training data.
+# Select those assets, learning rate, and output identity at launch. The single
+# update default bounds initial verification; longer schedules are run overrides.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/cosmos/anima_preview3
+  - /sampling/image/512
+  - /sampling/denoise/20_step_cfg_4_5
+  - _self_
+
+reward: ???
+data: ???
+
+model:
+  torch_compile:
+    # Eager generation/replay at batch one is the measured parity-safe shape.
+    enable: false
+
+actor:
+  optim:
+    lr: ???
+  max_norm: 0.1
+  ppo_epochs: 1
+  gradient_accumulation_steps: 4
+  samples_per_replay_batch: 1
+  timestep_fraction: 1.0
+  ema:
+    # Export the policy being optimized, not a different averaged policy.
+    enable: false
+
+algorithm:
+  kl_coef: 0.004
+  global_std: false
+  clip_ratio: 3.0e-3
+
+rollout:
+  noise_level: 0.3
+  n_samples_per_prompt: 8
+  prompts_per_batch: 4
+  samples_per_generation_batch: 1
+  sde:
+    type: flow_grpo
+
+trainer:
+  total_epochs: 1
+  output_dir: ???
+  save_freq: 1
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-6
+  precision_drift_guard:
+    # Matching dtype labels alone do not establish on-policy replay parity.
+    mode: fail
+    max_timestep_checks: 3
+    max_abs_log_ratio: 1.0e-6
+    max_ratio_abs_dev: 1.0e-6

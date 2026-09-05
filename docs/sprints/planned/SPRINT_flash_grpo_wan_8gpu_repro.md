@@ -1,7 +1,8 @@
 # SPRINT: Flash-GRPO on Wan2.1-T2V-1.3B — 8 卡单机复现
 
-状态：**superseded — 改经 vrl 执行（2026-08-16）**。本文档保留为配方与算力分析的
-参考；执行路径已从"跑外部仓库"改为"跑 `vrl/` 自身"。
+Status: **active through the corrected vrl FSDP recipe (2026-08-25)**. This
+document remains the recipe and capacity analysis; the executable source of
+truth is the phase-cycled FSDP preset named below.
 
 ## 0.-1 路线变更（2026-08-16）
 
@@ -11,10 +12,16 @@ transformers 4.57，死结不存在；HPSv3 已按 Kling VideoReward 的先例�
 vrl 原生 reward（`vrl/rewards/models/hpsv3.py`，MIT 归属注明），§8 的
 "不修改 `vrl/`" 约束随之作废。
 
-- **入口**：`vrl-train --config experiment/wan_2_1/online_grpo_hpsv3_4x_l40s`
-  （拓扑：GPU0 trainer / GPU1-2 rollout / GPU3 reward；96 样本每 update、
-  G=4、global_std、480×832×81f、20 步 CFG4.5，与论文配方对齐；
-  prompt 集就是上游的 19,700 条，`datasets/flash_grpo_video/`）。
+- **Entry point**:
+  `torchrun --standalone --nproc_per_node=4 -m vrl.scripts.train --config experiment/wan_2_1/online_grpo_hpsv3_fsdp_4x_l40s`.
+  Each rank time-shares its L40S between rollout, in-process HPSv3 reward, and
+  FSDP replay. The update remains 96 samples (`6 prompts/rank × 4 ranks × G=4`),
+  with global standardization, 480×832×81f, 20 denoise steps, and CFG 4.5 over
+  the upstream 19,700-prompt training set in `datasets/flash_grpo_video/`.
+- **Do not launch** the historical
+  `online_grpo_hpsv3_4x_l40s` preset. It retains the pre-fix
+  `native + cps + strided/0.51 + ordinary GRPO` construction and therefore is
+  not the policy-gradient-correct HPSv3 experiment.
 - **移植逐点对分（2026-08-16，g6e.12xlarge 实测）**：与上游
   `HPSv3RewardInferencer`（同权重、同 transformers 4.57、同 SDPA）在 8 张
   图上对比，max |Δ| = 0.27（量表 ~22 宽），8/8 排序一致。关键坑：上游

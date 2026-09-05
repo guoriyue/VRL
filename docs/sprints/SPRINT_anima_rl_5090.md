@@ -1,5 +1,11 @@
 # SPRINT: Anima RL post-training on a single RTX 5090
 
+Configuration migration (2026-09-04): historical model/reward/dataset experiment
+names and commands below record past runs. The combination-only Anima presets
+have been retired in favor of [runtime composition](../CONFIGURATION.md).
+Use each retained run's `resolved_config.yaml` for exact reproduction; current
+neutral defaults are not substitutes for the original experiment settings.
+
 Autonomous experiment log. Goal: a checkpoint that is **repeatably better than
 base Anima on a fixed anime eval prompt set** — visual quality up, diversity and
 prompt adherence retained — or an honest negative result with the strongest
@@ -681,3 +687,569 @@ after parking, so it also sees the reward service's 17.3 GB. Run 1 tripped it by
 case `VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB` exists for (documented in
 `vrl/utils/cuda_memory.py`), so runs use `VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB=1024`.
 The safety check was raised, not disabled.
+
+## Full-parameter capacity acceptance (2026-08-25)
+
+The single RTX 5090 completed a real optimizer update over the entire Anima
+Cosmos transformer. This was not a LoRA run and not merely a load/forward
+probe. The reusable recipe is
+`experiment/anima_preview3/online_grpo_codex_quality_fullparam`; the acceptance
+run reduced it to one prompt, four samples, and one epoch.
+
+Required full-parameter differences from the LoRA quality recipe:
+
+- `model.use_lora: false` and `model.lora: null`;
+- `algorithm.kl_coef: 0.0`, because the existing KL reference is implemented
+  by disabling a LoRA adapter;
+- `actor.optim.optim_8bit: true` with trainer-owned FP32 master weights;
+- `actor.gradient_checkpointing: true`, replay batch 1, EMA disabled;
+- `model.torch_compile.enable: false`, because compile and activation
+  checkpointing are rejected as an unsupported combination.
+
+The installed `vrl-train` console script pointed at a different editable
+checkout, so the accepted launch used the current repository explicitly:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+TOKENIZERS_PARALLELISM=false \
+python -u -m vrl.scripts.train \
+  --config experiment/anima_preview3/online_grpo_codex_quality_fullparam \
+  trainer.total_epochs=1 \
+  rollout.n_samples_per_prompt=4 \
+  trainer.output_dir=outputs/anima_codex_quality_fullparam_canary_20260825
+```
+
+Acceptance evidence:
+
+| gate | result |
+|---|---:|
+| run verdict | success |
+| trainable tensors / parameters | 567 / 1,956,405,248 |
+| rollout-replay max log-prob difference | 0.0 |
+| reward mean / std | 0.5250 / 0.2314 |
+| gradient norm | 0.305341 |
+| optimizer | AdamW8bit over FP32 masters |
+| observed device use during backward | ~21.0 GB |
+| full-state checkpoint | complete, 15,713,542,095 bytes |
+
+Every one of the 567 FP32 master tensors had a non-zero optimizer residual;
+1,953,786,187 of 1,956,405,248 elements changed below or across BF16 rounding,
+and the maximum residual was `5.0068e-6`. The published BF16
+`patch_embed.proj.weight` alone changed 27,123 values relative to base. This is
+direct evidence that the optimizer updated the full transformer rather than an
+adapter or an empty checkpoint.
+
+The rollout worker also passed the original 256 MiB parking gate after compile
+was disabled: its residual was only about 140 MiB above baseline. No relaxed
+parking limit was needed. The remaining unproven claim is quality improvement;
+one update proves trainability and capacity, not a better held-out model.
+
+## GPT-5.6 Luna full-parameter pilot and bottleneck result (2026-08-26)
+
+The five-update follow-up pinned `gpt-5.6-luna` as the Codex image-quality
+judge instead of inheriting a user-level CLI default. The reusable experiment
+is `experiment/anima_preview3/online_grpo_codex_quality_fullparam_luna`. It
+still trains all 1,956,405,248 Cosmos-transformer parameters with native BF16
+execution and FP32 optimizer masters; it is not literal FP32 execution and it
+does not train the frozen text encoder, Anima LLM adapter, or VAE.
+
+Codex scoring now supplies a per-call JSON Schema through `--output-schema`.
+This was required after an unconstrained Luna response omitted its final `]}`
+during a rollout. Montage schemas require the exact dynamic cell count, so a
+partial response fails at the inference boundary instead of being silently
+padded into a corrupted reward vector.
+
+The accepted launch used the documented Anima parking tolerance and the
+supervisor's checkpoint/resume path:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+VRL_PROFILE=1 \
+VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB=1024 \
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+TOKENIZERS_PARALLELISM=false \
+python -u -m vrl.scripts.supervise \
+  --config experiment/anima_preview3/online_grpo_codex_quality_fullparam_luna \
+  --max-attempts 2 \
+  trainer.output_dir=outputs/anima_codex_quality_fullparam_luna_supervised_20260826
+```
+
+The 1024 MiB bound does not disable parking validation. Across the run, the
+CuMem pool released a stable 6,292 MiB and vLLM reported 5.56 GiB freed on
+every sleep. The extra device-wide residual came from process-lifetime CUDA
+pages initialized after the fixed pre-load baseline; a model-pool leak would
+still exceed this bound by several GiB. Saving every two updates published
+complete checkpoints at updates 2 and 4 without including their I/O in phase
+percentages.
+
+Acceptance evidence:
+
+| gate | result |
+|---|---:|
+| run verdict | success on the supervisor's first attempt |
+| completed updates / global step | 5 / 5 |
+| reward mean range | 0.6825--0.8700 |
+| reward std range | 0.0245--0.2392 |
+| gradient norm range | 0.146105--1.532001 |
+| rollout-replay max log-prob difference | 0.0 on every update |
+| final checkpoint | complete, 15,713,542,031 bytes |
+
+The streaming path previously omitted replay and optimizer work from
+`phase_times`. It now records `evaluate`, `backward`, and `optim_step`, so the
+steady-state result is direct measurement rather than timestamp subtraction:
+
+| steady-state phase (updates 2--5) | mean seconds | share |
+|---|---:|---:|
+| generation | 17.215 | 16.3% |
+| GPT-5.6 Luna reward | 10.577 | 10.0% |
+| replay evaluate + backward + optimizer | 70.469 | 66.8% |
+| lifecycle handoffs and bookkeeping | 7.235 | 6.9% |
+| total | 105.497 | 100.0% |
+
+Therefore the Wan/HPSv3 bottleneck inversion does **not** carry over to this
+Anima full-parameter run. Wan generation was about 73% of an update; Anima
+generation is about 16%, while replay/backward remains the dominant lever.
+These five updates prove the full training and reward path, not held-out quality
+improvement. A fixed-prompt base-versus-checkpoint evaluation is still required
+before making that model-quality claim.
+
+## Ten-update Luna full-parameter failure and early stop (2026-08-26)
+
+The larger follow-up did not validate quality improvement. It exposed a rapid,
+system-wide representation collapse, so the planned 20-update run was stopped
+after a complete checkpoint at update 10. Continuing would have spent compute
+reinforcing a reward miss rather than answering a remaining scientific
+question.
+
+This run also resolves the earlier batch-size ambiguity. It used four distinct
+prompts per optimizer update, eight rollouts per prompt, and gradient
+accumulation of four. The optimizer therefore consumed 32 scored images per
+update while only one eight-image group occupied replay memory at a time. The
+observed GPU peak stayed near 24.8 GB. Eight is the proven GRPO *group size*, not
+the card's total-rollout limit; more prompt groups can be streamed without
+increasing that peak. The run stopped with 40 prompt draws and 320 exact
+training images, not one prompt repeated for ten updates.
+
+The resolved recipe was genuine Flow-GRPO sampling rather than plain
+deterministic GRPO: `rollout.denoise_mode: sde` and
+`rollout.sde.type: flow_grpo` were both active. This negative result is about
+the reward/objective anchor, not a missing Flow-GRPO implementation.
+
+Every underlying 512x512 rollout and its per-image Luna score is retained under
+`scored_rollouts/`. The generated `scored_rollouts/index.html` presents the 320
+images by policy version with their prompt, group mean, reward, and full-size
+PNG link; `rollout_rewards.csv` is the machine-readable equivalent. The
+unconsumed policy-11 group created during operator shutdown was moved to the
+system trash, so the retained 40 groups map exactly to the ten completed
+updates.
+
+### Collapse timeline
+
+The failure is visible in the original PNGs, not only in downscaled montages.
+Policies 1--3 were normal anime renders. Policy 7 first produced faceless,
+flat-color, and pixelated samples on simple prompts; policy 8 mixed healthy and
+painterly/glitch groups; all four policy-9 groups and all four policy-10 groups
+were degraded. Policy 10 included three simple-background groups, ruling out a
+complex-scene-only explanation.
+
+| rollout window | images | Luna mean | saturation | color entropy | 4x coarse residual |
+|---|---:|---:|---:|---:|---:|
+| policies 1--3 | 96 | 0.8130 | 0.0628 | 1.750 | 0.0444 |
+| policy 5 | 32 | 0.7878 | 0.0915 | 3.234 | 0.0542 |
+| policy 6 | 32 | 0.7866 | 0.0999 | 3.999 | 0.0591 |
+| policy 7 | 32 | 0.7544 | 0.0987 | 1.865 | 0.0509 |
+| policy 8 | 32 | 0.7244 | 0.1186 | 5.385 | 0.0543 |
+| policy 9 | 32 | 0.6627 | 0.1561 | 4.721 | 0.0405 |
+| policy 10 | 32 | 0.4981 | 0.1667 | 3.687 | 0.0410 |
+
+The same conclusion holds after restricting both windows to `standing +
+simple background`: policy-10 reward fell about 40%, saturation rose about
+152%, and coarse residual fell about 13% relative to policies 1--3. Lower
+coarse residual means the image is more easily represented by large color
+blocks. Edge energy rose in some late images, but visual review shows that the
+extra edges are glitch boundaries and noisy brush strokes, not useful detail.
+
+This is representation/quality collapse, not mode collapse. Mean within-group
+pairwise pixel RMS increased from 0.266 in policies 1--3 to 0.408 at policy 9
+and 0.342 at policy 10; color-histogram distance also increased. The model
+produced diverse failures rather than one repeated image.
+
+### Paired held-out result
+
+The early-stop evaluator compared base, checkpoint 5, and checkpoint 10 on 44
+held-out prompts, two fixed seeds each, and normal inference settings (512x512,
+20 steps, CFG 4.5). The training and evaluation manifests contain 20,000 and
+1,000 rows respectively with zero prompt-text overlap. The three arms used the
+same prompt/seed inputs and were deterministically blinded before Luna and
+human contact-sheet review, producing 264 images total.
+
+| arm | Luna mean | paired delta vs base (95% prompt-bootstrap CI) | win / tie / loss |
+|---|---:|---:|---:|
+| base | 0.8801 | -- | -- |
+| checkpoint 5 | 0.8345 | -0.0456 [-0.0736, -0.0172] | 7 / 7 / 30 |
+| checkpoint 10 | 0.3906 | -0.4894 [-0.5303, -0.4428] | 1 / 0 / 43 |
+
+Blind human review agreed. Across sampled hand, side-view, kneeling, running,
+and standing sheets, the checkpoint-10 cell was recognizable before opening
+the arm key because of broad pixelation and melted anatomy. Base and checkpoint
+5 remained clear, but neither the blind sheets nor Luna showed a stable
+checkpoint-5 improvement. Checkpoint 5 is already a statistically supported
+small regression; checkpoint 10 is catastrophic.
+
+The held-out evaluator commits a content-addressed generation manifest before
+Luna starts. It binds the exact config, evaluation manifest, prompts, seeds,
+sampling protocol, checkpoint hashes, and all 264 PNG hashes. A scoring failure
+can therefore retry Luna without regenerating images or mixing arms. The final
+`evaluation_complete.json` binds all report and contact-sheet hashes.
+
+### Root cause and decision
+
+The failure is structural and has three interacting parts:
+
+1. Group-relative GRPO centers each eight-image group's advantages. A uniform
+   drop in absolute quality does not directly create a restoring signal; even
+   an entirely bad group still rewards its relatively least-bad member.
+2. Luna detects much of the decline, but it still assigned 0.78--0.87 to some
+   visibly pixelated/glitch samples. Those within-group ranking errors are
+   exactly the errors GRPO optimizes.
+3. The full-parameter recipe has no fixed-base anchor (`kl_coef: 0.0`) and uses
+   `lr: 5e-6` across 1,956,405,248 trainable transformer parameters. The small
+   per-update clip constrains one on-policy step, not cumulative drift away
+   from the original model.
+
+This was not an OOM, NaN, inactive-gradient, replay mismatch, or checkpoint
+failure. All ten updates had finite reward variance and non-zero gradient norm,
+rollout/replay log-prob differences stayed zero, and checkpoints 5 and 10 are
+complete 15,713,542,095-byte full states. The machine can train the full model;
+this objective should not be resumed.
+
+Steady-state timing also confirms the earlier bottleneck result at the larger
+batch: generation was 68.85 s (15.8%), Luna scoring 63.20 s (14.5%), replay
+evaluate/backward/optimizer 281.62 s (64.7%), and lifecycle work 21.68 s (5.0%)
+per update. The optimization lever remains full-parameter replay/backward, not
+generation.
+
+The evidence is sufficient to reject this recipe, but not to claim that 40
+training prompts are a positive-quality training scale. A future attempt needs
+an absolute/base-quality anchor or a reward that reliably rejects texture
+collapse before any longer full-parameter run. Neither checkpoint should be
+promoted as a quality model.
+
+Run artifacts:
+
+- `outputs/anima_codex_quality_fullparam_luna_20update_20260826/scored_rollouts/index.html`
+- `outputs/anima_codex_quality_fullparam_luna_20update_20260826/scored_rollouts/rollout_rewards.csv`
+- `outputs/anima_codex_quality_fullparam_luna_20update_20260826/heldout_luna_curve_epochs_5_10/summary.json`
+- `outputs/anima_codex_quality_fullparam_luna_20update_20260826/heldout_luna_curve_epochs_5_10/contact_sheets/blind/`
+- `outputs/anima_codex_quality_fullparam_luna_20update_20260826/heldout_luna_curve_epochs_5_10/blind_key.json`
+- `outputs/anima_codex_quality_fullparam_luna_20update_20260826/heldout_luna_curve_epochs_5_10/human_blind_review.md`
+
+## Natural-language DDRL LoRA recovery canary (2026-08-27)
+
+The pixel collapse was not treated as a prompt-format bug. Better prompts
+reduce sampling noise and improve coverage, but they cannot restore an
+objective that rewards the least-bad image in an absolutely bad group. The
+recovery recipe therefore changes both the data and the optimization boundary:
+
+1. `datasets/anima/quality_v1` replaces random tag clauses with 64 reviewed,
+   two-sentence training prompts and 32 disjoint held-out prompts. Sixteen
+   buckets cover portraits, hands, body mechanics, difficult viewpoints,
+   interactions, environments, materials, and lighting. The reviewed source
+   manifest is round-robin ordered, but the already-generated
+   `data/external/anima/quality_v1/anchor_manifest.jsonl` is grouped four rows
+   per bucket. The completed general-quality runs therefore did not achieve the
+   intended four-bucket update stratification. Later datasets must regenerate
+   the consumed anchor manifest after changing source order; tests over the
+   source manifest alone cannot prove runtime sampler order.
+2. The untouched Anima base generated one deterministic anchor for every
+   training prompt at 40 steps and CFG 4.5. Offline VAE encoding produced 64
+   finite BF16 latent targets with shape `[16, 1, 64, 64]`, mean `-0.0134`, and
+   standard deviation `0.6136`. A decode round trip remained a normal image,
+   ruling out the latent normalization or single-frame codec as the pixel-block
+   source.
+3. Training is limited to a rank-32 LoRA at `2e-5`. A `1e-3` clean-target
+   diffusion loss anchors the conditional flow prediction, while Luna supplies
+   only the relative on-policy signal. The transformer base, text encoder, LLM
+   adapter, and VAE remain frozen.
+4. Rollout and replay both use batch one. Torch compile is disabled because
+   compile-enabled batch-one rollout and replay did not agree under BF16,
+   while eager/eager replay was exact. Strict drift gates fail before the
+   optimizer if native on-policy parity is lost.
+
+This corpus is a reviewed canary, not production-scale training data. Its
+synthetic base anchors are useful for preserving the original quality
+distribution, but they cannot teach quality beyond the base. A positive
+quality-training dataset must eventually replace or supplement them with
+human-reviewed, licensed reference images and accurate natural-language
+captions. Those references should be split by subject/scene source before
+training to prevent near-duplicate leakage into held-out evaluation.
+
+### Canary evidence
+
+The first four-prompt run completed without NaNs, OOM, or visual collapse and
+saved 32 original rollouts. Its held-out comparison used 32 disjoint prompts,
+two fixed seeds, and identical base/LoRA inputs:
+
+| arm | Luna mean | paired delta vs base (95% prompt-bootstrap CI) | win / tie / loss |
+|---|---:|---:|---:|
+| base | 0.77825 | -- | -- |
+| one-update LoRA | 0.78047 | +0.00222 [-0.00709, +0.01180] | 4 / 24 / 4 |
+
+All 64 paired images changed, but edge, color, and pixel-diversity checks found
+no immediate collapse. The confidence interval crosses zero, so this is a
+quality tie, not evidence of general improvement. Because this checkpoint also
+failed the on-policy parity gate, its visual result cannot be attributed to the
+DDRL objective and says nothing about longer-run collapse prevention.
+
+That first run was not promotable because a second correctness gate found a
+rollout/replay mismatch before the update. The isolation sequence was:
+
+| generation / replay | torch compile | pre-update max log-prob difference | verdict |
+|---|---:|---:|---|
+| batch 8 / batch 1 | enabled | 0.222382 | reject |
+| batch 1 / batch 1 | enabled | 0.090546 | reject |
+| batch 1 / batch 1 | disabled | 0.000000 | accept |
+
+The accepted eager probe had zero pre-update clip fraction, zero active clip
+fraction, zero ratio drift, finite gradient norm `0.018700`, and completed the
+optimizer step under the `1e-6` fail-fast gates. This confirms that compile,
+not the prompt corpus or DDRL target codec, caused the remaining parity error.
+The official canary recipe now pins eager batch-one rollout/replay and must
+start from the untouched base; the earlier mismatch checkpoint must not be
+resumed.
+
+### Accepted four-prompt eager canary
+
+The final recipe was then rerun from the untouched base with its full one-update
+shape: four round-robin prompt buckets, eight rollouts per prompt, and one
+optimizer step after 32 scored images. The run wrote to a fresh directory so
+neither direct training nor `supervise` could reuse the rejected checkpoint.
+
+| gate | result |
+|---|---:|
+| run verdict | success |
+| trained prompts / rollouts | 4 / 32 |
+| reward mean / std | 0.8513 / 0.0379 |
+| pre-update max log-prob difference | 0.000000 |
+| pre-update clip / active clip fraction | 0.0000 / 0.0000 |
+| max ratio deviation | 0.000000 |
+| total / policy / DDRL loss | 0.000114 / 0.000001 / 0.000113 |
+| gradient norm | 0.002713 |
+| optimizer steps | 1 |
+| final checkpoint | complete rank-32 LoRA, 330,937,455-byte trainer state |
+
+The complete update took 675.4 seconds: generation 146.4 seconds, Luna scoring
+39.5 seconds, replay evaluation 286.5 seconds, and backward 183.4 seconds.
+Eager replay restores correctness at a measured cost; replay/backward remains
+the bottleneck on the RTX 5090.
+
+The accepted checkpoint was evaluated against the untouched base on all 32
+disjoint held-out prompts with two fixed seeds each. The content-addressed
+protocol generated and scored 128 images:
+
+| arm | Luna mean | paired delta vs base (95% prompt-bootstrap CI) | win / tie / loss |
+|---|---:|---:|---:|
+| base | 0.78372 | -- | -- |
+| accepted eager LoRA | 0.78266 | -0.00106 [-0.00825, +0.00728] | 2 / 22 / 8 |
+
+The edge-energy delta was `-0.000016`, pixel-diversity delta `-0.000137`, and
+color-diversity delta `+0.000541`; every 95% interval crossed zero and the
+evaluator reported no supported edge, pixel, or color regression. A blind
+human review of all 32 contact sheets also found no systematic pixel blocks,
+flat-color collapse, melted contours, or diversity loss. Base-model prompt
+failures appeared on both arms. This is an accepted one-update quality tie,
+not evidence of general improvement or long-run stability.
+
+The next scientifically valid scale-up is one sequential 64-prompt pass: 16
+updates, four prompts and 32 scored rollouts per update, with fixed held-out
+evaluation at intermediate checkpoints. More epochs over this 64-prompt canary
+would mostly increase overfitting risk; it would not turn the canary into a
+solid training corpus.
+
+Recovery artifacts (the old canary paths below are retained as rejected
+historical evidence, not as resumable checkpoints):
+
+- `datasets/anima/quality_v1/README.md`
+- `data/external/anima/quality_v1/anchor_manifest.jsonl`
+- `data/external/anima/quality_v1/sft_latents_bf16.pt`
+- `outputs/anima_quality_v1_anchor_contact_sheet.jpg`
+- `outputs/anima_quality_v1_anchor_roundtrip.png`
+- `outputs/anima_codex_quality_ddrl_canary/scored_rollouts/`
+- `outputs/anima_codex_quality_ddrl_canary/heldout_luna_ddrl_canary/summary.json`
+- `outputs/anima_codex_quality_ddrl_canary/heldout_contact_sheet_overview.jpg`
+
+Accepted eager artifacts:
+
+- `outputs/anima_codex_quality_ddrl_canary_eager_20260827/metrics.csv`
+- `outputs/anima_codex_quality_ddrl_canary_eager_20260827/checkpoint-final/`
+- `outputs/anima_codex_quality_ddrl_canary_eager_20260827/scored_rollouts/`
+- `outputs/anima_codex_quality_ddrl_canary_eager_20260827/heldout_luna_eager/summary.json`
+- `outputs/anima_codex_quality_ddrl_canary_eager_20260827/heldout_luna_eager/contact_sheets/blind/`
+- `outputs/anima_codex_quality_ddrl_canary_eager_20260827/heldout_luna_eager/human_blind_review.md`
+
+### Completed 64-prompt general-quality pass
+
+The accepted eager run was extended to 16 updates and consumed 64 prompts / 512
+scored rollouts. It remained numerically stable and avoided the full-parameter
+pixel collapse, but it did not improve held-out quality:
+
+| arm | Luna mean | paired delta vs base (95% prompt-bootstrap CI) | win / tie / loss |
+|---|---:|---:|---:|
+| base | 0.76480 | -- | -- |
+| checkpoint 1 | 0.75452 | -0.01028 [-0.03236, +0.00434] | 7 / 16 / 9 |
+| checkpoint 16 | 0.75480 | -0.01000 [-0.02670, +0.00522] | 8 / 14 / 10 |
+
+Checkpoint 16 improved only `+0.00028` over checkpoint 1 on the same fixed
+held-out grid. Blind fixed-order review found no systematic visual improvement.
+DDRL solved the stability failure; it did not turn the broad Luna rubric into a
+general-quality learning signal. The grouped runtime anchor ordering above is a
+real recipe defect, but it cannot explain away the direct held-out result.
+
+Artifacts:
+
+- `outputs/anima_codex_quality_ddrl_canary_eager_20260827/metrics.csv`
+- `outputs/anima_codex_quality_ddrl_canary_eager_20260827/heldout_luna_compare_eager1_final16/summary.json`
+- `outputs/anima_codex_quality_ddrl_canary_eager_20260827/heldout_luna_compare_eager1_final16_fixed_order/index.html`
+
+## Color-and-light objective canary (2026-08-27)
+
+The next experiment narrowed the target to prompt-conditioned color and
+lighting execution instead of another broad aesthetics score. It introduced:
+
+- 64 training and 32 disjoint held-out prompts across 16 color/light buckets;
+- balanced muted/vivid, warm/cool, high/low key, natural/artificial, and
+  monochrome/multicolor conditions;
+- a style-neutral Luna rubric that treats alignment and severe structure as
+  hard gates but does not reward brightness, darkness, saturation, neon, or
+  dramatic light by themselves;
+- one shared rubric with invocation-specific single-image and montage response
+  contracts; and
+- held-out saturation and brightness diagnostics in addition to Luna, edge,
+  pixel diversity, and color-histogram diversity.
+
+The consumed color/light anchor manifest was regenerated from the final source
+manifest and verified to be round-robin at runtime. Four initially ambiguous
+prompts were made concrete after base-anchor review; this removed a blank color
+field, an empty spotlight, a repeated cafe layout, and a misplaced theater
+subject. All 64 base anchors use 40 steps, CFG 4.5, and an empty negative prompt,
+matching training and held-out inference. The BF16 latent shard contains 64
+targets of shape `[16, 1, 64, 64]`.
+
+Controlled reward calibration did not expose a fixed saturation or exposure
+shortcut. On a pastel prompt, Luna scored base / lower saturation / higher
+saturation / higher exposure as `0.918 / 0.934 / 0.846 / 0.823`. On a prompt
+requiring cobalt blue and lemon yellow, the corresponding scores were
+`0.88 / 0.72 / 0.90 / 0.84`. The preferred direction therefore changed with
+the prompt rather than always selecting more saturation or brightness.
+
+The one-update eager DDRL run completed in 673.1 seconds with exact pre-update
+rollout/replay parity, 32 scored images, reward `0.7991 +/- 0.0868`, finite
+gradient norm `0.005240`, and no clip or ratio drift. Within the four training
+groups, reward correlations with saturation, brightness, and edge energy were
+`+0.136`, `+0.121`, and `-0.015`; none dominated the ranking.
+
+The fixed held-out comparison used 32 prompts, two seeds, and 128 images:
+
+| arm | Luna mean | paired delta vs base (95% prompt-bootstrap CI) | win / tie / loss |
+|---|---:|---:|---:|
+| base | 0.78045 | -- | -- |
+| color/light checkpoint 1 | 0.77981 | -0.00064 [-0.00394, +0.00275] | 0 / 31 / 1 |
+
+Mean saturation changed by `-0.000098`, brightness by `-0.000037`, and edge
+energy by `+0.000038`; every interval crossed zero. Pixel diversity was also a
+tie. Dual-seed color-histogram distance decreased by `-0.001932` with a 95%
+interval `[-0.003812, -0.000204]`, a small supported reduction in seed-to-seed
+color diversity rather than a color-quality gain. Fixed-order visual review
+found the arms extremely close and no consistent preference for checkpoint 1.
+
+This is a stable but negative canary. The specialized judge is better behaved
+than the shelf rewards, yet one update provides no positive held-out direction
+and already shows a small diversity cost. Do not launch a 16-update run from
+this result alone. A scale-up needs a stronger positive learning gate, such as
+an absolute base-reference constraint or independently reviewed pairwise
+targets, and a production corpus larger than this 64-prompt canary.
+
+Artifacts:
+
+- `datasets/anima/color_light_v1/README.md`
+- `data/external/anima/color_light_v1/anchor_manifest.jsonl`
+- `data/external/anima/color_light_v1/sft_latents_bf16.pt`
+- `outputs/anima_color_light_v1_anchor_contact_sheet.jpg`
+- `outputs/anima_color_light_v1_anchor_roundtrip.png`
+- `outputs/anima_codex_color_light_ddrl_canary_eager_20260827/metrics.csv`
+- `outputs/anima_codex_color_light_ddrl_canary_eager_20260827/scored_rollouts/`
+- `outputs/anima_codex_color_light_ddrl_canary_eager_20260827/heldout_luna_color_compare_base_canary1/summary.json`
+- `outputs/anima_codex_color_light_ddrl_canary_eager_20260827/heldout_fixed_order_base_canary1/index.html`
+
+## Formal color-and-light prompt corpus (2026-08-28)
+
+The canary corpus was not large enough for a production claim: it contained
+only four training and two held-out prompts per fine-grained bucket, and its
+single update consumed only four prompts. `color_light_v2` expands the reviewed
+source to 256 training prompts and 96 entirely new held-out prompts. The 64 v1
+training rows remain in the training split, while the 32 v1 held-out rows remain
+development-only because they were already used to calibrate the judge and
+inspect a checkpoint.
+
+The formal taxonomy has four core axes with four observable buckets each:
+
+- palette intent: harmony, separation, specified hues, and warm/cool balance;
+- value and exposure: diffuse light, shadow detail, highlight rolloff, and
+  low-light exposure;
+- lighting consistency: mixed sources, directional key light, rim/backlight,
+  and atmospheric propagation; and
+- material response: skin-tone constancy, material-specific response,
+  reflection/transparency, and emissive behavior.
+
+The expansion used public work only to define coverage. GenColorBench and
+GenEval motivated explicit color assignment and object-color binding;
+T2I-CompBench motivated keeping color and material binding separable from
+holistic alignment; Qwen-Image-Bench independently separates color harmony,
+lighting/atmosphere, and material facets; Bernini names source, direction,
+temperature, intensity, and shadow as distinct lighting controls; and DOCCI
+motivated complete observable prose rather than prompt tags. Every committed
+row is original to VRL, so no benchmark prompt was moved into training.
+
+The training manifest is an orthogonal 64-block schedule. Every four-row update
+contains one prompt from each core axis, every four-update superblock visits all
+four buckets within every axis, and each cross-axis bucket pair co-occurs four
+times over the full pass. This corrects the v1 schedule, whose first update
+contained four different buckets but all four belonged to palette intent.
+
+Formal evaluation also required a protocol fix. The checkpoint evaluator used
+to hard-code two prompts per bucket/style, which would silently truncate a
+96-row manifest to 32. It now exposes `--prompts-per-bucket-style`; the default
+remains two for historical canary compatibility, while v2 uses six and records
+the selected count in provenance.
+
+The formal reward now uses each row's frozen base anchor directly. For one
+prompt, Luna sees `R + C1..C8` in a 3x3 montage, judges integrity separately
+from color/light preference, then repeats the judgment in mirrored cell order.
+Only exact per-candidate agreement survives. If no agreed, integrity-safe
+candidate beats the base, all eight primary Luna rewards are zero; this removes
+an uncertain preference gradient but does not disable the independent DDRL/KL
+terms. When a winner exists, only agreed `win` / `strong_win` candidates receive
+positive primary values; tie and loss categories remain zero so negative
+verdicts cannot pull the group mean below a base-level tie and accidentally make
+that tie's GRPO advantage positive. Full ordinal verdicts remain in the scored
+rollout audit fields. The old absolute-score canary remains unchanged for
+provenance. The formal run also keeps per-group normalization: with the verified
+one-prompt streaming microbatch, `global_std` would see the same eight rewards
+and would be numerically equivalent rather than an update-wide statistic.
+
+Training is still not runnable because DDRL deliberately refuses a prompt-only
+manifest when `sft_weight > 0`: all 256 rows need reviewed base anchors and
+matching clean latent targets under `data/external/anima/color_light_v2/`.
+Those anchors now serve both the clean-data regularizer and the comparative
+reward, so they must be generated from the pinned untouched base and reviewed
+before launch.
+
+Assets:
+
+- `datasets/anima/color_light_v2/dataset_spec.json`
+- `datasets/anima/color_light_v2/train_prompts.jsonl`
+- `datasets/anima/color_light_v2/eval_prompts.jsonl`
+- `vrl/config/presets/dataset/anima_color_light_v2_ddrl.yaml`
+- `vrl/config/presets/reward/codex_image_qa_anima_color_light_anchored.yaml`
+- `vrl/config/presets/experiment/anima_preview3/online_grpo_codex_color_light_v2_ddrl.yaml`

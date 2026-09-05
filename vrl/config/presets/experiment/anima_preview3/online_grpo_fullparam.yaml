@@ -1,0 +1,28 @@
+# Full 1.96B diffusion-transformer updates on one 32 GB GPU. Text encoders,
+# the Anima LLM adapter, and VAE remain frozen by the model-family contract.
+# These memory and precision settings were validated on a single RTX 5090;
+# they do not establish that any particular reward improves held-out quality.
+defaults:
+  - /experiment/anima_preview3/online_grpo
+  - _self_
+
+model:
+  use_lora: false
+  lora: null
+
+algorithm:
+  # Full parameters cannot use an adapter-disabled reference. A second frozen
+  # transformer would defeat this single-card memory contract.
+  kl_coef: 0.0
+
+actor:
+  optim:
+    lr: 5.0e-6
+    # Quantize optimizer moments only, not the BF16 forward/replay computation.
+    optim_8bit: true
+  max_norm: 1.0
+  gradient_checkpointing: true
+  gradient_accumulation_steps: 1
+
+rollout:
+  prompts_per_batch: 1

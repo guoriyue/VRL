@@ -1,6 +1,6 @@
 # Anima Preview3 single-file Cosmos Predict2 Text2Image checkpoint.
-# Default model.path is a Hugging Face cache repo id; runtime uses cached files
-# only and does not download artifacts.
+# Default model.path is a Hugging Face repo ID. Runtime reuses a matching local
+# cache entry when present and otherwise follows the standard Hub download path.
 model:
   family: cosmos-predict2-anima
   executor:
@@ -36,10 +36,8 @@ model:
       - to_add_out
 
   torch_compile:
-    # Cosmos DiT compile is validated here (compile_benchmark --family cosmos-predict2.5:
-    # 1.31x rollout / 1.33x train, fp32 fwd drift ~2e-6). Flipped on 2026-07-02 per the
-    # original condition "flip enable:true when an anima experiment lands" — the two
-    # anima_preview3 aesthetic recipes exist now. Compile-both = parity-safe (both paths
-    # run the same kernels); mode=default is the only LoRA+grad-ckpt-safe mode.
+    # Compile remains available for inference and profiling. The Anima training
+    # execution templates override it with eager mode for measured replay parity;
+    # a compile benchmark alone does not establish on-policy log-prob agreement.
     enable: true
     mode: default
