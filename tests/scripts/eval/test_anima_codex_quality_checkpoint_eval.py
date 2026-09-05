@@ -316,6 +316,67 @@ def test_balanced_prompt_selection_uses_manifest_taxonomy_and_training_sampling_
     assert sampling.max_sequence_length == 128
 
 
+def test_balanced_prompt_selection_accepts_and_records_one_natural_language_style(
+    tmp_path,
+) -> None:
+    examples = [
+        SimpleNamespace(
+            prompt=f"{bucket} natural sentence {index}.",
+            metadata={"bucket": bucket, "prompt_style": "natural_language"},
+        )
+        for bucket in ("action", "hands")
+        for index in range(checkpoint_eval.PROMPTS_PER_BUCKET_STYLE)
+    ]
+
+    selected = checkpoint_eval._select_balanced_prompts(examples)
+    protocol, _generated, _output_dir = _build_generation_stage(tmp_path)
+    provenance = checkpoint_eval._provenance_record(
+        replace(protocol, prompts=selected),
+        [],
+        {},
+    )
+
+    assert len(selected) == 4
+    assert {prompt.bucket for prompt in selected} == {"action", "hands"}
+    assert {prompt.prompt_style for prompt in selected} == {"natural_language"}
+    assert provenance["heldout_manifest"]["selection"]["prompt_styles"] == [
+        "natural_language",
+    ]
+    assert provenance["training_reward_components"] == ["codex_image_qa"]
+
+
+def test_balanced_prompt_selection_can_consume_a_larger_formal_stratum(
+    tmp_path,
+) -> None:
+    examples = [
+        SimpleNamespace(
+            prompt=f"{bucket} formal prompt {index}.",
+            metadata={"bucket": bucket, "prompt_style": "natural_language"},
+        )
+        for bucket in ("palette", "lighting")
+        for index in range(6)
+    ]
+
+    selected = checkpoint_eval._select_balanced_prompts(
+        examples,
+        prompts_per_bucket_style=6,
+    )
+    protocol, _generated, _output_dir = _build_generation_stage(tmp_path)
+    provenance = checkpoint_eval._provenance_record(
+        replace(protocol, prompts=selected),
+        [],
+        {},
+    )
+
+    assert len(selected) == 12
+    assert provenance["heldout_manifest"]["selection"]["per_bucket_style"] == 6
+    with pytest.raises(ValueError, match="must be >= 1"):
+        checkpoint_eval._select_balanced_prompts(
+            examples,
+            prompts_per_bucket_style=0,
+        )
+
+
 def test_base_arm_disables_training_lora_before_paired_generation(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -378,3 +439,176 @@ def test_base_arm_disables_training_lora_before_paired_generation(
     assert len(generated) == checkpoint_eval.SAMPLES_PER_PROMPT
     assert seen_adapter_states == [False, False]
     assert model.adapter_enabled is True
+
+
+def test_luna_scores_map_back_through_one_blind_arm_order_for_both_seeds(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    labels = ("base", "checkpoint-5", "checkpoint-10", "checkpoint-15", "checkpoint-final")
+    targets = tuple(
+        checkpoint_eval.CheckpointTarget(label, epoch, None, {})
+        for label, epoch in zip(labels, (0, 5, 10, 15, 20), strict=True)
+    )
+    prompt = checkpoint_eval.EvalPrompt(0, 9, "single anime girl", "hands", "language")
+    generated = []
+    for target in targets:
+        for sample_index in range(checkpoint_eval.SAMPLES_PER_PROMPT):
+            path = tmp_path / f"{target.label}-{sample_index}.png"
+            Image.new("RGB", (8, 8), color=(target.epoch, sample_index, 0)).save(path)
+            generated.append(
+                checkpoint_eval.GeneratedImage(
+                    checkpoint_label=target.label,
+                    epoch=target.epoch,
+                    prompt_index=0,
+                    manifest_index=9,
+                    sample_index=sample_index,
+                    seed=checkpoint_eval._sample_seed(0, sample_index),
+                    prompt=prompt.prompt,
+                    bucket=prompt.bucket,
+                    prompt_style=prompt.prompt_style,
+                    path=path,
+                    image_sha256="0" * 64,
+                ),
+            )
+
+    def fake_score_batch(_self, artifacts):
+        return [
+            {"codex_image_qa": (ord(artifact.metadata["blind_cell"]) - ord("A")) / 10}
+            for artifact in artifacts
+        ]
+
+    monkeypatch.setattr(
+        "vrl.rewards.models.codex_image_qa.CodexImageQARewardModel.score_batch",
+        fake_score_batch,
+    )
+    protocol = SimpleNamespace(
+        targets=targets,
+        prompts=(prompt,),
+        training_reward_components=("codex_image_qa",),
+        luna_config={"command": ["unused"], "images_per_call": len(targets)},
+    )
+
+    scored, blind_orders = checkpoint_eval._score_curve(protocol, generated)
+    output_dir = tmp_path / "evaluation"
+    output_dir.mkdir()
+    staging_dir = output_dir / "contact_sheets" / ".staging"
+    staging_dir.mkdir(parents=True)
+    (staging_dir / ".prompt0000.png.dead.tmp").write_bytes(b"interrupted")
+    checkpoint_eval._write_contact_sheets(scored, blind_orders, output_dir)
+    monkeypatch.setattr(checkpoint_eval, "BOOTSTRAP_RESAMPLES", 50)
+    summary = checkpoint_eval._summarize(
+        protocol,
+        scored,
+        checkpoint_eval._dual_seed_diversity(scored),
+    )
+
+    assert len(scored) == 10
+    assert set(blind_orders[0]) == set(labels)
+    for sample_index in range(checkpoint_eval.SAMPLES_PER_PROMPT):
+        sample_rows = [row for row in scored if row.image.sample_index == sample_index]
+        assert [row.image.checkpoint_label for row in sample_rows] == list(blind_orders[0])
+        assert [row.luna_score for row in sample_rows] == pytest.approx([0.0, 0.1, 0.2, 0.3, 0.4])
+    assert (output_dir / "contact_sheets" / "blind" / "prompt0000.png").is_file()
+    assert not staging_dir.exists()
+    key = json.loads((output_dir / "blind_key.json").read_text(encoding="utf-8"))
+    assert list(key["prompts"][0]["cell_to_arm"].values()) == list(blind_orders[0])
+    assert set(summary["paired_vs_base"]) == set(labels[1:])
+    assert summary["paired_vs_base"]["checkpoint-final"]["luna_by_bucket"]["hands"]["count"] == 1
+    assert set(summary["paired_vs_base"]["checkpoint-final"]) >= {
+        "saturation",
+        "brightness",
+        "edge_energy",
+    }
+    assessment = summary["endpoint_assessment"]
+    assert assessment["luna_was_training_reward"] is True
+    assert "both the training reward" in assessment["interpretation_limit"]
+
+    ocr_protocol = SimpleNamespace(**vars(protocol))
+    ocr_protocol.training_reward_components = ("ocr",)
+    ocr_summary = checkpoint_eval._summarize(
+        ocr_protocol,
+        scored,
+        checkpoint_eval._dual_seed_diversity(scored),
+    )
+    ocr_assessment = ocr_summary["endpoint_assessment"]
+    assert ocr_assessment["luna_was_training_reward"] is False
+    assert "not the training reward" in ocr_assessment["interpretation_limit"]
+
+
+def test_paired_delta_bootstraps_prompt_means_and_counts_ties(monkeypatch) -> None:
+    monkeypatch.setattr(checkpoint_eval, "BOOTSTRAP_RESAMPLES", 200)
+
+    result = checkpoint_eval._paired_delta(
+        {0: 0.4, 1: 0.5, 2: 0.6},
+        {0: 0.5, 1: 0.51, 2: 0.7},
+        tie_epsilon=0.02,
+        bootstrap_seed=7,
+    )
+
+    assert result["mean_delta"] == pytest.approx(0.07)
+    assert result["wins"] == 2
+    assert result["ties"] == 1
+    assert result["losses"] == 0
+    assert result["ci95_low"] <= result["mean_delta"] <= result["ci95_high"]
+
+
+def test_completed_report_marker_is_integrity_checked_and_never_reopened(tmp_path) -> None:
+    protocol, generated, output_dir = _build_generation_stage(tmp_path)
+    for relative_path in (
+        "samples.jsonl",
+        "summary.json",
+        "provenance.json",
+        "blind_key.json",
+        "contact_sheets/manifest.jsonl",
+    ):
+        path = output_dir / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n", encoding="utf-8")
+    sheet_path = output_dir / "contact_sheets" / "blind" / "prompt0000.png"
+    sheet_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (8, 8)).save(sheet_path)
+
+    checkpoint_eval._write_completion_marker(protocol, output_dir)
+
+    with pytest.raises(FileExistsError, match="refusing to overwrite completed"):
+        checkpoint_eval._reject_completed_output(protocol, output_dir)
+
+    original_bytes = generated[0].path.read_bytes()
+    Image.new("RGB", (8, 8), color="white").save(generated[0].path)
+    with pytest.raises(ValueError, match="hash mismatch"):
+        checkpoint_eval._reject_completed_output(protocol, output_dir)
+    generated[0].path.write_bytes(original_bytes)
+
+    generated[0].path.unlink()
+    with pytest.raises(FileNotFoundError, match="generated image is missing"):
+        checkpoint_eval._reject_completed_output(protocol, output_dir)
+    generated[0].path.write_bytes(original_bytes)
+
+    extra_image = output_dir / "images" / "extra.png"
+    Image.new("RGB", (8, 8)).save(extra_image)
+    with pytest.raises(ValueError, match="generated image set is not exact"):
+        checkpoint_eval._reject_completed_output(protocol, output_dir)
+    extra_image.unlink()
+
+    extra_sheet = sheet_path.with_name("extra.png")
+    Image.new("RGB", (8, 8)).save(extra_sheet)
+    with pytest.raises(ValueError, match="blind contact-sheet set is not exact"):
+        checkpoint_eval._reject_completed_output(protocol, output_dir)
+    extra_sheet.unlink()
+
+    (output_dir / "summary.json").write_text('{"changed": true}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="failed integrity check"):
+        checkpoint_eval._reject_completed_output(protocol, output_dir)
+
+
+def test_contact_sheet_writer_rejects_symlinked_output_parent(tmp_path) -> None:
+    _protocol, _generated, output_dir = _build_generation_stage(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (output_dir / "contact_sheets").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="must not contain symlinks"):
+        checkpoint_eval._write_contact_sheets([], {}, output_dir)
+
+    assert list(outside.iterdir()) == []

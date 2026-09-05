@@ -1,4 +1,4 @@
-"""Generate and verify reusable Anima held-out image grids."""
+"""Score and publish blinded Anima held-out quality comparisons."""
 
 from __future__ import annotations
 
@@ -7,8 +7,11 @@ import gc
 import hashlib
 import json
 import logging
+import math
 import os
+import random
 import re
+import statistics
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +23,8 @@ from vrl.scripts.families.cosmos.anima.generation_protocol import AnimaSampling
 from vrl.utils.artifacts import sha256_file
 
 if TYPE_CHECKING:
+    from PIL.Image import Image as PILImage
+
     from vrl.run import ResolvedModel
     from vrl.trainers.data import PromptExample
 
@@ -86,6 +91,18 @@ class GeneratedImage:
     path: Path
     # Integrity binding used both by retry validation and scored sample output.
     image_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class ScoredImage:
+    """A generated cell with its blinded position and diagnostics."""
+
+    image: GeneratedImage
+    blind_cell: str
+    luna_score: float
+    saturation: float
+    brightness: float
+    edge_energy: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -925,6 +942,498 @@ def _validate_owned_output_tree(output_dir: Path) -> None:
             raise ValueError(f"evaluation output path escapes its owner: {path}")
 
 
+def _blind_arm_order(labels: tuple[str, ...], prompt_index: int) -> tuple[str, ...]:
+    seed_material = f"{BLIND_SEED}:{prompt_index}".encode()
+    seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:8], "big")
+    shuffled = list(labels)
+    random.Random(seed).shuffle(shuffled)
+    return tuple(shuffled)
+
+
+def _score_curve(
+    protocol: EvaluationProtocol,
+    generated: list[GeneratedImage],
+) -> tuple[list[ScoredImage], dict[int, tuple[str, ...]]]:
+    from PIL import Image
+
+    from vrl.rewards.inference import RewardInferenceArtifact
+    from vrl.rewards.models.codex_image_qa import CodexImageQARewardModel
+    from vrl.scripts.eval.image_statistics import brightness, edge_energy, load_image, saturation
+
+    by_key = {
+        (image.checkpoint_label, image.prompt_index, image.sample_index): image
+        for image in generated
+    }
+    if len(by_key) != len(generated):
+        raise ValueError("generated image grid contains duplicate arm/prompt/sample cells")
+    labels = tuple(target.label for target in protocol.targets)
+    ordered_images: list[tuple[GeneratedImage, str]] = []
+    blind_orders: dict[int, tuple[str, ...]] = {}
+    artifacts: list[RewardInferenceArtifact] = []
+    open_images: list[Image.Image] = []
+    for prompt in protocol.prompts:
+        order = _blind_arm_order(labels, prompt.prompt_index)
+        blind_orders[prompt.prompt_index] = order
+        for sample_index in range(SAMPLES_PER_PROMPT):
+            for cell_index, label in enumerate(order):
+                image = by_key[(label, prompt.prompt_index, sample_index)]
+                cell = chr(ord("A") + cell_index)
+                with Image.open(image.path) as source:
+                    media = source.convert("RGB")
+                open_images.append(media)
+                ordered_images.append((image, cell))
+                artifacts.append(
+                    RewardInferenceArtifact(
+                        artifact_id=(
+                            f"prompt{prompt.prompt_index:04d}-sample{sample_index:02d}-cell{cell}"
+                        ),
+                        sample_id=(
+                            f"prompt{prompt.prompt_index:04d}-sample{sample_index:02d}-cell{cell}"
+                        ),
+                        path=str(image.path),
+                        prompt=image.prompt,
+                        media=media,
+                        metadata={
+                            "prompt_index": prompt.prompt_index,
+                            "sample_index": sample_index,
+                            "blind_cell": cell,
+                        },
+                    ),
+                )
+
+    scorer = CodexImageQARewardModel(protocol.luna_config)
+    score_maps = scorer.score_batch(artifacts)
+    if len(score_maps) != len(ordered_images):
+        raise ValueError(
+            f"Luna score count mismatch: {len(score_maps)} != {len(ordered_images)}",
+        )
+    scored: list[ScoredImage] = []
+    for (image, cell), score_map in zip(ordered_images, score_maps, strict=True):
+        score = float(score_map["codex_image_qa"])
+        if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+            raise ValueError(f"invalid Luna score for {image.path}: {score!r}")
+        image_array = load_image(image.path)
+        scored.append(
+            ScoredImage(
+                image=image,
+                blind_cell=cell,
+                luna_score=score,
+                saturation=saturation(image_array),
+                brightness=brightness(image_array),
+                edge_energy=edge_energy(image_array),
+            ),
+        )
+    del artifacts, open_images, scorer
+    return scored, blind_orders
+
+
+def _dual_seed_diversity(
+    scored: list[ScoredImage],
+) -> dict[str, dict[int, dict[str, float]]]:
+    import numpy as np
+
+    from vrl.scripts.eval.image_statistics import load_image
+
+    grouped: dict[tuple[str, int], list[ScoredImage]] = {}
+    for row in scored:
+        grouped.setdefault((row.image.checkpoint_label, row.image.prompt_index), []).append(row)
+    result: dict[str, dict[int, dict[str, float]]] = {}
+    for (label, prompt_index), rows in grouped.items():
+        rows.sort(key=lambda row: row.image.sample_index)
+        if len(rows) != SAMPLES_PER_PROMPT:
+            raise ValueError(
+                f"dual-seed diversity needs {SAMPLES_PER_PROMPT} rows for "
+                f"{label}/prompt{prompt_index}, got {len(rows)}",
+            )
+        left = load_image(rows[0].image.path)
+        right = load_image(rows[1].image.path)
+        pixel_rms = float(np.sqrt(np.mean(np.square(left - right))))
+        histograms = []
+        for image in (left, right):
+            histogram = np.concatenate(
+                [
+                    np.histogram(image[..., channel], bins=32, range=(0.0, 1.0))[0]
+                    for channel in range(3)
+                ],
+            ).astype(np.float64)
+            histogram /= histogram.sum() + 1e-12
+            histograms.append(histogram)
+        color_hist_l2 = float(np.linalg.norm(histograms[0] - histograms[1]))
+        result.setdefault(label, {})[prompt_index] = {
+            "pixel_rms": pixel_rms,
+            "color_hist_l2": color_hist_l2,
+        }
+    return result
+
+
+def _summarize(
+    protocol: EvaluationProtocol,
+    scored: list[ScoredImage],
+    diversity: dict[str, dict[int, dict[str, float]]],
+) -> dict[str, Any]:
+    targets = protocol.targets
+    labels = tuple(target.label for target in targets)
+    epoch_by_label = {target.label: target.epoch for target in targets}
+    rows_by_label = {
+        label: [row for row in scored if row.image.checkpoint_label == label] for label in labels
+    }
+    arms: dict[str, Any] = {}
+    prompt_luna: dict[str, dict[int, float]] = {}
+    prompt_saturation: dict[str, dict[int, float]] = {}
+    prompt_brightness: dict[str, dict[int, float]] = {}
+    prompt_edge: dict[str, dict[int, float]] = {}
+    bucket_by_prompt: dict[int, str] = {}
+    for row in scored:
+        previous = bucket_by_prompt.setdefault(row.image.prompt_index, row.image.bucket)
+        if previous != row.image.bucket:
+            raise ValueError(f"prompt {row.image.prompt_index} changed bucket across arms")
+    for label, rows in rows_by_label.items():
+        prompt_luna[label] = _prompt_means(rows, "luna_score")
+        prompt_saturation[label] = _prompt_means(rows, "saturation")
+        prompt_brightness[label] = _prompt_means(rows, "brightness")
+        prompt_edge[label] = _prompt_means(rows, "edge_energy")
+        pixel_values = [value["pixel_rms"] for value in diversity[label].values()]
+        hist_values = [value["color_hist_l2"] for value in diversity[label].values()]
+        arms[label] = {
+            "epoch": epoch_by_label[label],
+            "image_count": len(rows),
+            "prompt_count": len(prompt_luna[label]),
+            "luna": _value_summary([row.luna_score for row in rows]),
+            "saturation": _value_summary([row.saturation for row in rows]),
+            "brightness": _value_summary([row.brightness for row in rows]),
+            "edge_energy": _value_summary([row.edge_energy for row in rows]),
+            "dual_seed_diversity": {
+                "pixel_rms": _value_summary(pixel_values),
+                "color_hist_l2": _value_summary(hist_values),
+            },
+        }
+
+    base_label = labels[0]
+    paired: dict[str, Any] = {}
+    for target_index, target in enumerate(targets[1:], start=1):
+        label = target.label
+        paired[label] = {
+            "epoch": target.epoch,
+            "luna": _paired_delta(
+                prompt_luna[base_label],
+                prompt_luna[label],
+                tie_epsilon=LUNA_TIE_EPSILON,
+                bootstrap_seed=BOOTSTRAP_SEED + target_index * 10,
+            ),
+            "luna_by_bucket": _paired_by_bucket(
+                prompt_luna[base_label],
+                prompt_luna[label],
+                bucket_by_prompt,
+            ),
+            "saturation": _paired_delta(
+                prompt_saturation[base_label],
+                prompt_saturation[label],
+                tie_epsilon=None,
+                bootstrap_seed=BOOTSTRAP_SEED + target_index * 10 + 1,
+            ),
+            "brightness": _paired_delta(
+                prompt_brightness[base_label],
+                prompt_brightness[label],
+                tie_epsilon=None,
+                bootstrap_seed=BOOTSTRAP_SEED + target_index * 10 + 2,
+            ),
+            "edge_energy": _paired_delta(
+                prompt_edge[base_label],
+                prompt_edge[label],
+                tie_epsilon=None,
+                bootstrap_seed=BOOTSTRAP_SEED + target_index * 10 + 3,
+            ),
+            "dual_seed_diversity": {
+                metric: _paired_delta(
+                    {
+                        prompt_index: values[metric]
+                        for prompt_index, values in diversity[base_label].items()
+                    },
+                    {
+                        prompt_index: values[metric]
+                        for prompt_index, values in diversity[label].items()
+                    },
+                    tie_epsilon=None,
+                    bootstrap_seed=BOOTSTRAP_SEED + target_index * 10 + offset,
+                )
+                for offset, metric in enumerate(("pixel_rms", "color_hist_l2"), start=4)
+            },
+        }
+
+    endpoint = paired[targets[-1].label]
+    luna_was_training_reward = "codex_image_qa" in protocol.training_reward_components
+    assessment = {
+        "heldout_luna_gain_supported": endpoint["luna"]["ci95_low"] > 0.0,
+        "systematic_saturation_shift_supported": (
+            endpoint["saturation"]["ci95_low"] > 0.0 or endpoint["saturation"]["ci95_high"] < 0.0
+        ),
+        "systematic_brightness_shift_supported": (
+            endpoint["brightness"]["ci95_low"] > 0.0 or endpoint["brightness"]["ci95_high"] < 0.0
+        ),
+        "edge_detail_regression_supported": endpoint["edge_energy"]["ci95_high"] < 0.0,
+        "pixel_diversity_regression_supported": (
+            endpoint["dual_seed_diversity"]["pixel_rms"]["ci95_high"] < 0.0
+        ),
+        "color_diversity_regression_supported": (
+            endpoint["dual_seed_diversity"]["color_hist_l2"]["ci95_high"] < 0.0
+        ),
+        "luna_was_training_reward": luna_was_training_reward,
+        "human_blind_review": "pending",
+        "interpretation_limit": (
+            (
+                "Luna is both the training reward and this held-out judge; a gain shows "
+                "held-out reward generalization, not independent human-quality proof."
+            )
+            if luna_was_training_reward
+            else (
+                "Luna was not the training reward for this run; it is a separately "
+                "implemented automated held-out judge. A different scorer does not prove "
+                "semantic independence because its rubric may overlap the training "
+                "objective, and it is not independent human-quality proof."
+            )
+        ),
+    }
+    return {
+        "schema": REPORT_SCHEMA,
+        "comparison_unit": f"prompt mean across {SAMPLES_PER_PROMPT} fixed seeds",
+        "bootstrap": {
+            "unit": "prompt",
+            "resamples": BOOTSTRAP_RESAMPLES,
+            "seed": BOOTSTRAP_SEED,
+        },
+        "luna_tie_epsilon": LUNA_TIE_EPSILON,
+        "arms": arms,
+        "paired_vs_base": paired,
+        "endpoint_assessment": assessment,
+    }
+
+
+def _prompt_means(rows: list[ScoredImage], field: str) -> dict[int, float]:
+    grouped: dict[int, list[float]] = {}
+    for row in rows:
+        grouped.setdefault(row.image.prompt_index, []).append(float(getattr(row, field)))
+    for prompt_index, values in grouped.items():
+        if len(values) != SAMPLES_PER_PROMPT:
+            raise ValueError(
+                f"prompt {prompt_index} has {len(values)} {field} rows; "
+                f"expected {SAMPLES_PER_PROMPT}",
+            )
+    return {prompt_index: statistics.fmean(values) for prompt_index, values in grouped.items()}
+
+
+def _value_summary(values: list[float]) -> dict[str, float | int]:
+    if not values or any(not math.isfinite(value) for value in values):
+        raise ValueError("summary values must be non-empty and finite")
+    std = statistics.stdev(values) if len(values) > 1 else 0.0
+    return {
+        "count": len(values),
+        "mean": statistics.fmean(values),
+        "std": std,
+        "stderr": std / math.sqrt(len(values)),
+        "min": min(values),
+        "max": max(values),
+    }
+
+
+def _paired_delta(
+    base: dict[int, float],
+    current: dict[int, float],
+    *,
+    tie_epsilon: float | None,
+    bootstrap_seed: int,
+) -> dict[str, Any]:
+    if base.keys() != current.keys() or not base:
+        raise ValueError("paired metrics require identical non-empty prompt keys")
+    deltas = [current[index] - base[index] for index in sorted(base)]
+    low, high = _bootstrap_mean_ci(deltas, seed=bootstrap_seed)
+    result: dict[str, Any] = {
+        "prompt_count": len(deltas),
+        "mean_delta": statistics.fmean(deltas),
+        "median_delta": statistics.median(deltas),
+        "ci95_low": low,
+        "ci95_high": high,
+    }
+    if tie_epsilon is not None:
+        result.update(
+            {
+                "wins": sum(delta > tie_epsilon for delta in deltas),
+                "ties": sum(abs(delta) <= tie_epsilon for delta in deltas),
+                "losses": sum(delta < -tie_epsilon for delta in deltas),
+            },
+        )
+    return result
+
+
+def _paired_by_bucket(
+    base: dict[int, float],
+    current: dict[int, float],
+    bucket_by_prompt: dict[int, str],
+) -> dict[str, dict[str, float | int]]:
+    if base.keys() != current.keys() or base.keys() != bucket_by_prompt.keys():
+        raise ValueError("bucket deltas require identical prompt keys")
+    grouped: dict[str, list[float]] = {}
+    for prompt_index in sorted(base):
+        grouped.setdefault(bucket_by_prompt[prompt_index], []).append(
+            current[prompt_index] - base[prompt_index],
+        )
+    return {bucket: _value_summary(values) for bucket, values in sorted(grouped.items())}
+
+
+def _bootstrap_mean_ci(values: list[float], *, seed: int) -> tuple[float, float]:
+    if not values:
+        raise ValueError("bootstrap values must be non-empty")
+    rng = random.Random(seed)
+    count = len(values)
+    means = [
+        statistics.fmean(values[rng.randrange(count)] for _ in range(count))
+        for _ in range(BOOTSTRAP_RESAMPLES)
+    ]
+    means.sort()
+    low_index = int(0.025 * (BOOTSTRAP_RESAMPLES - 1))
+    high_index = int(0.975 * (BOOTSTRAP_RESAMPLES - 1))
+    return means[low_index], means[high_index]
+
+
+def _prepare_contact_sheet_staging(
+    output_dir: Path,
+    blind_orders: dict[int, tuple[str, ...]],
+) -> Path:
+    """Remove only this evaluator's stale PNG temps from a prior hard stop."""
+
+    contact_dir = output_dir / "contact_sheets"
+    blind_dir = contact_dir / "blind"
+    staging_dir = contact_dir / ".staging"
+    contact_dir.mkdir(parents=True, exist_ok=True)
+    prompt_prefixes = tuple(
+        f".prompt{prompt_index:04d}.png." for prompt_index in sorted(blind_orders)
+    )
+
+    def is_owned_temp(path: Path) -> bool:
+        return path.name.endswith(".tmp") and path.name.startswith(prompt_prefixes)
+
+    for directory in (blind_dir, staging_dir):
+        if not directory.exists():
+            continue
+        if not directory.is_dir():
+            raise NotADirectoryError(f"contact-sheet path is not a directory: {directory}")
+        for path in directory.iterdir():
+            if is_owned_temp(path) and path.is_file():
+                path.unlink()
+            elif directory == staging_dir:
+                raise ValueError(f"contact-sheet staging contains an unknown artifact: {path}")
+    staging_dir.mkdir(exist_ok=True)
+    return staging_dir
+
+
+def _write_contact_sheets(
+    scored: list[ScoredImage],
+    blind_orders: dict[int, tuple[str, ...]],
+    output_dir: Path,
+) -> None:
+    from PIL import Image, ImageDraw, ImageOps
+
+    _validate_owned_output_tree(output_dir)
+    staging_dir = _prepare_contact_sheet_staging(output_dir, blind_orders)
+    rows_by_key = {
+        (row.image.checkpoint_label, row.image.prompt_index, row.image.sample_index): row
+        for row in scored
+    }
+    sheet_dir = output_dir / "contact_sheets" / "blind"
+    sheet_dir.mkdir(parents=True, exist_ok=True)
+    manifest_rows: list[dict[str, Any]] = []
+    key_rows: list[dict[str, Any]] = []
+    tile = 512
+    header = 32
+    row_label_width = 96
+    gap = 2
+    for prompt_index in sorted(blind_orders):
+        order = blind_orders[prompt_index]
+        first = rows_by_key[(order[0], prompt_index, 0)].image
+        canvas = Image.new(
+            "RGB",
+            (
+                row_label_width + len(order) * tile + (len(order) + 1) * gap,
+                header + SAMPLES_PER_PROMPT * tile + (SAMPLES_PER_PROMPT + 1) * gap,
+            ),
+            "white",
+        )
+        draw = ImageDraw.Draw(canvas)
+        for cell_index, _label in enumerate(order):
+            cell = chr(ord("A") + cell_index)
+            x = row_label_width + gap + cell_index * (tile + gap)
+            draw.text((x + tile // 2 - 4, 8), cell, fill="black")
+        for sample_index in range(SAMPLES_PER_PROMPT):
+            y = header + gap + sample_index * (tile + gap)
+            seed = _sample_seed(prompt_index, sample_index)
+            draw.text((4, y + tile // 2), f"seed {seed}", fill="black")
+            for cell_index, label in enumerate(order):
+                row = rows_by_key[(label, prompt_index, sample_index)]
+                with Image.open(row.image.path) as source:
+                    image = ImageOps.fit(source.convert("RGB"), (tile, tile))
+                x = row_label_width + gap + cell_index * (tile + gap)
+                canvas.paste(image, (x, y))
+        sheet_path = sheet_dir / f"prompt{prompt_index:04d}.png"
+        _write_png_atomic(sheet_path, canvas, staging_dir=staging_dir)
+        manifest_rows.append(
+            {
+                "prompt_index": prompt_index,
+                "manifest_index": first.manifest_index,
+                "prompt": first.prompt,
+                "bucket": first.bucket,
+                "prompt_style": first.prompt_style,
+                "sheet": str(sheet_path.relative_to(output_dir)),
+                "seeds": [
+                    _sample_seed(prompt_index, index) for index in range(SAMPLES_PER_PROMPT)
+                ],
+                "cells": [chr(ord("A") + index) for index in range(len(order))],
+            },
+        )
+        key_rows.append(
+            {
+                "prompt_index": prompt_index,
+                "cell_to_arm": {chr(ord("A") + index): label for index, label in enumerate(order)},
+            },
+        )
+    _write_jsonl(output_dir / "contact_sheets" / "manifest.jsonl", manifest_rows)
+    _write_json(
+        output_dir / "blind_key.json",
+        {
+            "schema_version": 1,
+            "blind_seed": BLIND_SEED,
+            "note": "Review contact sheets before opening this key.",
+            "prompts": key_rows,
+        },
+    )
+    staging_dir.rmdir()
+
+
+def _write_samples(scored: list[ScoredImage], path: Path) -> None:
+    rows = []
+    for row in scored:
+        image = row.image
+        rows.append(
+            {
+                "checkpoint_label": image.checkpoint_label,
+                "epoch": image.epoch,
+                "prompt_index": image.prompt_index,
+                "manifest_index": image.manifest_index,
+                "sample_index": image.sample_index,
+                "seed": image.seed,
+                "prompt": image.prompt,
+                "bucket": image.bucket,
+                "prompt_style": image.prompt_style,
+                "blind_cell": row.blind_cell,
+                "image_path": str(image.path),
+                "image_sha256": image.image_sha256,
+                "luna_score": row.luna_score,
+                "saturation": row.saturation,
+                "brightness": row.brightness,
+                "edge_energy": row.edge_energy,
+            },
+        )
+    _write_jsonl(path, rows)
+
+
 def _preflight_record(protocol: EvaluationProtocol) -> dict[str, Any]:
     return {
         "run_dir": str(protocol.run_dir),
@@ -950,6 +1459,178 @@ def _preflight_record(protocol: EvaluationProtocol) -> dict[str, Any]:
         "sampling": protocol.sampling_record(),
         "model_identity": protocol.resolved_model.identity,
     }
+
+
+def _provenance_record(
+    protocol: EvaluationProtocol,
+    scored: list[ScoredImage],
+    blind_orders: dict[int, tuple[str, ...]],
+) -> dict[str, Any]:
+    prompt_template = str(protocol.luna_config.get("prompt_template", ""))
+    grid_template = str(protocol.luna_config.get("grid_prompt_template", ""))
+    selected_strata = {(prompt.bucket, prompt.prompt_style) for prompt in protocol.prompts}
+    prompts_per_bucket_style = len(protocol.prompts) // len(selected_strata)
+    return {
+        "schema": REPORT_SCHEMA,
+        "run_dir": str(protocol.run_dir),
+        "resolved_config": {
+            "path": str(protocol.config_path),
+            "sha256": protocol.config_sha256,
+        },
+        "evaluation_policy": {
+            "source": protocol.eval_policy_source,
+            "resolved_sha256": protocol.eval_policy_sha256,
+        },
+        "training_reward_components": list(protocol.training_reward_components),
+        "model_identity": protocol.resolved_model.identity,
+        "checkpoints": [
+            {
+                "label": target.label,
+                "epoch": target.epoch,
+                "path": str(target.path or ""),
+                "meta": target.meta,
+                "checkpoint_sha256": target.checkpoint_sha256,
+            }
+            for target in protocol.targets
+        ],
+        "heldout_manifest": {
+            "path": str(protocol.eval_manifest_path),
+            "sha256": protocol.eval_manifest_sha256,
+            "selection": {
+                "prompt_styles": sorted(
+                    {prompt.prompt_style for prompt in protocol.prompts},
+                ),
+                "per_bucket_style": prompts_per_bucket_style,
+                "selected_count": len(protocol.prompts),
+                "manifest_indices": [prompt.manifest_index for prompt in protocol.prompts],
+            },
+        },
+        "seed_grid": {
+            "base_seed": BASE_SEED,
+            "samples_per_prompt": SAMPLES_PER_PROMPT,
+            "formula": "base_seed + prompt_index * samples_per_prompt + sample_index",
+        },
+        "sampling": protocol.sampling_record(),
+        "luna": {
+            "command": protocol.luna_config["command"],
+            "images_per_call": protocol.luna_config["images_per_call"],
+            "tile_size": protocol.luna_config.get("tile_size"),
+            "max_concurrency": protocol.luna_config.get("max_concurrency"),
+            "prompt_template_sha256": _sha256_text(prompt_template),
+            "grid_prompt_template_sha256": _sha256_text(grid_template),
+            "scored_rollout_dir_disabled": True,
+        },
+        "blind": {
+            "seed": BLIND_SEED,
+            "scope": "one arm permutation per prompt, shared by both seeds",
+            "permutation_sha256": _sha256_text(
+                json.dumps(blind_orders, sort_keys=True, separators=(",", ":")),
+            ),
+        },
+        "outputs": {
+            "image_count": len(scored),
+            "generation_manifest": GENERATION_MANIFEST_NAME,
+            "samples": "samples.jsonl",
+            "summary": "summary.json",
+            "blind_contact_sheets": "contact_sheets/blind",
+            "blind_key": "blind_key.json",
+            "completion_marker": COMPLETION_MARKER_NAME,
+        },
+        "protocol_sha256": _protocol_sha256(protocol),
+    }
+
+
+def _write_completion_marker(protocol: EvaluationProtocol, output_dir: Path) -> None:
+    """Publish the final immutable-report marker after every report file exists."""
+
+    _validate_owned_output_tree(output_dir)
+    _load_generation_stage(protocol, output_dir)
+    expected_paths = _completion_artifact_paths(protocol, output_dir)
+    _validate_exact_contact_sheet_set(protocol, output_dir)
+    artifact_hashes: dict[str, str] = {}
+    for path in expected_paths:
+        if not path.is_file():
+            raise FileNotFoundError(f"completed evaluation artifact is missing: {path}")
+        artifact_hashes[path.relative_to(output_dir).as_posix()] = sha256_file(path)
+    _write_json(
+        output_dir / COMPLETION_MARKER_NAME,
+        {
+            "schema": COMPLETION_MARKER_SCHEMA,
+            "protocol_sha256": _protocol_sha256(protocol),
+            "artifacts": artifact_hashes,
+        },
+    )
+
+
+def _reject_completed_output(protocol: EvaluationProtocol, output_dir: Path) -> None:
+    _validate_owned_output_tree(output_dir)
+    marker_path = output_dir / COMPLETION_MARKER_NAME
+    if not marker_path.exists():
+        return
+    _load_generation_stage(protocol, output_dir)
+    _validate_exact_contact_sheet_set(protocol, output_dir)
+    marker = _read_json_object(marker_path)
+    if marker.get("schema") != COMPLETION_MARKER_SCHEMA:
+        raise ValueError(f"invalid completed evaluation marker: {marker_path}")
+    artifact_hashes = marker.get("artifacts")
+    if not isinstance(artifact_hashes, dict):
+        raise TypeError(f"completed evaluation artifacts must be a mapping: {marker_path}")
+    expected_paths = _completion_artifact_paths(protocol, output_dir)
+    expected_names = {path.relative_to(output_dir).as_posix() for path in expected_paths}
+    if set(artifact_hashes) != expected_names:
+        raise ValueError(f"completed evaluation artifact manifest is not exact: {marker_path}")
+    for relative_path, expected_sha256 in artifact_hashes.items():
+        if not _is_sha256(expected_sha256):
+            raise ValueError(f"completed evaluation artifact has an invalid hash: {relative_path}")
+        path = output_dir / relative_path
+        if not path.is_file() or sha256_file(path) != expected_sha256:
+            raise ValueError(f"completed evaluation artifact failed integrity check: {path}")
+    if marker.get("protocol_sha256") != _protocol_sha256(protocol):
+        raise FileExistsError(
+            "refusing to overwrite a completed report from a different protocol; "
+            f"use a fresh --output-dir: {output_dir}",
+        )
+    raise FileExistsError(f"refusing to overwrite completed evaluation output: {output_dir}")
+
+
+def _completion_artifact_paths(
+    protocol: EvaluationProtocol,
+    output_dir: Path,
+) -> list[Path]:
+    paths = [
+        Path(GENERATION_MANIFEST_NAME),
+        Path("samples.jsonl"),
+        Path("summary.json"),
+        Path("provenance.json"),
+        Path("blind_key.json"),
+        Path("contact_sheets/manifest.jsonl"),
+    ]
+    paths.extend(
+        Path("contact_sheets/blind") / f"prompt{prompt.prompt_index:04d}.png"
+        for prompt in protocol.prompts
+    )
+    return [output_dir / relative_path for relative_path in paths]
+
+
+def _validate_exact_contact_sheet_set(
+    protocol: EvaluationProtocol,
+    output_dir: Path,
+) -> None:
+    sheet_dir = output_dir / "contact_sheets" / "blind"
+    expected_sheets = {
+        sheet_dir / f"prompt{prompt.prompt_index:04d}.png" for prompt in protocol.prompts
+    }
+    actual_sheets = (
+        {path for path in sheet_dir.rglob("*") if path.is_file()} if sheet_dir.is_dir() else set()
+    )
+    if actual_sheets != expected_sheets:
+        missing = sorted(str(path) for path in expected_sheets - actual_sheets)
+        extra = sorted(str(path) for path in actual_sheets - expected_sheets)
+        raise ValueError(f"blind contact-sheet set is not exact: missing={missing}, extra={extra}")
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
 
 
 def _sha256_json(value: Any) -> str:
@@ -985,6 +1666,13 @@ def _write_json(path: Path, value: Any) -> None:
     _write_text_atomic(path, json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    _write_text_atomic(
+        path,
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+    )
+
+
 def _write_text_atomic(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
@@ -1000,6 +1688,27 @@ def _write_text_atomic(path: Path, value: str) -> None:
             temporary_path = Path(handle.name)
             handle.write(value)
             handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def _write_png_atomic(path: Path, image: PILImage, *, staging_dir: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=staging_dir,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+        image.save(temporary_path, format="PNG")
+        with temporary_path.open("rb") as handle:
             os.fsync(handle.fileno())
         os.replace(temporary_path, path)
         temporary_path = None
