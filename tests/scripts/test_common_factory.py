@@ -61,10 +61,11 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
         ],
     )
     collector_config = RolloutCollectorConfig.from_cfg(cfg)
+    built = build_configs(cfg)
 
     pair = build_algorithm_and_evaluator(
         family_entry=get_model_family_entry("wan_2_1"),
-        built=build_configs(cfg),
+        built=built,
         collector_config=collector_config,
         scheduler=object(),
     )
@@ -72,6 +73,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
     assert pair.evaluator.noise_level == 0.37
     assert pair.evaluator.sde_type == "cps"
     assert collector_config.request_sampling["denoise_mode"] == "native"
+    assert pair.algorithm.advantage_estimator.component_weights == built.reward.weights
 
 
 @pytest.mark.parametrize(

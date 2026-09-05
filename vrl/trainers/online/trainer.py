@@ -18,7 +18,7 @@ import torch
 import torch.nn as nn
 
 from vrl.algorithms.advantages import all_reduce_sufficient_stats
-from vrl.algorithms.base import Algorithm
+from vrl.algorithms.base import Algorithm, ComponentAdvantageAlgorithm
 from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
     compute_logprob_mismatch_stats,
@@ -1083,10 +1083,25 @@ class OnlineTrainer:
         with timer.time("advantage"):
             all_rewards = torch.cat([b.rewards for b in all_batches])
             all_group_ids = torch.cat([b.group_ids for b in all_batches])
-            advantages_all = self.algorithm.compute_advantages_from_tensors(
-                all_rewards,
-                all_group_ids,
-            )
+            if isinstance(self.algorithm, ComponentAdvantageAlgorithm):
+                component_tensors = {
+                    name: torch.as_tensor(
+                        values,
+                        dtype=all_rewards.dtype,
+                        device=all_rewards.device,
+                    )
+                    for name, values in reward_components.items()
+                }
+                advantages_all = self.algorithm.compute_advantages_from_components(
+                    all_rewards,
+                    component_tensors,
+                    all_group_ids,
+                )
+            else:
+                advantages_all = self.algorithm.compute_advantages_from_tensors(
+                    all_rewards,
+                    all_group_ids,
+                )
             # Per-prompt grouping stats for logging (mean group size + unique prompts).
             _unique_groups, _group_counts = torch.unique(all_group_ids, return_counts=True)
             group_size = (

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import torch
 
+from vrl.algorithms.advantages import GroupAdvantageEstimator
 from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
@@ -39,9 +40,14 @@ class MultiSegmentTokenGRPOConfig(TokenGRPOConfig):
 class MultiSegmentTokenGRPO(TokenGRPO):
     """Apply TokenGRPO independently per segment, then average by weight."""
 
-    def __init__(self, config: MultiSegmentTokenGRPOConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: MultiSegmentTokenGRPOConfig | None = None,
+        *,
+        advantage_estimator: GroupAdvantageEstimator | None = None,
+    ) -> None:
         cfg = config or MultiSegmentTokenGRPOConfig()
-        super().__init__(cfg)
+        super().__init__(cfg, advantage_estimator=advantage_estimator)
         self.config: MultiSegmentTokenGRPOConfig = cfg
 
     def compute_loss(

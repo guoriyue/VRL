@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import torch
 
+from vrl.algorithms.advantages import GroupAdvantageEstimator
 from vrl.algorithms.grpo.continuous import GRPO, ClippedPolicyConfig
 from vrl.algorithms.logprob_mismatch import (
     apply_rejection_sample_mask,
@@ -31,10 +32,16 @@ class TokenGRPOConfig(ClippedPolicyConfig):
 class TokenGRPO(GRPO):
     """GRPO with per-token PPO loss for autoregressive policies."""
 
-    def __init__(self, config: TokenGRPOConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: TokenGRPOConfig | None = None,
+        *,
+        advantage_estimator: GroupAdvantageEstimator | None = None,
+    ) -> None:
         cfg = config or TokenGRPOConfig()
         self.config: TokenGRPOConfig = cfg
         self._initialize_precision_correction()
+        self._initialize_advantage_estimator(advantage_estimator)
 
     def compute_loss(
         self,

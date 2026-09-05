@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from vrl.algorithms.advantages import group_relative_advantages
+from vrl.algorithms.advantages import GroupAdvantageEstimator
 from vrl.algorithms.logprob_mismatch import (
     PrecisionCorrectionConfig,
     apply_rejection_sample_mask,
@@ -23,6 +24,31 @@ class GroupAdvantageConfig:
     eps: float = 1e-4
     adv_clip_max: float = 5.0
     global_std: bool = False
+    # How multiple reward components are combined into one advantage.
+    # "weighted_sum_raw" (default, legacy): sum weighted raw rewards then
+    # normalize once — a high-variance component dominates. "normalized_sum"
+    # (DanceGRPO-style): normalize each component to a per-group advantage first,
+    # then weighted-sum, so no reward dominates by scale/variance. New
+    # multi-objective strategies plug into vrl.algorithms.advantages.
+    advantage_combine: str = GroupAdvantageEstimator.DEFAULT_STRATEGY
+
+    def __post_init__(self) -> None:
+        GroupAdvantageEstimator.validate_strategy(self.advantage_combine)
+
+    def build_estimator(
+        self,
+        *,
+        component_weights: Mapping[str, float] | None = None,
+    ) -> GroupAdvantageEstimator:
+        """Build the runtime estimator from this algorithm configuration."""
+
+        return GroupAdvantageEstimator(
+            eps=self.eps,
+            adv_clip_max=self.adv_clip_max,
+            global_std=self.global_std,
+            strategy=self.advantage_combine,
+            component_weights=component_weights,
+        )
 
 
 @dataclass(slots=True)
@@ -78,9 +104,15 @@ class GRPO:
     # this True so the trainer rejects the strict + ppo_epochs=1 no-op config.
     requires_active_trust_region = False
 
-    def __init__(self, config: GRPOConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: GRPOConfig | None = None,
+        *,
+        advantage_estimator: GroupAdvantageEstimator | None = None,
+    ) -> None:
         self.config = config or GRPOConfig()
         self._initialize_precision_correction()
+        self._initialize_advantage_estimator(advantage_estimator)
 
     def _initialize_precision_correction(self) -> None:
         """Install the trainer-injected rollout/replay correction capability."""
@@ -89,6 +121,16 @@ class GRPO:
         # injects trainer.precision_correction here at construction so the knobs
         # live at the trainer level, not in the algorithm's hyperparameters.
         self.precision_correction = PrecisionCorrectionConfig()
+
+    def _initialize_advantage_estimator(
+        self,
+        advantage_estimator: GroupAdvantageEstimator | None,
+    ) -> None:
+        """Bind one resolved advantage strategy to this algorithm instance."""
+
+        if advantage_estimator is None:
+            advantage_estimator = self.config.build_estimator()
+        self.advantage_estimator = advantage_estimator
 
     def compute_advantages_from_tensors(
         self,
@@ -100,13 +142,27 @@ class GRPO:
         Groups are identified by ``group_ids``: samples sharing the same
         group_id are normalized together (GRPO per-prompt normalization).
         """
-        cfg = self.config
-        return group_relative_advantages(
+        return self.advantage_estimator.compute(
             rewards,
             group_ids,
-            eps=cfg.eps,
-            adv_clip_max=cfg.adv_clip_max,
-            global_std=cfg.global_std,
+        )
+
+    def compute_advantages_from_components(
+        self,
+        rewards: Any,
+        component_rewards: dict[str, Any],
+        group_ids: Any,
+    ) -> Any:
+        """Compute advantages with optional raw reward-component observations.
+
+        The default strategy consumes ``rewards``, the authoritative weighted
+        total from the reward runtime. Component-aware strategies consume the
+        raw observations using the weights bound to ``advantage_estimator``.
+        """
+        return self.advantage_estimator.compute(
+            rewards,
+            group_ids,
+            component_rewards=component_rewards,
         )
 
     def compute_loss(
@@ -418,10 +474,16 @@ class FlowDPPO(GRPO):
     # collapses to -advantages * 1 (plain REINFORCE). Require a moving policy.
     requires_active_trust_region = True
 
-    def __init__(self, config: FlowDPPOConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: FlowDPPOConfig | None = None,
+        *,
+        advantage_estimator: GroupAdvantageEstimator | None = None,
+    ) -> None:
         cfg = config or FlowDPPOConfig()
         self.config: FlowDPPOConfig = cfg
         self._initialize_precision_correction()
+        self._initialize_advantage_estimator(advantage_estimator)
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
         import torch
@@ -539,10 +601,16 @@ class GRPOGuard(GRPO):
     # vanishes, and the loss collapses to plain GRPO. Require a moving policy.
     requires_active_trust_region = True
 
-    def __init__(self, config: GRPOGuardConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: GRPOGuardConfig | None = None,
+        *,
+        advantage_estimator: GroupAdvantageEstimator | None = None,
+    ) -> None:
         cfg = config or GRPOGuardConfig()
         self.config: GRPOGuardConfig = cfg
         self._initialize_precision_correction()
+        self._initialize_advantage_estimator(advantage_estimator)
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
         import torch
