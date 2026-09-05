@@ -79,13 +79,16 @@ def unregistered_code_paths() -> list[str]:
 def unknown_yaml_keys() -> dict[str, list[str]]:
     """Config sweep: unknown keys per experiment, for every shipped experiment."""
 
-    from vrl.config.loading import list_bundled_configs, load_config
+    from vrl.config.loading import compose_config, list_bundled_configs
     from vrl.config.unknown_keys import find_unknown_keys
 
     offenders: dict[str, list[str]] = {}
     for logical_name in list_bundled_configs("experiment"):
         name = logical_name.removeprefix("experiment/").removesuffix(".yaml")
-        unknown = find_unknown_keys(load_config(f"experiment/{name}"))
+        # Unknown-key lint only needs the composed mapping. Keeping mandatory
+        # deployment values unresolved lets it inspect fail-closed templates
+        # without inventing a bundle identity or weakening runtime loading.
+        unknown = find_unknown_keys(compose_config(f"experiment/{name}"))
         if unknown:
             offenders[name] = unknown
     return offenders

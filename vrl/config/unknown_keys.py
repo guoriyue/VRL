@@ -148,6 +148,8 @@ def _as_mapping(value: Any) -> Mapping[str, Any] | None:
 
 
 def _collect_unknown(value: Any, block: Any, path: str, out: list[str]) -> None:
+    from omegaconf import DictConfig, OmegaConf
+
     if block is OPEN:
         return
     mapping = _as_mapping(value)
@@ -168,6 +170,10 @@ def _collect_unknown(value: Any, block: Any, path: str, out: list[str]) -> None:
             continue
         child_block = block.children.get(key)
         if child_block is not None:
+            # Structural lint checks names before runtime composition supplies
+            # mandatory blocks. Reading their values here would resolve ???.
+            if isinstance(mapping, DictConfig) and OmegaConf.is_missing(mapping, key):
+                continue
             _collect_unknown(mapping[key], child_block, child_path, out)
 
 
