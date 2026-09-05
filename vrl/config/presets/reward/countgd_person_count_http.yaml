@@ -1,0 +1,26 @@
+# Deterministic exact-person-count reward served from CountGD's isolated CPU
+# environment. The service owns model paths and placement; this preset owns only
+# the shared-filesystem artifact and HTTP transport contract.
+#
+# This detector is reproducible but not safe as an unattended optimization
+# target: the Anima checkpoint-12 policy-shift audit found detector-only gains
+# and malformed-person erasure. Keep it for evaluation and bounded reward
+# robustness experiments; require blinded review of every reward flip before
+# promoting a trained policy.
+reward:
+  components:
+    countgd_person_count: 1.0
+  kwargs:
+    countgd_person_count:
+      reward_name: countgd-person-count
+      score_key: countgd_person_count
+      media_type: image
+      artifact_format: tensor
+      artifact_dir: ${trainer.output_dir}/reward_artifacts
+      debug_dir: ${trainer.output_dir}/reward_debug
+  inference:
+    countgd_person_count:
+      kind: http
+      endpoint: http://127.0.0.1:8311
+      expected_model: countgd-person-count
+      expected_model_version: CountGD@b6f362b3f5cd20db4a171faa410dfed8f2f466d8+protocol-f789d833f632cf59611136e06d117a1544a5ff3ba36ba5fbb78494689f537b26
