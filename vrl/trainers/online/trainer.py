@@ -748,10 +748,9 @@ class OnlineTrainer:
         self._optimizer: torch.optim.Optimizer | None = None
         self._ema: EMAModuleWrapper | None = None
         self._rollout_weights_initialized = False
-        # This process must prove its own rollout/replay backend parity. The
-        # proof is intentionally absent from checkpoints because a resumed
-        # process may use different kernels, compilation, or batch geometry.
-        self._replay_parity_pending = True
+        # Recheck rollout/replay parity in each process; a checkpoint's previous
+        # pass does not cover changes to kernels, compilation, or batch geometry.
+        self._replay_parity_passed = False
         self._precision_drift_guard_pending = True
         self._update_phase_timers: list[PhaseTimer] = []
         self.rollout_schedule = build_rollout_schedule(
@@ -2035,7 +2034,7 @@ class OnlineTrainer:
             or correction.recompute_old_logprob != "off"
         )
         if (
-            not self._replay_parity_pending
+            self._replay_parity_passed
             or self.evaluator is None
             or not self.algorithm.uses_evaluator
             or intentional_correction
@@ -2070,7 +2069,7 @@ class OnlineTrainer:
                 "align rollout/replay precision and batch shape or recompute "
                 "the old policy with the replay backend.",
             )
-        self._replay_parity_pending = False
+        self._replay_parity_passed = True
         return resolved
 
     @property
@@ -2343,7 +2342,7 @@ class OnlineTrainer:
         # next Ray rollout. The policy version and worker state are runtime
         # concerns, not persisted as an initialized rollout flag.
         self._rollout_weights_initialized = False
-        self._replay_parity_pending = True
+        self._replay_parity_passed = False
         self._precision_drift_guard_pending = True
         self.rollout_schedule.reset()
 

@@ -118,20 +118,20 @@ class TestOnlineTrainerResumeState:
         """Checks load state dict resets rollout weight initialization."""
         trainer = _make_resume_trainer()
         trainer._rollout_weights_initialized = True
-        trainer._replay_parity_pending = False
+        trainer._replay_parity_passed = True
 
         trainer.load_state_dict({"step": 9, "global_step": 9}, strict=True)
 
         assert trainer._rollout_weights_initialized is False
-        assert trainer._replay_parity_pending is True
+        assert trainer._replay_parity_passed is False
 
     @pytest.mark.parametrize("strict", [True, False])
     def test_resume_rechecks_parity_at_nonzero_training_step(self, strict: bool) -> None:
         from vrl.algorithms.types import InitialReplayStats
 
         trainer = _make_resume_trainer()
-        trainer._replay_parity_pending = False
-        assert "_replay_parity_pending" not in trainer.state_dict()
+        trainer._replay_parity_passed = True
+        assert "_replay_parity_passed" not in trainer.state_dict()
 
         trainer.load_state_dict({"step": 4, "global_step": 4}, strict=strict)
 
@@ -142,7 +142,7 @@ class TestOnlineTrainerResumeState:
             )
         assert trainer.state.step == 4
         assert trainer.state.global_step == 4
-        assert trainer._replay_parity_pending is True
+        assert trainer._replay_parity_passed is False
 
     def test_strict_resume_requires_master_optimizer_state_after_first_step(self) -> None:
         trainer = _make_resume_trainer()

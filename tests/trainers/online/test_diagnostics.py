@@ -245,7 +245,7 @@ class TestDiagnostics:
         assert grad_enabled[0] is False
         assert any(grad_enabled[1:])
 
-    def test_replay_parity_stays_pending_until_first_measured_update(
+    def test_replay_parity_passes_only_after_first_measured_update(
         self,
         tmp_path,
     ) -> None:
@@ -274,14 +274,14 @@ class TestDiagnostics:
 
         assert resolved.finite is True
         assert resolved.logprob_abs_diff_max == 0.0
-        assert trainer._replay_parity_pending is True
+        assert trainer._replay_parity_passed is False
         assert not (tmp_path / "training_debug.jsonl").exists()
 
         at_limit = InitialReplayStats(logprob_abs_diff_max=0.01, finite=True)
         resolved = trainer._validate_first_update_parity(at_limit, local_weight=1.0)
 
         assert resolved.logprob_abs_diff_max == pytest.approx(0.01)
-        assert trainer._replay_parity_pending is False
+        assert trainer._replay_parity_passed is True
         record = json.loads((tmp_path / "training_debug.jsonl").read_text().strip())
         assert record["event"] == "replay_parity_gate"
         assert record["passed"] is True
@@ -453,7 +453,7 @@ class TestDiagnostics:
         )
 
         assert isinstance(metrics.initial_replay, InitialReplayStats)
-        assert trainer._replay_parity_pending is True
+        assert trainer._replay_parity_passed is False
         row = OnlineMetricRow.from_step_metrics(0, metrics, ("nsfw_safety",))
         assert row.pre_update_clip_fraction == 0.0
         assert trainer.state.global_step == 0
@@ -508,7 +508,7 @@ class TestDiagnostics:
             )
 
         assert optimizer_called is False
-        assert trainer._replay_parity_pending is True
+        assert trainer._replay_parity_passed is False
         assert trainer.state.step == 0
         assert trainer.state.global_step == 0
 
@@ -529,5 +529,5 @@ class TestDiagnostics:
         resolved = trainer._validate_first_update_parity(drift, local_weight=1.0)
 
         assert resolved.logprob_abs_diff_max == pytest.approx(1.0)
-        assert trainer._replay_parity_pending is True
+        assert trainer._replay_parity_passed is False
         assert not (tmp_path / "training_debug.jsonl").exists()
