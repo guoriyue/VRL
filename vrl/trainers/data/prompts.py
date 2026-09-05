@@ -24,15 +24,16 @@ class PromptExample:
     target_text: str = ""
     reference_image: str | None = field(default=None, metadata={"artifact": True})
     reference_video: str | None = field(default=None, metadata={"artifact": True})
+    # CONTRACT: clean targets stay manifest-relative for the whole run. Exactly
+    # one target_image/target_video is the identity key into sft-latents shards;
+    # target-similarity rewards resolve the same artifact per process. Load-time
+    # reference resolution must never rewrite either target identity.
     target_image: str | None = field(default=None, metadata={"artifact": True})
-    # CONTRACT: target_video stays manifest-relative for the whole run — it is
-    # the identity key into sft-latents shards (save/load_sft_latents) and into
-    # target-similarity rewards, which resolve it per-process themselves.
-    # Load-time resolution (``resolve_prompt_example_references``) covers REFERENCE
-    # fields only and must never rewrite this one.
     target_video: str | None = field(default=None, metadata={"artifact": True})
     references: list[str] = field(default_factory=list, metadata={"artifact": True})
-    task_type: str = "text_to_video"
+    # Empty delegates the modality to the selected model-family registry entry.
+    # A video default silently mislabeled image-family JSONL rows such as Anima.
+    task_type: str = ""
     request_overrides: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -80,7 +81,7 @@ def load_prompt_manifest(path: str | Path) -> list[PromptExample]:
     """
     p = Path(path)
     if p.suffix == ".jsonl":
-        return list(JsonlPromptDataset(p).examples)
+        return load_prompt_examples_from_jsonl_bytes(p.read_bytes(), source=p)
     if p.suffix == ".txt":
         examples: list[PromptExample] = []
         with p.open(encoding="utf-8") as f:
@@ -93,6 +94,48 @@ def load_prompt_manifest(path: str | Path) -> list[PromptExample]:
                 examples.append(PromptExample(prompt=line, target_text=target))
         return examples
     raise ValueError(f"Unsupported manifest suffix: {p.suffix}")
+
+
+def load_prompt_examples_from_jsonl_bytes(
+    payload: bytes,
+    *,
+    source: str | Path = "<prompt manifest>",
+) -> list[PromptExample]:
+    """Parse an immutable UTF-8 JSONL snapshot into prompt examples.
+
+    Callers that already authenticated manifest bytes can pass that exact
+    snapshot through training without reopening a mutable filesystem path.
+    Unknown row fields retain the native manifest behavior: they are merged
+    into ``PromptExample.metadata`` after any explicit metadata entries.
+    """
+
+    if type(payload) is not bytes:
+        raise TypeError("prompt manifest payload must be immutable bytes")
+    context = str(source)
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{context}: prompt manifest must be valid UTF-8") from error
+
+    examples: list[PromptExample] = []
+    known_fields = set(PromptExample.__dataclass_fields__)
+    for line_number, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"{context}:{line_number}: invalid JSON") from error
+        if not isinstance(obj, dict):
+            raise ValueError(f"{context}:{line_number}: JSONL rows must be objects")
+        extra_metadata = {key: value for key, value in obj.items() if key not in known_fields}
+        prompt_fields = {key: value for key, value in obj.items() if key in known_fields}
+        metadata = dict(prompt_fields.get("metadata") or {})
+        metadata.update(extra_metadata)
+        prompt_fields["metadata"] = metadata
+        examples.append(PromptExample(**prompt_fields))
+    return examples
 
 
 def load_prompt_mixture(
@@ -198,24 +241,11 @@ class JsonlPromptDataset(Dataset):
     """
 
     def __init__(self, path: str | Path) -> None:
-        self.examples: list[PromptExample] = []
-        known_fields = set(PromptExample.__dataclass_fields__)
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                obj = json.loads(line)
-                if not isinstance(obj, dict):
-                    raise ValueError(f"{path}: JSONL rows must be objects")
-                extra_metadata = {
-                    key: value for key, value in obj.items() if key not in known_fields
-                }
-                prompt_fields = {key: value for key, value in obj.items() if key in known_fields}
-                metadata = dict(prompt_fields.get("metadata") or {})
-                metadata.update(extra_metadata)
-                prompt_fields["metadata"] = metadata
-                self.examples.append(PromptExample(**prompt_fields))
+        manifest_path = Path(path)
+        self.examples = load_prompt_examples_from_jsonl_bytes(
+            manifest_path.read_bytes(),
+            source=manifest_path,
+        )
 
     def __len__(self) -> int:
         return len(self.examples)
@@ -318,6 +348,7 @@ __all__ = [
     "JsonlPromptDataset",
     "PromptExample",
     "load_prompt_examples_from_config",
+    "load_prompt_examples_from_jsonl_bytes",
     "load_prompt_image_manifest",
     "load_prompt_manifest",
     "load_prompt_mixture",

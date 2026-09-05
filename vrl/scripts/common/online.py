@@ -6,7 +6,7 @@ import gc
 import inspect
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -56,6 +56,7 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.data import (
     PromptBatchSampler,
+    PromptExample,
     load_prompt_examples_from_config,
     resolve_prompt_example_references,
 )
@@ -740,8 +741,25 @@ class OnlineRecipeRun:
 
 async def run_online_recipe(
     cfg: DictConfig,
+    *,
+    prompt_examples: Sequence[PromptExample] | None = None,
 ) -> None:
     """Run a family online training job through shared recipe glue."""
+
+    provided_examples: list[PromptExample] | None = None
+    if prompt_examples is not None:
+        if isinstance(prompt_examples, str | bytes) or not isinstance(
+            prompt_examples,
+            Sequence,
+        ):
+            raise TypeError("prompt_examples must be a sequence of PromptExample objects")
+        provided_examples = list(prompt_examples)
+        for index, example in enumerate(provided_examples):
+            if not isinstance(example, PromptExample):
+                raise TypeError(
+                    "prompt_examples must contain only PromptExample objects; "
+                    f"item {index} is {type(example).__name__}",
+                )
 
     _preflight_production_video_reward(cfg)
     resolved = resolve_online_run(cfg)
@@ -833,7 +851,11 @@ async def run_online_recipe(
         strict=resume_config.strict,
     )
 
-    examples = load_prompt_examples_from_config(cfg.data)
+    examples = (
+        load_prompt_examples_from_config(cfg.data)
+        if provided_examples is None
+        else provided_examples
+    )
     data_config = built.root.data
     artifact_data_root = data_config.artifact_data_root if data_config is not None else None
     examples = [
