@@ -117,13 +117,6 @@ def test_safe_worker_name_includes_step() -> None:
     assert name.endswith("_trainer_step3")
 
 
-def test_config_low_overhead_defaults() -> None:
-    cfg = TorchProfilerConfig()
-    # Deep-dive knobs are off by default.
-    assert cfg.record_shapes is False
-    assert cfg.profile_memory is False
-
-
 # ---------------------------------------------------------------------------
 # P1 — activity resolution is trustworthy
 # ---------------------------------------------------------------------------

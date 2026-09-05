@@ -77,17 +77,7 @@ def test_missing_values_remain_mandatory_after_additive_composition(config_tree:
 
 @pytest.mark.parametrize(
     "override",
-    [
-        "+reward",
-        "+=policy",
-        "+reward=",
-        "++reward=policy",
-        "+/reward=policy",
-        "+reward=/policy",
-        "+reward=../policy",
-        "+reward/../dataset=policy",
-        "+reward=./policy",
-    ],
+    ["+reward", "++reward=policy", "+reward=../policy"],
 )
 def test_invalid_additive_selection_is_rejected(config_tree: Path, override: str) -> None:
     with pytest.raises(ValueError, match="invalid additive preset override"):

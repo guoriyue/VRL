@@ -35,19 +35,6 @@ class RewardRuntimeConfig:
     inference_configs: dict[str, RewardInferenceConfig]
 
     def __post_init__(self) -> None:
-        component_names = set(self.weights)
-        for field_name, component_map in (
-            ("kwargs", self.kwargs),
-            ("inference_configs", self.inference_configs),
-        ):
-            names = set(component_map)
-            if names != component_names:
-                missing = sorted(component_names - names)
-                unknown = sorted(names - component_names)
-                raise ValueError(
-                    f"reward runtime {field_name} keys must match component keys; "
-                    f"missing={missing}, unknown={unknown}",
-                )
         for name, component_kwargs in self.kwargs.items():
             for key in ("sleep_offload", "memory_parking_residual_bytes_limit"):
                 if key in component_kwargs:

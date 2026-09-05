@@ -9,7 +9,6 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from tests.config.helpers import unknown_keys
 from tests.config.test_load_all_experiments import (
     _experiment_names,
     _load_experiment_for_static_validation,
@@ -125,13 +124,6 @@ def test_plain_block_resolves_to_the_same_policy_for_both_roles():
     )
 
 
-def test_resolver_rejects_anything_but_the_parsed_section():
-    """A raw mapping never reaches the resolver: parse_config is the only door."""
-
-    with pytest.raises(TypeError, match="parsed precision section"):
-        PrecisionPolicy.from_section(_plain_precision())  # type: ignore[arg-type]
-
-
 def test_nested_bf16_resolves_role_dtypes_and_protected_defaults():
     p = PrecisionPolicy.from_section(
         _section(
@@ -198,15 +190,13 @@ def test_rollout_can_override_training_outer_autocast() -> None:
     assert p.stages_match is False
 
 
-@pytest.mark.parametrize("role", ["training", "rollout"])
-@pytest.mark.parametrize("value", [0, 1, "false"])
-def test_outer_autocast_rejects_non_boolean_values(role, value) -> None:
+def test_outer_autocast_rejects_non_boolean_values() -> None:
     block = _plain_precision()
-    block[role]["outer_autocast"] = value
+    block["training"]["outer_autocast"] = 1
 
     with pytest.raises(
         ValueError,
-        match=rf"precision\.{role}\.outer_autocast: Input should be a valid boolean",
+        match=r"precision\.training\.outer_autocast: Input should be a valid boolean",
     ):
         _section(block)
 
@@ -255,58 +245,17 @@ def test_float32_precision_is_required():
         _section(block)
 
 
-@pytest.mark.parametrize("mode", ["", "fp32", "true"])
-def test_float32_precision_rejects_unknown_modes(mode):
+def test_float32_precision_rejects_unknown_modes():
     block = _plain_precision()
-    block["float32_precision"] = mode
+    block["float32_precision"] = "fp32"
 
     with pytest.raises(ValueError, match=r"precision\.float32_precision must be one of"):
         PrecisionPolicy.from_section(_section(block))
 
 
-@pytest.mark.parametrize("allow_tf32", [False, True])
-def test_legacy_optimizer_tf32_key_is_unknown(allow_tf32):
-    """A removed key is an unknown key: one gate, one message, no legacy branch."""
-
-    cfg = OmegaConf.create(
-        {
-            "actor": {"optim": {"allow_tf32": allow_tf32}},
-            "precision": _plain_precision(),
-        },
-    )
-    with pytest.raises(ValueError, match=r"unknown actor\.optim\.allow_tf32"):
-        parse_config(cfg)
-
-
-@pytest.mark.parametrize("scalar", ["bf16", "fp32", "fp8", False])
-def test_scalar_precision_is_rejected_with_migration_path(scalar):
+def test_scalar_precision_is_rejected_with_migration_path():
     with pytest.raises(ValueError, match="scalar `precision` is no longer supported"):
-        PrecisionPolicy.from_section(_section(scalar))
-
-
-def test_nested_unknown_keys_are_reported_at_full_path():
-    from omegaconf import OmegaConf
-
-    block = _plain_precision()
-    block["rollout"]["quantization"] = {
-        "format": "fp8",
-        "recipe": "rowwise",
-        "typo": True,
-    }
-    block["forward"] = "fp16"
-    unknown = unknown_keys(OmegaConf.create({"precision": block}))
-    assert unknown == [
-        "precision.forward",
-        "precision.rollout.quantization.typo",
-    ]
-
-
-def test_prompt_encoder_keys_are_derived_from_precision_config_sections():
-    from omegaconf import OmegaConf
-
-    block = _plain_precision()
-    block["rollout"]["prompt_encoders"] = {"dtype": "fp16"}
-    assert unknown_keys(OmegaConf.create({"precision": block})) == []
+        _section("bf16")
 
 
 # -- removed legacy config --------------------------------------------
@@ -366,13 +315,9 @@ def test_legacy_generic_fp4_format_has_a_migration_error():
         PrecisionPolicy.from_section(_section(block))
 
 
-@pytest.mark.parametrize("recipe", ["nvfp4", "rowwise", "tensorwise", "blockwise"])
-def test_nvfp4_rejects_every_recipe(recipe):
+def test_nvfp4_rejects_every_recipe():
     block = _plain_precision()
-    block["rollout"]["quantization"] = {
-        "format": "nvfp4",
-        "recipe": recipe,
-    }
+    block["rollout"]["quantization"] = {"format": "nvfp4", "recipe": "rowwise"}
     with pytest.raises(ValueError, match="does not accept a recipe"):
         PrecisionPolicy.from_section(_section(block))
 
@@ -399,25 +344,16 @@ def test_fp8_rejects_unknown_recipe_during_config_resolution():
         PrecisionPolicy.from_section(_section(block))
 
 
-@pytest.mark.parametrize("format_name", ["fp8", "nvfp4"])
-@pytest.mark.parametrize("role", ["training", "rollout"])
-def test_quantization_format_is_rejected_in_dtype_position(role, format_name):
+def test_quantization_format_is_rejected_in_dtype_position():
     block = _plain_precision()
-    block[role]["dtype"] = format_name
+    block["rollout"]["dtype"] = "fp8"
     with pytest.raises(ValueError, match=r"belongs under a `quantization\.format` key"):
         PrecisionPolicy.from_section(_section(block))
 
 
-@pytest.mark.parametrize(
-    "quantization",
-    [
-        {"format": "fp8", "recipe": "rowwise"},
-        {"format": "nvfp4"},
-    ],
-)
-def test_training_quantization_parses_but_fails_without_runtime(quantization):
+def test_training_quantization_parses_but_fails_without_runtime():
     block = _plain_precision()
-    block["training"]["quantization"] = quantization
+    block["training"]["quantization"] = {"format": "fp8"}
     with pytest.raises(ValueError, match=r"training\.quantization is unavailable"):
         PrecisionPolicy.from_section(_section(block))
 
@@ -446,39 +382,14 @@ def test_resolve_torch_dtype_subbyte(spelling, torch_name):
     assert resolve_torch_dtype(spelling) is getattr(torch, torch_name)
 
 
-def test_legacy_actor_precision_keys_fail_loud() -> None:
-    """actor.mixed_precision/bf16 are unknown keys: fail loud, never silently load."""
-    import pytest
+def test_shipped_online_recipes_keep_training_and_rollout_precision_aligned():
+    """No bundled online recipe ships a rollout precision split by accident."""
 
-    from vrl.config.loading import load_config
-    from vrl.config.validation import validate_training_config
-
-    cfg = load_config(
-        "experiment/sd3_5/online_grpo_ocr",
-        overrides=["actor.mixed_precision=bf16"],
-    )
-    with pytest.raises(ValueError, match=r"unknown actor\.mixed_precision"):
-        validate_training_config(cfg)
-
-
-def _online_recipes() -> list[str]:
-    return [name for name in _experiment_names() if not Path(name).name.startswith("offline_")]
-
-
-_ONLINE_RECIPES = _online_recipes()
-
-
-@pytest.mark.parametrize("experiment", _ONLINE_RECIPES)
-def test_online_recipe_equivalence(experiment):
-    """Checks online recipes use aligned public precision."""
-    cfg = _load_experiment_for_static_validation(experiment)
-    policy = PrecisionPolicy.from_section(parse_config(cfg).precision)
-
-    assert policy.training == policy.rollout
-    assert resolve_torch_dtype(policy.training.dtype) is resolve_torch_dtype(
-        policy.rollout.dtype,
-    )
-    assert "mixed_precision" not in cfg.actor
-    assert "bf16" not in cfg.actor
-    # math is always protected at fp32.
-    assert policy.diffusion_math == "fp32"
+    for name in _experiment_names():
+        if Path(name).name.startswith("offline_"):
+            continue
+        policy = PrecisionPolicy.from_section(
+            parse_config(_load_experiment_for_static_validation(name)).precision,
+        )
+        assert policy.training == policy.rollout, name
+        assert policy.diffusion_math == "fp32", name

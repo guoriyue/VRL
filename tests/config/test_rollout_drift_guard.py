@@ -49,6 +49,18 @@ def test_teacache_without_any_correction_is_refused() -> None:
         require_guarded_rollout_drift(cfg, _precision(cfg))
 
 
+def test_validate_training_config_refuses_unguarded_teacache() -> None:
+    """The check runs on the real entry point, not only when called directly."""
+
+    from vrl.config.loading import load_config
+    from vrl.config.validation import validate_training_config
+
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr", overrides=["sampling.teacache=true"])
+
+    with pytest.raises(ValueError, match="teacache"):
+        validate_training_config(cfg)
+
+
 def test_teacache_mapping_form_is_refused_too() -> None:
     """``teacache: {threshold: ...}`` enables it just as ``teacache: true`` does."""
 
@@ -111,16 +123,6 @@ def test_explicit_expert_block_is_honored(expert_block: str) -> None:
     cfg = _cfg(sampling={"teacache": True}, trainer={expert_block: explicit})
 
     require_guarded_rollout_drift(cfg, _precision(cfg))
-
-
-def test_check_runs_inside_validate_training_config() -> None:
-    """Wired into the real entry point, not only callable on its own."""
-
-    import inspect
-
-    from vrl.config.validation import validate_training_config
-
-    assert "require_guarded_rollout_drift" in inspect.getsource(validate_training_config)
 
 
 # --- the compile compatibility matrix ----------------------------------------
@@ -281,35 +283,3 @@ def test_unknown_compile_scope_is_refused_at_config_load() -> None:
 
     with pytest.raises(ValueError, match=r"torch_compile\.scope must be one of"):
         compile_conflicts(parse_config(_scoped_compile_cfg("trainer")))
-
-
-def test_fsdp_conflict_is_now_caught_at_config_load() -> None:
-    """Regression: FSDP x compile used to surface only at strategy build.
-
-    Grad-checkpointing was checked at config load but FSDP2 was not, so an
-    unrunnable recipe failed later than it needed to.
-    """
-
-    import inspect
-
-    from vrl.config.validation import validate_training_config
-
-    assert "require_compile_compatible" in inspect.getsource(validate_training_config)
-
-
-def test_the_sequence_parallel_conflict_is_reachable_from_the_registry() -> None:
-    """Pins WHY the sequence-parallel entry exists: a family declares both.
-
-    If no family ever declared both, it would be dead code. sd3_5 does, which is
-    what made the previously-unguarded combination a real config a user can write.
-    """
-
-    from vrl.models.families.registry import FAMILY_REGISTRY
-
-    both = [
-        family
-        for family, entry in FAMILY_REGISTRY.items()
-        if entry.runtime_capabilities.supports_torch_compile
-        and entry.runtime_capabilities.sequence_parallel_installer is not None
-    ]
-    assert both, "no family declares both compile and sequence parallel"

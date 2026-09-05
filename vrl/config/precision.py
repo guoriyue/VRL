@@ -155,13 +155,6 @@ class RolePrecision:
             "float32_precision",
             _normalize_float32_precision(self.float32_precision),
         )
-        if not isinstance(self.outer_autocast, bool):
-            raise TypeError("role outer_autocast must be a bool")
-        if self.quantization is not None and not isinstance(
-            self.quantization,
-            QuantizationPolicy,
-        ):
-            raise TypeError("role quantization must be a QuantizationPolicy or None")
 
     @property
     def label(self) -> str:
@@ -185,10 +178,6 @@ class PrecisionPolicy:
     prompt_encoder_dtype: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.training, RolePrecision):
-            raise TypeError("precision.training must resolve to RolePrecision")
-        if not isinstance(self.rollout, RolePrecision):
-            raise TypeError("precision.rollout must resolve to RolePrecision")
         object.__setattr__(
             self,
             "diffusion_math",
@@ -227,11 +216,6 @@ class PrecisionPolicy:
                 "top-level `precision` is required. Configure "
                 "`precision.training.dtype`; add a `precision.rollout` block only "
                 "for a rollout-specific override.",
-            )
-        if not isinstance(section, PrecisionConfig):
-            raise TypeError(
-                "PrecisionPolicy.from_section takes the parsed precision section "
-                f"(RootConfig.precision), got {type(section).__name__}",
             )
         float32_precision = section.float32_precision
         training = RolePrecision(

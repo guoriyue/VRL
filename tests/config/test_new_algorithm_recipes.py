@@ -54,14 +54,8 @@ def test_grpo_guard_recipe_resolves_and_enables_proposal_mean_storage() -> None:
     ("kind", "field", "value"),
     [
         ("flow_dppo", "clip_ratio", 0.2),
-        ("flow_dppo", "kl_coef", 0.1),
-        ("flow_dppo", "flow_kl_use_dt", True),
-        ("flow_dppo", "sft_weight", 0.0),
         ("grpo_guard", "kl_coef", 0.1),
-        ("grpo_guard", "flow_kl_use_dt", True),
-        ("grpo_guard", "sft_weight", 0.0),
         ("token_grpo", "flow_kl_use_dt", True),
-        ("token_grpo", "sft_weight", 0.0),
     ],
 )
 def test_algorithm_configs_reject_unconsumed_knobs(

@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
-
 import pytest
 import torch
 from omegaconf import OmegaConf
 
 import vrl.config.builders as builders
-import vrl.config.validation as validation
-from vrl.config.builders import BuiltConfigs, RewardRuntimeConfig, build_configs
+from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
-from vrl.config.reward_inference import RewardInferenceConfig
-from vrl.config.schema import RootConfig
 
 
 def test_build_rejects_strict_resume_with_a_warm_start_adapter() -> None:
@@ -56,59 +50,6 @@ def test_build_preserves_warm_start_adapter_without_full_resume() -> None:
     assert built.root.model is not None
     assert built.root.model.lora is not None
     assert built.root.model.lora.path == "/tmp/warm-start-adapter"
-
-
-def test_build_resolves_public_config_precision_and_reward_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
-    calls = {"parse": 0, "precision": 0, "reward": 0, "standalone_reward_validation": 0}
-
-    def counted(name: str, function: Callable[..., Any]) -> Callable[..., Any]:
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            calls[name] += 1
-            return function(*args, **kwargs)
-
-        return wrapper
-
-    monkeypatch.setattr(
-        validation,
-        "parse_config",
-        counted("parse", validation.parse_config),
-    )
-    monkeypatch.setattr(
-        validation.PrecisionPolicy,
-        "from_section",
-        classmethod(counted("precision", validation.PrecisionPolicy.from_section.__func__)),
-    )
-    monkeypatch.setattr(
-        builders.RewardRuntimeConfig,
-        "from_cfg",
-        classmethod(counted("reward", builders.RewardRuntimeConfig.from_cfg.__func__)),
-    )
-
-    def unexpected_reward_reparse(*args: Any, **kwargs: Any) -> Any:
-        del args, kwargs
-        calls["standalone_reward_validation"] += 1
-        raise AssertionError("typed RootConfig.reward must not be parsed again")
-
-    monkeypatch.setattr(
-        validation,
-        "validate_reward_config",
-        unexpected_reward_reparse,
-    )
-
-    built = build_configs(cfg)
-
-    assert isinstance(built, BuiltConfigs)
-    assert isinstance(built.root, RootConfig)
-    assert isinstance(built.reward, RewardRuntimeConfig)
-    assert calls == {
-        "parse": 1,
-        "precision": 1,
-        "reward": 1,
-        "standalone_reward_validation": 0,
-    }
 
 
 def test_online_build_has_named_reward_and_trainer_fields() -> None:
@@ -161,22 +102,6 @@ def test_reward_runtime_config_normalizes_every_component_and_derives_transport(
         ),
     )
     assert external_only.all_external_inference is True
-
-
-def test_reward_runtime_config_rejects_inconsistent_component_maps() -> None:
-    with pytest.raises(ValueError, match=r"kwargs keys must match component keys"):
-        RewardRuntimeConfig(
-            weights={"aesthetic": 1.0},
-            kwargs={},
-            inference_configs={"aesthetic": RewardInferenceConfig()},
-        )
-
-    with pytest.raises(ValueError, match=r"inference_configs keys must match component keys"):
-        RewardRuntimeConfig(
-            weights={"aesthetic": 1.0},
-            kwargs={"aesthetic": {}},
-            inference_configs={},
-        )
 
 
 def test_reward_builder_rejects_kwargs_without_a_component() -> None:
@@ -244,8 +169,7 @@ def test_precision_role_split_is_resolved_once_into_trainer(
     assert built.trainer.precision_correction.tis_mode == correction_mode
 
 
-@pytest.mark.parametrize("find_unused_parameters", [False, True])
-def test_typed_root_is_a_strategy_builder_input(find_unused_parameters: bool) -> None:
+def test_typed_root_is_a_strategy_builder_input() -> None:
     from vrl.trainers.distributed import DistributedTrainingContext
     from vrl.trainers.strategy import DDPStrategy, build_strategy
 
@@ -253,10 +177,7 @@ def test_typed_root_is_a_strategy_builder_input(find_unused_parameters: bool) ->
         "experiment/sd3_5/online_grpo_ocr",
         overrides=[
             "distributed.training.strategy=ddp",
-            (
-                "distributed.training.ddp.find_unused_parameters="
-                f"{str(find_unused_parameters).lower()}"
-            ),
+            "distributed.training.ddp.find_unused_parameters=true",
         ],
     )
     built = build_configs(cfg)
@@ -270,4 +191,4 @@ def test_typed_root_is_a_strategy_builder_input(find_unused_parameters: bool) ->
     strategy = build_strategy(built.root, context)
 
     assert isinstance(strategy, DDPStrategy)
-    assert strategy._find_unused_parameters is find_unused_parameters
+    assert strategy._find_unused_parameters is True

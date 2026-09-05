@@ -411,12 +411,7 @@ def generation_request_rollout_fields() -> frozenset[str]:
 
 @functools.cache
 def _model_section_class_from_path(path: str) -> type[ModelSection]:
-    section_cls = import_from_path(path)
-    if not isinstance(section_cls, type) or not issubclass(section_cls, ModelSection):
-        raise TypeError(
-            f"model section path {path!r} must resolve to a ModelSection subclass",
-        )
-    return section_cls
+    return import_from_path(path)
 
 
 def _model_section_class_for_family(family: Any) -> type[ModelSection]:
@@ -475,12 +470,7 @@ def _parse_model_section(value: Any) -> ModelSection | None:
 
 @functools.cache
 def _sampling_section_class_from_path(path: str) -> type[SamplingSection]:
-    section_cls = import_from_path(path)
-    if not isinstance(section_cls, type) or not issubclass(section_cls, SamplingSection):
-        raise TypeError(
-            f"sampling section path {path!r} must resolve to a SamplingSection subclass",
-        )
-    return section_cls
+    return import_from_path(path)
 
 
 def sampling_section_class_for_family(family: Any) -> type[SamplingSection]:

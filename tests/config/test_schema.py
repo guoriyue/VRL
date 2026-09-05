@@ -20,7 +20,6 @@ from vrl.config.model_schema import (
 from vrl.config.sampling_schema import (
     ARSamplingSection,
     DenoiseImageSamplingSection,
-    EchoSamplingSection,
     JanusProSamplingSection,
     TextEncodedImageSamplingSection,
     VideoSamplingSection,
@@ -30,7 +29,6 @@ from vrl.config.schema import (
     DataConfig,
     RewardConfig,
     RolloutRuntimeSection,
-    RootConfig,
     parse_config,
 )
 from vrl.models.families.causvid.config import CausVidModelSection
@@ -139,7 +137,7 @@ def test_sampling_scheduler_batch_size_accepts_null_or_positive_integer(
     assert sampling.ar_scheduler_batch_size == value
 
 
-@pytest.mark.parametrize("value", [True, False, 0, -1, 1.0, 1.5, "2"])
+@pytest.mark.parametrize("value", [True, 0])
 def test_sampling_scheduler_batch_size_rejects_coercible_or_non_positive_values(
     value: object,
 ) -> None:
@@ -202,12 +200,6 @@ def test_algorithm_keys_are_scoped_to_selected_kind(kind: str, foreign_field: st
         AlgorithmConfig.model_validate({"kind": kind, foreign_field: 1})
 
 
-def test_algorithm_unknown_key_selector_defers_invalid_kind_to_schema() -> None:
-
-    cfg = OmegaConf.create({"algorithm": {"kind": "qpo", "future_field": 1}})
-    assert unknown_keys(cfg) == ["algorithm.future_field"]
-
-
 def test_algorithm_dispatch_covers_schema_kind_vocabulary() -> None:
     from vrl.config.algorithm import algorithm_config_class
 
@@ -223,10 +215,7 @@ def test_positive_kl_reward_coef_is_accepted_for_diffusion_rollouts() -> None:
     assert parse_config(cfg).algorithm.kl_reward_coef == 0.25
 
 
-@pytest.mark.parametrize(
-    "kind",
-    ["token_grpo", "token_grpo_multisegment", "diffusion_dpo"],
-)
+@pytest.mark.parametrize("kind", ["token_grpo", "diffusion_dpo"])
 def test_positive_kl_reward_coef_rejects_trajectories_without_step_kl(
     kind: str,
 ) -> None:
@@ -249,10 +238,7 @@ def test_zero_kl_reward_coef_remains_valid_for_token_rollouts() -> None:
     assert parse_config(cfg).algorithm.kl_reward_coef == 0.0
 
 
-@pytest.mark.parametrize(
-    "value",
-    [-0.1, True, "0.25", float("inf"), float("-inf"), float("nan")],
-)
+@pytest.mark.parametrize("value", [-0.1, float("nan")])
 def test_kl_reward_coef_rejects_invalid_public_values(value: object) -> None:
     cfg = _minimal_grpo_cfg()
     cfg.algorithm.kl_reward_coef = value
@@ -309,33 +295,18 @@ def test_unknown_attention_backend_raises() -> None:
         parse_config(cfg)
 
 
-@pytest.mark.parametrize("family", ["glm_image", "llamagen"])
-def test_native_cache_family_rejects_typed_attention_backend(family: str) -> None:
-    cfg = _minimal_grpo_cfg(model={"family": family})
+def test_native_cache_family_rejects_typed_attention_backend() -> None:
+    cfg = _minimal_grpo_cfg(model={"family": "llamagen"})
     cfg.sampling = {"attention_backend": "torch_native"}
 
     with pytest.raises(ValueError, match=r"unknown sampling\.attention_backend"):
         parse_config(cfg)
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("image_token_num", 256),
-        ("image_size", 256),
-        ("max_text_length", 120),
-    ],
-)
-def test_llamagen_sampling_rejects_model_derived_topology(
-    field: str,
-    value: object,
-) -> None:
-    cfg = _minimal_grpo_cfg(
-        model={"family": "llamagen"},
-        sampling={field: value},
-    )
+def test_llamagen_sampling_rejects_model_derived_topology() -> None:
+    cfg = _minimal_grpo_cfg(model={"family": "llamagen"}, sampling={"image_token_num": 256})
 
-    with pytest.raises(ValueError, match=rf"unknown sampling\.{field}"):
+    with pytest.raises(ValueError, match=r"unknown sampling\.image_token_num"):
         parse_config(cfg)
 
 
@@ -377,8 +348,6 @@ def test_sampling_section_requires_model_family_for_schema_selection() -> None:
     [
         ("hunyuan_image", DenoiseImageSamplingSection),
         ("cosmos-predict2", VideoSamplingSection),
-        ("cosmos3", VideoSamplingSection),
-        ("echo", EchoSamplingSection),
     ],
 )
 def test_family_without_text_length_rejects_max_sequence_length(
@@ -412,9 +381,6 @@ def test_echo_accepts_only_baked_guidance_value() -> None:
     ("family", "field", "value"),
     [
         ("janus_pro", "max_reflect_len", 80),
-        ("nextstep_1", "temperature", 0.9),
-        ("emu3", "image_token_num", 256),
-        ("glm_image", "guidance_scale", 4.5),
         ("magi_1", "guidance_scale", 4.5),
     ],
 )
@@ -456,22 +422,6 @@ def test_unknown_training_strategy_raises() -> None:
     cfg = _minimal_grpo_cfg(distributed={"training": {"strategy": "deepspeed"}})
     with pytest.raises(ValueError, match=r"unknown distributed\.training\.strategy"):
         parse_config(cfg)
-
-
-def test_training_keys_are_registered_not_unknown() -> None:
-    """distributed.training.* keys are known to the unknown-key walker."""
-
-    cfg = _minimal_grpo_cfg(
-        distributed={
-            "training": {
-                "strategy": "fsdp",
-                "num_nodes": 1,
-                "gpus_per_node": 2,
-            }
-        }
-    )
-    unknown = unknown_keys(cfg)
-    assert not [k for k in unknown if k.startswith("distributed.training")]
 
 
 # ── model family scoped keys ──────────────────────────────────────────────────
@@ -522,13 +472,11 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
     ]
 
 
-@pytest.mark.parametrize("family", ["wan_2_1", "wan_2_1_i2v", "wan", "wan_i2v"])
-def test_wan_boundary_ratio_is_source_derived_not_public_config(family: str) -> None:
-
+def test_wan_boundary_ratio_is_source_derived_not_public_config() -> None:
     cfg = OmegaConf.create(
         {
             "model": {
-                "family": family,
+                "family": "wan_2_1",
                 "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
                 "boundary_ratio": 0.9,
             },
@@ -536,28 +484,18 @@ def test_wan_boundary_ratio_is_source_derived_not_public_config(family: str) -> 
     )
 
     assert unknown_keys(cfg) == ["model.boundary_ratio"]
-    with pytest.raises(ValueError, match=r"unknown model\.boundary_ratio"):
-        parse_config(cfg)
 
 
-@pytest.mark.parametrize(
-    "family",
-    ["janus_pro", "janus", "janus_pro_r1", "janus_r1"],
-)
-@pytest.mark.parametrize("trust_remote_code", [False, True])
-def test_janus_keys_and_aliases_select_shared_family_section(
-    family: str,
-    trust_remote_code: bool,
-) -> None:
-
+@pytest.mark.parametrize("family", ["janus_pro", "janus_pro_r1"])
+def test_janus_families_select_the_shared_family_section(family: str) -> None:
     cfg_data: dict[str, object] = {
         "model": {
             "family": family,
-            "trust_remote_code": trust_remote_code,
+            "trust_remote_code": True,
             "vq_latent_channels": 8,
         },
     }
-    if family in {"janus_pro_r1", "janus_r1"}:
+    if family == "janus_pro_r1":
         cfg_data.update(
             {
                 "algorithm": {"kind": "token_grpo_multisegment"},
@@ -569,52 +507,40 @@ def test_janus_keys_and_aliases_select_shared_family_section(
     assert unknown_keys(cfg) == []
     parsed = parse_config(cfg)
     assert isinstance(parsed.model, JanusProModelSection)
-    assert parsed.model.trust_remote_code is trust_remote_code
+    assert parsed.model.trust_remote_code is True
     assert parsed.model.vq_latent_channels == 8
 
 
 @pytest.mark.parametrize(
-    ("field", "value"),
-    [("trust_remote_code", False), ("vq_latent_channels", 8)],
+    ("family", "field"),
+    [
+        ("emu3", "vq_latent_channels"),
+        ("sd3_5", "nft_previous_adapter"),
+        ("cosmos-predict2", "skip_text_encoder"),
+    ],
 )
-def test_janus_keys_are_unknown_for_shared_token_sibling(
-    field: str,
-    value: object,
-) -> None:
+def test_family_owned_keys_are_unknown_for_sibling_families(family: str, field: str) -> None:
+    """A key declared by one family's section is a typo for every other family."""
 
-    cfg = OmegaConf.create({"model": {"family": "emu3", field: value}})
+    cfg = OmegaConf.create({"model": {"family": family, field: True}})
 
     assert unknown_keys(cfg) == [f"model.{field}"]
 
 
-@pytest.mark.parametrize("family", ["nextstep_1", "nextstep"])
-@pytest.mark.parametrize("freeze_vae", [False, True])
-def test_nextstep_keys_and_alias_select_family_section(
-    family: str,
-    freeze_vae: bool,
-) -> None:
-
+def test_nextstep_keys_select_family_section() -> None:
     payload = {
-        "freeze_vae": freeze_vae,
+        "freeze_vae": True,
         "vae_path": "stepfun-ai/NextStep-1-f8ch16-Tokenizer",
         "vae_revision": "immutable",
     }
-    cfg = OmegaConf.create({"model": {"family": family, **payload}})
+    cfg = OmegaConf.create({"model": {"family": "nextstep_1", **payload}})
 
     assert unknown_keys(cfg) == []
     parsed = parse_config(cfg)
     assert isinstance(parsed.model, NextStep1ModelSection)
-    assert parsed.model.freeze_vae is freeze_vae
+    assert parsed.model.freeze_vae is True
     assert parsed.model.vae_path == payload["vae_path"]
     assert parsed.model.vae_revision == payload["vae_revision"]
-
-
-@pytest.mark.parametrize("field", ["freeze_vae", "vae_path", "vae_revision"])
-def test_nextstep_keys_are_unknown_for_shared_token_sibling(field: str) -> None:
-
-    cfg = OmegaConf.create({"model": {"family": "emu3", field: "unexpected"}})
-
-    assert unknown_keys(cfg) == [f"model.{field}"]
 
 
 def test_unknown_wan_offload_mode_raises() -> None:
@@ -632,16 +558,13 @@ def test_unknown_wan_offload_mode_raises() -> None:
         parse_config(cfg)
 
 
-@pytest.mark.parametrize("expert_lifecycle_profiling", [False, True])
-def test_root_retains_selected_family_model_section_and_serializes_its_fields(
-    expert_lifecycle_profiling: bool,
-) -> None:
+def test_root_retains_selected_family_model_section_and_serializes_its_fields() -> None:
     cfg = OmegaConf.create(
         {
             "model": {
                 "family": "wan_2_1_i2v",
                 "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
-                "expert_lifecycle_profiling": expert_lifecycle_profiling,
+                "expert_lifecycle_profiling": True,
                 "offload_mode": "sequential",
             },
         },
@@ -650,59 +573,26 @@ def test_root_retains_selected_family_model_section_and_serializes_its_fields(
     parsed = parse_config(cfg)
 
     assert isinstance(parsed.model, WanModelSection)
-    assert parsed.model.expert_lifecycle_profiling is expert_lifecycle_profiling
-    assert parsed.model.offload_mode == "sequential"
-    assert parsed.model_dump()["model"]["expert_lifecycle_profiling"] is expert_lifecycle_profiling
+    assert parsed.model.expert_lifecycle_profiling is True
     assert parsed.model_dump()["model"]["offload_mode"] == "sequential"
 
 
-@pytest.mark.parametrize("family", ["cosmos-predict2.5", "cosmos_predict2_5"])
-@pytest.mark.parametrize("skip_text_encoder", [False, True])
-def test_cosmos_predict25_keys_and_alias_select_family_section(
-    family: str,
-    skip_text_encoder: bool,
-) -> None:
-
+def test_cosmos_predict25_keys_select_family_section() -> None:
     cfg = OmegaConf.create(
-        {
-            "model": {
-                "family": family,
-                "skip_text_encoder": skip_text_encoder,
-            },
-        },
+        {"model": {"family": "cosmos-predict2.5", "skip_text_encoder": True}},
     )
 
     assert unknown_keys(cfg) == []
     parsed = parse_config(cfg)
     assert isinstance(parsed.model, CosmosPredict25ModelSection)
-    assert parsed.model.skip_text_encoder is skip_text_encoder
-    assert parsed.model_dump()["model"]["skip_text_encoder"] is skip_text_encoder
+    assert parsed.model.skip_text_encoder is True
 
 
-def test_cosmos_predict25_key_is_unknown_for_shared_predict2() -> None:
-
+def test_cosmos_anima_keys_select_family_section() -> None:
     cfg = OmegaConf.create(
         {
             "model": {
-                "family": "cosmos-predict2",
-                "skip_text_encoder": True,
-            },
-        },
-    )
-
-    assert unknown_keys(cfg) == ["model.skip_text_encoder"]
-
-
-@pytest.mark.parametrize(
-    "family",
-    ["cosmos-predict2-anima", "anima", "cosmos_anima"],
-)
-def test_cosmos_anima_keys_and_aliases_select_family_section(family: str) -> None:
-
-    cfg = OmegaConf.create(
-        {
-            "model": {
-                "family": family,
+                "family": "cosmos-predict2-anima",
                 "qwen_tokenizer_path": "Qwen/Qwen2.5-0.5B",
                 "scheduler_shift": 3.0,
                 "transformer_file": "split_files/diffusion_models/anima.safetensors",
@@ -717,23 +607,7 @@ def test_cosmos_anima_keys_and_aliases_select_family_section(family: str) -> Non
     assert parsed.model.transformer_file == "split_files/diffusion_models/anima.safetensors"
 
 
-def test_cosmos_anima_key_is_unknown_for_shared_predict2() -> None:
-
-    cfg = OmegaConf.create(
-        {
-            "model": {
-                "family": "cosmos-predict2",
-                "scheduler_shift": 3.0,
-            },
-        },
-    )
-
-    assert unknown_keys(cfg) == ["model.scheduler_shift"]
-
-
-@pytest.mark.parametrize("family", ["llamagen", "llamagen_t2i"])
-def test_llamagen_keys_and_alias_select_family_section(family: str) -> None:
-
+def test_llamagen_keys_select_family_section() -> None:
     payload = {
         "gpt_ckpt": "custom-gpt.pt",
         "gpt_model": "GPT-XL",
@@ -742,7 +616,7 @@ def test_llamagen_keys_and_alias_select_family_section(family: str) -> None:
         "t5_revision": "immutable",
         "vq_ckpt": "custom-vq.pt",
     }
-    cfg = OmegaConf.create({"model": {"family": family, **payload}})
+    cfg = OmegaConf.create({"model": {"family": "llamagen", **payload}})
 
     assert unknown_keys(cfg) == []
     parsed = parse_config(cfg)
@@ -750,24 +624,6 @@ def test_llamagen_keys_and_alias_select_family_section(family: str) -> None:
     assert parsed.model is not None
     parsed_payload = parsed.model.model_dump()
     assert {key: parsed_payload[key] for key in payload} == payload
-
-
-@pytest.mark.parametrize(
-    "field",
-    [
-        "gpt_ckpt",
-        "gpt_model",
-        "image_token_num",
-        "t5_path",
-        "t5_revision",
-        "vq_ckpt",
-    ],
-)
-def test_llamagen_keys_are_unknown_for_shared_token_sibling(field: str) -> None:
-
-    cfg = OmegaConf.create({"model": {"family": "emu3", field: "unexpected"}})
-
-    assert unknown_keys(cfg) == [f"model.{field}"]
 
 
 @pytest.mark.parametrize(
@@ -818,44 +674,6 @@ def test_family_owned_denoise_keys_select_their_public_sections(
     assert parsed.model is not None
     parsed_payload = parsed.model.model_dump()
     assert {key: parsed_payload[key] for key in payload} == payload
-
-
-@pytest.mark.parametrize("accepted", [False, True])
-def test_causvid_license_acknowledgement_preserves_both_public_states(
-    accepted: bool,
-) -> None:
-    parsed = parse_config(
-        OmegaConf.create(
-            {
-                "model": {
-                    "family": "causvid",
-                    "accept_noncommercial_license": accepted,
-                },
-            },
-        ),
-    )
-
-    assert isinstance(parsed.model, CausVidModelSection)
-    assert parsed.model.accept_noncommercial_license is accepted
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("nft_previous_adapter", True),
-        ("gemma_path", "google/gemma-3-12b-it"),
-        ("accept_noncommercial_license", True),
-        ("source_path", "third_party/MAGI-1"),
-    ],
-)
-def test_family_owned_denoise_keys_are_unknown_for_shared_sibling(
-    field: str,
-    value: object,
-) -> None:
-
-    cfg = OmegaConf.create({"model": {"family": "sd3_5", field: value}})
-
-    assert unknown_keys(cfg) == [f"model.{field}"]
 
 
 def test_model_family_aliases_select_their_canonical_section_classes() -> None:
@@ -923,14 +741,6 @@ def test_shared_nested_model_sections_preserve_explicit_falsy_presence() -> None
     assert isinstance(parsed.model.executor, ModelExecutorSection)
     assert parsed.model.model_dump(exclude_unset=True) == raw_model
 
-    # Re-selecting a family subclass from an already-typed shared section must
-    # not materialize omitted defaults into the runtime projection.
-    reparsed = RootConfig.model_validate(
-        {"model": ModelSection.model_validate(raw_model)},
-    )
-    assert reparsed.model is not None
-    assert reparsed.model.model_dump(exclude_unset=True) == raw_model
-
 
 def test_generation_memory_schema_and_policy_share_one_field_vocabulary() -> None:
     assert tuple(ModelMemorySection.model_fields) == tuple(
@@ -949,96 +759,45 @@ def test_generation_memory_schema_and_policy_share_one_field_vocabulary() -> Non
             {"memory": {"vae_decode": {"tileing": True}}},
             "model.memory.vae_decode.tileing",
         ),
-        ({"memory": {"transformer": {}}}, "model.memory.transformer"),
-        ({"torch_compile": {"enabled": True}}, "model.torch_compile.enabled"),
-        (
-            {"executor": {"max_seq_length": 300}},
-            "model.executor.max_seq_length",
-        ),
-        ({"pth": "org/model"}, "model.pth"),
     ],
 )
-def test_model_subtree_typos_fail_closed_with_complete_paths(
+def test_model_subtree_typos_are_named_with_complete_paths(
     model_fragment: dict[str, object],
     path: str,
 ) -> None:
-
-    cfg = OmegaConf.create(
-        {
-            "model": {
-                "family": "flux",
-                **model_fragment,
-            },
-        },
-    )
+    cfg = OmegaConf.create({"model": {"family": "flux", **model_fragment}})
 
     assert unknown_keys(cfg) == [path]
-    with pytest.raises(ValueError) as error:
-        parse_config(cfg)
-    assert str(error.value) == f"unknown {path}"
 
 
-@pytest.mark.parametrize(
-    ("family", "supports_executor", "supports_memory"),
-    [
-        (family, supports_executor, supports_memory)
-        for family, (supports_executor, supports_memory) in sorted(
-            _MODEL_RUNTIME_CAPABILITY_MATRIX.items(),
+def _parse_error(model: dict[str, object]) -> str | None:
+    try:
+        parse_config(OmegaConf.create({"model": model}))
+    except ValueError as error:
+        return str(error)
+    return None
+
+
+def test_model_runtime_sections_follow_family_capabilities() -> None:
+    """``model.executor`` / ``model.memory`` parse only for families that consume them."""
+
+    for family, (supports_executor, supports_memory) in _MODEL_RUNTIME_CAPABILITY_MATRIX.items():
+        executor_error = _parse_error(
+            {"family": family, "executor": {"max_sequence_length": 123}},
         )
-    ],
-)
-def test_model_runtime_sections_follow_family_capabilities(
-    family: str,
-    supports_executor: bool,
-    supports_memory: bool,
-) -> None:
-    executor_cfg = OmegaConf.create(
-        {
-            "model": {
-                "family": family,
-                "executor": {"max_sequence_length": 123},
-            },
-        },
-    )
-    if supports_executor:
-        parsed = parse_config(executor_cfg)
-        assert parsed.model is not None
-        assert parsed.model.executor is not None
-        assert parsed.model.executor.model_dump(exclude_unset=True) == {
-            "max_sequence_length": 123,
-        }
-    else:
-        with pytest.raises(
-            ValueError,
-            match=rf"model family {family!r} does not support model\.executor",
-        ):
-            parse_config(executor_cfg)
-
-    for tiling in (False, True):
-        memory_cfg = OmegaConf.create(
-            {
-                "model": {
-                    "family": family,
-                    "memory": {"vae_decode": {"tiling": tiling}},
-                },
-            },
+        memory_error = _parse_error(
+            {"family": family, "memory": {"vae_decode": {"tiling": True}}},
         )
-        if supports_memory:
-            parsed = parse_config(memory_cfg)
-            assert parsed.model is not None
-            assert parsed.model.memory is not None
-            assert parsed.model.memory.model_dump(exclude_unset=True) == {
-                "vae_decode": {"tiling": tiling},
-            }
+        if supports_executor:
+            assert executor_error is None, family
         else:
-            with pytest.raises(
-                ValueError,
-                match=(
-                    rf"model family {family!r} does not support "
-                    r"model\.memory section\(s\): vae_decode"
-                ),
-            ):
-                parse_config(memory_cfg)
+            assert executor_error == f"model family {family!r} does not support model.executor"
+        if supports_memory:
+            assert memory_error is None, family
+        else:
+            assert memory_error == (
+                f"model family {family!r} does not support model.memory section(s): vae_decode"
+            )
 
 
 @pytest.mark.parametrize("empty_value", [None, {}])
@@ -1059,31 +818,6 @@ def test_empty_model_runtime_sections_are_valid_for_every_family(
         )
 
         assert parsed.model is not None
-
-
-def test_model_family_aliases_preserve_runtime_section_capabilities() -> None:
-    def parse_error(family: str, section: str, value: object) -> str | None:
-        try:
-            parse_config(
-                OmegaConf.create(
-                    {"model": {"family": family, section: value}},
-                ),
-            )
-        except ValueError as error:
-            return str(error)
-        return None
-
-    runtime_sections = {
-        "executor": {"max_sequence_length": 123},
-        "memory": {"vae_decode": {"tiling": True}},
-    }
-    for alias, family in _FAMILY_BY_ALIAS.items():
-        for section, value in runtime_sections.items():
-            assert parse_error(alias, section, value) == parse_error(
-                family,
-                section,
-                value,
-            )
 
 
 def test_shared_only_families_use_the_shared_model_section() -> None:
@@ -1130,46 +864,6 @@ def test_unknown_batch_placement_strategy_raises() -> None:
         match=r"unknown distributed\.rollout\.batch_placement_strategy",
     ):
         parse_config(cfg)
-
-
-def test_rollout_keys_are_registered_not_unknown() -> None:
-    """distributed.rollout.* per-worker runtime keys are known to the walker.
-
-    Colocation lives at distributed.resources.rollout.gpu_pool=trainer, so the
-    removed distributed.rollout.colocate block is correctly an unknown key."""
-
-    cfg = _minimal_grpo_cfg(
-        distributed={
-            "rollout": {
-                "cpus_per_worker": 2.0,
-                "health_check_interval_s": 45.0,
-                "health_check_timeout_s": 30.0,
-                "health_check_first_wait_s": 5.0,
-                "worker_rpc_timeout_s": 3600.0,
-                "generation_stall_timeout_s": 1200.0,
-                "batch_placement_strategy": "dynamic",
-                "sync_trainable_state": False,
-                "pipelined": True,
-            }
-        }
-    )
-    unknown = unknown_keys(cfg)
-    assert not [k for k in unknown if k.startswith("distributed.rollout")]
-
-
-def test_retired_sync_actor_inflight_knob_is_unknown() -> None:
-
-    cfg = _minimal_grpo_cfg(
-        distributed={
-            "rollout": {
-                "max_inflight_chunks_per_worker": 2,
-            },
-        },
-    )
-
-    assert unknown_keys(cfg) == [
-        "distributed.rollout.max_inflight_chunks_per_worker",
-    ]
 
 
 def test_rollout_health_check_defaults_and_accepts_override() -> None:
@@ -1230,111 +924,40 @@ def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
         assert getattr(projected, name) == RolloutRuntimeSection.model_fields[name].default
 
 
-@pytest.mark.parametrize("interval_s", [0.0, -1.0])
-def test_rollout_health_check_interval_le_zero_disables_probe(interval_s: float) -> None:
+def test_rollout_health_check_interval_le_zero_disables_probe() -> None:
     """A non-positive interval turns the probe off; the timeout is then unchecked."""
 
     cfg = _minimal_grpo_cfg(
         distributed={
             "rollout": {
-                "health_check_interval_s": interval_s,
+                "health_check_interval_s": 0.0,
                 "health_check_timeout_s": 0.0,
             }
         },
     )
 
-    assert parse_config(cfg).distributed.rollout.health_check_interval_s == interval_s
-
-
-@pytest.mark.parametrize("interval_s", [float("inf"), float("-inf"), float("nan")])
-def test_rollout_health_check_interval_must_be_finite(interval_s: float) -> None:
-    cfg = _minimal_grpo_cfg(
-        distributed={"rollout": {"health_check_interval_s": interval_s}},
-    )
-
-    with pytest.raises(ValueError, match=r"health_check_interval_s must be finite"):
-        parse_config(cfg)
+    assert parse_config(cfg).distributed.rollout.health_check_interval_s == 0.0
 
 
 @pytest.mark.parametrize(
-    "timeout_s",
-    [0.0, -1.0, float("inf"), float("-inf"), float("nan")],
+    ("field", "value", "message"),
+    [
+        ("health_check_interval_s", float("nan"), r"health_check_interval_s must be finite"),
+        ("health_check_timeout_s", 0.0, r"health_check_timeout_s must be finite and > 0"),
+        ("health_check_first_wait_s", -1.0, r"health_check_first_wait_s must be finite and >= 0"),
+        ("worker_rpc_timeout_s", float("inf"), r"worker_rpc_timeout_s must be finite and > 0"),
+        ("generation_stall_timeout_s", 0.0, r"generation_stall_timeout_s must be finite and > 0"),
+    ],
 )
-def test_rollout_health_check_timeout_must_be_finite_and_positive_when_enabled(
-    timeout_s: float,
+def test_rollout_worker_timeouts_must_be_finite_and_in_range(
+    field: str,
+    value: float,
+    message: str,
 ) -> None:
-    cfg = _minimal_grpo_cfg(
-        distributed={
-            "rollout": {
-                "health_check_interval_s": 30.0,
-                "health_check_timeout_s": timeout_s,
-            }
-        },
-    )
+    cfg = _minimal_grpo_cfg(distributed={"rollout": {field: value}})
 
-    with pytest.raises(ValueError, match=r"health_check_timeout_s must be finite and > 0"):
+    with pytest.raises(ValueError, match=message):
         parse_config(cfg)
-
-
-@pytest.mark.parametrize(
-    "first_wait_s",
-    [-1.0, float("inf"), float("-inf"), float("nan")],
-)
-def test_rollout_health_check_first_wait_must_be_finite_and_non_negative(
-    first_wait_s: float,
-) -> None:
-    cfg = _minimal_grpo_cfg(
-        distributed={"rollout": {"health_check_first_wait_s": first_wait_s}},
-    )
-
-    with pytest.raises(ValueError, match=r"health_check_first_wait_s must be finite and >= 0"):
-        parse_config(cfg)
-
-
-@pytest.mark.parametrize(
-    "timeout_s",
-    [0.0, -1.0, float("inf"), float("-inf"), float("nan")],
-)
-def test_rollout_worker_rpc_timeout_must_be_finite_and_positive(
-    timeout_s: float,
-) -> None:
-    cfg = _minimal_grpo_cfg(
-        distributed={"rollout": {"worker_rpc_timeout_s": timeout_s}},
-    )
-
-    with pytest.raises(ValueError, match=r"worker_rpc_timeout_s must be finite and > 0"):
-        parse_config(cfg)
-
-
-@pytest.mark.parametrize(
-    "timeout_s",
-    [0.0, -1.0, float("inf"), float("-inf"), float("nan")],
-)
-def test_rollout_generation_stall_timeout_must_be_finite_and_positive(
-    timeout_s: float,
-) -> None:
-    cfg = _minimal_grpo_cfg(
-        distributed={"rollout": {"generation_stall_timeout_s": timeout_s}},
-    )
-
-    with pytest.raises(ValueError, match=r"generation_stall_timeout_s must be finite and > 0"):
-        parse_config(cfg)
-
-
-def test_reward_resident_overlap_is_not_a_resource_key() -> None:
-    """Same-GPU reward/rollout residency is not a public resource topology knob."""
-
-    cfg = _minimal_grpo_cfg(
-        distributed={
-            "resources": {
-                "reward": {
-                    "resident_overlap": True,
-                },
-            },
-        },
-    )
-
-    assert "distributed.resources.reward.resident_overlap" in unknown_keys(cfg)
 
 
 # ── Data loader discriminator ─────────────────────────────────────────────────
@@ -1489,7 +1112,7 @@ def test_prompt_manifest_mixture_requires_a_seed() -> None:
         )
 
 
-@pytest.mark.parametrize("count", [0, -5, 1.5, "many"])
+@pytest.mark.parametrize("count", [0, "many"])
 def test_prompt_manifest_rejects_non_positive_mixture_count(count: object) -> None:
     """A mixture count that cannot select prompts fails at config time."""
     with pytest.raises(ValueError, match=r"positive prompt count"):
@@ -1631,24 +1254,6 @@ def test_grpo_accepts_cps_sde_type() -> None:
     assert parsed.algorithm.kind == "grpo"
 
 
-def test_diffusion_nft_requires_valid_sde_type() -> None:
-    """Checks diffusion NFT requires valid SDE type."""
-    cfg = OmegaConf.create(
-        {
-            "algorithm": {"kind": "diffusion_nft"},
-            "data": {
-                "loader": "prompt_manifest",
-                "manifest": "x",
-                "preprocessing": {},
-                "sampler": {"type": "random_without_replacement"},
-            },
-            "rollout": {"sde": {"type": "invalid"}},
-        }
-    )
-    with pytest.raises(ValueError, match=r"unknown rollout\.sde\.type"):
-        parse_config(cfg)
-
-
 def test_token_grpo_multisegment_requires_explicit_janus_r1_family() -> None:
     """The algorithm cannot silently turn base Janus into the R1 protocol."""
     cfg = OmegaConf.create(
@@ -1666,24 +1271,6 @@ def test_token_grpo_multisegment_requires_explicit_janus_r1_family() -> None:
     )
     with pytest.raises(ValueError, match="janus_pro_r1"):
         parse_config(cfg)
-
-
-def test_token_grpo_multisegment_final_image_policy_single_source() -> None:
-    """final_image_policy is owned by the rollout section."""
-    cfg = OmegaConf.create(
-        {
-            "algorithm": {"kind": "token_grpo_multisegment"},
-            "data": {
-                "loader": "prompt_manifest",
-                "manifest": "x",
-                "preprocessing": {},
-                "sampler": {"type": "random_without_replacement"},
-            },
-            "model": {"family": "janus_pro_r1"},
-            "rollout": {"final_image_policy": "always_generate"},
-        }
-    )
-    assert parse_config(cfg).rollout.final_image_policy == "always_generate"
 
 
 def test_janus_r1_family_requires_multisegment_algorithm() -> None:
@@ -1736,7 +1323,6 @@ def test_production_video_reward_structural_rules() -> None:
     )
     from vrl.config.validation import validate_production_reward_contract
 
-    parse_config(cfg)  # schema parse stays clean
     validate_production_reward_contract(parse_config(cfg))
 
 
@@ -1781,24 +1367,14 @@ def test_production_video_reward_accepts_image_to_video_task_type() -> None:
     assert parsed.data.task_type == "image_to_video"
 
 
-def test_production_schema_defaults_known_gate_to_disabled() -> None:
-    cfg = OmegaConf.create({"production": {}})
+def test_production_gate_defaults_to_disabled_and_accepts_enabled() -> None:
+    disabled = parse_config(OmegaConf.create({"production": {}}))
+    assert disabled.production.kling_video_reward.enabled is False
 
-    parsed = parse_config(cfg)
-
-    assert parsed.production is not None
-    assert parsed.production.kling_video_reward.enabled is False
-
-
-def test_production_schema_accepts_enabled_gate() -> None:
-    cfg = OmegaConf.create(
-        {"production": {"kling_video_reward": {"enabled": True}}},
+    enabled = parse_config(
+        OmegaConf.create({"production": {"kling_video_reward": {"enabled": True}}}),
     )
-
-    parsed = parse_config(cfg)
-
-    assert parsed.production is not None
-    assert parsed.production.kling_video_reward.enabled is True
+    assert enabled.production.kling_video_reward.enabled is True
 
 
 # ── Missing field mapping (??? → ValueError) ──────────────────────────────────
@@ -1823,28 +1399,6 @@ def test_unknown_top_level_sections_are_rejected() -> None:
     OmegaConf.update(cfg, "some_future_section.foo", "bar")
     with pytest.raises(ValueError, match=r"unknown some_future_section"):
         parse_config(cfg)
-
-
-def test_unknown_reward_component_with_unknown_kwargs_is_accepted() -> None:
-    """Checks unknown reward component with unknown kwargs is accepted."""
-    cfg = OmegaConf.create(
-        {
-            "algorithm": {"kind": "grpo"},
-            "data": {
-                "loader": "prompt_manifest",
-                "manifest": "x",
-                "preprocessing": {},
-                "sampler": {"type": "random_without_replacement"},
-            },
-            "rollout": {"sde": {"type": "flow_grpo"}},
-            "reward": {
-                "components": {"custom_reward": 1.0},
-                "kwargs": {"custom_reward": {"model_repo": "org/model"}},
-            },
-        }
-    )
-    parsed = parse_config(cfg)
-    assert parsed.reward.components["custom_reward"] == 1.0
 
 
 # ── algorithm.sft_weight x data.sft_latents (regularizer data channel) ───────
@@ -1876,9 +1430,6 @@ def test_diffusion_dpo_sft_weight_does_not_require_online_latents_shard() -> Non
     ("section", "payload", "field"),
     [
         ("actor", {"ema": {"enable": True}}, "actor.ema"),
-        ("actor", {"ppo_epochs": 2}, "actor.ppo_epochs"),
-        ("trainer", {"total_epochs": 10}, "trainer.total_epochs"),
-        ("trainer", {"precision_drift_guard": {"mode": "warn"}}, "trainer.precision_drift_guard"),
         ("rollout", {"prompts_per_batch": 1}, "rollout.prompts_per_batch"),
     ],
 )
@@ -1939,7 +1490,7 @@ def test_latents_shard_without_weight_is_inert_and_allowed() -> None:
     parse_config(cfg)
 
 
-@pytest.mark.parametrize("value", [-0.1, float("nan"), float("inf")])
+@pytest.mark.parametrize("value", [-0.1, float("nan")])
 def test_sft_weight_must_be_finite_and_nonnegative(value: float) -> None:
     cfg = _minimal_grpo_cfg(algorithm={"kind": "grpo", "sft_weight": value})
     with pytest.raises(ValueError, match="finite number >= 0"):

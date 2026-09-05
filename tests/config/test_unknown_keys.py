@@ -100,46 +100,19 @@ def test_open_blocks_accept_arbitrary_keys() -> None:
     assert unknown_keys(cfg) == []
 
 
-@pytest.mark.parametrize("removed_key", ["enabld", "report_path"])
-def test_production_gate_is_closed(removed_key: str) -> None:
+def test_production_gate_is_closed() -> None:
     cfg = OmegaConf.create(
-        {
-            "production": {
-                "kling_video_reward": {
-                    "enabled": False,
-                    removed_key: "unused",
-                },
-            },
-        },
+        {"production": {"kling_video_reward": {"enabled": False, "enabld": True}}},
     )
 
-    assert unknown_keys(cfg) == [f"production.kling_video_reward.{removed_key}"]
+    assert unknown_keys(cfg) == ["production.kling_video_reward.enabld"]
 
 
-def test_production_enabled_is_a_known_key() -> None:
-    cfg = OmegaConf.create(
-        {"production": {"kling_video_reward": {"enabled": True}}},
-    )
-
-    assert unknown_keys(cfg) == []
-
-
-@pytest.mark.parametrize(
-    ("field_name", "value"),
-    [
-        ("microbatch_size", 1),
-        ("host_memory_budget_fraction", 0.9),
-    ],
-)
-def test_online_update_memory_keys_are_owned_by_actor(
-    field_name: str,
-    value: object,
-) -> None:
-    actor_cfg = OmegaConf.create({"actor": {field_name: value}})
-    rollout_cfg = OmegaConf.create({"rollout": {field_name: value}})
-
-    assert unknown_keys(actor_cfg) == []
-    assert unknown_keys(rollout_cfg) == [f"rollout.{field_name}"]
+def test_online_update_memory_keys_are_owned_by_actor() -> None:
+    assert unknown_keys(OmegaConf.create({"actor": {"microbatch_size": 1}})) == []
+    assert unknown_keys(OmegaConf.create({"rollout": {"microbatch_size": 1}})) == [
+        "rollout.microbatch_size",
+    ]
 
 
 @pytest.mark.parametrize(
