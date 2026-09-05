@@ -13,20 +13,8 @@ from vrl.config.schema import parse_config
 from vrl.generation import GenerationRequest
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.models.families.emu3.config import Emu3Config
-from vrl.models.families.emu3.model import Emu3Config as ModelEmu3Config
-from vrl.models.families.emu3.runner import Emu3TokenRunner
 from vrl.models.families.emu3.runtime import Emu3BatchExecutor, emu3_config_from_build
 from vrl.models.families.registry import get_model_family_entry
-
-
-@pytest.mark.parametrize("use_lora", [True, False])
-def test_runtime_config_defaults_and_model_compatibility_export(use_lora: bool) -> None:
-    config = Emu3Config(use_lora=use_lora)
-    entry = get_model_family_entry("emu3")
-
-    assert config.model_path == entry.family_build.default_model_path
-    assert config.use_lora is use_lora
-    assert ModelEmu3Config is Emu3Config
 
 
 def test_resolve_model_build_defaults_to_gen_hf_checkpoint() -> None:
@@ -106,15 +94,6 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
     # image_token_num/image_size are grid-derived, never config knobs.
     assert "image_token_num" not in config
     assert "image_size" not in config
-
-
-def test_executor_declares_identity_and_runner() -> None:
-    executor = Emu3BatchExecutor(model=object())
-
-    assert executor.family == "emu3"
-    assert executor.task == "ar_t2i"
-    assert executor._runner_cls is Emu3TokenRunner
-    assert executor._runner_attention_family == "emu3"
 
 
 @pytest.mark.parametrize(

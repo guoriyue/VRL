@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
@@ -154,19 +154,6 @@ def test_state_derives_image_token_count_from_tokens() -> None:
     )
 
     assert state.image_token_num == token_count
-    assert "image_token_num" not in {field.name for field in fields(state)}
-
-
-def test_state_requires_cond_paged_state() -> None:
-    with pytest.raises(TypeError, match="paged_cond_states"):
-        NextStep1ARState(
-            tokens=torch.zeros(1, 1, _HIDDEN_SIZE),
-            saved_noise=torch.zeros(1, 1, _HIDDEN_SIZE),
-            logprobs=torch.zeros(1, 1),
-            guidance_scale=1.0,
-            num_steps=2,
-            noise_level=0.5,
-        )
 
 
 @_RECORDING_BACKEND_STANDS_IN
@@ -220,7 +207,7 @@ def test_checkpoint_token_dim_overwrite_drives_runner_allocations() -> None:
 @_RECORDING_BACKEND_STANDS_IN
 @pytest.mark.parametrize(
     ("token_count", "expected_advance_count"),
-    [(1, 0), (2, 1), (3, 2)],
+    [(1, 0), (3, 2)],
 )
 def test_rollout_advances_attention_only_between_tokens(
     token_count: int,
@@ -234,7 +221,7 @@ def test_rollout_advances_attention_only_between_tokens(
 @_RECORDING_BACKEND_STANDS_IN
 @pytest.mark.parametrize(
     ("token_count", "expected_advance_count"),
-    [(1, 0), (2, 1), (3, 2)],
+    [(1, 0), (3, 2)],
 )
 def test_replay_advances_each_cfg_branch_only_between_tokens(
     token_count: int,

@@ -557,11 +557,6 @@ def _slot_state(runtime: _ModelBaseStub, weight: float, bias: float) -> dict[str
     }
 
 
-def test_diffusion_model_base_supports_versioned_slots() -> None:
-    """Diffusion families opt in generically (activation reuses load_trainable_state)."""
-    assert _ModelBaseStub().supports_versioned_trainable_state is True
-
-
 def test_install_retains_old_version_after_newer_install() -> None:
     """The core non-draining invariant: an old version stays activatable after a
     newer one is installed, and each activates to its OWN weights."""

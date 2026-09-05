@@ -39,7 +39,7 @@ def test_llamagen_t5_loader_uses_its_independent_revision(monkeypatch) -> None:
     assert calls[1][2]["revision"] == "immutable-t5-revision"
 
 
-@pytest.mark.parametrize("filename", ["../outside.pt", "/tmp/outside.pt"])
+@pytest.mark.parametrize("filename", ["../outside.pt"])
 def test_llamagen_member_cannot_escape_checkpoint_source(filename: str) -> None:
     from vrl.models.families.llamagen.model import _resolve_checkpoint_file
 

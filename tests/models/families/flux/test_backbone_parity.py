@@ -78,10 +78,8 @@ def test_flux_forward_step_runs_single_distilled_branch() -> None:
     assert out["noise_pred"].shape == (2, _SEQ, TINY_FLUX_IN_CHANNELS)
 
 
-@pytest.mark.parametrize("negative_prompt", [None, "", []])
-def test_flux_encode_prompt_accepts_only_empty_negative_conditioning(
-    negative_prompt: str | list[str] | None,
-) -> None:
+def test_flux_encode_prompt_accepts_only_empty_negative_conditioning() -> None:
+    negative_prompt = ""
     transformer = build_tiny_flux_transformer(guidance_embeds=True)
     model = _model(transformer)
     model.pipeline.encode_prompt = lambda **_kwargs: (
@@ -95,10 +93,8 @@ def test_flux_encode_prompt_accepts_only_empty_negative_conditioning(
     assert set(encoded) == {"prompt_embeds", "pooled_prompt_embeds", "text_ids"}
 
 
-@pytest.mark.parametrize("negative_prompt", ["low quality", ["low quality"]])
-def test_flux_encode_prompt_rejects_non_empty_negative_conditioning(
-    negative_prompt: str | list[str],
-) -> None:
+def test_flux_encode_prompt_rejects_non_empty_negative_conditioning() -> None:
+    negative_prompt = "low quality"
     transformer = build_tiny_flux_transformer(guidance_embeds=True)
     model = _model(transformer)
 

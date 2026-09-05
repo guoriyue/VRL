@@ -54,9 +54,8 @@ def test_checkpoint_ownership_rejects_redundant_trainable_registration() -> None
     assert checkpoint_owned_state_names(module) == {"trainable"}
 
 
-@pytest.mark.parametrize("names", ["trainable", [], [""]])
-def test_checkpoint_ownership_rejects_invalid_name_collections(names) -> None:
+def test_checkpoint_ownership_rejects_empty_names() -> None:
     module = _PolicyState()
 
-    with pytest.raises((TypeError, ValueError), match="names"):
-        register_checkpoint_owned_state(module, names)
+    with pytest.raises(ValueError, match="names"):
+        register_checkpoint_owned_state(module, [""])

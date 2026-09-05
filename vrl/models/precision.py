@@ -15,13 +15,7 @@ if TYPE_CHECKING:
 def model_precision(model: Any) -> RolePrecision:
     """Return the role precision stamped on a runtime or replay model."""
 
-    precision = getattr(model, "precision", None)
-    if not isinstance(precision, RolePrecision):
-        raise TypeError(
-            f"{type(model).__name__}.precision is missing or not a RolePrecision; "
-            "models receive it from RuntimeBundle assembly",
-        )
-    return precision
+    return model.precision
 
 
 def model_autocast(

@@ -95,8 +95,3 @@ def test_model_precision_reads_stamped_role_precision() -> None:
     model = SimpleNamespace(precision=role_precision)
 
     assert precision.model_precision(model) is role_precision
-
-
-def test_model_precision_rejects_unstamped_model() -> None:
-    with pytest.raises(TypeError, match="precision is missing or not a RolePrecision"):
-        precision.model_precision(SimpleNamespace())

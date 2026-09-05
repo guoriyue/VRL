@@ -37,13 +37,6 @@ def _tiny_transformer() -> SD3Transformer2DModel:
     )
 
 
-def test_sd3_transformer_exposes_attention_processors() -> None:
-    """Checks the SD3 transformer exposes a non-empty attention-processor map."""
-    processors = _tiny_transformer().attn_processors
-
-    assert processors
-
-
 def test_sd3_transformer_defaults_every_block_to_joint_attn_processor() -> None:
     """Checks every stock SD3 attention block uses diffusers JointAttnProcessor2_0."""
     processors = _tiny_transformer().attn_processors

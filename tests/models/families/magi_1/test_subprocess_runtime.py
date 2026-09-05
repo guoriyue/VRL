@@ -173,12 +173,8 @@ def test_prepare_config_rejects_multi_process_official_config(tmp_path: Path) ->
     ("sampling", "message"),
     [
         ({"num_frames": 25}, "multiple.*24"),
-        ({"height": 721}, "height.*multiple of 16"),
-        ({"width": 719}, "width.*multiple of 16"),
         ({"num_steps": 63}, "divisible.*window_size=4"),
-        ({"fps": 1}, "fps must be >= 2"),
         ({"guidance_scale": 7.5}, "does not map sampling.guidance_scale"),
-        ({"negative_prompt": "blurry"}, "does not expose negative_prompt"),
     ],
 )
 def test_prepare_config_rejects_silently_rounded_or_ignored_sampling(

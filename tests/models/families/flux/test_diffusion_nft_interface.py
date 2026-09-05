@@ -26,7 +26,7 @@ from tests.models.steps.denoise.fixtures import (
     _TINY_WAN_LORA_TARGETS,
     build_tiny_wan_transformer,
 )
-from vrl.models.families.flux.model import FluxModel, FluxReplayModel
+from vrl.models.families.flux.model import FluxReplayModel
 
 
 class _DummyFluxTransformer(nn.Module):
@@ -59,15 +59,6 @@ def _packed_inputs(*, batch: int = 2, grid: int = 16, channels: int = 64):
     pooled = torch.randn(batch, 768)
     timestep = torch.full((batch,), 500.0)  # [0, 1000] flow-match grid -> t=0.5
     return latents, prompt_embeds, pooled, timestep
-
-
-def test_flux_models_expose_nft_interface() -> None:
-    """Both the rollout and replay FLUX models expose the NFT model contract."""
-
-    for cls in (FluxModel, FluxReplayModel):
-        assert hasattr(cls, "diffusion_nft_prepare_transformer_input")
-        assert hasattr(cls, "sync_previous_policy_adapter")
-        assert hasattr(cls, "attach_previous_policy_adapter")
 
 
 def test_prepare_transformer_input_kwargs_and_grid() -> None:

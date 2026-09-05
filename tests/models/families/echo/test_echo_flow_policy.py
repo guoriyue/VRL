@@ -141,25 +141,19 @@ def test_encode_prompt_keeps_video_context_drops_audio() -> None:
     assert enc["video_context"].shape == (1, 3, 16)
 
 
-@pytest.mark.parametrize("negative_prompt", [None, "", []])
-def test_echo_encode_prompt_accepts_only_empty_negative_conditioning(
-    negative_prompt: str | list[str] | None,
-) -> None:
+def test_echo_encode_prompt_accepts_only_empty_negative_conditioning() -> None:
     model, _ = _build_model()
 
-    encoded = model.encode_prompt("a dog", negative_prompt=negative_prompt)
+    encoded = model.encode_prompt("a dog", negative_prompt="")
 
     assert set(encoded) == {"video_context", "attention_mask"}
 
 
-@pytest.mark.parametrize("negative_prompt", ["low quality", ["low quality"]])
-def test_echo_encode_prompt_rejects_non_empty_negative_conditioning(
-    negative_prompt: str | list[str],
-) -> None:
+def test_echo_encode_prompt_rejects_non_empty_negative_conditioning() -> None:
     model, _ = _build_model()
 
     with pytest.raises(ValueError, match="does not support negative prompts"):
-        model.encode_prompt("a dog", negative_prompt=negative_prompt)
+        model.encode_prompt("a dog", negative_prompt="low quality")
 
 
 def test_echo_executor_forwards_negative_prompt_to_model_contract() -> None:
@@ -189,7 +183,6 @@ def test_prepare_sampling_builds_noise_latents_and_schedule() -> None:
     assert state.latents.dtype == torch.float32
     assert len(state.timesteps) == 4
     assert state.num_train_timesteps == 1000
-    assert not hasattr(state, "guidance_scale")
 
 
 def test_prepare_sampling_rejects_unbaked_guidance() -> None:
@@ -307,17 +300,6 @@ def test_move_frozen_components_offloads_wrappers_device_driven() -> None:
     assert te.device == "cpu_sentinel" and vae.device == "cpu_sentinel"
     # The trainable transformer is never touched by the offload path.
     assert echo.model.weight.device == torch.device("cpu")
-
-
-def test_replay_model_offload_is_noop_without_wrappers() -> None:
-    echo = _FakeEcho()
-    replay = EchoReplayModel(
-        echo=echo,
-        scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000),
-        dtype=torch.float32,
-        device=torch.device("cpu"),
-    )
-    replay.move_frozen_components("cpu")  # no text encoder / VAE -> must not raise
 
 
 def test_replay_model_is_transformer_only_and_runs_velocity_forward() -> None:

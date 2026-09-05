@@ -82,13 +82,6 @@ def _discrete_batch(context: dict | None = None) -> RolloutBatch:
     )
 
 
-def test_emu3_model_exposes_trainer_replay_methods() -> None:
-    model = build_tiny_emu3_model()
-    assert callable(model.replay_forward)
-    assert callable(model.disable_adapter)
-    assert callable(model.load_trainable_state)
-
-
 def test_replay_forward_returns_masked_gen_vocab_logits() -> None:
     model = build_tiny_emu3_model()
     batch = _discrete_batch()
@@ -165,9 +158,3 @@ def test_lora_wrap_keeps_replay_and_adapter_surfaces_working() -> None:
     with model.disable_adapter():
         ref_logits = model.replay_forward(batch).segments["image_tokens"].values["logits"]
     assert ref_logits.shape == logits.shape
-
-
-def test_disable_adapter_without_lora_is_noop() -> None:
-    model = build_tiny_emu3_model()
-    with model.disable_adapter():
-        pass

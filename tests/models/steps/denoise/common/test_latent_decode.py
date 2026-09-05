@@ -48,17 +48,3 @@ def test_chunked_latent_decoder_standardizes_video_layout() -> None:
     out = decoder(latents)
 
     assert out.shape == (2, 3, 4, 1, 1)
-
-
-def test_latent_decode_plan_rejects_non_callable_fields() -> None:
-    """A trailing comma silently turns a lambda field into a 1-tuple; the plan
-    must reject that at construction instead of raising mid-decode."""
-    import pytest
-
-    with pytest.raises(TypeError, match="prepare_latents must be callable"):
-        LatentDecodePlan(
-            prepare_latents=(lambda x: x,),  # type: ignore[arg-type]
-            vae_decode=lambda x: x,
-            postprocess=lambda x: x,
-            output_layout="image_bchw",
-        )

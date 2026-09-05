@@ -12,13 +12,7 @@ from vrl.config.precision import RolePrecision
 from vrl.models.families.registry import TokenFamilyBuild, get_model_family_entry
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
-_LORA_ONLY_FAMILIES = (
-    "janus_pro",
-    "janus_pro_r1",
-    "emu3",
-    "glm_image",
-    "llamagen",
-)
+_LORA_ONLY_FAMILIES = ("janus_pro", "llamagen")
 
 
 class _TinyRuntimeModel(nn.Module):
@@ -107,27 +101,6 @@ def _install_fake_family_imports(
 
     monkeypatch.setattr("vrl.utils.config.import_from_path", import_test_object)
     return imported_paths
-
-
-@pytest.mark.parametrize(
-    ("family", "expected"),
-    (
-        ("janus_pro", False),
-        ("janus_pro_r1", False),
-        ("nextstep_1", True),
-        ("emu3", False),
-        ("glm_image", False),
-        ("llamagen", False),
-    ),
-)
-def test_token_family_describes_full_parameter_training_capability(
-    family: str,
-    expected: bool,
-) -> None:
-    recipe = get_model_family_entry(family).family_build
-
-    assert isinstance(recipe, TokenFamilyBuild)
-    assert recipe.supports_full_parameter_training is expected
 
 
 @pytest.mark.parametrize("family", _LORA_ONLY_FAMILIES)

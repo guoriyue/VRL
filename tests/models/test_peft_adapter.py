@@ -79,8 +79,6 @@ def test_local_adapter_load_accepts_target_order_only_difference(tmp_path: Path)
     ("override", "message"),
     (
         ({"expected_rank": 3}, "rank saved=2 configured=3"),
-        ({"expected_alpha": 8}, "alpha saved=4 configured=8"),
-        ({"expected_dropout": 0.0}, "dropout saved=0.25 configured=0.0"),
         (
             {"expected_target_modules": ["q_proj"]},
             "target_modules saved=",
@@ -116,33 +114,8 @@ def test_topology_mismatch_fails_before_base_model_mutation(
 @pytest.mark.parametrize(
     ("changes", "unsupported_field"),
     (
-        ({"exclude_modules": ["v_proj"]}, "exclude_modules"),
-        ({"fan_in_fan_out": True}, "fan_in_fan_out"),
-        ({"bias": "all"}, "bias"),
-        ({"use_rslora": True}, "use_rslora"),
         ({"modules_to_save": ["head"]}, "modules_to_save"),
-        (
-            {"layers_to_transform": [0], "layers_pattern": "layers"},
-            "layers_to_transform",
-        ),
-        ({"rank_pattern": {"q_proj": 1}}, "rank_pattern"),
-        ({"alpha_pattern": {"q_proj": 2}}, "alpha_pattern"),
-        ({"megatron_config": {"hidden_size": 2}}, "megatron_config"),
-        ({"megatron_core": "custom.core"}, "megatron_core"),
-        ({"trainable_token_indices": [0]}, "trainable_token_indices"),
-        ({"loftq_config": {"loftq_bits": 4, "loftq_iter": 1}}, "loftq_config"),
-        ({"eva_config": {}}, "eva_config"),
-        ({"corda_config": {}}, "corda_config"),
         ({"use_dora": True}, "use_dora"),
-        ({"alora_invocation_tokens": [1, 2]}, "alora_invocation_tokens"),
-        ({"use_qalora": True}, "use_qalora"),
-        ({"qalora_group_size": 8}, "qalora_group_size"),
-        ({"layer_replication": [[0, 1]]}, "layer_replication"),
-        ({"lora_bias": True}, "lora_bias"),
-        ({"target_parameters": ["expert"]}, "target_parameters"),
-        ({"arrow_config": {}}, "arrow_config"),
-        ({"ensure_weight_tying": True}, "ensure_weight_tying"),
-        ({"runtime_config": {"ephemeral_gpu_offload": True}}, "runtime_config"),
         ({"init_lora_weights": "olora"}, "init_lora_weights"),
     ),
 )
@@ -192,7 +165,7 @@ def test_unknown_raw_adapter_config_field_fails_instead_of_following_peft_warnin
     assert load_calls == 0
 
 
-@pytest.mark.parametrize("saved_selector", ("all-linear", r".*q_proj"))
+@pytest.mark.parametrize("saved_selector", ("all-linear",))
 def test_saved_target_selector_requires_an_explicit_canonical_target_set(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

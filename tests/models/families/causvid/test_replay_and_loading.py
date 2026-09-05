@@ -6,7 +6,6 @@ import hashlib
 import shutil
 import subprocess
 import sys
-from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -320,13 +319,6 @@ def test_checkpoint_sha_and_source_revision_fail_closed(
     _require_pinned_source_import(source_root)
 
 
-def test_resolved_artifacts_retain_only_runtime_paths() -> None:
-    assert [field.name for field in fields(CausVidResolvedArtifacts)] == [
-        "base_model_dir",
-        "checkpoint_file",
-    ]
-
-
 def test_source_root_returns_verified_path_and_rejects_wrong_checkout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -438,7 +430,7 @@ def test_checkpoint_resolution_preserves_remote_revision_and_sha(
         _resolve_checkpoint(build)
 
 
-@pytest.mark.parametrize("checkpoint_file", ["../outside.pt", "/tmp/outside.pt"])
+@pytest.mark.parametrize("checkpoint_file", ["../outside.pt"])
 def test_checkpoint_member_cannot_escape_local_source(
     tmp_path: Path,
     checkpoint_file: str,

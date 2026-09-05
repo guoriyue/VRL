@@ -462,10 +462,6 @@ class RuntimeBundle:
     adapter_roots: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.precision, RolePrecision):
-            raise TypeError(
-                "RuntimeBundle.precision must be RolePrecision",
-            )
         # Replay consumers read the exact role policy from the model they
         # forward, so a caller cannot pair a model with a different policy.
         self.model.precision = self.precision

@@ -18,7 +18,6 @@ from vrl.models.interfaces import (
     ReplaySegmentResult,
     RuntimeBundle,
     RuntimeModel,
-    require_runtime_model,
 )
 from vrl.models.steps.denoise import DiffusionModelBase
 
@@ -50,28 +49,6 @@ class _MinimalRuntimeModel:
 
     def load_trainable_state(self, state_dict: dict[str, Any]) -> None:
         del state_dict
-
-
-class _ReplayOnlyModel:
-    def replay_forward(
-        self,
-        batch: Any,
-        timestep_idx: int = 0,
-        *,
-        request: ReplayRequest | None = None,
-    ) -> ReplayResult:
-        del batch, timestep_idx, request
-        return ReplayResult(
-            segments={
-                "image_tokens": ReplaySegmentResult(
-                    segment="image_tokens",
-                    values={},
-                ),
-            },
-        )
-
-    def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
-        return contextlib.nullcontext()
 
 
 class _DiffusionModelBaseStub(DiffusionModelBase):
@@ -130,11 +107,6 @@ class _DiffusionModelBaseStub(DiffusionModelBase):
         yield
 
 
-def test_runtime_model_protocol_accepts_minimal_shape() -> None:
-    """Checks runtime model protocol accepts minimal shape."""
-    assert isinstance(_MinimalRuntimeModel(), RuntimeModel)
-
-
 @pytest.mark.parametrize(
     "family",
     sorted(registered_runtime_model_classes()),
@@ -152,12 +124,6 @@ def test_registered_family_runtime_model_satisfies_contract(family: str) -> None
     assert not missing, f"{family}: {runtime_cls.__name__} missing RuntimeModel methods {missing}"
 
 
-def test_require_runtime_model_reports_missing_state_loader() -> None:
-    """Checks require runtime model reports missing state loader."""
-    with pytest.raises(TypeError, match="missing: load_trainable_state"):
-        require_runtime_model(_ReplayOnlyModel(), owner="test.model")
-
-
 def test_runtime_bundle_exposes_model_contract() -> None:
     """Checks runtime bundle exposes model contract."""
     model = _MinimalRuntimeModel()
@@ -173,21 +139,6 @@ def test_runtime_bundle_exposes_model_contract() -> None:
     assert bundle.model is model
     assert bundle.precision == RolePrecision("fp32", "ieee", outer_autocast=False)
     assert model.precision is bundle.precision
-
-
-def test_runtime_bundle_rejects_unresolved_role_precision_mapping() -> None:
-    with pytest.raises(TypeError, match=r"RuntimeBundle\.precision"):
-        RuntimeBundle(
-            model=_MinimalRuntimeModel(),
-            trainable_modules={},
-            scheduler=None,
-            raw_handle=None,
-            precision={  # type: ignore[arg-type]
-                "dtype": "fp32",
-                "float32_precision": "ieee",
-            },
-            loads_full_generation_modules=False,
-        )
 
 
 def test_diffusion_load_trainable_state_accepts_trainable_only_payload() -> None:

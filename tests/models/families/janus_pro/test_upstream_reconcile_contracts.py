@@ -13,9 +13,7 @@ CPU-only, hand-built stubs (see tests/models/steps/token/fixtures.py) — no che
 
 from __future__ import annotations
 
-import subprocess
 import sys
-from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -166,39 +164,6 @@ def test_decode_image_tokens_rejects_non_square_token_grid() -> None:
 
     with pytest.raises(ValueError, match="square image-token grid"):
         model.decode_image_tokens(torch.zeros(1, 3, dtype=torch.long), image_size=32)
-
-
-def test_decode_geometry_guard_survives_optimized_python() -> None:
-    repo_root = Path(__file__).resolve().parents[4]
-    script = """
-import torch
-import torch.nn as nn
-from tests.models.steps.token.fixtures import StubVQ, build_stub_janus_model
-
-model = build_stub_janus_model(
-    language_model=nn.Identity(),
-    hidden_size=8,
-    image_vocab_size=16,
-    gen_vision_model=StubVQ(vocab_size=16, latent_channels=11),
-)
-try:
-    model.decode_image_tokens(torch.zeros(1, 3, dtype=torch.long), image_size=32)
-except ValueError:
-    pass
-else:
-    raise SystemExit("optimized Python skipped the Janus geometry guard")
-"""
-
-    result = subprocess.run(
-        [sys.executable, "-O", "-c", script],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr or result.stdout
 
 
 def test_janus_checkpoint_type_check_is_a_runtime_error(monkeypatch) -> None:

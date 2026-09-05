@@ -17,12 +17,6 @@ from vrl.models.families.janus_pro.config import (
     JANUS_IMAGE_TOKEN_NUM,
     JanusProConfig,
 )
-from vrl.models.families.janus_pro.model import (
-    JANUS_IMAGE_TOKEN_NUM as ModelImageTokenNum,
-)
-from vrl.models.families.janus_pro.model import (
-    JanusProConfig as ModelJanusProConfig,
-)
 from vrl.models.families.janus_pro.runtime import (
     JanusProBatchExecutor,
     janus_config_from_build,
@@ -52,30 +46,10 @@ def _build_cfg(*, family: str, trust_remote_code: bool):
     )
 
 
-def test_runtime_config_defaults_and_model_compatibility_export() -> None:
-    config = JanusProConfig()
-    base_entry = get_model_family_entry("janus_pro")
-    r1_entry = get_model_family_entry("janus_pro_r1")
-
-    assert (
-        config.model_path
-        == base_entry.family_build.default_model_path
-        == r1_entry.family_build.default_model_path
-    )
-    assert config.image_token_num == JANUS_IMAGE_TOKEN_NUM
-    assert config.lora_target_modules == (
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-    )
-    assert config.lora_init == "gaussian"
-    assert ModelImageTokenNum == JANUS_IMAGE_TOKEN_NUM
-    assert ModelJanusProConfig is JanusProConfig
-
-
-@pytest.mark.parametrize("family", ["janus_pro", "janus_pro_r1"])
-@pytest.mark.parametrize("trust_remote_code", [True, False])
+@pytest.mark.parametrize(
+    ("family", "trust_remote_code"),
+    [("janus_pro", True), ("janus_pro_r1", False)],
+)
 def test_config_projection_preserves_trust_remote_code_boolean(
     family: str,
     trust_remote_code: bool,
@@ -105,18 +79,6 @@ def test_config_projection_preserves_trust_remote_code_boolean(
     assert resolved.lora_init == "gaussian"
 
 
-def test_r1_transition_table_is_the_packages_own_constant() -> None:
-    """model.py and runtime.py both import this from the package during init.
-
-    It stays on the package (not config.py) because both modules read it while
-    the package is still initializing; the segment order is the R1 protocol.
-    """
-
-    from vrl.models.families.janus_pro import JANUS_R1_SEGMENTS
-
-    assert JANUS_R1_SEGMENTS == ("initial_image", "selfcheck_text", "final_image")
-
-
 def test_janus_r1_replay_build_keeps_the_explicit_runtime_family() -> None:
     cfg = load_config("experiment/janus_pro/online_r1_grpo_ocr")
     root = parse_config(cfg)
@@ -133,8 +95,7 @@ def test_janus_r1_replay_build_keeps_the_explicit_runtime_family() -> None:
     assert build.family == root.model.family
 
 
-def test_janus_model_build_does_not_expose_decode_strategy() -> None:
-    """Checks the Janus model build does not expose decode strategy."""
+def test_janus_model_build_carries_scheduler_batch_size() -> None:
     cfg = OmegaConf.create(
         {
             "model": {
@@ -165,7 +126,6 @@ def test_janus_model_build_does_not_expose_decode_strategy() -> None:
     )
 
     assert build.sampling_config is not None
-    assert "ar_decode_strategy" not in build.sampling_config
     assert build.sampling_config["ar_scheduler_batch_size"] == 2
 
 

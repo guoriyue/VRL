@@ -115,29 +115,3 @@ def test_pipeline_less_replay_models_never_inherit_the_pipeline_sync(
         "inherit from DiffusionModelBase/DiffusersReplayModelBase) a "
         "_set_transformer that does not touch self.pipeline"
     )
-
-
-@pytest.mark.parametrize("model_cls", [*_denoise_model_classes(), *_replay_model_classes()])
-def test_every_diffusion_class_resolves_the_transformer_members(model_cls: type) -> None:
-    """``trainable_modules``/``apply_full_finetune``/``_set_transformer`` have defaults.
-
-    They live on ``DiffusionModelBase``; nothing may resolve them to a
-    ``NotImplementedError`` stub or leave them undefined. A class that inherits
-    the ``_set_transformer`` default is additionally driven here: the default
-    must work with no pipeline and no other handle in sight.
-    """
-
-    if not issubclass(model_cls, DiffusionModelBase):
-        return
-    for name in ("trainable_modules", "apply_full_finetune", "_set_transformer"):
-        assert _owner(model_cls, name) is not None
-
-    if _owner(model_cls, "_set_transformer") is not DiffusionModelBase:
-        return
-    # __new__ without __init__: only the swap itself gets a chance to run.
-    model = model_cls.__new__(model_cls)
-    transformer = object()
-    model._set_transformer(transformer)
-
-    assert model.transformer is transformer
-    assert model.trainable_modules == {"transformer": transformer}

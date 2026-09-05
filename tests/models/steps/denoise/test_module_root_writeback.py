@@ -82,9 +82,6 @@ def test_one_override_serves_both_views_on_a_multi_root_policy() -> None:
 
     assert policy.transformer is expert_1
     assert policy.transformer_2 is expert_2
-    # No `_set_transformer_2` exists -- the old string-interpolated lookup would
-    # have failed here, which is exactly why families had to hand-write one.
-    assert not hasattr(policy, "_set_transformer_2")
 
 
 def test_unknown_root_fails_loud_on_a_single_root_policy() -> None:

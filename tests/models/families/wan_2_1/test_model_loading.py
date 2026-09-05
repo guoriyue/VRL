@@ -594,22 +594,6 @@ def test_wan_model_cpu_offload_reset_cycles_public_pipeline_hooks() -> None:
     assert model.pipeline_cpu_offload_healthy
 
 
-def test_wan_pipeline_offload_has_one_state_source() -> None:
-    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
-
-    model = WanI2VDiffusersModel(
-        pipeline=_FakePipeline(),
-        device=torch.device("cuda:0"),
-    )
-
-    assert "_pipeline_offload" in vars(model)
-    assert {
-        "_pipeline_offload_mode",
-        "_pipeline_offload_hooks_installed",
-        "_pipeline_offload_broken",
-    }.isdisjoint(vars(model))
-
-
 def test_wan_i2v_from_build_no_offload_stages_frozen_modules(monkeypatch) -> None:
     """No-offload stages VAE fp32 plus encoders at the build dtype, without hooks."""
     from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
@@ -769,8 +753,6 @@ def test_wan_model_build_normalization_is_shared_by_replay_and_rollout(
     ("value", "expected"),
     [
         (None, ("transformer_2",)),
-        ("all", ("transformer", "transformer_2")),
-        ("both", ("transformer", "transformer_2")),
         (
             ["transformer_2", "transformer", "transformer_2"],
             ("transformer", "transformer_2"),

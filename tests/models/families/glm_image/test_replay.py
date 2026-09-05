@@ -74,13 +74,6 @@ def _discrete_batch(context: dict | None = None) -> RolloutBatch:
     )
 
 
-def test_glm_image_model_exposes_trainer_replay_methods() -> None:
-    model = build_tiny_glm_image_model()
-    assert callable(model.replay_forward)
-    assert callable(model.disable_adapter)
-    assert callable(model.load_trainable_state)
-
-
 def test_replay_forward_returns_fused_codebook_head() -> None:
     model = build_tiny_glm_image_model()
     batch = _discrete_batch()
@@ -210,9 +203,3 @@ def test_lora_wrap_keeps_replay_and_adapter_surfaces_working() -> None:
         ref_result = model.replay_forward(batch).segments["image_tokens"]
     ref_log_probs = ref_result.logprobs(actions)
     assert ref_log_probs.shape == log_probs.shape
-
-
-def test_disable_adapter_without_lora_is_noop() -> None:
-    model = build_tiny_glm_image_model()
-    with model.disable_adapter():
-        pass

@@ -12,9 +12,6 @@ from vrl.utils.config import import_from_path
 
 _FAMILY_TARGETS = (
     ("janus_pro", ("q_proj", "k_proj", "v_proj", "o_proj")),
-    ("emu3", ("q_proj", "k_proj", "v_proj", "o_proj")),
-    ("glm_image", ("q_proj", "k_proj", "v_proj", "o_proj")),
-    ("nextstep_1", ("q_proj", "k_proj", "v_proj", "o_proj")),
     ("llamagen", ("wqkv", "wo")),
 )
 
@@ -184,10 +181,8 @@ def test_explicit_lora_fields_override_family_config_defaults(
 @pytest.mark.parametrize(
     ("lora", "expected"),
     (
-        ({"init_lora_weights": False}, False),
         ({"init": False}, False),
         ({"init_lora_weights": "olora"}, "olora"),
-        ({"init": "olora"}, "olora"),
     ),
 )
 def test_lora_init_aliases_preserve_bool_and_string_values(

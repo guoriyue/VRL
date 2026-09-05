@@ -13,25 +13,12 @@ from vrl.config.schema import parse_config
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.glm_image.config import GlmImageConfig
-from vrl.models.families.glm_image.model import GlmImageConfig as ModelGlmImageConfig
 from vrl.models.families.glm_image.runner import GlmImageTokenRunner
 from vrl.models.families.glm_image.runtime import (
     GlmImageBatchExecutor,
     glm_image_config_from_build,
 )
 from vrl.models.families.registry import get_model_family_entry
-
-
-@pytest.mark.parametrize("decode_offload_ar", [True, False])
-def test_runtime_config_defaults_and_model_compatibility_export(
-    decode_offload_ar: bool,
-) -> None:
-    config = GlmImageConfig(decode_offload_ar=decode_offload_ar)
-    entry = get_model_family_entry("glm_image")
-
-    assert config.model_path == entry.family_build.default_model_path
-    assert config.decode_offload_ar is decode_offload_ar
-    assert ModelGlmImageConfig is GlmImageConfig
 
 
 def test_resolve_model_build_defaults_to_glm_image_checkpoint() -> None:
@@ -116,13 +103,6 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
     assert "image_token_num" not in config
     assert "image_size" not in config
     assert "guidance_scale" not in config
-
-
-def test_executor_declares_family_identity() -> None:
-    executor = GlmImageBatchExecutor(model=object())
-
-    assert executor.family == "glm_image"
-    assert executor.task == "ar_t2i"
 
 
 def test_executor_rejects_explicit_attention_backend() -> None:

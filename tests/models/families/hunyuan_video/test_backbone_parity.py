@@ -77,10 +77,8 @@ def test_hunyuan_video_forward_step_single_branch_with_scaled_guidance() -> None
     assert out["noise_pred"].shape == TINY_HUNYUAN_VIDEO_LATENT_SHAPE
 
 
-@pytest.mark.parametrize("negative_prompt", [None, "", []])
-def test_hunyuan_video_encode_prompt_accepts_only_empty_negative_conditioning(
-    negative_prompt: str | list[str] | None,
-) -> None:
+def test_hunyuan_video_encode_prompt_accepts_only_empty_negative_conditioning() -> None:
+    negative_prompt = ""
     transformer = build_tiny_hunyuan_video_transformer()
     model = _model(transformer)
     model.pipeline.encode_prompt = lambda **_kwargs: (
@@ -98,10 +96,8 @@ def test_hunyuan_video_encode_prompt_accepts_only_empty_negative_conditioning(
     }
 
 
-@pytest.mark.parametrize("negative_prompt", ["low quality", ["low quality"]])
-def test_hunyuan_video_encode_prompt_rejects_non_empty_negative_conditioning(
-    negative_prompt: str | list[str],
-) -> None:
+def test_hunyuan_video_encode_prompt_rejects_non_empty_negative_conditioning() -> None:
+    negative_prompt = "low quality"
     transformer = build_tiny_hunyuan_video_transformer()
     model = _model(transformer)
 

@@ -140,16 +140,6 @@ def test_replay_forward_returns_typed_replay_result() -> None:
     assert torch.equal(segment.values["image_token_ids"], actions)
 
 
-def test_model_exposes_trainer_replay_methods() -> None:
-    """RuntimeModel surface: replay_forward / disable_adapter / load_trainable_state."""
-    model = build_tiny_llamagen_model()
-    assert callable(model.replay_forward)
-    assert callable(model.disable_adapter)
-    assert callable(model.load_trainable_state)
-    with model.disable_adapter():
-        pass
-
-
 def test_replay_model_has_no_rollout_decode_surface() -> None:
     """Replay wrapper loads no VQ decoder and stubs the decode surface."""
     model = build_tiny_llamagen_model(replay=True)

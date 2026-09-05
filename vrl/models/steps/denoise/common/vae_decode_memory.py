@@ -65,10 +65,8 @@ def apply_generation_memory_policy(
 
 
 def _call_required(target: Any, method_name: str, *, owner: str) -> None:
-    method = getattr(target, method_name, None)
-    if not callable(method):
-        raise TypeError(f"{owner} does not support requested {method_name}()")
-    method()
+    del owner
+    getattr(target, method_name)()
 
 
 __all__ = [

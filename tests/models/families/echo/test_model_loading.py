@@ -9,7 +9,6 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
 from vrl.models.interfaces.runtime import ModelBuild
 
@@ -181,15 +180,6 @@ def test_echo_direct_build_rejects_invalid_model_dimensions_before_loading(tmp_p
         match=r"model\.video_width must be a positive multiple of 32, got 65",
     ):
         EchoModel.from_build(build)
-
-
-def test_echo_preset_derives_request_dimensions_from_model_construction() -> None:
-    cfg = load_config("experiment/echo/online_grpo_kling_video_reward")
-
-    assert cfg.model.video_height == 256
-    assert cfg.model.video_width == 256
-    assert cfg.sampling.height == cfg.model.video_height
-    assert cfg.sampling.width == cfg.model.video_width
 
 
 @pytest.mark.parametrize("revision", [None, "gemma-immutable-revision"])

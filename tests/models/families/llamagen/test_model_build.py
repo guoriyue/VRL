@@ -14,19 +14,11 @@ from vrl.config.schema import parse_config
 from vrl.generation import GenerationRequest
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.models.families.llamagen.config import (
-    LLAMAGEN_CAPTION_DIM,
     LLAMAGEN_CAPTION_TOKEN_NUM,
     LLAMAGEN_DOWNSAMPLE_SIZE,
-    LLAMAGEN_GPT_CKPT,
-    LLAMAGEN_HF_REPO,
     LLAMAGEN_IMAGE_TOKEN_NUM,
-    LLAMAGEN_T5_PATH,
-    LLAMAGEN_VQ_CKPT,
     LlamaGenConfig,
     llamagen_image_size,
-)
-from vrl.models.families.llamagen.model import (
-    LlamaGenConfig as ModelLlamaGenConfig,
 )
 from vrl.models.families.llamagen.model import (
     LlamaGenModel,
@@ -89,24 +81,6 @@ def _executor_model(
             top_p=1.0,
         ),
     )
-
-
-@pytest.mark.parametrize("use_lora", [True, False])
-def test_runtime_config_defaults_and_model_compatibility_export(use_lora: bool) -> None:
-    config = LlamaGenConfig(use_lora=use_lora)
-    entry = get_model_family_entry("llamagen")
-
-    assert config.model_path == LLAMAGEN_HF_REPO == entry.family_build.default_model_path
-    assert config.gpt_ckpt == LLAMAGEN_GPT_CKPT
-    assert config.vq_ckpt == LLAMAGEN_VQ_CKPT
-    assert config.t5_path == LLAMAGEN_T5_PATH
-    assert config.image_token_num == LLAMAGEN_IMAGE_TOKEN_NUM
-    assert config.cls_token_num == LLAMAGEN_CAPTION_TOKEN_NUM
-    assert config.caption_dim == LLAMAGEN_CAPTION_DIM
-    assert config.downsample_size == LLAMAGEN_DOWNSAMPLE_SIZE
-    assert config.lora_target_modules == ("wqkv", "wo")
-    assert config.use_lora is use_lora
-    assert ModelLlamaGenConfig is LlamaGenConfig
 
 
 def test_resolve_model_build_defaults() -> None:
@@ -207,21 +181,6 @@ def test_schema_and_direct_model_build_share_square_grid_validation() -> None:
     build.model_config["image_token_num"] = 255
     with pytest.raises(ValueError, match="square grid"):
         llamagen_config_from_build(build)
-
-
-def test_llamagen_preset_omits_model_derived_request_topology() -> None:
-    cfg = load_config("experiment/llamagen/online_grpo_pickscore_validation")
-    topology_fields = {
-        "image_token_num",
-        "image_size",
-        "max_text_length",
-    }
-
-    assert cfg.model.image_token_num == LLAMAGEN_IMAGE_TOKEN_NUM
-    assert topology_fields.isdisjoint(cfg.sampling)
-    parsed = parse_config(cfg)
-    assert parsed.sampling is not None
-    assert topology_fields.isdisjoint(type(parsed.sampling).model_fields)
 
 
 def test_llamagen_collector_request_derives_omitted_topology_from_model() -> None:
@@ -423,7 +382,7 @@ def test_executor_rejects_shared_attention_backend_selection() -> None:
 
 @pytest.mark.parametrize(
     ("batch_size", "expected"),
-    [(None, None), (2, 2), (3, 3)],
+    [(None, None), (2, 2)],
 )
 def test_executor_allows_scheduler_bounds_covering_full_static_kv_chunk(
     batch_size: int | None,

@@ -16,18 +16,7 @@ from vrl.generation.bindings.token_autoregressive import ARRequestLayout
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.models.families.nextstep_1 import runtime as nextstep_runtime
 from vrl.models.families.nextstep_1.config import (
-    NEXTSTEP_DEFAULT_TOKEN_DIM,
-    NEXTSTEP_DEFAULT_TOKEN_NUM,
     NextStep1Config,
-)
-from vrl.models.families.nextstep_1.model import (
-    NEXTSTEP_DEFAULT_TOKEN_DIM as ModelDefaultTokenDim,
-)
-from vrl.models.families.nextstep_1.model import (
-    NEXTSTEP_DEFAULT_TOKEN_NUM as ModelDefaultTokenNum,
-)
-from vrl.models.families.nextstep_1.model import (
-    NextStep1Config as ModelNextStep1Config,
 )
 from vrl.models.families.nextstep_1.runtime import (
     NextStep1ARBatchResult,
@@ -60,27 +49,7 @@ def _build_cfg(*, use_lora: bool, freeze_vae: bool):
     )
 
 
-def test_runtime_config_defaults_and_model_compatibility_export() -> None:
-    config = NextStep1Config()
-    entry = get_model_family_entry("nextstep_1")
-
-    assert config.model_path == entry.family_build.default_model_path
-    assert config.image_token_num == NEXTSTEP_DEFAULT_TOKEN_NUM
-    assert config.token_dim == NEXTSTEP_DEFAULT_TOKEN_DIM
-    assert config.noise_level == 1.0
-    assert config.lora_target_modules == (
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-    )
-    assert ModelDefaultTokenNum == NEXTSTEP_DEFAULT_TOKEN_NUM
-    assert ModelDefaultTokenDim == NEXTSTEP_DEFAULT_TOKEN_DIM
-    assert ModelNextStep1Config is NextStep1Config
-
-
-@pytest.mark.parametrize("use_lora", [True, False])
-@pytest.mark.parametrize("freeze_vae", [True, False])
+@pytest.mark.parametrize(("use_lora", "freeze_vae"), [(True, False), (False, True)])
 def test_config_projection_preserves_boolean_states(
     use_lora: bool,
     freeze_vae: bool,

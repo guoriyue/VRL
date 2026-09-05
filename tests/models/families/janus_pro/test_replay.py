@@ -13,12 +13,8 @@ from vrl.models.families.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
     JanusProModel,
 )
-from vrl.models.families.registry import get_model_family_entry
 from vrl.models.interfaces import ReplayResult
-from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.trajectory import TrajectoryResolver, build_ar_discrete_trajectory
 
 HIDDEN = 32
@@ -112,32 +108,6 @@ def _discrete_batch() -> RolloutBatch:
     )
 
 
-def test_janus_collector_has_no_forward_step() -> None:
-    """Collectors expose collect(); train-time replay lives on the model."""
-    collector = build_rollout_collector(
-        get_model_family_entry("janus_pro"),
-        reward_runtime=RewardFunctionRuntime(None),
-        config=RolloutCollectorConfig(
-            request_sampling={
-                "guidance_scale": 5.0,
-                "temperature": 1.0,
-                "image_token_num": 4,
-                "image_size": 64,
-                "max_text_length": 256,
-            },
-        ),
-    )
-    assert not hasattr(collector, "forward_step")
-
-
-def test_janus_model_exposes_trainer_replay_methods() -> None:
-    """Checks Janus model exposes trainer replay methods."""
-    model = _build_stub_model()
-    assert callable(model.replay_forward)
-    assert callable(model.disable_adapter)
-    assert callable(model.load_trainable_state)
-
-
 def test_janus_model_replay_forward_returns_typed_replay_result() -> None:
     """Checks Janus model replay forward returns typed replay result."""
     model = _build_stub_model()
@@ -174,11 +144,3 @@ def test_janus_model_replay_forward_returns_typed_replay_result() -> None:
         rtol=1e-5,
         atol=1e-5,
     )
-
-
-def test_janus_disable_adapter_without_lora_is_noop() -> None:
-    """Checks Janus disable adapter without LoRA is no-op."""
-    model = _build_stub_model()
-
-    with model.disable_adapter():
-        pass

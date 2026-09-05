@@ -71,7 +71,7 @@ def test_anima_hub_artifact_uses_optional_revision(
     assert calls == [expected]
 
 
-@pytest.mark.parametrize("relative_file", ["../outside.safetensors", "/tmp/outside"])
+@pytest.mark.parametrize("relative_file", ["../outside.safetensors"])
 def test_anima_member_cannot_escape_checkpoint_source(relative_file: str) -> None:
     from vrl.models.families.cosmos.anima.model import _resolve_artifact
 

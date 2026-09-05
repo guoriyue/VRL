@@ -32,8 +32,6 @@ class ReplaySegmentResult:
     def __post_init__(self) -> None:
         if not isinstance(self.segment, str) or not self.segment:
             raise ValueError("ReplaySegmentResult.segment must be a non-empty string")
-        if not isinstance(self.values, dict):
-            raise TypeError("ReplaySegmentResult.values must be a dict")
 
     def require_value(self, key: str) -> Any:
         """Return a named replay payload or fail with the available payload keys."""
