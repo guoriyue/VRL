@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import importlib.metadata
 import json
 import logging
+import platform
 from collections.abc import Mapping
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -14,12 +18,20 @@ from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 
 from vrl.config.loading import load_config
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.generation.types import VideoGenerationRequest
+from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import get_model_family_entry
-from vrl.scripts.eval._device import resolve_eval_device, resolve_eval_dtype
-from vrl.trainers.data import load_prompt_manifest
+from vrl.models.interfaces.runtime import ModelBuild
+from vrl.scripts.eval._device import resolve_eval_device
+from vrl.scripts.families.cosmos.anima.generation_protocol import (
+    ANIMA_GENERATION_SCHEMA,
+    AnimaSampling,
+)
+from vrl.trainers.data import PromptExample, load_prompt_manifest
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.media import to_pil_image
 
 logger = logging.getLogger(__name__)
@@ -36,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default="experiment/anima_preview3/online_grpo_aesthetic_nsfw_safety",
+        default="model/cosmos/anima_preview3",
         help="Bundled config name or absolute YAML path.",
     )
     parser.add_argument(
@@ -93,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--dtype",
         choices=("auto", "fp32", "float32", "fp16", "float16", "bf16", "bfloat16"),
         default="auto",
-        help="Model weight dtype. auto follows the training config.",
+        help="Model weight dtype. auto follows the precision config, or fp32 on CPU.",
     )
     parser.add_argument(
         "--lora-path",
@@ -124,69 +136,146 @@ def main(argv: list[str] | None = None) -> None:
     if args.limit < 0:
         raise ValueError("--limit must be >= 0")
 
-    cfg = load_config(args.config, overrides=args.overrides)
+    # Keep the established inference defaults without importing training rewards,
+    # data, or trainer requirements. User overrides retain final precedence.
+    overrides = (
+        [
+            "+sampling/image=512",
+            "+sampling/denoise=10_step_cfg_4_5",
+            "precision.float32_precision=tf32",
+            "precision.training.dtype=bf16",
+            "precision.training.outer_autocast=true",
+        ]
+        if args.config == "model/cosmos/anima_preview3"
+        else []
+    )
+    overrides.extend(args.overrides)
+    cfg = load_config(args.config, overrides=overrides)
     _configure_lora_for_inference(cfg, lora_path=args.lora_path)
     root = parse_config(cfg)
     precision = resolve_precision_policy(root)
     prompts = _load_prompts(args, cfg)
+    manifest_path = _resolve_manifest_path(args, cfg)
     if args.limit:
         prompts = prompts[: args.limit]
     if not prompts:
         raise ValueError("provide at least one prompt source")
 
     sampling = _resolve_sampling(args, cfg)
+    device = resolve_eval_device(args.device)
+    dtype = resolve_torch_dtype(
+        ("fp32" if device.type == "cpu" else precision.training.dtype)
+        if args.dtype == "auto"
+        else args.dtype
+    )
     out_dir = Path(args.output_dir).expanduser().resolve()
-    image_dir = out_dir / "images"
-    image_dir.mkdir(parents=True, exist_ok=True)
+    _prepare_output_dir(out_dir)
+
+    if root.model is None:
+        raise ValueError("Anima generation requires model configuration")
+    entry = get_model_family_entry(str(root.model.family))
+    build = entry.resolve_model_build(
+        root,
+        device,
+        precision=precision,
+        parameter_dtype_override=dtype,
+    )
+    model_identity = resolve_checkpoint_model_identity(build)
+    lora_path = str(OmegaConf.select(cfg, "model.lora.path", default="") or "")
+    lora_hashes = {
+        "lora_weights_sha256": _lora_artifact_sha256(
+            lora_path,
+            "adapter_model.safetensors",
+        ),
+        "lora_config_sha256": _lora_artifact_sha256(
+            lora_path,
+            "adapter_config.json",
+        ),
+    }
+    lora_checkpoint = _lora_checkpoint_provenance(lora_path, model_identity)
 
     metadata = {
+        "schema": ANIMA_GENERATION_SCHEMA,
         "config": args.config,
+        "config_overrides": overrides,
         "prompt_count": len(prompts),
         "samples_per_prompt": args.samples_per_prompt,
-        "sampling": sampling,
+        "base_seed": int(args.seed),
+        "sampling": sampling.to_record(),
+        "negative_prompt": args.negative_prompt,
+        "execution": {
+            "device": str(device),
+            "dtype": str(dtype).removeprefix("torch."),
+        },
+        "generator_runtime": generator_runtime_identity(),
+        "prompt_source": {
+            "manifest_path": str(manifest_path) if manifest_path else "",
+            "manifest_sha256": sha256_file(manifest_path) if manifest_path else "",
+            "prompt_file": str(Path(args.prompt_file).expanduser().resolve())
+            if args.prompt_file
+            else "",
+            "prompt_file_sha256": (
+                sha256_file(Path(args.prompt_file).expanduser().resolve())
+                if args.prompt_file
+                else ""
+            ),
+            "inline_prompt_count": sum(bool(str(prompt).strip()) for prompt in args.prompt),
+            "limit": int(args.limit),
+        },
+        # This registry/schema-derived value is the sole base-checkpoint
+        # identity. It includes independent transformer/text-encoder/VAE
+        # sources and cannot drift when the public model schema gains fields.
+        "model_identity": model_identity,
+        "generation_policy": _generation_policy(build, precision),
         "model": {
-            "path": str(cfg.model.path),
             "use_lora": bool(cfg.model.use_lora),
             # Training presets declare lora rank/alpha/target_modules without a
             # path (nothing trained yet), so this key is genuinely absent.
-            "lora_path": str(OmegaConf.select(cfg, "model.lora.path", default="") or ""),
+            "lora_path": lora_path,
+            "lora_checkpoint": lora_checkpoint,
+            **lora_hashes,
         },
     }
-    (out_dir / "run_config.json").write_text(
-        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    # Exclusive creation is the ownership reservation after the emptiness
+    # check: two concurrent launches cannot both relabel the same directory.
+    with (out_dir / "run_config.json").open("x", encoding="utf-8") as handle:
+        handle.write(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
     if args.dry_run:
         print(json.dumps(metadata, indent=2, sort_keys=True))
         return
 
     import torch
 
-    device = resolve_eval_device(args.device)
-    dtype = resolve_eval_dtype(
-        args.dtype,
-        root,
-        precision=precision,
-        device=device,
-        requires_trainer="Anima generation",
-    )
     logger.info("Building Anima runtime on device=%s dtype=%s", device, dtype)
-    if root.model is None:
-        raise ValueError("Anima generation requires model configuration")
-    entry = get_model_family_entry(str(root.model.family))
-    bundle = entry.build_rollout(
-        entry.resolve_model_build(
-            root,
-            device,
-            precision=precision,
-            parameter_dtype_override=dtype,
+    bundle = entry.build_rollout(build)
+    loaded_identity = resolve_checkpoint_model_identity(build)
+    loaded_generator_runtime = generator_runtime_identity()
+    loaded_lora_hashes = {
+        "lora_weights_sha256": _lora_artifact_sha256(
+            lora_path,
+            "adapter_model.safetensors",
         ),
-    )
+        "lora_config_sha256": _lora_artifact_sha256(
+            lora_path,
+            "adapter_config.json",
+        ),
+    }
+    loaded_lora_checkpoint = _lora_checkpoint_provenance(lora_path, loaded_identity)
+    if (
+        loaded_identity != model_identity
+        or loaded_generator_runtime != metadata["generator_runtime"]
+        or loaded_lora_checkpoint != lora_checkpoint
+        or any(loaded_lora_hashes[key] != metadata["model"][key] for key in loaded_lora_hashes)
+    ):
+        raise RuntimeError("Anima model artifacts changed while the runtime was loading")
     model = bundle.model.eval()
+    image_dir = out_dir / "images"
+    image_dir.mkdir()
 
     rows: list[dict[str, Any]] = []
     with torch.no_grad():
-        for prompt_index, prompt in enumerate(prompts):
+        for prompt_index, example in enumerate(prompts):
+            prompt = example.prompt
             prompt_seed = int(args.seed) + prompt_index * int(args.samples_per_prompt)
             logger.info(
                 "Generating prompt %s/%s seed=%s",
@@ -194,7 +283,7 @@ def main(argv: list[str] | None = None) -> None:
                 len(prompts),
                 prompt_seed,
             )
-            images = _generate_images(
+            images = generate_images(
                 model,
                 prompt=prompt,
                 negative_prompt=args.negative_prompt,
@@ -217,26 +306,166 @@ def main(argv: list[str] | None = None) -> None:
                         "seed": prompt_seed,
                         "image_path": str(image_path),
                         "prompt": prompt,
+                        "prompt_metadata": dict(example.metadata),
+                        # Keep reward-only typed fields (target_text, target
+                        # artifacts, references) beside the generated image so
+                        # offline evaluators score the exact training target
+                        # without reparsing the prompt.
+                        "reward_metadata": example.reward_metadata(),
                     }
                 )
 
-    _write_metadata(rows, out_dir)
+    _write_metadata(
+        rows,
+        out_dir,
+        anchor_source=(
+            "anima_lora_synthetic" if bool(cfg.model.use_lora) else "anima_base_synthetic"
+        ),
+    )
     print(json.dumps({"total_images": len(rows), "output_dir": str(out_dir)}, indent=2))
 
 
-def _load_prompts(args: argparse.Namespace, cfg: DictConfig) -> list[str]:
-    prompts: list[str] = [str(prompt).strip() for prompt in args.prompt if str(prompt).strip()]
+def _load_prompts(args: argparse.Namespace, cfg: DictConfig) -> list[PromptExample]:
+    prompts = [
+        PromptExample(prompt=str(prompt).strip()) for prompt in args.prompt if str(prompt).strip()
+    ]
     if args.prompt_file:
         path = Path(args.prompt_file).expanduser()
         prompts.extend(
-            line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+            PromptExample(prompt=line.strip())
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
         )
+    manifest_path = _resolve_manifest_path(args, cfg)
+    if manifest_path:
+        prompts.extend(load_prompt_manifest(manifest_path))
+    return prompts
+
+
+def _resolve_manifest_path(args: argparse.Namespace, cfg: DictConfig) -> Path | None:
     manifest_path = args.manifest
     if args.eval_manifest:
         manifest_path = str(OmegaConf.select(cfg, "data.eval_manifest", default=cfg.data.manifest))
-    if manifest_path:
-        prompts.extend(example.prompt for example in load_prompt_manifest(manifest_path))
-    return prompts
+    if not manifest_path:
+        return None
+    return Path(manifest_path).expanduser().resolve()
+
+
+def _prepare_output_dir(out_dir: Path) -> None:
+    """Create one empty artifact root without relabeling an earlier run."""
+
+    if out_dir.exists():
+        if not out_dir.is_dir():
+            raise NotADirectoryError(f"Anima output path is not a directory: {out_dir}")
+        if any(out_dir.iterdir()):
+            raise FileExistsError(f"Anima output directory is not empty: {out_dir}")
+        return
+    out_dir.mkdir(parents=True)
+
+
+def _lora_artifact_sha256(lora_path: str, filename: str) -> str:
+    if not lora_path:
+        return ""
+    artifact = Path(lora_path).expanduser().resolve() / filename
+    return sha256_file(artifact) if artifact.is_file() else ""
+
+
+def _lora_checkpoint_provenance(
+    lora_path: str,
+    expected_model_identity: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Bind an exported adapter to its trainer checkpoint content, when present."""
+
+    if not lora_path:
+        return None
+    adapter_dir = Path(lora_path).expanduser().resolve()
+    checkpoint_dir = adapter_dir.parent if adapter_dir.name == "lora_weights" else None
+    if checkpoint_dir is None:
+        return None
+    metadata_path = checkpoint_dir / "checkpoint_meta.json"
+    if not metadata_path.is_file():
+        return None
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise TypeError(f"{metadata_path} must contain a JSON object")
+    if payload.get("family") != "cosmos-predict2-anima":
+        raise ValueError(f"LoRA checkpoint family is not Anima: {metadata_path}")
+    if payload.get("uses_lora") is not True:
+        raise ValueError(f"LoRA checkpoint metadata must declare uses_lora=true: {metadata_path}")
+    if payload.get("model_identity") != expected_model_identity:
+        raise ValueError(
+            f"LoRA checkpoint model identity differs from generation: {metadata_path}"
+        )
+    integer_fields: dict[str, int] = {}
+    for field_name in (
+        "schema_version",
+        "global_step",
+        "trainer_step",
+        "completed_epoch",
+        "next_epoch",
+    ):
+        value = payload.get(field_name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(
+                f"LoRA checkpoint {field_name} must be a non-negative integer: {metadata_path}",
+            )
+        integer_fields[field_name] = value
+    return {
+        "label": checkpoint_dir.name,
+        "metadata_sha256": sha256_file(metadata_path),
+        **integer_fields,
+    }
+
+
+def generator_runtime_identity() -> dict[str, Any]:
+    """Bind paired archives to the generator code and core package versions."""
+
+    versions: dict[str, str | None] = {}
+    for package in ("torch", "diffusers", "transformers", "peft", "safetensors"):
+        try:
+            versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            versions[package] = None
+    return {
+        "vrl_python_tree_sha256": _vrl_python_tree_sha256(),
+        "python": platform.python_version(),
+        "packages": versions,
+    }
+
+
+def _vrl_python_tree_sha256() -> str:
+    """Hash every repository Python source that can participate in generation."""
+
+    package_root = Path(__file__).resolve().parents[4]
+    digest = hashlib.sha256()
+    for path in sorted(package_root.rglob("*.py")):
+        relative = path.relative_to(package_root).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _generation_policy(build: ModelBuild, precision: PrecisionPolicy) -> dict[str, Any]:
+    """Project the resolved rollout behavior that can change generated pixels."""
+
+    rollout = build.require_rollout()
+    return {
+        "family": str(build.family),
+        "parameter_dtype": str(build.parameter_dtype).removeprefix("torch."),
+        "role_precision": asdict(build.precision),
+        "diffusion_math_dtype": str(precision.diffusion_math),
+        "prompt_encoder_dtype": str(rollout.prompt_encoder_dtype).removeprefix("torch."),
+        "generation_memory": (
+            asdict(build.generation_memory) if build.generation_memory is not None else None
+        ),
+        "rollout": {
+            "base_weight_sync": rollout.base_weight_sync,
+            "pipeline_offload_mode": rollout.pipeline_offload_mode,
+        },
+        "torch_compile": build.torch_compile,
+    }
 
 
 def _configure_lora_for_inference(
@@ -252,11 +481,14 @@ def _configure_lora_for_inference(
         raise ValueError("model.lora must be a mapping")
 
     if lora_path:
+        raw_path = Path(lora_path).expanduser().resolve()
+        exported_path = raw_path / "lora_weights"
+        resolved_path = exported_path if exported_path.exists() else raw_path
         OmegaConf.update(cfg, "model.use_lora", True, force_add=True)
         OmegaConf.update(
             cfg,
             "model.lora.path",
-            str(_resolve_lora_path(lora_path)),
+            str(resolved_path),
             force_add=True,
         )
         return
@@ -267,55 +499,51 @@ def _configure_lora_for_inference(
         OmegaConf.update(cfg, "model.use_lora", False)
 
 
-def _resolve_lora_path(path: str) -> Path:
-    raw = Path(path).expanduser().resolve()
-    exported = raw / "lora_weights"
-    return exported if exported.exists() else raw
-
-
-def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> dict[str, Any]:
+def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> AnimaSampling:
     num_steps = int(args.steps or OmegaConf.select(cfg, "sampling.num_steps", default=20))
-    return {
-        "width": int(args.width or OmegaConf.select(cfg, "sampling.width", default=512)),
-        "height": int(args.height or OmegaConf.select(cfg, "sampling.height", default=512)),
-        "num_steps": num_steps,
-        "guidance_scale": float(
+    return AnimaSampling(
+        width=int(args.width or OmegaConf.select(cfg, "sampling.width", default=512)),
+        height=int(args.height or OmegaConf.select(cfg, "sampling.height", default=512)),
+        num_steps=num_steps,
+        guidance_scale=float(
             OmegaConf.select(cfg, "sampling.guidance_scale", default=4.5)
             if args.guidance_scale is None
             else args.guidance_scale,
         ),
-        "max_sequence_length": int(
+        max_sequence_length=int(
             args.max_sequence_length
             or OmegaConf.select(cfg, "sampling.max_sequence_length", default=128),
         ),
-    }
+    )
 
 
-def _generate_images(
+def generate_images(
     model: Any,
     *,
     prompt: str,
     negative_prompt: str,
     seed: int,
     samples_per_prompt: int,
-    sampling: dict[str, Any],
+    sampling: AnimaSampling,
     torch: Any,
 ) -> list[Image.Image]:
+    """Generate one reproducible image batch through the native Anima runtime."""
+
     prompts = [prompt] * samples_per_prompt
     negative_prompts = [negative_prompt] * samples_per_prompt
     encoded = model.encode_prompt(
         prompts,
         negative_prompts,
-        max_sequence_length=int(sampling["max_sequence_length"]),
-        guidance_scale=float(sampling["guidance_scale"]),
+        max_sequence_length=sampling.max_sequence_length,
+        guidance_scale=sampling.guidance_scale,
     )
     request = VideoGenerationRequest(
         negative_prompt=negative_prompt,
-        width=int(sampling["width"]),
-        height=int(sampling["height"]),
+        width=sampling.width,
+        height=sampling.height,
         frame_count=1,
-        num_steps=int(sampling["num_steps"]),
-        guidance_scale=float(sampling["guidance_scale"]),
+        num_steps=sampling.num_steps,
+        guidance_scale=sampling.guidance_scale,
         seed=int(seed),
     )
     state = model.prepare_sampling(request, encoded)
@@ -332,7 +560,12 @@ def _generate_images(
     return [to_pil_image(image) for image in decoded]
 
 
-def _write_metadata(rows: list[dict[str, Any]], out_dir: Path) -> None:
+def _write_metadata(
+    rows: list[dict[str, Any]],
+    out_dir: Path,
+    *,
+    anchor_source: str,
+) -> None:
     jsonl_path = out_dir / "metadata.jsonl"
     jsonl_path.write_text(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
@@ -343,6 +576,29 @@ def _write_metadata(rows: list[dict[str, Any]], out_dir: Path) -> None:
         writer = csv.DictWriter(f, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+
+    # The same generation run can directly become synthetic clean-data
+    # supervision. Paths stay relative to the chosen artifact root (out_dir),
+    # while run_config.json pins the model, sampling, and negative prompt that
+    # produced them. Multiple base samples for one prompt are valid independent
+    # anchors because each image has its own stable target identity.
+    anchor_rows = [
+        {
+            "prompt": row["prompt"],
+            "target_image": str(Path(row["image_path"]).relative_to(out_dir)),
+            "metadata": {
+                **row.get("prompt_metadata", {}),
+                "anchor_seed": row["seed"],
+                "anchor_sample_index": row["sample_index"],
+                "anchor_source": anchor_source,
+            },
+        }
+        for row in rows
+    ]
+    (out_dir / "anchor_manifest.jsonl").write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in anchor_rows),
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":

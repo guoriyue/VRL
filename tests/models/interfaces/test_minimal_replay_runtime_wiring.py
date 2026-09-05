@@ -600,8 +600,10 @@ def test_anima_model_build_uses_explicit_local_paths() -> None:
     from vrl.models.families.registry import get_model_family_entry
 
     cfg = load_config(
-        "experiment/anima_preview3/online_grpo_aesthetic",
+        "model/cosmos/anima_preview3",
         overrides=[
+            "precision.training.dtype=bf16",
+            "precision.float32_precision=tf32",
             "model.path=/models/anima",
             "model.transformer_path=/models/anima/transformer.safetensors",
             "model.text_encoder_path=/models/anima/text_encoder.safetensors",
@@ -644,8 +646,10 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
     from vrl.models.families.registry import get_model_family_entry
 
     cfg = load_config(
-        "experiment/anima_preview3/online_grpo_aesthetic",
+        "model/cosmos/anima_preview3",
         overrides=[
+            "precision.training.dtype=bf16",
+            "precision.float32_precision=tf32",
             "sampling.num_steps=1",
             "model.use_lora=false",
         ],
