@@ -14,9 +14,9 @@ from vrl.generation.execution.sample_batches import ordered_covering_batches
 from vrl.generation.steps.denoise.config import DenoiseSDEParams
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig
 from vrl.generation.types import (
+    DenoiseRequest,
     GenerationRequest,
     GenerationSampleRow,
-    VideoGenerationRequest,
 )
 
 TChunk = TypeVar("TChunk")
@@ -26,7 +26,7 @@ TChunk = TypeVar("TChunk")
 class DiffusionSamplingParams:
     """Parsed diffusion sampling fields for one generation request."""
 
-    model_request: VideoGenerationRequest
+    model_request: DenoiseRequest
     max_sequence_length: int | None
     sde: DenoiseSDEParams
     sde_window_size: int
@@ -127,7 +127,7 @@ class DiffusionRequestLayout:
             ),
         )
         params = DiffusionSamplingParams(
-            model_request=VideoGenerationRequest(**model_request_kwargs),
+            model_request=DenoiseRequest(**model_request_kwargs),
             max_sequence_length=(
                 None if max_sequence_length is None else int(max_sequence_length)
             ),

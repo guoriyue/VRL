@@ -16,7 +16,7 @@ from tests.models.steps.denoise.fixtures import (
 )
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest
 from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.families.cosmos.predict2.model import CosmosPredict2Model
 from vrl.models.families.flux.model import FluxModel
@@ -109,7 +109,7 @@ class _ModelBaseStub(DiffusionModelBase):
 
     def prepare_sampling(
         self,
-        request: VideoGenerationRequest,
+        request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
     ) -> Any:

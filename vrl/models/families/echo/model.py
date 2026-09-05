@@ -27,7 +27,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest
 from vrl.models.families.echo.config import resolve_echo_video_dimensions
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise.base import (
@@ -309,7 +309,7 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
 
     def prepare_sampling(
         self,
-        request: VideoGenerationRequest,
+        request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
     ) -> EchoSamplingState:

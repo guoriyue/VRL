@@ -35,7 +35,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
@@ -185,7 +185,7 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
 
     def prepare_sampling(
         self,
-        request: VideoGenerationRequest,
+        request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
     ) -> CogVideoXSamplingState:

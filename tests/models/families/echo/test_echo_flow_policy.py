@@ -18,7 +18,7 @@ from diffusers import FlowMatchEulerDiscreteScheduler
 
 from tests.models.steps.denoise.fixtures import stamp_model_precision
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.generation.types import GenerationRequest, VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest, GenerationRequest
 from vrl.models.families.echo.model import (
     EchoModel,
     EchoReplayModel,
@@ -81,8 +81,8 @@ def _build_model() -> tuple[EchoModel, _FakeEcho]:
     return model, echo
 
 
-def _request(num_steps: int = 4) -> VideoGenerationRequest:
-    return VideoGenerationRequest(
+def _request(num_steps: int = 4) -> DenoiseRequest:
+    return DenoiseRequest(
         negative_prompt="",
         width=256,
         height=256,

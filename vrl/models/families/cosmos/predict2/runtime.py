@@ -14,7 +14,7 @@ from vrl.generation.bindings.full_sequence_denoise import (
     ReferenceConditionedBatches,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.generation.types import GenerationRequest, VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest, GenerationRequest
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -33,7 +33,7 @@ class CosmosBatchExecutor(ReferenceConditionedBatches, DiffusionBatchExecutorBas
         *,
         encoded: dict[str, Any],
         generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
+        video_request: DenoiseRequest,
         params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:

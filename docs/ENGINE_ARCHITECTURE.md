@@ -148,7 +148,7 @@ denoise (`DenoiseLoopConfig`, `DenoiseSDEParams`, `DenoiseLoopResult`,
 
 ### 2.5 Request/output types (`types.py`)
 
-`GenerationInput` → `GenerationRequest` (and `VideoGenerationRequest`) enter
+`GenerationInput` → `GenerationRequest` (and `DenoiseRequest`) enter
 the engine; `GenerationSampleRow` and `GenerationOutput` leave it. These are
 the collector-facing dataclasses; everything batch-shaped stays inside the
 engine.

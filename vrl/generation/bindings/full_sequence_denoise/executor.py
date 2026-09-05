@@ -31,10 +31,10 @@ from vrl.generation.steps.denoise.loop import (
     run_denoise_loop,
 )
 from vrl.generation.types import (
+    DenoiseRequest,
     GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    VideoGenerationRequest,
 )
 from vrl.trajectory.storage import (
     TrajectoryStoragePolicy,
@@ -90,7 +90,7 @@ class ReferenceConditionedBatches:
         self,
         *,
         generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
+        video_request: DenoiseRequest,
         params: Any,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
@@ -109,7 +109,7 @@ class ReferenceConditionedBatches:
         *,
         encoded: dict[str, Any],
         generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
+        video_request: DenoiseRequest,
         params: Any,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
@@ -360,7 +360,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
     def prepare_denoise_state(
         self,
         *,
-        request: VideoGenerationRequest,
+        request: DenoiseRequest,
         encoded: dict[str, Any],
         config: DenoiseLoopConfig,
         prepare_kwargs: dict[str, Any] | None = None,
@@ -491,7 +491,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         self,
         *,
         generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
+        video_request: DenoiseRequest,
         params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
@@ -517,7 +517,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         *,
         encoded: dict[str, Any],
         generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
+        video_request: DenoiseRequest,
         params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
@@ -539,7 +539,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         *,
         encoded: dict[str, Any],
         generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
+        video_request: DenoiseRequest,
         params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any] | None:

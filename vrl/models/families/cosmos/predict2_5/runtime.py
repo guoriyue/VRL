@@ -15,7 +15,7 @@ from vrl.generation.bindings.full_sequence_denoise import (
     DiffusionSamplingParams,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.generation.types import GenerationRequest, VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest, GenerationRequest
 
 
 class CosmosPredict25BatchExecutor(DiffusionBatchExecutorBase):
@@ -31,7 +31,7 @@ class CosmosPredict25BatchExecutor(DiffusionBatchExecutorBase):
         self,
         *,
         generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
+        video_request: DenoiseRequest,
         params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:

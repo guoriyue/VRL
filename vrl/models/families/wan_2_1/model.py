@@ -36,7 +36,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest
 from vrl.models.families.wan_2_1.config import (
     normalize_wan_boundary_ratio,
     normalize_wan_trainable_transformers,
@@ -646,7 +646,7 @@ class WanT2VDiffusersModel(
 
     def prepare_sampling(
         self,
-        request: VideoGenerationRequest,
+        request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
     ) -> WanT2VSamplingState:
@@ -1046,7 +1046,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
 
     def prepare_sampling(
         self,
-        request: VideoGenerationRequest,
+        request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
     ) -> WanI2VSamplingState:

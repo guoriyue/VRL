@@ -24,7 +24,7 @@ from typing import Any, Literal
 
 import torch
 
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest
 from vrl.models.families.cosmos import CosmosReplayForward, no_safety_checker
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
@@ -266,7 +266,7 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
 
     def prepare_sampling(
         self,
-        request: VideoGenerationRequest,
+        request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
     ) -> CosmosPredict2SamplingState:

@@ -40,17 +40,24 @@ class GenerationInput:
 
 
 @dataclass(slots=True)
-class VideoGenerationRequest:
-    """Backend-neutral parameters for one image or video generation call."""
+class DenoiseRequest:
+    """Backend-neutral parameters for one image or video generation call.
 
+    Geometry and schedule have no defaults: the sampling config is their single
+    source (``DiffusionRequestLayout.parse_sampling_params`` and the eval
+    scripts always pass them). ``fps`` is ``None`` for image families and for
+    video families that resolve their own rate; models read ``request.fps or
+    <family default>``.
+    """
+
+    width: int
+    height: int
+    frame_count: int
+    num_steps: int
+    guidance_scale: float
     negative_prompt: str = ""
-    width: int = 1024
-    height: int = 640
-    frame_count: int = 16
-    num_steps: int = 35
-    guidance_scale: float = 5.0
     seed: int | None = None
-    fps: int = 16
+    fps: int | None = None
 
 
 @dataclass(slots=True, init=False)
@@ -58,6 +65,9 @@ class GenerationRequest:
     """One generation request submitted to the engine."""
 
     request_id: str
+    # display/provenance-only: names the fleet this request was built for. The
+    # worker verifies its executor against the launch contract, not against
+    # this token; ``task`` is behavior-consumed (reward modality selection).
     family: str
     task: str
     inputs: list[GenerationInput]
@@ -192,9 +202,9 @@ class GenerationOutput:
 
 
 __all__ = [
+    "DenoiseRequest",
     "GenerationInput",
     "GenerationOutput",
     "GenerationRequest",
     "GenerationSampleRow",
-    "VideoGenerationRequest",
 ]

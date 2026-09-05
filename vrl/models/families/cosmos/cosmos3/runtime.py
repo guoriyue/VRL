@@ -24,7 +24,7 @@ from vrl.generation.bindings.full_sequence_denoise import (
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.protocols import GenerationBatchGatherer
-from vrl.generation.types import GenerationRequest, VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest, GenerationRequest
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.utils.logging import init_logger
 
@@ -74,7 +74,7 @@ class Cosmos3BatchExecutor(DiffusionBatchExecutorBase):
         self,
         *,
         generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
+        video_request: DenoiseRequest,
         params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
@@ -93,7 +93,7 @@ class Cosmos3BatchExecutor(DiffusionBatchExecutorBase):
         *,
         encoded: dict[str, Any],
         generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
+        video_request: DenoiseRequest,
         params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:

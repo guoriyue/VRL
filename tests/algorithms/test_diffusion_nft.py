@@ -37,7 +37,7 @@ from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.config.precision import RolePrecision
-from vrl.generation.types import GenerationRequest, GenerationSampleRow, VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest, GenerationRequest, GenerationSampleRow
 from vrl.models.families.cosmos.predict2_5.model import _copy_adapter_weights
 from vrl.models.steps.denoise import DiffusionModelBase
 from vrl.rollouts.batch import RolloutBatch
@@ -120,7 +120,7 @@ class _NFTModel(DiffusionModelBase):
 
     def prepare_sampling(
         self,
-        request: VideoGenerationRequest,
+        request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
     ) -> Any:

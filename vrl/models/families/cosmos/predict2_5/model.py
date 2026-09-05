@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import torch
 
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest
 from vrl.models.families.cosmos import (
     CosmosReplayForward,
     NoOpCosmosSafetyChecker,
@@ -339,7 +339,7 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
 
     def prepare_sampling(
         self,
-        request: VideoGenerationRequest,
+        request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
     ) -> CosmosPredict25SamplingState:

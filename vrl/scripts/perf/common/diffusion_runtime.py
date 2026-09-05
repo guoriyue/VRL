@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.interfaces import RuntimeBundle
 from vrl.scripts.perf.common.diffusion_benchmark import DIFFUSION_BENCHMARK_PROMPT
@@ -51,7 +51,7 @@ def prepare_sampling_state(model, cfg):
     }
     if max_sequence_length is not None:
         encode_kwargs["max_sequence_length"] = max_sequence_length
-    request = VideoGenerationRequest(
+    request = DenoiseRequest(
         negative_prompt=None,
         width=int(sampling.width),
         height=int(sampling.height),

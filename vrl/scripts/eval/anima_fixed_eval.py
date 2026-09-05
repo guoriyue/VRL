@@ -115,7 +115,7 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
     from vrl.config.loading import load_config
     from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
-    from vrl.generation.types import VideoGenerationRequest
+    from vrl.generation.types import DenoiseRequest
     from vrl.models.dtypes import resolve_torch_dtype
     from vrl.models.families.registry import get_model_family_entry
     from vrl.scripts.eval._device import resolve_eval_device
@@ -175,7 +175,7 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
                 max_sequence_length=max_seq,
                 guidance_scale=guidance,
             )
-            request = VideoGenerationRequest(
+            request = DenoiseRequest(
                 negative_prompt=_DEFAULT_NEGATIVE_PROMPT,
                 width=width,
                 height=height,

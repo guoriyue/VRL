@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import torch
 
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.utils.media import to_pil_image
 
@@ -96,7 +96,7 @@ def generate_one_video(
         max_sequence_length=int(sampling["max_sequence_length"]),
         guidance_scale=float(sampling["guidance_scale"]),
     )
-    request = VideoGenerationRequest(
+    request = DenoiseRequest(
         width=int(sampling["width"]),
         height=int(sampling["height"]),
         frame_count=int(sampling["num_frames"]),
@@ -150,7 +150,7 @@ def generate_images(
         max_sequence_length=sampling.max_sequence_length,
         guidance_scale=sampling.guidance_scale,
     )
-    request = VideoGenerationRequest(
+    request = DenoiseRequest(
         negative_prompt=negative_prompt,
         width=sampling.width,
         height=sampling.height,

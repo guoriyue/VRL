@@ -18,7 +18,7 @@ from typing import Any, ClassVar
 import torch
 import torch.nn as nn
 
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest
 from vrl.models.interfaces import (
     ReplayRequest,
     ReplayRequestContract,
@@ -103,7 +103,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
     @abstractmethod
     def prepare_sampling(
         self,
-        request: VideoGenerationRequest,
+        request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
     ) -> Any:

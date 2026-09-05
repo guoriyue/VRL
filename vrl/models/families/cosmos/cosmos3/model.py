@@ -36,7 +36,7 @@ from typing import Any
 import torch
 
 from vrl.generation.execution.sample_batches import SampleAlignedValues
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest
 from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
@@ -144,7 +144,7 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
     # ---- sampling-state assembly (the step-invariant packed_static) ----
     def prepare_sampling(
         self,
-        request: VideoGenerationRequest,
+        request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
     ) -> Cosmos3SamplingState:

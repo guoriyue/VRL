@@ -17,7 +17,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest
 from vrl.models.checkpoint_identity import validate_checkpoint_source_member
 from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.families.cosmos.anima.adapter import AnimaLLMAdapter
@@ -255,7 +255,7 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
 
     def prepare_sampling(
         self,
-        request: VideoGenerationRequest,
+        request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
     ) -> AnimaSamplingState:

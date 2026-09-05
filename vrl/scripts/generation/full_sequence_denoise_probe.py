@@ -144,7 +144,7 @@ def main() -> None:
 
     import torch
 
-    from vrl.generation.types import VideoGenerationRequest
+    from vrl.generation.types import DenoiseRequest
     from vrl.math.denoise.flow_matching import sde_step_with_logprob
     from vrl.models.families.registry import get_model_family_entry
 
@@ -180,7 +180,7 @@ def main() -> None:
             enc.to("cpu")
             torch.cuda.empty_cache()
 
-    request = VideoGenerationRequest(
+    request = DenoiseRequest(
         negative_prompt=args.negative_prompt,
         width=args.width,
         height=args.height,

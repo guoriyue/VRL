@@ -41,7 +41,7 @@ from typing import Any, ClassVar
 
 import torch
 
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import DenoiseRequest
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
@@ -202,7 +202,7 @@ class PixArtSigmaModel(
 
     def prepare_sampling(
         self,
-        request: VideoGenerationRequest,
+        request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
     ) -> PixArtSigmaSamplingState:
