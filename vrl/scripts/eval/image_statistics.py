@@ -21,6 +21,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
+from itertools import combinations
 from pathlib import Path
 
 import numpy as np
@@ -61,6 +63,34 @@ def load_image(path: Path) -> np.ndarray:
 
     with Image.open(path) as img:
         return np.asarray(img.convert("RGB"), dtype=np.float32) / 255.0
+
+
+def sample_diversity(paths: Sequence[Path]) -> dict[str, float]:
+    """Mean pairwise seed diversity, not a learned quality or semantic metric.
+
+    Two samples retain the original dual-seed diagnostics. More samples average
+    all pairs; only two full images are resident at a time.
+    """
+    if len(paths) < 2:
+        raise ValueError("sample diversity requires at least two images")
+    pixel_rms, color_hist_l2 = [], []
+    for left_path, right_path in combinations(paths, 2):
+        left, right = load_image(left_path), load_image(right_path)
+        if left.shape != right.shape:
+            raise ValueError("sample diversity requires identical image geometry")
+        pixel_rms.append(float(np.sqrt(np.mean(np.square(left - right)))))
+        histograms = []
+        for image in (left, right):
+            histogram = np.concatenate(
+                [
+                    np.histogram(image[..., channel], bins=32, range=(0.0, 1.0))[0]
+                    for channel in range(3)
+                ]
+            ).astype(np.float64)
+            histogram /= histogram.sum()
+            histograms.append(histogram)
+        color_hist_l2.append(float(np.linalg.norm(histograms[0] - histograms[1])))
+    return {"pixel_rms": float(np.mean(pixel_rms)), "color_hist_l2": float(np.mean(color_hist_l2))}
 
 
 def _collect_images(paths: list[Path]) -> list[Path]:
