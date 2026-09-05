@@ -291,6 +291,130 @@ class TestDiagnostics:
         later_mismatch = InitialReplayStats(logprob_abs_diff_max=1.0, finite=True)
         trainer._validate_first_update_parity(later_mismatch, local_weight=1.0)
 
+    def test_precision_drift_guard_stays_pending_until_first_trainable_update(
+        self,
+        tmp_path,
+    ) -> None:
+        """A filtered first rollout must not consume the precision guard."""
+        import asyncio
+        import json
+
+        import torch
+        import torch.nn as nn
+
+        from vrl.algorithms.types import TrainStepMetrics
+        from vrl.trainers.core.types import (
+            EMAConfig,
+            OptimConfig,
+            PrecisionDriftGuardConfig,
+        )
+        from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+
+        class _Algorithm(_EvaluatorAlgorithmFake):
+            required_signal_keys = ("log_prob",)
+            required_data_keys: tuple[str, ...] = ()
+
+            class _Config:
+                global_std = False
+                eps = 1e-8
+                adv_clip_max = 5.0
+                kl_coef = 0.0
+
+            config = _Config()
+
+            def compute_advantages_from_tensors(self, rewards, group_ids):
+                del group_ids
+                return rewards - rewards.mean()
+
+            def compute_loss(self, inputs):
+                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
+                del advantages, old_log_probs
+                loss = signals.log_prob.mean()
+                return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
+
+        class _Collector(CollectorControlFake):
+            def __init__(self) -> None:
+                super().__init__()
+                self.collections = 0
+
+            async def score_rollouts(self, pendings):
+                return list(pendings)
+
+            async def collect_unscored(self, prompts, **kwargs):
+                del prompts
+                group_size = int(kwargs["group_size"])
+                self.collections += 1
+                rewards = (
+                    torch.zeros(group_size, dtype=torch.float32)
+                    if self.collections == 1
+                    else torch.arange(group_size, dtype=torch.float32)
+                )
+                return _diffusion_rollout_batch(
+                    rewards=rewards,
+                    group_ids=torch.zeros(group_size, dtype=torch.long),
+                    num_steps=2,
+                )
+
+        evaluator_calls: list[int] = []
+
+        class _Evaluator(Evaluator):
+            def evaluate(self, model, batch, timestep_idx, **kw):
+                del kw
+                evaluator_calls.append(timestep_idx)
+                return _trajectory_signals(
+                    batch,
+                    model.weight.view(1).expand(batch.rewards.shape[0]),
+                    timestep_idx,
+                )
+
+        model = nn.Linear(1, 1, bias=False)
+        _stamp_model_precision(model)
+        trainer = OnlineTrainer(
+            algorithm=_Algorithm(),
+            collector=_Collector(),
+            evaluator=_Evaluator(),
+            model=model,
+            config=TrainerConfig(
+                batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
+                timestep_fraction=1.0,
+                drop_zero_advantage=True,
+                optim=OptimConfig(lr=0.01),
+                ema=EMAConfig(),
+                precision_drift_guard=PrecisionDriftGuardConfig(mode="fail"),
+                train_precision="no",
+                output_dir=str(tmp_path),
+            ),
+            device="cpu",
+        )
+        assert trainer.config.batch_plan.streaming is False
+
+        filtered_metrics = asyncio.run(trainer.step(["filtered-prompt"]))
+
+        assert filtered_metrics.adv_zero_rate == 1.0
+        assert trainer._precision_drift_guard_pending is True
+        assert trainer.state.step == 1
+        assert trainer.state.global_step == 0
+        assert evaluator_calls == []
+        assert not (tmp_path / "training_debug.jsonl").exists()
+
+        asyncio.run(trainer.step(["trainable-prompt"]))
+
+        assert trainer._precision_drift_guard_pending is False
+        assert trainer.state.step == 2
+        assert trainer.state.global_step == 1
+        records = [
+            json.loads(line)
+            for line in (tmp_path / "training_debug.jsonl").read_text().splitlines()
+        ]
+        precision_records = [
+            record for record in records if record["event"] == "precision_drift_guard"
+        ]
+        assert len(precision_records) == 1
+        assert precision_records[0]["violated"] is False
+        assert precision_records[0]["worst_stats"]["logprob_abs_diff_max"] == 0.0
+        assert all(record["event"] != "first_step_logprob_parity" for record in records)
+
     def test_fully_filtered_update_still_serializes_metrics_row(
         self,
         tmp_path,
