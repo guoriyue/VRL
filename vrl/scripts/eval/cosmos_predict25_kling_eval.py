@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import logging
 import re
@@ -28,6 +27,7 @@ from vrl.scripts.eval.denoise_video_generation import (
     generate_one_video,
     seed_for,
 )
+from vrl.scripts.eval.score_report import write_scores
 from vrl.trainers.checkpointing import (
     load_training_checkpoint,
     read_checkpoint_meta,
@@ -211,7 +211,7 @@ def main(argv: list[str] | None = None) -> None:
 
     score_key = _score_key(args, cfg)
     rows = _score_generated_videos(generated, cfg, score_key=score_key)
-    _write_scores(rows, output_dir)
+    write_scores(rows, output_dir)
     summary = _summarize_scores(rows)
     (output_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
@@ -457,19 +457,6 @@ def _write_generation_metadata(videos: list[GeneratedVideo], output_dir: Path) -
             row = asdict(video)
             row["path"] = str(video.path)
             handle.write(json.dumps(row, sort_keys=True) + "\n")
-
-
-def _write_scores(rows: list[dict[str, Any]], output_dir: Path) -> None:
-    jsonl_path = output_dir / "scores.jsonl"
-    with jsonl_path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, sort_keys=True) + "\n")
-    csv_path = output_dir / "scores.csv"
-    with csv_path.open("w", newline="", encoding="utf-8") as handle:
-        fieldnames = sorted({key for row in rows for key in row})
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
 
 
 def _summarize_scores(rows: list[dict[str, Any]]) -> dict[str, Any]:

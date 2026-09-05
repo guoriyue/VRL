@@ -49,8 +49,8 @@ from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.scripts.eval._device import resolve_eval_device, resolve_eval_dtype
 from vrl.scripts.eval._sampling import resolve_eval_sampling
-from vrl.scripts.eval._score_summary import summarize_paired_scores, write_scores
 from vrl.scripts.eval.denoise_video_generation import generate_one_video, seed_for
+from vrl.scripts.eval.score_report import summarize_paired_scores, write_scores
 from vrl.trainers.checkpointing import (
     is_complete_checkpoint,
     load_training_checkpoint,

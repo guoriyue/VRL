@@ -48,7 +48,7 @@ from vrl.rewards.models.countgd import (
     CountGDModel,
 )
 from vrl.rewards.types import REWARD_GROUP_ID_METADATA_KEY
-from vrl.scripts.eval._score_summary import bootstrap_mean_interval, distribution
+from vrl.scripts.eval.score_report import bootstrap_mean_interval, distribution
 from vrl.scripts.families.cosmos.anima.generation_protocol import (
     ANIMA_ANCHOR_MANIFEST_SCHEMA,
     AnimaGenerationArchive,

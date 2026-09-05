@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.scripts.eval import _score_summary
+from vrl.scripts.eval import score_report
 from vrl.scripts.eval import wan_hpsv3_checkpoint_eval as checkpoint_eval
 
 
@@ -35,7 +35,7 @@ def test_paired_delta_detects_improvement_and_regression() -> None:
         *_grid("worse", [0.0, 1.0, 2.0, 3.0]),
     ]
 
-    summary = _score_summary.summarize_paired_scores(
+    summary = score_report.summarize_paired_scores(
         rows,
         score_keys=checkpoint_eval.SCORE_KEYS,
         schema=checkpoint_eval.REPORT_SCHEMA,
@@ -57,7 +57,7 @@ def test_paired_summary_reports_every_score_key() -> None:
 
     rows = [*_grid("base", [1.0, 2.0]), *_grid("later", [3.0, 4.0])]
 
-    summary = _score_summary.summarize_paired_scores(
+    summary = score_report.summarize_paired_scores(
         rows,
         score_keys=checkpoint_eval.SCORE_KEYS,
         schema=checkpoint_eval.REPORT_SCHEMA,
@@ -70,7 +70,7 @@ def test_paired_summary_refuses_a_mismatched_grid() -> None:
     rows = [*_grid("base", [1.0, 2.0]), *_grid("short", [1.0])]
 
     with pytest.raises(ValueError, match="paired score grid differs"):
-        _score_summary.summarize_paired_scores(
+        score_report.summarize_paired_scores(
             rows,
             score_keys=("top_frame_mean",),
             schema=checkpoint_eval.REPORT_SCHEMA,
@@ -79,7 +79,7 @@ def test_paired_summary_refuses_a_mismatched_grid() -> None:
 
 def test_paired_summary_requires_the_base_arm() -> None:
     with pytest.raises(ValueError, match="requires 'base' rows"):
-        _score_summary.summarize_paired_scores(
+        score_report.summarize_paired_scores(
             _grid("only", [1.0, 2.0]),
             score_keys=("top_frame_mean",),
             schema=checkpoint_eval.REPORT_SCHEMA,
@@ -88,13 +88,13 @@ def test_paired_summary_requires_the_base_arm() -> None:
 
 def test_bootstrap_interval_is_deterministic_and_brackets_the_mean() -> None:
     values = [0.1, 0.4, -0.2, 0.9, 0.3, 0.5]
-    first = _score_summary.bootstrap_mean_interval(
+    first = score_report.bootstrap_mean_interval(
         values,
         schema="s",
         label="ckpt",
         score_key="top_frame_mean",
     )
-    second = _score_summary.bootstrap_mean_interval(
+    second = score_report.bootstrap_mean_interval(
         values,
         schema="s",
         label="ckpt",
@@ -108,7 +108,7 @@ def test_bootstrap_interval_is_deterministic_and_brackets_the_mean() -> None:
 def test_write_scores_publishes_jsonl_and_csv(tmp_path: Path) -> None:
     rows = _grid("base", [1.0, 2.0])
 
-    _score_summary.write_scores(rows, tmp_path)
+    score_report.write_scores(rows, tmp_path)
 
     written = [json.loads(line) for line in (tmp_path / "scores.jsonl").read_text().splitlines()]
     assert written == rows
