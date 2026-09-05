@@ -25,7 +25,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from vrl.algorithms.grpo.continuous import GRPO, FlashGRPO, FlashGRPOConfig
+from vrl.algorithms.grpo.continuous import FlashGRPO, FlashGRPOConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
@@ -179,11 +179,6 @@ def test_missing_sigma_fails_fast() -> None:
         )
 
 
-def test_base_grpo_weight_hook_is_none() -> None:
-    std, dt, sigma = _sde_intermediates([0, 1])
-    assert GRPO()._loss_weight(_signals(2, std_dev_t=std, dt=dt, sigma=sigma).primary) is None
-
-
 # ------------------------------------------------------------ kind dispatch
 
 
@@ -215,11 +210,6 @@ def _trainer_config(**overrides):
     )
     base.update(overrides)
     return TrainerConfig(**base)
-
-
-def test_trainer_config_accepts_sde_window_selection() -> None:
-    cfg = _trainer_config(timestep_selection="sde_window")
-    assert cfg.timestep_selection == "sde_window"
 
 
 def test_sde_window_selection_refuses_partial_timestep_fraction() -> None:

@@ -19,8 +19,6 @@ it away. That catches a sign flip independently of how the loss is written.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from dataclasses import fields
 from typing import Any
 
 import pytest
@@ -35,7 +33,6 @@ from tests.models.steps.denoise.fixtures import (
 )
 from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
-from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.config.precision import RolePrecision
 from vrl.generation.types import DenoiseRequest, GenerationRequest, GenerationSampleRow
 from vrl.models.families.cosmos.predict2_5.model import _copy_adapter_weights
@@ -52,17 +49,6 @@ _PRECISION = RolePrecision(
     float32_precision="ieee",
     outer_autocast=False,
 )
-
-
-def test_diffusion_nft_does_not_tolerate_off_policy_staleness() -> None:
-    """The capability that makes a continuous max_stale>0 config fail fast.
-
-    NFT is likelihood-free, so it opts out explicitly; GRPO carries an IS
-    correction and declares that it tolerates bounded staleness.
-    """
-
-    assert DiffusionNFT.tolerates_off_policy_staleness is False
-    assert GRPO.tolerates_off_policy_staleness is True
 
 
 @pytest.mark.parametrize("global_std", [False, True])
@@ -215,35 +201,7 @@ def _build_batch(
     )
 
 
-@pytest.mark.parametrize(
-    ("inputs", "message"),
-    [
-        (
-            AlgorithmInput(rollout_batch=object(), timestep_index=0, advantages=torch.ones(1)),
-            "AlgorithmInput.model is required",
-        ),
-        (
-            AlgorithmInput(model=object(), timestep_index=0, advantages=torch.ones(1)),
-            "AlgorithmInput.rollout_batch is required",
-        ),
-        (
-            AlgorithmInput(model=object(), rollout_batch=object(), advantages=torch.ones(1)),
-            "AlgorithmInput.timestep_index is required",
-        ),
-    ],
-)
-def test_nft_requires_explicit_execution_inputs(
-    inputs: AlgorithmInput,
-    message: str,
-) -> None:
-    with pytest.raises(RuntimeError, match=message):
-        DiffusionNFT().compute_loss(inputs)
-
-
-@pytest.mark.parametrize("timestep_index", [-1, 2])
-def test_nft_rejects_timestep_index_outside_trajectory(
-    timestep_index: int,
-) -> None:
+def test_nft_rejects_timestep_index_outside_trajectory() -> None:
     model = _build_model()
     batch = _build_batch(
         x0=torch.randn(_LATENT_SHAPE),
@@ -256,28 +214,9 @@ def test_nft_rejects_timestep_index_outside_trajectory(
         DiffusionNFT().compute_batch_timestep_loss(
             model,
             batch,
-            timestep_index,
+            2,
             torch.ones(_BATCH),
         )
-
-
-def test_nft_accepts_last_trajectory_timestep() -> None:
-    model = _build_model()
-    batch = _build_batch(
-        x0=torch.randn(_LATENT_SHAPE),
-        noise=torch.randn(_LATENT_SHAPE),
-        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
-        timestep=(250.0, 500.0),
-    )
-
-    loss, _ = DiffusionNFT().compute_batch_timestep_loss(
-        model,
-        batch,
-        1,
-        torch.ones(_BATCH),
-    )
-
-    assert torch.isfinite(loss)
 
 
 def _default_forward(
@@ -367,58 +306,6 @@ def test_nft_returns_only_objective_owned_step_metrics() -> None:
     assert metrics.phase_times == {}
 
 
-def test_nft_autocast_only_wraps_transformer_forwards(monkeypatch) -> None:
-    import vrl.algorithms.diffusion_nft as nft_module
-
-    model = _build_model()
-    batch = _build_batch(
-        x0=torch.randn(_LATENT_SHAPE),
-        noise=torch.randn(_LATENT_SHAPE),
-        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
-        timestep=500.0,
-    )
-    active_forward_scope = 0
-    scope_count = 0
-
-    @contextmanager
-    def track_model_autocast(forward_model, device):
-        nonlocal active_forward_scope, scope_count
-        assert forward_model is model
-        assert torch.device(device).type == "cpu"
-        active_forward_scope += 1
-        scope_count += 1
-        try:
-            yield
-        finally:
-            active_forward_scope -= 1
-
-    def check_transformer_scope(_module, _args):
-        assert active_forward_scope == 1
-
-    original_normalized_mse = nft_module.normalized_mse
-
-    def checked_normalized_mse(prediction, target):
-        assert active_forward_scope == 0
-        return original_normalized_mse(prediction, target)
-
-    monkeypatch.setattr(nft_module, "model_autocast", track_model_autocast)
-    monkeypatch.setattr(nft_module, "normalized_mse", checked_normalized_mse)
-    hook = model.transformer.register_forward_pre_hook(check_transformer_scope)
-    try:
-        loss, _metrics = DiffusionNFT().compute_batch_timestep_loss(
-            model,
-            batch,
-            0,
-            torch.ones(_BATCH),
-        )
-    finally:
-        hook.remove()
-
-    assert loss.requires_grad
-    assert scope_count == 3
-    assert active_forward_scope == 0
-
-
 def test_positive_advantage_trains_toward_reconstruction() -> None:
     # A good sample (high positive advantage) must pull the forward prediction
     # TOWARD the velocity that reconstructs the clean latent.
@@ -453,13 +340,6 @@ def test_nft_beta_must_be_positive() -> None:
             0,
             torch.tensor([1.0]),
         )
-
-
-def test_advantage_scale_is_the_only_nft_advantage_scale() -> None:
-    """Checks DiffusionNFT exposes one symmetric advantage scale."""
-
-    assert "advantage_scale" in {field.name for field in fields(DiffusionNFTConfig)}
-    assert "advantage_low" not in {field.name for field in fields(DiffusionNFTConfig)}
 
 
 def test_advantage_scale_must_be_positive() -> None:

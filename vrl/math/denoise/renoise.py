@@ -53,8 +53,6 @@ def renoise_step_with_logprob(
         raise ValueError("next_sample cannot be combined with noise")
     if next_sample is None and noise is None:
         raise ValueError("exactly one of noise or next_sample is required")
-    if not isinstance(pred_original_sample, torch.Tensor):
-        raise TypeError("pred_original_sample must be a torch.Tensor")
 
     dtype = torch.float32 if math_dtype is None else math_dtype
     original_dtype = pred_original_sample.dtype

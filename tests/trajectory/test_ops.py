@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 import torch
 
 from vrl.generation.types import GenerationRequest
@@ -24,16 +23,6 @@ def test_select_derives_sample_structure_from_selected_rows_and_axis() -> None:
     assert [row.sample_index for row in selected.sample_rows] == [2, 0]
     assert len(trajectory.sample_rows) == 3
     assert _axis_lengths(trajectory) == {"sample": 3, "token": 2}
-
-
-def test_select_rejects_unsupported_slice_without_partial_rebuild() -> None:
-    trajectory = _trajectory(samples=3)
-
-    with pytest.raises(TypeError, match="slice selectors are not supported"):
-        select_trajectory_batch(trajectory, slice(0, 2))
-
-    assert len(trajectory.sample_rows) == 3
-    assert _axis_lengths(trajectory)["sample"] == 3
 
 
 def test_move_preserves_derived_structure_and_provenance() -> None:

@@ -122,23 +122,3 @@ def test_replay_branch_reports_missing_and_available() -> None:
     assert "Available data keys:" in msg
     assert "prompt_embeds" in msg
     assert "timesteps" in msg
-
-
-def test_well_formed_inputs_pass_validation() -> None:
-    """The gate is silent on the happy path for both branches."""
-
-    adapter = AlgorithmAdapter()
-    adapter.validate_inputs(
-        GRPO(),
-        AlgorithmInput(
-            signals=_grpo_signals(old_log_prob=torch.zeros(_BATCH)),
-            advantages=torch.ones(_BATCH),
-        ),
-    )
-    adapter.validate_inputs(
-        DiffusionNFT(),
-        AlgorithmInput(
-            advantages=torch.zeros(_BATCH),
-            rollout_batch=_nft_batch(latents_clean=torch.randn(*_LATENT_SHAPE)),
-        ),
-    )

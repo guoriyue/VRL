@@ -197,15 +197,6 @@ def test_swap_excludes_qwen_modulation_and_text_input():
     assert any("img_mlp" in p for p in swapped)
 
 
-def test_invalid_recipe_rejected():
-    with pytest.raises(ValueError, match="recipe"):
-        Fp8Linear(nn.Linear(16, 16), recipe="bogus")
-
-
-def test_fp8_is_the_module_scheme_identity() -> None:
-    assert Fp8Linear.quantization_scheme == "fp8"
-
-
 # --- numeric: per-GEMM and end-to-end drift (GPU) ----------------------------
 
 

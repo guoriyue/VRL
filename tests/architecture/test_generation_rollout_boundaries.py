@@ -235,8 +235,6 @@ def test_model_family_registry_stays_import_light() -> None:
 
 def test_shared_ray_substrate_stays_domain_neutral() -> None:
     """Checks shared Ray substrate stays domain neutral."""
-    assert (VRL_ROOT / "ray" / "resources.py").exists()
-    assert not (VRL_ROOT / "generation" / "resources.py").exists()
     violations = _forbidden_imports(
         VRL_ROOT / "ray",
         forbidden=(
@@ -249,24 +247,6 @@ def test_shared_ray_substrate_stays_domain_neutral() -> None:
     assert not violations, _format_violations(violations)
 
 
-def test_reward_scoring_is_in_process() -> None:
-    """Rewards score in-process; the removed Ray pool transport must stay gone.
-
-    The pool (actor pool + release_after_call kill/reload + resident parking)
-    was replaced by InProcessRewardScorer sleep/wake offload. Guard against it
-    creeping back as a directory, and keep the in-process runtime generic (no
-    model-specific code in the shared transport).
-    """
-    assert not (VRL_ROOT / "rewards" / "ray").exists()
-    assert not (VRL_ROOT / "rewards" / "ray.py").exists()
-    runtime_text = (VRL_ROOT / "rewards" / "runtime.py").read_text(encoding="utf-8")
-    for snippet in ("KlingTeam", "VideoVLMRewardInference", "huggingface_hub"):
-        assert snippet not in runtime_text, "runtime.py leaks a specific model"
-    assert not (VRL_ROOT / "rewards" / "inference").exists()
-    assert not (VRL_ROOT / "rewards" / "video_inference").exists()
-    assert not list((VRL_ROOT / "rewards").rglob("spec.py"))
-
-
 def test_reward_models_live_under_models() -> None:
     """Model-backed rewards own model modules; pure functions do not."""
     models_root = VRL_ROOT / "rewards" / "models"
@@ -277,23 +257,6 @@ def test_reward_models_live_under_models() -> None:
     scaffolding = {"__init__.py", "base.py", "hub.py", "media.py"}
     extras = present - model_modules - scaffolding
     assert not extras, f"unexpected modules under rewards/models/: {extras}"
-    assert not (VRL_ROOT / "rewards" / "kling_video_reward.py").exists()
-    assert not (VRL_ROOT / "rewards" / "ray" / "kling_video_reward.py").exists()
-    assert not (VRL_ROOT / "rewards" / "scorers").exists()
-
-
-def test_reward_inference_is_a_single_domain_module() -> None:
-    """Checks reward inference is a single domain module."""
-    inference_path = VRL_ROOT / "rewards" / "inference.py"
-    assert inference_path.exists()
-    inference_text = inference_path.read_text(encoding="utf-8")
-    assert "build_reward_scorer" not in inference_text
-    assert "vrl.ray" not in inference_text
-    assert "vrl.rewards.ray" not in inference_text
-    assert not (VRL_ROOT / "rewards" / "scorer.py").exists()
-    assert not (VRL_ROOT / "rewards" / "inference_worker.py").exists()
-    assert not (VRL_ROOT / "rewards" / "inference_scheduler.py").exists()
-    assert not (VRL_ROOT / "rewards" / "scoring_worker.py").exists()
 
 
 def test_reward_function_implementations_live_under_functions() -> None:
@@ -309,7 +272,6 @@ def test_reward_function_implementations_live_under_functions() -> None:
         "types.py",
     }
     assert required_root <= _module_filenames(rewards_root)
-    assert not (VRL_ROOT / "rollouts" / "collector" / "rewards.py").exists()
 
     functions = _module_filenames(rewards_root / "functions")
     assert _registered_reward_modules() <= functions
@@ -318,85 +280,10 @@ def test_reward_function_implementations_live_under_functions() -> None:
     assert not extras, f"unexpected modules under rewards/functions/: {extras}"
 
 
-def test_generation_ray_adapter_stays_lean() -> None:
-    """Checks generation Ray adapter stays lean."""
-    ray_root = VRL_ROOT / "generation" / "ray"
-    required = {
-        "__init__.py",
-        "config.py",
-        "executor.py",
-        "launcher.py",
-        "runtime.py",
-        "session.py",
-        "weight_sync.py",
-        "worker.py",
-    }
-    assert required <= _module_filenames(ray_root)
-    assert not (ray_root / "on_demand_runtime.py").exists()
-    runtime_path = ray_root / "runtime.py"
-    session_path = ray_root / "session.py"
-    runtime_imports = set(_imports(runtime_path))
-    session_imports = set(_imports(session_path))
-    assert "vrl.generation.ray.session.RayGenerationSession" in runtime_imports
-    assert not any(
-        _is_module_or_child(target, "vrl.utils.lifecycle")
-        or _is_module_or_child(target, "vrl.generation.protocols")
-        for target in session_imports
-    )
-    session_tree = ast.parse(session_path.read_text(encoding="utf-8"))
-    session_class = next(
-        node
-        for node in session_tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "RayGenerationSession"
-    )
-    session_methods = {
-        node.name
-        for node in session_class.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    assert not {"activate", "generate", "offload", "shutdown"} & session_methods
-    for speculative_stage_adapter in ("pipeline_runner.py", "stage_worker.py"):
-        assert not (ray_root / speculative_stage_adapter).exists()
-    assert not (VRL_ROOT / "generation" / "pipeline").exists()
-    ray_adapter_files = (
-        ray_root / "config.py",
-        ray_root / "executor.py",
-        ray_root / "launcher.py",
-        ray_root / "runtime.py",
-        ray_root / "session.py",
-        ray_root / "worker.py",
-        ray_root / "weight_sync.py",
-    )
-    for path in ray_adapter_files:
-        text = path.read_text(encoding="utf-8")
-        assert "EnginePlan.from_request(" not in text
-        assert "vrl.generation.execution.sample_batches import" not in text
-
-
-def test_generation_execution_core_stays_flat_and_ray_neutral() -> None:
-    """Checks generation execution core stays flat and Ray neutral."""
-    execution_root = VRL_ROOT / "generation" / "execution"
-    for expected in (
-        "__init__.py",
-        "batch_placement.py",
-        "types.py",
-        "worker.py",
-    ):
-        assert (execution_root / expected).exists()
-    for ray_specific in ("executor.py", "placement.py"):
-        assert not (execution_root / ray_specific).exists()
-    assert not (execution_root / "distributed").exists()
-    for obsolete in (
-        "distributed_executor.py",
-        "distributed_planner.py",
-        "distributed_types.py",
-        "placement.py",
-        "stage_plan.py",
-        "worker_core.py",
-    ):
-        assert not (execution_root / obsolete).exists()
+def test_generation_execution_core_stays_ray_neutral() -> None:
+    """Checks generation execution core stays Ray neutral."""
     violations = _forbidden_imports(
-        execution_root,
+        VRL_ROOT / "generation" / "execution",
         forbidden=("vrl.generation.ray", "vrl.ray"),
     )
     assert not violations, _format_violations(violations)

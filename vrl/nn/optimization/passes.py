@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol
 
 from vrl.utils.logging import init_logger
 
@@ -44,7 +44,6 @@ class PassResult:
     detail: str
 
 
-@runtime_checkable
 class OptimizationPass(Protocol):
     """A build-time transformation of the rollout policy.
 

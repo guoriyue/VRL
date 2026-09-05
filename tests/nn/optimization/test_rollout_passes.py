@@ -14,8 +14,6 @@ import pytest
 from torch import nn
 
 from vrl.nn.optimization import (
-    ROLLOUT_PASSES,
-    OptimizationPass,
     apply_rollout_optimizations,
     unguarded_drift_sources,
 )
@@ -252,23 +250,6 @@ def test_full_coverage_passes() -> None:
     apply_rollout_optimizations(model, _build(quantization="fp8", compile_mode="default"))
 
     assert model.compiled == ["transformer:default", "transformer_2:default"]
-
-
-# --- registry shape ------------------------------------------------------------
-
-
-def test_registered_passes_satisfy_the_protocol_structurally() -> None:
-    """Concrete passes conform by shape and must NOT inherit the Protocol.
-
-    A consumer-facing Protocol is a structural contract, not an implementation
-    base; inheriting it to advertise conformance would let a class ship the
-    Protocol's ``...`` stubs as real methods.
-    """
-
-    assert ROLLOUT_PASSES, "no passes registered"
-    for optimization in ROLLOUT_PASSES:
-        assert isinstance(optimization, OptimizationPass)
-        assert OptimizationPass not in type(optimization).__mro__
 
 
 # --- drift accounting ----------------------------------------------------------

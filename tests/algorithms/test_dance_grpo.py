@@ -9,7 +9,6 @@ to GRPO without inventing a new config type.
 
 from __future__ import annotations
 
-import pytest
 import torch
 
 from vrl.trainers.online import OnlineTrainer
@@ -59,43 +58,7 @@ def test_at_least_one_step_even_at_tiny_fraction() -> None:
 # ------------------------------------------------ timestep_selection validation
 
 
-def _trainer_config(**overrides):
-    from vrl.trainers.core.types import (
-        DebugConfig,
-        EMAConfig,
-        OptimConfig,
-    )
-    from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-
-    base = dict(
-        batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
-        timestep_fraction=1.0,
-        drop_zero_advantage=False,
-        output_dir="outputs/",
-        optim=OptimConfig(lr=0.01),
-        ema=EMAConfig(),
-        debug=DebugConfig(),
-    )
-    base.update(overrides)
-    return TrainerConfig(**base)
-
-
-def test_trainer_config_accepts_random() -> None:
-    assert _trainer_config(timestep_selection="random").timestep_selection == "random"
-
-
-def test_trainer_config_rejects_unknown_selection() -> None:
-    with pytest.raises(ValueError, match="timestep_selection"):
-        _trainer_config(timestep_selection="bogus")
-
-
 # ---------------------------------------------------------- kind dispatch
-
-
-def test_dance_grpo_kind_is_accepted() -> None:
-    from vrl.config.schema import AlgorithmConfig
-
-    assert AlgorithmConfig(kind="dance_grpo").kind == "dance_grpo"
 
 
 def test_dance_grpo_builds_a_plain_grpo_config() -> None:

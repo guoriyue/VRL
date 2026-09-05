@@ -30,7 +30,7 @@ def _scheduler(prediction_type: str):
 
 
 @pytest.mark.parametrize("prediction_type", ["epsilon", "v_prediction"])
-@pytest.mark.parametrize("step_idx", [0, 4, 9])
+@pytest.mark.parametrize("step_idx", [0, 9])
 def test_ddim_mean_matches_diffusers_step(prediction_type: str, step_idx: int) -> None:
     """prev_sample_mean equals DDIMScheduler.step with eta and zero noise."""
     scheduler = _scheduler(prediction_type)

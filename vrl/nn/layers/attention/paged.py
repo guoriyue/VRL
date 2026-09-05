@@ -22,10 +22,6 @@ class ARAttentionConfig:
 
     family: str
 
-    def __post_init__(self) -> None:
-        if not self.family:
-            raise ValueError("ARAttentionConfig.family must be non-empty")
-
 
 @dataclass(frozen=True, slots=True)
 class VllmPagedAttentionConfig(ARAttentionConfig):
@@ -33,11 +29,6 @@ class VllmPagedAttentionConfig(ARAttentionConfig):
 
     block_size: int = 16
     cache_dtype: str = "auto"
-
-    def __post_init__(self) -> None:
-        ARAttentionConfig.__post_init__(self)
-        if self.block_size < 1:
-            raise ValueError("VllmPagedAttentionConfig.block_size must be >= 1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,8 +42,6 @@ class ARAttentionPrefillInput:
 
     def __post_init__(self) -> None:
         _require_embed_mask_batch(self.inputs_embeds, self.attention_mask)
-        if not self.branch:
-            raise ValueError("ARAttentionPrefillInput.branch must be non-empty")
         if self.max_new_tokens < 1:
             raise ValueError("ARAttentionPrefillInput.max_new_tokens must be >= 1")
 
@@ -63,9 +52,6 @@ class ARAttentionPrefillOutput:
 
     last_hidden: torch.Tensor
     sequence_states: tuple[Any, ...]
-
-    def __post_init__(self) -> None:
-        _require_last_hidden_batch(self.last_hidden, len(self.sequence_states))
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,9 +75,6 @@ class ARAttentionStepOutput:
 
     last_hidden: torch.Tensor
     sequence_states: tuple[Any, ...]
-
-    def __post_init__(self) -> None:
-        _require_last_hidden_batch(self.last_hidden, len(self.sequence_states))
 
 
 class ARAttentionBackend:
@@ -117,15 +100,6 @@ def _require_embed_mask_batch(inputs_embeds: torch.Tensor, attention_mask: torch
         raise ValueError("attention_mask must have shape [B, T]")
     if inputs_embeds.shape[0] != attention_mask.shape[0]:
         raise ValueError("inputs_embeds and attention_mask batch sizes must match")
-
-
-def _require_last_hidden_batch(last_hidden: torch.Tensor, batch_size: int) -> None:
-    if batch_size < 1:
-        raise ValueError("sequence_states must be non-empty")
-    if last_hidden.ndim not in (2, 3):
-        raise ValueError("last_hidden must have shape [B, H] or [B, 1, H]")
-    if last_hidden.shape[0] != batch_size:
-        raise ValueError("last_hidden batch size must match sequence_states")
 
 
 __all__ = [

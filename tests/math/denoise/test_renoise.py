@@ -46,12 +46,9 @@ def test_renoise_replay_keeps_gradient_on_prediction_only() -> None:
     assert recorded.grad is None
 
 
-@pytest.mark.parametrize("sigma", [0.0, -0.1])
-def test_renoise_rejects_deterministic_or_reverse_sigma(sigma: float) -> None:
-    # Supply ``noise`` so the required-arg check does not preempt the sigma
-    # validation this test is asserting on.
+def test_renoise_rejects_deterministic_sigma() -> None:
     with pytest.raises(ValueError, match="next_sigma must be > 0"):
-        renoise_step_with_logprob(torch.zeros(1, 2), sigma, noise=torch.zeros(1, 2))
+        renoise_step_with_logprob(torch.zeros(1, 2), 0.0, noise=torch.zeros(1, 2))
 
 
 def test_renoise_requires_noise_or_next_sample() -> None:

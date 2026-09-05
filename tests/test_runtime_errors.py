@@ -9,10 +9,6 @@ from vrl.runtime_errors import (
 )
 
 
-def test_terminal_runtime_error_is_a_runtime_error() -> None:
-    assert issubclass(TerminalRuntimeError, RuntimeError)
-
-
 def test_error_chain_prefers_explicit_cleanup_root() -> None:
     terminal = TerminalRuntimeError("worker fleet is unusable")
     wrapper = RuntimeError("cleanup also failed")

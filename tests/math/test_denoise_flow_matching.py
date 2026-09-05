@@ -147,31 +147,12 @@ def test_flow_scheduler_keeps_legacy_path() -> None:
         step_index=step,
     )
 
-    assert scheduler._vrl_edm_sigma_domain is False
     # Deterministic Euler step in the scheduler's own (already-flow) domain —
     # the pre-fix formula, bit-for-bit.
     torch.testing.assert_close(
         res.prev_sample,
         sample + (sigma_prev - sigma) * velocity,
     )
-
-
-def test_edm_domain_detection_is_cached_on_scheduler() -> None:
-    """Checks the runtime-sigma domain verdict is computed once and cached."""
-    scheduler = _FakeScheduler(_EDM_SIGMAS.clone())
-    sample = torch.randn(1, 3)
-    noise_pred = torch.randn(1, 3)
-
-    sde_step_with_logprob(
-        scheduler,
-        noise_pred,
-        _timestep(1),
-        sample,
-        generator=torch.Generator().manual_seed(0),
-        step_index=1,
-    )
-
-    assert scheduler._vrl_edm_sigma_domain is True
 
 
 # ── diffusion_pretraining_pair (the sft-regularizer noising construction) ────

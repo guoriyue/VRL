@@ -43,7 +43,10 @@ _LANE_TARGET = (
 _MODULE_LANE_TARGET = (
     "tests/ray/test_ray_actor_pool.py::test_actor_dispatcher_awaits_real_object_refs"
 )
-_CPU_TARGET = "tests/nn/layers/test_paged_attention_contract.py::test_paged_attention_config_requires_identity"
+_CPU_TARGET = (
+    "tests/nn/layers/test_paged_attention_contract.py"
+    "::test_paged_attention_prefill_validates_batch_shape"
+)
 
 
 def test_real_cover_is_a_registered_marker_and_so_is_every_real_lane(pytestconfig) -> None:

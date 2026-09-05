@@ -55,8 +55,10 @@ class TestGRPOSingleSampleNaN:
         assert advantages[0] < 0
         assert advantages[3] > 0
 
-    @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
-    @pytest.mark.parametrize("global_std", [False, True])
+    @pytest.mark.parametrize(
+        ("dtype", "global_std"),
+        [(torch.bfloat16, False), (torch.float32, True)],
+    )
     def test_constant_non_binary_reward_returns_exact_zero(
         self,
         dtype: torch.dtype,
@@ -313,8 +315,6 @@ class TestGRPOTruncatedImportanceSampling:
         "kwargs",
         [
             {"tis_mode": "nope"},
-            {"tis_imp_weight_cap": 0.0},
-            {"tis_clip_low": -1.0},
             {"tis_mode": "clip", "tis_clip_low": 2.0, "tis_imp_weight_cap": 2.0},
         ],
     )

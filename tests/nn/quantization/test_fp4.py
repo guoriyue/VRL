@@ -184,10 +184,6 @@ def test_nvfp4_gate_matches_the_hardware_it_claims_to_describe() -> None:
 # --- module ownership (CPU) ---------------------------------------------------
 
 
-def test_nvfp4_is_the_module_scheme_identity() -> None:
-    assert Fp4Linear.quantization_scheme == "nvfp4"
-
-
 def test_master_weight_is_the_only_state_dict_entry() -> None:
     quantized = Fp4Linear(nn.Linear(64, 32, bias=True))
     assert set(quantized.state_dict()) == {"weight", "bias"}

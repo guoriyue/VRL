@@ -85,25 +85,13 @@ def test_preview_image_preserves_uint8_and_identity(tmp_path: Path) -> None:
     np.testing.assert_array_equal(actual, image[0].permute(1, 2, 0).numpy())
 
 
-@pytest.mark.parametrize(
-    ("output", "match"),
-    [
-        (
-            SimpleNamespace(
-                request_id="request-0",
-                output=torch.zeros((1, 3, 2, 2), dtype=torch.uint8),
-                sample_rows=[
-                    SimpleNamespace(
-                        prompt="different",
-                    ),
-                ],
-            ),
-            "changed request/prompt identity",
-        ),
-    ],
-)
-def test_preview_image_rejects_invalid_executor_output(output: object, match: str) -> None:
-    with pytest.raises(RuntimeError, match=match):
+def test_preview_image_rejects_changed_prompt_identity() -> None:
+    output = SimpleNamespace(
+        request_id="request-0",
+        output=torch.zeros((1, 3, 2, 2), dtype=torch.uint8),
+        sample_rows=[SimpleNamespace(prompt="different")],
+    )
+    with pytest.raises(RuntimeError, match="changed request/prompt identity"):
         write_preview_image(
             output,
             Path("unused.png"),

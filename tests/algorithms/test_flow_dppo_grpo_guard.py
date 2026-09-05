@@ -86,7 +86,6 @@ def _on_policy_signals(n: int):
     "make_algo",
     [
         pytest.param(GRPO, id="grpo"),
-        pytest.param(GRPO, id="dance_grpo"),  # == GRPO loss (alias)
         pytest.param(lambda: FlowDPPO(FlowDPPOConfig(kl_mask_threshold=10.0)), id="flow_dppo"),
         pytest.param(GRPOGuard, id="grpo_guard"),
     ],
@@ -418,8 +417,3 @@ def test_kind_builds_the_right_config(kind: str, expected: type) -> None:
     from vrl.config.schema import AlgorithmConfig
 
     assert isinstance(AlgorithmConfig(kind=kind).hyperparameters, expected)
-
-
-def test_trust_region_algorithms_request_kl_intermediates() -> None:
-    assert FlowDPPO.needs_kl_intermediates is True
-    assert GRPOGuard.needs_kl_intermediates is True

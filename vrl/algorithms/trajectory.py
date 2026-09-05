@@ -24,16 +24,6 @@ class AlgorithmInput:
     rollout_batch: Any | None = None
     timestep_index: int | None = None
 
-    def __post_init__(self) -> None:
-        # Lazy: keep vrl.algorithms torch-free at import time so config parsing
-        # (algorithm.kind dispatch) never pulls the rollout evaluator stack.
-        from vrl.rollouts.evaluators.types import TrajectorySignalBatch
-
-        if self.signals is not None and not isinstance(self.signals, TrajectorySignalBatch):
-            raise TypeError(
-                "AlgorithmInput.signals must be a TrajectorySignalBatch",
-            )
-
 
 class AlgorithmAdapter:
     """Dispatch strict AlgorithmInput to objective-specific native APIs."""

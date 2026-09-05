@@ -11,12 +11,8 @@ import pytest
 import torch
 
 from vrl.nn.layers.attention.paged import (
-    ARAttentionConfig,
     ARAttentionPrefillInput,
-    ARAttentionPrefillOutput,
     ARAttentionStepInput,
-    ARAttentionStepOutput,
-    VllmPagedAttentionConfig,
 )
 
 pytestmark = pytest.mark.real_cover(
@@ -28,14 +24,6 @@ pytestmark = pytest.mark.real_cover(
         "CUDA plus vLLM's worker internals; the gpu-lane test drives the real ops"
     ),
 )
-
-
-def test_paged_attention_config_requires_identity() -> None:
-    """An empty family and a zero block_size are both rejected at construction."""
-    with pytest.raises(ValueError, match="family"):
-        ARAttentionConfig(family="")
-    with pytest.raises(ValueError, match="block_size"):
-        VllmPagedAttentionConfig(family="janus_pro", block_size=0)
 
 
 def test_paged_attention_prefill_validates_batch_shape() -> None:
@@ -67,15 +55,3 @@ def test_paged_attention_step_validates_state_shape() -> None:
             attention_mask=torch.ones(2, 4),
             sequence_states=("row-0",),
         )
-
-
-def test_paged_attention_outputs_accept_last_hidden_rank_two_or_three() -> None:
-    """Both the squeezed prefill hidden and the kept step axis are valid outputs."""
-    ARAttentionPrefillOutput(
-        last_hidden=torch.zeros(2, 4),
-        sequence_states=("a", "b"),
-    )
-    ARAttentionStepOutput(
-        last_hidden=torch.zeros(2, 1, 4),
-        sequence_states=("a", "b"),
-    )

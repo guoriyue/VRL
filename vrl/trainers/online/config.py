@@ -338,11 +338,6 @@ class TrainerConfig:
         return cls(**payload)
 
     def __post_init__(self) -> None:
-        if self.timestep_selection not in ("strided", "random", "sde_window"):
-            raise ValueError(
-                "actor.timestep_selection must be 'strided', 'random', or "
-                f"'sde_window' (got {self.timestep_selection!r})",
-            )
         if self.timestep_selection == "sde_window" and float(self.timestep_fraction) != 1.0:
             raise ValueError(
                 "actor.timestep_selection='sde_window' derives the trained steps "

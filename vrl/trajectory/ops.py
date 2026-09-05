@@ -138,8 +138,6 @@ def _selector_positions(selector: Any) -> list[int]:
         if str(selector_cpu.dtype) == "torch.bool":
             return [int(i) for i in selector_cpu.nonzero(as_tuple=False).flatten().tolist()]
         return [int(i) for i in selector_cpu.reshape(-1).tolist()]
-    if isinstance(selector, slice):
-        raise TypeError("slice selectors are not supported for trajectory selection")
     return [int(i) for i in selector]
 
 

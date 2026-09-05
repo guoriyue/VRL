@@ -67,8 +67,6 @@ class Fp8Linear(QuantizedLinear):
 
     def __init__(self, linear: nn.Linear, *, recipe: str = "rowwise") -> None:
         super().__init__()
-        if recipe not in ("rowwise", "tensorwise", "blockwise"):
-            raise ValueError(f"fp8 recipe must be rowwise/tensorwise/blockwise; got {recipe!r}")
         self.in_features = linear.in_features
         self.out_features = linear.out_features
         # blockwise needs 128-aligned dims (vLLM block kernel); fall back to rowwise

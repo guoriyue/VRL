@@ -6,16 +6,10 @@ import pytest
 import torch
 
 from vrl.nn.layers.attention.paged import (
-    ARAttentionBackend,
     ARAttentionPrefillInput,
     VllmPagedAttentionConfig,
 )
 from vrl.nn.modules.ar_decoder import VllmDecoderPagedAttentionBackend
-
-
-def test_vllm_decoder_backend_uses_paged_attention_contract() -> None:
-    """Checks vLLM decoder backend uses paged attention contract."""
-    assert issubclass(VllmDecoderPagedAttentionBackend, ARAttentionBackend)
 
 
 def test_vllm_decoder_pack_prefill_compacts_left_padded_prompts() -> None:
