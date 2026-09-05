@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import importlib
 import inspect
 import logging
 import os
@@ -20,6 +19,8 @@ from types import FrameType
 from typing import TYPE_CHECKING, Any
 
 from omegaconf import DictConfig
+
+from vrl.utils.config import import_from_path
 
 if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
@@ -44,22 +45,12 @@ def resolve_train_target(root: RootConfig) -> str:
     return import_path.strip()
 
 
-def _import_callable(import_path: str) -> Any:
-    if ":" not in import_path:
-        raise ValueError(
-            "trainer.entrypoint must use 'module:function' import path syntax",
-        )
-    module_name, attr_name = import_path.split(":", 1)
-    module = importlib.import_module(module_name)
-    return getattr(module, attr_name)
-
-
 def run_config(cfg: DictConfig) -> Any:
     """Run the family trainer selected by ``cfg``."""
 
     from vrl.config.schema import parse_config
 
-    trainer = _import_callable(resolve_train_target(parse_config(cfg)))
+    trainer = import_from_path(resolve_train_target(parse_config(cfg)))
     return trainer(cfg)
 
 

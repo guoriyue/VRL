@@ -25,6 +25,7 @@ from vrl.utils.media import to_pil_image
 if TYPE_CHECKING:
     from PIL import Image
 
+    from vrl.config.schema import RootConfig
     from vrl.models.steps.denoise.base import DiffusionModelBase, DiffusionSamplingStateBase
 
 
@@ -33,8 +34,8 @@ class ImageSampling:
     """Resolved image sampling values shared by generation and evaluation.
 
     One type serves the checkpoint evaluators and the Anima generation archive:
-    ``from_config`` reads a run's ``sampling`` section (``max_sequence_length``
-    defaults to 128 there), ``from_mapping`` re-reads a persisted record and
+    ``from_root`` projects the parsed config through ``resolve_eval_sampling``
+    (no defaults of its own), ``from_mapping`` re-reads a persisted record and
     fails closed on missing or unknown keys, and ``to_record`` writes it back
     with keys derived from the fields.
     """
@@ -61,17 +62,18 @@ class ImageSampling:
         object.__setattr__(self, "guidance_scale", float(guidance_scale))
 
     @classmethod
-    def from_config(cls, cfg: Mapping[str, Any]) -> ImageSampling:
-        """Read a run config's ``sampling`` section; text length defaults to 128."""
+    def from_root(
+        cls,
+        root: RootConfig,
+        *,
+        overrides: Mapping[str, Any] | None = None,
+    ) -> ImageSampling:
+        """Project the parsed config (CLI ``overrides`` on top) into the image fields."""
 
-        max_sequence_length = cfg.get("max_sequence_length")
-        return cls(
-            width=cfg.get("width"),
-            height=cfg.get("height"),
-            num_steps=cfg.get("num_steps"),
-            guidance_scale=cfg.get("guidance_scale"),
-            max_sequence_length=128 if max_sequence_length is None else max_sequence_length,
-        )
+        from vrl.scripts.eval._sampling import resolve_eval_sampling
+
+        sampling = resolve_eval_sampling(root, overrides=overrides)
+        return cls(**{field.name: sampling[field.name] for field in fields(cls)})
 
     @classmethod
     def from_mapping(

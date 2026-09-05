@@ -79,14 +79,16 @@ def to_builtin_deep(value: Any) -> Any:
 
 
 def import_from_path(path: str) -> Any:
-    """Load ``module:attribute`` or ``module.attribute`` import paths."""
+    """Load a ``module:attribute`` import path.
 
-    if ":" in path:
-        module_name, attr_name = path.split(":", 1)
-    else:
-        module_name, _, attr_name = path.rpartition(".")
-    if not module_name or not attr_name:
-        raise ValueError(f"invalid import path: {path!r}")
+    One grammar for every config-declared callable (``trainer.entrypoint``,
+    registry ``*_cls`` paths, reward ``model_factory``): the colon separates
+    the module from the attribute so a dotted attribute chain is unambiguous.
+    """
+
+    module_name, separator, attr_name = path.partition(":")
+    if not separator or not module_name or not attr_name:
+        raise ValueError(f"import path must use 'module:attribute' syntax: {path!r}")
     module = importlib.import_module(module_name)
     return getattr(module, attr_name)
 

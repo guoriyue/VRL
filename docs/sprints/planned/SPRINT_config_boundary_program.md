@@ -1,6 +1,6 @@
 # SPRINT PROGRAM: Config boundary — type it once, then delete the machinery that existed because it wasn't
 
-状态：**in progress（2026-09-05 审计；S0 门已就位；S1–S5 done，S6 待做）**
+状态：**in progress（2026-09-05 审计；S0 门已就位；S1–S5、S6a done，S6b 进行中）**
 
 前置（全部 done，本 program 是它们的收官）：[[SPRINT_config_unknown_key_warning]]、
 [[SPRINT_config_as_signatures]]、[[SPRINT_config_argument_ownership_and_resolution]]、
@@ -292,17 +292,40 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
   YAML 根本不可达，只有测试用 raw dict 喂得进去。这是 S6 的一个决策：给 sampling section 加
   `teacache` 字段（让功能可达）或删掉这条 guard 分支。
 
-### S6 — 脚本层与外围
+### S6a — 脚本层（**done**；决策 C 已由 owner 批准）
 
-- 五份 sampling 投影 → 读 `root.sampling` typed，**默认值归零**（缺就报错，schema 是唯一默认
-  源）。**决策点 C**：Anima 两脚本当前默认 `guidance_scale=4.5`/`max_sequence_length=128` 会变
-  为必填——需要 owner 确认这是预期（推荐：是，脚本不该私藏训练超参默认）。
-- `resolved_config.yaml` 加 `schema_version` 戳；读端统一一个 `load_resolved_run_config()`，
-  `sana_curve_verdict` 的 raw-load 逃生口随之关闭。
-- `RewardServiceConfig` 改 pydantic `extra="forbid"`（`worker_config` 进入校验）；
-  `kling_video_reward._from_dataclass` 的静默丢弃改 raise；danbooru taxonomy 改
-  `OmegaConf.load` + 一个小 model，脱离 import 时副作用。
-- `train._import_callable` 与 `utils.config.import_from_path` 合一（`module:attr` 唯一语法）。
+- 五份 `sampling.*` 投影收成一份 `vrl/scripts/eval/_sampling.py::resolve_eval_sampling(root, overrides)`
+  ——读 typed `root.sampling` / `root.rollout`，**不再持有任何默认值**：width/height/num_steps/
+  guidance_scale 必有；num_frames/fps/max_sequence_length 按 family section 是否声明决定携带；
+  rollout 的 denoise_mode/noise_level/sde_type 设了才带。缺就报 `config missing required field:
+  sampling.<key>`。Anima 两脚本原来私藏的 4.5 / 128、frame-prefix gate 的第三套解析器、
+  `_sampling.py` 自己的 512/93/20/16/1.0 全部消失（CLI 覆盖语义原样保留：falsy 数值回退配置，
+  `--guidance-scale 0` 保留）。
+- `resolved_config.yaml`：写端常量 `RESOLVED_CONFIG_NAME`，读端一个
+  `load_resolved_run_config(run_dir) -> (cfg, root)`（`vrl/trainers/checkpointing.py`，和写端同址）；
+  wan / sana_checkpoint_compare 改走它，sana_checkpoint_eval 因为要先过 `normalize_run_config`
+  只共用常量。**没有加 schema_version 戳**：`OmegaConf.save` 没有注释通道，而一个顶层 key 会变成
+  config 表面的一部分（parse 会拒），收益不抵；归档配置带退役 key 时 `parse_config` 已经按名报错。
+  `sana_curve_verdict` 读 `trainer.eval` 的 raw 逃生口**保留**——它读的是历史数据，不是配置。
+- `sana_aesthetic_report` 五个函数改吃 `RootConfig`（`normalize_run_config` 仍返回归一化的
+  DictConfig，主流程 parse 一次后往下传 root）；测试里"下游拿到的必须是 gate 的返回值"改为
+  断言 `parse_config` 的输入就是 gate 的返回值、下游拿到的就是那次 parse 的 root。
+- `train._import_callable` 删除；`vrl.utils.config.import_from_path` 只认 `module:attribute`
+  （preset 里 16 处 entrypoint 全是冒号形式，registry / reward factory 亦然）。
+- 测试：Anima / Kling / frame-prefix 的 main-path fixture 补上 sampling 块（它们之前靠脚本
+  默认值才跑得起来——正是决策 C 要消灭的那种默认）。
+
+### S6b — 外围 YAML 与 TeaCache（进行中）
+
+- `RewardServiceConfig` 改 pydantic `ConfigBase`（forbid、frozen；`worker_config` 保持开放），
+  `from_mapping` 用同一个 `_extract_error_message` 报错。
+- danbooru taxonomy：`yaml.safe_load` 后过一个小 pydantic model（forbid），`hand_focus ⊆ hand`
+  的交叉检查搬进 validator；常量从 model 派生，消费者不变。
+- `kling_video_reward._from_dataclass` 的 ignore-extras **保留并注明理由**：它读的是上游 checkpoint
+  的 `model_config.json`（第三方 artifact，词汇会扩展），不是 VRL 的配置面。
+- TeaCache：`sampling.teacache: bool | TeaCacheSection` 进 `DenoiseImageSamplingSection`（功能从
+  YAML 可达），collector 把 bool / mapping 两种形式投到 request；`require_guarded_rollout_drift(root)`
+  改读 typed root——S5b 留下的最后一处 raw 读关闭。
 
 ## 4. 明确不做
 

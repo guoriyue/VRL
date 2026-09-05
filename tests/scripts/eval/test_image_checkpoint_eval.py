@@ -164,7 +164,13 @@ def test_independent_policy_does_not_replace_run_sampling(tmp_path, plan, monkey
             {
                 "model": {"family": "cosmos-predict2-anima", "use_lora": False},
                 "precision": {"training": {"dtype": "fp32"}, "float32_precision": "ieee"},
-                "sampling": {"width": 8, "height": 8, "num_steps": 7, "guidance_scale": 2.0},
+                "sampling": {
+                    "width": 8,
+                    "height": 8,
+                    "num_steps": 7,
+                    "guidance_scale": 2.0,
+                    "max_sequence_length": 8,
+                },
                 "reward": {"components": {"ocr": 1.0}},
             }
         ),

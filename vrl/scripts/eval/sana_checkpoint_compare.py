@@ -25,9 +25,8 @@ from typing import Any
 
 import torch
 
-from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
-from vrl.config.schema import parse_config
+from vrl.config.schema import RootConfig
 from vrl.models import checkpoint_identity
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.models.precision import float32_precision_state, model_precision
@@ -38,6 +37,8 @@ from vrl.scripts.eval.sana_inference import (
     load_official_scheduler,
 )
 from vrl.trainers.checkpointing import (
+    RESOLVED_CONFIG_NAME,
+    load_resolved_run_config,
     load_training_checkpoint,
     read_checkpoint_meta,
     restore_model_checkpoint,
@@ -105,13 +106,10 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     """Generate both images and return their materialized artifact paths."""
 
     run_dir = args.run_dir.expanduser().resolve()
-    config_path = run_dir / "resolved_config.yaml"
-    if not config_path.is_file():
-        raise FileNotFoundError(f"training run has no resolved config: {config_path}")
-    cfg = load_config(config_path)
-    root = parse_config(cfg)
+    config_path = run_dir / RESOLVED_CONFIG_NAME
+    _, root = load_resolved_run_config(run_dir)
     precision = resolve_precision_policy(root.precision)
-    _validate_resolved_config(cfg)
+    _validate_resolved_config(root)
     _validate_sampling_args(args)
 
     checkpoint_input = args.checkpoint.expanduser()
@@ -292,13 +290,15 @@ def _model_precision_snapshot(model: Any) -> dict[str, Any]:
     }
 
 
-def _validate_resolved_config(cfg: Any) -> None:
-    family = str(cfg.model.get("family", "")).strip().lower()
+def _validate_resolved_config(root: RootConfig) -> None:
+    model = root.model
+    family = str(model.family if model is not None else "").strip().lower()
     if family != "sana":
         raise ValueError(
             f"SANA checkpoint comparison requires model.family='sana'; got {family!r}"
         )
-    if cfg.model.get("use_lora") is not False or cfg.model.get("lora") is not None:
+    assert model is not None
+    if model.use_lora is not False or model.lora is not None:
         raise ValueError(
             "SANA checkpoint comparison accepts full-parameter runs only: "
             "model.use_lora must be false and model.lora must be null",

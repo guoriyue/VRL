@@ -1611,6 +1611,9 @@ def restore_rng_state(state: dict[str, Any] | None, **generators: torch.Generato
             pass
 
 
+RESOLVED_CONFIG_NAME = "resolved_config.yaml"
+
+
 def save_resolved_config(cfg: Any, output_dir: str | Path, *, resumed: bool) -> None:
     """Save resolved config without overwriting the original on resume."""
 
@@ -1618,12 +1621,30 @@ def save_resolved_config(cfg: Any, output_dir: str | Path, *, resumed: bool) -> 
 
     path = Path(output_dir)
     path.mkdir(parents=True, exist_ok=True)
-    resolved_path = path / "resolved_config.yaml"
+    resolved_path = path / RESOLVED_CONFIG_NAME
     if not resumed or not resolved_path.exists():
         OmegaConf.save(cfg, resolved_path)
         return
     stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     OmegaConf.save(cfg, path / f"resume_config_{stamp}.yaml")
+
+
+def load_resolved_run_config(run_dir: str | Path) -> tuple[DictConfig, RootConfig]:
+    """Load and parse the config a training run persisted via ``save_resolved_config``.
+
+    The one reader for every checkpoint-evaluation entrypoint: the merged tree
+    (for provenance records and re-persisting) plus the parsed root every
+    consumer reads. A retired key in an archived run fails here, by name.
+    """
+
+    from vrl.config.loading import load_config
+    from vrl.config.schema import parse_config
+
+    path = Path(run_dir).expanduser().resolve() / RESOLVED_CONFIG_NAME
+    if not path.is_file():
+        raise FileNotFoundError(f"training run has no resolved config: {path}")
+    cfg = load_config(path)
+    return cfg, parse_config(cfg)
 
 
 def read_checkpoint_meta(checkpoint_dir: str | Path) -> dict[str, Any]:
@@ -1770,6 +1791,7 @@ __all__ = [
     "CHECKPOINT_SCHEMA_VERSION",
     "DEFAULT_CHECKPOINT_STRICT",
     "LORA_WEIGHTS_NAME",
+    "RESOLVED_CONFIG_NAME",
     "TRAINING_CHECKPOINT_NAME",
     "AdapterExport",
     "CheckpointTarget",
@@ -1783,6 +1805,7 @@ __all__ = [
     "is_complete_checkpoint",
     "load_checkpoint_state",
     "load_full_checkpoint_state",
+    "load_resolved_run_config",
     "load_training_checkpoint",
     "load_training_checkpoint_for_resume",
     "prepare_model_config_for_training_resume",

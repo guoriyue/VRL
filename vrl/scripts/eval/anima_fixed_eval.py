@@ -110,7 +110,6 @@ def main(argv: list[str] | None = None) -> None:
 
 def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
     import torch
-    from omegaconf import OmegaConf
 
     from vrl.config.loading import load_config
     from vrl.config.precision import resolve_precision_policy
@@ -119,6 +118,7 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
     from vrl.models.dtypes import resolve_torch_dtype
     from vrl.models.families.registry import get_model_family_entry
     from vrl.scripts.eval._device import resolve_eval_device
+    from vrl.scripts.eval._sampling import resolve_eval_sampling
     from vrl.trainers.data import load_prompt_manifest
     from vrl.utils.media import to_pil_image
 
@@ -146,15 +146,15 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
     precision = resolve_precision_policy(root.precision)
 
     prompts = [example.prompt for example in load_prompt_manifest(args.manifest)][: args.limit]
-    num_steps = int(args.steps or OmegaConf.select(cfg, "sampling.num_steps", default=20))
-    guidance = float(
-        OmegaConf.select(cfg, "sampling.guidance_scale", default=4.5)
-        if args.guidance_scale is None
-        else args.guidance_scale
+    sampling = resolve_eval_sampling(
+        root,
+        overrides={"num_steps": args.steps, "guidance_scale": args.guidance_scale},
     )
-    width = int(OmegaConf.select(cfg, "sampling.width", default=512))
-    height = int(OmegaConf.select(cfg, "sampling.height", default=512))
-    max_seq = int(OmegaConf.select(cfg, "sampling.max_sequence_length", default=128))
+    num_steps = int(sampling["num_steps"])
+    guidance = float(sampling["guidance_scale"])
+    width = int(sampling["width"])
+    height = int(sampling["height"])
+    max_seq = int(sampling["max_sequence_length"])
 
     device = resolve_eval_device("auto")
     dtype = resolve_torch_dtype("fp32" if device.type == "cpu" else precision.training.dtype)

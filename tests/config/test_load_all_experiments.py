@@ -1136,13 +1136,14 @@ def test_wan_video_reward_production_rejects_extra_loader_fields() -> None:
 
 def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
     """Checks unified train entrypoint reads YAML entrypoint."""
-    from vrl.scripts.train import _import_callable, resolve_train_target
+    from vrl.scripts.train import resolve_train_target
+    from vrl.utils.config import import_from_path
 
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     import_path = resolve_train_target(parse_config(cfg))
 
     assert import_path == cfg.trainer.entrypoint
-    assert callable(_import_callable(import_path))
+    assert callable(import_from_path(import_path))
 
 
 def test_cli_overrides_reach_typed_trainer_config() -> None:

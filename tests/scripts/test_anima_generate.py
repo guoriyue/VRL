@@ -9,6 +9,7 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 from vrl.config.precision import RolePrecision
+from vrl.config.schema import parse_config
 from vrl.scripts.families.cosmos.anima import generate
 from vrl.trainers.data import PromptExample
 
@@ -25,6 +26,13 @@ def _minimal_generate_config():
             "precision": {
                 "float32_precision": "ieee",
                 "training": {"dtype": "fp32"},
+            },
+            "sampling": {
+                "width": 8,
+                "height": 8,
+                "num_steps": 1,
+                "guidance_scale": 4.5,
+                "max_sequence_length": 8,
             },
         },
     )
@@ -44,13 +52,10 @@ def test_generate_accepts_checkpoint_dir_as_lora_path(tmp_path) -> None:
     exported.mkdir(parents=True)
     cfg = OmegaConf.create({"model": {"use_lora": False, "lora": {"path": ""}}})
 
-    generate._configure_lora_for_inference(
-        cfg,
-        lora_path=str(checkpoint),
-    )
-
-    assert cfg.model.use_lora is True
-    assert cfg.model.lora.path == str(exported)
+    assert generate._lora_overrides(cfg, lora_path=str(checkpoint)) == [
+        "model.use_lora=true",
+        f"model.lora.path={exported}",
+    ]
 
 
 def test_lora_checkpoint_provenance_binds_progress_and_identity(tmp_path) -> None:
@@ -105,20 +110,23 @@ def test_generate_image_conversion_accepts_chw_float() -> None:
 
 def test_generate_sampling_defaults_follow_config() -> None:
     """Checks generate sampling defaults follow config."""
-    cfg = OmegaConf.create(
-        {
-            "sampling": {
-                "width": 768,
-                "height": 512,
-                "num_steps": 12,
-                "guidance_scale": 4.0,
-                "max_sequence_length": 256,
+    root = parse_config(
+        OmegaConf.create(
+            {
+                "model": {"family": "cosmos-predict2-anima"},
+                "sampling": {
+                    "width": 768,
+                    "height": 512,
+                    "num_steps": 12,
+                    "guidance_scale": 4.0,
+                    "max_sequence_length": 256,
+                },
             },
-        },
+        ),
     )
     args = generate.build_parser().parse_args(["--prompt", "adult anime portrait"])
 
-    sampling = generate._resolve_sampling(args, cfg)
+    sampling = generate._resolve_sampling(args, root)
 
     assert sampling.width == 768
     assert sampling.height == 512
@@ -129,12 +137,25 @@ def test_generate_sampling_defaults_follow_config() -> None:
 
 def test_generate_sampling_preserves_explicit_zero_guidance() -> None:
     """An explicit zero disables CFG instead of falling back to the config."""
-    cfg = OmegaConf.create({"sampling": {"guidance_scale": 4.0}})
+    root = parse_config(
+        OmegaConf.create(
+            {
+                "model": {"family": "cosmos-predict2-anima"},
+                "sampling": {
+                    "width": 768,
+                    "height": 512,
+                    "num_steps": 12,
+                    "guidance_scale": 4.0,
+                    "max_sequence_length": 256,
+                },
+            },
+        ),
+    )
     args = generate.build_parser().parse_args(
         ["--prompt", "adult anime portrait", "--guidance-scale", "0"],
     )
 
-    sampling = generate._resolve_sampling(args, cfg)
+    sampling = generate._resolve_sampling(args, root)
 
     assert sampling.guidance_scale == 0.0
 

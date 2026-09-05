@@ -25,7 +25,6 @@ from omegaconf import DictConfig, OmegaConf
 
 from vrl import run
 from vrl.config.builders import RewardRuntimeConfig
-from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
@@ -37,8 +36,10 @@ from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.denoise_generation import generate_one_video
 from vrl.scripts.eval.score_report import summarize_paired_scores
 from vrl.trainers.checkpointing import (
+    RESOLVED_CONFIG_NAME,
     CheckpointTarget,
     load_checkpoint_state,
+    load_resolved_run_config,
     load_training_checkpoint,
 )
 from vrl.trainers.data import PromptExample, load_prompt_manifest
@@ -384,16 +385,15 @@ def _validate_generation_args(args: argparse.Namespace) -> None:
 
 def _load_run(run_dir_arg: Path) -> tuple[Path, DictConfig, Path]:
     run_dir = run_dir_arg.expanduser().resolve()
-    config_path = run_dir / "resolved_config.yaml"
-    if not config_path.is_file():
-        raise FileNotFoundError(f"training run has no resolved config: {config_path}")
-    cfg = load_config(config_path)
-    entry = get_model_family_entry(str(cfg.model.family))
+    cfg, root = load_resolved_run_config(run_dir)
+    if root.model is None:
+        raise ValueError("training run config has no model section")
+    entry = get_model_family_entry(str(root.model.family))
     if entry.family != "wan_2_1":
         raise ValueError(f"expected Wan 2.1 T2V run, got {entry.family!r}")
-    if OmegaConf.select(cfg, "model.use_lora", default=None) is not False:
+    if root.model.use_lora is not False:
         raise ValueError("Wan robotics checkpoint evaluation accepts full-parameter runs only")
-    return run_dir, cfg, config_path
+    return run_dir, cfg, run_dir / RESOLVED_CONFIG_NAME
 
 
 def _resolve_target(run_dir: Path, raw_value: str) -> CheckpointTarget:
@@ -479,7 +479,7 @@ def _build_protocol(
             "samples_per_prompt": samples_per_prompt,
             "formula": "base_seed + sample_index * seed_stride + eval_row_index",
         },
-        "sampling": resolve_eval_sampling(cfg),
+        "sampling": resolve_eval_sampling(parse_config(cfg)),
     }
 
 

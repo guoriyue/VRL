@@ -8,7 +8,10 @@ import logging
 from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from vrl.config.schema import RootConfig
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -156,7 +159,7 @@ def main(argv: list[str] | None = None) -> None:
     if not prompts:
         raise ValueError("provide at least one prompt source")
 
-    sampling = _resolve_sampling(args, cfg)
+    sampling = _resolve_sampling(args, root)
     device = resolve_eval_device(args.device)
     dtype = resolve_torch_dtype(
         ("fp32" if device.type == "cpu" else precision.training.dtype)
@@ -461,21 +464,18 @@ def _lora_overrides(cfg: DictConfig, *, lora_path: str) -> list[str]:
     return []
 
 
-def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> ImageSampling:
-    num_steps = int(args.steps or OmegaConf.select(cfg, "sampling.num_steps", default=20))
-    return ImageSampling(
-        width=int(args.width or OmegaConf.select(cfg, "sampling.width", default=512)),
-        height=int(args.height or OmegaConf.select(cfg, "sampling.height", default=512)),
-        num_steps=num_steps,
-        guidance_scale=float(
-            OmegaConf.select(cfg, "sampling.guidance_scale", default=4.5)
-            if args.guidance_scale is None
-            else args.guidance_scale,
-        ),
-        max_sequence_length=int(
-            args.max_sequence_length
-            or OmegaConf.select(cfg, "sampling.max_sequence_length", default=128),
-        ),
+def _resolve_sampling(args: argparse.Namespace, root: RootConfig) -> ImageSampling:
+    """The Anima sampling values, from the parsed config with the CLI on top."""
+
+    return ImageSampling.from_root(
+        root,
+        overrides={
+            "width": args.width,
+            "height": args.height,
+            "num_steps": args.steps,
+            "guidance_scale": args.guidance_scale,
+            "max_sequence_length": args.max_sequence_length,
+        },
     )
 
 

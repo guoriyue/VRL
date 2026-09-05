@@ -534,7 +534,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
             per_stratum=args.per_stratum,
             strata=args.strata,
         ),
-        ImageSampling.from_config(OmegaConf.to_container(cfg.sampling, resolve=True)),
+        ImageSampling.from_root(root),
         reward,
         args.samples_per_prompt,
         args.seed,

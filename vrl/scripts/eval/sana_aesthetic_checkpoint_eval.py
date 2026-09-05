@@ -35,6 +35,7 @@ from vrl.scripts.eval.sana_inference import (
     load_official_scheduler,
 )
 from vrl.trainers.checkpointing import (
+    RESOLVED_CONFIG_NAME,
     TRAINING_CHECKPOINT_NAME,
     is_complete_checkpoint,
     load_training_checkpoint,
@@ -96,7 +97,7 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = build_parser().parse_args(argv)
     run_dir = args.run_dir.expanduser().resolve()
-    config_path = run_dir / "resolved_config.yaml"
+    config_path = run_dir / RESOLVED_CONFIG_NAME
     if not config_path.is_file():
         raise FileNotFoundError(f"training run has no resolved config: {config_path}")
     training_metrics_path = run_dir / "metrics.csv"
@@ -104,28 +105,28 @@ def main(argv: list[str] | None = None) -> None:
         raise FileNotFoundError(f"training run has no metrics CSV: {training_metrics_path}")
 
     cfg = sana_report.normalize_run_config(load_config(config_path))
-    sana_report.validate_training_metrics(training_metrics_path, cfg)
+    root = parse_config(cfg)
+    sana_report.validate_training_metrics(training_metrics_path, root)
     training_manifest_path, eval_manifest_path, prompts = sana_report.resolve_protocol_manifests(
-        cfg,
+        root,
     )
     if not prompts:
         raise ValueError(f"evaluation manifest has no prompts: {eval_manifest_path}")
-    training_log = sana_report.validate_training_log_provenance(run_dir, cfg)
+    training_log = sana_report.validate_training_log_provenance(run_dir, root)
 
-    targets = _discover_checkpoint_targets(run_dir, cfg)
+    targets = _discover_checkpoint_targets(run_dir, root)
     device = resolve_eval_device(args.device)
     sampling = sana_report.resolve_sampling()
-    identity_root = parse_config(cfg)
-    if identity_root.model is None:
+    if root.model is None:
         raise ValueError("SANA checkpoint evaluation requires model configuration")
-    identity_precision = resolve_precision_policy(identity_root.precision)
+    identity_precision = resolve_precision_policy(root.precision)
     from vrl.models.families.registry import get_model_family_entry
     from vrl.run import resolve_model
 
-    identity_entry = get_model_family_entry(str(identity_root.model.family))
+    identity_entry = get_model_family_entry(str(root.model.family))
     model_identity = resolve_model(
         identity_entry,
-        identity_root,
+        root,
         device,
         precision=identity_precision,
         for_rollout=True,
@@ -141,7 +142,7 @@ def main(argv: list[str] | None = None) -> None:
     build_root = _materialize_model_snapshot(cfg)
     build_precision = resolve_precision_policy(build_root.precision)
     reward_models = _materialize_reward_model_snapshots(
-        sana_report.build_reward_model_definitions(cfg, generation_device=str(device)),
+        sana_report.build_reward_model_definitions(root, generation_device=str(device)),
     )
     eval_dir = run_dir / sana_report.REPORT_RELATIVE_PATH.parent
     eval_dir.mkdir(parents=True, exist_ok=True)
@@ -164,7 +165,7 @@ def main(argv: list[str] | None = None) -> None:
         raise RuntimeError("SANA checkpoint evaluation produced no summary rows")
     # The supervisor may append its final shutdown line while a long evaluation
     # is running. Reparse at publication so the report binds the final log bytes.
-    training_log = sana_report.validate_training_log_provenance(run_dir, cfg)
+    training_log = sana_report.validate_training_log_provenance(run_dir, root)
 
     provenance = {
         "run": {
@@ -227,7 +228,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
 
-def _discover_checkpoint_targets(run_dir: Path, cfg: DictConfig) -> list[CheckpointTarget]:
+def _discover_checkpoint_targets(run_dir: Path, root: RootConfig) -> list[CheckpointTarget]:
     numbered: list[tuple[int, Path]] = []
     for candidate in run_dir.glob("checkpoint-*"):
         match = re.fullmatch(r"checkpoint-(\d+)", candidate.name)
@@ -248,7 +249,7 @@ def _discover_checkpoint_targets(run_dir: Path, cfg: DictConfig) -> list[Checkpo
     if not numbered:
         raise ValueError(f"training run has no complete checkpoint-N directories: {run_dir}")
     numbered.sort()
-    expected = sana_report.checkpoint_curve_epochs(cfg)
+    expected = sana_report.checkpoint_curve_epochs(root)
     eval_numbered = [
         (epoch, path)
         for epoch, path in numbered

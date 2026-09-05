@@ -15,7 +15,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
-from vrl.config.schema import parse_config
+from vrl.config.schema import RootConfig, parse_config
 from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> None:
         device=device,
         requires_trainer="Cosmos checkpoint evaluation",
     )
-    sampling = _resolve_sampling(args, cfg)
+    sampling = _resolve_sampling(args, root)
     if root.model is None:
         raise ValueError("Cosmos checkpoint evaluation requires model configuration")
     entry = get_model_family_entry(str(root.model.family))
@@ -255,11 +255,11 @@ def _normalize_checkpoint_label(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value).strip()).strip("._-")
 
 
-def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> dict[str, Any]:
+def _resolve_sampling(args: argparse.Namespace, root: RootConfig) -> dict[str, Any]:
     # Adapt this script's CLI flags to the shared sampling projection. The arg names
     # (notably --steps -> num_steps) are cosmos-specific; wan has no such overrides.
     return resolve_eval_sampling(
-        cfg,
+        root,
         overrides={
             "width": args.width,
             "height": args.height,

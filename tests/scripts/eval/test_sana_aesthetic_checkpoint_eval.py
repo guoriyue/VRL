@@ -12,6 +12,7 @@ from PIL import Image
 
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
+from vrl.config.schema import parse_config
 from vrl.models import checkpoint_identity
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.scripts.eval import sana_aesthetic_checkpoint_eval as checkpoint_eval
@@ -394,7 +395,7 @@ def test_checkpoint_discovery_rejects_curve_gap(tmp_path) -> None:
     cfg.trainer.total_epochs = 50
 
     with pytest.raises(ValueError, match="incomplete or has gaps"):
-        checkpoint_eval._discover_checkpoint_targets(run_dir, cfg)
+        checkpoint_eval._discover_checkpoint_targets(run_dir, parse_config(cfg))
 
 
 def test_checkpoint_discovery_rejects_incomplete_curve_before_model_load(tmp_path) -> None:
@@ -403,7 +404,7 @@ def test_checkpoint_discovery_rejects_incomplete_curve_before_model_load(tmp_pat
     cfg.trainer.total_epochs = 50
 
     with pytest.raises(ValueError, match="incomplete or has gaps"):
-        checkpoint_eval._discover_checkpoint_targets(run_dir, cfg)
+        checkpoint_eval._discover_checkpoint_targets(run_dir, parse_config(cfg))
 
 
 def test_checkpoint_discovery_keeps_recovery_saves_out_of_eval_curve(tmp_path) -> None:
@@ -428,7 +429,7 @@ def test_checkpoint_discovery_keeps_recovery_saves_out_of_eval_curve(tmp_path) -
             encoding="utf-8",
         )
 
-    targets = checkpoint_eval._discover_checkpoint_targets(run_dir, cfg)
+    targets = checkpoint_eval._discover_checkpoint_targets(run_dir, parse_config(cfg))
 
     assert [target.epoch for target in targets] == [-1, 25]
 
@@ -437,11 +438,11 @@ def test_training_metrics_preflight_requires_every_registered_update(tmp_path) -
     run_dir = _write_run(tmp_path)
     cfg = OmegaConf.load(run_dir / "resolved_config.yaml")
     metrics = run_dir / "metrics.csv"
-    sana_report.validate_training_metrics(metrics, cfg)
+    sana_report.validate_training_metrics(metrics, parse_config(cfg))
     metrics.write_text("epoch,loss\n0,1.0\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="incomplete or out of order"):
-        sana_report.validate_training_metrics(metrics, cfg)
+        sana_report.validate_training_metrics(metrics, parse_config(cfg))
 
 
 def test_fullparam_long_config_is_the_exact_registered_protocol() -> None:
@@ -642,14 +643,25 @@ def test_main_carries_the_gates_normalized_config_downstream(monkeypatch, tmp_pa
         normalized.append(result)
         return result
 
+    parsed_inputs: list[object] = []
+    parsed_roots: list[object] = []
+    real_parse = checkpoint_eval.parse_config
+
+    def parse_spy(cfg):
+        parsed_inputs.append(cfg)
+        root = real_parse(cfg)
+        parsed_roots.append(root)
+        return root
+
     received: list[object] = []
     real_validate = sana_report.validate_training_metrics
 
-    def validate_spy(path, cfg):
-        received.append(cfg)
-        real_validate(path, cfg)
+    def validate_spy(path, root):
+        received.append(root)
+        real_validate(path, root)
 
     monkeypatch.setattr(sana_report, "normalize_run_config", normalize_spy)
+    monkeypatch.setattr(checkpoint_eval, "parse_config", parse_spy)
     monkeypatch.setattr(sana_report, "validate_training_metrics", validate_spy)
     monkeypatch.setattr(
         checkpoint_eval,
@@ -661,8 +673,12 @@ def test_main_carries_the_gates_normalized_config_downstream(monkeypatch, tmp_pa
         checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
 
     assert len(normalized) == 1
-    assert received[0] is normalized[0]
-    assert OmegaConf.select(received[0], "precision.float32_precision") == "ieee"
+    # The parsed root every downstream consumer reads comes from the gate's
+    # return value, not from a second plain load.
+    assert parsed_inputs[0] is normalized[0]
+    assert received[0] is parsed_roots[0]
+    assert received[0].precision is not None
+    assert received[0].precision.float32_precision == "ieee"
 
 
 @pytest.mark.parametrize(
@@ -749,7 +765,9 @@ def test_canonical_preset_change_requires_protocol_digest_update(monkeypatch, pa
 def test_registered_manifest_assets_are_exact_and_disjoint() -> None:
     cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
 
-    training_path, eval_path, eval_prompts = sana_report.resolve_protocol_manifests(cfg)
+    training_path, eval_path, eval_prompts = sana_report.resolve_protocol_manifests(
+        parse_config(cfg)
+    )
 
     assert sha256_file(training_path) == sana_report.TRAIN_MANIFEST_SHA256
     assert sha256_file(eval_path) == sana_report.EVAL_MANIFEST_SHA256
@@ -763,21 +781,28 @@ def test_manifest_replacement_and_overlap_are_rejected(monkeypatch, tmp_path) ->
     changed_eval.write_text("replacement prompt\n", encoding="utf-8")
     replaced.data.eval_manifest = str(changed_eval)
     with pytest.raises(ValueError, match="does not match the registered asset"):
-        sana_report.resolve_protocol_manifests(replaced)
+        sana_report.resolve_protocol_manifests(parse_config(replaced))
 
     training = tmp_path / "training.txt"
     evaluation = tmp_path / "evaluation.txt"
     training.write_text("shared prompt\ntraining only\n", encoding="utf-8")
     evaluation.write_text("shared prompt\neval only\n", encoding="utf-8")
     overlap_cfg = OmegaConf.create(
-        {"data": {"manifest": str(training), "eval_manifest": str(evaluation)}},
+        {
+            "data": {
+                "manifest": str(training),
+                "eval_manifest": str(evaluation),
+                "preprocessing": {},
+                "sampler": {"type": "sequential_window"},
+            },
+        },
     )
     monkeypatch.setattr(sana_report, "TRAIN_MANIFEST_SHA256", sha256_file(training))
     monkeypatch.setattr(sana_report, "EVAL_MANIFEST_SHA256", sha256_file(evaluation))
     monkeypatch.setattr(sana_report, "TRAIN_PROMPT_COUNT", 2)
     monkeypatch.setattr(sana_report, "EVAL_PROMPT_COUNT", 2)
     with pytest.raises(ValueError, match="overlap on 1 prompts"):
-        sana_report.resolve_protocol_manifests(overlap_cfg)
+        sana_report.resolve_protocol_manifests(parse_config(overlap_cfg))
 
 
 def test_reward_model_definitions_resolve_device_and_require_explicit_identity(tmp_path) -> None:
@@ -787,7 +812,7 @@ def test_reward_model_definitions_resolve_device_and_require_explicit_identity(t
     cfg.reward.kwargs.pickscore.device = None
 
     reward_models = sana_report.build_reward_model_definitions(
-        cfg,
+        parse_config(cfg),
         generation_device="cuda:3",
     )
 
@@ -797,14 +822,14 @@ def test_reward_model_definitions_resolve_device_and_require_explicit_identity(t
 
     cfg.reward.kwargs.pickscore.model_name = None
     with pytest.raises(ValueError, match="explicit pickscore reward identity"):
-        sana_report.build_reward_model_definitions(cfg, generation_device="cuda:3")
+        sana_report.build_reward_model_definitions(parse_config(cfg), generation_device="cuda:3")
 
 
 def test_reward_provenance_includes_pinned_revisions_and_asset_hash() -> None:
     cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
 
     reward_models = sana_report.build_reward_model_definitions(
-        cfg,
+        parse_config(cfg),
         generation_device="cuda:0",
     )
     records = [sana_report.reward_model_record(model) for model in reward_models]
@@ -839,7 +864,7 @@ def test_snapshot_materialization_uses_all_four_pinned_revisions(monkeypatch) ->
     monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
     cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
     reward_models = sana_report.build_reward_model_definitions(
-        cfg,
+        parse_config(cfg),
         generation_device="cuda:0",
     )
 
@@ -879,7 +904,7 @@ def test_snapshot_materialization_uses_all_four_pinned_revisions(monkeypatch) ->
 def test_training_log_binds_configured_revisions_without_network_log_scraping(tmp_path) -> None:
     cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
     with pytest.raises(FileNotFoundError, match=r"no supervisor\.log launch evidence"):
-        sana_report.validate_training_log_provenance(tmp_path, cfg)
+        sana_report.validate_training_log_provenance(tmp_path, parse_config(cfg))
 
     reward_kwargs = OmegaConf.to_container(cfg.reward.kwargs, resolve=True)
     expected = {
@@ -893,14 +918,14 @@ def test_training_log_binds_configured_revisions_without_network_log_scraping(tm
     log = tmp_path / "supervisor.log"
     log.write_text("all artifacts were cache hits\n", encoding="utf-8")
 
-    record = sana_report.validate_training_log_provenance(tmp_path, cfg)
+    record = sana_report.validate_training_log_provenance(tmp_path, parse_config(cfg))
 
     assert record["configured_model_revisions"] == expected
     assert record["sha256"] == sha256_file(log)
 
     cfg.reward.kwargs.pickscore.model_revision = None
     with pytest.raises(ValueError, match="requires pinned"):
-        sana_report.validate_training_log_provenance(tmp_path, cfg)
+        sana_report.validate_training_log_provenance(tmp_path, parse_config(cfg))
 
 
 def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None:

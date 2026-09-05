@@ -24,7 +24,7 @@ from typing import Any
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
-from vrl.config.schema import parse_config
+from vrl.config.schema import RootConfig, parse_config
 from vrl.scripts.eval.sana_inference import OFFICIAL_SAMPLING_PROTOCOL, SCHEDULER_PROTOCOL
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
@@ -118,16 +118,15 @@ def normalize_run_config(cfg: DictConfig) -> DictConfig:
     return normalized
 
 
-def resolve_protocol_manifests(cfg: DictConfig) -> tuple[Path, Path, list[str]]:
+def resolve_protocol_manifests(root: RootConfig) -> tuple[Path, Path, list[str]]:
     """Resolve and validate the frozen train/evaluation prompt split."""
 
+    data = root.data
     training_path = (
-        Path(str(OmegaConf.select(cfg, "data.manifest", default="") or "")).expanduser().resolve()
+        Path(str((data.manifest if data is not None else None) or "")).expanduser().resolve()
     )
     eval_path = (
-        Path(str(OmegaConf.select(cfg, "data.eval_manifest", default="") or ""))
-        .expanduser()
-        .resolve()
+        Path(str((data.eval_manifest if data is not None else None) or "")).expanduser().resolve()
     )
     for label, path in (("training", training_path), ("evaluation", eval_path)):
         if not path.is_file():
@@ -158,7 +157,7 @@ def resolve_protocol_manifests(cfg: DictConfig) -> tuple[Path, Path, list[str]]:
     return training_path, eval_path, eval_prompts
 
 
-def validate_training_metrics(path: Path, cfg: DictConfig) -> None:
+def validate_training_metrics(path: Path, root: RootConfig) -> None:
     """Fail when the training CSV does not cover every registered update."""
 
     with path.open(newline="", encoding="utf-8") as handle:
@@ -166,7 +165,7 @@ def validate_training_metrics(path: Path, cfg: DictConfig) -> None:
         if reader.fieldnames is None or "epoch" not in reader.fieldnames:
             raise ValueError(f"training metrics CSV has no epoch column: {path}")
         rows = list(reader)
-    total_epochs = int(OmegaConf.select(cfg, "trainer.total_epochs", default=0))
+    total_epochs = int((root.trainer.total_epochs if root.trainer is not None else None) or 0)
     actual_epochs = [int(float(row["epoch"])) for row in rows]
     expected_epochs = list(range(total_epochs))
     if actual_epochs != expected_epochs:
@@ -177,21 +176,19 @@ def validate_training_metrics(path: Path, cfg: DictConfig) -> None:
         )
 
 
-def validate_training_log_provenance(run_dir: Path, cfg: DictConfig) -> dict[str, Any]:
+def validate_training_log_provenance(run_dir: Path, root: RootConfig) -> dict[str, Any]:
     """Bind the supervisor log to revisions pinned in the resolved config."""
 
     path = run_dir / "supervisor.log"
     if not path.is_file():
         raise FileNotFoundError("SANA run has no supervisor.log launch evidence")
-    reward_kwargs = OmegaConf.to_container(
-        OmegaConf.select(cfg, "reward.kwargs", default={}),
-        resolve=True,
-    )
-    reward_kwargs = dict(reward_kwargs or {})
+    reward_kwargs = dict(root.reward.kwargs) if root.reward is not None else {}
     aesthetic = dict(reward_kwargs.get("aesthetic") or {})
     pickscore = dict(reward_kwargs.get("pickscore") or {})
+    if root.model is None:
+        raise ValueError("SANA training provenance requires model configuration")
     configured = {
-        str(cfg.model.path): str(cfg.model.revision or ""),
+        str(root.model.path): str(root.model.revision or ""),
         str(aesthetic.get("model_name") or ""): str(aesthetic.get("model_revision") or ""),
         str(pickscore.get("processor_name") or ""): str(
             pickscore.get("processor_revision") or "",
@@ -214,17 +211,13 @@ def resolve_sampling() -> dict[str, Any]:
 
 
 def build_reward_model_definitions(
-    cfg: DictConfig,
+    root: RootConfig,
     *,
     generation_device: str,
 ) -> list[RewardModelDefinition]:
     """Resolve the fixed reward implementations and persisted identities."""
 
-    raw_kwargs = OmegaConf.to_container(
-        OmegaConf.select(cfg, "reward.kwargs", default={}),
-        resolve=True,
-    )
-    reward_kwargs = dict(raw_kwargs or {})
+    reward_kwargs = dict(root.reward.kwargs) if root.reward is not None else {}
     reward_models: list[RewardModelDefinition] = []
     for name, score_key, model_factory, identity_keys in (
         (
@@ -330,13 +323,14 @@ def group_seed(prompt_index: int) -> int:
     return EVAL_BASE_SEED + prompt_index * EVAL_SAMPLES_PER_PROMPT
 
 
-def checkpoint_curve_epochs(cfg: DictConfig) -> list[int]:
+def checkpoint_curve_epochs(root: RootConfig) -> list[int]:
     """Return the preregistered curve epochs after validating save cadence."""
 
-    save_freq = int(OmegaConf.select(cfg, "trainer.save_freq", default=0))
+    trainer = root.trainer
+    save_freq = int((trainer.save_freq if trainer is not None else None) or 0)
     if save_freq <= 0:
         raise ValueError("SANA aesthetic curve requires trainer.save_freq > 0")
-    total_epochs = int(OmegaConf.select(cfg, "trainer.total_epochs", default=0))
+    total_epochs = int((trainer.total_epochs if trainer is not None else None) or 0)
     if (
         total_epochs <= 0
         or total_epochs % save_freq != 0
@@ -789,18 +783,21 @@ def _validate_report_provenance(
     if config_record.get("canonical_protocol_sha256") != CANONICAL_PROTOCOL_SHA256:
         raise ValueError("SANA evaluation report names the wrong canonical protocol digest")
     cfg = normalize_run_config(load_config(config_path))
-    validate_training_metrics(training_metrics_path, cfg)
-    if provenance["training_log"] != validate_training_log_provenance(run_dir, cfg):
+    root = parse_config(cfg)
+    validate_training_metrics(training_metrics_path, root)
+    if provenance["training_log"] != validate_training_log_provenance(run_dir, root):
         raise ValueError("SANA evaluation training-log provenance changed")
+    if root.model is None:
+        raise ValueError("SANA evaluation report requires model configuration")
     expected_model = {
-        "family": str(cfg.model.family),
-        "repo": str(cfg.model.path),
-        "revision": str(cfg.model.revision),
+        "family": str(root.model.family),
+        "repo": str(root.model.path),
+        "revision": str(root.model.revision),
     }
     if provenance["model"] != expected_model:
         raise ValueError("SANA evaluation model provenance disagrees with resolved_config.yaml")
 
-    training_manifest_path, eval_manifest_path, prompts = resolve_protocol_manifests(cfg)
+    training_manifest_path, eval_manifest_path, prompts = resolve_protocol_manifests(root)
     for label, path, expected_count in (
         (
             "training_manifest",
@@ -835,7 +832,7 @@ def _validate_report_provenance(
     expected_rewards = [
         reward_model_record(reward_model)
         for reward_model in build_reward_model_definitions(
-            cfg,
+            root,
             generation_device=str(execution["generation_device"]),
         )
     ]
@@ -843,7 +840,7 @@ def _validate_report_provenance(
         raise ValueError("SANA evaluation reward provenance disagrees with resolved_config.yaml")
 
     checkpoints = provenance["checkpoints"]
-    _validate_checkpoint_records(run_dir, cfg, checkpoints)
+    _validate_checkpoint_records(run_dir, root, checkpoints)
 
     sample_record = provenance["samples"]
     sample_path = run_dir / str(sample_record.get("path", ""))
@@ -912,7 +909,7 @@ def _validate_report_provenance(
 
 def _validate_checkpoint_records(
     run_dir: Path,
-    cfg: DictConfig,
+    root: RootConfig,
     checkpoints: Any,
 ) -> None:
     if (
@@ -931,7 +928,7 @@ def _validate_checkpoint_records(
         raise ValueError(
             "SANA evaluation checkpoint provenance no longer matches the training run",
         )
-    expected_epochs = checkpoint_curve_epochs(cfg)
+    expected_epochs = checkpoint_curve_epochs(root)
     if [int(record.get("epoch", -1)) for record in checkpoints[1:]] != expected_epochs:
         raise ValueError(
             "SANA evaluation checkpoint provenance no longer matches the training run",

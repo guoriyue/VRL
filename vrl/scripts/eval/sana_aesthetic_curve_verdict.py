@@ -46,7 +46,9 @@ def _read_eval_rows(run_dir: Path) -> list[dict[str, float]]:
     if legacy_path.is_file():
         from omegaconf import OmegaConf
 
-        config_path = run_dir / "resolved_config.yaml"
+        from vrl.trainers.checkpointing import RESOLVED_CONFIG_NAME
+
+        config_path = run_dir / RESOLVED_CONFIG_NAME
         if config_path.is_file():
             legacy_cfg = OmegaConf.load(config_path)
             # ``trainer.eval`` was intentionally removed from the current schema.

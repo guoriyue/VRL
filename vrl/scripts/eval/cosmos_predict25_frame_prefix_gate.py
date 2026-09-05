@@ -21,12 +21,11 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
-from omegaconf import OmegaConf
 
 from vrl import run
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
-from vrl.config.schema import parse_config
+from vrl.config.schema import RootConfig, parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.utils.artifacts import sha256_file
@@ -64,11 +63,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _sampling_dimension(args: argparse.Namespace, cfg: Any, name: str) -> int:
+def _sampling_dimension(args: argparse.Namespace, root: RootConfig, name: str) -> int:
     override = int(getattr(args, name))
     if override > 0:
         return override
-    value = OmegaConf.select(cfg, f"sampling.{name}", default=0)
+    value = getattr(root.sampling, name, None) if root.sampling is not None else None
     if int(value or 0) <= 0:
         raise ValueError(f"sampling.{name} must be positive or supplied on the CLI")
     return int(value)
@@ -113,9 +112,9 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             f"frame-prefix gate requires family 'cosmos-predict2.5'; got {entry.family!r}",
         )
 
-    height = _sampling_dimension(args, cfg, "height")
-    width = _sampling_dimension(args, cfg, "width")
-    num_frames = _sampling_dimension(args, cfg, "num_frames")
+    height = _sampling_dimension(args, root, "height")
+    width = _sampling_dimension(args, root, "width")
+    num_frames = _sampling_dimension(args, root, "num_frames")
     if num_frames < args.prefix_frames:
         raise ValueError("--num-frames must be >= --prefix-frames")
     video = _prepare_prefix_video(

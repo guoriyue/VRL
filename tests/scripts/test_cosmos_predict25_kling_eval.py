@@ -11,6 +11,7 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.config.precision import RolePrecision
+from vrl.config.schema import parse_config
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
 
 MODEL_IDENTITY = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
@@ -38,6 +39,15 @@ def _minimal_eval_config(*, family: str = "cosmos-predict2.5"):
             "precision": {
                 "float32_precision": "ieee",
                 "training": {"dtype": "bf16"},
+            },
+            "sampling": {
+                "width": 8,
+                "height": 8,
+                "num_frames": 9,
+                "num_steps": 1,
+                "fps": 16,
+                "max_sequence_length": 8,
+                "guidance_scale": 4.5,
             },
             "trainer": {},
         },
@@ -142,24 +152,44 @@ def test_checkpoint_eval_reuses_model_by_default() -> None:
     assert args.rebuild_model_between_checkpoints is False
 
 
+def _video_root(**sampling: object):
+    """A parsed cosmos config declaring every key the eval projection carries."""
+    return parse_config(
+        OmegaConf.create(
+            {
+                "model": {"family": "cosmos-predict2.5"},
+                "sampling": {
+                    "width": 8,
+                    "height": 8,
+                    "num_frames": 9,
+                    "num_steps": 1,
+                    "fps": 16,
+                    "max_sequence_length": 8,
+                    **sampling,
+                },
+            },
+        ),
+    )
+
+
 def test_eval_sampling_inherits_guidance_when_cli_omits_it() -> None:
     """An omitted guidance flag inherits the merged sampling config."""
-    cfg = OmegaConf.create({"sampling": {"guidance_scale": 4.0}})
+    root = _video_root(guidance_scale=4.0)
     args = eval_script.build_parser().parse_args(["--checkpoint", "unused"])
 
-    sampling = eval_script._resolve_sampling(args, cfg)
+    sampling = eval_script._resolve_sampling(args, root)
 
     assert sampling["guidance_scale"] == 4.0
 
 
 def test_eval_sampling_preserves_explicit_zero_guidance() -> None:
     """An explicit zero disables CFG instead of falling back to the config."""
-    cfg = OmegaConf.create({"sampling": {"guidance_scale": 4.0}})
+    root = _video_root(guidance_scale=4.0)
     args = eval_script.build_parser().parse_args(
         ["--checkpoint", "unused", "--guidance-scale", "0"],
     )
 
-    sampling = eval_script._resolve_sampling(args, cfg)
+    sampling = eval_script._resolve_sampling(args, root)
 
     assert sampling["guidance_scale"] == 0.0
 

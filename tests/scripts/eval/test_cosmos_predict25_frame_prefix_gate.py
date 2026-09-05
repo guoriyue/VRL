@@ -68,7 +68,11 @@ def test_run_gate_loads_through_production_resolve_and_materialize(
             return SimpleNamespace(model=model)
 
     entry = SimpleNamespace(family="cosmos-predict2.5")
-    root = SimpleNamespace(model=SimpleNamespace(family="cosmos-predict2.5"), precision=object())
+    root = SimpleNamespace(
+        model=SimpleNamespace(family="cosmos-predict2.5"),
+        precision=object(),
+        sampling=SimpleNamespace(height=8, width=8, num_frames=9),
+    )
     monkeypatch.setattr(
         gate,
         "load_config",
