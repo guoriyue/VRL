@@ -21,6 +21,7 @@ def _cfg(
     kling_video_reward: bool = False,
     reward_components: dict[str, float] | None = None,
     reward_kwargs: dict[str, dict] | None = None,
+    reward_inference: dict[str, dict] | None = None,
 ) -> object:
     if rollout_runtime is None:
         rollout_runtime = {}
@@ -37,6 +38,7 @@ def _cfg(
         data["reward"] = {
             "components": reward_components,
             "kwargs": reward_kwargs or {},
+            "inference": reward_inference or {},
         }
     return OmegaConf.create(
         data,
@@ -785,13 +787,11 @@ def test_http_only_reward_owns_no_local_resource_or_handoff() -> None:
                 "reward": {"device": "gpu", "devices": [2]},
             },
             reward_components={"videoscore2": 1.0},
-            reward_kwargs={
+            reward_inference={
                 "videoscore2": {
-                    "inference": {
-                        "kind": "http",
-                        "endpoint": "http://reward:8300",
-                        "expected_model": "videoscore2-v1",
-                    },
+                    "kind": "http",
+                    "endpoint": "http://reward:8300",
+                    "expected_model": "videoscore2-v1",
                 },
             },
         ),
@@ -816,13 +816,11 @@ def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> N
                 "reward": {"device": "cpu"},
             },
             reward_components={"ocr": 0.5, "videoscore2": 0.5},
-            reward_kwargs={
+            reward_inference={
                 "videoscore2": {
-                    "inference": {
-                        "kind": "http",
-                        "endpoint": "http://reward:8300",
-                        "expected_model": "videoscore2-v1",
-                    },
+                    "kind": "http",
+                    "endpoint": "http://reward:8300",
+                    "expected_model": "videoscore2-v1",
                 },
             },
         ),

@@ -127,13 +127,11 @@ def test_reward_runtime_config_normalizes_every_component_and_derives_transport(
             {
                 "reward": {
                     "components": {"remote": 0.0, "local": 1.0},
-                    "kwargs": {
+                    "inference": {
                         "remote": {
-                            "inference": {
-                                "kind": "http",
-                                "endpoint": "http://127.0.0.1:8300",
-                                "expected_model": "remote-model",
-                            },
+                            "kind": "http",
+                            "endpoint": "http://127.0.0.1:8300",
+                            "expected_model": "remote-model",
                         },
                     },
                 },
@@ -151,7 +149,13 @@ def test_reward_runtime_config_normalizes_every_component_and_derives_transport(
             {
                 "reward": {
                     "components": {"remote": 0.0},
-                    "kwargs": {"remote": reward.kwargs["remote"]},
+                    "inference": {
+                        "remote": {
+                            "kind": "http",
+                            "endpoint": "http://127.0.0.1:8300",
+                            "expected_model": "remote-model",
+                        },
+                    },
                 },
             },
         ),

@@ -200,6 +200,7 @@ async def _score(
     import torch
     from PIL import Image
 
+    from vrl.config.reward_inference import RewardInferenceConfig
     from vrl.rewards.functions.registry import MultiReward
     from vrl.rewards.types import RewardSample
 
@@ -209,19 +210,25 @@ async def _score(
             "media_type": "image",
             "artifact_format": "tensor",
             "artifact_dir": "outputs/reward_artifacts",
-            "inference": {
-                "kind": "http",
-                "endpoint": endpoint,
-                "timeout_s": 1800,
-                "expected_model": "animereward-quality",
-            },
         }
+    }
+    inference_configs = {
+        "animereward_quality": RewardInferenceConfig(
+            kind="http",
+            endpoint=endpoint,
+            expected_model="animereward-quality",
+        ),
     }
     if with_pickscore:
         components["pickscore"] = 1.0
         kwargs["pickscore"] = {"dtype": "float32"}
+        inference_configs["pickscore"] = RewardInferenceConfig()
 
-    reward = MultiReward.from_dict(components, reward_kwargs=kwargs)
+    reward = MultiReward.from_dict(
+        components,
+        reward_kwargs=kwargs,
+        inference_configs=inference_configs,
+    )
     samples = []
     for row in rows:
         arr = np.asarray(Image.open(row["image_path"]).convert("RGB"), dtype=np.uint8).copy()

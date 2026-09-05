@@ -32,7 +32,10 @@ from vrl.config.base import ConfigBase
 from vrl.config.data import DataLoaderName, manifest_sources, resolve_data_loader
 from vrl.config.model_schema import ModelSection
 from vrl.config.precision import PrecisionConfig
-from vrl.config.reward_inference import parse_reward_inference_config
+from vrl.config.reward_inference import (
+    RewardInferenceConfig,
+    parse_reward_inference_config,
+)
 from vrl.config.sampling_schema import SamplingSection
 from vrl.config.unknown_keys import OPEN, ConfigBlock
 from vrl.generation.execution.types import BatchPlacementStrategy
@@ -51,12 +54,34 @@ from vrl.utils.profiling import TorchProfilerConfig
 
 
 class RewardConfig(ConfigBase):
+    model_config = ConfigDict(extra="ignore", arbitrary_types_allowed=True)
+
     # reward names are user-chosen — open by design
     components: Annotated[dict[str, Any], OPEN]
     # each reward's kwargs contract is owned and validated by the reward class
     # itself at construction (vrl/rewards/), same as model families — the
     # config layer does not duplicate per-reward knowledge
     kwargs: Annotated[dict[str, Any], OPEN] = Field(default_factory=dict)
+    # Per-component transport/deployment, keyed by the same user-chosen names.
+    # A component without an entry executes in-process.
+    inference: Annotated[dict[str, RewardInferenceConfig], OPEN] = Field(
+        default_factory=dict,
+    )
+
+    @field_validator("inference", mode="before")
+    @classmethod
+    def _parse_inference(cls, value: object) -> object:
+        # RewardInferenceConfig is a frozen dataclass, not a pydantic model;
+        # parse entries here so errors name the reward.inference.<name> path.
+        if not isinstance(value, Mapping):
+            return value
+        return {
+            str(name): parse_reward_inference_config(
+                entry,
+                context=f"reward.inference.{name}",
+            )
+            for name, entry in value.items()
+        }
 
     @model_validator(mode="after")
     def _validate_reward(self) -> RewardConfig:
@@ -66,11 +91,12 @@ class RewardConfig(ConfigBase):
                 raise ValueError(
                     f"reward.kwargs.{name} must be a mapping, got {type(sub).__name__}",
                 )
-            if isinstance(sub, dict):
-                parse_reward_inference_config(
-                    sub.get("inference"),
-                    context=f"reward.kwargs.{name}.inference",
-                )
+
+        unknown_inference = sorted(set(self.inference) - set(self.components))
+        if unknown_inference:
+            raise ValueError(
+                f"reward.inference configured for unknown component(s): {unknown_inference}",
+            )
 
         # Zero keeps a scorer observation-only: it is still computed and logged
         # but contributes nothing to the optimization reward.
@@ -183,7 +209,7 @@ class DataConfig(ConfigBase):
     split: str | None = None
     cache_dir: str | None = None
     # Precomputed clean-latents shard for the GRPO diffusion-loss regularizer
-    # (algorithm.sft_weight > 0): {target_video -> VAE latents} written by
+    # (algorithm.sft_weight > 0): {target image/video -> VAE latents} written by
     # vrl/scripts/denoise/encode_targets.py. reader: run_online_recipe.
     sft_latents: str | None = None
     max_train_samples: Any = None

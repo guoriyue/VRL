@@ -48,6 +48,7 @@ class RewardInferenceConfig:
     endpoint: str = ""
     timeout_s: float = 1800.0
     expected_model: str = ""
+    expected_model_version: str = ""
 
     def __post_init__(self) -> None:
         if self.kind not in {"in_process", "http"}:
@@ -59,12 +60,15 @@ class RewardInferenceConfig:
             raise ValueError("reward inference.timeout_s must be a finite number > 0")
         endpoint = self.endpoint.strip()
         expected_model = self.expected_model.strip()
+        expected_model_version = self.expected_model_version.strip()
         object.__setattr__(self, "timeout_s", timeout_s)
         object.__setattr__(self, "expected_model", expected_model)
+        object.__setattr__(self, "expected_model_version", expected_model_version)
         if self.kind == "in_process":
-            if endpoint or expected_model:
+            if endpoint or expected_model or expected_model_version:
                 raise ValueError(
-                    "reward inference.kind=in_process cannot set endpoint or expected_model",
+                    "reward inference.kind=in_process cannot set endpoint, expected_model, "
+                    "or expected_model_version",
                 )
             object.__setattr__(self, "endpoint", endpoint)
             return
@@ -104,18 +108,16 @@ def reward_inference_configs_from_cfg(cfg: Any) -> dict[str, RewardInferenceConf
 
     reward = cfg_get(cfg, "reward", None)
     components = cfg_get(reward, "components", {}) if reward is not None else {}
-    kwargs = cfg_get(reward, "kwargs", {}) if reward is not None else {}
+    inference = cfg_get(reward, "inference", {}) if reward is not None else {}
     if not isinstance(components, Mapping):
         return {}
-    kwargs = kwargs if isinstance(kwargs, Mapping) else {}
+    inference = inference if isinstance(inference, Mapping) else {}
     resolved: dict[str, RewardInferenceConfig] = {}
     for raw_name in components:
         name = str(raw_name)
-        component_kwargs = cfg_get(kwargs, name, {}) or {}
-        inference = cfg_get(component_kwargs, "inference", None)
         resolved[name] = parse_reward_inference_config(
-            inference,
-            context=f"reward.kwargs.{name}.inference",
+            cfg_get(inference, name, None),
+            context=f"reward.inference.{name}",
         )
     return resolved
 

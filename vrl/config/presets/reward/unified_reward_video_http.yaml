@@ -31,8 +31,8 @@ reward:
       # Persist raw axes for reward-hacking audits; the selected scalar alone
       # cannot reveal alignment, physics, and style moving in opposite directions.
       debug_dir: ${trainer.output_dir}/reward_debug
-      inference:
-        kind: http
-        endpoint: http://127.0.0.1:8300
-        timeout_s: 1800
-        expected_model: unified-reward-video
+  inference:
+    unified_reward_video:
+      kind: http
+      endpoint: http://127.0.0.1:8300
+      expected_model: unified-reward-video
