@@ -59,6 +59,47 @@ one reward call would overlap trainer backward. In-process rewards retain one
 batched scoring call even on a dedicated GPU; this avoids trading batch
 throughput for fake event-loop concurrency.
 
+## CountGD object counting
+
+Select `+reward=countgd_http` with any reward-neutral generator recipe. Start
+the shared CPU service from the existing isolated CountGD installation:
+
+```bash
+data/external/countgd/env/bin/python -m vrl.rewards.service.server \
+  --config vrl/config/reward_service/countgd.yaml
+```
+
+Each JSONL prompt row supplies its own counting target, for example:
+
+```json
+{"prompt": "Three cats sitting on a sofa.", "metadata": {"object_class": "cat", "expected_count": 3}}
+{"prompt": "Two cups on a wooden table.", "metadata": {"object_class": "cup", "expected_count": 2}}
+```
+
+One batch can contain different classes; no per-class reward or experiment YAML
+is needed. `object_class` is a non-empty text description, not a closed label
+list. Use one class or noun phrase per image (for example, `red apple`), not
+multiple classes separated by periods or question marks (these are rejected).
+The adapter normalizes case, whitespace at
+the ends, and trailing periods before passing the description to CountGD.
+`expected_count` must be an integer >= 0. The reward is 1 only when the detected
+count exactly matches; it is otherwise 0. Neither value is inferred from the
+generation prompt. This is image counting, not video tracking.
+
+The generic names replace `countgd_person_count` / `countgd_person_count_http`;
+old run configs must use the new component/preset and convert `expected_people`
+to `object_class: person` plus `expected_count`. Restart the service with the
+new config: its protocol version intentionally differs from the person-only
+version, so an old running service is rejected. The historical Anima paired
+evaluator translates its old person-count archives at the model boundary.
+
+[CountGD](https://github.com/niki-amini-naieni/CountGD) supports text-conditioned
+open-world counting, but accepting a class description does not establish its
+accuracy on that class or style. The previous Anima person-count experiment
+found detector-only gains under optimization. Audit held-out images before
+using this signal for training; zero-count rewards can also reward missed
+detections. Checkpoint/runtime pins and the 0.23 detection threshold are unchanged.
+
 ## Video Score Keys
 
 Do not treat every video reward's default score as an orthogonal training

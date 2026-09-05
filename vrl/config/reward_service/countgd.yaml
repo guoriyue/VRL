@@ -1,8 +1,7 @@
-# Operator-owned CPU CountGD service for exact-person-count Anima RL.
+# Operator-owned CPU CountGD service for text-conditioned object counting.
 #
 # The pinned external installation lives under data/external/countgd by default.
-# CPU placement is deliberate: measured inference is about 2.0 seconds/image,
-# while avoiding any invisible allocation on the sole RTX 5090. The service
+# CPU placement avoids allocating memory on the generator's GPU. The service
 # automatically advertises generation_overlap_safe for an explicit CPU device.
 #
 # Install or verify the ignored pinned runtime:
@@ -13,15 +12,16 @@
 # Launch from the isolated CountGD environment:
 #
 #   data/external/countgd/env/bin/python -m vrl.rewards.service.server \
-#     --config vrl/config/reward_service/countgd_person_count.yaml
+#     --config vrl/config/reward_service/countgd.yaml
 host: 127.0.0.1
 port: 8311
-model_name: countgd-person-count
-model_version: CountGD@b6f362b3f5cd20db4a171faa410dfed8f2f466d8+protocol-f789d833f632cf59611136e06d117a1544a5ff3ba36ba5fbb78494689f537b26
+model_name: countgd
+model_version: CountGD@b6f362b3f5cd20db4a171faa410dfed8f2f466d8+protocol-a22646e78242bc9122a032fb9075d1ca8b175de751bd1a75e910a28994472d51
 
 # HTTP artifacts are integrity-checked paths on the shared local filesystem.
+# Relative roots are resolved against this configuration file, not the shell cwd.
 artifact_roots:
-  - /home/mingfeiguo/Desktop/VRL/outputs
+  - ../../../outputs
 
 max_concurrency: 1
 max_pending_requests: 16
@@ -29,6 +29,6 @@ max_cached_requests: 1024
 generation_overlap_safe: false
 
 worker_config:
-  model_factory: vrl.rewards.models.countgd_person_count:CountGDPersonCountModel
+  model_factory: vrl.rewards.models.countgd:CountGDModel
   reward_model_version: ${model_version}
   device: cpu

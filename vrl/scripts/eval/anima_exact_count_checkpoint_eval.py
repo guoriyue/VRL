@@ -38,14 +38,14 @@ from PIL import Image, ImageDraw, ImageOps
 from vrl.config.loading import load_config
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.codex_image_qa import CodexImageQARewardModel
-from vrl.rewards.models.countgd_person_count import (
+from vrl.rewards.models.countgd import (
     COUNTGD_CHECKPOINT_SHA256,
     COUNTGD_MODEL_VERSION,
-    COUNTGD_PERSON_COUNT_SCORE_KEY,
     COUNTGD_RUNTIME_TREE_SHA256,
+    COUNTGD_SCORE_KEY,
     COUNTGD_SOURCE_REVISION,
     COUNTGD_SPACE_REVISION,
-    CountGDPersonCountModel,
+    CountGDModel,
 )
 from vrl.rewards.types import REWARD_GROUP_ID_METADATA_KEY
 from vrl.scripts.eval._score_summary import bootstrap_mean_interval, distribution
@@ -243,7 +243,7 @@ def create_report(
             [*base_cells, *checkpoint_cells],
             progress_every=progress_every,
         )
-        reward_key = COUNTGD_PERSON_COUNT_SCORE_KEY
+        reward_key = COUNTGD_SCORE_KEY
         observed_count_key = "countgd_observed_count"
 
     score_rows = [
@@ -364,14 +364,14 @@ def _build_countgd_reward_model(
     *,
     source_dir: Path | None,
     device: str,
-) -> tuple[CountGDPersonCountModel, dict[str, Any]]:
+) -> tuple[CountGDModel, dict[str, Any]]:
     worker_config: dict[str, Any] = {
         "device": device,
         "reward_model_version": COUNTGD_MODEL_VERSION,
     }
     if source_dir is not None:
         worker_config["source_dir"] = str(source_dir)
-    model = CountGDPersonCountModel(worker_config)
+    model = CountGDModel(worker_config)
     return model, {
         "backend": "countgd",
         "criterion": "observed_count == expected_people",
@@ -440,7 +440,7 @@ def _score_cells(
 
 
 def _score_countgd_cells(
-    model: CountGDPersonCountModel,
+    model: CountGDModel,
     cells: Sequence[ExactCountCell],
     *,
     progress_every: int,
@@ -458,7 +458,13 @@ def _score_countgd_cells(
             size_bytes=generated.image_path.stat().st_size,
             sha256=generated.image_sha256,
             prompt=generated.prompt,
-            metadata=generated.reward_metadata,
+            # This historical person-count archive also serves the Codex
+            # evaluator; translate its target only at the generic model boundary.
+            metadata={
+                **generated.reward_metadata,
+                "object_class": "person",
+                "expected_count": cell.expected_people,
+            },
         )
         result = model.evaluate(artifact)
         scored.append(
@@ -466,7 +472,7 @@ def _score_countgd_cells(
                 cell=cell,
                 scores={
                     **result.to_scores(),
-                    "countgd_observed_count": float(result.observed_people),
+                    "countgd_observed_count": float(result.observed_count),
                 },
             ),
         )

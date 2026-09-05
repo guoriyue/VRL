@@ -7,7 +7,8 @@ import pytest
 from omegaconf import OmegaConf
 from PIL import Image
 
-from vrl.rewards.models.countgd_person_count import CountGDPersonCountModel
+from vrl.rewards.inference import RewardInferenceArtifact
+from vrl.rewards.models.countgd import CountGDModel, CountGDResult
 from vrl.scripts.eval import anima_exact_count_checkpoint_eval as checkpoint_eval
 from vrl.scripts.families.cosmos.anima.generation_protocol import (
     ANIMA_GENERATION_SCHEMA,
@@ -115,9 +116,15 @@ def test_complete_report_binds_png_grid_and_keeps_blind_key_secret(
 ) -> None:
     base_dir = _write_archive(tmp_path / "base", color=(10, 20, 30))
     checkpoint_dir = _write_archive(tmp_path / "checkpoint", color=(30, 20, 10))
-    model = CountGDPersonCountModel.__new__(CountGDPersonCountModel)
+    model = CountGDModel.__new__(CountGDModel)
     model.prepare_for_inference = lambda: None
-    model.count_people = lambda artifact: artifact.metadata["expected_people"]
+
+    def evaluate(artifact: RewardInferenceArtifact) -> CountGDResult:
+        assert artifact.metadata["object_class"] == "person"
+        assert artifact.metadata["expected_count"] == 4
+        return CountGDResult(expected_count=4, observed_count=4)
+
+    model.evaluate = evaluate
     monkeypatch.setattr(
         checkpoint_eval,
         "_build_countgd_reward_model",
@@ -140,6 +147,8 @@ def test_complete_report_binds_png_grid_and_keeps_blind_key_secret(
         for line in (output_dir / "scores.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert len(score_rows) == 4
+    assert all(row["scores"]["countgd"] == 1.0 for row in score_rows)
+    assert all(row["observed_count"] == row["expected_people"] == 4 for row in score_rows)
     assert all(row["image_sha256"] == sha256_file(Path(row["image_path"])) for row in score_rows)
     assert summary["sources"]["base"]["grid_digest"]["cells"] == 2
     assert summary["sources"]["base"]["grid_digest"]["schema"].endswith("/v1")

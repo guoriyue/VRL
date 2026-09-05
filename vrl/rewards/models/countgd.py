@@ -1,13 +1,15 @@
-"""Deterministic exact-person-count reward backed by pinned CountGD.
+"""Text-conditioned exact-object-count reward backed by pinned CountGD.
 
 CountGD is kept in an isolated reward-service environment because its upstream
 source is not packaged and imports generic top-level modules such as ``models``
 and ``util``.  This adapter follows the project's official single-image,
-text-only protocol exactly: the ``datasets_inference`` transform, no visual
-exemplars, caption ``"person ."``, and confidence threshold 0.23.
+text-only inference path: the ``datasets_inference`` transform, no visual
+exemplars, and confidence threshold 0.23.
 
-The reward target comes only from ``artifact.metadata["expected_people"]``.
-Prompt parsing would make wording an accidental second source of truth.
+Each artifact specifies ``metadata.object_class`` and ``metadata.expected_count``.
+Class descriptions are passed to CountGD, not selected from a fixed vocabulary.
+Prompt parsing would make wording an accidental second source of truth. This
+scores detector agreement, not a guarantee of correct counting for every class.
 """
 
 from __future__ import annotations
@@ -37,11 +39,9 @@ COUNTGD_CHECKPOINT_SHA256 = "c1bab864b17db345b4c6e3aaabb5765bc2c0a90d0bc8defb5e6
 COUNTGD_RUNTIME_TREE_SHA256 = "e41c4fd64148a0a55a4d5bda3e0f5f8da6297811d3f7648506761742ac04b450"
 COUNTGD_INSTALL_SCHEMA = "vrl.countgd-install/v1"
 
-_COUNT_CAPTION = "person ."
 _CONFIDENCE_THRESHOLD = 0.23
-_EXPECTED_PEOPLE_METADATA_KEY = "expected_people"
-COUNTGD_PERSON_COUNT_SCORE_KEY = "countgd_person_count"
-_PROTOCOL_SCHEMA = "vrl.countgd-person-count-protocol/v1"
+COUNTGD_SCORE_KEY = "countgd"
+_PROTOCOL_SCHEMA = "vrl.countgd-count-protocol/v2"
 _RESIZE_SHORT_SIDE = 800
 _RESIZE_MAX_SIDE = 1333
 _NORMALIZATION_MEAN = (0.485, 0.456, 0.406)
@@ -49,7 +49,6 @@ _NORMALIZATION_STD = (0.229, 0.224, 0.225)
 _VISUAL_EXEMPLAR_COUNT = 0
 _EXEMPLAR_POINT_INDICES = (0,)
 _MODEL_INIT_SEED = 42
-_MAX_COUNT_ERROR = 0
 
 
 def countgd_model_protocol() -> dict[str, Any]:
@@ -57,20 +56,24 @@ def countgd_model_protocol() -> dict[str, Any]:
 
     return {
         "schema": _PROTOCOL_SCHEMA,
-        "caption": _COUNT_CAPTION,
+        "caption_template": "{object_class} .",
+        "class_normalization": "strip, lowercase, remove trailing periods, strip",
+        "class_constraint": "single phrase without internal periods or question marks",
         "checkpoint_sha256": COUNTGD_CHECKPOINT_SHA256,
         "confidence_threshold": _CONFIDENCE_THRESHOLD,
         "count_decision": "sigmoid(pred_logits).max(-1) > confidence_threshold",
         "exemplar_point_indices": list(_EXEMPLAR_POINT_INDICES),
-        "expected_people_metadata_key": _EXPECTED_PEOPLE_METADATA_KEY,
-        "max_count_error": _MAX_COUNT_ERROR,
+        "object_class_metadata_key": "object_class",
+        "expected_count_metadata_key": "expected_count",
+        "minimum_expected_count": 0,
+        "count_reward": "float(observed_count == expected_count)",
         "model_init_seed": _MODEL_INIT_SEED,
         "normalization_mean": list(_NORMALIZATION_MEAN),
         "normalization_std": list(_NORMALIZATION_STD),
         "resize_max_side": _RESIZE_MAX_SIDE,
         "resize_short_side": _RESIZE_SHORT_SIDE,
         "runtime_tree_sha256": COUNTGD_RUNTIME_TREE_SHA256,
-        "score_key": COUNTGD_PERSON_COUNT_SCORE_KEY,
+        "score_key": COUNTGD_SCORE_KEY,
         "source_revision": COUNTGD_SOURCE_REVISION,
         "space_revision": COUNTGD_SPACE_REVISION,
         "visual_exemplar_count": _VISUAL_EXEMPLAR_COUNT,
@@ -94,14 +97,14 @@ _RUNTIME_TREE_EXCLUDED_DIRS = frozenset({"__pycache__", ".cache", "cache", "outp
 
 
 @dataclass(frozen=True, slots=True)
-class CountGDPersonCountConfig:
+class CountGDConfig:
     """Resolved model-owned paths and device for one CountGD service."""
 
     source_dir: Path
     device: str
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, Any]) -> CountGDPersonCountConfig:
+    def from_mapping(cls, value: Mapping[str, Any]) -> CountGDConfig:
         advertised_version = str(value.get("reward_model_version", "")).strip()
         if advertised_version != COUNTGD_MODEL_VERSION:
             raise ValueError(
@@ -116,13 +119,13 @@ class CountGDPersonCountConfig:
         )
         device = str(value.get("device", "cpu")).strip().lower()
         if not device:
-            raise ValueError("CountGD person-count device must be non-empty")
+            raise ValueError("CountGD device must be non-empty")
         return cls(source_dir=source_dir, device=device)
 
 
 @dataclass(frozen=True, slots=True)
-class CountGDPersonDetection:
-    """One protocol-filtered CountGD person detection."""
+class CountGDDetection:
+    """One protocol-filtered CountGD detection for the requested class."""
 
     bbox_cxcywh: tuple[float, float, float, float]
     confidence: float
@@ -141,36 +144,21 @@ class CountGDPersonDetection:
 
 
 @dataclass(frozen=True, slots=True)
-class CountGDPersonCountObservation:
-    """Typed output from one qualified CountGD image observation."""
-
-    observed_people: int
-
-    def __post_init__(self) -> None:
-        if type(self.observed_people) is not int or self.observed_people < 0:
-            raise ValueError("CountGD observed_people must be a non-negative integer")
-
-
-@dataclass(frozen=True, slots=True)
-class CountGDPersonCountResult:
+class CountGDResult:
     """One observation evaluated against the artifact's typed target."""
 
-    expected_people: int
-    observation: CountGDPersonCountObservation
+    expected_count: int
+    observed_count: int
 
     def __post_init__(self) -> None:
-        if type(self.expected_people) is not int or self.expected_people < 1:
-            raise ValueError("CountGD expected_people must be a positive integer")
-        if not isinstance(self.observation, CountGDPersonCountObservation):
-            raise TypeError("CountGD observation must be CountGDPersonCountObservation")
-
-    @property
-    def observed_people(self) -> int:
-        return self.observation.observed_people
+        if type(self.expected_count) is not int or self.expected_count < 0:
+            raise ValueError("CountGD expected_count must be a non-negative integer")
+        if type(self.observed_count) is not int or self.observed_count < 0:
+            raise ValueError("CountGD observed_count must be a non-negative integer")
 
     @property
     def exact_match(self) -> bool:
-        return abs(self.observed_people - self.expected_people) <= _MAX_COUNT_ERROR
+        return self.observed_count == self.expected_count
 
     @property
     def reward(self) -> float:
@@ -179,7 +167,7 @@ class CountGDPersonCountResult:
     def to_scores(self) -> dict[str, float]:
         """Serialize the production reward-service score boundary."""
 
-        return {COUNTGD_PERSON_COUNT_SCORE_KEY: self.reward}
+        return {COUNTGD_SCORE_KEY: self.reward}
 
 
 @dataclass(slots=True)
@@ -199,11 +187,11 @@ class _RuntimeTreeDigest:
     file_count: int
 
 
-class CountGDPersonCountModel:
-    """Return one iff CountGD observes exactly the typed requested person count."""
+class CountGDModel:
+    """Return one iff CountGD observes exactly the requested object count."""
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
-        self.config = CountGDPersonCountConfig.from_mapping(worker_config)
+        self.config = CountGDConfig.from_mapping(worker_config)
         self._runtime: _CountGDRuntime | None = None
 
     def prepare_for_inference(self) -> None:
@@ -222,30 +210,38 @@ class CountGDPersonCountModel:
     def __call__(self, artifact: RewardInferenceArtifact) -> dict[str, float]:
         return self.evaluate(artifact).to_scores()
 
-    def observe(self, artifact: RewardInferenceArtifact) -> CountGDPersonCountObservation:
-        """Return the typed CountGD observation used by every scorer."""
-
-        return CountGDPersonCountObservation(observed_people=self.count_people(artifact))
-
-    def evaluate(self, artifact: RewardInferenceArtifact) -> CountGDPersonCountResult:
+    def evaluate(self, artifact: RewardInferenceArtifact) -> CountGDResult:
         """Apply the model-owned exact-count decision to one typed target."""
 
-        expected_people = _expected_people(artifact)
-        return CountGDPersonCountResult(
-            expected_people=expected_people,
-            observation=self.observe(artifact),
+        expected_count = artifact.metadata.get("expected_count")
+        if type(expected_count) is not int or expected_count < 0:
+            raise ValueError(
+                f"CountGD artifact {artifact.artifact_id!r} requires a non-negative integer "
+                "metadata['expected_count']",
+            )
+        return CountGDResult(
+            expected_count=expected_count,
+            observed_count=len(self.detect(artifact)),
         )
 
-    def count_people(self, artifact: RewardInferenceArtifact) -> int:
-        """Return the count derived from the protocol-filtered detections."""
-
-        return len(self.detect_people(artifact))
-
-    def detect_people(
+    def detect(
         self,
         artifact: RewardInferenceArtifact,
-    ) -> tuple[CountGDPersonDetection, ...]:
-        """Run the qualified protocol and retain its typed person detections."""
+    ) -> tuple[CountGDDetection, ...]:
+        """Detect the artifact's requested class without parsing its prompt."""
+
+        object_class = artifact.metadata.get("object_class")
+        if not isinstance(object_class, str) or not (
+            object_class := object_class.strip().lower().rstrip(".").strip()
+        ):
+            raise ValueError(
+                f"CountGD artifact {artifact.artifact_id!r} requires a non-empty string "
+                "metadata['object_class']",
+            )
+        # CountGD treats '.' and '?' as category separators; max-token confidence
+        # would otherwise silently combine detections for several classes.
+        if "." in object_class or "?" in object_class:
+            raise ValueError("CountGD object_class must be a single phrase without '.' or '?'")
 
         self.prepare_for_inference()
         runtime = self._runtime
@@ -264,14 +260,14 @@ class CountGDPersonCountModel:
                 input_image.unsqueeze(0).to(device),
                 [target["exemplars"].to(device)],
                 [runtime.torch.tensor(_EXEMPLAR_POINT_INDICES, device=device)],
-                captions=[_COUNT_CAPTION],
+                captions=[f"{object_class} ."],
             )
         confidence = output["pred_logits"][0].sigmoid().max(dim=-1).values
         keep = confidence > _CONFIDENCE_THRESHOLD
         kept_boxes = output["pred_boxes"][0][keep].detach().cpu().tolist()
         kept_confidence = confidence[keep].detach().cpu().tolist()
         return tuple(
-            CountGDPersonDetection(
+            CountGDDetection(
                 bbox_cxcywh=tuple(box),
                 confidence=score,
             )
@@ -342,16 +338,6 @@ class CountGDPersonCountModel:
             ],
         )
         return _CountGDRuntime(model=model, transform=transform, torch=torch)
-
-
-def _expected_people(artifact: RewardInferenceArtifact) -> int:
-    value = artifact.metadata.get(_EXPECTED_PEOPLE_METADATA_KEY)
-    if type(value) is not int or value < 1:
-        raise ValueError(
-            f"CountGD artifact {artifact.artifact_id!r} requires a positive integer "
-            f"metadata[{_EXPECTED_PEOPLE_METADATA_KEY!r}]",
-        )
-    return value
 
 
 def _verify_install(source_dir: Path) -> None:
@@ -516,14 +502,13 @@ __all__ = [
     "COUNTGD_CHECKPOINT_SHA256",
     "COUNTGD_INSTALL_SCHEMA",
     "COUNTGD_MODEL_VERSION",
-    "COUNTGD_PERSON_COUNT_SCORE_KEY",
     "COUNTGD_RUNTIME_TREE_SHA256",
+    "COUNTGD_SCORE_KEY",
     "COUNTGD_SOURCE_REVISION",
     "COUNTGD_SPACE_REVISION",
-    "CountGDPersonCountConfig",
-    "CountGDPersonCountModel",
-    "CountGDPersonCountObservation",
-    "CountGDPersonCountResult",
-    "CountGDPersonDetection",
+    "CountGDConfig",
+    "CountGDDetection",
+    "CountGDModel",
+    "CountGDResult",
     "countgd_model_protocol",
 ]

@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from vrl.rewards.models.countgd_person_count import (
+from vrl.rewards.models.countgd import (
     _RUNTIME_TREE_ALGORITHM,
     _RUNTIME_TREE_SCHEMA,
     COUNTGD_CHECKPOINT_SHA256,
@@ -843,7 +843,7 @@ async def run() -> None:
                     "model_version": {COUNTGD_MODEL_VERSION!r},
                     "artifact_roots": [str(root)],
                     "worker_config": {{
-                        "model_factory": "vrl.rewards.models.countgd_person_count:CountGDPersonCountModel",
+                        "model_factory": "vrl.rewards.models.countgd:CountGDModel",
                         "reward_model_version": {COUNTGD_MODEL_VERSION!r},
                         "device": "cpu",
                         "source_dir": str(source_dir),
@@ -867,7 +867,7 @@ async def run() -> None:
                         prompt="one person",
                         size_bytes=len(payload),
                         sha256=hashlib.sha256(payload).hexdigest(),
-                        metadata={{"expected_people": 1}},
+                        metadata={{"object_class": "person", "expected_count": 1}},
                     ),
                 ),
             )
@@ -889,7 +889,7 @@ async def run() -> None:
                         expected_request_id=request.request_id,
                     )
                     assert len(results) == 1
-                    assert "countgd_person_count" in results[0].scores
+                    assert "countgd" in results[0].scores
         finally:
             await service.shutdown_async()
 
