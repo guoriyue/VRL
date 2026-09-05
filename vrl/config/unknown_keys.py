@@ -203,9 +203,7 @@ def require_no_unknown_keys(cfg: Any, *, section: str | None = None) -> None:
 
     unknown = find_unknown_keys(cfg, section=section)
     if unknown:
-        raise ValueError(
-            "unknown config keys (typo? renamed? removed?): " + ", ".join(unknown),
-        )
+        raise ValueError("unknown " + ", ".join(unknown))
 
 
 __all__ = ["OPEN", "find_unknown_keys", "require_no_unknown_keys"]

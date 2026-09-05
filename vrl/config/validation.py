@@ -326,9 +326,6 @@ def validate_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPoli
     derivation of ``root``, and it is returned only so the caller does not resolve
     it a second time (asserted by tests/config/test_builders.py).
     """
-    from vrl.config.unknown_keys import require_no_unknown_keys
-
-    require_no_unknown_keys(cfg)
     root = parse_config(cfg)
     precision = resolve_precision_policy(root)
     # Every torch.compile incompatibility at once. Checked at config load — where

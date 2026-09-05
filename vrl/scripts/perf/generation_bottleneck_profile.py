@@ -29,7 +29,6 @@ import time
 from collections import defaultdict
 
 import torch
-from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
 from vrl.config.precision import normalize_precision, resolve_precision_policy
@@ -96,26 +95,22 @@ def main(argv=None):
     )
     args = p.parse_args(argv)
 
-    cfg = load_config(args.config)
     device = torch.device(args.device)
     precision = normalize_precision(args.precision)
     fp8 = precision == "fp8"
     nvfp4 = precision == "nvfp4"
-    OmegaConf.update(
-        cfg,
-        "precision.rollout.dtype",
-        "bf16" if fp8 or nvfp4 else precision,
-        force_add=True,
-    )
+    rollout_dtype = "bf16" if fp8 or nvfp4 else precision
+    cfg = load_config(args.config, overrides=[f"precision.rollout.dtype={rollout_dtype}"])
+    root = parse_config(cfg)
     label = f"bf16+fp8/{args.fp8_recipe}" if fp8 else "bf16+nvfp4" if nvfp4 else precision
-    _nf = cfg.sampling.get("num_frames", cfg.sampling.get("frame_count", 1))
+    sampling = root.sampling
+    num_frames = getattr(sampling, "num_frames", None) or 1
     print(
-        f"shape {cfg.sampling.width}x{cfg.sampling.height}x{_nf}, "
-        f"{cfg.sampling.num_steps} steps; precision={label}; profiling {args.steps} steps",
+        f"shape {sampling.width}x{sampling.height}x{num_frames}, "
+        f"{sampling.num_steps} steps; precision={label}; profiling {args.steps} steps",
         flush=True,
     )
 
-    root = parse_config(cfg)
     precision_policy = resolve_precision_policy(root)
     runtime = build_runtime(root, device, precision=precision_policy)
     model = runtime.model

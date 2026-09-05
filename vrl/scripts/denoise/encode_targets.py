@@ -156,7 +156,6 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
 
     import torch
-    from omegaconf import OmegaConf
 
     from vrl.config.loading import load_config
     from vrl.config.precision import resolve_precision_policy
@@ -180,21 +179,22 @@ def main(argv: list[str] | None = None) -> None:
         if args.device is not None
         else ("cuda" if torch.cuda.is_available() else "cpu"),
     )
-    height = int(OmegaConf.select(cfg, "sampling.height"))
-    width = int(OmegaConf.select(cfg, "sampling.width"))
-    num_frames = int(OmegaConf.select(cfg, "sampling.num_frames", default=1) or 1)
-    fps = float(OmegaConf.select(cfg, "sampling.fps", default=16) or 16)
+    sampling = root.sampling
+    if sampling is None:
+        raise ValueError("target encoding requires sampling configuration")
+    height = int(sampling.height)
+    width = int(sampling.width)
+    num_frames = int(getattr(sampling, "num_frames", None) or 1)
+    fps = float(getattr(sampling, "fps", None) or 16)
 
-    examples = load_prompt_examples_from_config(cfg.data)
+    examples = load_prompt_examples_from_config(root.data)
     if args.limit is not None:
         examples = examples[: int(args.limit)]
     if not examples:
         raise ValueError("the training manifest resolved to zero examples")
 
-    data_root = OmegaConf.select(cfg, "data.artifact_data_root", default=None)
-    allow_absolute = bool(
-        OmegaConf.select(cfg, "data.allow_absolute_artifact_paths", default=False),
-    )
+    data_root = root.data.artifact_data_root if root.data is not None else None
+    allow_absolute = bool(root.data.allow_absolute_artifact_paths) if root.data else False
     targets = _resolve_clean_targets(
         examples,
         data_root=data_root,
@@ -268,8 +268,8 @@ def main(argv: list[str] | None = None) -> None:
     save_sft_latents(
         args.out,
         family=family,
-        model_path=str(OmegaConf.select(cfg, "model.path", default="")),
-        model_revision=str(OmegaConf.select(cfg, "model.revision", default="") or ""),
+        model_path=str(root.model.path or ""),
+        model_revision=str(root.model.revision or ""),
         latents_by_target=latents_by_target,
     )
     logger.info(

@@ -103,6 +103,7 @@ def test_reward_worker_config_adds_reward_model_name_default() -> None:
     cfg = OmegaConf.create(
         {
             "reward": {
+                "components": {"kling_video_reward": 1.0},
                 "kwargs": {
                     "kling_video_reward": {
                         "reward_name": "KlingTeam/VideoReward@main",

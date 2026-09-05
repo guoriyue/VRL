@@ -93,23 +93,6 @@ def require_exact_int(value: object, *, path: str, minimum: int | None = None) -
     return value
 
 
-def to_builtin(value: Any) -> Any:
-    """Shallow-unwrap an OmegaConf ``DictConfig``/``ListConfig`` to a plain dict/list.
-
-    Anything else (including already-plain values) passes through unchanged. Use
-    :func:`plain_mapping` instead when a deep, fully-recursive conversion is needed.
-    """
-
-    try:
-        from omegaconf import DictConfig, ListConfig, OmegaConf
-    except Exception:
-        return value
-
-    if isinstance(value, (DictConfig, ListConfig)):
-        return OmegaConf.to_container(value, resolve=True)
-    return value
-
-
 def to_builtin_deep(value: Any) -> Any:
     """Deep-convert OmegaConf configs and nested Mapping/list/tuple to plain types.
 
@@ -151,6 +134,5 @@ __all__ = [
     "import_from_path",
     "plain_mapping",
     "require_exact_int",
-    "to_builtin",
     "to_builtin_deep",
 ]

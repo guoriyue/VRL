@@ -22,7 +22,7 @@ from vrl.config.reward_inference import (
     RewardInferenceConfig,
     reward_inference_configs_from_cfg,
 )
-from vrl.utils.config import cfg_get, to_builtin
+from vrl.utils.config import cfg_get, to_builtin_deep
 
 
 @dataclass(frozen=True, slots=True)
@@ -935,7 +935,7 @@ def _parse_rollout_gpu_pool(rollout_node: Any) -> str:
 
     pool = "auto"
     if new_pool is not _MISSING:
-        pool = str(to_builtin(new_pool)).strip().lower()
+        pool = str(to_builtin_deep(new_pool)).strip().lower()
         if pool not in {"auto", "trainer", "dedicated"}:
             raise ValueError(
                 "distributed.resources.rollout.gpu_pool must be 'auto', 'trainer', "
@@ -950,7 +950,7 @@ def _parse_reward_device(reward_node: Any) -> str:
     device = cfg_get(reward_node, "device", _MISSING)
     if device is _MISSING:
         return "trainer"
-    value = str(to_builtin(device)).strip().lower()
+    value = str(to_builtin_deep(device)).strip().lower()
     if value not in {"trainer", "cpu", "gpu"}:
         raise ValueError(
             "distributed.resources.reward.device must be 'trainer', 'cpu', "
@@ -965,7 +965,7 @@ def _parse_reward_gpu_pool(reward_node: Any) -> str:
     gpu_pool = cfg_get(reward_node, "gpu_pool", _MISSING)
     if gpu_pool is _MISSING:
         return "auto"
-    value = str(to_builtin(gpu_pool)).strip().lower()
+    value = str(to_builtin_deep(gpu_pool)).strip().lower()
     if value not in {"auto", "rollout", "dedicated"}:
         raise ValueError(
             "distributed.resources.reward.gpu_pool must be 'auto', 'rollout', "
@@ -975,7 +975,7 @@ def _parse_reward_gpu_pool(reward_node: Any) -> str:
 
 
 def _parse_devices(value: Any) -> list[int] | str:
-    value = to_builtin(value)
+    value = to_builtin_deep(value)
     if _is_auto(value):
         return "auto"
     if value is None:
@@ -997,7 +997,7 @@ def _parse_devices(value: Any) -> list[int] | str:
 
 
 def _parse_num_gpus(value: Any, *, field_name: str) -> int | str | None:
-    value = to_builtin(value)
+    value = to_builtin_deep(value)
     if _is_auto(value):
         return "auto"
     if value is None:
@@ -1010,7 +1010,7 @@ def _parse_num_gpus(value: Any, *, field_name: str) -> int | str | None:
 
 
 def _parse_num_engines(value: Any, *, field_name: str) -> int | str:
-    value = to_builtin(value)
+    value = to_builtin_deep(value)
     if _is_auto(value):
         return "auto"
     try:

@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from vrl.config.builders import BuiltConfigs
-from vrl.config.validation import require
+from vrl.config.schema import RootConfig
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
@@ -761,8 +761,8 @@ async def run_online_recipe(
                     f"item {index} is {type(example).__name__}",
                 )
 
-    _preflight_production_video_reward(cfg)
     resolved = resolve_online_run(cfg)
+    _preflight_production_video_reward(resolved.built.root)
     built = resolved.built
     run_config = resolved.run
     family_entry = resolved.family
@@ -804,7 +804,7 @@ async def run_online_recipe(
     # Resolve the training process identity (rank/device) and fail-fast on
     # strategies the online recipe can't yet drive end-to-end, before building the
     # model / Ray runtime.
-    training_context = resolve_training_context(cfg, device=device)
+    training_context = resolve_training_context(built.root, device=device)
     _require_supported_online_strategy(training_context)
     _require_supported_distributed_rollout_topology(training_context, resources)
     # Construct the strategy before any model or Ray actor. Shared-GPU on-demand
@@ -825,12 +825,10 @@ async def run_online_recipe(
     # must therefore select the reward model's actual CUDA device; cross-node reward
     # ordinals are remote budget tokens and fail here before any model is loaded.
     reward_inputs = resolved.reward_inputs(trainer_device=device)
+    data_config = built.root.data
     if family_entry.task in {"i2v", "v2w"}:
-        conditioning = OmegaConf.select(
-            cfg,
-            "data.preprocessing.conditioning",
-            default=None,
-        )
+        preprocessing = data_config.preprocessing if data_config is not None else None
+        conditioning = (preprocessing or {}).get("conditioning")
         if conditioning != "reference_image":
             raise ValueError(
                 f"{family_entry.family} requires data.preprocessing.conditioning=reference_image",
@@ -852,11 +850,10 @@ async def run_online_recipe(
     )
 
     examples = (
-        load_prompt_examples_from_config(cfg.data)
+        load_prompt_examples_from_config(data_config)
         if provided_examples is None
         else provided_examples
     )
-    data_config = built.root.data
     artifact_data_root = data_config.artifact_data_root if data_config is not None else None
     examples = [
         resolve_prompt_example_references(
@@ -871,14 +868,8 @@ async def run_online_recipe(
 
         require_reference_images(
             examples,
-            manifest_path=Path(
-                str(OmegaConf.select(cfg, "data.manifest", default="manifest")),
-            ),
-            default_reference_image=OmegaConf.select(
-                cfg,
-                "data.preprocessing.reference_image",
-                default=None,
-            ),
+            manifest_path=Path(str(data_config.manifest or "manifest")),
+            default_reference_image=(data_config.preprocessing or {}).get("reference_image"),
         )
     # Derive the per-rank resume verdict the trainer/weight-syncer read below. Kept
     # after the checkpoint-identity preflight so an incompatible checkpoint fails
@@ -965,7 +956,7 @@ async def run_online_recipe(
         ref_model = (
             _default_reference_model(bundle, built)
             if family_entry.policy_semantics.step_kind == "denoise"
-            and str(cfg.algorithm.kind) != "diffusion_nft"
+            and str(built.root.algorithm.kind) != "diffusion_nft"
             else None
         )
         # The strategy built during preflight is the single owner of trainable-state
@@ -1075,7 +1066,7 @@ async def run_online_recipe(
             prompts_per_rank=rank_batch,
             num_replicas=training_context.world_size,
             rank=training_context.rank,
-            strategy=str(require(cfg, "data.sampler.type")),
+            strategy=str(data_config.sampler["type"]),
         )
         for epoch in range(start_epoch, run_config.total_epochs):
             indices = prompt_sampler.sample(epoch=epoch)
@@ -1134,10 +1125,11 @@ async def run_online_recipe(
         await lifecycle.shutdown(run_error=run_error)
 
 
-def _preflight_production_video_reward(cfg: DictConfig) -> None:
+def _preflight_production_video_reward(root: RootConfig) -> None:
     """Fail fast on the driver if the production reward backend is unimportable."""
 
-    if not bool(OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)):
+    production = root.production
+    if production is None or not production.kling_video_reward.enabled:
         return
     from vrl.rewards.models.kling_video_reward import preflight_kling_video_reward_backend
 

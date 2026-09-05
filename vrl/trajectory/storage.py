@@ -8,7 +8,7 @@ from typing import Any, Literal, get_args
 
 from vrl.trajectory.device import map_tensor_tree
 from vrl.trajectory.types import TrajectoryBatch
-from vrl.utils.config import to_builtin
+from vrl.utils.config import to_builtin_deep
 
 TrajectoryStorageDevice = Literal["preserve", "cpu"]
 TrajectoryStorageDType = Literal["preserve", "float32", "float16", "bfloat16"]
@@ -45,7 +45,7 @@ def trajectory_storage_policy_from_cfg(value: object) -> TrajectoryStoragePolicy
 
     if value is None:
         return TrajectoryStoragePolicy()
-    value = to_builtin(value)
+    value = to_builtin_deep(value)
     if isinstance(value, Mapping):
         return TrajectoryStoragePolicy(
             device=str(value.get("device", "preserve")),

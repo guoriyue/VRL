@@ -125,31 +125,32 @@ def test_online_section_keys_derive_from_runtime_yaml_owners(section: str) -> No
     assert nested_fields <= set(block.children)
 
 
-def test_typed_online_sections_keep_derived_fields_and_drop_unknown_extras() -> None:
+def test_typed_online_sections_keep_derived_fields_and_reject_unknown_extras() -> None:
     from vrl.config.schema import parse_config
 
     parsed = parse_config(
         OmegaConf.create(
             {
-                "actor": {"ppo_epochs": 2, "future_typo": "ignored"},
-                "trainer": {
-                    "output_dir": "outputs/test",
-                    "profile": True,
-                    "future_typo": "ignored",
-                },
+                "actor": {"ppo_epochs": 2},
+                "trainer": {"output_dir": "outputs/test", "profile": True},
             },
         ),
     )
-
     assert parsed.actor is not None
     assert parsed.actor.ppo_epochs == 2
-    assert "future_typo" not in parsed.actor.model_fields_set
-    assert "future_typo" not in parsed.actor.model_dump()
     assert parsed.trainer is not None
     assert parsed.trainer.output_dir == "outputs/test"
     assert parsed.trainer.profile is True
-    assert "future_typo" not in parsed.trainer.model_fields_set
-    assert "future_typo" not in parsed.trainer.model_dump()
+
+    with pytest.raises(ValueError, match=r"unknown actor\.future_typo, trainer\.future_typo"):
+        parse_config(
+            OmegaConf.create(
+                {
+                    "actor": {"ppo_epochs": 2, "future_typo": "ignored"},
+                    "trainer": {"output_dir": "outputs/test", "future_typo": "ignored"},
+                },
+            ),
+        )
 
 
 def test_unknown_keys_are_found_at_every_depth() -> None:
@@ -286,7 +287,7 @@ def test_chunk_autoregressive_model_keys_are_registered(
 
 def test_require_no_unknown_keys_fails_loud() -> None:
     cfg = OmegaConf.create({"model": {"family": "sana"}, "rolout": {"n": 1}})
-    with pytest.raises(ValueError, match=r"unknown config keys.*rolout"):
+    with pytest.raises(ValueError, match=r"unknown rolout"):
         require_no_unknown_keys(cfg)
     require_no_unknown_keys(OmegaConf.create({"model": {"family": "sana"}}))
 

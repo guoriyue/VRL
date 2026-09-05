@@ -1841,13 +1841,12 @@ def test_missing_mandatory_value_produces_repo_standard_message() -> None:
 # ── extra="ignore" migration policy ──────────────────────────────────────────
 
 
-def test_unknown_top_level_sections_are_silently_ignored() -> None:
-    """Checks unknown top level sections are silently ignored."""
+def test_unknown_top_level_sections_are_rejected() -> None:
+    """parse_config is the one gate: a section no consumer reads fails loud."""
     cfg = _minimal_grpo_cfg()
     OmegaConf.update(cfg, "some_future_section.foo", "bar")
-    # Must not raise even though some_future_section is not in RootConfig
-    parsed = parse_config(cfg)
-    assert parsed.algorithm.kind == "grpo"
+    with pytest.raises(ValueError, match=r"unknown some_future_section"):
+        parse_config(cfg)
 
 
 def test_unknown_reward_component_with_unknown_kwargs_is_accepted() -> None:
@@ -1973,7 +1972,7 @@ def test_sft_weight_must_be_finite_and_nonnegative(value: float) -> None:
 
 def test_sft_weight_rejects_non_diffusion_grpo_kind() -> None:
     cfg = _minimal_grpo_cfg(
-        algorithm={"kind": "token_grpo", "sft_weight": 0.1},
+        algorithm={"kind": "flash_grpo", "sft_weight": 0.1},
     )
     cfg.data.sft_latents = "data/droid/sft_latents.pt"
     with pytest.raises(ValueError, match="only for diffusion"):

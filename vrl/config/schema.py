@@ -2,9 +2,11 @@
 
 OmegaConf handles YAML defaults, interpolation, and CLI overrides.
 Pydantic validates the fully-resolved, merged container after OmegaConf finishes.
-Unknown YAML keys load fine and are reported loudly by the single whole-tree
-walker in vrl.config.unknown_keys — a typo, a dead key, and a removed legacy
-key all get the same treatment: one warning naming the dotted path.
+Unknown YAML keys fail here, before Pydantic runs, through the single
+whole-tree walker in vrl.config.unknown_keys — a typo, a dead key, and a
+removed legacy key all get the same treatment: one error naming the dotted
+path. ``parse_config`` is the one seam, so every entrypoint that parses a
+config (training, eval, perf, encode tools) gets the same gate.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ from vrl.config.reward_inference import (
     parse_reward_inference_config,
 )
 from vrl.config.sampling_schema import SamplingSection
-from vrl.config.unknown_keys import OPEN, ConfigBlock
+from vrl.config.unknown_keys import OPEN, ConfigBlock, require_no_unknown_keys
 from vrl.generation.execution.types import BatchPlacementStrategy
 from vrl.models.families.names import normalize_model_family
 from vrl.models.families.registry import FAMILY_REGISTRY, get_model_family_entry
@@ -1092,8 +1094,10 @@ def parse_config(cfg: DictConfig) -> RootConfig:
     """Validate a fully-merged, resolved DictConfig through the typed schema.
 
     OmegaConf resolves interpolations and enforces ??? missing-value semantics;
-    Pydantic validates structure, enum discriminators, and cross-field rules.
+    the unknown-key walker rejects keys no consumer reads; Pydantic validates
+    structure, enum discriminators, and cross-field rules.
     """
+    require_no_unknown_keys(cfg)
     try:
         raw = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
     except MissingMandatoryValue as exc:

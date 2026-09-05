@@ -34,9 +34,7 @@ def test_generate_disables_empty_training_lora_for_inference() -> None:
     """Checks generate disables empty training LoRA for inference."""
     cfg = OmegaConf.create({"model": {"use_lora": True, "lora": {"path": ""}}})
 
-    generate._configure_lora_for_inference(cfg, lora_path="")
-
-    assert cfg.model.use_lora is False
+    assert generate._lora_overrides(cfg, lora_path="") == ["model.use_lora=false"]
 
 
 def test_generate_accepts_checkpoint_dir_as_lora_path(tmp_path) -> None:

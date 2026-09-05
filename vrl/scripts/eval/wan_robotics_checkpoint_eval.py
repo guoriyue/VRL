@@ -24,6 +24,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from vrl import run
+from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
@@ -681,10 +682,7 @@ def _build_scoring_artifacts(
 
 
 def _reward_worker_config(cfg: DictConfig, *, device: torch.device) -> dict[str, Any]:
-    reward_cfg = OmegaConf.select(cfg, "reward.kwargs.robotics_video_reward", default={})
-    reward_cfg = OmegaConf.to_container(reward_cfg, resolve=True) or {}
-    if not isinstance(reward_cfg, dict):
-        raise ValueError("run config has no robotics_video_reward mapping")
+    reward_cfg = RewardRuntimeConfig.from_cfg(cfg).kwargs.get("robotics_video_reward") or {}
     worker_config = dict(reward_cfg.get("worker_config") or {})
     worker_config["device"] = str(device)
     worker_config["data_root"] = str(

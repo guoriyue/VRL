@@ -498,7 +498,7 @@ def test_legacy_actor_precision_keys_fail_loud() -> None:
         "experiment/sd3_5/online_grpo_ocr",
         overrides=["actor.mixed_precision=bf16"],
     )
-    with pytest.raises(ValueError, match=r"unknown config keys.*mixed_precision"):
+    with pytest.raises(ValueError, match=r"unknown actor\.mixed_precision"):
         validate_training_config(cfg)
 
 

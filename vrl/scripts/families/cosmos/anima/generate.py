@@ -144,7 +144,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     overrides.extend(args.overrides)
     cfg = load_config(args.config, overrides=overrides)
-    _configure_lora_for_inference(cfg, lora_path=args.lora_path)
+    lora_overrides = _lora_overrides(cfg, lora_path=args.lora_path)
+    if lora_overrides:
+        cfg = load_config(args.config, overrides=[*overrides, *lora_overrides])
     root = parse_config(cfg)
     precision = resolve_precision_policy(root)
     prompts = _load_prompts(args, cfg)
@@ -432,11 +434,13 @@ def _generation_policy(build: ModelBuild, precision: PrecisionPolicy) -> dict[st
     }
 
 
-def _configure_lora_for_inference(
-    cfg: DictConfig,
-    *,
-    lora_path: str,
-) -> None:
+def _lora_overrides(cfg: DictConfig, *, lora_path: str) -> list[str]:
+    """Dotlist overrides selecting the inference LoRA.
+
+    They go back through ``load_config`` instead of mutating the loaded tree,
+    so the result is composed and validated like any other override.
+    """
+
     model = cfg.get("model")
     if not isinstance(model, Mapping):
         raise ValueError("model must be a mapping")
@@ -448,19 +452,13 @@ def _configure_lora_for_inference(
         raw_path = Path(lora_path).expanduser().resolve()
         exported_path = raw_path / "lora_weights"
         resolved_path = exported_path if exported_path.exists() else raw_path
-        OmegaConf.update(cfg, "model.use_lora", True, force_add=True)
-        OmegaConf.update(
-            cfg,
-            "model.lora.path",
-            str(resolved_path),
-            force_add=True,
-        )
-        return
+        return ["model.use_lora=true", f"model.lora.path={resolved_path}"]
 
     configured_path = str((lora or {}).get("path") or "").strip()
     if bool(model.get("use_lora")) and not configured_path:
         logger.warning("Disabling empty training LoRA config for base-model inference")
-        OmegaConf.update(cfg, "model.use_lora", False)
+        return ["model.use_lora=false"]
+    return []
 
 
 def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> ImageSampling:

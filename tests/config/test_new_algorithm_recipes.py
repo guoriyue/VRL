@@ -104,5 +104,5 @@ def test_recipes_have_no_unknown_config_keys(recipe: str, caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="vrl.config.unknown_keys"):
         cfg = _load(recipe)
         build_configs(cfg)
-    unknown = [r for r in caplog.records if "unknown config keys" in r.getMessage()]
+    unknown = [r for r in caplog.records if "unknown " in r.getMessage()]
     assert not unknown, [r.getMessage() for r in unknown]

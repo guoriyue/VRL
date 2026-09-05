@@ -391,6 +391,13 @@ def _install_common_fakes(
         lambda cfg: SimpleNamespace(
             root=RootConfig.model_validate(
                 {
+                    "algorithm": {"kind": "grpo"},
+                    "rollout": {"sde": {"type": "flow_grpo"}},
+                    "data": {
+                        "manifest": "unit-manifest.jsonl",
+                        "preprocessing": {},
+                        "sampler": {"type": "random_without_replacement"},
+                    },
                     "distributed": {
                         "rollout": {"cpus_per_worker": cfg.distributed.rollout.cpus_per_worker},
                         "training": {"strategy": "single_process"},
