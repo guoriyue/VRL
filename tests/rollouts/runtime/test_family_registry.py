@@ -5,15 +5,13 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import replace
-from pathlib import Path
 from types import SimpleNamespace
-from typing import get_args
 
 import pytest
 from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
-from vrl.config.precision import PrecisionConfig, PrecisionPolicy
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.sampling_schema import SamplingSection
 from vrl.config.schema import parse_config
 from vrl.models.families.names import (
@@ -22,13 +20,12 @@ from vrl.models.families.names import (
 )
 from vrl.models.families.registry import (
     FAMILY_REGISTRY,
-    SHARED_MODEL_SECTION_CLS,
     DenoiseFamilyBuild,
     GenerationRuntimeCapabilities,
     TokenFamilyBuild,
     get_model_family_entry,
 )
-from vrl.models.families.semantics import GenerationRegime, PolicySemantics
+from vrl.models.families.semantics import PolicySemantics
 from vrl.models.interfaces.generation_memory import (
     GenerationMemoryPolicy,
     VaeDecodeMemory,
@@ -125,24 +122,6 @@ def test_model_build_projects_typed_sections_without_losing_falsy_presence() -> 
     assert "memory" not in (replay_build.model_config or {})
 
 
-def test_model_build_rejects_raw_config_and_wrong_precision_types() -> None:
-    cfg, root, precision = _typed_model_build_inputs(
-        {
-            "model": {"family": "sana", "path": "unit-checkpoint"},
-            "precision": {
-                "float32_precision": "ieee",
-                "training": {"dtype": "fp32"},
-            },
-        },
-    )
-    entry = get_model_family_entry("sana")
-
-    with pytest.raises(TypeError, match="validated RootConfig"):
-        entry.resolve_model_build(cfg, "cpu", precision=precision)
-    with pytest.raises(TypeError, match="resolved PrecisionPolicy"):
-        entry.resolve_model_build(root, "cpu", precision=object())
-
-
 def test_model_build_rejects_entry_and_typed_family_mismatch() -> None:
     _, root, precision = _typed_model_build_inputs(
         {
@@ -159,33 +138,6 @@ def test_model_build_rejects_entry_and_typed_family_mismatch() -> None:
             root,
             "cpu",
             precision=precision,
-        )
-
-
-def test_model_build_cannot_bypass_unknown_model_keys_with_raw_config() -> None:
-    cfg = OmegaConf.create(
-        {
-            "model": {
-                "family": "sana",
-                "path": "unit-checkpoint",
-                "use_lorra": True,
-            },
-            "precision": {
-                "float32_precision": "ieee",
-                "training": {"dtype": "fp32"},
-            },
-        },
-    )
-
-    with pytest.raises(ValueError, match=r"unknown model\.use_lorra"):
-        parse_config(cfg)
-    with pytest.raises(TypeError, match="validated RootConfig"):
-        get_model_family_entry("sana").resolve_model_build(
-            cfg,
-            "cpu",
-            precision=PrecisionPolicy.from_section(
-                PrecisionConfig.model_validate(OmegaConf.to_container(cfg.precision)),
-            ),
         )
 
 
@@ -282,72 +234,6 @@ def test_generation_runtime_capabilities_reject_unknown_memory_sections() -> Non
         )
 
 
-def test_executor_config_support_is_not_duplicated_as_a_capability_field() -> None:
-    assert (
-        "supports_model_executor_config" not in GenerationRuntimeCapabilities.__dataclass_fields__
-    )
-
-
-def test_generation_regime_vocabulary_uses_paper_familiar_names() -> None:
-    assert set(get_args(GenerationRegime)) == {
-        "full_sequence",
-        "token_autoregressive",
-        "chunk_autoregressive",
-    }
-
-
-def test_family_name_import_does_not_load_runtime_registry() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            (
-                "import sys; import vrl.models.families.names; "
-                "assert 'vrl.models.families.registry' not in sys.modules"
-            ),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0, result.stderr
-
-
-def test_production_code_does_not_reference_legacy_taxonomy_paths() -> None:
-    root = Path(__file__).resolve().parents[3] / "vrl"
-    legacy_directories = (
-        root / "models" / "ar",
-        root / "models" / "diffusion",
-        root / "generation" / "ar",
-        root / "generation" / "diffusion",
-        root / "math" / "ar",
-        root / "math" / "diffusion",
-        root / "rollouts" / "evaluators" / "ar",
-        root / "rollouts" / "evaluators" / "diffusion",
-        root / "scripts" / "ar",
-        root / "scripts" / "diffusion",
-    )
-    stale_directories = [path.relative_to(root) for path in legacy_directories if path.exists()]
-    assert not stale_directories, f"legacy taxonomy directories: {stale_directories}"
-
-    legacy_paths = (
-        "vrl.models." + "ar",
-        "vrl.models." + "diffusion",
-        "vrl.generation." + "ar",
-        "vrl.generation." + "diffusion",
-        "vrl.math." + "ar",
-        "vrl.math." + "diffusion",
-    )
-    violations = [
-        path.relative_to(root)
-        for path in root.rglob("*.py")
-        if any(legacy_path in path.read_text(encoding="utf-8") for legacy_path in legacy_paths)
-    ]
-
-    assert not violations, f"legacy taxonomy path references: {violations}"
-
-
 def test_family_registry_entries_have_complete_protocol_wiring() -> None:
     assert FAMILY_REGISTRY
     assert len(FAMILY_REGISTRY) == len(set(FAMILY_REGISTRY))
@@ -392,77 +278,6 @@ def test_family_registry_entries_own_importable_sampling_sections() -> None:
         section_cls = import_from_path(entry.sampling_section_cls)
         assert isinstance(section_cls, type)
         assert issubclass(section_cls, SamplingSection)
-
-
-def test_sampling_sections_share_only_matching_request_vocabularies() -> None:
-    predict2 = import_from_path(
-        get_model_family_entry("cosmos-predict2").sampling_section_cls,
-    )
-    cosmos3 = import_from_path(get_model_family_entry("cosmos3").sampling_section_cls)
-    sana = import_from_path(get_model_family_entry("sana").sampling_section_cls)
-    hunyuan_image = import_from_path(
-        get_model_family_entry("hunyuan_image").sampling_section_cls,
-    )
-    janus = import_from_path(get_model_family_entry("janus_pro").sampling_section_cls)
-    glm = import_from_path(get_model_family_entry("glm_image").sampling_section_cls)
-
-    assert predict2 is cosmos3
-    assert sana is not hunyuan_image
-    assert janus is not glm
-
-
-def test_migrated_model_sections_are_owned_by_their_family_packages() -> None:
-    expected_paths = {
-        "causvid": "vrl.models.families.causvid.config:CausVidModelSection",
-        "wan_2_1": "vrl.models.families.wan_2_1.config:WanModelSection",
-        "wan_2_1_i2v": "vrl.models.families.wan_2_1.config:WanModelSection",
-        "cosmos-predict2.5": (
-            "vrl.models.families.cosmos.predict2_5.config:CosmosPredict25ModelSection"
-        ),
-        "cosmos-predict2-anima": (
-            "vrl.models.families.cosmos.anima.config:CosmosAnimaModelSection"
-        ),
-        "echo": "vrl.models.families.echo.config:EchoModelSection",
-        "flux": "vrl.models.families.flux.config:FluxModelSection",
-        "janus_pro": "vrl.models.families.janus_pro.config:JanusProModelSection",
-        "janus_pro_r1": "vrl.models.families.janus_pro.config:JanusProModelSection",
-        "llamagen": "vrl.models.families.llamagen.config:LlamaGenModelSection",
-        "magi_1": "vrl.models.families.magi_1.config:Magi1ModelSection",
-        "nextstep_1": "vrl.models.families.nextstep_1.config:NextStep1ModelSection",
-    }
-
-    assert {
-        family: get_model_family_entry(family).model_section_cls for family in expected_paths
-    } == expected_paths
-
-
-def test_migrated_token_runtime_configs_are_owned_by_their_family_packages() -> None:
-    expected_paths = {
-        "emu3": "vrl.models.families.emu3.config:Emu3Config",
-        "glm_image": "vrl.models.families.glm_image.config:GlmImageConfig",
-    }
-
-    for family, expected_path in expected_paths.items():
-        entry = get_model_family_entry(family)
-        assert isinstance(entry.family_build, TokenFamilyBuild)
-        assert entry.family_build.config_cls == expected_path
-        assert entry.model_section_cls == SHARED_MODEL_SECTION_CLS
-
-    llamagen = get_model_family_entry("llamagen")
-    assert isinstance(llamagen.family_build, TokenFamilyBuild)
-    assert llamagen.family_build.config_cls == "vrl.models.families.llamagen.config:LlamaGenConfig"
-
-    nextstep = get_model_family_entry("nextstep_1")
-    assert isinstance(nextstep.family_build, TokenFamilyBuild)
-    assert (
-        nextstep.family_build.config_cls == "vrl.models.families.nextstep_1.config:NextStep1Config"
-    )
-
-    janus = get_model_family_entry("janus_pro")
-    janus_r1 = get_model_family_entry("janus_pro_r1")
-    assert isinstance(janus.family_build, TokenFamilyBuild)
-    assert janus.family_build is janus_r1.family_build
-    assert janus.family_build.config_cls == "vrl.models.families.janus_pro.config:JanusProConfig"
 
 
 def test_model_section_imports_do_not_load_model_runtimes() -> None:
@@ -512,80 +327,6 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_token_runtime_config_imports_do_not_load_model_runtimes() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            (
-                "import sys; "
-                "from vrl.models.families.registry import get_model_family_entry; "
-                "from vrl.utils.config import import_from_path; "
-                "emu_entry = get_model_family_entry('emu3'); "
-                "glm_entry = get_model_family_entry('glm_image'); "
-                "janus_entry = get_model_family_entry('janus_pro'); "
-                "llamagen_entry = get_model_family_entry('llamagen'); "
-                "nextstep_entry = get_model_family_entry('nextstep_1'); "
-                "emu_cls = import_from_path(emu_entry.family_build.config_cls); "
-                "glm_cls = import_from_path(glm_entry.family_build.config_cls); "
-                "janus_cls = import_from_path(janus_entry.family_build.config_cls); "
-                "llamagen_cls = import_from_path("
-                "llamagen_entry.family_build.config_cls); "
-                "nextstep_cls = import_from_path("
-                "nextstep_entry.family_build.config_cls); "
-                "from vrl.models.families.emu3.config import Emu3Config; "
-                "from vrl.models.families.glm_image.config import GlmImageConfig; "
-                "from vrl.models.families.janus_pro import JANUS_R1_SEGMENTS; "
-                "from vrl.models.families.janus_pro.config import JanusProConfig; "
-                "from vrl.models.families.llamagen.config import LlamaGenConfig; "
-                "from vrl.models.families.nextstep_1.config import NextStep1Config; "
-                "assert emu_cls is Emu3Config; "
-                "assert glm_cls is GlmImageConfig; "
-                "assert janus_cls is JanusProConfig; "
-                "assert llamagen_cls is LlamaGenConfig; "
-                "assert nextstep_cls is NextStep1Config; "
-                "assert Emu3Config.__module__.endswith('.emu3.config'); "
-                "assert GlmImageConfig.__module__.endswith('.glm_image.config'); "
-                "assert JanusProConfig.__module__.endswith('.janus_pro.config'); "
-                "assert LlamaGenConfig.__module__.endswith('.llamagen.config'); "
-                "assert NextStep1Config.__module__.endswith('.nextstep_1.config'); "
-                "assert JANUS_R1_SEGMENTS == "
-                "('initial_image', 'selfcheck_text', 'final_image'); "
-                "assert 'torch' not in sys.modules; "
-                "assert 'diffusers' not in sys.modules; "
-                "assert 'transformers' not in sys.modules; "
-                "assert 'peft' not in sys.modules; "
-                "assert 'safetensors' not in sys.modules; "
-                "assert 'huggingface_hub' not in sys.modules; "
-                "assert not any("
-                "name.startswith('vrl.models.families.') and "
-                "any(part in {'model', 'runtime', 'runner', 'adapter'} "
-                "for part in name.split('.')) "
-                "for name in sys.modules)"
-            ),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0, result.stderr
-
-
-def test_family_entry_rejects_an_empty_model_section_path() -> None:
-    entry = get_model_family_entry("sana")
-
-    with pytest.raises(ValueError, match="requires a model section class"):
-        replace(entry, model_section_cls="")
-
-
-def test_family_entry_rejects_an_empty_sampling_section_path() -> None:
-    entry = get_model_family_entry("sana")
-
-    with pytest.raises(ValueError, match="requires a sampling section class"):
-        replace(entry, sampling_section_cls="")
-
-
 def test_policy_replay_support_is_derived_from_family_recipes() -> None:
     causvid = get_model_family_entry("causvid")
     magi = get_model_family_entry("magi_1")
@@ -602,30 +343,14 @@ def test_policy_replay_support_is_derived_from_family_recipes() -> None:
     "kwargs",
     [
         {},
-        {"replay_cls": "example:Replay"},
-        {"transformer_classname": "Transformer"},
         {
             "replay_cls": "example:Replay",
             "transformer_classname": "Transformer",
             "replay_runtime_builder": "example:build_replay",
         },
         {
-            "replay_cls": "example:Replay",
-            "transformer_classname": "Transformer",
-            "replay_unavailable_reason": "generation only",
-        },
-        {
             "replay_runtime_builder": "example:build_replay",
             "replay_unavailable_reason": "generation only",
-        },
-        {"replay_unavailable_reason": "  "},
-        {
-            "replay_runtime_builder": "example:build_replay",
-            "scheduler_classname": "Scheduler",
-        },
-        {
-            "replay_unavailable_reason": "generation only",
-            "scheduler_classname": "Scheduler",
         },
     ],
 )

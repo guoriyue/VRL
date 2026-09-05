@@ -66,10 +66,6 @@ class RolloutCollector:
     ) -> None:
         self.config = config
         self.request_builder = request_builder
-        if not isinstance(reward_runtime, RewardRuntime):
-            raise TypeError(
-                "reward runtime must implement the complete RewardRuntime protocol",
-            )
         self.reward_runtime = reward_runtime
         # Resolved family PolicySemantics.trajectory_layout (source of truth for
         # multisegment routing), threaded into every RolloutBatchBuildContext.
@@ -85,11 +81,6 @@ class RolloutCollector:
         self._reward_shutdown_complete = False
 
     def set_generation_runtime(self, runtime: GenerationRuntime) -> None:
-        if not isinstance(runtime, GenerationRuntime):
-            raise TypeError(
-                "generation runtime must implement the complete GenerationRuntime "
-                "protocol (activate/generate/offload/shutdown/topology)",
-            )
         self._generation_runtime = runtime
 
     @property

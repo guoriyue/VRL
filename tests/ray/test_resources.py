@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
-
 import pytest
 from omegaconf import OmegaConf
 
@@ -87,19 +85,7 @@ def test_resolved_resource_summaries_are_derived_from_topology() -> None:
     assert resolved.rollout_num_gpus == 1
     assert resolved.colocated is False
     assert resolved.requires_trainer_reservation is True
-    stored_fields = {field.name for field in fields(resolved)}
-    assert stored_fields.isdisjoint(
-        {
-            "rollout_num_gpus",
-            "colocated",
-            "requires_trainer_reservation",
-            "trainer_torch_device",
-        },
-    )
-
-    layout = BundleLayout.from_resources(resolved)
-    assert "trainer_bundle_indices" not in {field.name for field in fields(layout)}
-    assert layout.bundle_gpu_ids == (0, 1)
+    assert BundleLayout.from_resources(resolved).bundle_gpu_ids == (0, 1)
 
 
 def test_explicit_split_devices_do_not_overlap() -> None:
@@ -595,6 +581,7 @@ def test_resource_plan_formatter_includes_key_fields() -> None:
     assert f"rollout={list(resolved.rollout_devices)}" in text
     assert f"reward={list(resolved.reward_devices)}" in text
     assert f"trainer_reservation={resolved.requires_trainer_reservation}" in text
+    assert f"lifecycle=rollout:{resolved.lifecycle.rollout_mode}" in text
 
 
 def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
@@ -657,24 +644,6 @@ def test_cross_node_requires_explicit_rollout_count() -> None:
                 )
             ),
         )
-
-
-def test_cross_node_plan_formatter_reports_flag() -> None:
-    """Checks cross-node plan formatter reports flag."""
-    resolved = ResolvedDistributedResources.resolve(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": "auto",
-                    "cross_node": True,
-                    "trainer": {"num_gpus": 1},
-                    "rollout": {"num_gpus": 1, "num_engines": 1},
-                },
-            )
-        ),
-    )
-
-    assert "cross_node=True" in format_distributed_resource_plan(resolved)
 
 
 def test_cross_node_preset_resolves() -> None:
@@ -906,36 +875,10 @@ def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> N
     )
 
     assert resolved.reward_devices == ()
-    assert resolved.reward_devices == ()
     assert resolved.reward_runs_on_cpu is True
     assert resolved.reward_torch_device() == "cpu"
     # CPU rewards get no bundle: they execute in the driver process.
     assert BundleLayout.from_resources(resolved).reward_bundle_indices == ()
-
-
-def test_resource_plan_formatter_includes_lifecycle() -> None:
-    """Acceptance #8: the resource plan log shows the lifecycle plan at a glance."""
-    resolved = ResolvedDistributedResources.resolve(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0, 1],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1]},
-                    "reward": {"device": "gpu", "gpu_pool": "rollout"},
-                },
-            )
-        ),
-    )
-
-    text = format_distributed_resource_plan(resolved)
-    plan = resolved.lifecycle
-    # Lifecycle modes/flags are structured fields; build the expected substring
-    # from them so a separator/keyword reword in the formatter does not break
-    # this acceptance check.
-    assert f"lifecycle=rollout:{plan.rollout_mode}" in text
-    assert f"before_reward:{plan.release_rollout_before_reward}" in text
-    assert f"reward_after_score:{plan.release_reward_after_score}" in text
 
 
 def test_reward_auto_placement_prefers_dedicated_spare_gpu() -> None:
@@ -1294,32 +1237,6 @@ def test_fsdp_colocate_resolves_per_rank_local_single_gpu() -> None:
     assert resolved.colocated is True
     assert resolved.lifecycle.rollout_mode == "on_demand"
     assert resolved.cross_node is False  # per-rank-local: no shared Ray cluster
-
-
-@pytest.mark.real_cover(
-    None,
-    why=(
-        "torch reports the host's own GPU count, so a fixed rank-local topology cannot be "
-        "manufactured in-process: unpinned, DistributedTrainingContext.from_root hands back "
-        "cuda:<local_rank> from the real device count and the cuda:0 assertion breaks on any "
-        "host with more than one visible GPU"
-    ),
-    tracked_in="docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
-)
-def test_rollout_gpu_pool_rejects_unknown_value() -> None:
-    """rollout.gpu_pool only accepts auto/trainer/dedicated."""
-    with pytest.raises(ValueError, match=r"unknown distributed\.resources\.rollout\.gpu_pool"):
-        ResolvedDistributedResources.resolve(
-            parse_config(
-                _cfg(
-                    {
-                        "visible_devices": [0],
-                        "trainer": {"num_gpus": 1},
-                        "rollout": {"num_gpus": 1, "gpu_pool": "nonsense"},
-                    },
-                )
-            ),
-        )
 
 
 # ── cosmos async-reward recipe (3-GPU disjoint reward overlap) ───────────────

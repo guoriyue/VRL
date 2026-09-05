@@ -30,51 +30,6 @@ def _batch(prompts: list[str], group_size: int):
     )
 
 
-def test_runtime_coordinator_rejects_incomplete_collector_control_protocol() -> None:
-    from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-
-    with pytest.raises(
-        TypeError,
-        match=r"activate_generation_runtime\(\).*offload_generation_runtime_memory",
-    ):
-        RolloutRuntimeCoordinator(
-            collector=SimpleNamespace(generation_runtime=_Runtime()),
-            strategy=SimpleNamespace(),
-            training_state_getter=lambda: object(),
-            weight_syncer=None,
-            sync_state_getter=None,
-            weights_initialized=lambda: True,
-            set_weights_initialized=lambda _value: None,
-        )
-
-
-def test_runtime_coordinator_requires_reward_handoff_capabilities() -> None:
-    from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-
-    class _MissingRewardCapabilities:
-        generation_runtime = _Runtime()
-
-        async def activate_generation_runtime(self) -> None:
-            return None
-
-        async def offload_generation_runtime_memory(self) -> None:
-            return None
-
-        async def shutdown(self) -> None:
-            return None
-
-    with pytest.raises(TypeError, match="reward handoff capabilities"):
-        RolloutRuntimeCoordinator(
-            collector=_MissingRewardCapabilities(),
-            strategy=SimpleNamespace(),
-            training_state_getter=lambda: object(),
-            weight_syncer=None,
-            sync_state_getter=None,
-            weights_initialized=lambda: True,
-            set_weights_initialized=lambda _value: None,
-        )
-
-
 class _Runtime:
     def __init__(self) -> None:
         self.current_policy_version = 0

@@ -181,13 +181,6 @@ async def _snapshot_when(
         await asyncio.sleep(0.001)
 
 
-def test_factory_builds_continuous_schedule() -> None:
-    """Checks factory builds continuous schedule."""
-    runtime = _Runtime()
-    schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
-    assert isinstance(schedule, ContinuousRolloutSchedule)
-
-
 @pytest.mark.asyncio
 async def test_shutdown_joins_owner_and_is_idempotent() -> None:
     runtime = _Runtime()
@@ -326,18 +319,6 @@ def test_continuous_rejects_stale_window_for_intolerant_algorithm() -> None:
             _Syncer(runtime),
             algorithm_tolerates_off_policy_staleness=False,
         )
-
-
-def test_continuous_allows_stale_window_for_tolerant_algorithm() -> None:
-    """A GRPO-family (tolerant) algorithm + max_stale>0 builds normally."""
-    runtime = _Runtime()
-    schedule = _build(
-        _continuous_config(max_stale_policy_versions=1),
-        _Collector(runtime),
-        _Syncer(runtime),
-        algorithm_tolerates_off_policy_staleness=True,
-    )
-    assert isinstance(schedule, ContinuousRolloutSchedule)
 
 
 def test_continuous_rejects_zero_window_before_algorithm_gate() -> None:

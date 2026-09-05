@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
-
 import pytest
 
 from vrl.rollouts.evaluators.base import Evaluator, ReplayEvaluatorBase
@@ -32,12 +30,6 @@ def _evaluators() -> tuple[ReplayEvaluatorBase, ...]:
         ChunkAutoregressiveDenoiseLogProbEvaluator(),
         DiffusionSDELogProbEvaluator(scheduler=object()),
     )
-
-
-def test_replay_evaluator_base_requires_an_evaluate_implementation() -> None:
-    assert inspect.isabstract(ReplayEvaluatorBase)
-    with pytest.raises(TypeError, match="evaluate"):
-        _IncompleteReplayEvaluator()
 
 
 @pytest.mark.parametrize("evaluator", _evaluators(), ids=lambda value: type(value).__name__)

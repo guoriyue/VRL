@@ -190,10 +190,6 @@ class ModelFamilyEntry:
             )
         if not self.gatherer_cls:
             raise ValueError(f"model family {self.family!r} requires a gatherer binding")
-        if not self.model_section_cls:
-            raise ValueError(f"model family {self.family!r} requires a model section class")
-        if not self.sampling_section_cls:
-            raise ValueError(f"model family {self.family!r} requires a sampling section class")
 
     @property
     def supports_policy_replay(self) -> bool:
@@ -263,14 +259,8 @@ class ModelFamilyEntry:
     def executor_kwargs(self, root: RootConfig) -> dict[str, Any]:
         """Return this family's executor arguments from a validated root."""
 
-        from vrl.config.schema import RootConfig
         from vrl.utils.config import plain_mapping
 
-        if not isinstance(root, RootConfig):
-            raise TypeError(
-                "root must be a validated RootConfig; raw DictConfig/Mapping "
-                f"inputs are not accepted (got {type(root).__name__})",
-            )
         if root.model is None:
             raise ValueError("validated root is missing model configuration")
         executor_config = root.model.executor
@@ -306,19 +296,8 @@ class ModelFamilyEntry:
         reinterpreted at this boundary.
         """
 
-        from vrl.config.precision import PrecisionPolicy
-        from vrl.config.schema import RootConfig
         from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
-        if not isinstance(root, RootConfig):
-            raise TypeError(
-                "root must be a validated RootConfig; raw DictConfig/Mapping "
-                f"inputs are not accepted (got {type(root).__name__})",
-            )
-        if not isinstance(precision, PrecisionPolicy):
-            raise TypeError(
-                f"precision must be a resolved PrecisionPolicy; got {type(precision).__name__}",
-            )
         if root.model is None:
             raise ValueError("validated root is missing model configuration")
         configured_family = normalize_model_family(str(root.model.family))

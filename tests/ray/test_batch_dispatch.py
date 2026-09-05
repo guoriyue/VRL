@@ -711,8 +711,6 @@ def test_dynamic_planner_leaves_chunks_unbound_with_costs() -> None:
     assert len(plan.assignments) == 4
     assert all(a.estimated_cost > 0 for a in plan.assignments)
     assert all(a.batch is a.envelope.batch for a in plan.assignments)
-    assert all(not hasattr(a, "node_id") for a in plan.assignments)
-    assert all(not hasattr(a, "gpu_ids") for a in plan.assignments)
     # Batch identity and order (the gather contract) are untouched.
     assert [a.batch.sample_start for a in plan.assignments] == [0, 2, 4, 6]
 

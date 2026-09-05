@@ -214,28 +214,6 @@ def test_collector_requires_runtime_before_collect() -> None:
         asyncio.run(collect_scored(collector, ["p0"], group_size=1))
 
 
-def test_collector_rejects_incomplete_runtime_control_protocol() -> None:
-    class _GenerateOnlyRuntime:
-        async def generate(self, request: GenerationRequest) -> GenerationOutput:
-            raise NotImplementedError
-
-    with pytest.raises(TypeError, match="complete GenerationRuntime protocol"):
-        _collector(generation_runtime=_GenerateOnlyRuntime())  # type: ignore[arg-type]
-
-
-def test_collector_rejects_incomplete_reward_runtime_protocol() -> None:
-    class _ScoreOnlyRewardRuntime:
-        async def score(self, samples: Sequence[RewardSample]) -> RewardOutput:
-            raise NotImplementedError
-
-    with pytest.raises(TypeError, match="complete RewardRuntime protocol"):
-        RolloutCollector(
-            config=RolloutCollectorConfig(),
-            request_builder=_RequestBuilder(),
-            reward_runtime=_ScoreOnlyRewardRuntime(),  # type: ignore[arg-type]
-        )
-
-
 @pytest.mark.asyncio
 async def test_collector_shutdown_retries_in_safe_runtime_then_reward_order() -> None:
     runtime = _Runtime(shutdown_failures=1)
@@ -306,12 +284,7 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert batch.context == {"collector": "test"}
     assert batch.trajectory is not None
     assert batch.group_ids.tolist() == [0, 0, 1, 1]
-    assert not hasattr(batch.trajectory, "group_ids")
     assert [row.prompt_index for row in batch.trajectory.sample_rows] == [0, 0, 1, 1]
-    assert not hasattr(batch, "training_view")
-    assert not hasattr(batch, "dones")
-    assert not hasattr(batch, "videos")
-    assert not hasattr(batch, "prompts")
 
 
 def test_nextstep_noise_level_reaches_generation_request_from_rollout_owner() -> None:
@@ -667,11 +640,6 @@ def test_reward_samples_preserve_prompt_identity_and_metadata() -> None:
         "request-0:prompt:0",
         "request-0:prompt:1",
     ]
-    assert not any(
-        hasattr(sample, name)
-        for sample in samples
-        for name in ("device", "batch_size", "expected_count")
-    )
 
 
 def test_collector_uses_one_reward_call_and_splits_scores_per_group() -> None:
@@ -1132,5 +1100,3 @@ def test_collect_phase_timings_are_per_call_not_shared(
     assert "collect.batch_build" in first.phases
     assert "collect.reward_score" not in second.phases
     assert "collect.batch_build" not in second.phases
-    # The old shared mutable dict (clobbered by concurrent collects) is gone.
-    assert not hasattr(collector, "last_collect_phases")

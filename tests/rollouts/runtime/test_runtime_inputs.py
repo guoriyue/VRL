@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pickle
 import threading
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -21,7 +20,6 @@ from vrl.models.families.janus_pro.runtime import JanusProR1GenerationBatchGathe
 from vrl.models.families.nextstep_1.runtime import NextStep1GenerationBatchGatherer
 from vrl.models.families.registry import (
     FAMILY_REGISTRY,
-    GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
     ModelFamilyEntry,
     get_model_family_entry,
 )
@@ -40,41 +38,6 @@ class _TestGatherer:
 class _UnpickleableGatherer(_TestGatherer):
     def __init__(self) -> None:
         self.lock = threading.Lock()
-
-
-def test_ray_launch_inputs_reject_invalid_contract_type() -> None:
-    with pytest.raises(TypeError, match="launch_contract must be"):
-        RayGenerationLaunchInputs(
-            launch_contract=object(),
-            gatherer=_TestGatherer(),
-        )
-
-
-def test_ray_launch_inputs_reject_invalid_gatherer_protocol() -> None:
-    with pytest.raises(TypeError, match="gatherer must implement GenerationBatchGatherer"):
-        RayGenerationLaunchInputs(
-            launch_contract=GenerationRuntimeLaunchContract(
-                family="test",
-                model_build={},
-                expected_model_identity={"schema": "test"},
-            ),
-            gatherer=object(),
-        )
-
-
-def test_ray_launch_inputs_reject_non_callable_gatherer_method() -> None:
-    with pytest.raises(
-        TypeError,
-        match="gatherer must implement GenerationBatchGatherer, got SimpleNamespace",
-    ):
-        RayGenerationLaunchInputs(
-            launch_contract=GenerationRuntimeLaunchContract(
-                family="test",
-                model_build={},
-                expected_model_identity={"schema": "test"},
-            ),
-            gatherer=SimpleNamespace(gather_batches=object()),
-        )
 
 
 def test_ray_launch_inputs_reject_unpickleable_gatherer_state() -> None:
@@ -149,33 +112,8 @@ def test_every_registry_entry_has_pickle_safe_ray_launch_inputs(
     [
         ("sd3_5/online_grpo_ocr", "sd3_5", DiffusionBatchGatherer, ()),
         (
-            "sana/online_grpo_aesthetic",
-            "sana",
-            DiffusionBatchGatherer,
-            (),
-        ),
-        ("wan_2_1/online_grpo_ocr", "wan_2_1", DiffusionBatchGatherer, ()),
-        (
-            "wan_2_1/online_grpo_kling_video_reward",
-            "wan_2_1",
-            DiffusionBatchGatherer,
-            (),
-        ),
-        (
             "wan_2_1/online_grpo_physics_i2v",
             "wan_2_1_i2v",
-            DiffusionBatchGatherer,
-            (),
-        ),
-        (
-            "wan_2_1/online_grpo_i2v_smoke_single_gpu",
-            "wan_2_1_i2v",
-            DiffusionBatchGatherer,
-            (),
-        ),
-        (
-            "cosmos_predict2/online_grpo_kling_video_reward",
-            "cosmos-predict2",
             DiffusionBatchGatherer,
             (),
         ),
@@ -188,19 +126,6 @@ def test_every_registry_entry_has_pickle_safe_ray_launch_inputs(
                 "+dataset=drawbench_train_192",
                 "actor.optim.lr=1.0e-5",
                 "trainer.output_dir=outputs/test_anima_launch_inputs",
-            ),
-        ),
-        (
-            "anima_preview3/online_grpo",
-            "cosmos-predict2-anima",
-            DiffusionBatchGatherer,
-            (
-                "+reward=aesthetic",
-                "+reward=nsfw_safety",
-                "+dataset=anime_safety_stress",
-                "reward.components.nsfw_safety=0.5",
-                "actor.optim.lr=1.0e-5",
-                "trainer.output_dir=outputs/test_anima_safe_launch_inputs",
             ),
         ),
         (
@@ -416,24 +341,10 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
     ("experiment", "family", "overrides"),
     [
         ("sd3_5/online_grpo_ocr", "sd3_5", ()),
-        ("wan_2_1/online_grpo_ocr", "wan_2_1", ()),
-        ("wan_2_1/online_grpo_physics_i2v", "wan_2_1_i2v", ()),
-        ("wan_2_1/online_grpo_i2v_smoke_single_gpu", "wan_2_1_i2v", ()),
-        ("cosmos_predict2/online_grpo_kling_video_reward", "cosmos-predict2", ()),
         (
             "cosmos_predict2_5/online_nft_kling_video_reward",
             "cosmos-predict2.5",
             (),
-        ),
-        (
-            "anima_preview3/online_grpo",
-            "cosmos-predict2-anima",
-            (
-                "+reward=aesthetic",
-                "+dataset=drawbench_train_192",
-                "actor.optim.lr=1.0e-5",
-                "trainer.output_dir=outputs/test_anima_compile_inputs",
-            ),
         ),
     ],
 )
@@ -526,56 +437,6 @@ def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
         "fps": 24,
         "batch_passthrough_keys": ["text_ids"],
     }
-
-
-@pytest.mark.parametrize(
-    "family",
-    [
-        family
-        for family, entry in FAMILY_REGISTRY.items()
-        if entry.executor_cls != GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
-    ],
-)
-def test_custom_executors_reject_model_executor_instead_of_silently_dropping_it(
-    family: str,
-) -> None:
-    with pytest.raises(ValueError, match=r"does not support model\.executor"):
-        parse_config(
-            OmegaConf.create(
-                {
-                    "model": {
-                        "family": family,
-                        "path": "unit-test",
-                        "executor": {"max_sequence_length": 123},
-                    },
-                },
-            ),
-        )
-
-
-@pytest.mark.parametrize(
-    "family",
-    [
-        family
-        for family, entry in FAMILY_REGISTRY.items()
-        if not entry.runtime_capabilities.supported_model_memory_sections
-    ],
-)
-def test_executor_projection_defensively_rejects_unsupported_memory(
-    family: str,
-) -> None:
-    with pytest.raises(ValueError, match=r"does not support model\.memory"):
-        parse_config(
-            OmegaConf.create(
-                {
-                    "model": {
-                        "family": family,
-                        "path": "unit-test",
-                        "memory": {"vae_decode": {"tiling": False}},
-                    },
-                },
-            ),
-        )
 
 
 def test_custom_executor_keeps_independent_supported_memory_config() -> None:

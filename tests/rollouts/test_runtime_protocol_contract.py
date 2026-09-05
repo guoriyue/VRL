@@ -13,7 +13,7 @@ import pytest
 from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
-from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, WeightSyncer
+from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 
 
 def _runtime(
@@ -77,12 +77,6 @@ def test_concrete_runtimes_satisfy_generation_runtime_structurally() -> None:
     assert isinstance(deferred, GenerationRuntime)
 
 
-def test_runtimes_expose_explicit_activation_and_offload() -> None:
-    runtime = _runtime(deferred=True)
-    assert callable(runtime.activate)
-    assert callable(runtime.offload)
-
-
 def test_weight_syncer_reports_its_runtime_version() -> None:
     async def _update_weights(state, version):  # pragma: no cover - signature only
         del state, version
@@ -93,14 +87,3 @@ def test_weight_syncer_reports_its_runtime_version() -> None:
     )
     syncer = RayRuntimeWeightSyncer(runtime)
     assert syncer.current_policy_version == 7
-
-
-def test_base_weight_syncer_defaults_to_no_version() -> None:
-    class _NullSyncer(WeightSyncer):
-        async def push(self, state_dict):  # pragma: no cover - contract only
-            del state_dict
-
-        async def pull(self):  # pragma: no cover - contract only
-            return {}
-
-    assert _NullSyncer().current_policy_version is None

@@ -78,12 +78,6 @@ class RolloutRuntimeCoordinator:
         weights_initialized: Callable[[], bool],
         set_weights_initialized: Callable[[bool], None],
     ) -> None:
-        if not isinstance(collector, RolloutCollectorControl):
-            raise TypeError(
-                "rollout collector must implement activate_generation_runtime(), "
-                "offload_generation_runtime_memory(), shutdown(), "
-                "generation_runtime, and reward handoff capabilities",
-            )
         self.collector = collector
         self.strategy = strategy
         self.training_state_getter = training_state_getter

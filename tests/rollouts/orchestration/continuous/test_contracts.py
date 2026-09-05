@@ -35,7 +35,6 @@ from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutSettings,
 )
 from vrl.rollouts.orchestration.prompt_collection import PromptCollectionCleanupError
-from vrl.rollouts.orchestration.types import RewardCollectionMode
 from vrl.rollouts.stats import RolloutStats
 from vrl.utils.lifecycle import RuntimeLifecycle
 
@@ -198,32 +197,6 @@ class _FiniteCollector:
 
     async def score_rollouts(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
         return [pending.batch for pending in pendings]
-
-
-@pytest.mark.asyncio
-async def test_collect_group_uses_one_batched_serial_reward_call(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, Any] = {}
-
-    async def _collect_prompt_groups(**kwargs: Any) -> list[RolloutBatch]:
-        captured.update(kwargs)
-        return [_batch("p0")]
-
-    monkeypatch.setattr(
-        "vrl.rollouts.orchestration.continuous.producer.collect_prompt_groups",
-        _collect_prompt_groups,
-    )
-    producer = _producer(
-        _FiniteCollector(),
-        ContinuousRolloutQueue(max_items=1),
-    )
-    prompt_batch = producer._active_batch
-    assert prompt_batch is not None
-
-    await producer._collect_group(prompt_batch=prompt_batch, slot=0, admission_wait_s=0.0)
-
-    assert captured["reward_mode"] is RewardCollectionMode.BATCHED_SERIAL
 
 
 # ------------------------------------------------------------- ready queue

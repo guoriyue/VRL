@@ -25,21 +25,6 @@ class RayGenerationLaunchInputs:
     rank_group: RankGroupSpec | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.launch_contract, GenerationRuntimeLaunchContract):
-            raise TypeError(
-                "launch_contract must be a GenerationRuntimeLaunchContract, "
-                f"got {type(self.launch_contract).__name__}",
-            )
-        if self.rank_group is not None and not isinstance(self.rank_group, RankGroupSpec):
-            raise TypeError(
-                f"rank_group must be a RankGroupSpec or None, got {type(self.rank_group).__name__}",
-            )
-        if not isinstance(self.gatherer, GenerationBatchGatherer) or not callable(
-            getattr(self.gatherer, "gather_batches", None),
-        ):
-            raise TypeError(
-                f"gatherer must implement GenerationBatchGatherer, got {type(self.gatherer).__name__}",
-            )
         try:
             pickle.dumps(self)
         except Exception as error:
