@@ -439,15 +439,13 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
     reward = MultiReward.from_dict(
         {"videoscore2": 1.0},
         device="cuda:0",
-        reward_kwargs={
-            "videoscore2": {
-                "artifact_dir": str(tmp_path),
-                "inference": {
-                    "kind": "http",
-                    "endpoint": "http://reward:8300",
-                    "expected_model": "videoscore2-v1",
-                },
-            },
+        reward_kwargs={"videoscore2": {"artifact_dir": str(tmp_path)}},
+        inference_configs={
+            "videoscore2": RewardInferenceConfig(
+                kind="http",
+                endpoint="http://reward:8300",
+                expected_model="videoscore2-v1",
+            ),
         },
         memory_parking_required=False,
     )
@@ -466,14 +464,12 @@ def test_http_reward_rejects_inmemory_artifact_component() -> None:
         MultiReward.from_dict(
             {"aesthetic": 1.0},
             device="cpu",
-            reward_kwargs={
-                "aesthetic": {
-                    "inference": {
-                        "kind": "http",
-                        "endpoint": "http://reward:8300",
-                        "expected_model": "aesthetic-v1",
-                    },
-                },
+            inference_configs={
+                "aesthetic": RewardInferenceConfig(
+                    kind="http",
+                    endpoint="http://reward:8300",
+                    expected_model="aesthetic-v1",
+                ),
             },
         )
 
@@ -592,15 +588,14 @@ def test_mixed_runtime_components_fail_closed_for_generation_overlap(tmp_path) -
     reward = MultiReward.from_dict(
         {"videoscore2": 1.0, "ocr": 0.5},
         device="cpu",
-        reward_kwargs={
-            "videoscore2": {
-                "artifact_dir": str(tmp_path),
-                "inference": {
-                    "kind": "http",
-                    "endpoint": "http://reward:8300",
-                    "expected_model": "videoscore2-v1",
-                },
-            },
+        reward_kwargs={"videoscore2": {"artifact_dir": str(tmp_path)}},
+        inference_configs={
+            "videoscore2": RewardInferenceConfig(
+                kind="http",
+                endpoint="http://reward:8300",
+                expected_model="videoscore2-v1",
+            ),
+            "ocr": RewardInferenceConfig(),
         },
     )
 
@@ -615,12 +610,14 @@ def test_http_reward_rejects_local_worker_config() -> None:
             device="cpu",
             reward_kwargs={
                 "videoscore2": {
-                    "inference": {
-                        "kind": "http",
-                        "endpoint": "http://reward:8300",
-                        "expected_model": "videoscore2-v1",
-                    },
                     "worker_config": {"device": "cuda:0"},
                 },
+            },
+            inference_configs={
+                "videoscore2": RewardInferenceConfig(
+                    kind="http",
+                    endpoint="http://reward:8300",
+                    expected_model="videoscore2-v1",
+                ),
             },
         )

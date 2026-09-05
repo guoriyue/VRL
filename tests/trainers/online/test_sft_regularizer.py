@@ -23,6 +23,7 @@ from vrl.trainers.online.trainer import _ReplayMetrics
 _B, _T = 2, 4
 _LATENT = (3, 2, 2)
 _TARGET_VIDEO = "targets/training.mp4"
+_TARGET_IMAGE = "targets/training.png"
 
 
 class _Collector(CollectorControlFake):
@@ -49,7 +50,13 @@ class _Policy(nn.Module):
 
     def replay_forward_with_latents(self, batch, timestep_idx, latents):
         self.forward_calls.append((timestep_idx, latents))
-        return {"noise_pred": self.weight * latents}
+        return {
+            "noise_pred": -100.0 * self.weight * latents,
+            "noise_pred_cond": self.weight * latents,
+        }
+
+    def diffusion_pretraining_prediction(self, values):
+        return values["noise_pred_cond"]
 
 
 def _batch(scheduler) -> RolloutBatch:
@@ -123,8 +130,20 @@ def test_sft_term_flows_gradient_and_scales_with_weight(tmp_path) -> None:
 def test_sft_term_rejects_missing_target(tmp_path) -> None:
     latents = {"targets/other.mp4": torch.randn(*_LATENT)}
     trainer = _trainer(tmp_path, sft_weight=0.5, sft_latents=latents)
-    with pytest.raises(ValueError, match="no entry for target_video"):
+    with pytest.raises(ValueError, match="no entry for clean target"):
         trainer._sft_regularizer_loss(_batch(trainer.evaluator.scheduler))
+
+
+def test_sft_term_accepts_image_target_identity(tmp_path) -> None:
+    trainer = _trainer(
+        tmp_path,
+        sft_weight=0.5,
+        sft_latents={_TARGET_IMAGE: torch.randn(*_LATENT)},
+    )
+    batch = _batch(trainer.evaluator.scheduler)
+    batch.context["reward_metadata"] = {"target_image": _TARGET_IMAGE}
+
+    assert torch.isfinite(trainer._sft_regularizer_loss(batch))
 
 
 def test_sft_term_rejects_geometry_mismatch(tmp_path) -> None:

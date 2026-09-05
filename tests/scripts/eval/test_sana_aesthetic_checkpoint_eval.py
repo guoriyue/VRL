@@ -516,6 +516,27 @@ def test_historical_fullparam_shape_normalizes_to_the_live_protocol() -> None:
     )
 
 
+def test_historical_parity_threshold_normalizes_without_changing_frozen_identity() -> None:
+    canonical = load_config(sana_report.CANONICAL_CONFIG_NAME)
+    historical = OmegaConf.to_container(canonical, resolve=True)
+    historical["trainer"]["debug"].update(historical["trainer"].pop("replay_parity"))
+
+    assert sana_report._semantic_digest(historical) == sana_report.CANONICAL_PROTOCOL_SHA256
+    normalized = sana_report.normalize_run_config(OmegaConf.create(historical))
+    assert OmegaConf.to_container(normalized, resolve=True) == OmegaConf.to_container(
+        canonical, resolve=True
+    )
+
+
+@pytest.mark.parametrize("old_threshold", [1.0e-6, 1.0e-4])
+def test_parity_threshold_rejects_ambiguous_old_and_live_keys(old_threshold) -> None:
+    changed = load_config(sana_report.CANONICAL_CONFIG_NAME)
+    changed.trainer.debug.max_abs_logprob_diff = old_threshold
+
+    with pytest.raises(ValueError, match="ambiguous SANA parity threshold"):
+        sana_report.normalize_run_config(changed)
+
+
 @pytest.mark.parametrize(
     ("path", "value"),
     [
@@ -674,6 +695,7 @@ def test_live_entrypoint_requires_explicit_precision_protocol(path: str) -> None
         ("actor.ppo_epochs", 4),
         ("trainer.total_epochs", 301),
         ("sampling.num_steps", 11),
+        ("trainer.replay_parity.max_abs_logprob_diff", 1.0e-4),
     ],
 )
 def test_fullparam_protocol_rejects_scientific_drift(path: str, value: object) -> None:
@@ -700,7 +722,15 @@ def test_quality_sampling_is_official_and_not_derived_from_training_sde() -> Non
     }
 
 
-def test_canonical_preset_change_requires_protocol_digest_update(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("sampling.num_steps", 11),
+        ("trainer.replay_parity.max_abs_logprob_diff", 1.0e-4),
+        ("trainer.replay_parity.unexpected", True),
+    ],
+)
+def test_canonical_preset_change_requires_protocol_digest_update(monkeypatch, path, value) -> None:
     actual = load_config(sana_report.CANONICAL_CONFIG_NAME)
     real_load_config = sana_report.load_config
 
@@ -708,7 +738,7 @@ def test_canonical_preset_change_requires_protocol_digest_update(monkeypatch) ->
         cfg = real_load_config(name, *args, **kwargs)
         if str(name) == sana_report.CANONICAL_CONFIG_NAME:
             cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
-            cfg.sampling.num_steps = 11
+            OmegaConf.update(cfg, path, value, merge=False)
         return cfg
 
     monkeypatch.setattr(sana_report, "load_config", changed_canonical)

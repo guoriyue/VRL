@@ -499,7 +499,7 @@ def build_reward_scorer(
     if "service_url" in cfg:
         raise ValueError(
             "worker_config.service_url was removed; configure "
-            "reward.kwargs.<component>.inference.kind=http and inference.endpoint",
+            "reward.inference.<component>.kind=http and its endpoint",
         )
     deployment = parse_reward_inference_config(
         inference,

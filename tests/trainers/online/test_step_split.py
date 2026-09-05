@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 import torch
 import torch.nn as nn
 
@@ -251,6 +252,75 @@ def test_streaming_all_filtered_update_does_not_advance_policy(tmp_path) -> None
     assert sync_calls == []
     assert metrics.grad_norm == 0.0
     assert torch.equal(trainer.model.weight, initial_weight)
+    assert trainer._precision_drift_guard_pending is True
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("drift", [0.0005, 0.1])
+def test_corrected_replay_enforces_drift_guard_on_both_update_paths(
+    tmp_path,
+    streaming: bool,
+    drift: float,
+) -> None:
+    """Correction bypasses exact parity, not the bounded first-update guard."""
+    import json
+
+    from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
+    from vrl.scripts.common.online import _run_streaming_optimizer_update
+    from vrl.trainers.core.types import PrecisionDriftGuardConfig
+    from vrl.trainers.online.precision_guard import PrecisionDriftError
+
+    trainer = _build_trainer(tmp_path)
+    trainer.algorithm.precision_correction = PrecisionCorrectionConfig(tis_mode="truncate")
+    trainer.config.precision_drift_guard = PrecisionDriftGuardConfig(
+        mode="fail",
+        max_abs_log_ratio=0.001,
+        max_ratio_abs_dev=0.001,
+    )
+
+    class DriftEvaluator(Evaluator):
+        def evaluate(self, model, batch, timestep_idx, **kw):
+            del kw
+            fresh = model.weight.view(1).expand(batch.rewards.shape[0]) + drift
+            return _trajectory_signals(
+                batch,
+                fresh,
+                timestep_idx,
+                old_log_prob=torch.ones_like(fresh),
+            )
+
+    trainer.evaluator = DriftEvaluator()
+    initial_weight = trainer.model.weight.detach().clone()
+
+    async def run_update():
+        if streaming:
+            return await _run_streaming_optimizer_update(
+                trainer,
+                ["p"],
+                batch_plan=OnlineBatchPlan(
+                    prompts_per_batch=1,
+                    n_samples_per_prompt=2,
+                    gradient_accumulation_steps=1,
+                ),
+            )
+        return await trainer.step(["p"])
+
+    if drift > trainer.config.precision_drift_guard.max_abs_log_ratio:
+        with pytest.raises(PrecisionDriftError, match="precision drift guard"):
+            asyncio.run(run_update())
+        assert trainer.state.global_step == 0
+        assert torch.equal(trainer.model.weight, initial_weight)
+        assert trainer._precision_drift_guard_pending is True
+    else:
+        asyncio.run(run_update())
+        assert trainer.state.global_step == 1
+        assert not torch.equal(trainer.model.weight, initial_weight)
+        assert trainer._precision_drift_guard_pending is False
+        records = [
+            json.loads(line)
+            for line in (tmp_path / "training_debug.jsonl").read_text().splitlines()
+        ]
+        assert [record["event"] for record in records] == ["precision_drift_guard"]
 
 
 def test_streaming_scaler_skipped_update_does_not_publish_weights(tmp_path) -> None:
@@ -298,3 +368,38 @@ def test_phase_events_use_the_metric_step(tmp_path) -> None:
     assert events
     assert {event["step"] for event in events} == {0}
     assert trainer.state.step == 1
+
+
+def test_streaming_profiles_training_phases(tmp_path) -> None:
+    """Streaming metrics and events cover replay, backward, and optimizer work."""
+    import json
+
+    from vrl.scripts.common.online import _run_streaming_optimizer_update
+
+    trainer = _build_trainer(tmp_path)
+    trainer.config.profile = True
+
+    metrics = asyncio.run(
+        _run_streaming_optimizer_update(
+            trainer,
+            ["p"],
+            batch_plan=OnlineBatchPlan(
+                prompts_per_batch=1,
+                n_samples_per_prompt=2,
+                gradient_accumulation_steps=1,
+            ),
+        ),
+    )
+
+    for phase in ("evaluate", "backward", "optim_step"):
+        assert metrics.phase_times[phase] > 0.0
+
+    events = [
+        json.loads(line) for line in (tmp_path / "phase_events.jsonl").read_text().splitlines()
+    ]
+    training_events = {
+        event["phase"]: event["step"]
+        for event in events
+        if event["phase"] in {"evaluate", "backward", "optim_step"}
+    }
+    assert training_events == {"evaluate": 0, "backward": 0, "optim_step": 0}

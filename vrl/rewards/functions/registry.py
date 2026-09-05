@@ -17,10 +17,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from vrl.config.reward_inference import (
-    RewardInferenceConfig,
-    parse_reward_inference_config,
-)
+from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.base import (
     DiskArtifactRewardFunction,
     RewardCleanupError,
@@ -171,8 +168,7 @@ class MultiReward(RewardFunction):
         e.g. ``{"ocr": {"debug_dir": "out/ocr_debug"}}``.
 
         Config-driven callers pass their already-resolved ``inference_configs``.
-        Direct callers may omit it and use raw component kwargs as this public
-        construction boundary's source.
+        Direct callers may omit it; every component then executes in-process.
         """
         _register_builtins()
         reward_kwargs = reward_kwargs or {}
@@ -180,11 +176,7 @@ class MultiReward(RewardFunction):
         reward_classes = {name: get_reward(name) for name in configured_weights}
         if inference_configs is None:
             resolved_inference_configs: Mapping[str, RewardInferenceConfig] = {
-                name: parse_reward_inference_config(
-                    dict(reward_kwargs.get(name) or {}).get("inference"),
-                    context=f"reward.kwargs.{name}.inference",
-                )
-                for name in configured_weights
+                name: RewardInferenceConfig() for name in configured_weights
             }
         else:
             component_names = set(configured_weights)
@@ -210,13 +202,12 @@ class MultiReward(RewardFunction):
             reward_cls = reward_classes[name]
             # `or {}`: a bare YAML key (kwargs: <name>:) parses as None.
             extra = dict(reward_kwargs.get(name) or {})
-            extra.pop("inference", None)
             reserved_runtime_keys = sorted(set(extra) & {"scorer", "runtime"})
             if reserved_runtime_keys:
                 raise ValueError(
                     f"reward.kwargs.{name} cannot set runtime injection keys "
                     f"{reserved_runtime_keys}; configure reward inference through "
-                    "reward.kwargs.<name>.inference",
+                    "reward.inference.<name>",
                 )
             inference = resolved_inference_configs[name]
             if "execution" in extra:
@@ -335,19 +326,13 @@ def validate_reward_memory_parking_components(
 
     Config-driven callers pass ``inference_configs`` from ``RewardRuntimeConfig``.
     The fallback preserves this validator as a boundary for direct ``MultiReward``
-    construction, where raw component kwargs are the only available source.
+    construction, where every component executes in-process.
     """
 
     _register_builtins()
     kwargs_by_name = reward_kwargs or {}
     if inference_configs is None:
-        inference_configs = {
-            name: parse_reward_inference_config(
-                dict(kwargs_by_name.get(name) or {}).get("inference"),
-                context=f"reward.kwargs.{name}.inference",
-            )
-            for name in names
-        }
+        inference_configs = {name: RewardInferenceConfig() for name in names}
     component_names = set(names)
     inference_names = set(inference_configs)
     if inference_names != component_names:

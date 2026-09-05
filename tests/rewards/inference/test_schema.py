@@ -14,6 +14,7 @@ from vrl.rewards.inference import (
 def _artifact(artifact_id: str) -> RewardInferenceArtifact:
     return RewardInferenceArtifact(
         artifact_id=artifact_id,
+        sample_id=f"sample-{artifact_id}",
         path=f"/tmp/{artifact_id}.pt",
         prompt="prompt",
     )
@@ -23,6 +24,17 @@ def test_request_rejects_duplicate_artifact_ids() -> None:
     artifact = _artifact("x")
     with pytest.raises(ValueError, match="duplicate"):
         RewardInferenceRequest(request_id="req", artifacts=(artifact, artifact))
+
+
+@pytest.mark.parametrize("sample_id", ["", None])
+def test_artifact_requires_typed_sample_id(sample_id: object) -> None:
+    expected = "must be non-empty" if sample_id == "" else "must be a str"
+    with pytest.raises((TypeError, ValueError), match=expected):
+        RewardInferenceArtifact(
+            artifact_id="artifact",
+            sample_id=sample_id,  # type: ignore[arg-type]
+            path="/tmp/artifact.pt",
+        )
 
 
 @pytest.mark.parametrize(
@@ -42,6 +54,7 @@ def test_artifact_rejects_invalid_file_integrity(
     with pytest.raises(ValueError, match=message):
         RewardInferenceArtifact(
             artifact_id="artifact",
+            sample_id="sample-0",
             path="/tmp/artifact.pt",
             size_bytes=size_bytes,
             sha256=sha256,
@@ -52,6 +65,7 @@ def test_inmemory_artifact_rejects_file_integrity() -> None:
     with pytest.raises(ValueError, match="in-memory media cannot declare"):
         RewardInferenceArtifact(
             artifact_id="artifact",
+            sample_id="sample-0",
             path="",
             media=object(),
             size_bytes=1,

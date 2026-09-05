@@ -79,7 +79,22 @@ def normalize_run_config(cfg: DictConfig) -> DictConfig:
     expected = OmegaConf.to_container(load_config(CANONICAL_CONFIG_NAME), resolve=True)
     if not isinstance(actual, dict) or not isinstance(expected, dict):
         raise TypeError("SANA evaluation configs must resolve to mappings")
-    canonical_digest = _semantic_digest(expected)
+    # The frozen v4 identity predates the parity gate's move out of debug.
+    # Project only that spelling back for hashing: threshold changes and any
+    # additional parity settings must still invalidate the registered protocol.
+    # Runtime validation below keeps the live shape and its mandatory gate.
+    registered_shape = deepcopy(expected)
+    registered_trainer = _section(registered_shape, "trainer")
+    parity = _section(registered_shape, "trainer", "replay_parity")
+    if registered_trainer is not None and parity is not None:
+        debug = _section(registered_shape, "trainer", "debug")
+        if debug is not None and "max_abs_logprob_diff" in parity:
+            if "max_abs_logprob_diff" in debug:
+                raise ValueError("ambiguous SANA parity threshold in debug and replay_parity")
+            debug["max_abs_logprob_diff"] = parity.pop("max_abs_logprob_diff")
+            if not parity:
+                registered_trainer.pop("replay_parity")
+    canonical_digest = _semantic_digest(registered_shape)
     if canonical_digest != CANONICAL_PROTOCOL_SHA256:
         raise ValueError(
             "bundled SANA aesthetic preset changed without a protocol schema update: "
@@ -557,6 +572,15 @@ def _erase_meaningless_spelling(
         return trajectory_storage_policy_from_cfg(value)
 
     trainer = actual.get("trainer")
+    # Historical reports may carry the threshold under debug. This protocol
+    # adapter accepts that old spelling without teaching live training configs
+    # an alias or discarding conflicting/unknown persisted settings.
+    debug = _section(actual, "trainer", "debug")
+    if isinstance(trainer, dict) and debug is not None and "max_abs_logprob_diff" in debug:
+        parity = trainer.setdefault("replay_parity", {})
+        if not isinstance(parity, dict) or "max_abs_logprob_diff" in parity:
+            raise ValueError("ambiguous SANA parity threshold in debug and replay_parity")
+        parity["max_abs_logprob_diff"] = debug.pop("max_abs_logprob_diff")
     uses_retired_entrypoint = (
         isinstance(trainer, dict)
         and trainer.get("entrypoint") == _RETIRED_ENTRYPOINT

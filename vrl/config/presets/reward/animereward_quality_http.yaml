@@ -15,8 +15,8 @@ reward:
       artifact_format: tensor
       artifact_dir: ${trainer.output_dir}/reward_artifacts
       debug_dir: ${trainer.output_dir}/reward_debug
-      inference:
-        kind: http
-        endpoint: http://127.0.0.1:8310
-        timeout_s: 1800
-        expected_model: animereward-quality
+  inference:
+    animereward_quality:
+      kind: http
+      endpoint: http://127.0.0.1:8310
+      expected_model: animereward-quality

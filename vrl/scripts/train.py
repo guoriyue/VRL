@@ -1,9 +1,9 @@
 """Unified YAML-driven training entry point.
 
-The experiment name and implementation entrypoint belong in the bundled
-``vrl/config/presets/experiment/**/*.yaml`` files. This module is only the
-CLI/import layer: it loads one YAML config, imports ``trainer.entrypoint``, then
-runs it.
+Execution recipes declare ``trainer.entrypoint``. Independent model, reward,
+and dataset presets can be composed at launch with ``+group=option`` arguments.
+This module is only the CLI/import layer: it loads the composed config, imports
+the entrypoint, then runs it.
 """
 
 from __future__ import annotations
@@ -184,7 +184,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "overrides",
         nargs="*",
-        help="OmegaConf dotlist overrides, e.g. trainer.seed=42 actor.optim.lr=2e-4",
+        help=(
+            "Ordered preset overlays (+reward=ocr +dataset=...) and OmegaConf "
+            "dotlist overrides (trainer.seed=42 actor.optim.lr=2e-4)."
+        ),
     )
     return parser
 

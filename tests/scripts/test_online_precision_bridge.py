@@ -9,7 +9,10 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from tests.config.test_load_all_experiments import _experiment_names
+from tests.config.test_load_all_experiments import (
+    _experiment_names,
+    _load_experiment_for_static_validation,
+)
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
@@ -27,7 +30,7 @@ _RECIPES = [name for name in _experiment_names() if not Path(name).name.startswi
 @pytest.mark.parametrize("experiment", _RECIPES)
 def test_bridge_uses_aligned_public_precision(experiment):
     """Checks bridge derives trainer precision from public precision."""
-    cfg = load_config(f"experiment/{experiment}")
+    cfg = _load_experiment_for_static_validation(experiment)
     trainer_config = build_configs(cfg).trainer
     policy = resolve_precision_policy(cfg)
     # The bridge contract is the role-label equality below (train/rollout labels
@@ -209,6 +212,23 @@ def test_precision_drift_guard_config_is_bridged_from_yaml():
 
     assert trainer_config.precision_drift_guard.mode == "fail"
     assert trainer_config.precision_drift_guard.max_abs_log_ratio == pytest.approx(0.02)
+
+
+def test_replay_parity_config_is_bridged_from_yaml() -> None:
+    cfg = _with_precision(
+        "sd3_5/online_grpo_ocr",
+        _plain_policy("bf16"),
+    )
+    cfg = OmegaConf.merge(
+        cfg,
+        OmegaConf.create(
+            {"trainer": {"replay_parity": {"max_abs_logprob_diff": 2.0e-4}}},
+        ),
+    )
+
+    trainer_config = build_configs(cfg).trainer
+
+    assert trainer_config.replay_parity.max_abs_logprob_diff == pytest.approx(2.0e-4)
 
 
 def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):

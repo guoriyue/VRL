@@ -120,6 +120,13 @@ def build_algorithm_and_evaluator(
     if algorithm_section is None:
         raise ValueError("online recipe requires an algorithm section")
     kind = algorithm_section.kind
+    if kind == "diffusion_dpo":
+        raise ValueError(
+            "diffusion_dpo is an offline recipe and is not supported by common online recipe",
+        )
+    reward = built.reward
+    if reward is None:
+        raise ValueError("online recipe requires reward configuration")
     diffusion_logprob_kinds = {"grpo", "dance_grpo", "flash_grpo", "flow_dppo", "grpo_guard"}
     precision = built.precision
     if precision.diffusion_math != "fp32" and kind not in diffusion_logprob_kinds:
@@ -167,14 +174,29 @@ def build_algorithm_and_evaluator(
                 "implement the full-sequence scheduler target required by "
                 "algorithm.sft_weight; set sft_weight=0",
             )
+        advantage_estimator = algorithm_config.build_estimator(
+            component_weights=reward.weights,
+        )
         if kind == "flow_dppo":
-            algorithm: object = FlowDPPO(algorithm_config)
+            algorithm: object = FlowDPPO(
+                algorithm_config,
+                advantage_estimator=advantage_estimator,
+            )
         elif kind == "grpo_guard":
-            algorithm = GRPOGuard(algorithm_config)
+            algorithm = GRPOGuard(
+                algorithm_config,
+                advantage_estimator=advantage_estimator,
+            )
         elif kind == "flash_grpo":
-            algorithm = FlashGRPO(algorithm_config)
+            algorithm = FlashGRPO(
+                algorithm_config,
+                advantage_estimator=advantage_estimator,
+            )
         else:
-            algorithm = GRPO(algorithm_config)
+            algorithm = GRPO(
+                algorithm_config,
+                advantage_estimator=advantage_estimator,
+            )
         if is_chunk_autoregressive:
             if precision.diffusion_math != "fp32":
                 raise ValueError(
@@ -238,7 +260,15 @@ def build_algorithm_and_evaluator(
             from vrl.rollouts.evaluators.token import TokenLogProbEvaluator
 
             evaluator = TokenLogProbEvaluator()
-        return AlgorithmEvaluatorPair(algorithm=TokenGRPO(algorithm_config), evaluator=evaluator)
+        return AlgorithmEvaluatorPair(
+            algorithm=TokenGRPO(
+                algorithm_config,
+                advantage_estimator=algorithm_config.build_estimator(
+                    component_weights=reward.weights,
+                ),
+            ),
+            evaluator=evaluator,
+        )
 
     if kind == "token_grpo_multisegment":
         from vrl.algorithms.grpo.multisegment import (
@@ -259,7 +289,12 @@ def build_algorithm_and_evaluator(
         segment_flags = dict(algorithm_config.train_segments or {})
         enabled_segments = tuple(name for name, enabled in segment_flags.items() if bool(enabled))
         return AlgorithmEvaluatorPair(
-            algorithm=MultiSegmentTokenGRPO(algorithm_config),
+            algorithm=MultiSegmentTokenGRPO(
+                algorithm_config,
+                advantage_estimator=algorithm_config.build_estimator(
+                    component_weights=reward.weights,
+                ),
+            ),
             evaluator=MultiSegmentTokenLogProbEvaluator(enabled_segments=enabled_segments),
         )
 
@@ -278,11 +313,6 @@ def build_algorithm_and_evaluator(
         return AlgorithmEvaluatorPair(
             algorithm=DiffusionNFT(algorithm_config),
             evaluator=None,
-        )
-
-    if kind == "diffusion_dpo":
-        raise ValueError(
-            "diffusion_dpo is an offline recipe and is not supported by common online recipe",
         )
 
     raise ValueError(f"unsupported online algorithm.kind: {kind!r}")

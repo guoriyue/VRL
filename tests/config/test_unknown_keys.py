@@ -11,6 +11,14 @@ from vrl.config.unknown_keys import find_unknown_keys, require_no_unknown_keys
 from vrl.utils.profiling import TorchProfilerConfig
 
 
+def test_required_blocks_do_not_hide_unknown_keys_during_structural_lint() -> None:
+    cfg = OmegaConf.create({"reward": "???", "data": "???", "unknown_section": "???"})
+
+    assert find_unknown_keys(cfg) == ["unknown_section"]
+    assert OmegaConf.is_missing(cfg, "reward")
+    assert OmegaConf.is_missing(cfg, "data")
+
+
 @dataclasses.dataclass
 class _FixtureNestedConfig:
     enabled: bool = False

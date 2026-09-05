@@ -703,8 +703,10 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
     assert cfg.reward.components == {"robotics_video_reward": 1.0}
     reward = cfg.reward.kwargs.robotics_video_reward
     assert reward.score_key == "robotics_blend"
-    assert reward.inference.kind == "http"
-    assert reward.inference.expected_model == "robotics-video-reward-v1"
+    assert cfg.reward.inference.robotics_video_reward.kind == "http"
+    assert cfg.reward.inference.robotics_video_reward.expected_model == (
+        "robotics-video-reward-v1"
+    )
 
 
 def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devices) -> None:

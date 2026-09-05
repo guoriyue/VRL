@@ -40,7 +40,13 @@ def test_runtime_requires_model_factory() -> None:
     )
     request = RewardInferenceRequest(
         request_id="req",
-        artifacts=(RewardInferenceArtifact(artifact_id="a0", path="/tmp/a0.mp4"),),
+        artifacts=(
+            RewardInferenceArtifact(
+                artifact_id="a0",
+                sample_id="sample-0",
+                path="/tmp/a0.mp4",
+            ),
+        ),
     )
     with pytest.raises(ValueError, match="model_factory"):
         asyncio.run(runtime.score_batch(request))
@@ -105,6 +111,7 @@ async def test_runtime_loads_reward_model_via_factory() -> None:
         artifacts=(
             RewardInferenceArtifact(
                 artifact_id="a0",
+                sample_id="sample-0",
                 path="/tmp/a0.mp4",
                 prompt="prompt",
             ),

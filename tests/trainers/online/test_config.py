@@ -9,7 +9,7 @@ from dataclasses import FrozenInstanceError, fields
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.trainers.core.types import OptimConfig
+from vrl.trainers.core.types import DebugConfig, OptimConfig, ReplayParityConfig
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
 
@@ -48,6 +48,20 @@ def test_trainer_config_does_not_mirror_controller_lifecycle() -> None:
     trainer_fields = {trainer_field.name for trainer_field in fields(TrainerConfig)}
 
     assert trainer_fields.isdisjoint({"total_epochs", "save_freq", "seed"})
+
+
+def test_replay_parity_is_a_correctness_config_not_a_debug_toggle() -> None:
+    trainer_fields = {trainer_field.name: trainer_field for trainer_field in fields(TrainerConfig)}
+
+    assert [debug_field.name for debug_field in fields(DebugConfig)] == ["first_step"]
+    assert trainer_fields["replay_parity"].metadata["yaml"] == "trainer.replay_parity"
+    assert ReplayParityConfig().max_abs_logprob_diff == pytest.approx(0.01)
+
+
+@pytest.mark.parametrize("limit", [-1.0, float("nan"), float("inf")])
+def test_replay_parity_rejects_invalid_limits(limit: float) -> None:
+    with pytest.raises(ValueError, match=r"trainer\.replay_parity\.max_abs_logprob_diff"):
+        ReplayParityConfig(max_abs_logprob_diff=limit)
 
 
 def test_online_batch_plan_fields_declare_public_owners() -> None:

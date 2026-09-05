@@ -14,9 +14,10 @@ from typing import Any
 # The one protocol identifier: trainer client and standalone service can be
 # deployed at different versions, so a mismatched peer must fail loudly (426)
 # instead of silently misreading fields. v3 dropped the protocol string, the
-# capability array, and the artifact-transport field — fixed facts of the
-# service are guaranteed by this version, not advertised per request.
-WIRE_VERSION = 3
+# capability array, and the artifact-transport field; v4 adds the original
+# sample identity to artifact provenance. Fixed facts of the service are
+# guaranteed by this version, not advertised per request.
+WIRE_VERSION = 4
 
 
 # Keep the exported enum's historical ``str(member)`` representation; the wire
@@ -46,8 +47,6 @@ class RewardServiceInfo:
     """Discoverable service identity and scheduling facts."""
 
     model_name: str
-    # Display/provenance-only until the typed client config gains a separate
-    # expected_model_version field; expected_model currently gates model_name.
     model_version: str
     # The one genuinely deployment-dependent fact: whether the operator proved
     # this service's accelerators are isolated from the training topology, so

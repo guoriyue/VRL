@@ -37,6 +37,7 @@ def test_video_artifact_store_writes_tensor_with_provenance(tmp_path: Path) -> N
     assert len(artifacts) == 1
     artifact = artifacts[0]
     assert artifact.artifact_id.startswith("sample-x:")
+    assert artifact.sample_id == "sample-x"
     assert Path(artifact.path).is_absolute()
     assert Path(artifact.path).exists()
     assert artifact.size_bytes == Path(artifact.path).stat().st_size

@@ -14,6 +14,11 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+# Internal schema key joining rollout prompt groups across the reward boundary.
+# The collector is the only writer; batch-capable rewards consume the opaque
+# value by equality and must never reconstruct it from sample ids or prompt text.
+REWARD_GROUP_ID_METADATA_KEY = "reward_group_id"
+
 
 @dataclass(slots=True)
 class RewardSample:
@@ -68,4 +73,8 @@ class RewardOutput:
         object.__setattr__(self, "timing_ms", timing_ms)
 
 
-__all__ = ["RewardOutput", "RewardSample"]
+__all__ = [
+    "REWARD_GROUP_ID_METADATA_KEY",
+    "RewardOutput",
+    "RewardSample",
+]

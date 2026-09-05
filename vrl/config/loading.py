@@ -145,12 +145,23 @@ def _load_one(
     return merged
 
 
-def load_config(
+def compose_config(
     path: str | Path,
     overrides: list[str] | None = None,
     root: Path | None = None,
 ) -> DictConfig:
-    """Load a YAML config with defaults overlay and dotlist overrides."""
+    """Compose defaults and overrides without resolving mandatory values.
+
+    This inspection boundary exists for structural tooling such as unknown-key
+    linting. Runtime entrypoints must use :func:`load_config`, which resolves
+    interpolations and rejects every mandatory ``???`` value.
+
+    ``+group=option`` appends an independent preset after the base config, in
+    command-line order (for example, ``+reward=ocr +dataset=drawbench_train_192``).
+    These layers merge, rather than replace, existing sections; start with a
+    reward/data-neutral recipe when selecting those roles at launch. All scalar
+    dotlist overrides apply last, regardless of their command-line position.
+    """
 
     config_root: ConfigSource = root.resolve() if root is not None else _BUNDLED_CONFIGS
 
@@ -161,12 +172,26 @@ def load_config(
     else:
         source = _join_config(config_root, _normalize_config_name(path))
 
-    # ``/group=option`` overrides swap a defaults entry; everything else is a
-    # dotlist value override merged after composition.
+    # ``/group=option`` swaps defaults; ``+group=option`` appends presets.
+    # Dotlist values merge after both kinds of composition.
     default_overrides: dict[str, str] = {}
+    preset_overlays: list[str] = []
     value_overrides: list[str] = []
     for override in overrides or []:
-        if isinstance(override, str) and override.startswith("/") and "=" in override:
+        if isinstance(override, str) and override.startswith("+"):
+            if "=" not in override:
+                raise ValueError(f"invalid additive preset override: {override!r}")
+            group, option = (part.strip() for part in override[1:].split("=", 1))
+            name = f"{group}/{option}"
+            if (
+                not group
+                or not option
+                or group.startswith("+")
+                or any(part in ("", ".", "..") for part in name.replace("\\", "/").split("/"))
+            ):
+                raise ValueError(f"invalid additive preset override: {override!r}")
+            preset_overlays.append(_normalize_config_name(name))
+        elif isinstance(override, str) and override.startswith("/") and "=" in override:
             key, value = override.split("=", 1)
             group = key.strip().lstrip("/")
             if not group:
@@ -177,9 +202,28 @@ def load_config(
 
     cfg = _load_one(source, config_root, default_overrides=default_overrides)
 
+    for name in preset_overlays:
+        # A selected policy may itself inherit another preset in the same group.
+        # Resolve it independently so base-default replacements cannot rewrite
+        # that inheritance into a cycle or change the explicitly selected layer.
+        overlay = _load_one(_join_config(config_root, name), config_root)
+        cfg = OmegaConf.merge(cfg, overlay)
+
     if value_overrides:
         cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(value_overrides))
         assert isinstance(cfg, DictConfig)
+
+    return cfg
+
+
+def load_config(
+    path: str | Path,
+    overrides: list[str] | None = None,
+    root: Path | None = None,
+) -> DictConfig:
+    """Load a YAML config with defaults overlay and required-value checks."""
+
+    cfg = compose_config(path, overrides=overrides, root=root)
 
     OmegaConf.resolve(cfg)
 
@@ -197,4 +241,9 @@ def load_config(
     return cfg
 
 
-__all__ = ["bundled_config_resource", "list_bundled_configs", "load_config"]
+__all__ = [
+    "bundled_config_resource",
+    "compose_config",
+    "list_bundled_configs",
+    "load_config",
+]

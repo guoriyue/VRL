@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import signal
 import sys
@@ -27,7 +28,7 @@ from vrl.scripts.supervise import (
 )
 from vrl.trainers.core.types import (
     ContinuousRolloutConfig,
-    DebugConfig,
+    ReplayParityConfig,
     RolloutOrchestrationConfig,
 )
 from vrl.trainers.metrics_io import (
@@ -637,21 +638,48 @@ def test_health_config_derives_strict_parity_limit_from_training_config() -> Non
     health = HealthGateConfig.from_cli(
         _health_args(),
         schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
-        debug=DebugConfig(max_abs_logprob_diff=0.004),
+        replay_parity=ReplayParityConfig(max_abs_logprob_diff=0.004),
     )
 
     assert health.continuous is None
     assert health.max_pre_update_logprob_diff == pytest.approx(0.004)
 
 
-def test_health_config_keeps_explicit_parity_override() -> None:
+def test_health_config_accepts_tighter_explicit_parity_override() -> None:
     health = HealthGateConfig.from_cli(
-        _health_args("--health-max-pre-update-logprob-diff", "0.02"),
+        _health_args("--health-max-pre-update-logprob-diff", "0.002"),
         schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
-        debug=DebugConfig(max_abs_logprob_diff=0.004),
+        replay_parity=ReplayParityConfig(max_abs_logprob_diff=0.004),
     )
 
-    assert health.max_pre_update_logprob_diff == pytest.approx(0.02)
+    assert health.max_pre_update_logprob_diff == pytest.approx(0.002)
+
+
+def test_health_config_rejects_wider_explicit_parity_override() -> None:
+    with pytest.raises(ValueError, match="cannot exceed"):
+        HealthGateConfig.from_cli(
+            _health_args("--health-max-pre-update-logprob-diff", "0.02"),
+            schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
+            replay_parity=ReplayParityConfig(max_abs_logprob_diff=0.004),
+        )
+
+
+def test_health_config_carries_the_grad_norm_spike_bound_from_cli() -> None:
+    health = HealthGateConfig.from_cli(
+        _health_args("--health-max-grad-norm", "0.8"),
+        schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
+        replay_parity=ReplayParityConfig(),
+    )
+
+    assert health.max_grad_norm == pytest.approx(0.8)
+    assert (
+        HealthGateConfig.from_cli(
+            _health_args(),
+            schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
+            replay_parity=ReplayParityConfig(),
+        ).max_grad_norm
+        == math.inf
+    )
 
 
 @pytest.mark.parametrize(
@@ -670,7 +698,7 @@ def test_health_config_derives_continuous_metrics_from_training_schedule(
             schedule_mode="continuous",
             continuous=ContinuousRolloutConfig(max_stale_policy_versions=2),
         ),
-        debug=DebugConfig(),
+        replay_parity=ReplayParityConfig(),
     )
 
     assert health.continuous is not None
@@ -688,7 +716,7 @@ def test_health_config_accepts_a_continuous_schedule_on_its_own_defaults() -> No
     health = HealthGateConfig.from_cli(
         _health_args(),
         schedule=RolloutOrchestrationConfig(schedule_mode="continuous"),
-        debug=DebugConfig(),
+        replay_parity=ReplayParityConfig(),
     )
 
     assert health.continuous is not None
@@ -705,7 +733,7 @@ def test_health_config_rejects_stale_override_wider_than_training() -> None:
                 schedule_mode="continuous",
                 continuous=ContinuousRolloutConfig(max_stale_policy_versions=1),
             ),
-            debug=DebugConfig(),
+            replay_parity=ReplayParityConfig(),
         )
 
 
@@ -714,7 +742,7 @@ def test_health_config_rejects_stale_override_for_strict_schedule() -> None:
         HealthGateConfig.from_cli(
             _health_args("--health-max-stale-policy-versions", "0"),
             schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
-            debug=DebugConfig(),
+            replay_parity=ReplayParityConfig(),
         )
 
 
@@ -771,6 +799,70 @@ def test_health_gate_reads_a_complete_online_metric_row(tmp_path) -> None:
     assert not (out / HEALTH_VERDICT_NAME).exists()
 
 
+def test_health_gate_trips_on_a_grad_norm_spike_after_the_failure_limit(tmp_path) -> None:
+    """The pre-collapse signature: a steady band, then a spike that keeps going."""
+
+    out = tmp_path / "run"
+    out.mkdir()
+    metrics = out / "metrics.csv"
+    metrics.write_text(_METRICS_HEADER + _metric_row(0, grad_norm="0.26"))
+    gate = MetricsHealthGate(HealthGateConfig(failure_limit=2, max_grad_norm=0.8), out)
+
+    assert gate.judge_new_rows() is False
+
+    metrics.write_text(metrics.read_text() + _metric_row(1, grad_norm="1.46"))
+
+    assert gate.judge_new_rows() is False
+
+    metrics.write_text(metrics.read_text() + _metric_row(2, grad_norm="2.1"))
+
+    assert gate.judge_new_rows() is True
+    verdict = json.loads((out / HEALTH_VERDICT_NAME).read_text())
+    assert verdict["epoch"] == 2
+    assert verdict["consecutive_unhealthy_rows"] == 2
+    assert any("grad_norm 2.1 is above maximum 0.8" in reason for reason in verdict["reasons"])
+    assert verdict["thresholds"]["max_grad_norm"] == 0.8
+
+
+def test_health_gate_accepts_a_grad_norm_below_the_maximum(tmp_path) -> None:
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "metrics.csv").write_text(_METRICS_HEADER + _metric_row(0, grad_norm="0.26"))
+    gate = MetricsHealthGate(HealthGateConfig(failure_limit=1, max_grad_norm=0.8), out)
+
+    assert gate.judge_new_rows() is False
+    assert not (out / HEALTH_VERDICT_NAME).exists()
+
+
+def test_health_gate_default_never_trips_on_a_large_grad_norm(tmp_path) -> None:
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "metrics.csv").write_text(_METRICS_HEADER + _metric_row(0, grad_norm="1e6"))
+    gate = MetricsHealthGate(HealthGateConfig(failure_limit=1), out)
+
+    assert gate.judge_new_rows() is False
+    assert not (out / HEALTH_VERDICT_NAME).exists()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"max_grad_norm": 0.0}, "must be > 0"),
+        ({"max_grad_norm": -1.0}, "must be > 0"),
+        ({"max_grad_norm": float("nan")}, "must be > 0"),
+        ({"max_grad_norm": 1e-8}, "must be > min_grad_norm"),
+        ({"max_grad_norm": 0.5, "min_grad_norm": 0.5}, "must be > min_grad_norm"),
+        ({"max_grad_norm": 0.1, "min_grad_norm": 0.5}, "must be > min_grad_norm"),
+    ],
+)
+def test_health_config_rejects_a_max_grad_norm_at_or_below_the_minimum(
+    kwargs: dict[str, float],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        HealthGateConfig(**kwargs)
+
+
 def test_metrics_health_gate_cli_thresholds_are_configurable() -> None:
     args = build_parser().parse_args(
         [
@@ -791,6 +883,8 @@ def test_metrics_health_gate_cli_thresholds_are_configurable() -> None:
             "0.003",
             "--health-min-grad-norm",
             "0.0002",
+            "--health-max-grad-norm",
+            "0.8",
         ],
     )
 
@@ -802,6 +896,13 @@ def test_metrics_health_gate_cli_thresholds_are_configurable() -> None:
     assert args.health_max_stale_logprob_diff == 0.08
     assert args.health_min_reward_std == 0.003
     assert args.health_min_grad_norm == 0.0002
+    assert args.health_max_grad_norm == 0.8
+
+
+def test_metrics_health_gate_max_grad_norm_is_disabled_by_default() -> None:
+    args = build_parser().parse_args(["--config", "unit", "--health-metrics"])
+
+    assert args.health_max_grad_norm == math.inf
 
 
 @pytest.mark.parametrize(
@@ -814,6 +915,9 @@ def test_metrics_health_gate_cli_thresholds_are_configurable() -> None:
         ("--health-max-stale-logprob-diff", "nan"),
         ("--health-min-reward-std", "-1"),
         ("--health-min-grad-norm", "inf"),
+        ("--health-max-grad-norm", "0"),
+        ("--health-max-grad-norm", "-1"),
+        ("--health-max-grad-norm", "inf"),
     ],
 )
 def test_metrics_health_gate_cli_rejects_invalid_thresholds(option, value) -> None:

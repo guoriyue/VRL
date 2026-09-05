@@ -76,6 +76,7 @@ def test_robotics_reward_uses_only_audited_kling_alignment(
     )
     artifact = RewardInferenceArtifact(
         artifact_id="a0",
+        sample_id="sample-0",
         path=str(tmp_path / "a0.mp4"),
         prompt="Move the object into the tray",
         metadata={"target_video": "targets/a0.mp4"},

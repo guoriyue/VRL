@@ -332,6 +332,15 @@ def test_owned_ray_session_retries_shutdown_before_committing_closed() -> None:
     assert ray_api.calls == 2
 
 
+@pytest.mark.asyncio
+async def test_run_online_recipe_rejects_non_prompt_example_sequence() -> None:
+    with pytest.raises(TypeError, match="item 1 is str"):
+        await online.run_online_recipe(
+            _cfg(),
+            prompt_examples=(PromptExample(prompt="valid"), "not-an-example"),  # type: ignore[arg-type]
+        )
+
+
 def _install_common_fakes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
@@ -518,6 +527,35 @@ def _install_common_fakes(
         lambda self, path, *args, **kwargs: state["checkpoint_paths"].append(path.name),
     )
     return reward
+
+
+@pytest.mark.asyncio
+async def test_injected_prompt_examples_bypass_manifest_loader(monkeypatch, tmp_path) -> None:
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+    provided = PromptExample(prompt="frozen prompt", metadata={"source": "snapshot"})
+    monkeypatch.setattr(
+        online,
+        "load_prompt_examples_from_config",
+        lambda _cfg: (_ for _ in ()).throw(AssertionError("manifest path must not reopen")),
+    )
+    seen: list[PromptExample] = []
+
+    class _ReachedResolvedPrompt(RuntimeError):
+        pass
+
+    def _stop_after_selection(example: PromptExample, **_kwargs: Any) -> PromptExample:
+        seen.append(example)
+        raise _ReachedResolvedPrompt
+
+    monkeypatch.setattr(online, "resolve_prompt_example_references", _stop_after_selection)
+
+    with pytest.raises(_ReachedResolvedPrompt):
+        await online.run_online_recipe(_cfg(), prompt_examples=(provided,))
+
+    assert seen == [provided]
+    assert state["bundle_builds"] == 0
+    assert state["owner_creates"] == 0
 
 
 @pytest.mark.asyncio

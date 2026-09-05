@@ -29,11 +29,13 @@ def _make_request() -> RewardInferenceRequest:
         artifacts=(
             RewardInferenceArtifact(
                 artifact_id="a",
+                sample_id="sample-a",
                 path="",
                 media=[1.0, 2.0],
             ),
             RewardInferenceArtifact(
                 artifact_id="b",
+                sample_id="sample-b",
                 path="",
                 media=[3.0],
             ),
@@ -181,6 +183,7 @@ def _parking_request() -> RewardInferenceRequest:
         artifacts=(
             RewardInferenceArtifact(
                 artifact_id="a0",
+                sample_id="sample-0",
                 path="/tmp/a0.mp4",
                 prompt="p",
             ),
@@ -456,6 +459,7 @@ async def test_real_aesthetic_score_parks_stably_across_two_cycles() -> None:
         artifacts=(
             RewardInferenceArtifact(
                 artifact_id="image-0",
+                sample_id="sample-0",
                 path="",
                 media=torch.zeros(3, 512, 512),
             ),

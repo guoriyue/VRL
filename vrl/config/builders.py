@@ -12,10 +12,7 @@ from vrl.config.algorithm import algorithm_config_class
 from vrl.config.precision import (
     PrecisionPolicy,
 )
-from vrl.config.reward_inference import (
-    RewardInferenceConfig,
-    parse_reward_inference_config,
-)
+from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.config.schema import RewardConfig, RootConfig
 from vrl.config.validation import (
     dataclass_field_names,
@@ -83,12 +80,10 @@ class RewardRuntimeConfig:
             keys = ", ".join(f"reward.kwargs.{name}" for name in unknown_kwargs)
             raise ValueError(f"reward kwargs configured for unknown component(s): {keys}")
         kwargs = {name: dict(reward.kwargs.get(name) or {}) for name in weights}
+        # RewardConfig already parsed the typed inference section; absent
+        # entries execute in-process.
         inference_configs = {
-            name: parse_reward_inference_config(
-                (kwargs.get(name) or {}).get("inference"),
-                context=f"reward.kwargs.{name}.inference",
-            )
-            for name in weights
+            name: reward.inference.get(name, RewardInferenceConfig()) for name in weights
         }
         return cls(
             weights=weights,

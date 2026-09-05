@@ -337,7 +337,12 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
         def evaluate(self, model, batch, timestep_idx, **kw):
             del kw
             fresh = model.weight.view(1).expand(batch.rewards.shape[0])
-            return _trajectory_signals(batch, fresh, timestep_idx)
+            return _trajectory_signals(
+                batch,
+                fresh,
+                timestep_idx,
+                old_log_prob=torch.full_like(fresh, float(timestep_idx)),
+            )
 
     algorithm = _Algorithm()
     model = torch.nn.Linear(1, 1, bias=False)

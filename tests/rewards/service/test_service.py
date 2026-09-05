@@ -49,6 +49,7 @@ def _request(
         artifacts=(
             RewardInferenceArtifact(
                 artifact_id="a0",
+                sample_id="sample-0",
                 path=path,
                 prompt=prompt,
                 size_bytes=len(payload),
@@ -109,6 +110,7 @@ async def _running_service(
             endpoint=f"http://{host}:{port}",
             timeout_s=5,
             expected_model="unit-model",
+            expected_model_version="unit-v1",
         ),
     )
     try:
@@ -132,6 +134,7 @@ def test_wire_roundtrip_is_versioned_and_preserves_request(tmp_path) -> None:
     assert restored.artifacts[0].path == str(artifact_file)
     assert restored.artifacts[0].size_bytes == 1
     assert restored.artifacts[0].sha256 == hashlib.sha256(b"x").hexdigest()
+    assert restored.artifacts[0].sample_id == "sample-0"
     assert restored.artifacts[0].metadata == {"target_text": "HELLO"}
 
 
@@ -141,6 +144,7 @@ def test_wire_rejects_inmemory_media() -> None:
         artifacts=(
             RewardInferenceArtifact(
                 artifact_id="a0",
+                sample_id="sample-0",
                 path="",
                 media=object(),
             ),
@@ -291,7 +295,19 @@ async def test_client_verifies_isolation_only_after_safe_service_preflight(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_expected_model_mismatch_fails_before_scoring(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("expected_model", "expected_version", "message"),
+    [
+        ("wrong-model", "", "identity mismatch"),
+        ("actual-model", "wrong-version", "version mismatch"),
+    ],
+)
+async def test_expected_model_identity_mismatch_fails_before_scoring(
+    tmp_path,
+    expected_model: str,
+    expected_version: str,
+    message: str,
+) -> None:
     artifact_file = tmp_path / "a0.mp4"
     artifact_file.write_bytes(b"x")
     runtime = _FakeRuntime()
@@ -301,6 +317,7 @@ async def test_expected_model_mismatch_fails_before_scoring(tmp_path) -> None:
         host="127.0.0.1",
         port=0,
         model_name="actual-model",
+        model_version="actual-version",
     )
     await service.start()
     host, port = service.address
@@ -308,11 +325,12 @@ async def test_expected_model_mismatch_fails_before_scoring(tmp_path) -> None:
         RewardInferenceConfig(
             kind="http",
             endpoint=f"http://{host}:{port}",
-            expected_model="wrong-model",
+            expected_model=expected_model,
+            expected_model_version=expected_version,
         ),
     )
     try:
-        with pytest.raises(RemoteRewardServiceError, match="identity mismatch") as caught:
+        with pytest.raises(RemoteRewardServiceError, match=message) as caught:
             await client.score_batch(_request(str(artifact_file)))
     finally:
         await client.shutdown()

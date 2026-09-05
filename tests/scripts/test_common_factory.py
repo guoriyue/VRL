@@ -34,11 +34,18 @@ from vrl.scripts.common.factory import (
 def _built_reward(
     weights: dict[str, float],
     kwargs: dict[str, dict],
+    inference: dict[str, dict] | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         reward=RewardRuntimeConfig.from_cfg(
             OmegaConf.create(
-                {"reward": {"components": weights, "kwargs": kwargs}},
+                {
+                    "reward": {
+                        "components": weights,
+                        "kwargs": kwargs,
+                        "inference": inference or {},
+                    },
+                },
             ),
         ),
     )
@@ -54,10 +61,11 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
         ],
     )
     collector_config = RolloutCollectorConfig.from_cfg(cfg)
+    built = build_configs(cfg)
 
     pair = build_algorithm_and_evaluator(
         family_entry=get_model_family_entry("wan_2_1"),
-        built=build_configs(cfg),
+        built=built,
         collector_config=collector_config,
         scheduler=object(),
     )
@@ -65,6 +73,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
     assert pair.evaluator.noise_level == 0.37
     assert pair.evaluator.sde_type == "cps"
     assert collector_config.request_sampling["denoise_mode"] == "native"
+    assert pair.algorithm.advantage_estimator.component_weights == built.reward.weights
 
 
 @pytest.mark.parametrize(
@@ -333,7 +342,7 @@ def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
     assert run.total_epochs == 5
     assert run.save_freq == 1
     assert trainer.debug.first_step is True
-    assert trainer.debug.max_abs_logprob_diff == pytest.approx(1.0e-6)
+    assert trainer.replay_parity.max_abs_logprob_diff == pytest.approx(1.0e-6)
     assert trainer.precision_drift_guard.mode == "fail"
     assert trainer.precision_drift_guard.max_abs_log_ratio == pytest.approx(1.0e-6)
     assert trainer.precision_drift_guard.max_ratio_abs_dev == pytest.approx(1.0e-6)
@@ -534,13 +543,11 @@ def test_http_reward_accepts_torchrun_rank_local_device(monkeypatch) -> None:
             },
             "reward": {
                 "components": {"unified_reward_video": 1.0},
-                "kwargs": {
+                "inference": {
                     "unified_reward_video": {
-                        "inference": {
-                            "kind": "http",
-                            "endpoint": "http://127.0.0.1:8300",
-                            "expected_model": "unified-reward-robotics",
-                        },
+                        "kind": "http",
+                        "endpoint": "http://127.0.0.1:8300",
+                        "expected_model": "unified-reward-robotics",
                     },
                 },
             },
@@ -551,13 +558,12 @@ def test_http_reward_accepts_torchrun_rank_local_device(monkeypatch) -> None:
         resolve_reward_inputs(
             _built_reward(
                 {"unified_reward_video": 1.0},
+                {},
                 {
                     "unified_reward_video": {
-                        "inference": {
-                            "kind": "http",
-                            "endpoint": "http://127.0.0.1:8300",
-                            "expected_model": "unified-reward-robotics",
-                        },
+                        "kind": "http",
+                        "endpoint": "http://127.0.0.1:8300",
+                        "expected_model": "unified-reward-robotics",
                     },
                 },
             ),
@@ -629,19 +635,26 @@ def test_shared_reward_capability_fails_before_component_construction(monkeypatc
 def test_shared_reward_preflight_consumes_resolved_inference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Config-driven parking does not parse component transport a second time."""
+    """Config-driven parking consumes the resolved deployment map as-is."""
     import vrl.rewards.functions.registry as reward_registry
 
     built = _built_reward({"aesthetic": 1.0}, {"aesthetic": {}})
+    captured: dict[str, object] = {}
 
-    def unexpected_reparse(*args, **kwargs):
-        del args, kwargs
-        raise AssertionError("resolved reward inference must be consumed directly")
+    def capture(
+        names,
+        *,
+        device="cuda",
+        reward_kwargs=None,
+        inference_configs=None,
+    ):
+        del names, device, reward_kwargs
+        captured["inference_configs"] = inference_configs
 
     monkeypatch.setattr(
         reward_registry,
-        "parse_reward_inference_config",
-        unexpected_reparse,
+        "validate_reward_memory_parking_components",
+        capture,
     )
 
     validate_reward_memory_parking(
@@ -649,30 +662,37 @@ def test_shared_reward_preflight_consumes_resolved_inference(
         built=built,
     )
 
+    assert captured["inference_configs"] is built.reward.inference_configs
+
 
 def test_reward_build_consumes_resolved_inference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The real MultiReward construction path does not parse transport twice."""
-    import vrl.rewards.functions.registry as reward_registry
+    """The MultiReward construction path consumes the resolved map as-is."""
+    from vrl.rewards.functions.registry import MultiReward
 
     built = _built_reward({"ocr": 1.0}, {})
+    captured: dict[str, object] = {}
 
-    def unexpected_reparse(*args, **kwargs):
-        del args, kwargs
-        raise AssertionError("resolved reward inference must be consumed directly")
+    def fake_from_dict(
+        cls,
+        score_dict,
+        device="cuda",
+        reward_kwargs=None,
+        memory_parking_required=None,
+        inference_configs=None,
+    ):
+        del cls, score_dict, device, reward_kwargs, memory_parking_required
+        captured["inference_configs"] = inference_configs
+        return object()
 
-    monkeypatch.setattr(
-        reward_registry,
-        "parse_reward_inference_config",
-        unexpected_reparse,
-    )
+    monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
 
-    reward = build_reward_function(
+    build_reward_function(
         ResolvedReward(config=built.reward, device="cpu", memory_parking_required=False),
     )
 
-    assert [name for name, _, _ in reward.rewards] == ["ocr"]
+    assert captured["inference_configs"] is built.reward.inference_configs
 
 
 def test_reward_runtime_factory_exposes_the_public_runtime_protocol() -> None:

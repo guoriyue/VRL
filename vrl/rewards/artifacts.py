@@ -72,6 +72,7 @@ class InMemoryRewardArtifactStore:
             artifacts.append(
                 RewardInferenceArtifact(
                     artifact_id=f"{sample.sample_id}:in-memory",
+                    sample_id=sample.sample_id,
                     path="",
                     media=sample.output,
                     prompt=str(sample.prompt),
@@ -182,6 +183,7 @@ class DiskRewardArtifactStore:
             # InferenceRewardFunction._write_debug; the store writes media only.
             artifact = RewardInferenceArtifact(
                 artifact_id=artifact_id,
+                sample_id=sample.sample_id,
                 path=str(path),
                 prompt=str(sample.prompt),
                 size_bytes=size_bytes,

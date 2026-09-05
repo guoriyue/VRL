@@ -55,6 +55,24 @@ class TestGRPOSingleSampleNaN:
         assert advantages[0] < 0
         assert advantages[3] > 0
 
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
+    @pytest.mark.parametrize("global_std", [False, True])
+    def test_constant_non_binary_reward_returns_exact_zero(
+        self,
+        dtype: torch.dtype,
+        global_std: bool,
+    ) -> None:
+        """A constant decimal reward must not create a rounding-error gradient."""
+
+        grpo = GRPO(GRPOConfig(eps=1e-8, global_std=global_std))
+        rewards = torch.full((8,), 0.9, dtype=dtype)
+        group_ids = torch.zeros(8, dtype=torch.long)
+
+        advantages = grpo.compute_advantages_from_tensors(rewards, group_ids)
+
+        assert torch.isfinite(advantages).all()
+        assert torch.equal(advantages, torch.zeros_like(advantages))
+
 
 class TestGRPOFlowMatchingKL:
     """Groups tests for grpoflow matching KL."""

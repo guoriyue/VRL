@@ -49,6 +49,7 @@ class TestAdvantageAndMetrics:
 
             def __init__(self) -> None:
                 self.loss_calls = 0
+                self.component_advantage_calls = 0
 
             def compute_advantages_from_tensors(self, rewards, group_ids):
                 advantages = torch.zeros_like(rewards)
@@ -61,6 +62,16 @@ class TestAdvantageAndMetrics:
                     std = gr.std().clamp(min=1e-8)
                     advantages[mask] = (gr - mean) / std
                 return advantages
+
+            def compute_advantages_from_components(
+                self,
+                rewards,
+                component_rewards,
+                group_ids,
+            ):
+                self.component_advantage_calls += 1
+                assert set(component_rewards) == {"observer"}
+                return self.compute_advantages_from_tensors(rewards, group_ids)
 
             def compute_loss(self, inputs):
                 signals, _advantages, old_log_probs = _algorithm_inputs(inputs)
@@ -130,7 +141,12 @@ class TestAdvantageAndMetrics:
                     device=model.weight.device,
                 )
                 log_prob = old + self.calls / 1000.0 + model.weight.view(1) * 0.0
-                return _trajectory_signals(batch, log_prob, timestep_idx)
+                return _trajectory_signals(
+                    batch,
+                    log_prob,
+                    timestep_idx,
+                    old_log_prob=old,
+                )
 
         model = nn.Linear(1, 1, bias=False)
         _stamp_model_precision(model)
@@ -175,6 +191,7 @@ class TestAdvantageAndMetrics:
         # Component metrics belong to the consumed second batch only. The first
         # step's observations must not accumulate on a shared reward object.
         assert second_step.reward_components == {"observer": pytest.approx(10.5)}
+        assert trainer.algorithm.component_advantage_calls == 2
 
     def test_cea_metrics_propagate_approx_kl(self) -> None:
         """CEA aggregation should not silently drop approx_kl."""

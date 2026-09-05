@@ -12,6 +12,7 @@ from vrl.trainers.core.types import (
     EMAConfig,
     OptimConfig,
     PrecisionDriftGuardConfig,
+    ReplayParityConfig,
     RolloutOrchestrationConfig,
 )
 from vrl.utils.config import require_exact_int
@@ -181,6 +182,10 @@ class TrainerConfig:
     debug: DebugConfig = field(
         default_factory=DebugConfig,
         metadata={"yaml": "trainer.debug"},
+    )
+    replay_parity: ReplayParityConfig = field(
+        default_factory=ReplayParityConfig,
+        metadata={"yaml": "trainer.replay_parity"},
     )
     precision_drift_guard: PrecisionDriftGuardConfig = field(
         default_factory=PrecisionDriftGuardConfig,

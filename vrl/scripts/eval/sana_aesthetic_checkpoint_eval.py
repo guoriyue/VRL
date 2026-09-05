@@ -505,6 +505,10 @@ def _score_images(
                         f"{image.checkpoint_label}-p{image.prompt_index:04d}"
                         f"-s{image.sample_index:02d}"
                     ),
+                    sample_id=(
+                        f"{image.checkpoint_label}-p{image.prompt_index:04d}"
+                        f"-s{image.sample_index:02d}"
+                    ),
                     path=str(image.path),
                     prompt=image.prompt,
                     metadata={

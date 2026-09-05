@@ -12,8 +12,8 @@ reward:
       artifact_format: mp4
       artifact_dir: ${trainer.output_dir}/reward_artifacts
       debug_dir: ${trainer.output_dir}/reward_debug
-      inference:
-        kind: http
-        endpoint: http://127.0.0.1:8301
-        timeout_s: 1800
-        expected_model: robotics-video-reward
+  inference:
+    robotics_video_reward:
+      kind: http
+      endpoint: http://127.0.0.1:8301
+      expected_model: robotics-video-reward

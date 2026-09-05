@@ -8,8 +8,8 @@ from omegaconf import OmegaConf
 
 from vrl.scripts.denoise import encode_targets
 from vrl.scripts.denoise.encode_targets import (
-    _resolve_target_videos,
-    _video_at_sampling_geometry,
+    _resolve_clean_targets,
+    _target_at_sampling_geometry,
 )
 from vrl.trainers.data.prompts import PromptExample
 
@@ -24,17 +24,18 @@ def test_target_preflight_uses_artifact_root_and_target_identity(tmp_path) -> No
         PromptExample(prompt="same instruction", target_video="targets/b.mp4"),
     ]
 
-    targets = _resolve_target_videos(
+    targets = _resolve_clean_targets(
         examples,
         data_root=root,
         allow_absolute=False,
     )
 
-    assert [key for key, _ in targets] == ["targets/a.mp4", "targets/b.mp4"]
-    assert [path for _, path in targets] == [
+    assert [key for key, _, _ in targets] == ["targets/a.mp4", "targets/b.mp4"]
+    assert [path for _, path, _ in targets] == [
         str(root / "targets/a.mp4"),
         str(root / "targets/b.mp4"),
     ]
+    assert [kind for _, _, kind in targets] == ["target_video", "target_video"]
 
 
 def test_target_preflight_rejects_duplicate_target_identity(tmp_path) -> None:
@@ -45,14 +46,14 @@ def test_target_preflight_rejects_duplicate_target_identity(tmp_path) -> None:
         PromptExample(prompt="second", target_video=str(target)),
     ]
 
-    with pytest.raises(ValueError, match="repeats target_video"):
-        _resolve_target_videos(examples, data_root=None, allow_absolute=True)
+    with pytest.raises(ValueError, match="repeats clean target"):
+        _resolve_clean_targets(examples, data_root=None, allow_absolute=True)
 
 
 def test_target_preflight_rejects_missing_file(tmp_path) -> None:
     example = PromptExample(prompt="missing", target_video="targets/missing.mp4")
     with pytest.raises(FileNotFoundError, match="does not exist"):
-        _resolve_target_videos([example], data_root=tmp_path, allow_absolute=False)
+        _resolve_clean_targets([example], data_root=tmp_path, allow_absolute=False)
 
 
 def test_video_geometry_rejects_short_target(monkeypatch) -> None:
@@ -62,7 +63,13 @@ def test_video_geometry_rejects_short_target(monkeypatch) -> None:
     )
 
     with pytest.raises(ValueError, match="requires 3"):
-        _video_at_sampling_geometry("short.mp4", height=4, width=4, num_frames=3)
+        _target_at_sampling_geometry(
+            "short.mp4",
+            media_type="target_video",
+            height=4,
+            width=4,
+            num_frames=3,
+        )
 
 
 def test_video_geometry_resizes_without_changing_frame_count(monkeypatch) -> None:
@@ -71,9 +78,32 @@ def test_video_geometry_resizes_without_changing_frame_count(monkeypatch) -> Non
         lambda _path, *, num_frames: torch.zeros(num_frames, 2, 3, 3),
     )
 
-    video = _video_at_sampling_geometry("target.mp4", height=4, width=6, num_frames=3)
+    video = _target_at_sampling_geometry(
+        "target.mp4",
+        media_type="target_video",
+        height=4,
+        width=6,
+        num_frames=3,
+    )
 
     assert video.shape == (1, 3, 3, 4, 6)
+
+
+def test_image_target_becomes_one_frame_video(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "vrl.utils.media.read_image_as_frames",
+        lambda _path: torch.zeros(1, 2, 3, 3),
+    )
+
+    video = _target_at_sampling_geometry(
+        "target.png",
+        media_type="target_image",
+        height=4,
+        width=6,
+        num_frames=1,
+    )
+
+    assert video.shape == (1, 3, 1, 4, 6)
 
 
 def test_entrypoint_rejects_malformed_model_before_registry_model_build(
@@ -103,5 +133,35 @@ def test_entrypoint_rejects_malformed_model_before_registry_model_build(
                 "invalid",
                 "--out",
                 str(tmp_path / "latents.pt"),
+            ],
+        )
+
+
+def test_entrypoint_forwards_composition_overrides(monkeypatch, tmp_path) -> None:
+    from vrl.config import loading as config_loading
+
+    expected_overrides = [
+        "+reward=codex_image_qa_anime_color_light",
+        "+reward=codex_image_qa_luna",
+        "+dataset=anima_color_light_ddrl",
+        "model.use_lora=false",
+        "sampling.num_steps=40",
+    ]
+
+    def capture_load_config(path, *, overrides):
+        assert path == "experiment/anima_preview3/online_grpo"
+        assert overrides == expected_overrides
+        raise RuntimeError("configuration arguments captured before model loading")
+
+    monkeypatch.setattr(config_loading, "load_config", capture_load_config)
+
+    with pytest.raises(RuntimeError, match="configuration arguments captured"):
+        encode_targets.main(
+            [
+                "--experiment",
+                "anima_preview3/online_grpo",
+                "--out",
+                str(tmp_path / "latents.pt"),
+                *expected_overrides,
             ],
         )

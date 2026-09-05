@@ -105,12 +105,12 @@ reward:
       # Resolves under the service's configured artifact_roots.
       # HTTP carries the control protocol; the mp4 moves as a filesystem path.
       artifact_dir: ${trainer.output_dir}/reward_artifacts
-      # Transport only. Physical isolation is the service's own attestation.
-      inference:
-        kind: http
-        endpoint: http://127.0.0.1:8300
-        timeout_s: 1800
-        expected_model: unified-reward-overlap-gate
+  # Transport only. Physical isolation is the service's own attestation.
+  inference:
+    unified_reward_video:
+      kind: http
+      endpoint: http://127.0.0.1:8300
+      expected_model: unified-reward-overlap-gate
 
 trainer:
   output_dir: outputs/wan_videoscore2_overlap_gate

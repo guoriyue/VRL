@@ -402,6 +402,7 @@ def _score_generated_videos(
     artifacts = [
         RewardInferenceArtifact(
             artifact_id=_artifact_id(video),
+            sample_id=_artifact_id(video),
             path=str(video.path),
             prompt=video.prompt,
             metadata={

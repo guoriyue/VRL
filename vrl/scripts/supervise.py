@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any
 from vrl.trainers.metrics_io import online_metric_columns
 
 if TYPE_CHECKING:
-    from vrl.trainers.core.types import DebugConfig, RolloutOrchestrationConfig
+    from vrl.trainers.core.types import ReplayParityConfig, RolloutOrchestrationConfig
 
 from vrl.scripts.train import RUN_VERDICT_NAME, rank_run_verdict_name
 
@@ -143,6 +143,12 @@ class HealthGateConfig:
     continuous: ContinuousHealthPolicy | None = None
     min_reward_std: float = 1e-4
     min_grad_norm: float = 1e-8
+    # A pre-clip gradient-norm spike is the earliest observable signal of a
+    # diverging full-parameter update: the norm leaves its steady band one epoch
+    # before loss/reward go non-finite, so catching it here saves the run's last
+    # trustworthy checkpoint. Left at inf (disabled) because the healthy band is
+    # recipe-specific; an operator sets it from the run's own observed range.
+    max_grad_norm: float = math.inf
 
     def __post_init__(self) -> None:
         required_columns = set(_REQUIRED_HEALTH_METRICS)
@@ -165,6 +171,14 @@ class HealthGateConfig:
         ):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
                 raise ValueError(f"{name} must be finite and >= 0")
+        # Validated apart from the loop above: inf is this field's "disabled".
+        if math.isnan(self.max_grad_norm) or self.max_grad_norm <= 0:
+            raise ValueError("max_grad_norm must be > 0")
+        if self.max_grad_norm <= self.min_grad_norm:
+            raise ValueError(
+                f"max_grad_norm must be > min_grad_norm "
+                f"({self.max_grad_norm:g} <= {self.min_grad_norm:g})",
+            )
 
     @classmethod
     def from_cli(
@@ -172,7 +186,7 @@ class HealthGateConfig:
         args: argparse.Namespace,
         *,
         schedule: RolloutOrchestrationConfig,
-        debug: DebugConfig,
+        replay_parity: ReplayParityConfig,
     ) -> HealthGateConfig:
         """Reconcile operator CLI thresholds against the resolved training config.
 
@@ -209,8 +223,14 @@ class HealthGateConfig:
             )
 
         parity_limit = args.health_max_pre_update_logprob_diff
+        training_parity_limit = float(replay_parity.max_abs_logprob_diff)
         if parity_limit is None:
-            parity_limit = float(debug.max_abs_logprob_diff)
+            parity_limit = training_parity_limit
+        elif parity_limit > training_parity_limit:
+            raise ValueError(
+                "health max_pre_update_logprob_diff cannot exceed the training "
+                f"replay-parity limit ({parity_limit:g} > {training_parity_limit:g})",
+            )
 
         return cls(
             poll_seconds=args.health_poll_seconds,
@@ -219,6 +239,7 @@ class HealthGateConfig:
             continuous=continuous,
             min_reward_std=args.health_min_reward_std,
             min_grad_norm=args.health_min_grad_norm,
+            max_grad_norm=args.health_max_grad_norm,
         )
 
 
@@ -394,6 +415,10 @@ class MetricsHealthGate:
             reasons.append(
                 f"grad_norm {grad_norm:g} is below minimum {self.config.min_grad_norm:g}",
             )
+        if grad_norm is not None and grad_norm > self.config.max_grad_norm:
+            reasons.append(
+                f"grad_norm {grad_norm:g} is above maximum {self.config.max_grad_norm:g}",
+            )
         return reasons, parsed
 
     def _write_verdict(
@@ -427,6 +452,11 @@ class MetricsHealthGate:
                 ),
                 "min_reward_std": self.config.min_reward_std,
                 "min_grad_norm": self.config.min_grad_norm,
+                # None, not inf: the verdict is a machine-readable contract and
+                # ``Infinity`` is not valid JSON for a non-Python reader.
+                "max_grad_norm": (
+                    None if math.isinf(self.config.max_grad_norm) else self.config.max_grad_norm
+                ),
             },
         }
         path = self.output_dir / HEALTH_VERDICT_NAME
@@ -868,7 +898,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=_bounded_number(float, 0),
         default=None,
         help="Maximum healthy pre-update log-probability difference. When omitted, "
-        "derive trainer.debug.max_abs_logprob_diff from the resolved training config.",
+        "derive trainer.replay_parity.max_abs_logprob_diff from the resolved "
+        "training config. An override may tighten, but not widen, that limit.",
     )
     parser.add_argument(
         "--health-max-stale-policy-versions",
@@ -900,9 +931,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Minimum healthy gradient norm (default: {health_defaults.min_grad_norm:g}).",
     )
     parser.add_argument(
+        "--health-max-grad-norm",
+        type=_bounded_number(float, 0, exclusive=True),
+        default=health_defaults.max_grad_norm,
+        help="Maximum healthy PRE-CLIP gradient norm; a spike above the run's steady "
+        "band is the earliest warning of a diverging update (default: disabled).",
+    )
+    parser.add_argument(
         "overrides",
         nargs="*",
-        help="OmegaConf dotlist overrides forwarded to vrl-train.",
+        help="Ordered +group=option presets and dotlist overrides forwarded to vrl-train.",
     )
     return parser
 
@@ -950,7 +988,7 @@ def main(argv: list[str] | None = None) -> None:
             health = HealthGateConfig.from_cli(
                 args,
                 schedule=trainer.rollout_orchestration,
-                debug=trainer.debug,
+                replay_parity=trainer.replay_parity,
             )
         except (TypeError, ValueError) as error:
             parser.error(str(error))

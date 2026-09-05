@@ -65,6 +65,7 @@ def test_full_call_runs_external_command(tmp_path: Path) -> None:
     )
     artifact = RewardInferenceArtifact(
         artifact_id="clip",
+        sample_id="sample-clip",
         path=str(video),
         prompt="dance",
     )

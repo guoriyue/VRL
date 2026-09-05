@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from vrl.algorithms.types import TrainStepMetrics
 
@@ -65,4 +65,19 @@ class Algorithm(Protocol):
         inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
         """Compute loss from strict trajectory-native algorithm inputs."""
+        ...
+
+
+@runtime_checkable
+class ComponentAdvantageAlgorithm(Protocol):
+    """Optional algorithm capability for raw reward-component observations."""
+
+    def compute_advantages_from_components(
+        self,
+        rewards: Any,
+        component_rewards: dict[str, Any],
+        group_ids: Any,
+    ) -> Any:
+        """Compute advantages from weighted totals and their raw components."""
+
         ...

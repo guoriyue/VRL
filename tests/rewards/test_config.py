@@ -12,7 +12,7 @@ from vrl.config.reward_inference import (
 
 
 def test_in_process_is_the_default() -> None:
-    assert parse_reward_inference_config(None, context="reward.kwargs.x.inference") == (
+    assert parse_reward_inference_config(None, context="reward.inference.x") == (
         RewardInferenceConfig()
     )
 
@@ -21,12 +21,12 @@ def test_http_requires_endpoint_and_expected_model() -> None:
     with pytest.raises(ValueError, match="absolute http"):
         parse_reward_inference_config(
             {"kind": "http", "expected_model": "judge-v1"},
-            context="reward.kwargs.x.inference",
+            context="reward.inference.x",
         )
     with pytest.raises(ValueError, match="expected_model"):
         parse_reward_inference_config(
             {"kind": "http", "endpoint": "http://reward:8300"},
-            context="reward.kwargs.x.inference",
+            context="reward.inference.x",
         )
 
 
@@ -49,7 +49,7 @@ def test_http_endpoint_is_an_origin_without_embedded_credentials(
                 "endpoint": endpoint,
                 "expected_model": "unit",
             },
-            context="reward.kwargs.x.inference",
+            context="reward.inference.x",
         )
 
 
@@ -57,7 +57,7 @@ def test_unknown_inference_key_is_rejected_from_typed_source() -> None:
     with pytest.raises(ValueError, match=r"unsupported .* keys"):
         parse_reward_inference_config(
             {"kind": "in_process", "service_url": "http://legacy"},
-            context="reward.kwargs.x.inference",
+            context="reward.inference.x",
         )
 
 
@@ -65,14 +65,13 @@ def test_component_inference_configs_resolve_independently() -> None:
     cfg = {
         "reward": {
             "components": {"ocr": 0.25, "videoscore2": 0.75},
-            "kwargs": {
+            "inference": {
                 "videoscore2": {
-                    "inference": {
-                        "kind": "http",
-                        "endpoint": "http://reward:8300",
-                        "timeout_s": 90,
-                        "expected_model": "videoscore2-v1",
-                    },
+                    "kind": "http",
+                    "endpoint": "http://reward:8300",
+                    "timeout_s": 90,
+                    "expected_model": "videoscore2-v1",
+                    "expected_model_version": "VideoScore2@unit-revision",
                 },
             },
         },
@@ -86,4 +85,5 @@ def test_component_inference_configs_resolve_independently() -> None:
         endpoint="http://reward:8300",
         timeout_s=90,
         expected_model="videoscore2-v1",
+        expected_model_version="VideoScore2@unit-revision",
     )

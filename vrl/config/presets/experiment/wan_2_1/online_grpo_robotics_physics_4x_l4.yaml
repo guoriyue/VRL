@@ -91,11 +91,11 @@ reward:
       media_type: video
       artifact_format: mp4
       artifact_dir: ${trainer.output_dir}/reward_artifacts
-      inference:
-        kind: http
-        endpoint: http://127.0.0.1:8300
-        timeout_s: 1800
-        expected_model: unified-reward-robotics
+  inference:
+    unified_reward_video:
+      kind: http
+      endpoint: http://127.0.0.1:8300
+      expected_model: unified-reward-robotics
 
 trainer:
   rollout_orchestration:

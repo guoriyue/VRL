@@ -18,7 +18,7 @@ import torch
 import torch.nn as nn
 
 from vrl.algorithms.advantages import all_reduce_sufficient_stats
-from vrl.algorithms.base import Algorithm
+from vrl.algorithms.base import Algorithm, ComponentAdvantageAlgorithm
 from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
     compute_logprob_mismatch_stats,
@@ -700,7 +700,7 @@ class OnlineTrainer:
         # (importance-ratio algorithms hold a `precision_correction` slot).
         if hasattr(algorithm, "precision_correction"):
             algorithm.precision_correction = config.precision_correction
-        # Clean fine-tuning latents ({target_video -> [C,T,H,W]}) for the GRPO
+        # Clean fine-tuning latents ({target artifact -> [C,T,H,W]}) for the GRPO
         # diffusion-loss regularizer; the recipe loads data.sft_latents and the
         # config layer already rejected sft_weight>0 without it.
         self._sft_latents = dict(sft_latents) if sft_latents else None
@@ -748,6 +748,12 @@ class OnlineTrainer:
         self._optimizer: torch.optim.Optimizer | None = None
         self._ema: EMAModuleWrapper | None = None
         self._rollout_weights_initialized = False
+        # This process must prove its own rollout/replay backend parity. The
+        # proof is intentionally absent from checkpoints because a resumed
+        # process may use different kernels, compilation, or batch geometry.
+        self._replay_parity_pending = True
+        self._precision_drift_guard_pending = True
+        self._update_phase_timers: list[PhaseTimer] = []
         self.rollout_schedule = build_rollout_schedule(
             self.config.rollout_orchestration,
             collector=self.collector,
@@ -1083,10 +1089,25 @@ class OnlineTrainer:
         with timer.time("advantage"):
             all_rewards = torch.cat([b.rewards for b in all_batches])
             all_group_ids = torch.cat([b.group_ids for b in all_batches])
-            advantages_all = self.algorithm.compute_advantages_from_tensors(
-                all_rewards,
-                all_group_ids,
-            )
+            if isinstance(self.algorithm, ComponentAdvantageAlgorithm):
+                component_tensors = {
+                    name: torch.as_tensor(
+                        values,
+                        dtype=all_rewards.dtype,
+                        device=all_rewards.device,
+                    )
+                    for name, values in reward_components.items()
+                }
+                advantages_all = self.algorithm.compute_advantages_from_components(
+                    all_rewards,
+                    component_tensors,
+                    all_group_ids,
+                )
+            else:
+                advantages_all = self.algorithm.compute_advantages_from_tensors(
+                    all_rewards,
+                    all_group_ids,
+                )
             # Per-prompt grouping stats for logging (mean group size + unique prompts).
             _unique_groups, _group_counts = torch.unique(all_group_ids, return_counts=True)
             group_size = (
@@ -1315,6 +1336,7 @@ class OnlineTrainer:
         """Start one streaming optimizer update: reset grads + metric accumulator."""
         self._update_optimizer = self._ensure_optimizer()
         self._update_ema = self._ensure_ema()
+        self._update_phase_timers.clear()
         self.model.train()
         self._update_agg_metrics = _ReplayMetrics()
         self._update_had_training_work = False
@@ -1338,8 +1360,8 @@ class OnlineTrainer:
         The single body behind both the streaming microbatch path and the
         full-batch PPO-epoch path — the two hand-copies drifted once
         (the all-filtered initial_replay crash), so the sweep lives here and
-        the callers keep only their own orchestration. ``timer`` is the
-        full-batch profiler; the streaming path times at a coarser grain.
+        the callers keep only their own orchestration. Both paths pass their
+        batch profiler so replay and backward timings share the same boundary.
         """
 
         cfg = self.config
@@ -1404,6 +1426,8 @@ class OnlineTrainer:
         from vrl.algorithms.trajectory import AlgorithmAdapter
 
         cfg = self.config
+        if cfg.profile:
+            self._update_phase_timers.append(batch.timer)
         # Unanimous skip across ranks: a backward fires cross-rank collectives, so
         # one rank skipping an empty microbatch while another runs it deadlocks
         # (see _all_ranks_have_work). Called once per microbatch on every rank, in
@@ -1422,6 +1446,13 @@ class OnlineTrainer:
             cfg.timestep_fraction,
             cfg.timestep_selection,
         )
+        samples_per_replay_batch = cfg.batch_plan.samples_per_replay_batch
+        first_batch = _training_sample_batches(
+            batch.batches[0],
+            batch.advantages[0],
+            samples_per_replay_batch,
+        )[0]
+        self._check_initial_precision_drift(first_batch.batch, train_indices)
         self._run_replay_pass(
             batch.batches,
             batch.advantages,
@@ -1431,6 +1462,7 @@ class OnlineTrainer:
             agg=self._update_agg_metrics,
             capture_initial_replay=True,
             defer_replay_tensors=defer,
+            timer=batch.timer,
         )
 
     async def finish_optimizer_update(
@@ -1455,13 +1487,15 @@ class OnlineTrainer:
         optimizer = self._update_optimizer
         agg = self._update_agg_metrics
         sync_stats = RolloutStats()
+        optimizer_timer = PhaseTimer(enabled=self.config.profile)
         if self._update_had_training_work:
-            local_initial, local_weight = agg.initial_replay_snapshot()
-            initial_replay = self._validate_first_update_parity(
-                local_initial,
-                local_weight=local_weight,
-            )
-            grad_norm, stepped = self._clip_and_step(optimizer)
+            with optimizer_timer.time("optim_step"):
+                local_initial, local_weight = agg.initial_replay_snapshot()
+                initial_replay = self._validate_first_update_parity(
+                    local_initial,
+                    local_weight=local_weight,
+                )
+                grad_norm, stepped = self._clip_and_step(optimizer)
             agg.grad_norms.append(grad_norm)
             if stepped:
                 after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
@@ -1487,9 +1521,13 @@ class OnlineTrainer:
 
         metric_step = self.state.step
         self.state.step += 1
+        stats.add_phases(optimizer_timer.times)
         stats.merge(sync_stats)
         if self.config.profile:
             self._stats_sink.record(metric_step, stats)
+            for timer in (*self._update_phase_timers, optimizer_timer):
+                self._write_phase_events(timer, step=metric_step)
+            self._update_phase_timers.clear()
         phase_times = stats.as_phase_dict()
         metrics = agg.build(
             reward_mean=reward_mean,
@@ -1624,7 +1662,7 @@ class OnlineTrainer:
             _ratio = torch.exp(_dbg_log_prob - _old_lp_0)
             _old_lp_first = _old_lp_0.reshape(-1)[0]
             _fresh_lp_first = _dbg_log_prob.reshape(-1)[0]
-            _parity_limit = float(cfg.debug.max_abs_logprob_diff)
+            _parity_limit = float(cfg.replay_parity.max_abs_logprob_diff)
             _local_parity_finite = bool(
                 torch.isfinite(_old_lp_0).all().item()
                 and torch.isfinite(_dbg_log_prob).all().item()
@@ -1671,22 +1709,13 @@ class OnlineTrainer:
                 },
                 "runtime_debug": _dbg_batch.context.get("runtime_debug"),
             }
-            # Replay parity is the ratio==1 invariant: with unchanged weights
-            # the fresh log-prob must reproduce the collection-time one. Persist
-            # the failing evidence before aborting so NaN/Inf cannot exploit a
-            # false comparison and train a corrupted policy.
+            # Persist a failing probe immediately: the mandatory full-update
+            # gate below owns enforcement, while this optional probe owns the
+            # tensor/provenance evidence needed to diagnose that failure.
             if not _parity_passed and self._strategy.context.is_primary:
                 append_jsonl_record(
                     f"{cfg.output_dir}/training_debug.jsonl",
                     first_step_debug_record,
-                )
-            if not _parity_passed:
-                raise RuntimeError(
-                    "first-step log-prob parity failed before optimizer step: "
-                    f"finite={_parity_finite}, max_abs_diff={_parity_max:.6g}, "
-                    f"limit={_parity_limit:.6g}. Replay does not reproduce rollout "
-                    "log-probs; check role precision, conditioning, and the "
-                    "scheduler domain.",
                 )
         elif cfg.debug.first_step and self.state.step == 0:
             # Non-evaluator algorithms (NFT) compute no log-prob ratio, so the
@@ -1739,72 +1768,9 @@ class OnlineTrainer:
                     },
                 }
 
-        # Precision drift guard: on the first step (before any optimizer update),
-        # check rollout-vs-replay logprob parity. `auto` protects unsafe precision
-        # splits; explicit warn/fail is used for same-precision acceptance runs.
-        if self.state.step == 0 and uses_evaluator and self.evaluator is not None:
-            _guard_batch = move_training_batch_to_device(
-                first_debug_batch.batch,
-                self.device,
-                defer_replay_tensors=defer_replay_tensor_move,
-            )
-
-            def _guard_evaluate(timestep_idx: int) -> TrajectorySignalBatch:
-                with (
-                    torch.no_grad(),
-                    profile_range("trainer.replay"),
-                ):
-                    _sig = self.evaluator.evaluate(
-                        self.model,
-                        _guard_batch,
-                        timestep_idx,
-                        ref_model=self.ref_model,
-                        signal_request=SignalRequest(
-                            need_ref=False,
-                            need_kl_intermediates=False,
-                        ),
-                    )
-                if not isinstance(_sig, TrajectorySignalBatch):
-                    raise TypeError(
-                        "evaluator output must be TrajectorySignalBatch; "
-                        f"got {type(_sig).__name__}",
-                    )
-                return _sig
-
-            _guard_record = measure_precision_drift(
-                cfg.precision_drift_guard,
-                training_precision=precision_metadata["training_precision"],
-                rollout_precision=precision_metadata["rollout_precision"],
-                math_precision=precision_metadata["math_precision"],
-                timestep_indices=train_indices,
-                evaluate_fn=_guard_evaluate,
-                metadata=precision_metadata,
-            )
-            if _guard_record is not None:
-                _worst = dict(_guard_record.get("worst_stats") or {})
-                _worst["logprob_abs_diff_max"] = _distributed_max_float(
-                    float(_worst.get("logprob_abs_diff_max", 0.0)),
-                    self.device,
-                )
-                _worst["ratio_abs_dev_max"] = _distributed_max_float(
-                    float(_worst.get("ratio_abs_dev_max", 0.0)),
-                    self.device,
-                )
-                _worst["finite"] = _distributed_all_true(
-                    bool(_worst.get("finite", True)),
-                    self.device,
-                )
-                _guard_record["worst_stats"] = _worst
-                _guard_record["violated"] = not _distributed_all_true(
-                    not bool(_guard_record["violated"]),
-                    self.device,
-                )
-                # Fail mode runs on every rank after the shared verdict; warn mode
-                # logs once so distributed runs do not race on duplicate output.
-                if _guard_record["mode"] == "fail" or self._strategy.context.is_primary:
-                    enforce_precision_drift(_guard_record, logger=logger)
-            if _guard_record is not None and first_step_debug_record is not None:
-                first_step_debug_record["precision_drift_guard"] = _guard_record
+        guard_record = self._check_initial_precision_drift(first_debug_batch.batch, train_indices)
+        if guard_record is not None and first_step_debug_record is not None:
+            first_step_debug_record["precision_drift_guard"] = guard_record
 
         initial_replay = InitialReplayStats()
         policy_updated = False
@@ -1965,13 +1931,96 @@ class OnlineTrainer:
         if not is_dummy:
             agg.add_sft(float(sft_term.detach()), float(loss_weight))
 
+    def _check_initial_precision_drift(
+        self,
+        batch: RolloutBatch,
+        timestep_indices: Sequence[int],
+    ) -> dict[str, Any] | None:
+        """Enforce the same first-trainable-batch guard on both update paths.
+
+        Precision correction deliberately permits non-exact replay, so its
+        bounded drift guard must also run during streaming accumulation. Callers
+        agree across ranks that training work exists before entering this gate.
+        """
+
+        from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
+        from vrl.utils.profiling import profile_range
+
+        if (
+            not self._precision_drift_guard_pending
+            or not self.algorithm.uses_evaluator
+            or self.evaluator is None
+        ):
+            return None
+        cfg = self.config
+        precision_metadata = _trainer_precision_metadata(cfg, self.model, self.evaluator)
+        guard_batch = move_training_batch_to_device(
+            batch,
+            self.device,
+            defer_replay_tensors=bool(
+                getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),
+            ),
+        )
+
+        def evaluate(timestep_idx: int) -> TrajectorySignalBatch:
+            with torch.no_grad(), profile_range("trainer.replay"):
+                signals = self.evaluator.evaluate(
+                    self.model,
+                    guard_batch,
+                    timestep_idx,
+                    ref_model=self.ref_model,
+                    signal_request=SignalRequest(need_ref=False, need_kl_intermediates=False),
+                )
+            if not isinstance(signals, TrajectorySignalBatch):
+                raise TypeError(
+                    "evaluator output must be TrajectorySignalBatch; "
+                    f"got {type(signals).__name__}",
+                )
+            return signals
+
+        record = measure_precision_drift(
+            cfg.precision_drift_guard,
+            training_precision=precision_metadata["training_precision"],
+            rollout_precision=precision_metadata["rollout_precision"],
+            math_precision=precision_metadata["math_precision"],
+            timestep_indices=timestep_indices,
+            evaluate_fn=evaluate,
+            metadata=precision_metadata,
+        )
+        if record is not None:
+            worst = dict(record.get("worst_stats") or {})
+            worst["logprob_abs_diff_max"] = _distributed_max_float(
+                float(worst.get("logprob_abs_diff_max", 0.0)),
+                self.device,
+            )
+            worst["ratio_abs_dev_max"] = _distributed_max_float(
+                float(worst.get("ratio_abs_dev_max", 0.0)),
+                self.device,
+            )
+            worst["finite"] = _distributed_all_true(
+                bool(worst.get("finite", True)),
+                self.device,
+            )
+            record["worst_stats"] = worst
+            record["violated"] = not _distributed_all_true(
+                not bool(record["violated"]),
+                self.device,
+            )
+            # Fail on every rank; warn and persist evidence only on the writer.
+            if record["mode"] == "fail" or self._strategy.context.is_primary:
+                enforce_precision_drift(record, logger=logger)
+            if self._strategy.context.is_primary:
+                append_jsonl_record(f"{cfg.output_dir}/training_debug.jsonl", record)
+        self._precision_drift_guard_pending = False
+        return record
+
     def _validate_first_update_parity(
         self,
         local: InitialReplayStats,
         *,
         local_weight: float,
     ) -> InitialReplayStats:
-        """Return the global initial snapshot and validate it before optimizer.step."""
+        """Gate this process's first measured exact replay before optimizer.step."""
 
         cfg = self.config
         resolved, has_measurements = _distributed_initial_replay_stats(
@@ -1979,12 +2028,17 @@ class OnlineTrainer:
             local_weight=local_weight,
             device=self.device,
         )
+        correction = getattr(self.algorithm, "precision_correction", None)
+        intentional_correction = correction is not None and (
+            correction.tis_mode != "off"
+            or correction.rs_mode != "off"
+            or correction.recompute_old_logprob != "off"
+        )
         if (
-            not cfg.debug.first_step
-            or self.state.step != 0
-            or self.state.global_step != 0
+            not self._replay_parity_pending
             or self.evaluator is None
             or not self.algorithm.uses_evaluator
+            or intentional_correction
         ):
             return resolved
 
@@ -1993,10 +2047,10 @@ class OnlineTrainer:
         if not has_measurements:
             return resolved
 
-        limit = float(cfg.debug.max_abs_logprob_diff)
+        limit = float(cfg.replay_parity.max_abs_logprob_diff)
         passed = resolved.finite and resolved.logprob_abs_diff_max <= limit
         record = {
-            "event": "first_step_full_logprob_parity",
+            "event": "replay_parity_gate",
             "passed": passed,
             "finite": resolved.finite,
             "max_abs_diff": resolved.logprob_abs_diff_max,
@@ -2009,13 +2063,14 @@ class OnlineTrainer:
             append_jsonl_record(f"{cfg.output_dir}/training_debug.jsonl", record)
         if not passed:
             raise RuntimeError(
-                "full first-step log-prob parity failed before optimizer step: "
+                "replay parity failed before this process's first optimizer update: "
                 f"finite={resolved.finite}, "
                 f"max_abs_diff={resolved.logprob_abs_diff_max:.6g}, "
                 f"limit={limit:.6g}. The first-sample probe is insufficient; "
                 "align rollout/replay precision and batch shape or recompute "
                 "the old policy with the replay backend.",
             )
+        self._replay_parity_pending = False
         return resolved
 
     @property
@@ -2041,19 +2096,15 @@ class OnlineTrainer:
         import torch.nn.functional as F
 
         from vrl.math.denoise.flow_matching import diffusion_pretraining_pair
+        from vrl.trainers.data.sft_latents import resolve_clean_target
         from vrl.trajectory import TrajectoryResolver
 
         assert self._sft_latents is not None  # ctor validated
         reward_metadata = group_batch.context.get("reward_metadata", {})
-        target_key = str(reward_metadata.get("target_video", "") or "").strip()
-        if not target_key:
-            raise ValueError(
-                "the sft regularizer needs batch.context.reward_metadata.target_video "
-                "to identify the clean target latent; this collector did not attach it",
-            )
+        target_key = resolve_clean_target(reward_metadata).key
         if target_key not in self._sft_latents:
             raise ValueError(
-                f"data.sft_latents has no entry for target_video {target_key!r}; "
+                f"data.sft_latents has no entry for clean target {target_key!r}; "
                 "re-encode the shard over the full training manifest",
             )
         scheduler = getattr(self.evaluator, "scheduler", None)
@@ -2102,7 +2153,7 @@ class OnlineTrainer:
         noise = torch.randn_like(x0)
         noisy, target = diffusion_pretraining_pair(scheduler, x0, noise, t)
         values = self.model.replay_forward_with_latents(group_batch, step_idx, noisy)
-        model_pred = values["noise_pred"]
+        model_pred = self.model.diffusion_pretraining_prediction(values)
         return self._sft_weight * F.mse_loss(model_pred.float(), target.float())
 
     def _shared_sft_step_index(self, num_steps: int) -> int:
@@ -2292,6 +2343,8 @@ class OnlineTrainer:
         # next Ray rollout. The policy version and worker state are runtime
         # concerns, not persisted as an initialized rollout flag.
         self._rollout_weights_initialized = False
+        self._replay_parity_pending = True
+        self._precision_drift_guard_pending = True
         self.rollout_schedule.reset()
 
     def _optimizer_parameter_manifest(self) -> list[dict[str, Any]]:
