@@ -138,7 +138,7 @@ sana_checkpoint_compare / wan_robotics_checkpoint_eval）拼错 key 静默放行
 0 error；1 个 yaml 是非实验文件）。每个 sprint 结束 diff 必须为空，或差异逐条有据。
 现有门：`tests/config` 529 passed / 11s，`python -m vrl.config.lint` 双绿。
 
-### S1 — 先堵洞，不动 schema（**done**；snapshot diff 为空，77 实验逐字节相同）
+### S1 — 先堵洞，不动 schema（**done**；snapshot 门见 §3.2）
 
 落地（决策 A 已由 owner 批准）：
 - `require_no_unknown_keys` 折进 `parse_config`：十个只走 `load_config + parse_config` 的脚本
@@ -167,7 +167,7 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
 `precision._select` 不做过渡替换（`_select` 把 None 当缺省、`cfg_path` 不把 None 当缺省，
 语义不同），直接在 S2 随 precision 定型删除。
 
-### S2 — precision 定型（**done**；snapshot diff 为空）
+### S2 — precision 定型（**done**；snapshot 门见 §3.2）
 
 - `precision.py`：六个零实例化的 dataclass 换成六个 pydantic section
   （`PrecisionConfig` / `TrainingPrecisionConfig` / `RolloutPrecisionConfig` /
@@ -192,7 +192,7 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
   `parse_config(...).precision`（走同一道门），"两种输入形状必须一致"的 8 个用例随 `_select`
   一起消失（只剩一种形状），改为一个"resolver 拒绝非 section 输入"的负向用例。
 
-### S3 — actor / trainer 定型（**done**；snapshot diff 为空）
+### S3 — actor / trainer 定型（**done**；snapshot 门见 §3.2）
 
 - `ActorSection` / `TrainerSection` 改成真 model（`ClosedConfigBase`）：每个标量一个显式
   typed 字段（`StrictInt`/`StrictBool`/`Literal`），**嵌套块直接用消费它的运行时 dataclass 作
@@ -218,7 +218,7 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
   "离线入口消费哪些键"的刻意隔离表，与 model/sampling 的 family-select 不同（离线只有一个
   变体），做成 kind-select 变体是为形状一致而加机器，不做。
 
-### S4 — distributed / data / rollout 定型（**done**；snapshot diff 为空；决策 B 已由 owner 批准）
+### S4 — distributed / data / rollout 定型（**done**；snapshot 门见 §3.2；决策 B 已由 owner 批准）
 
 - `distributed.resources: DistributedResourceConfig | None`——消费它的 dataclass 直接做 section
   类型（与 S3 同款），pydantic 在 parse 时构造/校验；`gpu_pool` / `reward.device` /
@@ -245,7 +245,7 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
 - `vrl/run.py` 两处 `resolve_distributed_resources(cfg)` 改传 `built.root`：`resolve_online_run` 里
   raw `cfg` 现在只剩 `build_configs(cfg)` 一处消费。
 
-### S5a — 拆 walker（**done**；snapshot diff 为空）
+### S5a — 拆 walker（**done**；snapshot 门见 §3.2）
 
 - `algorithm` 是最后一个靠 walker 的 `select`/`variants` 才能判 unknown-key 的 section。改成
   `AlgorithmConfig(kind, kl_reward_coef, hyperparameters)`：一个 before-validator 按 `kind` 选运行时
@@ -269,7 +269,7 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
   （其中两个参数值本来就不合法——`add_kl_coefficient=0.2` 给 bool 字段、`segment_weights=[1.0]`
   给 dict 字段——旧路径从不校验值）。
 
-### S5b — 拆访问器（**done**；snapshot diff 为空）
+### S5b — 拆访问器（**done**；snapshot 门见 §3.2）
 
 - `cfg_get` / `cfg_path`（`vrl/utils/config.py`）、`require` / `optional_none` / `path_exists` /
   `_select_field`（`vrl/config/validation.py`）、`_set_cfg_path`（checkpointing）全部删除。
@@ -351,6 +351,50 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
   `SamplingSection`。
 - `vrl/scripts/eval/sana_aesthetic_report.normalize_run_config` 仍持有一台手写递归 dict differ
   （`_first_config_difference`）——它比较的是两份 resolved dict，与 schema 无关，故未动。
+
+## 3.2 Rebase 与快照门修正（2026-09-05）
+
+八个提交先在 `origin/main @ fe0ed88e`（上游新进 58 个提交）之上重放，再在 `66be4ac3`（又 5 个：
+生成协议 / CheckpointTarget / DenoiseRequest 定型）之上重放一次。冲突集中在上游同期重写的
+几处，处理原则不变——上游结构为底，本 program 的"读 parsed root"落上去：
+
+- `RewardConfig.inference`（上游新增的 `dict[str, RewardInferenceConfig]` 段）保持 typed；上游
+  `reward_inference_configs_from_cfg` 的调用点改走 `RewardRuntimeConfig.from_cfg(root.reward)`。
+- `TrainerSection.replay_parity`（上游新增）进 typed section，`TrainerConfig.from_root` 一并投影。
+- Anima 生成脚本：上游把 `max_sequence_length` 挪进 `model.executor`（`GenericDiffusionBatchExecutor`
+  的 `default_*` 语义）。`resolve_eval_sampling` 的 family 键（`num_frames` / `fps` /
+  `max_sequence_length`）因此在 `sampling` 未声明时回退到 `model.executor`——这是配置声明的值，
+  不是脚本默认；两处都没有仍然报 `config missing required field: sampling.<name>`。
+  `tests/scripts/eval/test_sampling.py` 钉住这三种情形。
+- lint 对 `???` 模板实验（`anima_preview3/online_grpo*`）只跳过缺失值本身，旁边的 unknown key
+  照报（§S5a 的 `experiment_parse_error`）。
+- 上游把 Anima 的 `AnimaSampling` 合并成 `denoise_generation.ImageSampling`，并带了一个
+  `from_config`（`max_sequence_length` 缺省 128——正是决策 C 要消灭的脚本默认）。它改为
+  `ImageSampling.from_root(root, overrides=...)`，经 `resolve_eval_sampling` 投影、字段由
+  `fields(cls)` 派生；Anima 生成脚本与 `image_checkpoint_eval` 共用这一个入口，脚本层再无 sampling
+  默认值。`image_checkpoint_eval` 对独立 eval policy 文件的两处 `OmegaConf.select`（`data.eval_manifest`、
+  `reward`）保留：那是一份只含 reward/data 的局部策略文档，不是 RootConfig，reward 部分已过
+  `RewardConfig.model_validate`。
+
+**快照门的修正。** 各 sprint 记录里的"snapshot diff 为空"来自一次错误的调用方式：
+`python scratchpad/config_snapshot.py` 以脚本所在目录为 `sys.path[0]`，`import vrl` 落到了机器上
+另一份 editable 安装（`~/Desktop/wm-infra`），于是每一步都在拿同一份无关代码和自己比。那些
+逐步结论作废。两次 rebase 后都用 `PYTHONPATH=<repo>` 对 `origin/main` worktree 与本分支各跑一次，
+72 个实验（上游删了 5 个 anima 实验；2 个 `???` 模板两边同样报缺失）：
+
+| 比较对象 | 结果 |
+|---|---|
+| `compose` 后的 merged YAML | 72/72 逐字节相同 |
+| `BuiltConfigs.algorithm` / `precision` / `resume` / `reward` / `trainer` | 72/72 相同 |
+| `BuiltConfigs.root`（parsed `RootConfig` dump） | 70 个不同——全部是 typed section 物化出来的默认值（`actor.optim.adam_beta1` 等 81 条新叶子）与 `algorithm.hyperparameters` 的嵌套；共有叶子路径上唯一的值变化是 `algorithm.sft_weight: None → 0.0`（runtime dataclass 默认，`built.algorithm` 两边一致） |
+
+这一次是对八个提交合起来的端到端比较，比逐步比较更强，作为本 program 的零行为变化证据。
+教训已写进 snapshot 工具（先 `sys.path.insert(0, cwd)` 并打印 `vrl.__file__`）。
+
+Gates（第二次 rebase 后，CPU）：`tests/config tests/data tests/quality tests/models tests/nn
+tests/algorithms tests/trajectory` 1856 passed；`tests/scripts tests/rollouts tests/generation
+tests/trainers tests/ray tests/rewards` 2444 passed（另 1 例 FSDP gather 测试因 rendezvous 端口 EADDRINUSE 失败，单独重跑 6/6 通过）；`python -m vrl.config.lint` clean；ruff 在分支
+触及的 106 个 `.py` 上 clean。
 
 ## 4. 明确不做
 
