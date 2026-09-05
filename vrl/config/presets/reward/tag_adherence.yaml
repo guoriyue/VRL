@@ -1,0 +1,22 @@
+# Tag adherence reward — WD14 SwinV2 v3 tagger recall over the prompt's own
+# danbooru tags, CPU, deterministic. Every prompt row must carry
+# `metadata.adherence_tags` (produced by the dataset builder, see
+# dataset/anime_safety_c_adherence); a row without it fails the reward loudly
+# rather than scoring 0. Chosen because judge rewards were too noisy to drive
+# GRPO while tag recall on NSFW prompts is a measured, closable gap.
+distributed:
+  resources:
+    reward:
+      # onnxruntime CPU provider; keep it off the trainer GPU.
+      device: cpu
+
+reward:
+  components:
+    tag_adherence: 1.0
+  kwargs:
+    tag_adherence:
+      model_repo: SmilingWolf/wd-swinv2-tagger-v3
+      # imgutils' default general-tag threshold; the headroom baseline was
+      # measured at this value.
+      threshold: 0.35
+      metadata_key: adherence_tags
