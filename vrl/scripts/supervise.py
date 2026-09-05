@@ -143,6 +143,12 @@ class HealthGateConfig:
     continuous: ContinuousHealthPolicy | None = None
     min_reward_std: float = 1e-4
     min_grad_norm: float = 1e-8
+    # A pre-clip gradient-norm spike is the earliest observable signal of a
+    # diverging full-parameter update: the norm leaves its steady band one epoch
+    # before loss/reward go non-finite, so catching it here saves the run's last
+    # trustworthy checkpoint. Left at inf (disabled) because the healthy band is
+    # recipe-specific; an operator sets it from the run's own observed range.
+    max_grad_norm: float = math.inf
 
     def __post_init__(self) -> None:
         required_columns = set(_REQUIRED_HEALTH_METRICS)
@@ -165,6 +171,14 @@ class HealthGateConfig:
         ):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
                 raise ValueError(f"{name} must be finite and >= 0")
+        # Validated apart from the loop above: inf is this field's "disabled".
+        if math.isnan(self.max_grad_norm) or self.max_grad_norm <= 0:
+            raise ValueError("max_grad_norm must be > 0")
+        if self.max_grad_norm <= self.min_grad_norm:
+            raise ValueError(
+                f"max_grad_norm must be > min_grad_norm "
+                f"({self.max_grad_norm:g} <= {self.min_grad_norm:g})",
+            )
 
     @classmethod
     def from_cli(
@@ -225,6 +239,7 @@ class HealthGateConfig:
             continuous=continuous,
             min_reward_std=args.health_min_reward_std,
             min_grad_norm=args.health_min_grad_norm,
+            max_grad_norm=args.health_max_grad_norm,
         )
 
 
@@ -400,6 +415,10 @@ class MetricsHealthGate:
             reasons.append(
                 f"grad_norm {grad_norm:g} is below minimum {self.config.min_grad_norm:g}",
             )
+        if grad_norm is not None and grad_norm > self.config.max_grad_norm:
+            reasons.append(
+                f"grad_norm {grad_norm:g} is above maximum {self.config.max_grad_norm:g}",
+            )
         return reasons, parsed
 
     def _write_verdict(
@@ -433,6 +452,11 @@ class MetricsHealthGate:
                 ),
                 "min_reward_std": self.config.min_reward_std,
                 "min_grad_norm": self.config.min_grad_norm,
+                # None, not inf: the verdict is a machine-readable contract and
+                # ``Infinity`` is not valid JSON for a non-Python reader.
+                "max_grad_norm": (
+                    None if math.isinf(self.config.max_grad_norm) else self.config.max_grad_norm
+                ),
             },
         }
         path = self.output_dir / HEALTH_VERDICT_NAME
@@ -907,9 +931,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Minimum healthy gradient norm (default: {health_defaults.min_grad_norm:g}).",
     )
     parser.add_argument(
+        "--health-max-grad-norm",
+        type=_bounded_number(float, 0, exclusive=True),
+        default=health_defaults.max_grad_norm,
+        help="Maximum healthy PRE-CLIP gradient norm; a spike above the run's steady "
+        "band is the earliest warning of a diverging update (default: disabled).",
+    )
+    parser.add_argument(
         "overrides",
         nargs="*",
-        help="OmegaConf dotlist overrides forwarded to vrl-train.",
+        help="Ordered +group=option presets and dotlist overrides forwarded to vrl-train.",
     )
     return parser
 
