@@ -33,7 +33,7 @@ defaults:
 
 actor:
   optim:
-    lr: 1.0e-5
+    lr: 1.0e-4            # reference: train.learning_rate = 1e-4
   # All six prompt groups per streaming microbatch (GAS=1): per-sample replay
   # keeps GPU activations bounded regardless, and collecting the whole update
   # before one backward pass cuts phase park/wake transitions from 18 to 3 per
@@ -43,16 +43,34 @@ actor:
   # 8 of this smoke).
   microbatch_size: 6
   ppo_epochs: 1
-  # Paper parity (Flash-GRPO trains 51% of the 20 denoise steps) and half the
-  # replay compute vs the repo-wide 0.99 default.
-  timestep_fraction: 0.51
+  # Mechanism 1: train EXACTLY the rollout's stochastic step. The trained
+  # subset is the recorded window, not a trainer-side draw, so
+  # timestep_fraction must be 1.0 (the sde_window validation refuses any other
+  # value). The earlier strided/0.51 pairing trained a FIXED even-indexed
+  # subset every update, including the near-terminal step where cps collapses
+  # std_dev_t — see the rollout block.
+  timestep_selection: sde_window
+  timestep_fraction: 1.0
   # Mandatory at this geometry: the 32,760-token replay backward OOM'd a
-  # 44.4GiB L40S under compile-alone (measured 2026-08-16); checkpointing
-  # excludes compile, so the run is eager end to end.
+  # 44.4GiB L40S under compile-alone (measured 2026-08-16). Compile is scoped
+  # to the rollout instead (see model.torch_compile).
   gradient_checkpointing: full
+  ema:
+    enable: true          # reference: EMAModuleWrapper(trainable_parameters,
+    decay: 0.9            #   decay=0.9,
+    update_interval: 8    #   update_step_interval=8)
 
 algorithm:
-  kl_coef: 0.004
+  kind: flash_grpo        # rectified loss; the three mechanisms of arXiv:2605.15980
+  # The paper's 1e-3. FlashGRPOConfig already defaults to it, but
+  # recipe/online/denoise_grpo.yaml sets 1e-4 and a YAML value shadows a
+  # dataclass default, so the paper value only takes effect when written here.
+  # 1e-4 sits BELOW this recipe's rollout-vs-replay numeric drift: run50
+  # measured pre_update_clip_fraction=0.78 before a single weight update, i.e.
+  # the clip was gating on noise and randomly zeroing ~40% of the gradient.
+  # Watch that metric on update 1 — it must start near zero.
+  clip_ratio: 1.0e-3
+  kl_coef: 0.0            # reference: no KL term; clip_ratio is the rail
   # Flash-GRPO normalizes with the std of the whole 96-sample update; under
   # FSDP this is the true cross-rank std (advantages.py all-reduces it).
   global_std: true
@@ -60,7 +78,11 @@ algorithm:
 model:
   local_files_only: true
   torch_compile:
-    enable: false
+    enable: true
+    # Rollout only: the FSDP2 trainer runs eager + gradient checkpointing,
+    # both of which inductor refuses. Measured 446s -> 324s per 4-video group.
+    scope: rollout
+    mode: default
 
 distributed:
   training:
@@ -88,9 +110,27 @@ rollout:
   prompts_per_batch: 6
   n_samples_per_prompt: 4
   samples_per_generation_batch: 1
-  noise_level: 0.7
+  # The window machinery lives on the SDE branch of the denoise loop; wan's
+  # family default is 'native', which bypasses it. 'native' is not merely a
+  # different sampler here: it stores the scheduler's DETERMINISTIC step as the
+  # action and then scores it under the SDE proposal, so the "log-prob" is a
+  # fixed quadratic in the model output rather than the density of a draw.
+  # E[grad log pi] != 0 under it, and the negative-advantage branch has no
+  # equilibrium. That is why run50 descended on its own objective.
+  denoise_mode: sde
+  # flow_grpo SDE at noise_level 1.0 is the reference parameterization
+  # (std_dev_t = sigmas[1] * sigma) and its log-prob carries the 1/(2*sigma^2)
+  # normalizer. cps omits that normalizer while compute_kl_divergence keeps it,
+  # and cps derives std_dev_t from sigma_prev, which collapses to 2.7e-3 at the
+  # near-terminal step — inflating the effective KL weight there by ~7e4.
+  noise_level: 1.0
   sde:
-    type: cps
+    type: flow_grpo
+    # Mechanisms 1+2: ONE stochastic step per trajectory, drawn once per
+    # generation request so every sample of a prompt group shares it
+    # (iso-temporal grouping). Reference: index ~ U{0..9}.
+    window_size: 1
+    window_range: [0, 10]
   # 24 trajectories x 81 frames per rank per update: bf16 host-side leaves or
   # host RAM becomes the wall before GPU memory does.
   trajectory_storage:
