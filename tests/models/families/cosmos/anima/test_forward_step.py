@@ -69,5 +69,6 @@ def test_anima_forward_step_uses_const_flow_derivative_contract() -> None:
     assert out["noise_pred_cond"] == torch.ones_like(latents)
     assert out["noise_pred_uncond"] == torch.zeros_like(latents)
     assert out["noise_pred"] == torch.full_like(latents, 2.0)
+    assert model.diffusion_pretraining_prediction(out) is out["noise_pred_cond"]
     assert torch.equal(transformer.calls[0]["hidden_states"], latents)
     assert transformer.calls[0]["timestep"] == torch.tensor([0.7])

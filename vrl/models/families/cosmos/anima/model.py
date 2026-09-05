@@ -347,6 +347,16 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
             "noise_pred_uncond": noise_pred_uncond,
         }
 
+    def diffusion_pretraining_prediction(self, values: dict[str, Any]) -> Any:
+        """Use Anima's raw conditional flow velocity for clean-data training.
+
+        Anima applies classifier-free guidance directly to raw flow velocities.
+        The guided value is an inference extrapolation, while the checkpoint's
+        diffusion objective was learned on the conditional branch itself.
+        """
+
+        return values["noise_pred_cond"]
+
     def export_batch_context(self, state: AnimaSamplingState) -> dict[str, Any]:
         return {
             "guidance_scale": state.guidance_scale,
@@ -381,6 +391,33 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             padding_mask=shared_replay_tensor(replay_tensors, batch_context, "padding_mask"),
         )
+
+    def encode_video_to_latents(self, video: torch.Tensor) -> torch.Tensor:
+        """Encode clean images into Anima's scheduler-domain latents.
+
+        The offline clean-target encoder represents an image as a one-frame
+        ``[B, C, T, H, W]`` video. Using the deterministic posterior mode makes
+        a generated anchor shard reproducible, while this normalization is the
+        exact inverse of ``decode_latents`` below.
+        """
+
+        x = (video.to(self.vae.dtype) * 2.0 - 1.0).to(self.device)
+        with torch.no_grad():
+            encoded = torch.cat(
+                [self.vae.encode(sample.unsqueeze(0)).latent_dist.mode() for sample in x],
+                dim=0,
+            )
+        latents_mean = (
+            torch.tensor(self.vae.config.latents_mean)
+            .view(1, self.vae.config.z_dim, 1, 1, 1)
+            .to(encoded.device, encoded.dtype)
+        )
+        latents_std = (
+            torch.tensor(self.vae.config.latents_std)
+            .view(1, self.vae.config.z_dim, 1, 1, 1)
+            .to(encoded.device, encoded.dtype)
+        )
+        return (encoded - latents_mean) / latents_std
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         def _transform(batch: torch.Tensor) -> torch.Tensor:
