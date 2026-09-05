@@ -56,23 +56,6 @@ def test_fsdp_parses_torchrun_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ctx.device == torch.device("cuda:1")
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [("distributed", False), ("is_primary", False)],
-)
-def test_context_rejects_stored_derived_flags(field: str, value: bool) -> None:
-    kwargs = {
-        "strategy": "ddp",
-        "rank": 1,
-        "world_size": 2,
-        "device": torch.device("cpu"),
-        field: value,
-    }
-
-    with pytest.raises(TypeError, match=field):
-        DistributedTrainingContext(**kwargs)
-
-
 def test_fsdp_rank0_is_primary() -> None:
     ctx = DistributedTrainingContext.from_root(
         parse_config(_cfg({"strategy": "fsdp", "gpus_per_node": 2})),

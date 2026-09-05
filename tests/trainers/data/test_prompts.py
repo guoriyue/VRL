@@ -49,8 +49,3 @@ def test_jsonl_bytes_loader_rejects_non_object_row_with_line_number() -> None:
 
     with pytest.raises(ValueError, match=r"snapshot.jsonl:3: JSONL rows must be objects"):
         load_prompt_examples_from_jsonl_bytes(payload, source="snapshot.jsonl")
-
-
-def test_jsonl_bytes_loader_requires_immutable_bytes() -> None:
-    with pytest.raises(TypeError, match="must be immutable bytes"):
-        load_prompt_examples_from_jsonl_bytes(bytearray(b'{"prompt":"x"}\n'))  # type: ignore[arg-type]

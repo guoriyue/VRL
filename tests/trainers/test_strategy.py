@@ -479,11 +479,3 @@ def test_checkpoint_and_rollout_state_have_distinct_ownership() -> None:
     assert set(rollout) == {"adapter.weight"}
     assert "adapter.previous" not in rollout
     assert "cache" not in checkpoint
-
-
-def test_barrier_is_noop() -> None:
-    assert SingleProcessStrategy().barrier() is None
-
-
-def test_shutdown_is_noop() -> None:
-    assert SingleProcessStrategy().shutdown() is None

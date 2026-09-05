@@ -111,8 +111,6 @@ def load_prompt_examples_from_jsonl_bytes(
     into ``PromptExample.metadata`` after any explicit metadata entries.
     """
 
-    if type(payload) is not bytes:
-        raise TypeError("prompt manifest payload must be immutable bytes")
     context = str(source)
     try:
         text = payload.decode("utf-8")

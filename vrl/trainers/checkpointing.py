@@ -315,17 +315,11 @@ def _resolve_adapter_exports(
 
     if exports is None:
         return {}
-    if not isinstance(exports, Mapping):
-        raise TypeError("adapter_exports must be a mapping")
     roots = require_trainable_modules(bundle)
     resolved: dict[str, _ResolvedAdapterExport] = {}
     output_names: dict[PurePosixPath, str] = {}
     effective_output_names: dict[PurePosixPath, str] = {}
     for name, export in exports.items():
-        if not isinstance(export, AdapterExport):
-            raise TypeError(
-                f"adapter export {name!r} must be an AdapterExport, got {type(export).__name__}",
-            )
         normalized_name = _safe_relative_output_path(
             name,
             field="adapter export name",
@@ -386,18 +380,9 @@ def _checkpoint_stage_agreement(strategy: Any | None, succeeded: bool) -> bool:
     if strategy is None:
         return succeeded
     agreement = getattr(strategy, "all_ranks_succeeded", None)
-    context = getattr(strategy, "context", None)
-    world_size = int(getattr(context, "world_size", 1))
-    if not callable(agreement):
-        if world_size > 1:
-            raise TypeError(
-                "multi-rank checkpoint strategy must expose all_ranks_succeeded()",
-            )
+    if agreement is None:
         return succeeded
-    result = agreement(succeeded)
-    if not isinstance(result, bool):
-        raise TypeError("strategy.all_ranks_succeeded() must return bool")
-    return result
+    return agreement(succeeded)
 
 
 def _checkpoint_ranks_agree_bool(
@@ -418,11 +403,7 @@ def _checkpoint_ranks_agree_bool(
 def _checkpoint_trainable_parameters(bundle: Any) -> list[Any]:
     """Return EMA parameters in the same order used by the trainer model."""
 
-    model = getattr(bundle, "model", None)
-    parameters = getattr(model, "parameters", None)
-    if not callable(parameters):
-        raise TypeError("EMA artifact export requires bundle.model.parameters()")
-    ordered = [parameter for parameter in parameters() if parameter.requires_grad]
+    ordered = [parameter for parameter in bundle.model.parameters() if parameter.requires_grad]
 
     root_parameter_ids = {
         id(parameter)
@@ -446,10 +427,6 @@ def _adapter_relative_state(
 ) -> dict[str, Any]:
     """Project one gathered checkpoint root into an adapter module namespace."""
 
-    if any(not isinstance(name, str) for name in root_state):
-        raise TypeError(
-            f"adapter export {artifact_name!r} state keys must be strings",
-        )
     if not prefix:
         state = dict(root_state)
     else:
@@ -505,29 +482,14 @@ def save_training_checkpoint(
     _require_checkpoint_family(family, field="family")
     if not isinstance(model_identity, dict) or not model_identity:
         raise ValueError("model_identity must be a non-empty dict")
-    is_primary = True
-    if strategy is not None:
-        context = getattr(strategy, "context", None)
-        if context is None or not isinstance(getattr(context, "is_primary", None), bool):
-            raise TypeError("checkpoint strategy must expose context.is_primary as bool")
-        is_primary = context.is_primary
+    is_primary = True if strategy is None else strategy.context.is_primary
     resolved_exports: dict[str, _ResolvedAdapterExport] = {}
     ema_has_updates = False
     setup_failure: BaseException | None = None
     try:
         resolved_exports = _resolve_adapter_exports(bundle, adapter_exports)
         if resolved_exports and export_ema is not None:
-            try:
-                ema_has_updates = export_ema.has_updates
-            except AttributeError as error:
-                raise TypeError(
-                    "export_ema must expose a bool has_updates property",
-                ) from error
-            if not isinstance(ema_has_updates, bool):
-                raise TypeError("export_ema.has_updates must be a bool property")
-            for method_name in ("copy_ema_to", "copy_temp_to"):
-                if not callable(getattr(export_ema, method_name, None)):
-                    raise TypeError(f"export_ema must expose {method_name}()")
+            ema_has_updates = export_ema.has_updates
     except BaseException as error:
         setup_failure = error
     if not _checkpoint_stage_agreement(strategy, setup_failure is None):
@@ -1267,10 +1229,7 @@ def _checkpoint_state_for_restore(
             strict=strict,
         )
         module = unwrap_compile_and_ddp(wrapped)
-        state_dict = getattr(module, "state_dict", None)
-        if not callable(state_dict):
-            raise TypeError(f"checkpoint module {root_name!r} does not expose state_dict()")
-        runtime_state = state_dict()
+        runtime_state = module.state_dict()
         known_names = frozenset(str(name) for name in runtime_state)
         owned_names = checkpoint_owned_state_names(module)
         saved_names = frozenset(saved)
@@ -1435,10 +1394,7 @@ def export_checkpoint_state(bundle: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for name, wrapped in modules.items():
         module = unwrap_compile_and_ddp(wrapped)
-        state_dict = getattr(module, "state_dict", None)
-        if not callable(state_dict):
-            raise TypeError(f"checkpoint module {name!r} does not expose state_dict()")
-        module_state = state_dict()
+        module_state = module.state_dict()
         owned_names = checkpoint_owned_state_names(module)
         if not owned_names:
             raise ValueError(f"checkpoint module {name!r} has no checkpoint-owned state")
@@ -1486,10 +1442,7 @@ def load_checkpoint_state(
         selected = {key: value for key, value in module_state.items() if key in owned_names}
         if not selected:
             continue
-        load_state_dict = getattr(module, "load_state_dict", None)
-        if not callable(load_state_dict):
-            raise TypeError(f"checkpoint module {name!r} does not expose load_state_dict()")
-        load_state_dict(selected, strict=False)
+        module.load_state_dict(selected, strict=False)
 
 
 def load_full_checkpoint_state(
@@ -1516,10 +1469,7 @@ def load_full_checkpoint_state(
         module_state = state[name]
         if not isinstance(module_state, dict):
             raise TypeError(f"checkpoint module {name!r} state must be a dict")
-        state_dict = getattr(module, "state_dict", None)
-        if not callable(state_dict):
-            raise TypeError(f"checkpoint module {name!r} does not expose state_dict()")
-        known_names = frozenset(str(key) for key in state_dict())
+        known_names = frozenset(str(key) for key in module.state_dict())
         missing_keys = sorted(known_names - set(module_state))
         extra_keys = sorted(set(module_state) - known_names)
         if strict and (missing_keys or extra_keys):
@@ -1533,10 +1483,7 @@ def load_full_checkpoint_state(
     # checkpoint cannot partially mutate an earlier module.
     for name in sorted(validated):
         module, module_state = validated[name]
-        load_state_dict = getattr(module, "load_state_dict", None)
-        if not callable(load_state_dict):
-            raise TypeError(f"checkpoint module {name!r} does not expose load_state_dict()")
-        load_state_dict(module_state, strict=strict)
+        module.load_state_dict(module_state, strict=strict)
 
 
 def _select_owned_checkpoint_state(

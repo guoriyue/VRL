@@ -114,16 +114,11 @@ def build_trainable_state_sync_getter(bundle: Any) -> TrainableStateGetter:
 def flatten_trainable_module_state(modules: Mapping[str, Any]) -> dict[str, Any]:
     """Return trainable ``module_name.parameter_name`` keys for rollout sync."""
 
-    if not isinstance(modules, Mapping) or not modules:
-        raise ValueError("trainable modules must be a non-empty mapping")
     state: dict[str, Any] = {}
     for module_name, module in modules.items():
         name = str(module_name)
         module = unwrap_compile_and_ddp(module)
-        state_dict = getattr(module, "state_dict", None)
-        if not callable(state_dict):
-            raise TypeError(f"trainable module {name!r} does not expose state_dict()")
-        state.update(select_trainable_state(module, name, state_dict()))
+        state.update(select_trainable_state(module, name, module.state_dict()))
     if not state:
         raise ValueError("trainable module state is empty")
     return state

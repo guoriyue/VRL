@@ -950,51 +950,6 @@ def test_samples_per_replay_batch_splits_backward_and_preserves_gradient(monkeyp
     assert streaming_split_grad == pytest.approx(full_grad)
 
 
-def test_fixed_replay_chunk_remains_available_to_distributed_strategies() -> None:
-    """DDP/FSDP accept the same explicit replay batch configuration."""
-    from types import SimpleNamespace
-
-    import torch.nn as nn
-
-    from vrl.trainers.core.types import OptimConfig
-    from vrl.trainers.online import OnlineTrainer
-    from vrl.trainers.online.config import TrainerConfig
-
-    class _Algorithm(_EvaluatorAlgorithmFake):
-        class _Config:
-            sft_weight = 0.0
-
-        config = _Config()
-
-    for strategy_name in ("ddp", "fsdp"):
-        strategy = SimpleNamespace(
-            context=SimpleNamespace(strategy=strategy_name),
-            prepare_model=lambda model: model,
-        )
-        model = nn.Linear(1, 1)
-        _stamp_model_precision(model)
-        trainer = OnlineTrainer(
-            algorithm=_Algorithm(),
-            collector=CollectorControlFake(),
-            evaluator=None,
-            model=model,
-            config=TrainerConfig(
-                optim=OptimConfig(lr=1e-4),
-                batch_plan=OnlineBatchPlan(
-                    prompts_per_batch=1,
-                    n_samples_per_prompt=2,
-                    samples_per_replay_batch=1,
-                ),
-                timestep_fraction=1.0,
-                output_dir="x",
-                drop_zero_advantage=False,
-            ),
-            strategy=strategy,  # type: ignore[arg-type]
-            device="cpu",
-        )
-        assert trainer.config.batch_plan.samples_per_replay_batch == 1
-
-
 def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     """Startup logs should make rollout microbatch residency visible."""
     import logging

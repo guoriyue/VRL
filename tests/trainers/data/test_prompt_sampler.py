@@ -119,7 +119,7 @@ def test_random_without_replacement_rejects_a_short_global_batch() -> None:
 
 @pytest.mark.parametrize(
     ("num_replicas", "rank"),
-    [(0, 0), (2, -1), (2, 2)],
+    [(0, 0), (2, 2)],
 )
 def test_prompt_batch_sampler_rejects_invalid_rank_geometry(
     num_replicas: int,

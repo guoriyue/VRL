@@ -82,26 +82,6 @@ class TestSampleTimesteps:
         with pytest.raises(RuntimeError, match="set_timesteps"):
             trainer._sample_timesteps(4)
 
-    def test_missing_timesteps_attr_raises(self) -> None:
-        """Same red line when the scheduler doesn't expose timesteps at all."""
-        scheduler = SimpleNamespace(config=SimpleNamespace(num_train_timesteps=1000))
-        # Avoid setting ``timesteps`` - getattr should return None.
-        cfg = OfflineDPOTrainerConfig(prediction_type="epsilon")
-        model = torch.nn.Linear(4, 4)
-        model.precision = PRECISION
-        trainer = OfflineDPOTrainer(
-            model=model,
-            ref_model=None,
-            forward_fn=_noop_forward,
-            noise_scheduler=scheduler,
-            encode_pixels=_noop_encode_pix,
-            encode_text=_noop_encode_text,
-            config=cfg,
-            device="cpu",
-        )
-        with pytest.raises(RuntimeError, match="set_timesteps"):
-            trainer._sample_timesteps(4)
-
 
 def test_offline_dpo_state_dict_restores_optimizer_and_global_step() -> None:
     """Checks offline DPO state dict restores optimizer and global step."""

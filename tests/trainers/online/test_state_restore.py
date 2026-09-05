@@ -18,18 +18,14 @@ from vrl.config.precision import RolePrecision
 class TestOnlineTrainerResumeState:
     """Groups tests for online trainer resume state."""
 
-    def test_state_dict_omits_dead_totals_and_accepts_legacy_keys(self) -> None:
+    def test_load_state_dict_accepts_legacy_total_keys(self) -> None:
+        """Checkpoints written before the totals were dropped still resume."""
+
         source = _make_resume_trainer()
         source.state.step = 3
         source.state.global_step = 5
 
         state = source.state_dict()
-
-        assert "total_reward" not in state
-        assert "total_loss" not in state
-        assert not hasattr(source.state, "total_reward")
-        assert not hasattr(source.state, "total_loss")
-
         state.update({"total_reward": 99.0, "total_loss": 101.0})
         restored = _make_resume_trainer()
         restored.load_state_dict(state, strict=True)

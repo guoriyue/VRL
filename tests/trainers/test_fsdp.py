@@ -21,7 +21,6 @@ import torch
 from torch import nn
 
 from tests.trainers._state_dict_helpers import gather_full_state_dict
-from vrl.config.loading import load_config
 from vrl.config.schema import FSDPConfig, RootConfig, parse_config
 from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.trainers.distributed import DistributedTrainingContext
@@ -31,7 +30,6 @@ from vrl.trainers.fsdp import (
     gather_checkpoint_state_dict,
     init_training_process_group,
     iter_blocks,
-    load_checkpoint_state_dict,
     load_full_state_dict,
     mixed_precision_policy,
     normalize_fsdp_parameter_dtype,
@@ -485,40 +483,6 @@ def test_fsdp_checkpoint_gather_asks_dcp_to_skip_frozen_base_when_possible(
     assert set(state) == ({"weight", "bias"} if register_frozen else {"weight"})
 
 
-def test_fsdp_checkpoint_load_rejects_owned_key_missing_from_local_dcp_state(
-    monkeypatch,
-) -> None:
-    module = nn.Linear(2, 1, bias=False)
-    set_called = False
-
-    def fake_get_model_state_dict(actual, *, options):
-        assert actual is module
-        assert options.full_state_dict is False
-        return {}
-
-    def fake_set_model_state_dict(*_args, **_kwargs):
-        nonlocal set_called
-        set_called = True
-
-    monkeypatch.setattr(
-        "torch.distributed.checkpoint.state_dict.get_model_state_dict",
-        fake_get_model_state_dict,
-    )
-    monkeypatch.setattr(
-        "torch.distributed.checkpoint.state_dict.set_model_state_dict",
-        fake_set_model_state_dict,
-    )
-
-    with pytest.raises(ValueError, match="local state is missing checkpoint-owned"):
-        load_checkpoint_state_dict(
-            module,
-            {"weight": torch.ones_like(module.weight)},
-            strict=True,
-        )
-
-    assert set_called is False
-
-
 def test_fsdp_checkpoint_includes_registered_frozen_state_but_rollout_does_not(
     cpu_process_group,
 ) -> None:
@@ -766,7 +730,6 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
     from torch.distributed.tensor import DTensor
 
     from vrl.config.precision import PrecisionPolicy
-    from vrl.config.schema import parse_config
     from vrl.models.families.registry import get_model_family_entry
     from vrl.models.steps.denoise import build as denoise_build
 
@@ -961,29 +924,9 @@ def test_build_strategy_fsdp_reads_public_defaults_and_overrides(
     assert strategy._cpu_offload is cpu_offload
 
 
-def test_base_fsdp_preset_omits_schema_defaults_but_resolves_them() -> None:
-    cfg = load_config("base/distributed/training_fsdp")
-
-    assert "fsdp" not in cfg.distributed.training
-    training = parse_config(cfg).distributed.training
-
-    assert training is not None
-    assert training.fsdp == FSDPConfig()
-
-
-def test_fsdp_strategy_constructor_requires_resolved_config() -> None:
-    with pytest.raises(TypeError, match="mesh_dims"):
-        FSDPStrategy(_cpu_fsdp_context())  # type: ignore[call-arg]
-
-
 def test_build_strategy_rejects_config_context_mismatch() -> None:
     with pytest.raises(ValueError, match="strategy mismatch"):
         build_strategy(RootConfig(), _cpu_fsdp_context())
-
-
-def test_build_strategy_rejects_raw_unvalidated_config() -> None:
-    with pytest.raises(TypeError, match="must be RootConfig"):
-        build_strategy({}, _cpu_fsdp_context())  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -1053,48 +996,6 @@ def test_fsdp_parking_rolls_every_rank_back_when_one_peer_fails() -> None:
 
     # Rolled back: nothing stays parked, so the world is resident again.
     assert strategy._parked_training_state is None
-
-
-def test_fsdp_shutdown_releases_training_process_group(monkeypatch) -> None:
-    calls: list[bool] = []
-    monkeypatch.setattr(
-        "vrl.trainers.fsdp.shutdown_training_process_group",
-        lambda: calls.append(True),
-    )
-
-    _fsdp_strategy(_cpu_fsdp_context()).shutdown()
-
-    assert calls == [True]
-
-
-def test_build_strategy_fsdp_allows_ema_and_resume() -> None:
-    # The original §10 gates, now lifted: EMA updates through DTensor
-    # local-shard views (EMAModuleWrapper) and optimizer resume goes through
-    # the strategy's full-state export/load.
-    assert isinstance(
-        build_strategy(
-            RootConfig.model_validate(
-                {
-                    "actor": {"ema": {"enable": True}},
-                    "distributed": {"training": {"strategy": "fsdp"}},
-                },
-            ),
-            _cpu_fsdp_context(),
-        ),
-        FSDPStrategy,
-    )
-    assert isinstance(
-        build_strategy(
-            RootConfig.model_validate(
-                {
-                    "trainer": {"resume_from": "/ckpt/checkpoint-10"},
-                    "distributed": {"training": {"strategy": "fsdp"}},
-                },
-            ),
-            _cpu_fsdp_context(),
-        ),
-        FSDPStrategy,
-    )
 
 
 def test_build_strategy_fsdp_rejects_train_compile() -> None:

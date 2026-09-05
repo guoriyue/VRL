@@ -184,11 +184,6 @@ def test_flatten_strips_nested_compile_inside_a_ddp_wrapper() -> None:
     assert torch.equal(state["adapter.weight"], inner.weight)
 
 
-def test_flatten_empty_mapping_fails_fast() -> None:
-    with pytest.raises(ValueError, match="non-empty mapping"):
-        flatten_trainable_module_state({})
-
-
 def test_flatten_all_frozen_module_fails_fast() -> None:
     module = torch.nn.Linear(2, 1, bias=False)
     module.weight.requires_grad_(False)

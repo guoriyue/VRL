@@ -1037,10 +1037,7 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
     yet built) before constructing ``FSDPStrategy``.
     """
 
-    from vrl.config.schema import RootConfig, TrainingSection
-
-    if not isinstance(config, RootConfig):
-        raise TypeError(f"build_strategy config must be RootConfig, got {type(config).__name__}")
+    from vrl.config.schema import TrainingSection
 
     training = (
         config.distributed.training

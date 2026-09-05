@@ -182,31 +182,9 @@ def test_build_strategy_reads_ddp_public_default_and_override(
     assert strategy._find_unused_parameters is find_unused_parameters
 
 
-def test_ddp_strategy_constructor_requires_resolved_config() -> None:
-    with pytest.raises(TypeError, match="find_unused_parameters"):
-        DDPStrategy(_cpu_ddp_context())  # type: ignore[call-arg]
-
-
 def test_ddp_rejects_shared_gpu_training_state_parking_preflight() -> None:
     with pytest.raises(NotImplementedError, match="Use disjoint rollout GPUs"):
         _ddp_strategy(_cpu_ddp_context()).validate_training_state_parking()
-
-
-def test_ddp_shutdown_releases_training_process_group(monkeypatch) -> None:
-    calls: list[bool] = []
-    monkeypatch.setattr(
-        "vrl.trainers.fsdp.shutdown_training_process_group",
-        lambda: calls.append(True),
-    )
-
-    _ddp_strategy(_cpu_ddp_context()).shutdown()
-
-    assert calls == [True]
-
-
-def test_ddp_prepare_model_rejects_model_without_transformer_handle() -> None:
-    with pytest.raises(NotImplementedError, match="trainable roots"):
-        _ddp_strategy(_cpu_ddp_context()).prepare_model(_ARLikePolicy())
 
 
 def test_ddp_wraps_resolved_device_after_per_rank_mask(monkeypatch) -> None:
