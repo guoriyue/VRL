@@ -5,6 +5,8 @@ command/prompt placeholders, run the ``codex exec`` subprocess (timeout + error
 handling), then parse the judge output. Absolute mode returns clamped ``[0, 1]``
 scores. Reference-listwise mode compares one complete rollout group with its
 frozen base anchor and returns categorical rewards in ``[-2, 2]``.
+Binary-guard mode requires two order-mirrored passes before returning a
+reward of one.
 
 Restored 2026-08-22 (removed in 51c78968) and adapted to the current
 score_batch/InProcessRewardScorer interface. Judge calls fan out over a thread
@@ -114,6 +116,25 @@ class _ReferenceVerdict:
     preference: _ReferencePreference
 
 
+class _BinaryGuardDecision(StrEnum):
+    PASS = "pass"
+    FAIL = "fail"
+
+
+@dataclass(frozen=True, slots=True)
+class _BinaryGuardVerdict:
+    candidate_id: str
+    carrier_grounding: _BinaryGuardDecision
+    image_integrity: _BinaryGuardDecision
+
+    @property
+    def passes(self) -> bool:
+        return (
+            self.carrier_grounding is _BinaryGuardDecision.PASS
+            and self.image_integrity is _BinaryGuardDecision.PASS
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class _CandidateGroup:
     group_id: str
@@ -141,7 +162,8 @@ class CodexImageQARewardModel:
     the schema-path placeholder. ``comparison_mode=reference_listwise`` adds a
     frozen base image to the judge montage but never to the returned rollout
     rows; its categorical rewards are therefore in ``[-2, 2]`` rather than the
-    legacy absolute mode's ``[0, 1]``.
+    legacy absolute mode's ``[0, 1]``. ``comparison_mode=binary_guard`` scores
+    complete rollout groups twice and accepts only order-invariant passes.
     """
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
@@ -168,14 +190,17 @@ class CodexImageQARewardModel:
         if self.comparison_mode not in {
             "absolute",
             "reference_listwise",
+            "binary_guard",
         }:
             raise ValueError(
-                "Codex image-QA comparison_mode must be 'absolute' or 'reference_listwise', "
+                "Codex image-QA comparison_mode must be 'absolute', "
+                "'reference_listwise', or 'binary_guard', "
                 f"got {self.comparison_mode!r}",
             )
         self.reference_data_root = str(cfg.get("reference_data_root", "")).strip()
         self.expected_group_size = int(cfg.get("expected_group_size", 0))
         self.reference_prompt_template = str(cfg.get("reference_prompt_template", ""))
+        self.binary_guard_prompt_template = str(cfg.get("binary_guard_prompt_template", ""))
         if self.comparison_mode == "reference_listwise":
             if not self.reference_data_root:
                 raise ValueError(
@@ -194,6 +219,20 @@ class CodexImageQARewardModel:
                 raise ValueError(
                     "reference_listwise Codex image-QA requires reference_prompt_template",
                 )
+        if self.comparison_mode == "binary_guard":
+            if self.expected_group_size < 2:
+                raise ValueError(
+                    "binary_guard Codex image-QA requires expected_group_size >= 2",
+                )
+            if self.images_per_call != self.expected_group_size:
+                raise ValueError(
+                    "binary_guard Codex image-QA requires images_per_call "
+                    "to equal expected_group_size so a rollout group is never chunked",
+                )
+            if not self.binary_guard_prompt_template.strip():
+                raise ValueError(
+                    "binary_guard Codex image-QA requires binary_guard_prompt_template",
+                )
         scored_rollout_dir = str(cfg.get("scored_rollout_dir", "")).strip()
         self.scored_rollout_dir = Path(scored_rollout_dir) if scored_rollout_dir else None
         self._saved_batch_index = _next_saved_batch_index(self.scored_rollout_dir)
@@ -204,6 +243,8 @@ class CodexImageQARewardModel:
             return []
         if self.comparison_mode == "reference_listwise":
             scores = self._score_batch_reference_listwise(artifacts)
+        elif self.comparison_mode == "binary_guard":
+            scores = self._score_batch_binary_guard(artifacts)
         elif self.images_per_call > 1:
             scores = self._score_batch_grid(artifacts)
         else:
@@ -283,6 +324,136 @@ class CodexImageQARewardModel:
             )
             staging_dir.replace(final_dir)
         self._saved_batch_index += 1
+
+    def _score_batch_binary_guard(
+        self,
+        artifacts: list[Any],
+    ) -> list[dict[str, float]]:
+        """Accept only candidates that pass both checks in both cell orders."""
+
+        groups = self._candidate_groups(artifacts)
+        jobs = [(group, reverse) for group in groups for reverse in (False, True)]
+
+        def run_job(
+            job: tuple[_CandidateGroup, bool],
+        ) -> tuple[str, bool, dict[str, _BinaryGuardVerdict]]:
+            group, reverse = job
+            return (
+                group.group_id,
+                reverse,
+                self._score_binary_guard_pass(artifacts, group, reverse=reverse),
+            )
+
+        workers = min(self.max_concurrency, len(jobs))
+        if workers <= 1:
+            pass_results = [run_job(job) for job in jobs]
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                pass_results = list(pool.map(run_job, jobs))
+
+        verdicts_by_pass = {
+            (group_id, reverse): verdicts for group_id, reverse, verdicts in pass_results
+        }
+        scores: list[dict[str, float] | None] = [None] * len(artifacts)
+        for group in groups:
+            forward = verdicts_by_pass[(group.group_id, False)]
+            reverse = verdicts_by_pass[(group.group_id, True)]
+            for candidate_id, artifact_index in zip(
+                group.candidate_ids,
+                group.candidate_indices,
+                strict=True,
+            ):
+                forward_verdict = forward[candidate_id]
+                reverse_verdict = reverse[candidate_id]
+                forward_pass = forward_verdict.passes
+                reverse_pass = reverse_verdict.passes
+                consensus = forward_pass and reverse_pass
+                scores[artifact_index] = {
+                    "codex_image_qa": float(consensus),
+                    "codex_image_qa_forward": float(forward_pass),
+                    "codex_image_qa_reverse": float(reverse_pass),
+                    "codex_image_qa_consensus": float(consensus),
+                    "codex_image_qa_mirror_agreement": float(
+                        forward_verdict == reverse_verdict,
+                    ),
+                }
+
+        ordered_scores: list[dict[str, float]] = []
+        for artifact_index, score_map in enumerate(scores):
+            if score_map is None:
+                raise RuntimeError(
+                    "binary-guard scoring did not produce a result for "
+                    f"artifact index {artifact_index}",
+                )
+            ordered_scores.append(score_map)
+        return ordered_scores
+
+    def _score_binary_guard_pass(
+        self,
+        artifacts: list[Any],
+        group: _CandidateGroup,
+        *,
+        reverse: bool,
+    ) -> dict[str, _BinaryGuardVerdict]:
+        """Run one guard pass while keeping ids attached to candidate media."""
+
+        labeled_media = list(
+            zip(
+                group.candidate_ids,
+                (artifacts[index].as_media() for index in group.candidate_indices),
+                strict=True,
+            ),
+        )
+        if reverse:
+            # Reverse complete (id, media) pairs so the second montage is a
+            # genuine spatial order reversal, not a relabeling of the first.
+            labeled_media.reverse()
+
+        response_contract = json.dumps(
+            {
+                "candidates": [
+                    {
+                        "id": candidate_id,
+                        "carrier_grounding": _BinaryGuardDecision.PASS.value,
+                        "image_integrity": _BinaryGuardDecision.PASS.value,
+                    }
+                    for candidate_id in group.candidate_ids
+                ],
+            },
+            separators=(",", ":"),
+        )
+        prompt_text = _render_prompt_template(
+            self.binary_guard_prompt_template,
+            prompt=group.prompt,
+            count=len(group.candidate_ids),
+            response_contract=response_contract,
+        )
+        with tempfile.TemporaryDirectory(prefix="vrl-codex-image-qa-binary-guard-") as tmp:
+            tmp_path = Path(tmp)
+            image_path = tmp_path / "grid.png"
+            output_path = tmp_path / "judge_output.txt"
+            output_schema_path = tmp_path / "output_schema.json"
+            _compose_grid(
+                [media for _, media in labeled_media],
+                self.tile_size,
+                image_path,
+                labels=[label for label, _ in labeled_media],
+            )
+            _write_binary_guard_output_schema(output_schema_path, group.candidate_ids)
+            command = _render_command(
+                self.command,
+                image_path=image_path,
+                output_path=output_path,
+                output_schema_path=output_schema_path,
+                prompt=group.prompt,
+            )
+            output_text = self._run_command(
+                command,
+                stdin_text=prompt_text if self.pass_prompt_stdin else "",
+                output_path=output_path,
+                workdir=tmp_path,
+            )
+        return _extract_binary_guard_verdicts(output_text, group.candidate_ids)
 
     def _score_batch_reference_listwise(
         self,
@@ -800,6 +971,45 @@ def _write_reference_output_schema(
     path.write_text(json.dumps(schema, separators=(",", ":")), encoding="utf-8")
 
 
+def _write_binary_guard_output_schema(
+    path: Path,
+    candidate_ids: Sequence[str],
+) -> None:
+    """Write the exact structured contract for one binary-guard pass."""
+
+    candidate_ids = tuple(candidate_ids)
+    if not candidate_ids or len(set(candidate_ids)) != len(candidate_ids):
+        raise ValueError("binary-guard candidate ids must be non-empty and unique")
+    decision = {
+        "type": "string",
+        "enum": [member.value for member in _BinaryGuardDecision],
+    }
+    verdict = {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string", "enum": list(candidate_ids)},
+            "carrier_grounding": decision,
+            "image_integrity": decision,
+        },
+        "required": ["id", "carrier_grounding", "image_integrity"],
+        "additionalProperties": False,
+    }
+    schema = {
+        "type": "object",
+        "properties": {
+            "candidates": {
+                "type": "array",
+                "items": verdict,
+                "minItems": len(candidate_ids),
+                "maxItems": len(candidate_ids),
+            },
+        },
+        "required": ["candidates"],
+        "additionalProperties": False,
+    }
+    path.write_text(json.dumps(schema, separators=(",", ":")), encoding="utf-8")
+
+
 def _next_saved_batch_index(root: Path | None) -> int:
     """Continue after complete batches when a supervised run resumes."""
 
@@ -930,6 +1140,65 @@ def _extract_reference_verdicts(
     if missing_ids:
         raise ValueError(
             f"reference-listwise output is missing candidate ids: {sorted(missing_ids)}",
+        )
+    return {candidate_id: parsed[candidate_id] for candidate_id in candidate_ids}
+
+
+def _extract_binary_guard_verdicts(
+    text: str,
+    candidate_ids: Sequence[str],
+) -> dict[str, _BinaryGuardVerdict]:
+    """Parse one complete binary-guard response without permissive fallback."""
+
+    candidate_ids = tuple(candidate_ids)
+    try:
+        value = json.loads(text.strip())
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Cannot parse binary-guard Codex image-QA output: {text!r}",
+        ) from exc
+    if not isinstance(value, dict) or set(value) != {"candidates"}:
+        raise ValueError("binary-guard output must contain only 'candidates'")
+    rows = value["candidates"]
+    if not isinstance(rows, list) or len(rows) != len(candidate_ids):
+        observed = len(rows) if isinstance(rows, list) else type(rows).__name__
+        raise ValueError(
+            "binary-guard output candidate count mismatch: "
+            f"expected {len(candidate_ids)}, got {observed}",
+        )
+
+    parsed: dict[str, _BinaryGuardVerdict] = {}
+    expected_ids = set(candidate_ids)
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {
+            "id",
+            "carrier_grounding",
+            "image_integrity",
+        }:
+            raise ValueError(
+                "each binary-guard candidate must contain exactly 'id', "
+                "'carrier_grounding', and 'image_integrity'",
+            )
+        candidate_id = row["id"]
+        if not isinstance(candidate_id, str) or candidate_id not in expected_ids:
+            raise ValueError(f"unexpected binary-guard candidate id: {candidate_id!r}")
+        if candidate_id in parsed:
+            raise ValueError(f"duplicate binary-guard candidate id: {candidate_id!r}")
+        try:
+            parsed[candidate_id] = _BinaryGuardVerdict(
+                candidate_id=candidate_id,
+                carrier_grounding=_BinaryGuardDecision(row["carrier_grounding"]),
+                image_integrity=_BinaryGuardDecision(row["image_integrity"]),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid binary-guard verdict for {candidate_id!r}: {row!r}",
+            ) from exc
+
+    missing_ids = expected_ids.difference(parsed)
+    if missing_ids:
+        raise ValueError(
+            f"binary-guard output is missing candidate ids: {sorted(missing_ids)}",
         )
     return {candidate_id: parsed[candidate_id] for candidate_id in candidate_ids}
 
