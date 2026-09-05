@@ -127,7 +127,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     device = resolve_eval_device(str(args.device))
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     resolved = run.resolve_model(entry, root, device, precision=precision, for_rollout=True)
     bundle = None
     try:

@@ -110,7 +110,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         raise FileNotFoundError(f"training run has no resolved config: {config_path}")
     cfg = load_config(config_path)
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     _validate_resolved_config(cfg)
     _validate_sampling_args(args)
 

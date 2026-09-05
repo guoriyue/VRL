@@ -111,7 +111,7 @@ def main(argv=None):
         flush=True,
     )
 
-    precision_policy = resolve_precision_policy(root)
+    precision_policy = resolve_precision_policy(root.precision)
     runtime = build_runtime(root, device, precision=precision_policy)
     model = runtime.model
     if fp8:

@@ -197,7 +197,7 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
         # resolve_model_build rejects raw DictConfig input: project the run's
         # resolved config through the typed schema and precision policy first.
         root = parse_config(cfg)
-        precision = resolve_precision_policy(root)
+        precision = resolve_precision_policy(root.precision)
         resolved = run.resolve_model(entry, root, device, precision=precision, for_rollout=True)
         bundle = entry.build_rollout(resolved.build)
         if target.path is not None:

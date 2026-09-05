@@ -68,7 +68,7 @@ def test_run_gate_loads_through_production_resolve_and_materialize(
             return SimpleNamespace(model=model)
 
     entry = SimpleNamespace(family="cosmos-predict2.5")
-    root = SimpleNamespace(model=SimpleNamespace(family="cosmos-predict2.5"))
+    root = SimpleNamespace(model=SimpleNamespace(family="cosmos-predict2.5"), precision=object())
     monkeypatch.setattr(
         gate,
         "load_config",
@@ -77,7 +77,7 @@ def test_run_gate_loads_through_production_resolve_and_materialize(
         ),
     )
     monkeypatch.setattr(gate, "parse_config", lambda _cfg: root)
-    monkeypatch.setattr(gate, "resolve_precision_policy", lambda _root: object())
+    monkeypatch.setattr(gate, "resolve_precision_policy", lambda _section: object())
     monkeypatch.setattr(gate, "get_model_family_entry", lambda _family: entry)
     monkeypatch.setattr(gate, "resolve_eval_device", lambda _device: torch.device("cpu"))
     monkeypatch.setattr(

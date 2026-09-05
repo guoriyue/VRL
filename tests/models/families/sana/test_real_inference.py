@@ -36,7 +36,7 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
     cfg.model.revision = None
     cfg.model.use_lora = False
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
 
     device = torch.device("cuda")
     entry = get_model_family_entry("sana")

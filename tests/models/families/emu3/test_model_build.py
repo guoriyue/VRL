@@ -43,7 +43,7 @@ def test_resolve_model_build_defaults_to_gen_hf_checkpoint() -> None:
     )
 
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     build = get_model_family_entry("emu3").resolve_model_build(
         root,
         device="cpu",
@@ -79,7 +79,7 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
     )
 
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     build = get_model_family_entry("emu3").resolve_model_build(
         root,
         device="cpu",

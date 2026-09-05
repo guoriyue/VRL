@@ -1,4 +1,4 @@
-"""Resolve public precision config into role-specific runtime policy.
+"""Typed public ``precision`` section and its resolution into runtime policy.
 
 ``dtype`` is the ordinary parameter precision for a role; ``outer_autocast``
 selects whether the shared diffusion boundary also applies that dtype through
@@ -14,19 +14,24 @@ precision is family-owned and is not represented by this prompt-encoder axis.
 Diffusion math defaults to fp32. FP32 matmul precision is an explicit run-wide
 policy because PyTorch process defaults are not a stable trainer/worker contract.
 
-Training quantization is part of the structural schema so the eventual training
-runtime will use the same role shape, but policy resolution fails until a real
-autograd-capable consumer exists. This module remains torch-free; runtime
-boundaries materialize dtype tokens through ``vrl.models.dtypes``.
+The pydantic sections below are the single declaration of the YAML shape:
+``parse_config`` validates them (vocabulary, required keys, unknown keys), and
+:func:`resolve_precision_policy` turns the validated section into the two role
+policies. Training quantization is part of the structural schema so the
+eventual training runtime will use the same role shape, but policy resolution
+fails until a real autograd-capable consumer exists. This module remains
+torch-free; runtime boundaries materialize dtype tokens through
+``vrl.models.dtypes``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast, get_args
 
-_MISSING = object()
+from pydantic import StrictBool, field_validator, model_validator
+
+from vrl.config.base import ClosedConfigBase
 
 Float32Precision = Literal["ieee", "tf32"]
 
@@ -51,48 +56,6 @@ _QUANTIZATION_FORMAT_RULES = {
     "nvfp4": _QuantizationFormatRules(allowed_recipes=(), default_recipe=None),
 }
 _PRECISION_TOKENS = (*_PLAIN_DTYPES, *_QUANTIZATION_FORMAT_RULES)
-
-
-# These dataclasses define the public YAML shape consumed by the unknown-key
-# walker. The parser below owns behavior, while schema keys are derived from this
-# source instead of repeated as hand-maintained allowed-key tuples.
-@dataclass(frozen=True, slots=True)
-class DTypePrecisionConfig:
-    dtype: Any
-
-
-@dataclass(frozen=True, slots=True)
-class QuantizationConfig:
-    format: Any
-    recipe: Any = None
-
-
-@dataclass(frozen=True, slots=True)
-class TrainingPrecisionConfig:
-    dtype: Any
-    outer_autocast: Any = True
-    quantization: QuantizationConfig | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class PromptEncodersPrecisionConfig:
-    dtype: Any
-
-
-@dataclass(frozen=True, slots=True)
-class RolloutPrecisionConfig:
-    dtype: Any = None
-    outer_autocast: Any = None
-    quantization: QuantizationConfig | None = None
-    prompt_encoders: PromptEncodersPrecisionConfig | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class PrecisionConfig:
-    training: TrainingPrecisionConfig
-    float32_precision: Any
-    rollout: RolloutPrecisionConfig | None = None
-    diffusion_math: DTypePrecisionConfig | None = None
 
 
 def normalize_precision(value: Any, *, default: str = "fp32") -> str:
@@ -130,6 +93,9 @@ def _normalize_float32_precision(value: Any) -> Float32Precision:
             f"precision.float32_precision must be one of {allowed}; got {value!r}",
         )
     return cast("Float32Precision", mode)
+
+
+# ── Resolved runtime policy ───────────────────────────────────────────────────
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,165 +219,151 @@ class PrecisionPolicy:
         return self.training == self.rollout
 
 
-def resolve_precision_policy(cfg: Any) -> PrecisionPolicy:
-    """Resolve the required nested top-level ``precision`` block."""
+# ── Public YAML sections ──────────────────────────────────────────────────────
 
-    legacy_allow_tf32 = _select(cfg, "actor.optim.allow_tf32", _MISSING)
-    if legacy_allow_tf32 is not _MISSING:
-        raise ValueError(
-            "actor.optim.allow_tf32 is no longer supported because FP32 matmul "
-            "precision is a forward policy, not an optimizer setting. Replace it "
-            "with top-level precision.float32_precision: tf32 (or ieee).",
-        )
 
-    block = _select(cfg, "precision", _MISSING)
-    if block is _MISSING:
+class QuantizationConfig(ClosedConfigBase):
+    """``quantization`` block of one role: a format plus an optional recipe."""
+
+    format: str
+    recipe: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_format_and_recipe(self) -> QuantizationConfig:
+        # The runtime policy owns the format/recipe vocabulary; validating it at
+        # parse time keeps a bad block from surviving past parse_config.
+        QuantizationPolicy(format=self.format, recipe=self.recipe)
+        return self
+
+
+class TrainingPrecisionConfig(ClosedConfigBase):
+    dtype: str
+    outer_autocast: StrictBool = True
+    quantization: QuantizationConfig | None = None
+
+    @field_validator("dtype", mode="before")
+    @classmethod
+    def _normalize_dtype(cls, value: Any) -> str:
+        return _normalize_plain_dtype(value, path="precision.training.dtype")
+
+
+class PromptEncodersPrecisionConfig(ClosedConfigBase):
+    dtype: str
+
+    @field_validator("dtype", mode="before")
+    @classmethod
+    def _normalize_dtype(cls, value: Any) -> str:
+        return _normalize_plain_dtype(value, path="precision.rollout.prompt_encoders.dtype")
+
+
+class RolloutPrecisionConfig(ClosedConfigBase):
+    """Rollout-role overrides; every omitted key inherits the training role."""
+
+    dtype: str | None = None
+    outer_autocast: StrictBool | None = None
+    quantization: QuantizationConfig | None = None
+    prompt_encoders: PromptEncodersPrecisionConfig | None = None
+
+    @field_validator("dtype", mode="before")
+    @classmethod
+    def _normalize_dtype(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _normalize_plain_dtype(value, path="precision.rollout.dtype")
+
+
+class DiffusionMathPrecisionConfig(ClosedConfigBase):
+    dtype: str
+
+    @field_validator("dtype", mode="before")
+    @classmethod
+    def _normalize_dtype(cls, value: Any) -> str:
+        return _normalize_plain_dtype(value, path="precision.diffusion_math.dtype")
+
+
+class PrecisionConfig(ClosedConfigBase):
+    """Top-level ``precision`` section."""
+
+    float32_precision: Float32Precision
+    training: TrainingPrecisionConfig
+    rollout: RolloutPrecisionConfig | None = None
+    diffusion_math: DiffusionMathPrecisionConfig | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_scalar_block(cls, value: Any) -> Any:
+        if isinstance(value, (str, bool)):
+            raise ValueError(
+                "scalar `precision` is no longer supported because it hides the "
+                "difference between base dtype and quantization. Use "
+                "`precision: {training: {dtype: bf16}}`.",
+            )
+        return value
+
+    @field_validator("float32_precision", mode="before")
+    @classmethod
+    def _normalize_float32(cls, value: Any) -> Float32Precision:
+        return _normalize_float32_precision(value)
+
+
+def _quantization_policy(section: QuantizationConfig | None) -> QuantizationPolicy | None:
+    if section is None:
+        return None
+    return QuantizationPolicy(format=section.format, recipe=section.recipe)
+
+
+def resolve_precision_policy(section: PrecisionConfig | None) -> PrecisionPolicy:
+    """Resolve the parsed ``precision`` section (``RootConfig.precision``)."""
+
+    if section is None:
         raise ValueError(
             "top-level `precision` is required. Configure "
             "`precision.training.dtype`; add a `precision.rollout` block only "
             "for a rollout-specific override.",
         )
-    if isinstance(block, (str, bool)):
-        raise ValueError(
-            "scalar `precision` is no longer supported because it hides the "
-            "difference between base dtype and quantization. Use "
-            "`precision: {training: {dtype: bf16}}`.",
+    if not isinstance(section, PrecisionConfig):
+        raise TypeError(
+            "resolve_precision_policy takes the parsed precision section "
+            f"(RootConfig.precision), got {type(section).__name__}",
         )
-    _reject_legacy_keys(block)
-
-    float32_precision_raw = _select(block, "float32_precision", _MISSING)
-    if float32_precision_raw is _MISSING:
-        raise ValueError(
-            "precision.float32_precision is required; set it to 'tf32' for "
-            "TensorFloat-32 FP32 matmuls or 'ieee' for full IEEE FP32 matmuls.",
-        )
-    float32_precision = _normalize_float32_precision(float32_precision_raw)
-    training = _parse_role(
-        block,
-        "training",
+    float32_precision = section.float32_precision
+    training = RolePrecision(
+        dtype=section.training.dtype,
         float32_precision=float32_precision,
-        outer_autocast_default=True,
+        outer_autocast=section.training.outer_autocast,
+        quantization=_quantization_policy(section.training.quantization),
     )
-    rollout = _parse_role(
-        block,
-        "rollout",
-        dtype_default=training.dtype,
+    rollout_section = section.rollout or RolloutPrecisionConfig()
+    rollout = RolePrecision(
+        dtype=rollout_section.dtype or training.dtype,
         float32_precision=float32_precision,
-        outer_autocast_default=training.outer_autocast,
+        outer_autocast=(
+            training.outer_autocast
+            if rollout_section.outer_autocast is None
+            else rollout_section.outer_autocast
+        ),
+        quantization=_quantization_policy(rollout_section.quantization),
     )
-    math_raw = _select(block, "diffusion_math.dtype", "fp32")
-    prompt_encoder_raw = _select(
-        block,
-        "rollout.prompt_encoders.dtype",
-        rollout.dtype,
-    )
+    prompt_encoders = rollout_section.prompt_encoders
     return PrecisionPolicy(
         training=training,
         rollout=rollout,
-        diffusion_math=_normalize_plain_dtype(
-            math_raw,
-            path="precision.diffusion_math.dtype",
-        ),
-        prompt_encoder_dtype=_normalize_plain_dtype(
-            prompt_encoder_raw,
-            path="precision.rollout.prompt_encoders.dtype",
-        ),
+        diffusion_math=section.diffusion_math.dtype if section.diffusion_math else "fp32",
+        prompt_encoder_dtype=prompt_encoders.dtype if prompt_encoders else rollout.dtype,
     )
-
-
-def _parse_role(
-    block: Any,
-    role: str,
-    *,
-    float32_precision: Float32Precision,
-    outer_autocast_default: bool,
-    dtype_default: Any = _MISSING,
-) -> RolePrecision:
-    dtype_raw = _select(block, f"{role}.dtype", dtype_default)
-    if dtype_raw is _MISSING:
-        raise ValueError(f"precision.{role}.dtype is required")
-    quantization_raw = _select(block, f"{role}.quantization", None)
-    quantization = None
-    if quantization_raw is not None:
-        format_raw = _select(quantization_raw, "format", _MISSING)
-        if format_raw is _MISSING:
-            raise ValueError(f"precision.{role}.quantization.format is required")
-        recipe_raw = _select(quantization_raw, "recipe", None)
-        quantization = QuantizationPolicy(
-            format=str(format_raw),
-            recipe=str(recipe_raw) if recipe_raw is not None else None,
-        )
-    outer_autocast = _select(
-        block,
-        f"{role}.outer_autocast",
-        outer_autocast_default,
-    )
-    if not isinstance(outer_autocast, bool):
-        raise TypeError(
-            f"precision.{role}.outer_autocast must be a bool; got {outer_autocast!r}",
-        )
-    return RolePrecision(
-        dtype=_normalize_plain_dtype(dtype_raw, path=f"precision.{role}.dtype"),
-        float32_precision=float32_precision,
-        outer_autocast=outer_autocast,
-        quantization=quantization,
-    )
-
-
-def _reject_legacy_keys(block: Any) -> None:
-    # Legacy dotted keys (precision.train/math/frozen/...) are already rejected
-    # upstream by require_no_unknown_keys, whose known set derives from
-    # PrecisionConfig's fields — a second hand-written list here could only
-    # rot. The one shape that walker cannot express stays: a scalar
-    # precision.rollout (the walker returns early on non-mappings).
-    present: list[str] = []
-    rollout = _select(block, "rollout", None)
-    if (
-        rollout is not None
-        and not isinstance(rollout, Mapping)
-        and not hasattr(
-            rollout,
-            "get",
-        )
-    ):
-        present.append("precision.rollout")
-    if present:
-        names = ", ".join(present)
-        raise ValueError(
-            f"legacy precision key(s) are no longer supported: {names}. Use "
-            "precision.training.dtype, precision.training.outer_autocast, "
-            "precision.rollout.dtype, precision.rollout.outer_autocast, "
-            "precision.rollout.quantization, precision.diffusion_math.dtype, "
-            "precision.rollout.prompt_encoders.dtype, and "
-            "precision.float32_precision.",
-        )
-
-
-def _select(obj: Any, path: str, default: Any = None) -> Any:
-    """Read a dotted path from a Mapping/DictConfig/namespace, else ``default``."""
-
-    cur = obj
-    for part in path.split("."):
-        if cur is None:
-            return default
-        nxt = None
-        if isinstance(cur, Mapping) or hasattr(cur, "get"):
-            try:
-                nxt = cur.get(part, None)  # type: ignore[union-attr]
-            except Exception:
-                nxt = None
-        if nxt is None:
-            nxt = getattr(cur, part, None)
-        cur = nxt
-    return default if cur is None else cur
 
 
 __all__ = [
+    "DiffusionMathPrecisionConfig",
     "Float32Precision",
     "PrecisionConfig",
     "PrecisionPolicy",
+    "PromptEncodersPrecisionConfig",
+    "QuantizationConfig",
     "QuantizationPolicy",
     "RolePrecision",
+    "RolloutPrecisionConfig",
+    "TrainingPrecisionConfig",
     "normalize_precision",
     "resolve_precision_policy",
 ]

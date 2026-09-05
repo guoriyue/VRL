@@ -14,6 +14,7 @@ from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision, resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.magi_1.model import (
@@ -113,7 +114,7 @@ def _build(
 def test_model_preset_owns_the_official_rollout_precision_contract() -> None:
     actor = load_config("base/actor", overrides=["actor.optim.lr=0.0"])
     model = load_config("model/magi_1/4_5b_base")
-    precision = resolve_precision_policy(OmegaConf.merge(actor, model))
+    precision = resolve_precision_policy(parse_config(OmegaConf.merge(actor, model)).precision)
 
     assert precision.rollout.dtype == "bf16"
     assert precision.rollout.float32_precision == "ieee"

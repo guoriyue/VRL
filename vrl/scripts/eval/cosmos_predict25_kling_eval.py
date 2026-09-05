@@ -130,7 +130,7 @@ def main(argv: list[str] | None = None) -> None:
 
     cfg = load_config(args.config, overrides=args.overrides)
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     prompts = _load_prompts(args, cfg)
     if args.limit:
         prompts = prompts[: args.limit]

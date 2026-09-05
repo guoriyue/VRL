@@ -148,7 +148,7 @@ def main(argv: list[str] | None = None) -> None:
     if lora_overrides:
         cfg = load_config(args.config, overrides=[*overrides, *lora_overrides])
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     prompts = _load_prompts(args, cfg)
     manifest_path = _resolve_manifest_path(args, cfg)
     if args.limit:

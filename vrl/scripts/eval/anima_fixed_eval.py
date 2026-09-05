@@ -143,7 +143,7 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
         overrides += ["model.use_lora=false"]
     cfg = load_config(args.config, overrides=overrides)
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
 
     prompts = [example.prompt for example in load_prompt_manifest(args.manifest)][: args.limit]
     num_steps = int(args.steps or OmegaConf.select(cfg, "sampling.num_steps", default=20))

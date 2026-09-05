@@ -51,7 +51,7 @@ def main(argv=None) -> None:
     # Match the omni side: base weights, no LoRA adapter.
     cfg.model.use_lora = False
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     device = torch.device(args.device)
     runtime = build_runtime(root, device, precision=precision)
     model = runtime.model

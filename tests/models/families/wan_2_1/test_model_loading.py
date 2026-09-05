@@ -179,7 +179,7 @@ def test_wan_resolver_projects_pipeline_offload_to_rollout_only(family: str, mon
     from vrl.config.schema import parse_config
 
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     rollout = entry.resolve_model_build(root, "cpu", precision=precision, for_rollout=True)
     replay = entry.resolve_model_build(root, "cpu", precision=precision, for_rollout=False)
 
@@ -731,7 +731,7 @@ def test_wan_model_build_normalization_is_shared_by_replay_and_rollout(
             },
         ),
     )
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     entry = get_model_family_entry("wan_2_1_i2v")
 
     replay = entry.resolve_model_build(

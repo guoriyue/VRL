@@ -11,4 +11,11 @@ class ConfigBase(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-__all__ = ["ConfigBase"]
+class ClosedConfigBase(ConfigBase):
+    """Fully typed section: every key is a declared field, so pydantic itself
+    rejects unknown ones (the tree walker still names them first)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+__all__ = ["ClosedConfigBase", "ConfigBase"]

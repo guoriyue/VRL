@@ -129,7 +129,7 @@ def _resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any
         },
     )
     root = parse_config(cfg)
-    precision_policy = resolve_precision_policy(root)
+    precision_policy = resolve_precision_policy(root.precision)
     build = entry.resolve_model_build(
         root,
         device,

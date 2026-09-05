@@ -42,7 +42,7 @@ def test_build_runtime_hands_the_resolved_build_to_the_family_rollout_builder(
             },
         ),
     )
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     device = torch.device("cpu")
     resolved_build = object()
     runtime = object()

@@ -83,7 +83,7 @@ def test_config_projection_preserves_trust_remote_code_boolean(
     entry = get_model_family_entry(family)
     cfg = _build_cfg(family=family, trust_remote_code=trust_remote_code)
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     build = entry.resolve_model_build(
         root,
         device="cpu",
@@ -120,7 +120,7 @@ def test_r1_transition_table_is_the_packages_own_constant() -> None:
 def test_janus_r1_replay_build_keeps_the_explicit_runtime_family() -> None:
     cfg = load_config("experiment/janus_pro/online_r1_grpo_ocr")
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
 
     build = get_model_family_entry("janus_pro_r1").resolve_model_build(
         root,
@@ -157,7 +157,7 @@ def test_janus_model_build_does_not_expose_decode_strategy() -> None:
     )
 
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     build = get_model_family_entry("janus_pro").resolve_model_build(
         root,
         device="cpu",

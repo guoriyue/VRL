@@ -264,7 +264,7 @@ def _capture_launch_inputs(
 
     config = _ray_config(cfg)
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     schedule_mode = str(
         OmegaConf.select(
             cfg,

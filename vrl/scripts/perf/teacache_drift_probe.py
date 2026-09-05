@@ -212,7 +212,7 @@ def main(argv=None):
 
     cfg = load_config(args.config)
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     device = torch.device(args.device)
     dtype = torch.bfloat16
     model = _build_model(root, device, dtype, precision=precision)

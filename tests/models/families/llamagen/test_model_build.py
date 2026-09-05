@@ -122,7 +122,7 @@ def test_resolve_model_build_defaults() -> None:
         },
     )
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     build = get_model_family_entry("llamagen").resolve_model_build(
         root,
         device="cpu",
@@ -135,7 +135,7 @@ def test_config_from_build_uses_fused_projection_lora_targets() -> None:
     """The vendored GPT has wqkv/wo, not q_proj/k_proj/v_proj."""
     cfg = _cfg()
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     build = get_model_family_entry("llamagen").resolve_model_build(
         root,
         device="cpu",
@@ -177,7 +177,7 @@ def test_config_from_build_rejects_sampling_topology_different_from_model(
     message: str,
 ) -> None:
     root = parse_config(_cfg())
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     build = get_model_family_entry("llamagen").resolve_model_build(
         root,
         device="cpu",
@@ -197,7 +197,7 @@ def test_schema_and_direct_model_build_share_square_grid_validation() -> None:
         parse_config(invalid_cfg)
 
     root = parse_config(_cfg())
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     build = get_model_family_entry("llamagen").resolve_model_build(
         root,
         device="cpu",
@@ -266,7 +266,7 @@ def test_false_lora_initialization_reaches_peft_as_bool() -> None:
     cfg = _cfg()
     cfg.model.lora = {"init_lora_weights": False}
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     build = get_model_family_entry("llamagen").resolve_model_build(
         root,
         device="cpu",
@@ -313,7 +313,7 @@ def test_lora_checkpoint_roundtrip_loads_trainable_adapter_weights(tmp_path) -> 
         "alpha": 4,
     }
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     build = get_model_family_entry("llamagen").resolve_model_build(
         root,
         device="cpu",

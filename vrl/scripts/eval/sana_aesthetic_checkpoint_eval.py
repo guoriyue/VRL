@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> None:
     identity_root = parse_config(cfg)
     if identity_root.model is None:
         raise ValueError("SANA checkpoint evaluation requires model configuration")
-    identity_precision = resolve_precision_policy(identity_root)
+    identity_precision = resolve_precision_policy(identity_root.precision)
     from vrl.models.families.registry import get_model_family_entry
     from vrl.run import resolve_model
 
@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> None:
                 strict=True,
             )
     build_root = _materialize_model_snapshot(cfg)
-    build_precision = resolve_precision_policy(build_root)
+    build_precision = resolve_precision_policy(build_root.precision)
     reward_models = _materialize_reward_model_snapshots(
         sana_report.build_reward_model_definitions(cfg, generation_device=str(device)),
     )

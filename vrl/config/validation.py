@@ -327,7 +327,7 @@ def validate_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPoli
     it a second time (asserted by tests/config/test_builders.py).
     """
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     # Every torch.compile incompatibility at once. Checked at config load — where
     # the all-experiments test sees it — because a model-layer
     # torch_compile.enable=true default can silently flip compile on underneath a

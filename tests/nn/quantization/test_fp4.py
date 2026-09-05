@@ -377,7 +377,7 @@ def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
         },
     )
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     build = get_model_family_entry("sd3_5").resolve_model_build(
         root,
         "cuda",

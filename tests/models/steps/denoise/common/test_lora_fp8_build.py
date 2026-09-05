@@ -186,7 +186,7 @@ def test_fp8_config_replay_build_does_not_defer_device_move(monkeypatch) -> None
         },
     )
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     build = get_model_family_entry("sd3_5").resolve_model_build(
         root,
         "cpu",

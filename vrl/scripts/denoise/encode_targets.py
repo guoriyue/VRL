@@ -168,7 +168,7 @@ def main(argv: list[str] | None = None) -> None:
 
     cfg = load_config(f"experiment/{args.experiment}", overrides=args.overrides)
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     if root.model is None:
         raise ValueError("target encoding requires model configuration")
     entry = get_model_family_entry(str(root.model.family))

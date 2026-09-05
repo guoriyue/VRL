@@ -15,13 +15,14 @@ from tests.config.test_load_all_experiments import (
 )
 from vrl.config.loading import load_config
 from vrl.config.precision import (
+    PrecisionConfig,
     PrecisionPolicy,
     QuantizationPolicy,
     RolePrecision,
     normalize_precision,
     resolve_precision_policy,
 )
-from vrl.config.schema import RootConfig
+from vrl.config.schema import parse_config
 from vrl.models.dtypes import (
     dtype_to_precision_token,
     dtype_to_wire_name,
@@ -29,25 +30,16 @@ from vrl.models.dtypes import (
 )
 
 
-def _top(precision=None, allow_tf32=None) -> dict[str, Any]:
-    top: dict[str, Any] = {"actor": {}}
-    if allow_tf32 is not None:
-        top["actor"] = {"optim": {"allow_tf32": allow_tf32}}
-    if precision is not None:
-        top["precision"] = precision
-    return top
+def _section(precision: Any = None) -> PrecisionConfig | None:
+    """Parse one ``precision`` block the way every production caller does.
 
-
-def _cfg(precision=None, allow_tf32=None) -> RootConfig:
-    """Feed the resolver the type 13 of its 14 production call sites hand it.
-
-    Every malformed block below still reaches the resolver rather than tripping
-    pydantic first: ``RootConfig.precision`` is annotated ``Any`` so scalars,
-    legacy keys and typo'd sub-blocks pass through untouched, and ``actor.optim``
-    survives because the actor section allows the runtime fields through.
+    ``parse_config`` is the single gate: shape, vocabulary, and unknown keys are
+    all rejected there with the repo's message format, and the resolver only
+    ever sees a typed section (or ``None`` when the block is absent).
     """
 
-    return RootConfig(**_top(precision, allow_tf32))
+    top: dict[str, Any] = {} if precision is None else {"precision": precision}
+    return parse_config(OmegaConf.create(top)).precision
 
 
 # -- normalize / convert ----------------------------------------------
@@ -122,28 +114,8 @@ def _plain_precision(dtype: str = "bf16") -> dict:
     }
 
 
-def _shaped(shape: str, top: dict[str, Any]):
-    """One of the two real config shapes the resolver is handed in production.
-
-    ``rootconfig`` is the main path (validation, every trainer entrypoint);
-    ``dictconfig`` is the raw ``load_config`` product that ``vrl/config/builders.py``
-    can still fall back to. ``_select`` carries a Mapping/``.get`` lookup *and* a
-    ``getattr`` lookup precisely to serve both, so the two must never disagree.
-    """
-
-    return RootConfig(**top) if shape == "rootconfig" else OmegaConf.create(top)
-
-
-@pytest.mark.parametrize("shape", ["rootconfig", "dictconfig"])
-def test_both_real_config_shapes_resolve_to_the_same_policy(shape: str):
-    """Nothing else asserts the two production input shapes agree.
-
-    Every other test in this file drives one shape, so ``_select``'s two lookup
-    paths could drift apart unnoticed — which matters because the fallback shape
-    is what a caller gets when it forgets to resolve the policy itself.
-    """
-
-    policy = resolve_precision_policy(_shaped(shape, _top(precision=_plain_precision())))
+def test_plain_block_resolves_to_the_same_policy_for_both_roles():
+    policy = resolve_precision_policy(_section(_plain_precision()))
 
     assert policy == PrecisionPolicy(
         training=RolePrecision(dtype="bf16", float32_precision="tf32"),
@@ -153,35 +125,17 @@ def test_both_real_config_shapes_resolve_to_the_same_policy(shape: str):
     )
 
 
-@pytest.mark.parametrize("shape", ["rootconfig", "dictconfig"])
-@pytest.mark.parametrize(
-    ("top", "message"),
-    [
-        pytest.param(_top(), "top-level `precision` is required", id="missing"),
-        pytest.param(_top(precision="bf16"), "scalar `precision`", id="scalar"),
-        pytest.param(
-            _top(precision=_plain_precision(), allow_tf32=True),
-            r"actor\.optim\.allow_tf32",
-            id="legacy-tf32",
-        ),
-    ],
-)
-def test_both_real_config_shapes_reject_the_same_way(shape: str, top: dict, message: str):
-    """The three migration errors only ever fire through this file's own inputs.
+def test_resolver_rejects_anything_but_the_parsed_section():
+    """A raw mapping never reaches the resolver: parse_config is the only door."""
 
-    A missing block and a scalar block are read off ``precision``; the legacy key
-    is read off ``actor.optim`` — three different ``_select`` walks, and each one
-    has to reach the same error from either shape.
-    """
-
-    with pytest.raises(ValueError, match=message):
-        resolve_precision_policy(_shaped(shape, top))
+    with pytest.raises(TypeError, match="parsed precision section"):
+        resolve_precision_policy(_plain_precision())  # type: ignore[arg-type]
 
 
 def test_nested_bf16_resolves_role_dtypes_and_protected_defaults():
     p = resolve_precision_policy(
-        _cfg(
-            precision={
+        _section(
+            {
                 "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
             },
@@ -198,8 +152,8 @@ def test_nested_bf16_resolves_role_dtypes_and_protected_defaults():
 
 def test_rollout_quantization_inherits_training_base_dtype():
     p = resolve_precision_policy(
-        _cfg(
-            precision={
+        _section(
+            {
                 "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
                 "rollout": {"quantization": {"format": "fp8"}},
@@ -213,8 +167,8 @@ def test_rollout_quantization_inherits_training_base_dtype():
 
 def test_rollout_inherits_training_outer_autocast() -> None:
     p = resolve_precision_policy(
-        _cfg(
-            precision={
+        _section(
+            {
                 "float32_precision": "ieee",
                 "training": {"dtype": "fp16", "outer_autocast": False},
             },
@@ -236,7 +190,7 @@ def test_rollout_can_override_training_outer_autocast() -> None:
     block = _plain_precision("fp16")
     block["rollout"]["outer_autocast"] = False
 
-    p = resolve_precision_policy(_cfg(precision=block))
+    p = resolve_precision_policy(_section(block))
 
     assert p.training.outer_autocast is True
     assert p.rollout.outer_autocast is False
@@ -250,12 +204,15 @@ def test_outer_autocast_rejects_non_boolean_values(role, value) -> None:
     block = _plain_precision()
     block[role]["outer_autocast"] = value
 
-    with pytest.raises(TypeError, match=rf"precision\.{role}\.outer_autocast must be a bool"):
-        resolve_precision_policy(_cfg(precision=block))
+    with pytest.raises(
+        ValueError,
+        match=rf"precision\.{role}\.outer_autocast: Input should be a valid boolean",
+    ):
+        _section(block)
 
 
 def test_prompt_encoders_default_to_rollout_dtype_even_for_fp32():
-    p = resolve_precision_policy(_cfg(precision=_plain_precision("fp32")))
+    p = resolve_precision_policy(_section(_plain_precision("fp32")))
     assert p.prompt_encoder_dtype == "fp32"
 
 
@@ -263,14 +220,14 @@ def test_diffusion_math_and_prompt_encoders_can_be_explicit():
     block = _plain_precision()
     block["diffusion_math"] = {"dtype": "bf16"}
     block["rollout"]["prompt_encoders"] = {"dtype": "fp16"}
-    p = resolve_precision_policy(_cfg(precision=block))
+    p = resolve_precision_policy(_section(block))
     assert p.diffusion_math == "bf16"
     assert p.prompt_encoder_dtype == "fp16"
 
 
 def test_base_preset_keeps_prompt_encoders_aligned_with_rollout():
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
-    p = resolve_precision_policy(cfg)
+    p = resolve_precision_policy(parse_config(cfg).precision)
     assert p.rollout.dtype == "bf16"
     assert p.prompt_encoder_dtype == "bf16"
     assert p.training.float32_precision == "tf32"
@@ -282,7 +239,7 @@ def test_float32_precision_is_explicit_and_resolved(mode):
     block = _plain_precision()
     block["float32_precision"] = mode
 
-    policy = resolve_precision_policy(_cfg(precision=block))
+    policy = resolve_precision_policy(_section(block))
     assert policy.training.float32_precision == mode
     assert policy.rollout.float32_precision == mode
 
@@ -291,8 +248,11 @@ def test_float32_precision_is_required():
     block = _plain_precision()
     del block["float32_precision"]
 
-    with pytest.raises(ValueError, match=r"precision\.float32_precision is required"):
-        resolve_precision_policy(_cfg(precision=block))
+    with pytest.raises(
+        ValueError,
+        match=r"config missing required field: precision\.float32_precision",
+    ):
+        _section(block)
 
 
 @pytest.mark.parametrize("mode", ["", "fp32", "true"])
@@ -301,24 +261,27 @@ def test_float32_precision_rejects_unknown_modes(mode):
     block["float32_precision"] = mode
 
     with pytest.raises(ValueError, match=r"precision\.float32_precision must be one of"):
-        resolve_precision_policy(_cfg(precision=block))
+        resolve_precision_policy(_section(block))
 
 
 @pytest.mark.parametrize("allow_tf32", [False, True])
-def test_legacy_optimizer_tf32_key_has_migration_error(allow_tf32):
-    with pytest.raises(
-        ValueError,
-        match=r"actor\.optim\.allow_tf32.*precision\.float32_precision",
-    ):
-        resolve_precision_policy(
-            _cfg(precision=_plain_precision(), allow_tf32=allow_tf32),
-        )
+def test_legacy_optimizer_tf32_key_is_unknown(allow_tf32):
+    """A removed key is an unknown key: one gate, one message, no legacy branch."""
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {"optim": {"allow_tf32": allow_tf32}},
+            "precision": _plain_precision(),
+        },
+    )
+    with pytest.raises(ValueError, match=r"unknown actor\.optim\.allow_tf32"):
+        parse_config(cfg)
 
 
 @pytest.mark.parametrize("scalar", ["bf16", "fp32", "fp8", False])
 def test_scalar_precision_is_rejected_with_migration_path(scalar):
     with pytest.raises(ValueError, match="scalar `precision` is no longer supported"):
-        resolve_precision_policy(_cfg(precision=scalar))
+        resolve_precision_policy(_section(scalar))
 
 
 def test_nested_unknown_keys_are_reported_at_full_path():
@@ -340,7 +303,7 @@ def test_nested_unknown_keys_are_reported_at_full_path():
     ]
 
 
-def test_prompt_encoder_keys_are_derived_from_precision_config_dataclasses():
+def test_prompt_encoder_keys_are_derived_from_precision_config_sections():
     from omegaconf import OmegaConf
 
     from vrl.config.unknown_keys import find_unknown_keys
@@ -356,7 +319,7 @@ def test_prompt_encoder_keys_are_derived_from_precision_config_dataclasses():
 def test_top_level_precision_is_required():
     """There is no implicit default: a config with no precision block must not load."""
     with pytest.raises(ValueError, match="top-level `precision` is required"):
-        resolve_precision_policy(_cfg())
+        resolve_precision_policy(_section())
 
 
 # -- role dtype versus selective quantization -------------------------
@@ -365,7 +328,7 @@ def test_top_level_precision_is_required():
 def test_fp8_rollout_split_keeps_bf16_base_and_prompt_default():
     block = _plain_precision()
     block["rollout"]["quantization"] = {"format": "fp8", "recipe": "rowwise"}
-    p = resolve_precision_policy(_cfg(precision=block))
+    p = resolve_precision_policy(_section(block))
     assert p.training == RolePrecision(dtype="bf16", float32_precision="tf32")
     assert p.rollout == RolePrecision(
         dtype="bf16",
@@ -385,7 +348,7 @@ def test_quantized_role_label_preserves_its_base_dtype():
         "quantization": {"format": "fp8"},
     }
 
-    p = resolve_precision_policy(_cfg(precision=block))
+    p = resolve_precision_policy(_section(block))
 
     assert p.rollout.label == "fp16+fp8"
 
@@ -393,7 +356,7 @@ def test_quantized_role_label_preserves_its_base_dtype():
 def test_nvfp4_rollout_is_a_recipe_free_selective_policy():
     block = _plain_precision()
     block["rollout"]["quantization"] = {"format": "nvfp4"}
-    p = resolve_precision_policy(_cfg(precision=block))
+    p = resolve_precision_policy(_section(block))
     assert p.rollout.quantization == QuantizationPolicy(format="nvfp4")
     assert p.rollout.quantization.recipe is None
     assert p.rollout.label == "bf16+nvfp4"
@@ -404,7 +367,7 @@ def test_legacy_generic_fp4_format_has_a_migration_error():
     block = _plain_precision()
     block["rollout"]["quantization"] = {"format": "fp4"}
     with pytest.raises(ValueError, match="use `format: nvfp4`"):
-        resolve_precision_policy(_cfg(precision=block))
+        resolve_precision_policy(_section(block))
 
 
 @pytest.mark.parametrize("recipe", ["nvfp4", "rowwise", "tensorwise", "blockwise"])
@@ -415,21 +378,21 @@ def test_nvfp4_rejects_every_recipe(recipe):
         "recipe": recipe,
     }
     with pytest.raises(ValueError, match="does not accept a recipe"):
-        resolve_precision_policy(_cfg(precision=block))
+        resolve_precision_policy(_section(block))
 
 
 @pytest.mark.parametrize("recipe", ["rowwise", "tensorwise", "blockwise"])
 def test_fp8_accepts_only_declared_recipes(recipe):
     block = _plain_precision()
     block["rollout"]["quantization"] = {"format": "fp8", "recipe": recipe}
-    p = resolve_precision_policy(_cfg(precision=block))
+    p = resolve_precision_policy(_section(block))
     assert p.rollout.quantization == QuantizationPolicy(format="fp8", recipe=recipe)
 
 
 def test_fp8_omitted_recipe_resolves_to_rowwise():
     block = _plain_precision()
     block["rollout"]["quantization"] = {"format": "fp8"}
-    p = resolve_precision_policy(_cfg(precision=block))
+    p = resolve_precision_policy(_section(block))
     assert p.rollout.quantization == QuantizationPolicy(format="fp8", recipe="rowwise")
 
 
@@ -437,7 +400,7 @@ def test_fp8_rejects_unknown_recipe_during_config_resolution():
     block = _plain_precision()
     block["rollout"]["quantization"] = {"format": "fp8", "recipe": "nvfp4"}
     with pytest.raises(ValueError, match="invalid for format 'fp8'"):
-        resolve_precision_policy(_cfg(precision=block))
+        resolve_precision_policy(_section(block))
 
 
 @pytest.mark.parametrize("format_name", ["fp8", "nvfp4"])
@@ -446,7 +409,7 @@ def test_quantization_format_is_rejected_in_dtype_position(role, format_name):
     block = _plain_precision()
     block[role]["dtype"] = format_name
     with pytest.raises(ValueError, match=r"belongs under a `quantization\.format` key"):
-        resolve_precision_policy(_cfg(precision=block))
+        resolve_precision_policy(_section(block))
 
 
 @pytest.mark.parametrize(
@@ -460,7 +423,7 @@ def test_training_quantization_parses_but_fails_without_runtime(quantization):
     block = _plain_precision()
     block["training"]["quantization"] = quantization
     with pytest.raises(ValueError, match=r"training\.quantization is unavailable"):
-        resolve_precision_policy(_cfg(precision=block))
+        resolve_precision_policy(_section(block))
 
 
 def test_quantization_requires_format():
@@ -468,9 +431,9 @@ def test_quantization_requires_format():
     block["rollout"]["quantization"] = {"recipe": "rowwise"}
     with pytest.raises(
         ValueError,
-        match=r"precision\.rollout\.quantization\.format is required",
+        match=r"config missing required field: precision\.rollout\.quantization\.format",
     ):
-        resolve_precision_policy(_cfg(precision=block))
+        _section(block)
 
 
 @pytest.mark.parametrize(
@@ -513,7 +476,7 @@ _ONLINE_RECIPES = _online_recipes()
 def test_online_recipe_equivalence(experiment):
     """Checks online recipes use aligned public precision."""
     cfg = _load_experiment_for_static_validation(experiment)
-    policy = resolve_precision_policy(cfg)
+    policy = resolve_precision_policy(parse_config(cfg).precision)
 
     assert policy.training == policy.rollout
     assert resolve_torch_dtype(policy.training.dtype) is resolve_torch_dtype(

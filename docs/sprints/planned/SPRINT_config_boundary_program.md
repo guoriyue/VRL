@@ -1,6 +1,6 @@
 # SPRINT PROGRAM: Config boundary — type it once, then delete the machinery that existed because it wasn't
 
-状态：**in progress（2026-09-05 审计；S0 门已就位；S1 done，S2 起逐个落地）**
+状态：**in progress（2026-09-05 审计；S0 门已就位；S1、S2 done，S3 起逐个落地）**
 
 前置（全部 done，本 program 是它们的收官）：[[SPRINT_config_unknown_key_warning]]、
 [[SPRINT_config_as_signatures]]、[[SPRINT_config_argument_ownership_and_resolution]]、
@@ -167,14 +167,30 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
 `precision._select` 不做过渡替换（`_select` 把 None 当缺省、`cfg_path` 不把 None 当缺省，
 语义不同），直接在 S2 随 precision 定型删除。
 
-### S2 — precision 定型
+### S2 — precision 定型（**done**；snapshot diff 为空）
 
-`PrecisionConfig` 改 pydantic（training/rollout/quantization/prompt_encoders/diffusion_math
-子 model，`extra="forbid"`），挂到 `RootConfig.precision`；`resolve_precision_policy(section:
-PrecisionConfig)`。删六个幽灵 dataclass、`_select`、`_reject_legacy_keys`、`allow_tf32` legacy
-分支（`extra="forbid"` 天然拒绝已删 key，报的还是完整路径）。测试 68 处调用：30 处
-`resolve_precision_policy(root)` 改传 `root.precision`，16 处 `_cfg(precision=block)` fixture
-改造一处即可。
+- `precision.py`：六个零实例化的 dataclass 换成六个 pydantic section
+  （`PrecisionConfig` / `TrainingPrecisionConfig` / `RolloutPrecisionConfig` /
+  `QuantizationConfig` / `PromptEncodersPrecisionConfig` / `DiffusionMathPrecisionConfig`），
+  全部 `extra="forbid"`（新 `ClosedConfigBase`）。dtype 词汇、float32 模式、quantization
+  format/recipe 在 **parse 时**校验（validator 复用原有 normalize 函数与 `QuantizationPolicy`，
+  报错文案不变）；`outer_autocast` 用 `StrictBool`，0/1/"false" 照旧拒绝。
+- `resolve_precision_policy(section: PrecisionConfig | None)`：只吃 parsed section，
+  40 行完成 training→rollout 继承 + 两个默认；260 行手写 `_parse_role` / `_select` /
+  `_reject_legacy_keys` / `actor.optim.allow_tf32` legacy 分支全部删除。`allow_tf32` 现在就是
+  一个 unknown key（`unknown actor.optim.allow_tf32`），和其它已删 key 同一条路。
+- `RootConfig.precision: PrecisionConfig | None`——不再是 `Annotated[Any, ConfigBlock(...)]`，
+  walker 从 pydantic 字段自动下钻。
+- `_extract_error_message(exc, *, section=)`：把 bare section 的 loc 前缀交给格式化器本身，
+  `_revalidate_section` 里的两段 `startswith` 字符串手术删除；类型错误（原先丢 loc）现在
+  报 `<path>: <pydantic msg>`。
+- 调用方：vrl 14 处 + tests 40 处 `resolve_precision_policy(root)` → `(root.precision)`；
+  4 处喂 raw DictConfig 的测试改 `parse_config(cfg).precision` 或
+  `PrecisionConfig.model_validate(...)`；`TrainerConfig.from_cfg` 的无 precision 回退改走
+  `parse_config`（S3 整体重写该函数）。
+- `tests/config/test_precision.py`：fixture 从 `RootConfig(**top)` 直构改为
+  `parse_config(...).precision`（走同一道门），"两种输入形状必须一致"的 8 个用例随 `_select`
+  一起消失（只剩一种形状），改为一个"resolver 拒绝非 section 输入"的负向用例。
 
 ### S3 — actor / trainer 定型（program 里最重的一步）
 

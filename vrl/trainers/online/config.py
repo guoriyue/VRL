@@ -320,7 +320,10 @@ class TrainerConfig:
             raise ValueError("config missing required key(s): " + ", ".join(sorted(missing)))
 
         # Resolve the public policy once; trainer fields are its runtime projection.
-        precision = precision or resolve_precision_policy(cfg)
+        if precision is None:
+            from vrl.config.schema import parse_config
+
+            precision = resolve_precision_policy(parse_config(cfg).precision)
         payload.update(
             batch_plan=OnlineBatchPlan.from_cfg(cfg),
             train_precision=precision.training.label,

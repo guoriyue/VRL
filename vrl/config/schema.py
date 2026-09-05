@@ -436,13 +436,7 @@ def _revalidate_section[SectionT: ConfigBase](
     try:
         return section_cls.model_validate(payload)
     except ValidationError as exc:
-        message = _extract_error_message(exc)
-        if message.startswith("unknown ") and not message.startswith(f"unknown {section}."):
-            message = f"unknown {section}.{message[len('unknown ') :]}"
-        elif message.startswith("config missing required field: "):
-            rest = message[len("config missing required field: ") :]
-            message = f"config missing required field: {section}.{rest}"
-        raise ValueError(message) from exc
+        raise ValueError(_extract_error_message(exc, section=section)) from exc
 
 
 def _parse_model_section(value: Any) -> ModelSection | None:
@@ -924,10 +918,8 @@ class RootConfig(ConfigBase):
         _online_runtime_section_block("actor", ActorSection),
     ] = None
     distributed: DistributedSection | None = None
-    # reader: vrl/config/precision.py. Keep Any here so the resolver owns precise
-    # migration and availability errors; ConfigBlock derives every known nested
-    # key from PrecisionConfig rather than duplicating a hand-maintained tuple.
-    precision: Annotated[Any, ConfigBlock(PrecisionConfig)] = None
+    # resolver: vrl/config/precision.py resolve_precision_policy(root.precision)
+    precision: PrecisionConfig | None = None
 
     @field_validator("model", mode="before")
     @classmethod
@@ -1068,12 +1060,20 @@ class RootConfig(ConfigBase):
 # ── Parse boundary ────────────────────────────────────────────────────────────
 
 
-def _extract_error_message(exc: ValidationError) -> str:
-    """Extract a clean ValueError message from a Pydantic ValidationError."""
+def _extract_error_message(exc: ValidationError, *, section: str = "") -> str:
+    """Extract a clean ValueError message from a Pydantic ValidationError.
+
+    ``section`` re-anchors a bare section payload (a family-selected ``model``
+    or ``sampling`` class validated on its own) to its public YAML path, so the
+    location always reads ``<section>.<field>``.
+    """
     first = exc.errors(include_url=False)[0]
     error_type = first["type"]
     msg = first["msg"]
-    loc = ".".join(str(p) for p in first["loc"])
+    parts = [str(p) for p in first["loc"]]
+    if section:
+        parts.insert(0, section)
+    loc = ".".join(parts)
     # Missing required field — remap to repo-standard message format
     if error_type == "missing":
         return f"config missing required field: {loc}"
@@ -1085,9 +1085,11 @@ def _extract_error_message(exc: ValidationError) -> str:
         expected = msg.replace("Input should be", "expected")
         return f"unknown {loc}={input_val!r}; {expected}"
     # ValueError raised inside a validator — strip Pydantic's "Value error, " prefix
+    # (validators name the offending path themselves).
     if msg.startswith("Value error, "):
         return msg[len("Value error, ") :]
-    return msg
+    # Type errors: pydantic's sentence plus the path it lost.
+    return f"{loc}: {msg}" if loc else msg
 
 
 def parse_config(cfg: DictConfig) -> RootConfig:

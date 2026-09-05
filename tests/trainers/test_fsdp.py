@@ -819,7 +819,7 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
         },
     )
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
+    precision = resolve_precision_policy(root.precision)
     entry = get_model_family_entry("wan_2_1_i2v")
     build = entry.resolve_model_build(
         root,
