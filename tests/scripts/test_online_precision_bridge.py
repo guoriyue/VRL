@@ -9,7 +9,10 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from tests.config.test_load_all_experiments import _experiment_names
+from tests.config.test_load_all_experiments import (
+    _experiment_names,
+    _load_experiment_for_static_validation,
+)
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
@@ -27,7 +30,7 @@ _RECIPES = [name for name in _experiment_names() if not Path(name).name.startswi
 @pytest.mark.parametrize("experiment", _RECIPES)
 def test_bridge_uses_aligned_public_precision(experiment):
     """Checks bridge derives trainer precision from public precision."""
-    cfg = load_config(f"experiment/{experiment}")
+    cfg = _load_experiment_for_static_validation(experiment)
     trainer_config = build_configs(cfg).trainer
     policy = resolve_precision_policy(cfg)
     # The bridge contract is the role-label equality below (train/rollout labels

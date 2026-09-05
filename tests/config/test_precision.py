@@ -9,7 +9,10 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from tests.config.test_load_all_experiments import _experiment_names
+from tests.config.test_load_all_experiments import (
+    _experiment_names,
+    _load_experiment_for_static_validation,
+)
 from vrl.config.loading import load_config
 from vrl.config.precision import (
     PrecisionPolicy,
@@ -509,7 +512,7 @@ _ONLINE_RECIPES = _online_recipes()
 @pytest.mark.parametrize("experiment", _ONLINE_RECIPES)
 def test_online_recipe_equivalence(experiment):
     """Checks online recipes use aligned public precision."""
-    cfg = load_config(f"experiment/{experiment}")
+    cfg = _load_experiment_for_static_validation(experiment)
     policy = resolve_precision_policy(cfg)
 
     assert policy.training == policy.rollout

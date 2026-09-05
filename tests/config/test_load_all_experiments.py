@@ -53,6 +53,25 @@ def _load_bundled_raw(name: str):
         return OmegaConf.load(stream)
 
 
+def _load_experiment_for_static_validation(name: str):
+    """Complete runtime templates with inert test choices."""
+
+    overrides: list[str] = []
+    if name in {
+        "anima_preview3/online_grpo",
+        "anima_preview3/online_grpo_fullparam",
+    }:
+        overrides = [
+            "+reward=aesthetic",
+            "+dataset=anime_anatomy",
+            "trainer.total_epochs=1",
+            "trainer.output_dir=/test-only/anima-composition",
+        ]
+        if name == "anima_preview3/online_grpo":
+            overrides.append("actor.optim.lr=1e-5")
+    return load_config(f"experiment/{name}", overrides=overrides)
+
+
 def test_load_config_enforces_mandatory_marker(tmp_path: Path) -> None:
     """Keys declared '???' must be set by the experiment or a dotlist override."""
     config = tmp_path / "exp.yaml"
@@ -137,7 +156,7 @@ def test_geometry_sampling_presets_do_not_own_text_encoder_lengths() -> None:
 
 
 def test_text_lengths_live_at_model_or_real_protocol_boundaries() -> None:
-    anima = load_config("experiment/anima_preview3/online_grpo_aesthetic")
+    anima = _load_experiment_for_static_validation("anima_preview3/online_grpo")
     sana = load_config("experiment/sana/online_grpo_aesthetic")
     wan22 = load_config("experiment/wan_2_2/online_grpo_dual_expert_proof")
     predict2 = load_config("experiment/cosmos_predict2/online_grpo_v2w_reference_480p")
@@ -260,7 +279,7 @@ def test_reward_configs_are_single_reward_building_blocks() -> None:
 def test_all_experiments_load_and_validate() -> None:
     """Checks all experiments load and validate."""
     for name in _experiment_names():
-        cfg = load_config(f"experiment/{name}")
+        cfg = _load_experiment_for_static_validation(name)
         assert "model" in cfg, f"{name} missing model.*"
         assert "trainer" in cfg, f"{name} missing trainer.*"
         assert "algorithm" in cfg, f"{name} missing algorithm.*"
@@ -305,7 +324,7 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
 
     failures = []
     for name in _experiment_names():
-        cfg = load_config(f"experiment/{name}")
+        cfg = _load_experiment_for_static_validation(name)
         if str(cfg.algorithm.kind) == "diffusion_dpo":
             continue
 
@@ -1175,6 +1194,174 @@ def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
     assert built.trainer.batch_plan.samples_per_replay_batch == 1
 
 
+def test_anime_general_quality_policy_is_reusable_and_luna_is_an_identity_overlay() -> None:
+    policy_raw = _load_bundled_raw("reward/codex_image_qa_anime_general_quality")
+
+    assert tuple(policy_raw.defaults) == ("/reward/codex_image_qa", "_self_")
+    assert set(policy_raw) == {"defaults", "reward"}
+    assert "command" not in policy_raw.reward.kwargs.codex_image_qa
+    assert "max_concurrency" not in policy_raw.reward.kwargs.codex_image_qa
+
+    policy = load_config("reward/codex_image_qa_anime_general_quality")
+    experiment_overrides = [
+        "+reward=codex_image_qa_anime_general_quality",
+        "+dataset=anima_quality_ddrl",
+        "actor.optim.lr=2e-5",
+        "trainer.total_epochs=1",
+        "trainer.output_dir=/test-only/anima-quality",
+    ]
+    base_experiment = load_config(
+        "experiment/anima_preview3/online_grpo",
+        overrides=experiment_overrides,
+    )
+    luna_experiment = load_config(
+        "experiment/anima_preview3/online_grpo",
+        overrides=[*experiment_overrides, "+reward=codex_image_qa_luna_scored"],
+    )
+    base_reward = base_experiment.reward.kwargs.codex_image_qa
+    luna_reward = luna_experiment.reward.kwargs.codex_image_qa
+
+    assert policy.reward.kwargs.codex_image_qa.images_per_call == 4
+    assert policy.reward.kwargs.codex_image_qa.tile_size == 512
+    assert policy.reward.kwargs.codex_image_qa.max_concurrency == 8
+    assert policy.reward.kwargs.codex_image_qa.prompt_template == (
+        policy.reward.kwargs.codex_image_qa.grid_prompt_template
+    )
+    assert base_reward.prompt_template == policy.reward.kwargs.codex_image_qa.prompt_template
+    assert luna_reward.prompt_template == policy.reward.kwargs.codex_image_qa.prompt_template
+    assert "--model" not in policy.reward.kwargs.codex_image_qa.command
+    assert "gpt-5.6-luna" not in policy.reward.kwargs.codex_image_qa.command
+    assert "gpt-5.6-luna" in luna_reward.command
+
+
+def test_anima_runtime_composes_ddrl_without_changing_on_policy_execution() -> None:
+    """Objective selection must preserve the measured eager replay contract."""
+    cfg = load_config(
+        "experiment/anima_preview3/online_grpo",
+        overrides=[
+            "+reward=codex_image_qa_anime_general_quality",
+            "+reward=codex_image_qa_luna_scored",
+            "+dataset=anima_quality_ddrl",
+            "sampling.num_steps=40",
+            "algorithm.sft_weight=1e-3",
+            "actor.optim.lr=2e-5",
+            "actor.drop_zero_advantage=false",
+            "trainer.total_epochs=1",
+            "trainer.output_dir=/test-only/anima-quality-ddrl",
+        ],
+    )
+
+    assert cfg.model.use_lora is True
+    assert cfg.model.torch_compile.enable is False
+    assert cfg.rollout.samples_per_generation_batch == 1
+    assert cfg.actor.samples_per_replay_batch == 1
+    assert cfg.data.sampler.type == "sequential_window"
+    assert cfg.algorithm.sft_weight == pytest.approx(1.0e-3)
+    assert cfg.trainer.replay_parity.max_abs_logprob_diff == pytest.approx(1.0e-6)
+    assert cfg.trainer.precision_drift_guard.mode == "fail"
+    assert cfg.trainer.precision_drift_guard.max_abs_log_ratio == pytest.approx(1.0e-6)
+    assert cfg.trainer.precision_drift_guard.max_ratio_abs_dev == pytest.approx(1.0e-6)
+
+
+def test_anima_color_light_composition_changes_the_target_policy_and_data() -> None:
+    cfg = load_config(
+        "experiment/anima_preview3/online_grpo",
+        overrides=[
+            "+reward=codex_image_qa",
+            "+reward=codex_image_qa_luna_scored",
+            "+reward=codex_image_qa_anime_color_light",
+            "+dataset=anima_color_light_ddrl",
+            "algorithm.sft_weight=1e-3",
+            "actor.optim.lr=2e-5",
+            "trainer.total_epochs=1",
+            "trainer.output_dir=/test-only/anima-color-light",
+        ],
+    )
+
+    reward = cfg.reward.kwargs.codex_image_qa
+    assert cfg.data.eval_manifest == "datasets/anima/color_light/eval_prompts.jsonl"
+    assert cfg.model.use_lora is True
+    assert cfg.algorithm.sft_weight == pytest.approx(1.0e-3)
+    assert reward.images_per_call == 4
+    assert reward.tile_size == 512
+    assert "gpt-5.6-luna" in reward.command
+    assert reward.prompt_template == reward.grid_prompt_template
+    assert "{response_contract}" in reward.prompt_template
+    assert "more saturated" in reward.prompt_template
+
+
+def test_anima_color_light_reference_reward_composes_with_ddrl_data() -> None:
+    cfg = load_config(
+        "experiment/anima_preview3/online_grpo",
+        overrides=[
+            "+reward=codex_image_qa",
+            "+reward=codex_image_qa_luna_scored",
+            "+reward=codex_image_qa_anime_color_light_anchored",
+            "+dataset=anima_color_light_ddrl",
+            "algorithm.sft_weight=1e-3",
+            "actor.optim.lr=2e-5",
+            "trainer.total_epochs=64",
+            "trainer.save_freq=8",
+            "trainer.output_dir=/test-only/anima-color-light-reference",
+        ],
+    )
+
+    assert cfg.data.manifest == "data/external/anima/color_light/anchor_manifest.jsonl"
+    assert cfg.data.eval_manifest == "datasets/anima/color_light/eval_prompts.jsonl"
+    assert cfg.data.sft_latents == "data/external/anima/color_light/sft_latents_bf16.pt"
+    assert cfg.data.sampler.type == "sequential_window"
+    assert cfg.rollout.prompts_per_batch == 4
+    assert cfg.rollout.n_samples_per_prompt == 8
+    assert cfg.trainer.total_epochs == 64
+    assert cfg.trainer.save_freq == 8
+    reward = cfg.reward.kwargs.codex_image_qa
+    assert reward.comparison_mode == "reference_listwise"
+    assert reward.images_per_call == 8
+    assert reward.expected_group_size == cfg.rollout.n_samples_per_prompt == 8
+    assert reward.reference_data_root == cfg.data.artifact_data_root
+    assert "frozen base reference" in reward.reference_prompt_template
+    assert "Do not force a winner" in reward.reference_prompt_template
+    assert cfg.algorithm.global_std is False
+    assert cfg.model.use_lora is True
+    assert cfg.model.torch_compile.enable is False
+    assert cfg.algorithm.sft_weight == pytest.approx(1.0e-3)
+
+
+def test_anima_runtime_requires_explicit_experiment_choices() -> None:
+    assert list_bundled_configs("experiment/anima_preview3") == (
+        "experiment/anima_preview3/online_grpo.yaml",
+        "experiment/anima_preview3/online_grpo_fullparam.yaml",
+    )
+    for name in ("online_grpo", "online_grpo_fullparam"):
+        with pytest.raises(ValueError) as exc:
+            load_config(f"experiment/anima_preview3/{name}")
+        for key in ("reward", "data", "trainer.output_dir"):
+            assert key in str(exc.value)
+        if name == "online_grpo":
+            assert "actor.optim.lr" in str(exc.value)
+
+    fullparam = load_config(
+        "experiment/anima_preview3/online_grpo_fullparam",
+        overrides=[
+            "+reward=aesthetic",
+            "+dataset=anime_anatomy",
+            "trainer.output_dir=/test-only/anima-fullparam",
+        ],
+    )
+    assert fullparam.trainer.total_epochs == 1
+    assert fullparam.model.use_lora is False
+    assert fullparam.model.lora is None
+    assert fullparam.model.torch_compile.enable is False
+    assert fullparam.algorithm.kl_coef == 0.0
+    assert fullparam.actor.optim.lr == pytest.approx(5e-6)
+    assert fullparam.actor.optim.optim_8bit is True
+    assert fullparam.actor.max_norm == 1.0
+    assert fullparam.actor.gradient_checkpointing is True
+    assert fullparam.actor.ema.enable is False
+    assert fullparam.rollout.samples_per_generation_batch == 1
+    assert fullparam.actor.samples_per_replay_batch == 1
+
+
 @pytest.mark.parametrize("value", ["0", "-1", "largest", "true"])
 def test_generation_chunk_rejects_non_positive_or_non_integer_values(value: str) -> None:
     cfg = load_config(
@@ -1215,7 +1402,16 @@ def test_missing_drop_zero_advantage_fails_fast() -> None:
 
 def test_negative_reward_component_weights_are_rejected() -> None:
     """Checks negative reward component weights are rejected."""
-    cfg = load_config("experiment/anima_preview3/online_grpo_aesthetic_nsfw_safety")
+    cfg = load_config(
+        "experiment/anima_preview3/online_grpo",
+        overrides=[
+            "+reward=aesthetic",
+            "+reward=nsfw_safety",
+            "+dataset=anime_safety_stress",
+            "actor.optim.lr=1e-5",
+            "trainer.output_dir=/test-only/anima-safety",
+        ],
+    )
     cfg.reward.components.nsfw_safety = -0.5
 
     with pytest.raises(ValueError, match=r"reward\.components\.nsfw_safety must be >= 0"):
