@@ -129,6 +129,53 @@ def test_early_curve_discovers_only_numbered_completed_checkpoints(tmp_path) -> 
         checkpoint_eval._discover_targets(tmp_path)
 
 
+def test_epochs_cli_accepts_only_registered_curve_prefix() -> None:
+    parser = checkpoint_eval.build_parser()
+
+    assert parser.parse_args(["--run-dir", "run"]).epochs == checkpoint_eval.CURVE_EPOCHS
+    policy_args = parser.parse_args(
+        [
+            "--run-dir",
+            "run",
+            "--eval-policy-config",
+            "reward/codex_image_qa_anime_general_quality",
+            "--eval-policy-override",
+            "+reward=codex_image_qa_luna",
+            "--eval-policy-override",
+            "+dataset=anima_quality_ddrl",
+        ],
+    )
+    assert policy_args.eval_policy_config == "reward/codex_image_qa_anime_general_quality"
+    assert policy_args.eval_policy_override == [
+        "+reward=codex_image_qa_luna",
+        "+dataset=anima_quality_ddrl",
+    ]
+    assert parser.parse_args(["--run-dir", "run", "--epochs", "5,10"]).epochs == (5, 10)
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--run-dir", "run", "--epochs", "5,15"])
+
+
+def test_explicit_lora_export_resolves_to_checkpoint_source_of_truth(tmp_path) -> None:
+    checkpoint = tmp_path / "checkpoint-final"
+    _write_complete_checkpoint(checkpoint, 1, uses_lora=True)
+    (checkpoint / "lora_weights").mkdir()
+
+    targets = checkpoint_eval._discover_explicit_targets(
+        (f"ddrl-canary={checkpoint / 'lora_weights'}",),
+        expected_uses_lora=True,
+    )
+
+    assert [(target.label, target.epoch, target.path) for target in targets] == [
+        ("base", 0, None),
+        ("ddrl-canary", 1, checkpoint),
+    ]
+    parser = checkpoint_eval.build_parser()
+    args = parser.parse_args(
+        ["--run-dir", str(tmp_path), "--checkpoint", str(checkpoint / "lora_weights")],
+    )
+    assert args.checkpoint == [str(checkpoint / "lora_weights")]
+
+
 def test_explicit_checkpoint_rejects_adapter_mode_mismatch(tmp_path) -> None:
     checkpoint = tmp_path / "checkpoint-final"
     _write_complete_checkpoint(checkpoint, 1, uses_lora=True)
@@ -551,6 +598,52 @@ def test_paired_delta_bootstraps_prompt_means_and_counts_ties(monkeypatch) -> No
     assert result["ties"] == 1
     assert result["losses"] == 0
     assert result["ci95_low"] <= result["mean_delta"] <= result["ci95_high"]
+
+
+def test_luna_failure_retries_only_scoring_from_verified_generation_stage(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    protocol, generated, output_dir = _build_generation_stage(tmp_path)
+    partial_output = tmp_path / "partial"
+    partial_output.mkdir()
+    with pytest.raises(FileNotFoundError, match="no complete generation stage"):
+        checkpoint_eval._load_generation_stage(protocol, partial_output)
+
+    recovered = checkpoint_eval._load_generation_stage(protocol, output_dir)
+    assert [image.image_sha256 for image in recovered] == [
+        image.image_sha256 for image in generated
+    ]
+
+    monkeypatch.setattr(
+        checkpoint_eval,
+        "_resolve_protocol",
+        lambda _run_dir, **_kwargs: protocol,
+    )
+    monkeypatch.setattr(
+        checkpoint_eval,
+        "_generate_curve",
+        lambda *_args, **_kwargs: pytest.fail("verified images must not be regenerated"),
+    )
+
+    def fail_scoring(_protocol, retry_images):
+        assert [image.path for image in retry_images] == [image.path for image in recovered]
+        raise RuntimeError("spend limit")
+
+    monkeypatch.setattr(checkpoint_eval, "_score_curve", fail_scoring)
+    with pytest.raises(RuntimeError, match="spend limit"):
+        checkpoint_eval.main(
+            ["--run-dir", str(tmp_path), "--output-dir", str(output_dir)],
+        )
+
+    with pytest.raises(ValueError, match="different evaluation protocol"):
+        checkpoint_eval._load_generation_stage(
+            replace(protocol, config_sha256="f" * 64),
+            output_dir,
+        )
+    Image.new("RGB", (8, 8), color="white").save(generated[0].path)
+    with pytest.raises(ValueError, match="hash mismatch"):
+        checkpoint_eval._load_generation_stage(protocol, output_dir)
 
 
 def test_completed_report_marker_is_integrity_checked_and_never_reopened(tmp_path) -> None:

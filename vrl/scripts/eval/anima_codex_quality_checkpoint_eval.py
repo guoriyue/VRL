@@ -1,7 +1,32 @@
-"""Score and publish blinded Anima held-out quality comparisons."""
+"""Evaluate an Anima checkpoint against the pinned Luna quality rubric.
+
+The default registered protocol compares the pinned base model with checkpoints
+5/10/15 and the final 20-update checkpoint. An explicit ``--epochs`` prefix can
+evaluate an early-stopped run without pretending that its last numbered
+checkpoint is ``checkpoint-final``. Repeatable ``--checkpoint [LABEL=]PATH``
+arguments evaluate an explicitly selected full-parameter or LoRA checkpoint,
+including the checkpoint's ``lora_weights`` export path. Every arm sees
+identical prompt/seed/sampling inputs. Images are generated before the CPU-only
+Luna phase, then arranged in a deterministically blinded order for both Luna and
+human contact-sheet review. A content-addressed generation manifest is
+committed before Luna starts, so a failed scoring attempt can reuse the exact
+verified image grid without loading the generator again.
+
+``--eval-policy-config`` lets an objective-specific run (for example OCR) keep
+its resolved model and sampling contract while importing only the held-out
+manifest and Luna rubric from a reviewed evaluation preset. Repeatable
+``--eval-policy-override`` arguments compose independent reward and dataset
+presets without changing the run's generation policy. The resolved policy
+projection is content-hashed into every retry and provenance record.
+
+This is intentionally a standalone process. Training owns checkpoints and
+scored training rollouts; evaluation never reaches into a live trainer or
+appends artifacts to the training reward directory.
+"""
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import gc
 import hashlib
@@ -140,6 +165,175 @@ class ResolvedEvaluationPolicy:
     eval_manifest_path: Path
     eval_manifest_sha256: str
     luna_config: dict[str, Any]
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--run-dir",
+        type=Path,
+        required=True,
+        help="Training output containing resolved_config.yaml.",
+    )
+    parser.add_argument(
+        "--eval-policy-config",
+        default=None,
+        help=(
+            "Bundled config name or absolute YAML path supplying only data.eval_manifest "
+            "and reward.kwargs.codex_image_qa. Model and sampling always come from "
+            "<run-dir>/resolved_config.yaml; defaults to that run config."
+        ),
+    )
+    parser.add_argument(
+        "--eval-policy-override",
+        action="append",
+        default=[],
+        metavar="OVERRIDE",
+        help=(
+            "Repeatable config override for the evaluation policy only, such as "
+            "+reward=codex_image_qa_luna or +dataset=anima_quality_ddrl. "
+            "Without --eval-policy-config, overlays apply to a copy of the saved run config."
+        ),
+    )
+    parser.add_argument(
+        "--epochs",
+        type=_parse_curve_epochs,
+        default=CURVE_EPOCHS,
+        help=(
+            "Comma-separated registered curve prefix to evaluate. "
+            "Defaults to 5,10,15,20; use 5,10 for a run stopped at checkpoint 10."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint",
+        action="append",
+        default=[],
+        metavar="[LABEL=]PATH",
+        help=(
+            "Explicit checkpoint to evaluate; repeatable. Accepts checkpoint "
+            "directories and their lora_weights/ export. When present, the "
+            "registered --epochs curve is not discovered."
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Result directory; a verified incomplete generation stage is resumed. "
+            "Defaults to <run-dir>/heldout_luna_curve for the full curve and an "
+            "epoch-specific sibling for an early curve."
+        ),
+    )
+    parser.add_argument(
+        "--device",
+        default="auto",
+        help="Generation device; auto selects cuda:0 when available.",
+    )
+    parser.add_argument(
+        "--prompts-per-bucket-style",
+        type=int,
+        default=PROMPTS_PER_BUCKET_STYLE,
+        help=(
+            "Number of held-out rows selected from every bucket/style stratum. "
+            "The default 2 preserves the registered canary protocol; formal "
+            "color-light evaluation uses 6."
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate config, held-out prompts, checkpoints, and identities only.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    args = build_parser().parse_args(argv)
+    protocol = _resolve_protocol(
+        args.run_dir,
+        device_name=args.device,
+        curve_epochs=args.epochs,
+        checkpoint_specs=tuple(args.checkpoint),
+        prompts_per_bucket_style=args.prompts_per_bucket_style,
+        eval_policy_config=args.eval_policy_config,
+        eval_policy_overrides=tuple(args.eval_policy_override),
+    )
+    preflight = _preflight_record(protocol)
+    if args.dry_run:
+        print(json.dumps(preflight, indent=2, sort_keys=True))
+        return
+
+    if args.checkpoint:
+        default_output_name = "heldout_luna_compare_" + "_".join(
+            target.label for target in protocol.targets[1:]
+        )
+    else:
+        default_output_name = (
+            "heldout_luna_curve"
+            if args.epochs == CURVE_EPOCHS
+            else "heldout_luna_curve_epochs_" + "_".join(str(epoch) for epoch in args.epochs)
+        )
+    output_dir = (
+        args.output_dir.expanduser().resolve()
+        if args.output_dir is not None
+        else protocol.run_dir / default_output_name
+    )
+    if output_dir.exists():
+        _reject_completed_output(protocol, output_dir)
+        generated = _load_generation_stage(protocol, output_dir)
+        logger.info(
+            "Reusing %d verified generated images from %s; generation is skipped",
+            len(generated),
+            output_dir,
+        )
+    else:
+        output_dir.mkdir(parents=True)
+        generated = _generate_curve(protocol, output_dir)
+        _write_generation_stage(protocol, generated, output_dir)
+        logger.info("Committed recoverable generation stage to %s", output_dir)
+
+    _validate_owned_output_tree(output_dir)
+    scored, blind_orders = _score_curve(protocol, generated)
+    diversity = _dual_seed_diversity(scored)
+    _validate_owned_output_tree(output_dir)
+    _write_contact_sheets(scored, blind_orders, output_dir)
+    _write_samples(scored, output_dir / "samples.jsonl")
+    summary = _summarize(protocol, scored, diversity)
+    _write_json(output_dir / "summary.json", summary)
+    _write_json(
+        output_dir / "provenance.json",
+        _provenance_record(protocol, scored, blind_orders),
+    )
+    _write_completion_marker(protocol, output_dir)
+    print(
+        json.dumps(
+            {
+                "output_dir": str(output_dir),
+                "images": len(scored),
+                "summary": summary,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+    )
+
+
+def _parse_curve_epochs(value: str) -> tuple[int, ...]:
+    """Adapt the CLI spelling to the registered checkpoint-prefix protocol."""
+
+    parts = value.split(",")
+    if any(not part.strip() for part in parts):
+        raise argparse.ArgumentTypeError("epochs must be comma-separated integers")
+    try:
+        epochs = tuple(int(part.strip()) for part in parts)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("epochs must be comma-separated integers") from exc
+    try:
+        return _validate_curve_epochs(epochs)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def _validate_curve_epochs(epochs: tuple[int, ...]) -> tuple[int, ...]:
@@ -1715,3 +1909,7 @@ def _write_png_atomic(path: Path, image: PILImage, *, staging_dir: Path) -> None
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    main()
