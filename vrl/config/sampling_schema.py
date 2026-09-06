@@ -29,7 +29,7 @@ class SamplingSection(ConfigBase):
 
     @classmethod
     def require_overrides(cls, overrides: Mapping[str, Any]) -> dict[str, Any]:
-        """Validate per-prompt ``request_overrides`` against this family's fields.
+        """Return per-prompt ``request_overrides`` validated against this family's fields.
 
         The override vocabulary is this class's fields, so a typo fails with the
         same ``unknown sampling.<key>`` message as a YAML typo instead of riding

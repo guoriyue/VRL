@@ -191,7 +191,7 @@ class TrainingResumeConfig:
 
     @classmethod
     def from_root(cls, root: RootConfig) -> TrainingResumeConfig:
-        """Resolve the public checkpoint inputs once at the config-build boundary."""
+        """Build the resume policy from the root's public checkpoint inputs."""
 
         trainer = root.trainer
         resume_from = str((trainer.resume_from if trainer is not None else None) or "").strip()

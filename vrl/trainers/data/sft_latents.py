@@ -32,7 +32,7 @@ class CleanTargetRef:
 
     @classmethod
     def from_source(cls, source: Mapping[str, object] | PromptExample) -> CleanTargetRef:
-        """Resolve the one clean target shared by the shard producer and consumer.
+        """Build the clean-target identity shared by the shard producer and consumer.
 
         ``source`` is either a typed ``PromptExample`` or rollout metadata received
         across the collector boundary. Requiring exactly one field prevents a shard

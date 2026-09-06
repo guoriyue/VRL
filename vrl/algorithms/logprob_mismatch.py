@@ -96,7 +96,7 @@ class LogprobMismatchStats:
         fresh_log_prob: torch.Tensor,
         old_log_prob: torch.Tensor,
     ) -> LogprobMismatchStats:
-        """Stats on replay-vs-rollout-behavior log-probability drift.
+        """Compute drift statistics between replay and rollout-behavior log-probabilities.
 
         ``fresh_log_prob`` is the freshly recomputed replay logprob (compute dtype);
         ``old_log_prob`` is the rollout behavior logprob (rollout dtype). Reductions run

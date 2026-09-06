@@ -242,6 +242,13 @@ from_section / from_resources / from_request / from_trials / from_metrics / from
 | `CleanTargetRef.resolve` | `.from_source` | 入参名就是 `source` |
 | `RewardInferenceConfig.parse` | `.from_mapping` | 入参是 Mapping，仓库已有 9 个 `from_mapping` |
 
+**docstring 也要跟着规则走。** 函数体原样搬进类里时，第一行 docstring 还在说旧动词
+（`from_manifest` 却写着 "Validate one prompt manifest…"），读者看到名字和第一句打架，
+会以为命名是随手取的。规则的另一半：**`from_<输入>` 的第一行写「从什么构造出什么、遇到什么拒绝」，
+不写「校验什么」**——校验是构造的一部分，仓库里既有的 `from_*` 也全是这么做的
+（`from_values`："Validate and load one trainable LoRA adapter"）。本轮把我搬的 13 个方法的第一行
+统一成了这个写法；上游既有的 5 个（`RewardRuntimeConfig.from_cfg` 等）保持原文，它们不是本 sprint 的改动。
+
 **唯一保留的例外**：`LogprobMismatchStats.compute(fresh, old)`。它不是把一种表示转成另一种，
 而是从两个张量**测量**出统计量；`vrl/algorithms/advantages.py:193` 早有 `compute(` 先例。
 `HuggingFaceRepoRevision.parse(str)` 同理保留——入参是待解析的非结构化字符串，不是一个可

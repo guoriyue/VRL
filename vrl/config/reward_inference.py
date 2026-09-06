@@ -84,7 +84,7 @@ class RewardInferenceConfig:
         *,
         context: str,
     ) -> RewardInferenceConfig:
-        """Parse one component's config without duplicating its typed field list."""
+        """Build one component's inference config from its mapping, rejecting unknown keys."""
 
         if value is None:
             return cls()

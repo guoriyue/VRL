@@ -373,7 +373,7 @@ class ResolvedDistributedResources:
         *,
         reward_inference: dict[str, RewardInferenceConfig] | None = None,
     ) -> ResolvedDistributedResources:
-        """Resolve role-level resource config into concrete CUDA ordinals.
+        """Build the resource plan from the root: role-level requests to concrete CUDA ordinals.
 
         This is the single source of truth for trainer/rollout/reward GPU
         ownership. It intentionally does static ownership checks only; memory

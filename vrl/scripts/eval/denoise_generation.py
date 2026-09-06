@@ -82,7 +82,7 @@ class ImageSampling:
         *,
         what: str = "sampling",
     ) -> ImageSampling:
-        """Parse one fail-closed persisted sampling record."""
+        """Build sampling values from one persisted record, rejecting missing or unknown keys."""
 
         if not isinstance(value, Mapping):
             raise TypeError(f"{what} must be a mapping")

@@ -83,7 +83,7 @@ class ArtifactManifestReport:
         required_artifact_fields: Sequence[str] = (),
         required_metadata_fields: Sequence[str] = (),
     ) -> ArtifactManifestReport:
-        """Validate one prompt manifest that references external binary artifacts."""
+        """Build the report for one prompt manifest, rejecting missing or unreadable artifacts."""
 
         path = Path(manifest_path)
         examples = load_prompt_manifest(path)
@@ -148,7 +148,7 @@ class ArtifactManifestReport:
         eval_manifest: str | Path,
         **kwargs: Any,
     ) -> ArtifactManifestReport:
-        """Validate train/eval artifact manifests and report source-episode overlap."""
+        """Build one report for a train/eval manifest pair, flagging source-episode overlap."""
 
         train = cls.from_manifest(train_manifest, **kwargs)
         eval_report = cls.from_manifest(eval_manifest, **kwargs)
@@ -182,7 +182,7 @@ class ArtifactManifestReport:
         data_root: str | Path | None = None,
         require_target_video: bool = False,
     ) -> ArtifactManifestReport:
-        """Validate real Video2World manifests and first-frame reference provenance."""
+        """Build the report for a Video2World manifest pair, requiring first-frame provenance."""
 
         artifact_fields = (
             ("reference_image", "target_video") if require_target_video else ("reference_image",)

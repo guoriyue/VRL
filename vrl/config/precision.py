@@ -209,7 +209,7 @@ class PrecisionPolicy:
 
     @classmethod
     def from_section(cls, section: PrecisionConfig | None) -> PrecisionPolicy:
-        """Resolve the parsed ``precision`` section (``RootConfig.precision``)."""
+        """Build the precision policy from the parsed ``precision`` section."""
 
         if section is None:
             raise ValueError(

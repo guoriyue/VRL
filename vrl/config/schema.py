@@ -121,7 +121,7 @@ class RewardConfig(ConfigBase):
 
     @classmethod
     def from_cfg(cls, cfg: DictConfig) -> RewardConfig:
-        """Validate reward component shape and model-backed reward kwargs."""
+        """Build the reward section from ``cfg.reward``, rejecting malformed components."""
         if "reward" not in cfg:
             raise ValueError("config missing required field: reward")
         reward_raw = OmegaConf.to_container(cfg.reward, resolve=True, throw_on_missing=True) or {}

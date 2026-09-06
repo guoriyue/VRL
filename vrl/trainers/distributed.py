@@ -62,7 +62,7 @@ class DistributedTrainingContext:
         device: torch.device,
         env: Mapping[str, str] | None = None,
     ) -> DistributedTrainingContext:
-        """Resolve the training process identity from config + torchrun env.
+        """Build this process's training identity from the root config and the torchrun env.
 
         ``single_process`` always returns rank0 / world1 / primary and keeps the
         resource-resolved ``device``; it ignores env entirely. ``fsdp`` parses and
