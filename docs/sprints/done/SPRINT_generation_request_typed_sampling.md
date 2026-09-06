@@ -1,6 +1,6 @@
-# SPRINT：`GenerationRequest.sampling` 从 dict 袋子到分层类型（planned）
+# SPRINT：`GenerationRequest.sampling` 从 dict 袋子到分层类型（done）
 
-状态：**planned（2026-09-05）**。本文是数据类型清理时对 `GenerationRequest.sampling: dict[str, Any]`
+状态：**done（2026-09-05 立项，当日三片落地；执行记录见 §8，与 §3/§4 的偏差也记在那里）**。本文是数据类型清理时对 `GenerationRequest.sampling: dict[str, Any]`
 的审计结论：它不是一个"该类型化的闭合 key 集"，而是六个来源合并出来的 wire 载荷，把它改成
 typed 是一次跨 config / collector / wire / 三个 binding / 七个 family runtime 的重设计，不是清理。
 本文记录证据、分层方案和分三片落地的顺序，供独立 sprint 执行。
@@ -144,3 +144,80 @@ class GenerationRequest:
 - `vrl/generation/execution/batch_placement.py`：`request.sampling.get("max_new_tokens")`
   分支——全仓没有任何写方（`max_new_tokens` 只出现在 reward worker_config 里），是死代码
   五形式第 2 形（活调用者、死语义），已删。
+
+## 8. 执行记录（2026-09-05）
+
+三片各一个 commit，每片都过全量 CPU 套件（`CUDA_VISIBLE_DEVICES=""`）、config lint 与
+config snapshot gate；未跑任何 GPU / 训练。
+
+### 第一片 — `refactor(generation): lift the engine-level knobs off the sampling dict`
+
+按 §4 原样落地：`samples_per_generation_batch` / `train_segments` /
+`trajectory_storage` 成为 `GenerationRequest` 字段；`RolloutCollectorConfig` 携带前两者，
+`generation_sampling()` 及其对 storage policy 的 wire 再编码删除；planner、Ray runtime 的
+`auto` 改写（`replace(request, samples_per_generation_batch=n)`）、executor 的
+`apply_wire_storage_policy`（直接读 typed policy）、multisegment builder 改读字段。
+`tests/quality/preview.py` 用 `replace()` 而不是 request_overrides 处理 `auto`。
+
+### 第二片 — `refactor(generation): carry the rollout-owned denoise knobs as typed DenoiseRequestOptions`
+
+`DenoiseRequestOptions`（`vrl/generation/steps/denoise/config.py`）持有
+`denoise_mode / noise_level / sde_type / sde_window_size / sde_window_range / return_kl /
+return_prev_sample_mean / cache_ref_noise_pred / teacache`，构造时校验词表与窗口形状，
+`resolve_sde_window_range(num_steps)` 只做依赖 schedule 的那一步。collector 从
+`rollout.*` / `rollout.sde.*` / `sampling.teacache` 投影一次（`return_kl` 仍由 KL reward
+系数派生），layout 的四个私有 parser 与全部 `sampling.get(key, literal)` 删除；factory 的
+SDE evaluator 与 nextstep runtime 读同一对象。
+
+**与 §3 的两处偏差**：
+
+- `seed` / `negative_prompt` **没有**进 `DenoiseRequestOptions`。它们不是 `rollout.*` 的
+  旋钮：AR layout / executor、causvid、magi 都从各自的 sampling 里读 `seed`，`negative_prompt`
+  由去噪家族的 sampling section 拥有。它们在第三片成为 section 字段（见下）。
+- `denoise` 对**所有**家族的 collector 请求都构造，不是"AR 请求为 None"。证据是
+  nextstep_1（AR continuous）消费 `rollout.noise_level`
+  （`vrl/models/families/nextstep_1/runtime.py`）。手工构造的请求 `denoise=None` 时读方回落到
+  `DenoiseRequestOptions()` 的默认值，默认值仍只此一份。
+
+### 第三片 — `refactor(rollouts): per-prompt request_overrides are validated against the family sampling section`
+
+**与 §4 的偏差**：没有把 pydantic `SamplingSection` 实例放上 wire，`request.sampling`
+仍是"该家族 section 已声明键"的 dict。原因：(a) 三十多个测试文件用 `family="test"` 等
+不在 registry 里的家族手工构造请求，实例上 wire 会迫使每个都经过 registry；(b) 七个家族
+runtime 的 `sampling.get(key, self.model.config.default)` 在 section 字段默认 `None` 的前提下
+只会变成 `x if x is not None else default`，类型化收益为零。fail-closed 的价值在边界拿到：
+
+- `vrl/config/schema.py::validate_sampling_overrides(family, overrides)`：用家族的
+  `SamplingSection`（`extra="forbid"`）校验每条 prompt 的 `request_overrides`，错误信息与
+  YAML 同形（`unknown sampling.typo_key`）。`GenerationRequestBuilder.build` 在构造请求时
+  调用；去噪旋钮的覆盖走 `replace(DenoiseRequestOptions)`。
+- section 词表补齐真实的 override 来源：`SamplingSection.seed`（droid 数据集每行的
+  `request_overrides.seed`）、`DenoiseImageSamplingSection.negative_prompt`（preview 与
+  anima 的反向提示）、`SharedAttentionARSamplingSection.ar_paged_block_size / ar_paged_cache_dtype`
+  （原先只有测试能产生的 vllm_paged 旋钮，现在可从 YAML 到达）。snapshot gate 的差异只有
+  这些新字段的 `null`。
+- `require_native_ar_engine` 与 `sampling.ar_engine` 删除：边界关闭后没有任何 section 声明
+  它，guard 只剩测试能触发（dead code 五形之一、二）。`SPRINT_config_string_settings.md`
+  当年"保留 vestigial guard"的裁定建立在 sampling 开放的前提上，前提已不成立。
+- `PromptExample.request_overrides` 的注释写明词表来源。
+
+验收测试在 `tests/rollouts/runtime/test_engine_requests.py::test_engine_request_builder_rejects_a_request_override_outside_the_family_vocabulary`
+（§6 写的是 `tests/config/test_unknown_keys.py`；它是 collector 边界，放在 collector 的测试里）。
+
+### §6 的 grep 指标
+
+`grep -rn 'sampling\.get(\|sampling\["' vrl`：96 → 74。剩余命中全部是家族级键的读方：
+
+| 位置 | 命中 | 性质 |
+|---|---|---|
+| 七个家族 runtime / model（janus_pro、emu3、glm_image、llamagen、nextstep_1、causvid、magi_1、flux） | 35 | 家族自己的 section 字段回落到 `model.config` |
+| `full_sequence_denoise/layout.py` | 11 | 几何 / fps / max_sequence_length / seed / negative_prompt，回落到 executor 的 `default_*` |
+| `token_autoregressive/{layout,executor}.py` + `ar_attention_backends.py` | 7 | AR binding 级键（seed、image_*、attention_backend、ar_paged_*、ar_scheduler_batch_size） |
+| `execution/batch_placement.py` | 1 | `num_steps` 作为 diffusion 成本启发 |
+| `rollouts/collector/requests.py` | 1 | `fps` 复制进 reward metadata |
+| `scripts/eval/*` | 19 | §5 非目标：eval 脚本自己的 runtime dict |
+
+"家族 runtime 之外零命中"未达成：AR binding 的 7 处正是
+`SPRINT_config_resolution_consolidation.md` P3 计划并入 `ARSamplingParams` 的那组键，
+属于该 sprint；`batch_placement` 与 `requests.py` 各一处读的是家族键，随家族 section
+类型化一起走。
