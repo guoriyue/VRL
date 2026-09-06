@@ -8,7 +8,7 @@ import inspect
 import math
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +16,6 @@ import pytest
 import torch
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import LocalEntryNotFoundError
-from omegaconf import OmegaConf
 
 from tests import ci_envs
 from vrl.config.builders import build_configs
@@ -36,6 +35,7 @@ from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator,
     build_reward_function,
 )
+from vrl.trainers.data.prompts import PromptExample
 from vrl.trainers.diagnostics import trainable_state_digest
 from vrl.trainers.online import OnlineTrainer
 from vrl.utils.config import import_from_path
@@ -46,7 +46,15 @@ CASE_FILTER_ENV = "WM_REAL_MODEL_RL_CASES"
 
 @dataclass(frozen=True, slots=True)
 class CheckpointField:
-    cfg_path: str
+    """A checkpoint the case needs on disk.
+
+    ``cfg_path`` is the config key that receives the resolved path. ``None``
+    means the runtime finds the checkpoint on its own (a base-model name baked
+    into another checkpoint's config); the field then only gates the case on
+    the cached snapshot so an offline run skips instead of erroring mid-load.
+    """
+
+    cfg_path: str | None
     repo_id: str
     required_files: tuple[str, ...] = ()
     allow_file: bool = False
@@ -63,6 +71,11 @@ class RealCheckpointCase:
     min_cuda_memory_gib: float
     reference_image_cfg_path: str | None = None
     use_config_reward: bool = False
+    # ``use_config_reward`` cases score through the config's reward stack. The
+    # default swaps the reward MODEL for a tensor-mean factory so the case
+    # proves reward transport (artifacts, manifest, debug rows) without the
+    # real weights; ``None`` keeps the config's real model factory.
+    reward_model_factory: str | None = "tests.e2e.test_real_checkpoint_rl:build_tensor_mean_model"
     synthetic_replay_rollout: bool = False
     # Sample->replay log-prob parity bound (GRPO ratio==1 invariant). With
     # ppo_epochs=1 the optimizer steps after the whole timestep loop, so every
@@ -70,6 +83,87 @@ class RealCheckpointCase:
     # NFT cases report 0.0 (no evaluator log-probs) and pass trivially.
     logprob_parity_tol: float = 5e-3
 
+
+_COSMOS_PREDICT2_KLING_TRANSPORT = RealCheckpointCase(
+    case_id="cosmos_predict2",
+    config="experiment/cosmos_predict2/online_grpo_kling_video_reward",
+    family="cosmos-predict2",
+    prompt="A quiet street with a clear RL sign",
+    checkpoints=(
+        CheckpointField(
+            cfg_path="model.path",
+            repo_id="nvidia/Cosmos-Predict2-2B-Video2World",
+            required_files=(
+                "model_index.json",
+                "transformer/config.json",
+                "transformer/diffusion_pytorch_model.safetensors",
+                "text_encoder/config.json",
+                "text_encoder/model.safetensors.index.json",
+                "vae/config.json",
+                "vae/diffusion_pytorch_model.safetensors",
+                "scheduler/scheduler_config.json",
+                "tokenizer/tokenizer.json",
+            ),
+        ),
+    ),
+    overrides=(
+        "model.torch_compile.enable=false",
+        # The preset trains full-parameter (sized for multi-GPU, 2026-06-10);
+        # on one card the 2B fp32 masters + Adam moments beside the 11B text
+        # encoder do not fit 32 GiB. LoRA (the repo's own predict2 LoRA
+        # experiments' targets) keeps this a single-card case while still
+        # updating real trainable weights.
+        "model.use_lora=true",
+        "model.lora.rank=8",
+        "model.lora.alpha=8",
+        "model.lora.target_modules=[to_q,to_k,to_v,to_out.0]",
+        "algorithm.kl_coef=0.0",
+        "algorithm.kl_reward_coef=0.0",
+        "actor.drop_zero_advantage=false",
+        "rollout.n_samples_per_prompt=2",
+        "rollout.prompts_per_batch=1",
+        "rollout.samples_per_generation_batch=1",
+        "rollout.noise_level=0.7",
+        "rollout.sde.type=cps",
+        "rollout.sde.window_size=0",
+        "rollout.sde.window_range=[0,1]",
+        "sampling.num_steps=2",
+        "sampling.guidance_scale=1.0",
+        "sampling.height=128",
+        "sampling.width=128",
+        "sampling.num_frames=5",
+        "sampling.fps=16",
+    ),
+    # Measured 2026-09-06 on one 32 GiB card: 16.4 GiB peak (LoRA, 128x128x5f,
+    # text encoder parked before the reward model loads).
+    min_cuda_memory_gib=24.0,
+    reference_image_cfg_path="data.preprocessing.reference_image",
+    use_config_reward=True,
+)
+# Same run, real Kling VideoReward: the 2B Qwen2-VL judge scores the rollout
+# clips instead of the tensor-mean stand-in. This is the only lane where the
+# code after the factory string in vrl/rewards/models/kling_video_reward.py
+# runs on real weights. ``Qwen/Qwen2-VL-2B-Instruct`` is the base model named
+# inside the VideoReward snapshot's model_config.json; no config key can
+# redirect it, so it is gated (cfg_path=None) rather than overridden.
+_COSMOS_PREDICT2_KLING_REAL_REWARD = replace(
+    _COSMOS_PREDICT2_KLING_TRANSPORT,
+    case_id="cosmos_predict2_kling_real_reward",
+    checkpoints=(
+        *_COSMOS_PREDICT2_KLING_TRANSPORT.checkpoints,
+        CheckpointField(
+            cfg_path="reward.kwargs.kling_video_reward.worker_config.model_path",
+            repo_id="KlingTeam/VideoReward",
+            required_files=("model_config.json",),
+        ),
+        CheckpointField(
+            cfg_path=None,
+            repo_id="Qwen/Qwen2-VL-2B-Instruct",
+            required_files=("config.json",),
+        ),
+    ),
+    reward_model_factory=None,
+)
 
 CASES: tuple[RealCheckpointCase, ...] = (
     RealCheckpointCase(
@@ -225,52 +319,8 @@ CASES: tuple[RealCheckpointCase, ...] = (
         ),
         min_cuda_memory_gib=16.0,
     ),
-    RealCheckpointCase(
-        case_id="cosmos_predict2",
-        config="experiment/cosmos_predict2/online_grpo_kling_video_reward",
-        family="cosmos-predict2",
-        prompt="A quiet street with a clear RL sign",
-        checkpoints=(
-            CheckpointField(
-                cfg_path="model.path",
-                repo_id="nvidia/Cosmos-Predict2-2B-Video2World",
-                required_files=(
-                    "model_index.json",
-                    "transformer/config.json",
-                    "transformer/diffusion_pytorch_model.safetensors",
-                    "text_encoder/config.json",
-                    "text_encoder/model.safetensors.index.json",
-                    "vae/config.json",
-                    "vae/diffusion_pytorch_model.safetensors",
-                    "scheduler/scheduler_config.json",
-                    "tokenizer/tokenizer.json",
-                ),
-            ),
-        ),
-        overrides=(
-            "model.torch_compile.enable=false",
-            "algorithm.kl_coef=0.0",
-            "algorithm.kl_reward_coef=0.0",
-            "actor.drop_zero_advantage=false",
-            "rollout.n_samples_per_prompt=2",
-            "rollout.prompts_per_batch=1",
-            "rollout.samples_per_generation_batch=1",
-            "rollout.noise_level=0.7",
-            "rollout.sde.type=cps",
-            "rollout.sde.window_size=0",
-            "rollout.sde.window_range=[0,1]",
-            "sampling.num_steps=2",
-            "sampling.guidance_scale=1.0",
-            "sampling.height=128",
-            "sampling.width=128",
-            "sampling.num_frames=5",
-            "sampling.fps=16",
-            "sampling.max_sequence_length=64",
-        ),
-        min_cuda_memory_gib=28.0,
-        reference_image_cfg_path="data.preprocessing.reference_image",
-        use_config_reward=True,
-    ),
+    _COSMOS_PREDICT2_KLING_TRANSPORT,
+    _COSMOS_PREDICT2_KLING_REAL_REWARD,
     RealCheckpointCase(
         case_id="cosmos_predict2_5",
         config="experiment/cosmos_predict2_5/online_nft_kling_video_reward",
@@ -446,6 +496,33 @@ def test_new_diffusion_algorithm_case_overrides_build_without_gpu(
     assert hasattr(built.algorithm, "kl_coef") is has_reference_kl
 
 
+@pytest.mark.parametrize("case", CASES, ids=lambda case: case.case_id)
+def test_every_case_config_parses_without_a_gpu(
+    case: RealCheckpointCase,
+    tmp_path: Path,
+) -> None:
+    """Each case's overrides still name knobs its family's schema accepts.
+
+    The GPU lane only runs on a machine with the weights, so a stale override
+    (``sampling.max_sequence_length`` on a family whose section dropped it)
+    used to surface as an ERROR there and nowhere else. Checkpoint paths are
+    placeholders: config validation does not open them.
+    """
+    overrides = [
+        f"{field.cfg_path}={tmp_path / field.repo_id.replace('/', '--')}"
+        for field in case.checkpoints
+        if field.cfg_path is not None
+    ]
+    overrides += list(case.overrides)
+    if case.reference_image_cfg_path is not None:
+        overrides.append(f"{case.reference_image_cfg_path}={_write_reference_image(tmp_path)}")
+    if case.use_config_reward:
+        overrides.extend(_local_reward_overrides(tmp_path, case.reward_model_factory))
+    overrides.extend(_common_training_overrides(tmp_path))
+
+    parse_config(load_config(case.config, overrides=overrides))
+
+
 class _IndexReward:
     async def score_batch(self, rollouts: list[Any]) -> list[float]:
         return [float(i) for i, _ in enumerate(rollouts)]
@@ -455,11 +532,28 @@ class _DirectExecutorGenerationRuntime:
     """Test-only runtime that drives the real family executor without Ray actors.
 
     Real-checkpoint e2e tests use this to validate replay/trainer integration
-    without making Ray scheduling part of the assertion surface.
+    without making Ray scheduling part of the assertion surface. The executor
+    runs on the trainer's own modules, so this runtime plays the colocated
+    rollout worker's wake/sleep on them: ``activate`` puts the model and its
+    frozen pipeline components (text encoder / VAE) on the GPU after the
+    trainer parked them for the phase, ``offload`` moves the frozen components
+    (and, when the trainer shares the card and will restore its state after
+    the phase, the model itself) back to the host before an in-process reward
+    takes the card.
     """
 
-    def __init__(self, executor: Any) -> None:
+    def __init__(
+        self,
+        executor: Any,
+        *,
+        model: Any,
+        device: torch.device,
+        park_model: bool = False,
+    ) -> None:
         self.executor = executor
+        self.model = model
+        self.device = device
+        self.park_model = park_model
         self.current_policy_version = 0
 
     @property
@@ -467,7 +561,8 @@ class _DirectExecutorGenerationRuntime:
         return False
 
     async def activate(self) -> None:
-        return None
+        self.model.to(self.device)
+        self._move_frozen(self.device)
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         rows = request.sample_rows()
@@ -475,11 +570,19 @@ class _DirectExecutorGenerationRuntime:
             return self.executor.forward_plan(request, rows, EnginePlan.from_request(request))
 
     async def offload(self) -> None:
+        self._move_frozen(torch.device("cpu"))
+        if self.park_model:
+            self.model.to(torch.device("cpu"))
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
     async def shutdown(self) -> None:
         return None
+
+    def _move_frozen(self, device: torch.device) -> None:
+        move_frozen = getattr(self.model, "move_frozen_components", None)
+        if callable(move_frozen):
+            move_frozen(device)
 
 
 class _SyntheticDiffusionReplayCollector:
@@ -543,17 +646,24 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
     _skip_unless_case_enabled(case)
     _skip_unless_cuda_has_memory(case.min_cuda_memory_gib)
 
-    checkpoint_overrides = [
-        f"{field.cfg_path}={_resolve_checkpoint_path(case, field)}" for field in case.checkpoints
-    ]
+    checkpoint_overrides = []
+    for field in case.checkpoints:
+        path = _resolve_checkpoint_path(case, field)
+        if field.cfg_path is not None:
+            checkpoint_overrides.append(f"{field.cfg_path}={path}")
     case_overrides = list(case.overrides)
+    step_inputs: list[Any] = [case.prompt]
     if case.reference_image_cfg_path is not None:
         reference_image = _write_reference_image(tmp_path)
         case_overrides.append(
             f"{case.reference_image_cfg_path}={reference_image.as_posix()}",
         )
+        # The executor reads the reference image off the GenerationInput that
+        # PromptExample.generation_input() builds; a bare string prompt carries
+        # none (production fills the dataset default in via validate_reference_images).
+        step_inputs = [PromptExample(prompt=case.prompt, reference_image=str(reference_image))]
     if case.use_config_reward:
-        case_overrides.extend(_local_reward_overrides(tmp_path))
+        case_overrides.extend(_local_reward_overrides(tmp_path, case.reward_model_factory))
 
     cfg = load_config(
         case.config,
@@ -585,6 +695,14 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             dtype,
         )
         collector_config = RolloutCollectorConfig.from_root(parse_config(cfg))
+        resources = ResolvedDistributedResources.from_root(parse_config(cfg))
+        # The real topology plan for this box. Generation runs on the trainer's
+        # own modules through _DirectExecutorGenerationRuntime, whose
+        # activate/offload move them the way a colocated rollout worker wakes
+        # and sleeps, so the trainer parks and the reward releases exactly as
+        # in production. Index-reward cases keep no plan: their CPU reward
+        # runtime has nothing to park.
+        lifecycle = resources.lifecycle if case.use_config_reward else None
         if case.synthetic_replay_rollout:
             collector = _SyntheticDiffusionReplayCollector(
                 model=bundle.model,
@@ -597,11 +715,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             executor = _build_executor(entry, bundle.model, cfg)
             reward_fn = (
                 build_reward_function(
-                    resolve_reward_inputs(
-                        built,
-                        ResolvedDistributedResources.from_root(parse_config(cfg)),
-                        trainer_device=device,
-                    ),
+                    resolve_reward_inputs(built, resources, trainer_device=device),
                 )
                 if case.use_config_reward
                 else _IndexReward()
@@ -610,7 +724,13 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 entry,
                 reward_runtime=RewardFunctionRuntime(reward_fn),
                 config=collector_config,
-                generation_runtime=_DirectExecutorGenerationRuntime(executor),
+                generation_runtime=_DirectExecutorGenerationRuntime(
+                    executor,
+                    model=bundle.model,
+                    device=device,
+                    park_model=lifecycle is not None and lifecycle.trainer_and_rollout_share_gpu,
+                ),
+                lifecycle=lifecycle,
             )
         pair = build_algorithm_and_evaluator(
             family_entry=entry,
@@ -631,7 +751,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         )
 
         before = trainable_state_digest(bundle.model)
-        metrics = asyncio.run(trainer.step([case.prompt]))
+        metrics = asyncio.run(trainer.step(step_inputs))
         after = trainable_state_digest(bundle.model)
 
         assert trainer.state.step == 1
@@ -654,9 +774,18 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 f"{case.logprob_parity_tol}) — broken sample/replay parity"
             )
         if case.use_config_reward:
-            _assert_local_reward_artifacts(tmp_path, metrics)
+            _assert_local_reward_artifacts(
+                tmp_path,
+                metrics,
+                samples=int(cfg.rollout.n_samples_per_prompt),
+            )
     finally:
-        if collector is not None:
+        if trainer is not None:
+            # Production order: park the trainer's state, then release the
+            # collector, so a shared in-process reward can prove its memory
+            # went away against the pre-load baseline.
+            asyncio.run(trainer.rollout_schedule.lifecycle.shutdown_collector_runtime())
+        elif collector is not None:
             asyncio.run(collector.shutdown())
         elif reward_fn is not None:
             # Once constructed, the collector is the reward runtime's sole
@@ -685,33 +814,48 @@ def _common_training_overrides(tmp_path: Path) -> tuple[str, ...]:
 
 
 def build_tensor_mean_model(worker_config):
-    """Test RewardModel factory: score = mean of the artifact tensor."""
+    """Test RewardModel factory: score = mean pixel of the decoded artifact.
 
-    def _model(*, artifact, request):
-        tensor = torch.load(Path(artifact.path), map_location="cpu").float()
-        key = request.score_key.split("+", 1)[0].strip()
-        return {key: float(tensor.mean().item())}
+    Returns the Kling function's public ``overall_reward`` key (the preset's
+    ``score_key``) so reward transport is exercised end to end without weights.
+    """
+
+    del worker_config
+    from vrl.rewards.models.media import decode_artifact_frames
+
+    def _model(artifact):
+        frames = decode_artifact_frames(artifact)
+        return {"overall_reward": float(frames.float().mean().item())}
 
     return _model
 
 
-def _local_reward_overrides(tmp_path: Path) -> tuple[str, ...]:
+def _local_reward_overrides(tmp_path: Path, model_factory: str | None) -> tuple[str, ...]:
     artifact_dir = tmp_path / "reward_artifacts"
     debug_dir = tmp_path / "reward_debug"
-    model_factory = "tests.e2e.test_real_checkpoint_rl:build_tensor_mean_model"
-    return (
+    overrides = [
         f"reward.kwargs.kling_video_reward.artifact_dir={artifact_dir.as_posix()}",
         f"reward.kwargs.kling_video_reward.debug_dir={debug_dir.as_posix()}",
-        f"reward.kwargs.kling_video_reward.worker_config.model_factory={model_factory}",
-        "reward.kwargs.kling_video_reward.worker_config.reward_model_version=e2e-tensor-mean",
-    )
+        # Scored artifacts are released after scoring by default; keep them so
+        # the on-disk transport can be asserted.
+        "reward.kwargs.kling_video_reward.retain_artifacts=true",
+        "reward.kwargs.kling_video_reward.worker_config.local_files_only=true",
+    ]
+    if model_factory is not None:
+        overrides += [
+            f"reward.kwargs.kling_video_reward.worker_config.model_factory={model_factory}",
+            "reward.kwargs.kling_video_reward.worker_config.reward_model_version=e2e-tensor-mean",
+        ]
+    return tuple(overrides)
 
 
-def _assert_local_reward_artifacts(tmp_path: Path, metrics: Any) -> None:
+def _assert_local_reward_artifacts(tmp_path: Path, metrics: Any, *, samples: int) -> None:
     components = metrics.reward_components
     assert "kling_video_reward" in components
     assert isinstance(components["kling_video_reward"], float)
-    assert (tmp_path / "reward_artifacts" / "manifest.jsonl").exists()
+    # One retained mp4 per scored sample, plus the per-request debug rows.
+    retained = sorted((tmp_path / "reward_artifacts").glob("*.mp4"))
+    assert len(retained) == samples, [path.name for path in retained]
     assert (tmp_path / "reward_debug" / "kling_video_reward_results.jsonl").exists()
 
 
@@ -752,10 +896,6 @@ def _build_executor(
     signature = inspect.signature(executor_cls)
     if "samples_per_generation_batch" in signature.parameters:
         kwargs["samples_per_generation_batch"] = int(cfg.rollout.samples_per_generation_batch)
-    if "reference_image" in signature.parameters:
-        kwargs["reference_image"] = OmegaConf.select(
-            cfg, "data.preprocessing.reference_image", default=None
-        )
     return executor_cls(model, **kwargs)
 
 
@@ -960,7 +1100,8 @@ def _resolve_checkpoint_path(case: RealCheckpointCase, field: CheckpointField) -
 
 
 def _checkpoint_env_name(case: RealCheckpointCase, field: CheckpointField) -> str:
-    return f"WM_REAL_CHECKPOINT_{_env_token(case.case_id)}_{_env_token(field.cfg_path)}"
+    target = field.cfg_path if field.cfg_path is not None else field.repo_id
+    return f"WM_REAL_CHECKPOINT_{_env_token(case.case_id)}_{_env_token(target)}"
 
 
 def _cached_hf_snapshot(
