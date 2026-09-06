@@ -84,7 +84,13 @@ def load_flow_match_scheduler(
 
 
 def validate_rollout_quantization_support(build: ModelBuild) -> None:
-    """Fail before model mutation when the requested rollout format cannot run."""
+    """Fail before model mutation when the requested rollout format cannot run.
+
+    Deliberately a free function rather than a ``ModelBuild`` method: quantization
+    support is a loader concern, and callers pass the build structurally — a
+    nominal method would demand a fully constructed ModelBuild where the contract
+    only needs the shape.
+    """
 
     quantization = build.precision.quantization
     if quantization is None or quantization.format != "nvfp4":
@@ -206,5 +212,4 @@ __all__ = [
     "load_diffusers_scheduler",
     "load_diffusers_transformer",
     "load_flow_match_scheduler",
-    "validate_rollout_quantization_support",
 ]

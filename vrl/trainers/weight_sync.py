@@ -112,6 +112,22 @@ def build_trainable_state_sync_getter(bundle: RuntimeBundle) -> TrainableStateGe
     return _getter
 
 
+def require_trainable_modules(bundle: RuntimeBundle) -> Mapping[str, Any]:
+    """Return the checkpoint-root mapping of a bundle, refusing an empty one.
+
+    Deliberately a free function, not ``RuntimeBundle.require_trainable_modules``:
+    the invariant belongs to the trainer layer (checkpointing / strategy / weight
+    sync all read roots through here), and every caller passes the bundle
+    structurally — the annotation documents the intended type without demanding
+    a fully constructed one.
+    """
+
+    modules = bundle.trainable_modules
+    if not modules:
+        raise ValueError("RuntimeBundle.trainable_modules must be a non-empty mapping")
+    return modules
+
+
 def flatten_trainable_module_state(modules: Mapping[str, Any]) -> dict[str, Any]:
     """Return trainable ``module_name.parameter_name`` keys for rollout sync."""
 
@@ -166,13 +182,6 @@ def _resolve_next_policy_version(
     if current is None:
         return 1
     return int(current) + 1
-
-
-def require_trainable_modules(bundle: RuntimeBundle) -> Mapping[str, Any]:
-    modules = bundle.trainable_modules
-    if not modules:
-        raise ValueError("RuntimeBundle.trainable_modules must be a non-empty mapping")
-    return modules
 
 
 def _trainable_parameter_names(module: Any, module_name: str) -> set[str]:

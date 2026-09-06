@@ -220,6 +220,69 @@ resources: ResolvedDistributedResources)`，以及
   `select_* (9)` / `apply_* (12)` 是无主语的纯函数——判据都不命中。
 - `normalize_wan_boundary_ratio(value, *, field_name)` 的字符串参数命名配置键，Rule 1 反例。
 
+## 4ter. 命名规则（第三轮补正）
+
+第一、二轮我给 9 个方法起了 5 种名字（`from_root` / `from_section` / `from_cfg` /
+`resolve` / `parse` / `compute`），看着像随手取的。**实测仓库早有惯例**——53 个既有
+classmethod 构造器，后缀命名的是**输入是什么**：
+
+```
+from_build 15   from_root 9   from_mapping 9   from_cfg 2
+from_section / from_resources / from_request / from_trials / from_metrics / from_sampling ... 各 1
+```
+
+**规则：`from_<输入>`。** 后缀不同不是随意，是输入类型不同：`from_root(root: RootConfig)`、
+`from_cfg(cfg: DictConfig)`、`from_section(section: PrecisionConfig)` 是三种不同的入参。
+
+按这条把三个偏离的改回来了：
+
+| 第二轮 | 改正为 | 理由 |
+|---|---|---|
+| `ResolvedDistributedResources.resolve` | `.from_root` | 入参是 `RootConfig`，和既有 9 个 `from_root` 同族 |
+| `CleanTargetRef.resolve` | `.from_source` | 入参名就是 `source` |
+| `RewardInferenceConfig.parse` | `.from_mapping` | 入参是 Mapping，仓库已有 9 个 `from_mapping` |
+
+**唯一保留的例外**：`LogprobMismatchStats.compute(fresh, old)`。它不是把一种表示转成另一种，
+而是从两个张量**测量**出统计量；`vrl/algorithms/advantages.py:193` 早有 `compute(` 先例。
+`HuggingFaceRepoRevision.parse(str)` 同理保留——入参是待解析的非结构化字符串，不是一个可
+"from" 的对象。
+
+## 4quater. 负面结果：bucket 5 的两个函数**不能**变成方法
+
+第二轮的提交信息里我写「标注后没有露出新的所有权信号，因为它们仍有多个必需参数」——
+**这句话是错的**。标注之后有两个恰好只剩一个必需参数：
+
+```python
+require_trainable_modules(bundle: RuntimeBundle) -> Mapping[str, Any]   # 14 个调用点
+validate_rollout_quantization_support(build: ModelBuild) -> None        #  2 个调用点
+```
+
+按 Rule 1 这就是所有权信号，所以第三轮真的把它们搬成了
+`RuntimeBundle.require_trainable_modules()` / `ModelBuild.validate_rollout_quantization_support()`。
+**结果 146 个测试红**：
+
+```
+AttributeError: '_Bundle' object has no attribute 'require_trainable_modules'
+AttributeError: 'types.SimpleNamespace' object has no attribute 'validate_rollout_quantization_support'
+```
+
+**根因**：这两个参数从来就不是名义上的 `RuntimeBundle` / `ModelBuild`，而是**结构类型**。
+15 个测试文件传的是只带 `trainable_modules` 一个字段的轻量替身；`RuntimeBundle` 是个字段
+很多的 dataclass，真造一个代价很高，替身的存在是有理由的。
+
+**这里有一条一般性教训，值得单独记住**：
+
+> **类型标注是提示，方法是运行时契约。** 把 `x: Any` 改成 `x: SomeType` 不改变任何运行时
+> 行为（鸭子类型照跑）；把 `f(x)` 改成 `x.f()` 把结构契约变成了名义契约。前者永远安全，
+> 后者只在**所有**调用者都真的持有该类型时才安全。Rule 1 的「单一类型参数 = 所有权信号」
+> 必须再过一道：这个类型是名义的还是结构的？
+
+因此两处都已回退为自由函数，**标注保留**（它是准确的意图文档，且零运行时代价），并在
+docstring 里写明为什么不是方法。另外 `require_trainable_modules` 的消费者全在
+`vrl/trainers/`（checkpointing / strategy / weight_sync），把它挂到
+`vrl/models/interfaces/` 的 `RuntimeBundle` 上还会把 trainer 的不变量推进 model 接口层——
+即使测试问题不存在，这也是反对搬家的第二个独立理由。
+
 ## 5. 未决项（唯一一条）
 
 `Any` + `owner=`/`what=` 字符串的 4 个收窄器，按 Rule 1 + Rule 2 都可疑，但它们做的是
@@ -264,7 +327,8 @@ vrl/models/dtypes.py:104              require_plain_dtype(value: Any, *, what: s
 
 ## 8. 总账
 
-两轮合计：**9 个自由函数变成 classmethod，6 个防御性 `getattr` 删除，4 个 `Any` 参数标注**。
+三轮合计：**9 个自由函数变成 classmethod（命名统一为 `from_<输入>`），6 个防御性 `getattr`
+删除，4 个 `Any` 参数标注，2 次搬家尝试被实测否决并记录了原因**。
 审过的函数总数 123 + 约 120 = 约 240 个；判定「该搬家」的比例约 4%。
 这个比例本身是结论：仓库里 `require_/build_/resolve_/validate_` 密集**不是**设计问题，
 绝大多数有正当理由；值得改的是那一小撮「名字和返回类型指同一个概念」的构造器。

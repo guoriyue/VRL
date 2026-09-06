@@ -22,6 +22,7 @@ import torch
 from torch import nn
 
 from vrl.trainers.distributed import DistributedTrainingContext
+from vrl.trainers.weight_sync import require_trainable_modules
 from vrl.utils.cuda_memory import empty_cuda_cache
 
 if TYPE_CHECKING:
@@ -753,7 +754,6 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
     def export_checkpoint_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
         from vrl.models.weight_utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import gather_checkpoint_state_dict
-        from vrl.trainers.weight_sync import require_trainable_modules
 
         modules = require_trainable_modules(bundle)
         return {
@@ -764,7 +764,6 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
         from vrl.models.weight_utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import gather_trainable_state_dict
-        from vrl.trainers.weight_sync import require_trainable_modules
 
         modules = require_trainable_modules(bundle)
         state: dict[str, Any] = {}
@@ -784,7 +783,6 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
     ) -> None:
         from vrl.models.weight_utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import load_checkpoint_state_dict
-        from vrl.trainers.weight_sync import require_trainable_modules
 
         modules = require_trainable_modules(bundle)
         missing = sorted(set(modules) - set(state))
@@ -810,7 +808,6 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
     ) -> None:
         from vrl.models.weight_utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import load_full_state_dict
-        from vrl.trainers.weight_sync import require_trainable_modules
 
         modules = require_trainable_modules(bundle)
         missing = sorted(set(modules) - set(state))
@@ -1000,7 +997,6 @@ class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
 
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
         from vrl.trainers.weight_sync import (
-            require_trainable_modules,
             select_trainable_state,
             to_cpu_snapshot,
         )
