@@ -97,7 +97,7 @@ def test_same_host_fsdp_selects_one_physical_gpu_per_rank(
         cfg,
         {"distributed": {"resources": {"visible_devices": [int(selected)]}}},
     )
-    resources = ResolvedDistributedResources.resolve(parse_config(narrowed))
+    resources = ResolvedDistributedResources.from_root(parse_config(narrowed))
     assert resources.trainer_devices == (int(expected),)
     assert resources.rollout_devices == (int(expected),)
 

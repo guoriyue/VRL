@@ -85,7 +85,7 @@ class RewardConfig(ConfigBase):
         if not isinstance(value, Mapping):
             return value
         return {
-            str(name): RewardInferenceConfig.parse(
+            str(name): RewardInferenceConfig.from_mapping(
                 entry,
                 context=f"reward.inference.{name}",
             )
@@ -780,7 +780,7 @@ class RolloutRuntimeSection(ConfigBase):
 class DistributedSection(ConfigBase):
     """Key registry for distributed.*; values validated by vrl.ray.resources."""
 
-    # reader: vrl/ray/resources.py ResolvedDistributedResources.resolve(root); the
+    # reader: vrl/ray/resources.py ResolvedDistributedResources.from_root(root); the
     # consuming dataclass is the section type, so pydantic validates it here.
     resources: DistributedResourceConfig | None = None
     # reader: vrl/generation/ray/config.py RayGenerationConfig.from_root (worker

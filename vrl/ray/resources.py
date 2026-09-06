@@ -367,7 +367,7 @@ class ResolvedDistributedResources:
         return plan_ordinal
 
     @classmethod
-    def resolve(
+    def from_root(
         cls,
         root: RootConfig,
         *,

@@ -12,19 +12,19 @@ from vrl.config.schema import RewardConfig
 
 
 def test_in_process_is_the_default() -> None:
-    assert RewardInferenceConfig.parse(None, context="reward.inference.x") == (
+    assert RewardInferenceConfig.from_mapping(None, context="reward.inference.x") == (
         RewardInferenceConfig()
     )
 
 
 def test_http_requires_endpoint_and_expected_model() -> None:
     with pytest.raises(ValueError, match="absolute http"):
-        RewardInferenceConfig.parse(
+        RewardInferenceConfig.from_mapping(
             {"kind": "http", "expected_model": "judge-v1"},
             context="reward.inference.x",
         )
     with pytest.raises(ValueError, match="expected_model"):
-        RewardInferenceConfig.parse(
+        RewardInferenceConfig.from_mapping(
             {"kind": "http", "endpoint": "http://reward:8300"},
             context="reward.inference.x",
         )
@@ -41,7 +41,7 @@ def test_http_endpoint_is_an_origin_without_embedded_credentials(
     endpoint: str,
 ) -> None:
     with pytest.raises(ValueError, match="endpoint"):
-        RewardInferenceConfig.parse(
+        RewardInferenceConfig.from_mapping(
             {
                 "kind": "http",
                 "endpoint": endpoint,
@@ -53,7 +53,7 @@ def test_http_endpoint_is_an_origin_without_embedded_credentials(
 
 def test_unknown_inference_key_is_rejected_from_typed_source() -> None:
     with pytest.raises(ValueError, match=r"unsupported .* keys"):
-        RewardInferenceConfig.parse(
+        RewardInferenceConfig.from_mapping(
             {"kind": "in_process", "service_url": "http://legacy"},
             context="reward.inference.x",
         )

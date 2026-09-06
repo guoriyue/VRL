@@ -599,7 +599,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 build_reward_function(
                     resolve_reward_inputs(
                         built,
-                        ResolvedDistributedResources.resolve(parse_config(cfg)),
+                        ResolvedDistributedResources.from_root(parse_config(cfg)),
                         trainer_device=device,
                     ),
                 )

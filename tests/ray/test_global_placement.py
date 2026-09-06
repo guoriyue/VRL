@@ -46,7 +46,7 @@ _REAL_RAY_PROBE_TIMEOUT = pytest.mark.real_cover(
 def _resolve(resources: dict):
     # Release scheduling is derived from topology, so only the resources block is
     # needed to pin a placement plan.
-    return ResolvedDistributedResources.resolve(
+    return ResolvedDistributedResources.from_root(
         parse_config(OmegaConf.create({"distributed": {"resources": resources}})),
     )
 

@@ -500,7 +500,7 @@ def build_reward_scorer(
             "worker_config.service_url was removed; configure "
             "reward.inference.<component>.kind=http and its endpoint",
         )
-    deployment = RewardInferenceConfig.parse(
+    deployment = RewardInferenceConfig.from_mapping(
         inference,
         context="reward inference",
     )

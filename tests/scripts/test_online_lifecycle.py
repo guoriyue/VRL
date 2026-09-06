@@ -449,7 +449,7 @@ def _install_common_fakes(
     monkeypatch.setattr(online, "validate_checkpoint_compatibility", _validate_checkpoint)
     monkeypatch.setattr(
         resolved_run.ray_resources.ResolvedDistributedResources,
-        "resolve",
+        "from_root",
         classmethod(lambda _cls, cfg, **kwargs: resources),
     )
     monkeypatch.setattr(online, "format_distributed_resource_plan", lambda resources: "resources")
@@ -812,7 +812,7 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
     )
     monkeypatch.setattr(
         resolved_run.ray_resources.ResolvedDistributedResources,
-        "resolve",
+        "from_root",
         classmethod(lambda _cls, _cfg, **_kwargs: resources),
     )
     monkeypatch.setattr(
@@ -861,7 +861,7 @@ async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
     )
     monkeypatch.setattr(
         resolved_run.ray_resources.ResolvedDistributedResources,
-        "resolve",
+        "from_root",
         classmethod(lambda _cls, _cfg, **_kwargs: resources),
     )
     monkeypatch.setattr(

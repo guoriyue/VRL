@@ -93,7 +93,7 @@ def _target_at_sampling_geometry(
         frames = read_image_as_frames(path)
     elif media_type == "target_video":
         frames = read_video_frames(path, num_frames=num_frames)
-    else:  # pragma: no cover - CleanTargetRef.resolve owns this closed set
+    else:  # pragma: no cover - CleanTargetRef.from_source owns this closed set
         raise ValueError(f"unsupported clean target field: {media_type}")
     if int(frames.shape[0]) != num_frames:
         raise ValueError(
@@ -128,7 +128,7 @@ def _resolve_clean_targets(
     seen_target_keys: set[str] = set()
     for index, example in enumerate(examples):
         try:
-            target = CleanTargetRef.resolve(example)
+            target = CleanTargetRef.from_source(example)
         except ValueError as exc:
             raise ValueError(f"manifest row {index} ({example.prompt!r}): {exc}") from exc
         if target.key in seen_target_keys:

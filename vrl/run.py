@@ -283,7 +283,7 @@ def resolve_run(cfg: DictConfig) -> ResolvedRun:
 
     built = builders.build_configs(cfg)
     family = _model_family(built)
-    resources = ray_resources.ResolvedDistributedResources.resolve(
+    resources = ray_resources.ResolvedDistributedResources.from_root(
         built.root,
         reward_inference=built.reward.inference_configs if built.reward else None,
     )
@@ -308,7 +308,7 @@ def resolve_online_run(cfg: DictConfig) -> ResolvedOnlineRun:
     built = builders.build_configs(cfg)
     run = OnlineRunConfig.from_root(built.root)
     family = _model_family(built)
-    resources = ray_resources.ResolvedDistributedResources.resolve(
+    resources = ray_resources.ResolvedDistributedResources.from_root(
         built.root,
         reward_inference=built.reward.inference_configs if built.reward else None,
     )

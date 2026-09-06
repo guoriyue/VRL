@@ -78,7 +78,7 @@ class RewardInferenceConfig:
             )
 
     @classmethod
-    def parse(
+    def from_mapping(
         cls,
         value: Mapping[str, Any] | RewardInferenceConfig | None,
         *,

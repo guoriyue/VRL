@@ -129,7 +129,7 @@ def test_create_runtime_rejects_missing_rollout_placement() -> None:
     import vrl.generation.ray.launcher as launcher_mod
     from vrl.ray.resources import ResolvedDistributedResources
 
-    resolved = ResolvedDistributedResources.resolve(
+    resolved = ResolvedDistributedResources.from_root(
         parse_config(
             OmegaConf.create(
                 {
@@ -164,7 +164,7 @@ def _cpu_rollout_owner(
     from vrl.ray.placement import GlobalRayPlacementOwner
     from vrl.ray.resources import ResolvedDistributedResources
 
-    resolved = ResolvedDistributedResources.resolve(
+    resolved = ResolvedDistributedResources.from_root(
         parse_config(
             OmegaConf.create(
                 {

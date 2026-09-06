@@ -211,7 +211,7 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     reward = build_reward_function(
         resolve_reward_inputs(
             built,
-            ResolvedDistributedResources.resolve(parse_config(cfg)),
+            ResolvedDistributedResources.from_root(parse_config(cfg)),
             trainer_device="cuda:0",
         ),
     )
@@ -296,7 +296,7 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     reward = build_reward_function(
         resolve_reward_inputs(
             built,
-            ResolvedDistributedResources.resolve(parse_config(cfg)),
+            ResolvedDistributedResources.from_root(parse_config(cfg)),
             trainer_device="cuda:0",
         ),
     )
@@ -403,7 +403,7 @@ def test_shared_reward_capability_fails_before_component_construction(monkeypatc
         build_reward_function(
             resolve_reward_inputs(
                 _built_reward({"geneval": 1.0}, {"geneval": {}}),
-                ResolvedDistributedResources.resolve(parse_config(cfg)),
+                ResolvedDistributedResources.from_root(parse_config(cfg)),
                 trainer_device="cuda:0",
             ),
         )
@@ -432,7 +432,7 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
     cfg = _shared_reward_cfg("aesthetic")
     shared = resolve_reward_inputs(
         _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
-        ResolvedDistributedResources.resolve(parse_config(cfg)),
+        ResolvedDistributedResources.from_root(parse_config(cfg)),
     )
     assert shared.device == "cuda:0"
     assert shared.memory_parking_required is True
@@ -444,7 +444,7 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
     rank_local.distributed.resources.rollout.devices = [2]
     rank_local_reward = resolve_reward_inputs(
         _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
-        ResolvedDistributedResources.resolve(parse_config(rank_local)),
+        ResolvedDistributedResources.from_root(parse_config(rank_local)),
         trainer_device="cuda:0",
     )
     assert rank_local_reward.device == "cuda:0"
@@ -460,7 +460,7 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
     }
     http_reward = resolve_reward_inputs(
         _built_reward({"unified_reward_video": 1.0}, {}, http_inference),
-        ResolvedDistributedResources.resolve(parse_config(rank_local)),
+        ResolvedDistributedResources.from_root(parse_config(rank_local)),
         trainer_device="cuda:0",
     )
     assert http_reward.device == "cuda:0"
@@ -482,7 +482,7 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
     # A CPU-only reward reservation wins even when the trainer runs on CUDA.
     cpu_reward = resolve_reward_inputs(
         _built_reward({"ocr": 1.0}, {"ocr": {}}),
-        ResolvedDistributedResources.resolve(parse_config(cpu_cfg)),
+        ResolvedDistributedResources.from_root(parse_config(cpu_cfg)),
         trainer_device="cuda:0",
     )
     assert cpu_reward.device == "cpu"

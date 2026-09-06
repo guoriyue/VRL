@@ -180,7 +180,7 @@ def _resource_cfg(
 def _ray_config(cfg: Any) -> RayGenerationConfig:
     return RayGenerationConfig.from_root(
         parse_config(cfg),
-        resources=ResolvedDistributedResources.resolve(parse_config(cfg)),
+        resources=ResolvedDistributedResources.from_root(parse_config(cfg)),
     )
 
 
@@ -579,7 +579,7 @@ def test_pipelined_rejects_multiple_resolved_engines() -> None:
     with pytest.raises(ValueError, match="requires exactly one rollout engine"):
         RayGenerationConfig.from_root(
             parse_config(cfg),
-            resources=ResolvedDistributedResources.resolve(parse_config(cfg)),
+            resources=ResolvedDistributedResources.from_root(parse_config(cfg)),
         )
 
 
@@ -597,7 +597,7 @@ def test_pipelined_rejects_multiple_placement_bundles_before_ray_start(
     }
     config = RayGenerationConfig.from_root(
         parse_config(cfg),
-        resources=ResolvedDistributedResources.resolve(parse_config(cfg)),
+        resources=ResolvedDistributedResources.from_root(parse_config(cfg)),
     )
     entry = get_model_family_entry("sd3_5")
     launch_inputs = RayGenerationLaunchInputs(

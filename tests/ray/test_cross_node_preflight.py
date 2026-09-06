@@ -32,13 +32,13 @@ def _resources():
     """The real resolver, not a namespace with one attribute on it.
 
     ``cross_node_preflight``'s second argument is always
-    ``ResolvedDistributedResources.resolve(parse_config(cfg))`` output in production. Standing in a
+    ``ResolvedDistributedResources.from_root(parse_config(cfg))`` output in production. Standing in a
     ``SimpleNamespace(rollout_num_gpus=...)`` skipped the entire cross_node
     config -> resolution chain, so a resolution change that produced the wrong
     rollout GPU budget could not fail this test. Costs ~0.13ms resolved.
     """
 
-    return ResolvedDistributedResources.resolve(
+    return ResolvedDistributedResources.from_root(
         parse_config(
             OmegaConf.create(
                 {

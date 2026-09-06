@@ -31,7 +31,7 @@ class CleanTargetRef:
     key: str
 
     @classmethod
-    def resolve(cls, source: Mapping[str, object] | PromptExample) -> CleanTargetRef:
+    def from_source(cls, source: Mapping[str, object] | PromptExample) -> CleanTargetRef:
         """Resolve the one clean target shared by the shard producer and consumer.
 
         ``source`` is either a typed ``PromptExample`` or rollout metadata received

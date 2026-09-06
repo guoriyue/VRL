@@ -318,7 +318,7 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
 
         try:
             built = build_configs(cfg)
-            resources = ResolvedDistributedResources.resolve(parse_config(cfg))
+            resources = ResolvedDistributedResources.from_root(parse_config(cfg))
             validate_rollout_schedule_topology(
                 built.trainer.rollout_orchestration,
                 resources,
@@ -378,7 +378,7 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
     cfg = load_config("experiment/sd3_5/online_grpo_ocr_continuous_4gpu_acceptance")
     validate_training_config(cfg)
     built = build_configs(cfg)
-    resources = ResolvedDistributedResources.resolve(parse_config(cfg))
+    resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
         resources,
@@ -412,7 +412,7 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
     parent = load_config("experiment/cosmos_predict2/online_grpo_droid_overfit_validation")
     validate_training_config(cfg)
     built = build_configs(cfg)
-    resources = ResolvedDistributedResources.resolve(parse_config(cfg))
+    resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
         resources,
@@ -448,7 +448,7 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
     parent = load_config("experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve")
     validate_training_config(cfg)
     built = build_configs(cfg)
-    resources = ResolvedDistributedResources.resolve(parse_config(cfg))
+    resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
         resources,
@@ -514,7 +514,7 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     )
     validate_training_config(cfg)
     built = build_configs(cfg)
-    resources = ResolvedDistributedResources.resolve(parse_config(cfg))
+    resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
         resources,
@@ -541,7 +541,7 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
     )
     validate_training_config(cfg)
     built = build_configs(cfg)
-    resources = ResolvedDistributedResources.resolve(parse_config(cfg))
+    resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
         resources,
@@ -565,7 +565,7 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devi
     )
     validate_training_config(cfg)
     built = build_configs(cfg)
-    resources = ResolvedDistributedResources.resolve(parse_config(cfg))
+    resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
         resources,
@@ -598,7 +598,7 @@ def test_masked_physical_ordinal_comes_from_the_config_knob_not_the_auto_path() 
     OmegaConf.update(cfg, "distributed.resources.visible_devices", [1], force_add=True)
     validate_training_config(cfg)
 
-    resources = ResolvedDistributedResources.resolve(parse_config(cfg))
+    resources = ResolvedDistributedResources.from_root(parse_config(cfg))
 
     assert resources.visible_devices == (1,)
     assert resources.trainer_devices == resources.rollout_devices == (1,)
@@ -868,7 +868,7 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> No
     cfg = load_config("experiment/wan_2_1/online_grpo_i2v_fsdp_2x_l4")
     validate_training_config(cfg)
     built = build_configs(cfg)
-    resources = ResolvedDistributedResources.resolve(parse_config(cfg))
+    resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
         resources,
