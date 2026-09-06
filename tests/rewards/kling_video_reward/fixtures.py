@@ -107,13 +107,12 @@ def head_logits(model: Any, input_ids: torch.Tensor, attention_mask: torch.Tenso
         return model.rm_head(hidden)
 
 
-def build_tiny_qwen2vl_repo(root: Path, *, output_dim: int = 1, seed: int = 0) -> Path:
-    """Write a tiny Qwen2-VL reward model + real ``Qwen2VLProcessor`` under ``root``.
+def build_tiny_qwen2vl_processor(root: Path) -> Any:
+    """Write a real ``Qwen2VLProcessor`` over a byte-level vocabulary under ``root``.
 
     The tokenizer is a byte-level vocabulary with zero merges plus the Qwen2-VL
-    control tokens the chat template and video processor emit. Eight spare ids
-    are left above the vocabulary so ``add_special_tokens`` + ``resize_token_embeddings``
-    have room for the three ``<|*_reward|>`` tokens.
+    control tokens the chat template and video processor emit (registered as
+    special tokens so the zero-merge BPE keeps them atomic).
     """
 
     from transformers import (
@@ -150,21 +149,42 @@ def build_tiny_qwen2vl_repo(root: Path, *, output_dim: int = 1, seed: int = 0) -
         video_processor=Qwen2VLVideoProcessor(),
     )
     processor.save_pretrained(root)
+    return processor
+
+
+def vision_token_ids(tokenizer: Any) -> dict[str, int]:
+    """The config ids a Qwen2-VL forward splices vision features at, for ``tokenizer``.
+
+    The Qwen2-VL defaults point at the 151k hub vocabulary, not a tiny one.
+    """
+
+    return {
+        name: tokenizer.convert_tokens_to_ids(token)
+        for name, token in (
+            ("vision_start_token_id", "<|vision_start|>"),
+            ("vision_end_token_id", "<|vision_end|>"),
+            ("video_token_id", "<|video_pad|>"),
+            ("image_token_id", "<|image_pad|>"),
+        )
+    }
+
+
+def build_tiny_qwen2vl_repo(root: Path, *, output_dim: int = 1, seed: int = 0) -> Path:
+    """Write a tiny Qwen2-VL reward model + real ``Qwen2VLProcessor`` under ``root``.
+
+    Eight spare ids are left above the vocabulary so ``add_special_tokens`` +
+    ``resize_token_embeddings`` have room for the three ``<|*_reward|>`` tokens.
+    """
+
+    tokenizer = build_tiny_qwen2vl_processor(root).tokenizer
     model = build_tiny_kling_reward_model(
         output_dim=output_dim,
-        vocab_size=len(vocab) + 8,
+        vocab_size=len(tokenizer) + 8,
         pad_token_id=tokenizer.pad_token_id,
         seed=seed,
     )
-    # The multimodal forward splices vision features at these ids; the Qwen2-VL
-    # defaults point at the 151k hub vocabulary, not this tiny one.
-    for name, token in (
-        ("vision_start_token_id", "<|vision_start|>"),
-        ("vision_end_token_id", "<|vision_end|>"),
-        ("video_token_id", "<|video_pad|>"),
-        ("image_token_id", "<|image_pad|>"),
-    ):
-        setattr(model.config, name, tokenizer.convert_tokens_to_ids(token))
+    for name, token_id in vision_token_ids(tokenizer).items():
+        setattr(model.config, name, token_id)
     model.save_pretrained(root)
     return root
 
@@ -172,6 +192,8 @@ def build_tiny_qwen2vl_repo(root: Path, *, output_dim: int = 1, seed: int = 0) -
 __all__ = [
     "TINY_HIDDEN_SIZE",
     "build_tiny_kling_reward_model",
+    "build_tiny_qwen2vl_processor",
     "build_tiny_qwen2vl_repo",
     "head_logits",
+    "vision_token_ids",
 ]

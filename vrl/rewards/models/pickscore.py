@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from vrl.rewards.models.base import TorchRewardModel
-from vrl.utils.media import to_uint8
+from vrl.rewards.models.media import pil_frames_from_media
 
 
 class PickScoreRewardModel(TorchRewardModel):
@@ -54,32 +54,12 @@ class PickScoreRewardModel(TorchRewardModel):
         )
 
     def score_media(self, *, media: Any, prompt: str) -> Mapping[str, float]:
-        import numpy as np
-        import torch
-        from PIL import Image
-
-        if isinstance(media, torch.Tensor):
-            arr = to_uint8(media).cpu().numpy()
-            if arr.ndim == 5:
-                # Score the middle frame. The canonical video layout is [B,C,T,H,W];
-                # [B,T,C,H,W] wins the ambiguous case, matching nsfw_safety.
-                frame_axis = 1 if arr.shape[2] in (1, 3, 4) else 2
-                arr = arr.take(arr.shape[frame_axis] // 2, axis=frame_axis)
-            if arr.ndim == 3:
-                arr = arr[None]
-            arr = arr.transpose(0, 2, 3, 1)  # NCHW -> NHWC
-            images = [Image.fromarray(a) for a in arr]
-        elif isinstance(media, np.ndarray):
-            images = (
-                [Image.fromarray(media)]
-                if media.ndim == 3
-                else [Image.fromarray(a) for a in media]
-            )
-        elif isinstance(media, Image.Image):
-            images = [media]
-        else:
+        try:
+            samples = pil_frames_from_media(media)
+        except TypeError:
             return {"pickscore": 0.0}
-
+        # One image per sample: a video is scored on its middle frame.
+        images = [frames[len(frames) // 2] for frames in samples]
         score = self._score(prompt, images)
         return {"pickscore": float(score)}
 

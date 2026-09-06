@@ -37,21 +37,18 @@ from typing import Any
 
 import torch
 
-from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.assets.video_judge_prompts import (
     VIDEOSCORE2_SCORE_REGEX,
     VIDEOSCORE2_SYSTEM_PROMPT,
     VIDEOSCORE2_USER_TEMPLATE,
 )
-from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.hub import resolve_model_root
+from vrl.rewards.models.qwen_vl_judge import QwenVLVideoJudge
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
 
 _DEFAULT_REWARD_MODEL = "TIGER-Lab/VideoScore2"
-_DEFAULT_FPS = 2.0
-_DEFAULT_MAX_NEW_TOKENS = 1024
 _SCORE_SCALE = (1, 2, 3, 4, 5)
 
 _DIMENSION_MARKERS: tuple[tuple[str, str], ...] = (
@@ -63,84 +60,42 @@ _DIMENSION_MARKERS: tuple[tuple[str, str], ...] = (
 _DIGIT_PROXIMITY_WINDOW = 8
 
 
-class VideoScore2Model:
+class VideoScore2Model(QwenVLVideoJudge):
     """Load VideoScore2 and score one (prompt, video) pair per call."""
 
-    def __init__(self, worker_config: Mapping[str, Any]) -> None:
-        self.worker_config = dict(worker_config)
-        self.model_root = resolve_model_root(
-            self.worker_config,
-            default_model=_DEFAULT_REWARD_MODEL,
-            family="VideoScore2",
-        )
-        self.dtype = resolve_torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
-        self.device = str(self.worker_config.get("device", "cuda:0"))
-        self.fps = float(self.worker_config.get("fps", _DEFAULT_FPS))
-        self.max_new_tokens = int(
-            self.worker_config.get("max_new_tokens", _DEFAULT_MAX_NEW_TOKENS),
-        )
-        # Continuous expected-value scoring (default) vs upstream integer parsing.
-        self.soft_scores = bool(self.worker_config.get("soft_scores", True))
-        # Optional per-frame pixel bound for qwen smart_resize, matching the
-        # Kling reward's knob; None keeps the processor default.
-        max_frame_pixels = self.worker_config.get("max_frame_pixels")
-        self.max_frame_pixels = None if max_frame_pixels is None else int(max_frame_pixels)
-        self.local_files_only = bool(self.worker_config.get("local_files_only", False))
+    family = "VideoScore2"
 
-        logger.info(
-            "loading VideoScore2 %s",
-            kv(
-                root=self.model_root,
-                device=self.device,
-                dtype=self.dtype,
-                fps=self.fps,
-                soft_scores=self.soft_scores,
+    def __init__(self, worker_config: Mapping[str, Any]) -> None:
+        # Continuous expected-value scoring (default) vs upstream integer parsing.
+        self.soft_scores = bool(worker_config.get("soft_scores", True))
+        super().__init__(
+            worker_config,
+            model_root=resolve_model_root(
+                dict(worker_config),
+                default_model=_DEFAULT_REWARD_MODEL,
+                family="VideoScore2",
             ),
         )
-
-        from transformers import AutoModelForImageTextToText, AutoProcessor
-
-        processor = AutoProcessor.from_pretrained(
-            str(self.model_root),
-            trust_remote_code=True,
-            local_files_only=self.local_files_only,
-        )
-        model = AutoModelForImageTextToText.from_pretrained(
-            str(self.model_root),
-            torch_dtype=self.dtype,
-            trust_remote_code=True,
-            local_files_only=self.local_files_only,
-        )
-        model.eval()
-        self.processor = processor
-        self.tokenizer = getattr(processor, "tokenizer", None) or processor
-        self.model = model.to(self.device)
         # Pre-resolve digit token ids once; the soft path reads their logits.
         self.digit_token_ids = _resolve_digit_token_ids(self.tokenizer)
 
-    def __call__(
-        self,
-        artifact: RewardInferenceArtifact,
-    ) -> dict[str, float]:
-        prompt, video_path = artifact.require_prompt_and_video_path(family="VideoScore2")
-        return self._score_video(video_path, prompt)
+    def _load_model(self, load_kwargs: dict[str, Any]) -> Any:
+        from transformers import AutoModelForImageTextToText
 
-    def _score_video(self, video_path: str, prompt: str) -> dict[str, float]:
-        from qwen_vl_utils import process_vision_info
+        # The checkpoint ships its own model code.
+        return AutoModelForImageTextToText.from_pretrained(
+            str(self.model_root),
+            trust_remote_code=True,
+            **load_kwargs,
+        )
 
-        video_content: dict[str, Any] = {
-            "type": "video",
-            "video": f"file://{video_path}",
-            "fps": self.fps,
-        }
-        if self.max_frame_pixels is not None:
-            video_content["max_pixels"] = self.max_frame_pixels
-        messages = [
+    def _messages(self, video_path: str, prompt: str) -> list[dict[str, Any]]:
+        return [
             {"role": "system", "content": VIDEOSCORE2_SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": [
-                    video_content,
+                    self._video_content(video_path),
                     {
                         "type": "text",
                         "text": VIDEOSCORE2_USER_TEMPLATE.format(prompt=prompt),
@@ -148,44 +103,26 @@ class VideoScore2Model:
                 ],
             },
         ]
-        text = self.processor.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        image_inputs, video_inputs = process_vision_info(messages)
-        inputs = self.processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        ).to(self.device)
 
-        with torch.no_grad():
-            # Greedy decoding makes this judge degenerate on real video: it
-            # repeats "</multi-dimensional analysis></summary>" until
-            # max_new_tokens and never emits the score block the parser needs
-            # (measured on 480x832 rollout video: 0/4 parses, identical 63 s
-            # runs, and still no score line at 2048/3072/4096 tokens). The
-            # checkpoint ships the working recipe in generation_config.json, but
-            # it must be passed explicitly -- relying on the loaded config
-            # reproduces the greedy loop. With these values scoring converges in
-            # ~363 tokens. Temperature 1e-6 is argmax in all but name, so this
-            # does not make rewards meaningfully stochastic.
-            generated = self.model.generate(
-                **inputs,
-                max_new_tokens=self.max_new_tokens,
-                do_sample=True,
-                temperature=1e-6,
-                repetition_penalty=1.05,
-                output_scores=self.soft_scores,
-                return_dict_in_generate=True,
-            )
-        prompt_len = int(inputs["input_ids"].shape[1])
-        generated_ids = generated.sequences[0][prompt_len:].tolist()
-        decoded = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+    def _generate_kwargs(self) -> dict[str, Any]:
+        # Greedy decoding makes this judge degenerate on real video: it
+        # repeats "</multi-dimensional analysis></summary>" until
+        # max_new_tokens and never emits the score block the parser needs
+        # (measured on 480x832 rollout video: 0/4 parses, identical 63 s
+        # runs, and still no score line at 2048/3072/4096 tokens). The
+        # checkpoint ships the working recipe in generation_config.json, but
+        # it must be passed explicitly -- relying on the loaded config
+        # reproduces the greedy loop. With these values scoring converges in
+        # ~363 tokens. Temperature 1e-6 is argmax in all but name, so this
+        # does not make rewards meaningfully stochastic.
+        return {
+            "do_sample": True,
+            "temperature": 1e-6,
+            "repetition_penalty": 1.05,
+            "output_scores": self.soft_scores,
+        }
 
+    def _parse(self, decoded: str, generated: Any, generated_ids: list[int]) -> dict[str, float]:
         hard = _parse_integer_scores(decoded)
         if hard is None:
             raise ValueError(

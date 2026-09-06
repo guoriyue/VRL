@@ -88,6 +88,15 @@ def test_longer_clip_is_subsampled_to_the_window() -> None:
     assert processor.seen_frame_counts == [4]
 
 
+def test_channel_first_video_is_read_as_frames_of_one_clip() -> None:
+    """The collector's [C,T,H,W] video layout yields T frames, then the window rule."""
+    model, processor = _model(num_frames=4)
+
+    model.score_media(media=torch.zeros(3, 10, 8, 8), prompt="1girl, solo")
+
+    assert processor.seen_frame_counts == [4]
+
+
 def test_score_is_scaled_into_unit_range() -> None:
     """The head regresses onto 0-100; the reward is reported in ~[0, 1]."""
     model, _ = _model(logit=73.5)

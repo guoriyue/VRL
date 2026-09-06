@@ -76,6 +76,25 @@ def test_aesthetic_model_loads_the_shipped_head_over_a_real_clip(
     assert model._module([_solid_image(0), _solid_image(255)]).shape == (2,)
 
 
+def test_aesthetic_video_scores_three_evenly_spaced_frames(aesthetic_clip_repo: Path) -> None:
+    """A [C,T,H,W] clip is scored on frames t//4, t//2, 3t//4 and averaged."""
+
+    from vrl.rewards.models.aesthetic import AestheticRewardModel
+
+    model = AestheticRewardModel(
+        {"device": "cpu", "dtype": "float32", "model_name": str(aesthetic_clip_repo)},
+    )
+    video = torch.zeros(3, 8, 12, 12)
+    video[:, 2] = 1.0  # t//4
+    video[:, 4] = 0.5  # t//2
+    video[:, 6] = 0.25  # 3t//4
+
+    scored = model.score_media(media=video, prompt="")
+    expected = model._module([_solid_image(255), _solid_image(128), _solid_image(64)]).mean()
+
+    assert scored == {"aesthetic": pytest.approx(float(expected))}
+
+
 @pytest.mark.real_cover(
     "tests/rewards/inference/test_in_process_runtime.py"
     "::test_real_aesthetic_score_parks_stably_across_two_cycles",
@@ -171,7 +190,7 @@ def test_pickscore_matches_an_independent_cosine_oracle(pickscore_clip_repo: Pat
 def test_pickscore_score_media_dispatches_tensors_and_rejects_non_media(
     pickscore_clip_repo: Path,
 ) -> None:
-    """NCHW tensors reach the scorer as PIL images; unknown media scores 0.0."""
+    """An image scores itself, a [C,T,H,W] video its middle frame; non-media is 0.0."""
 
     from vrl.rewards.models.pickscore import PickScoreRewardModel
 
@@ -182,27 +201,26 @@ def test_pickscore_score_media_dispatches_tensors_and_rejects_non_media(
             "processor_name": str(pickscore_clip_repo),
         },
     )
-    batch = torch.zeros(2, 3, 12, 12)
-    batch[1] = 1.0
+    video = torch.zeros(3, 5, 12, 12)
+    video[:, 2] = 1.0  # only the middle frame is white
 
-    scored = model.score_media(media=batch, prompt="a square")
-    reference = model._score("a square", [_solid_image(0), _solid_image(255)])
+    image_score = model.score_media(media=torch.ones(3, 12, 12), prompt="a square")
+    video_score = model.score_media(media=video, prompt="a square")
+    reference = model._score("a square", [_solid_image(255)])
 
-    assert scored == {"pickscore": pytest.approx(reference)}
+    assert image_score == {"pickscore": pytest.approx(reference)}
+    assert video_score == {"pickscore": pytest.approx(reference)}
     assert model.score_media(media="not-media", prompt="a square") == {"pickscore": 0.0}
 
 
-@pytest.mark.parametrize("layout", ["BCTHW", "BTCHW"])
-def test_pickscore_score_media_scores_the_middle_frame_of_a_video(
-    layout: str,
+def test_pickscore_score_media_scores_the_middle_frame_of_each_video(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Both video layouts reach the scorer as one RGB PIL image per sample."""
+    """A [B,C,T,H,W] batch reaches the scorer as one RGB PIL image per sample."""
     from vrl.rewards.models.pickscore import PickScoreRewardModel
 
-    frames = torch.zeros(2, 3, 5, 12, 12)
-    frames[:, :, 2] = 1.0  # only the middle frame is white
-    media = frames if layout == "BCTHW" else frames.permute(0, 2, 1, 3, 4)
+    media = torch.zeros(2, 3, 5, 12, 12)
+    media[:, :, 2] = 1.0  # only the middle frame is white
     seen: list[list[object]] = []
     monkeypatch.setattr(
         PickScoreRewardModel,

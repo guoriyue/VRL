@@ -6,7 +6,7 @@ class below deliberately re-declares that head's layer stack — the packaged
 ``sac+logos+ava1-l14-linearMSE.pth`` state dict (shipped in
 ``vrl.rewards.assets`` so scoring needs no external download) only loads into
 this exact architecture. Returns ``{"aesthetic": score}``, the mean over up to
-three sampled frames.
+three evenly spaced frames.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from vrl.rewards.models.base import TorchRewardModel
-from vrl.utils.media import to_uint8
+from vrl.rewards.models.media import evenly_spaced_frames, pil_frames_from_media
 
 
 class AestheticRewardModel(TorchRewardModel):
@@ -87,28 +87,12 @@ class AestheticRewardModel(TorchRewardModel):
         return _AestheticScorer(self.dtype).to(self.device)
 
     def score_media(self, *, media: Any, prompt: str) -> Mapping[str, float]:
-        import torch
-
-        output = media
-        if isinstance(output, torch.Tensor):
-            images_raw = to_uint8(output)
-            if images_raw.ndim == 4 and images_raw.shape[0] > 4:
-                b = images_raw.shape[0]
-                indices = [b // 4, b // 2, 3 * b // 4]
-                images = [images_raw[i].cpu().numpy().transpose(1, 2, 0) for i in indices]
-            elif images_raw.ndim == 4 and images_raw.shape[0] <= 4:
-                t = images_raw.shape[1]
-                indices = [t // 4, t // 2, 3 * t // 4]
-                images = [images_raw[:, i, :, :].cpu().numpy().transpose(1, 2, 0) for i in indices]
-            elif images_raw.ndim == 3:
-                images = [images_raw.cpu().numpy().transpose(1, 2, 0)]
-            else:
-                t = images_raw.shape[0]
-                indices = [t // 4, t // 2, 3 * t // 4]
-                images = [images_raw[i].cpu().numpy().transpose(1, 2, 0) for i in indices]
-        else:
-            images = [output]
-
+        # A video contributes three evenly spaced frames; an image, itself.
+        images = [
+            frame
+            for frames in pil_frames_from_media(media)
+            for frame in evenly_spaced_frames(frames, 3)
+        ]
         scores = self._module_for_inference()(images)
         return {"aesthetic": float(scores.mean().item())}
 

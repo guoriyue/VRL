@@ -95,4 +95,37 @@ def build_tiny_clip_repo(
     return root
 
 
-__all__ = ["build_tiny_clip_repo", "shipped_aesthetic_projection_dim"]
+def build_tiny_qwen_vl_judge_repo(root: Path, *, seed: int = 0) -> Path:
+    """A tiny generative ``Qwen2VLForConditionalGeneration`` + real processor under ``root``.
+
+    The judge base loads it through ``AutoProcessor`` / ``AutoModelForImageTextToText``
+    exactly as it loads VideoScore2; generation runs in milliseconds on CPU.
+    """
+
+    from transformers import Qwen2VLForConditionalGeneration
+
+    from tests.rewards.kling_video_reward.fixtures import (
+        build_tiny_kling_reward_model,
+        build_tiny_qwen2vl_processor,
+        vision_token_ids,
+    )
+
+    tokenizer = build_tiny_qwen2vl_processor(root).tokenizer
+    config = build_tiny_kling_reward_model(
+        vocab_size=len(tokenizer),
+        pad_token_id=tokenizer.pad_token_id,
+    ).config
+    for name, token_id in vision_token_ids(tokenizer).items():
+        setattr(config, name, token_id)
+    with torch.random.fork_rng(devices=[], device_type="cpu"):
+        torch.manual_seed(seed)
+        model = Qwen2VLForConditionalGeneration(config)
+    model.save_pretrained(root)
+    return root
+
+
+__all__ = [
+    "build_tiny_clip_repo",
+    "build_tiny_qwen_vl_judge_repo",
+    "shipped_aesthetic_projection_dim",
+]

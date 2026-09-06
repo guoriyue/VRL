@@ -38,7 +38,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from vrl.rewards.models.base import TorchRewardModel
-from vrl.utils.media import to_uint8
+from vrl.rewards.models.media import pil_frames_from_media
 
 # Verbatim from the release's reward_infer.py quality branch. The head is a
 # regressor -- the "output a number from [1,2,3,4,5]" rubric is the training
@@ -165,32 +165,15 @@ class AnimeRewardQualityModel(TorchRewardModel):
         return module
 
     def _as_frames(self, media: Any) -> list[Any]:
-        """Normalise any supported media payload to a list of PIL frames."""
+        """The frames of one sample as PIL images (a batch scores its first sample)."""
 
-        import numpy as np
-        import torch
-        from PIL import Image
-
-        if isinstance(media, torch.Tensor):
-            arr = to_uint8(media).cpu().numpy()
-            if arr.ndim == 3:
-                arr = arr[None]
-            if arr.ndim == 4:
-                arr = arr.transpose(0, 2, 3, 1)  # NCHW -> NHWC
-            elif arr.ndim == 5:
-                arr = arr[0].transpose(0, 2, 3, 1)
-            frames = [Image.fromarray(a) for a in arr]
-        elif isinstance(media, np.ndarray):
-            frames = (
-                [Image.fromarray(media)]
-                if media.ndim == 3
-                else [Image.fromarray(a) for a in media]
-            )
-        elif isinstance(media, Image.Image):
-            frames = [media]
-        else:
-            raise TypeError(f"AnimeRewardQualityModel cannot score media of type {type(media)!r}")
-        return [frame.convert("RGB") for frame in frames]
+        try:
+            samples = pil_frames_from_media(media)
+        except TypeError as exc:
+            raise TypeError(
+                f"AnimeRewardQualityModel cannot score media of type {type(media)!r}",
+            ) from exc
+        return samples[0]
 
     def score_media(self, *, media: Any, prompt: str) -> Mapping[str, float]:
         import torch
