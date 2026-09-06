@@ -294,13 +294,9 @@ class MochiReplayModel(DiffusersReplayModelBase, MochiModel):
         replay scheduler must carry the same table the rollout used.
         """
         num_steps = build.num_steps
-        # A scheduler without .config is a hand-injected test double — only
-        # real diffusers schedulers carry the shipped (inverted) config that
-        # needs standardizing.
-        config = getattr(self._scheduler, "config", None)
-        if num_steps is not None and config is not None:
+        if num_steps is not None:
             self._scheduler = standard_mochi_scheduler(
-                config,
+                self._scheduler.config,
                 int(num_steps),
                 build.device,
             )

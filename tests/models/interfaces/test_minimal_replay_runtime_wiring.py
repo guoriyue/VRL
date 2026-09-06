@@ -261,14 +261,24 @@ class _TinyTransformer(nn.Module):
         return self.weight.dtype
 
 
-class _TinyScheduler:
-    def __init__(self) -> None:
-        self.timesteps = torch.tensor([1.0])
-        self.sigmas = torch.tensor([1.0])
+def _flow_match_scheduler(*_args: Any, **_kwargs: Any) -> Any:
+    """Stand-in for ``load_flow_match_scheduler``: the real class from its defaults."""
 
-    def set_timesteps(self, n: int, device: Any = None) -> None:
-        self.timesteps = torch.arange(n, device=device, dtype=torch.float32)
-        self.sigmas = torch.ones(n, device=device, dtype=torch.float32)
+    from diffusers import FlowMatchEulerDiscreteScheduler
+
+    return FlowMatchEulerDiscreteScheduler()
+
+
+def _diffusers_scheduler(_build: Any, class_name: str, **_kwargs: Any) -> Any:
+    """Stand-in for ``load_diffusers_scheduler``.
+
+    The registry's ``scheduler_classname`` is its own source of truth, so build
+    exactly that real class from its defaults instead of echoing a double.
+    """
+
+    import diffusers
+
+    return getattr(diffusers, class_name)()
 
 
 class _TinyRuntimeModel(nn.Module):
@@ -362,18 +372,10 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
         "load_diffusers_transformer",
         fake_transformer_loader,
     )
-    monkeypatch.setattr(
-        _shared_build,
-        "load_flow_match_scheduler",
-        lambda *_args, **_kwargs: _TinyScheduler(),
-    )
+    monkeypatch.setattr(_shared_build, "load_flow_match_scheduler", _flow_match_scheduler)
     # Families with a scheduler_classname (cogvideox) load through the
     # classname path instead of the flow-match default.
-    monkeypatch.setattr(
-        _shared_build,
-        "load_diffusers_scheduler",
-        lambda *_args, **_kwargs: _TinyScheduler(),
-    )
+    monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", _diffusers_scheduler)
 
     entry = get_model_family_entry(family)
     bundle = entry.build_replay(
@@ -406,9 +408,9 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
 
     scheduler_classes: list[str] = []
 
-    def fake_scheduler_loader(_build: Any, class_name: str, **_kwargs: Any) -> _TinyScheduler:
+    def fake_scheduler_loader(build: Any, class_name: str, **kwargs: Any) -> Any:
         scheduler_classes.append(class_name)
-        return _TinyScheduler()
+        return _diffusers_scheduler(build, class_name, **kwargs)
 
     monkeypatch.setattr(
         _shared_build,
@@ -421,8 +423,66 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
         _build(family="wan_2_1"),
     )
 
+    from diffusers import UniPCMultistepScheduler
+
     assert scheduler_classes == ["UniPCMultistepScheduler"]
-    assert bundle.scheduler.timesteps.tolist() == [1.0]
+    assert isinstance(bundle.scheduler, UniPCMultistepScheduler)
+
+
+@pytest.mark.real_cover(
+    "tests/models/steps/denoise/test_scheduler_logprob_parity.py"
+    "::test_family_scheduler_sample_replay_parity",
+    why=(
+        "the transformer is a double and the rebuilt ladder is pinned by class and length only "
+        "(literal timestep values move with the diffusers version); element-wise parity between "
+        "this replay ladder and the rollout's runs on real schedulers in the counterpart"
+    ),
+)
+@pytest.mark.parametrize(
+    ("family", "scheduler_class"),
+    [("mochi", "FlowMatchEulerDiscreteScheduler"), ("pixart_sigma", "DDIMScheduler")],
+)
+def test_replay_builders_standardize_the_loaded_scheduler_onto_the_rollout_ladder(
+    monkeypatch: pytest.MonkeyPatch,
+    family: str,
+    scheduler_class: str,
+) -> None:
+    """``prepare_replay`` replaces the scheduler the loader handed over.
+
+    Mochi ships ``invert_sigmas`` (ascending time) and PixArt ships a DPM-Solver;
+    both replay models rebuild the rollout's own ladder from the shipped config
+    and ``build.num_steps``. The loaded instance must therefore NOT survive.
+    """
+    from vrl.models.families.registry import get_model_family_entry
+    from vrl.models.steps.denoise import build as _shared_build
+
+    loaded: list[Any] = []
+
+    def loader(*args: Any, **kwargs: Any) -> Any:
+        scheduler = (
+            _diffusers_scheduler(*args, **kwargs)
+            if len(args) > 1
+            else _flow_match_scheduler(*args, **kwargs)
+        )
+        loaded.append(scheduler)
+        return scheduler
+
+    monkeypatch.setattr(
+        _shared_build,
+        "load_diffusers_transformer",
+        lambda *_args, **_kwargs: _TinyTransformer(),
+    )
+    monkeypatch.setattr(_shared_build, "load_flow_match_scheduler", loader)
+    monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", loader)
+
+    bundle = get_model_family_entry(family).build_replay(
+        _build(family=family, scheduler_config={"num_steps": 2}),
+    )
+
+    (shipped,) = loaded
+    assert bundle.scheduler is not shipped
+    assert type(bundle.scheduler).__name__ == scheduler_class
+    assert bundle.scheduler.timesteps.numel() == 2
 
 
 def test_wan_i2v_replay_builder_uses_i2v_replay_model(
@@ -438,11 +498,7 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
         "load_diffusers_transformer",
         lambda *_args, **_kwargs: _TinyTransformer(),
     )
-    monkeypatch.setattr(
-        _shared_build,
-        "load_diffusers_scheduler",
-        lambda *_args, **_kwargs: _TinyScheduler(),
-    )
+    monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", _diffusers_scheduler)
 
     bundle = get_model_family_entry("wan_2_1_i2v").build_replay(
         _build(family="wan_2_1_i2v"),
@@ -475,11 +531,7 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
     # late-loads transformer_2 through vrl.models.loader — patch both.
     monkeypatch.setattr(_shared_build, "load_diffusers_transformer", fake_transformer_loader)
     monkeypatch.setattr(_loader, "load_diffusers_transformer", fake_transformer_loader)
-    monkeypatch.setattr(
-        _shared_build,
-        "load_diffusers_scheduler",
-        lambda *_args, **_kwargs: _TinyScheduler(),
-    )
+    monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", _diffusers_scheduler)
 
     bundle = get_model_family_entry("wan_2_1_i2v").build_replay(
         _build(
@@ -515,11 +567,7 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
         "load_diffusers_transformer",
         lambda *_args, **_kwargs: _TinyTransformer(),
     )
-    monkeypatch.setattr(
-        _shared_build,
-        "load_diffusers_scheduler",
-        lambda *_args, **_kwargs: _TinyScheduler(),
-    )
+    monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", _diffusers_scheduler)
     monkeypatch.setattr(
         predict25_model.CosmosPredict25ReplayModel,
         "apply_lora",

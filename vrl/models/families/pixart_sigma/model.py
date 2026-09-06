@@ -314,13 +314,9 @@ class PixArtSigmaReplayModel(DiffusersReplayModelBase, PixArtSigmaModel):
         replay scheduler must carry the same timestep/alphas_cumprod table.
         """
         num_steps = build.num_steps
-        # A scheduler without .config is a hand-injected test double — only
-        # real diffusers schedulers carry the shipped beta config that needs
-        # standardizing.
-        config = getattr(self._scheduler, "config", None)
-        if num_steps is not None and config is not None:
+        if num_steps is not None:
             self._scheduler = pixart_ddim_scheduler(
-                config,
+                self._scheduler.config,
                 int(num_steps),
                 build.device,
             )
