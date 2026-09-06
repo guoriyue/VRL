@@ -357,6 +357,8 @@ accept-path 的观测口。改名后调用点变成 `require_*(...)` 却不接�
 | `require_artifact_manifest_pair(train, eval, ...)` | `ArtifactManifestReport.from_pair(...)` |
 | `require_source_backed_video_world_manifest_pair(...)` | `ArtifactManifestReport.from_video_world_pair(...)` |
 
+**后记（第七轮）**：`from_pair` 又被并掉了。它和 `from_manifest` 读的是**同一种文件**，区别只是几份，「pair」听起来像另一种清单，误导。现在是一个 `from_manifest(manifest, eval_manifest=None, ...)`——传一份做单份检查，传两份多做一次 train/eval 源片段交叉比对；`from_video_world_pair` 同理改为 `from_video_world_manifest`。命名规则里「`from_<输入>` 的后缀说的是输入类型」这一条，反过来也成立：**输入类型相同就不该有两个名字**。
+
 **教训**：判据是按「函数名 vs 返回类型」定的，扫描却是按前缀做的——前缀集合不全就会漏。
 第四轮的改名把 `validate_* -> 值` 这一半暴露出来，这三个才浮上来。
 

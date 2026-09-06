@@ -78,12 +78,17 @@ class ArtifactManifestReport:
         cls,
         manifest_path: str | Path,
         *,
+        eval_manifest: str | Path | None = None,
         data_root: str | Path | None = None,
         artifact_fields: Sequence[str] = DEFAULT_ARTIFACT_FIELDS,
         required_artifact_fields: Sequence[str] = (),
         required_metadata_fields: Sequence[str] = (),
     ) -> ArtifactManifestReport:
-        """Build the report for one prompt manifest, rejecting missing or unreadable artifacts."""
+        """Build the report for a prompt manifest, rejecting missing or unreadable artifacts.
+
+        With ``eval_manifest`` the same checks run on both files and the report also
+        flags source episodes the two share (train/eval leakage) as a warning.
+        """
 
         path = Path(manifest_path)
         examples = load_prompt_manifest(path)
@@ -131,6 +136,27 @@ class ArtifactManifestReport:
         source_episodes = tuple(sorted(_source_episodes(examples)))
         if not examples:
             warnings.append(f"{path}: manifest is empty")
+        if eval_manifest is None:
+            return cls(
+                manifest_path=path,
+                data_root=root,
+                row_count=len(examples),
+                artifact_count=len(resolved),
+                resolved_artifacts=tuple(resolved),
+                warnings=tuple(warnings),
+                source_episodes=source_episodes,
+            )
+
+        eval_report = cls.from_manifest(
+            eval_manifest,
+            data_root=data_root,
+            artifact_fields=artifact_fields,
+            required_artifact_fields=required_artifact_fields,
+            required_metadata_fields=required_metadata_fields,
+        )
+        overlap = tuple(sorted(set(source_episodes).intersection(eval_report.source_episodes)))
+        if overlap:
+            warnings.append("train/eval source_episode overlap: " + ", ".join(overlap))
         return cls(
             manifest_path=path,
             data_root=root,
@@ -139,58 +165,29 @@ class ArtifactManifestReport:
             resolved_artifacts=tuple(resolved),
             warnings=tuple(warnings),
             source_episodes=source_episodes,
-        )
-
-    @classmethod
-    def from_pair(
-        cls,
-        train_manifest: str | Path,
-        eval_manifest: str | Path,
-        **kwargs: Any,
-    ) -> ArtifactManifestReport:
-        """Build one report for a train/eval manifest pair, flagging source-episode overlap."""
-
-        train = cls.from_manifest(train_manifest, **kwargs)
-        eval_report = cls.from_manifest(eval_manifest, **kwargs)
-        overlap = tuple(
-            sorted(set(train.source_episodes).intersection(eval_report.source_episodes)),
-        )
-        warnings = list(train.warnings)
-        if overlap:
-            warnings.append(
-                "train/eval source_episode overlap: " + ", ".join(overlap),
-            )
-        return cls(
-            manifest_path=train.manifest_path,
-            data_root=train.data_root,
-            row_count=train.row_count,
-            artifact_count=train.artifact_count,
-            resolved_artifacts=train.resolved_artifacts,
-            warnings=tuple(warnings),
-            source_episodes=train.source_episodes,
             eval_manifest_path=eval_report.manifest_path,
             eval_source_episodes=eval_report.source_episodes,
             source_episode_overlap=overlap,
         )
 
     @classmethod
-    def from_video_world_pair(
+    def from_video_world_manifest(
         cls,
-        train_manifest: str | Path,
-        eval_manifest: str | Path,
+        manifest_path: str | Path,
         *,
+        eval_manifest: str | Path | None = None,
         data_root: str | Path | None = None,
         require_target_video: bool = False,
     ) -> ArtifactManifestReport:
-        """Build the report for a Video2World manifest pair, requiring first-frame provenance."""
+        """Build the report for a Video2World manifest, requiring first-frame provenance."""
 
         artifact_fields = (
             ("reference_image", "target_video") if require_target_video else ("reference_image",)
         )
         required_artifact_fields = artifact_fields
-        return cls.from_pair(
-            train_manifest,
-            eval_manifest,
+        return cls.from_manifest(
+            manifest_path,
+            eval_manifest=eval_manifest,
             data_root=data_root,
             artifact_fields=artifact_fields,
             required_artifact_fields=required_artifact_fields,

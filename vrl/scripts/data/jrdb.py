@@ -195,9 +195,9 @@ def _cmd_jrdb_targets(args: Any) -> None:
     validation_summary: dict[str, Any] | None = None
     if eval_rows:
         write_jsonl(eval_manifest, eval_rows)
-        validation = ArtifactManifestReport.from_video_world_pair(
+        validation = ArtifactManifestReport.from_video_world_manifest(
             train_manifest,
-            eval_manifest,
+            eval_manifest=eval_manifest,
             data_root=data_root,
             require_target_video=True,
         )

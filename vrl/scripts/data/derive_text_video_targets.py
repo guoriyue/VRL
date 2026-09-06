@@ -127,9 +127,9 @@ def _cmd_derive_text_video_targets(args: argparse.Namespace) -> None:
     write_jsonl(train_output, train_rows)
     write_jsonl(eval_output, eval_rows)
 
-    validation = ArtifactManifestReport.from_pair(
+    validation = ArtifactManifestReport.from_manifest(
         train_output,
-        eval_output,
+        eval_manifest=eval_output,
         data_root=data_root,
         artifact_fields=("target_video",),
         required_artifact_fields=("target_video",),

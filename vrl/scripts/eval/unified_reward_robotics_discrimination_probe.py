@@ -35,15 +35,15 @@ from typing import Any
 
 import torch
 
+from vrl.rewards.inference import (
+    RewardInferenceArtifact,
+    RewardInferenceRequest,
+)
 from vrl.scripts.eval.robotics_discrimination import (
     aggregate_axis_scores,
     build_discrimination_candidates,
     require_robotics_scores,
     robotics_reward_verdict,
-)
-from vrl.rewards.inference import (
-    RewardInferenceArtifact,
-    RewardInferenceRequest,
 )
 from vrl.trainers.data.prompts import PromptExample, load_prompt_manifest
 from vrl.utils.artifacts import default_data_root, resolve_artifact_path, sha256_file

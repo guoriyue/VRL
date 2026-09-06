@@ -57,9 +57,9 @@ def test_video_world_manifests_validate_reference_artifacts(tmp_path: Path) -> N
         },
     )
 
-    report = ArtifactManifestReport.from_pair(
+    report = ArtifactManifestReport.from_manifest(
         train_manifest,
-        eval_manifest,
+        eval_manifest=eval_manifest,
         data_root=data_root,
         artifact_fields=("reference_image",),
         required_artifact_fields=("reference_image",),
@@ -94,9 +94,9 @@ def test_source_backed_video_world_manifest_requires_provenance(tmp_path: Path) 
         },
     )
 
-    report = ArtifactManifestReport.from_video_world_pair(
+    report = ArtifactManifestReport.from_video_world_manifest(
         train_manifest,
-        eval_manifest,
+        eval_manifest=eval_manifest,
         data_root=data_root,
     )
 
@@ -132,9 +132,9 @@ def test_source_backed_video_world_manifest_can_require_target_video(tmp_path: P
         },
     )
 
-    report = ArtifactManifestReport.from_video_world_pair(
+    report = ArtifactManifestReport.from_video_world_manifest(
         train_manifest,
-        eval_manifest,
+        eval_manifest=eval_manifest,
         data_root=data_root,
         require_target_video=True,
     )
@@ -159,9 +159,9 @@ def test_source_backed_video_world_manifest_rejects_missing_required_target_vide
     _write_jsonl(eval_manifest, row)
 
     with pytest.raises(ArtifactManifestError, match="missing required field target_video"):
-        ArtifactManifestReport.from_video_world_pair(
+        ArtifactManifestReport.from_video_world_manifest(
             train_manifest,
-            eval_manifest,
+            eval_manifest=eval_manifest,
             data_root=data_root,
             require_target_video=True,
         )
@@ -182,9 +182,9 @@ def test_source_backed_video_world_manifest_rejects_placeholder_rows(tmp_path: P
     _write_jsonl(eval_manifest, row)
 
     with pytest.raises(ArtifactManifestError, match=r"metadata\.source_repo is required"):
-        ArtifactManifestReport.from_video_world_pair(
+        ArtifactManifestReport.from_video_world_manifest(
             train_manifest,
-            eval_manifest,
+            eval_manifest=eval_manifest,
             data_root=data_root,
         )
 
@@ -203,9 +203,9 @@ def test_video_world_source_episode_overlap_is_reported(tmp_path: Path) -> None:
     _write_jsonl(train, row)
     _write_jsonl(eval_manifest, row)
 
-    report = ArtifactManifestReport.from_pair(
+    report = ArtifactManifestReport.from_manifest(
         train,
-        eval_manifest,
+        eval_manifest=eval_manifest,
         data_root=tmp_path,
         required_artifact_fields=("reference_image",),
     )

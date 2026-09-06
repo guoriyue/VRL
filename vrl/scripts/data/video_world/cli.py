@@ -158,9 +158,9 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
 
     validation_summary: dict[str, Any] = {}
     if eval_rows:
-        validation = ArtifactManifestReport.from_video_world_pair(
+        validation = ArtifactManifestReport.from_video_world_manifest(
             train_manifest,
-            eval_manifest,
+            eval_manifest=eval_manifest,
             data_root=data_root,
         )
         validation_summary = validation.to_dict()
@@ -237,9 +237,9 @@ def _cmd_video_world_targets(args: argparse.Namespace) -> None:
 
     validation_summary: dict[str, Any] = {}
     if eval_rows:
-        validation = ArtifactManifestReport.from_video_world_pair(
+        validation = ArtifactManifestReport.from_video_world_manifest(
             train_manifest,
-            eval_manifest,
+            eval_manifest=eval_manifest,
             data_root=data_root,
             require_target_video=True,
         )
