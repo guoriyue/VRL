@@ -387,6 +387,62 @@ accept-path 的观测口。改名后调用点变成 `require_*(...)` 却不接�
   实测搬家会红 146 条。
 - 其余是序列/多参数入口，没有单一所有者。
 
+## 4septies. 第六轮：再并 7 个（42 → 35），并把「结构类型」过滤前置
+
+这一轮先按第四轮的教训过滤（**每个候选先查调用点传的是真实例还是桩**），再决定搬不搬。
+
+### 4sp.1 内联（2 个）：单一调用者就是拥有它的方法
+
+`vrl/models/interfaces/replay.py` 的 `validate_replay_segments` / `validate_zero_replay_timestep`
+全仓各只有一个调用者——`ReplayRequestContract` 上对应的方法，且都传 `owner=type(self).__name__`。
+类的 docstring 自己就写着这是「placement rules 里的所有权信号」。两个函数体直接内联进方法，
+`owner=` 参数消失（方法里读 `type(self).__name__`）。两条直接调用它们的测试改为通过一个
+最小 `ReplayRequestContract` 子类走方法。
+
+### 4sp.2 第一参数是类本身 → classmethod（2 个）
+
+- `_revalidate_section(section_cls, payload, *, section)`（`schema.py`，3 个调用者）→
+  **`ConfigBase.revalidate(payload, *, section)`**。它依赖的 `_extract_error_message` /
+  `_UNKNOWN_KEY_ERRORS` 一并从 `schema.py` 搬到 `base.py`——`base.py` 的 docstring 早就
+  "see ``_extract_error_message``"，只是人一直住在隔壁；`schema` import `base`，反向不行，所以只能这么搬。
+  两个外部调用者（`rewards/service/server.py`、`scripts/data/danbooru/config.py`）改 import 路径。
+- `require_sampling_overrides(family, overrides) -> dict`（1 个调用者）→
+  **`SamplingSection.require_overrides(overrides)`**。它做的事就是「用这个家族的 section 类校验
+  一个 mapping」，主人是 section 类；调用点变成
+  `sampling_section_class_for_family(family).require_overrides(overrides)`。
+
+### 4sp.3 词汇表让类型自己拥有（2 个函数消失）
+
+`require_pipeline_offload_mode` / `require_torch_compile_scope` 各自的 docstring 都写着「必须是
+自由函数，因为 wire 路径在 typed 对象存在之前就要读这个字段，两处读者共用一个定义」。
+这个理由成立，但 **`Literal` 才是根因**：`Literal` 不能自我校验，所以需要一个外部函数。
+改成 `StrEnum` 之后 `PipelineOffloadMode(value)` 本身就是那个唯一定义，wire 路径和 typed 路径
+自然共享：
+
+```python
+class PipelineOffloadMode(StrEnum):
+    NONE = "none"; MODEL = "model"; SEQUENTIAL = "sequential"
+    @classmethod
+    def _missing_(cls, value): raise ValueError(f"rollout pipeline_offload_mode must be one of ...")
+```
+
+`_missing_` 保住了原来的错误措辞（两条测试 `match=r"torch_compile\.scope must be one of"` 钉着）。
+`StrEnum` 是 `str` 子类：`asdict()` 上 wire、`GenerationRuntimeLaunchContract` 的
+primitives-only 校验、`== "none"` 比较、`str()`/pickle 都不变。`RolloutBuildOptions.__post_init__`
+把传入的裸字符串归一成枚举成员。wan config 里的 `get_args(PipelineOffloadMode)` 改成
+`[m.value for m in PipelineOffloadMode]`。
+
+### 4sp.4 查了但**不搬**的（结构类型再次拦住）
+
+| 函数 | 调用点证据 | 判定 |
+|---|---|---|
+| `validate_checkpoint_compatibility(checkpoint: TrainingCheckpoint \| None, ...)` | 6 个测试站点里 4 个传 `SimpleNamespace(...)` / `object()`，且 6 处 monkeypatch 打的是模块属性 | 结构类型，留 |
+| `validate_every_core_quantized(model: Any, scheme)` | 测试用自带 `policy_cores` 属性的桩类；生产上只有 `DiffusionModelBase` 有 `policy_cores`，token 家族没有 | 结构类型，留 |
+| `validate_checkpoint_meta_compatibility(meta: Mapping, ...)` | 5 个调用者：2 个传 `target.meta`，3 个传 `read_checkpoint_meta(path)` 裸 dict | 一半调用者没有 `CheckpointTarget`，留 |
+| `validate_checkpoint_identity_schema(schema_cls: type)` | 收的是 pydantic 类；逻辑属于 checkpoint-identity 域，挂到 `ConfigBase` 会把 checkpoint 概念拽进 config 基类 | 留 |
+
+**第四轮那条「标注是提示、方法是契约」在这一轮直接省掉了两次返工。**
+
 ## 5. 未决项（唯一一条）
 
 `Any` + `owner=`/`what=` 字符串的 4 个收窄器，按 Rule 1 + Rule 2 都可疑，但它们做的是
@@ -431,10 +487,11 @@ vrl/models/dtypes.py:104              require_plain_dtype(value: Any, *, what: s
 
 ## 8. 总账
 
-五轮合计：**15 个自由函数并进了类（9 个 classmethod 构造器 + 3 个 manifest 构造器 + 3 个方法），
-23 处 `require_`/`validate_` 按「是否返回值」统一命名，6 个防御性 `getattr` 删除，4 个 `Any` 参数
-标注，1 处失效的门面导出清理，2 次搬家尝试被实测否决并记录了原因**。
-`require_`/`validate_` 自由函数从 48 降到 42，剩下的每一个都有 §4s.4 里的具体理由。
+六轮合计：**22 个自由函数消失**（9 个 classmethod 构造器 + 3 个 manifest 构造器 + 3 个实例方法
++ 2 个内联进拥有者方法 + 2 个 classmethod + 2 个被 `StrEnum` 取代 + 1 个私有 helper 成为
+`ConfigBase.revalidate`），23 处 `require_`/`validate_` 按「是否返回值」统一命名，6 个防御性 `getattr`
+删除，4 个 `Any` 参数标注，1 处失效的门面导出清理，4 次搬家尝试被「结构类型」过滤否决并记录了原因。
+`require_`/`validate_` 自由函数从 48 降到 35，剩下的每一个都有 §4s.4 / §4sp.4 里的具体理由。
 审过的函数总数 123 + 约 120 = 约 240 个；判定「该搬家」的比例约 4%。
 这个比例本身是结论：仓库里 `require_/build_/resolve_/validate_` 密集**不是**设计问题，
 绝大多数有正当理由；值得改的是那一小撮「名字和返回类型指同一个概念」的构造器。
