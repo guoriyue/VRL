@@ -1,6 +1,6 @@
 # SPRINT: reward 侧 tiny-real 仓库，以及 optional 车道的第一批真成员（done）
 
-状态：**done（2026-09-05 re-baseline 后当日落地 RW-01/02/03/04-A/B/C/06/07/08/11；RW-04-D 未做，见 §11）**。
+状态：**done（2026-09-05 落地 RW-01/02/03/04-A/B/C/06/07/08/11；2026-09-06 GPU 空出后补齐 RW-04-D 与 vLLM 依赖清单，见 §11.5）**。
 原计划状态：planned / CPU-only（两个 opt-in 测试需要 `--optional`，一个需要 `--extra reward`）。
 基线：main @ `812cc3cf`。分层判据见
 `docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md`
@@ -653,9 +653,9 @@ WM_RUN_REAL_MODEL_TESTS=1 .venv/bin/python -m pytest tests/rewards/functions/tes
 - **RW-07**：`_PaddleOCR2x` / `_PaddleOCR3x` 双协议参数化（substring 满分、视频编辑距离、视频不享受 image-only 捷径三条）；视频编辑距离断言收紧为 `0.875`；新增视频逐字包含目标仍得 0.0 的不变量；列长度不一致的 `zip` 截断单独成测；真引擎测试按 `WM_RUN_REAL_MODEL_TESTS=1` 门控、显式 TrueType 字体、断言形状与差分。`OCRReward.__init__` 未加参数，`_engine` seam 保留。
 - **RW-11**：`find_spec("vllm") is None` 才 skip，装了却 import 不到内部 API 直接红。
 
-### 11.3 未做
+### 11.3 未做（2026-09-05 时点；两项都已在 11.5 补齐）
 
-- **RW-04-D**（真 2B 权重的 e2e case）：需要 GPU 与整块显存，本机有训练在跑，按"不启动整 GPU 任务"的约束不做。§2.4-D 列的三处必补项仍然成立。
+- **RW-04-D**（真 2B 权重的 e2e case）：当时 GPU 被占。
 - 补 vLLM 依赖清单进 `pyproject.toml`（§2.8 的后续项）。
 
 ### 11.4 验收数字
@@ -667,3 +667,57 @@ WM_RUN_REAL_MODEL_TESTS=1 .venv/bin/python -m pytest tests/rewards/functions/tes
 | `WM_RUN_REAL_MODEL_TESTS=1 ... -k real_paddleocr` | 1 passed（真 PaddleOCR 2.9.1 读出 HELLO，匹配目标分数 > 不匹配） |
 | `tests/architecture/test_real_cover_labels.py` | 10 passed（新标签全部解析） |
 | 全量 CPU 套件 | 见提交信息 |
+
+### 11.5 2026-09-06 补齐：RW-04-D 与 vLLM 依赖清单
+
+**vLLM 依赖清单**（commit `3fad24ab1`）：§2.8 说的"48 个缺失"是按 `--no-deps` 推算的上界。
+实测法：在装了 vllm 0.21.0 的 base 解释器里 import VRL 真正用到的四个入口
+（`vllm.v1.worker.block_table`、`vllm.device_allocator.cumem`、`vllm._custom_ops`、
+`vllm.v1.attention.backends.utils`），把新进入 `sys.modules` 的顶层包映射回发行版，与 vLLM 的
+非-extra `Requires-Dist` 求交：**30/69** 个真的被 import；其中只经 vllm 进入 lock、VRL 主闭包
+自己不带的是 `cbor2`、`gguf`、`mistral-common[image]`（连带 `tiktoken`）、`openai`、
+`openai-harmony`、`cloudpickle`、`py-cpuinfo`。这 7 个写进 README:234 的 `--no-deps` 命令
+与 pyproject:114 注释；不动 uv.lock（它们经 `ar-vllm` extra 早已在锁里）。
+
+**RW-04-D**（commit `d1fb9f812`，predict2 修复 `3a9f9865a`）：`tests/e2e/test_real_checkpoint_rl.py` 新增
+`cosmos_predict2_kling_real_reward`，由 transport case `replace()` 派生：`reward_model_factory=None`
+保留 preset 的真工厂；`CheckpointField(cfg_path="…worker_config.model_path", repo_id="KlingTeam/VideoReward")`
++ 一条 `cfg_path=None` 的 `Qwen/Qwen2-VL-2B-Instruct` 门控（§2.4-D 第 2 条：基座名写死在
+`model_config.json`，没有 cfg 路径能重定向，只能门控）。`_local_reward_overrides(tmp_path, model_factory)`
+按 §2.4-D 第 1 条参数化。实测（单卡 32 GiB）：
+
+| | transport case | real reward case |
+|---|---|---|
+| 结果 | passed | passed |
+| wall | 20.1 s | 38.7 s |
+| GPU 峰值 | — | **16.4 GiB** |
+| reward_debug 里的分数 | tensor-mean | 真 `KlingTeam/VideoReward@main`：VQ/MQ/TA/overall 四个键，两条样本分数不同 |
+
+§2.4-D 第 3 条（把 `min_cuda_memory_gib` 抬到 ~36）**没有成立**：实测 16.4 GiB，因为 harness 现在会在
+reward 加载前把 11B 文本编码器与 transformer 挪到主机内存（见下）。两个 case 的门槛改为 24.0。
+
+**顺手发现 cosmos_predict2 这个 GPU-only case 已经烂了五处**（CPU 车道全绿，只有真跑才看得见）：
+
+1. `sampling.max_sequence_length=64` 不是 predict2 sampling section 的字段（`VideoSamplingSection` 没有它；
+   只有 `TextEncoded*` 有）——typed sampling 之后配置解析直接炸。删掉，并加
+   `test_every_case_config_parses_without_a_gpu`（15 个 case 全部逐个解析）。
+2. reference image 现在从 `GenerationInput.reference_image` 读（executor 不再收构造参数）；
+   harness 改喂 `PromptExample(prompt, reference_image)`，走 `generation_input()`。
+3. reward model 调用协议是 `model(artifact)`；tensor-mean 替身改为 `decode_artifact_frames` 后取均值，
+   返回 Kling 的公开键 `overall_reward`。
+4. collector 没拿到 lifecycle 计划 → reward 加载前没人让出 GPU → 真 2B 直接 OOM。现在传本机真实的
+   `ResolvedDistributedResources.lifecycle`；`_DirectExecutorGenerationRuntime.activate/offload` 在 trainer
+   自己的模块上扮演 colocated rollout worker 的 wake/sleep（trainer park → runtime 把模块搬回 GPU 生成 →
+   reward 前搬走 → phase 结束 trainer restore）；shutdown 走 `rollout_schedule.lifecycle.shutdown_collector_runtime()`，
+   让 reward 的 residual 门看到已 park 的 trainer。
+5. preset 2026-06-10 改成全参微调（"sized for multi-GPU"）：2B 的 fp32 master + Adam 矩 + 11B T5 在 32 GiB
+   上放不下（实测 optimizer.step 时 OOM）。case 改走 LoRA（`to_q/to_k/to_v/to_out.0`，仓库自己的 predict2
+   LoRA 实验同一组 target）；`min_cuda_memory_gib=28` 是 LoRA 时代的遗留数字。
+6. 打分后 artifacts 默认 `release`；`manifest.jsonl` 已不存在。override 加 `retain_artifacts=true`，断言改为
+   "每个样本一个保留的 mp4 + debug results 行"。
+
+另有一个生产 bug 被同一条车道抓出：**predict2 关 CFG（`guidance_scale=1.0`）时 replay 恢复
+`KeyError: 'uncond_mask'`**——`prepare_latents` 在 CFG 关时不返回 uncond mask/indicator，导出为 None，
+trajectory builder 丢掉 None，`restore_eval_state` 走 `replay_tensor()` 的 batch_context 回退就炸。
+修法与 `negative_prompt_embeds` 一致（`.get`），并加 CPU 往返测试
+（`test_predict2_restore_tolerates_the_absent_uncond_bundle_when_cfg_is_off`）。
