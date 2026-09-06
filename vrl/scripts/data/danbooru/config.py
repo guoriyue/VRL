@@ -107,7 +107,7 @@ def _load_taxonomy(path: Path) -> _Taxonomy:
     try:
         return _Taxonomy.model_validate(raw)
     except ValidationError as exc:
-        from vrl.config.schema import _extract_error_message
+        from vrl.config.base import _extract_error_message
 
         raise ValueError(f"{path}: {_extract_error_message(exc)}") from exc
 

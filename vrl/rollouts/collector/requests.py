@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import fields, replace
 from typing import Any, NamedTuple
 
-from vrl.config.schema import require_sampling_overrides
+from vrl.config.schema import sampling_section_class_for_family
 from vrl.generation import GenerationInput, GenerationRequest
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.models.families.registry import ModelFamilyEntry
@@ -66,7 +66,9 @@ class GenerationRequestBuilder:
         if denoise_overrides:
             denoise = replace(denoise or DenoiseRequestOptions(), **denoise_overrides)
         if overrides:
-            sampling.update(require_sampling_overrides(self.entry.family, overrides))
+            sampling.update(
+                sampling_section_class_for_family(self.entry.family).require_overrides(overrides)
+            )
 
         group_metadata = dict(metadata or {})
         if "fps" in sampling:

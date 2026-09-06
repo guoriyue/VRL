@@ -108,7 +108,7 @@ class RewardServiceConfig(ConfigBase):
     def from_mapping(cls, value: Mapping[str, Any]) -> RewardServiceConfig:
         """Validate one loaded YAML mapping with the repo's config error text."""
 
-        from vrl.config.schema import _extract_error_message
+        from vrl.config.base import _extract_error_message
 
         try:
             return cls.model_validate(dict(value))

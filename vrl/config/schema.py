@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import functools
 import math
-import re
 from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields
 from typing import Any, Literal
@@ -34,7 +33,7 @@ from pydantic import (
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.algorithm import algorithm_config_class, resolve_kl_reward_coef
-from vrl.config.base import ConfigBase
+from vrl.config.base import ConfigBase, _extract_error_message
 from vrl.config.data import DataLoaderName, manifest_sources, resolve_data_loader
 from vrl.config.model_schema import ModelSection
 from vrl.config.precision import PrecisionConfig
@@ -431,25 +430,6 @@ def _model_section_class_for_family(family: Any) -> type[ModelSection]:
     return _model_section_class_from_path(entry.model_section_cls)
 
 
-def _revalidate_section[SectionT: ConfigBase](
-    section_cls: type[SectionT],
-    payload: Any,
-    *,
-    section: str,
-) -> SectionT:
-    """Validate a bare section payload and re-anchor errors to its YAML path.
-
-    The selected family class validates the bare ``model``/``sampling`` payload;
-    on failure its error is re-prefixed so callers still receive the public
-    ``<section>.<field>`` location instead of the bare field name.
-    """
-
-    try:
-        return section_cls.model_validate(payload)
-    except ValidationError as exc:
-        raise ValueError(_extract_error_message(exc, section=section)) from exc
-
-
 def _parse_model_section(value: Any) -> ModelSection | None:
     if value is None:
         return None
@@ -468,7 +448,7 @@ def _parse_model_section(value: Any) -> ModelSection | None:
         raise ValueError("model must be a mapping")
 
     if payload is not None:
-        parsed = _revalidate_section(section_cls, payload, section="model")
+        parsed = section_cls.revalidate(payload, section="model")
 
     entry = get_model_family_entry(str(parsed.family))
     entry.validate_model_runtime_sections(
@@ -509,23 +489,7 @@ def _parse_sampling_section(
     else:
         raise ValueError("sampling must be a mapping")
 
-    return _revalidate_section(section_cls, payload, section="sampling")
-
-
-def require_sampling_overrides(family: Any, overrides: Mapping[str, Any]) -> dict[str, Any]:
-    """Validate per-prompt ``request_overrides`` against the family sampling class.
-
-    The override vocabulary is the family's ``SamplingSection`` fields, so a typo
-    fails with the same ``unknown sampling.<key>`` message as a YAML typo instead
-    of riding the wire to a runtime that ignores it. Returns the validated values.
-    """
-
-    section = _revalidate_section(
-        sampling_section_class_for_family(family),
-        dict(overrides),
-        section="sampling",
-    )
-    return section.model_dump(mode="python", exclude_unset=True)
+    return section_cls.revalidate(payload, section="sampling")
 
 
 # ── actor / trainer sections ──────────────────────────────────────────────────
@@ -973,62 +937,6 @@ class RootConfig(ConfigBase):
 # ── Parse boundary ────────────────────────────────────────────────────────────
 
 
-_UNKNOWN_KEY_ERRORS = ("extra_forbidden", "unexpected_keyword_argument")
-
-
-def _extract_error_message(exc: ValidationError, *, section: str = "") -> str:
-    """Extract a clean ValueError message from a Pydantic ValidationError.
-
-    ``section`` re-anchors a bare section payload (a family-selected ``model``
-    or ``sampling`` class validated on its own) to its public YAML path, so the
-    location always reads ``<section>.<field>``.
-
-    Unknown keys take precedence and are reported all at once, sorted — a typo,
-    a removed key, and a never-seen key get the same ``unknown a.b, c.d`` line
-    whether pydantic saw them as ``extra_forbidden`` on a model, as an
-    unexpected keyword on a stdlib dataclass field, or already folded into a
-    nested section's own message. Otherwise the first error is reported.
-    """
-    errors = exc.errors(include_url=False)
-
-    def location(error: Any) -> str:
-        # A union field (``teacache: bool | TeaCacheSection``) reports the
-        # variant's class name as a loc segment; YAML keys are snake_case, so a
-        # CapWords segment is never a key and only hides the real path.
-        parts = [str(p) for p in error["loc"] if not re.fullmatch(r"[A-Z][A-Za-z0-9]*", str(p))]
-        if section:
-            parts.insert(0, section)
-        return ".".join(parts)
-
-    unknown: set[str] = set()
-    for error in errors:
-        if error["type"] in _UNKNOWN_KEY_ERRORS:
-            unknown.add(location(error))
-        elif error["msg"].startswith("Value error, unknown ") and "; expected" not in error["msg"]:
-            unknown.update(error["msg"][len("Value error, unknown ") :].split(", "))
-    if unknown:
-        return "unknown " + ", ".join(sorted(unknown))
-
-    first = errors[0]
-    error_type = first["type"]
-    msg = first["msg"]
-    loc = location(first)
-    # Missing required field — remap to repo-standard message format
-    if error_type == "missing":
-        return f"config missing required field: {loc}"
-    # Literal enum mismatch — reformat to "unknown {loc}={input!r}; expected ..."
-    if error_type == "literal_error":
-        input_val = first.get("input", "")
-        expected = msg.replace("Input should be", "expected")
-        return f"unknown {loc}={input_val!r}; {expected}"
-    # ValueError raised inside a validator — strip Pydantic's "Value error, " prefix
-    # (validators name the offending path themselves).
-    if msg.startswith("Value error, "):
-        return msg[len("Value error, ") :]
-    # Type errors: pydantic's sentence plus the path it lost.
-    return f"{loc}: {msg}" if loc else msg
-
-
 def parse_config(cfg: DictConfig) -> RootConfig:
     """Validate a fully-merged, resolved DictConfig through the typed schema.
 
@@ -1064,6 +972,5 @@ __all__ = [
     "TrainerSection",
     "generation_request_rollout_fields",
     "parse_config",
-    "require_sampling_overrides",
     "sampling_section_class_for_family",
 ]
