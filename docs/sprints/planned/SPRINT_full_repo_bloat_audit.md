@@ -230,17 +230,36 @@ collector 内层计时 vs prompt_collection 恒开计时）归入 2-B 一并处�
 | 项 | 缓做原因 |
 |---|---|
 | generation executor/weight_sync 的 remote-vs-local 双路径（2-A 核心） | 需要把 test_oom_split/test_engine 等替身迁移到 conftest 的包级真 Ray 集群上——独立的测试架构工程,不宜混入机械批次 |
-| `_sampling_fields_for_cfg` 三分支收敛 | 10+ 测试文件的 raw-mapping fixture 需逐个改为真 SamplingSection |
-| rewards Qwen judge 基类合并、tensor→PIL 统一路由 | 触碰打分行为面(两处已知语义漂移正是证据),必须先建 reward 数值回归门 |
 | `retain_artifacts`、reward client `_execute`/`_revalidate` 脚手架 | 低值;前者三个测试消费者需改断言路径 |
-| `robotics_discrimination.py` 迁往 scripts/eval | 机械但独立 |
 | models: sana `from_build`→super、wan `WanI2VReplayModel` MRO、cosmos3 `set_num_steps` | 中风险继承/MRO 变化,各需 tiny-model 回归确认(cosmos3 还需查 dynamic shifting) |
 | reward inference 映射 4→1 构造点 | `resources.py` 在 typed build 之前运行,需先确认调用序 |
 | `_OFFLINE_DPO_*_FIELDS` 派生/交叉校验、`lora.init` 双别名、precision `_select`→`cfg_path` | 用户可见 config 面(别名删除是 key 迁移)、`None`-vs-缺失语义差需逐调用点核对 |
 | 三份 lazy-export 表 → 共享工厂 | 公共 facade 行为须逐字节保持,含 torch-free import 契约测试 |
-| fp4/fp8 基类定理测试参数化、4 份复制的 reward function 测试文件 | 机械但量大;并入下一轮测试批次 |
-| scripts 长尾死 CLI flag(wan_robotics/videophy 等)、`--vbench-*` 决定、`init-dirs` | 各挂着 KEEP 脚本,逐个确认;vbench 需先确认 extra 是否装过 |
-| `test_wan_dpo_config.py:28-131` 迁往 tests/config | 纯搬移 |
+| kling / unified_reward_video 两份 reward function 测试文件 | 与 hpsv3/videoscore2 不同构（各带 release-after-success、empty runtime、rubric 断言），不并入参数化模块 |
+| scripts 长尾死 CLI flag(wan_robotics/videophy 等)、`--vbench-*` 决定、`init-dirs` | 各挂着 KEEP 脚本,逐个确认;vbench 需先确认 extra 是否装过。`dead_flags` lint 当前报 350 个 flag 全部有消费者 |
+
+### 2026-09-05 结清的余项
+
+- **`_sampling_fields_for_cfg` 三分支收敛**：函数已不存在——`SPRINT_config_boundary_program`
+  把 sampling 字段集改为 `type(root.sampling).model_fields` 派生，随后
+  `SPRINT_generation_request_typed_sampling` 把 request 边界关闭。零额外动作。
+- **rewards Qwen judge 基类合并、tensor→PIL 统一路由**（`41b38f64`）：数值门由
+  `SPRINT_reward-tiny-real-and-optional-lanes` 建成后动手。`QwenVLVideoJudge`
+  承接 VideoScore2 与 Cosmos3 reasoner 的加载 / chat turn / processor / generate / decode，
+  漂移按 device_map 正确的一侧收敛（inputs 跟 `self.model.device`）；
+  `pil_frames_from_media` 承接 pickscore / aesthetic / animereward 的 tensor→PIL，
+  布局契约与 `decode_artifact_frames` 一致（`[C,H,W]` / `[C,T,H,W]` / `[B,C,T,H,W]`），
+  帧选择仍各自决定（中间帧 / 三等分 / 窗口）。判定精化：pickscore 早先修复里接受的
+  `[B,T,C,H,W]` 猜测随之删除——没有任何 producer。unified_reward_video 不并入：它把帧当
+  图片送 processor，不走 `process_vision_info`，形状不同。
+- **`robotics_discrimination.py` 迁往 `vrl/scripts/eval/`**，测试随迁 `tests/scripts/eval/`；
+  `vrl/rewards/evaluation/` 包删除（唯一成员）。
+- **`test_wan_dpo_config.py` 的 builder 定理迁往 `tests/config/test_offline_dpo_builders.py`**；
+  留下的两条是 `train_wan_2_1_dpo` 的入口行为。
+- **fp4/fp8 基类定理参数化**：`tests/nn/quantization/test_quantized_linear.py` 对
+  `QUANTIZATION_SCHEMES` 参数化五条 master-weight 生命周期 / fail-before-mutation 定理，
+  两个 per-scheme 文件只留数值与 targeting。
+- **hpsv3 / videoscore2 两份逐字同构的 function 测试** → `tests/rewards/test_disk_artifact_reward_functions.py`。
 
 ### 已结清的 deferral
 
