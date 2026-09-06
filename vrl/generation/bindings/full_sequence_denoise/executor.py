@@ -39,7 +39,6 @@ from vrl.generation.types import (
 from vrl.trajectory.storage import (
     TrajectoryStoragePolicy,
     apply_value_storage_policy,
-    trajectory_storage_policy_from_cfg,
     trajectory_tensor_bytes,
 )
 from vrl.utils.cuda_memory import (
@@ -338,10 +337,8 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         bit-for-bit.
         """
 
-        policy = trajectory_storage_policy_from_cfg(
-            request.sampling.get("trajectory_storage"),
-        )
-        if policy == TrajectoryStoragePolicy():
+        policy = request.trajectory_storage
+        if policy is None or policy == TrajectoryStoragePolicy():
             return batch_result
         batch_result.observations = apply_value_storage_policy(
             batch_result.observations,

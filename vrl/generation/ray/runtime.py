@@ -231,15 +231,12 @@ class RayGenerationRuntime:
                     "generate requires an active rollout runtime; "
                     "the rollout schedule must await activate() first",
                 )
-            if request.sampling.get("samples_per_generation_batch") == "auto":
+            if request.samples_per_generation_batch == "auto":
                 resolved = await self._resolve_probed_samples_per_generation_batch(
                     session,
                     request,
                 )
-                request = replace(
-                    request,
-                    sampling={**dict(request.sampling), "samples_per_generation_batch": resolved},
-                )
+                request = replace(request, samples_per_generation_batch=resolved)
             if request.policy_version is None and self.current_policy_version is not None:
                 request = replace(
                     request,

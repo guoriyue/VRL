@@ -125,12 +125,8 @@ def _request(num_steps: int = 10, samples: int = 8, sbs: int = 2) -> GenerationR
         task="t2i",
         inputs=["a test prompt"],
         samples_per_prompt=samples,
-        sampling={
-            "height": 64,
-            "width": 64,
-            "num_steps": num_steps,
-            "samples_per_generation_batch": sbs,
-        },
+        sampling={"height": 64, "width": 64, "num_steps": num_steps},
+        samples_per_generation_batch=sbs,
         runtime_debug=True,
     )
 

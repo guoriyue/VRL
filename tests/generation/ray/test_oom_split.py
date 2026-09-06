@@ -146,11 +146,7 @@ def _request(
         task="t2i",
         inputs=["p"],
         samples_per_prompt=num_samples,
-        sampling=(
-            {}
-            if samples_per_generation_batch is None
-            else {"samples_per_generation_batch": samples_per_generation_batch}
-        ),
+        samples_per_generation_batch=samples_per_generation_batch,
         runtime_debug=runtime_debug,
     )
 

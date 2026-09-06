@@ -16,10 +16,10 @@ The reward-side dual is vrl/rewards/types.py (``RewardSample`` /
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    from vrl.trajectory import TrajectoryBatch
+    from vrl.trajectory import TrajectoryBatch, TrajectoryStoragePolicy
 
 
 @dataclass(slots=True)
@@ -73,6 +73,15 @@ class GenerationRequest:
     inputs: list[GenerationInput]
     samples_per_prompt: int
     sampling: dict[str, Any] = field(default_factory=dict)
+    # Engine-level knobs read by family-neutral code (planner, executor,
+    # trajectory builders). They are request fields, not sampling keys:
+    # ``samples_per_generation_batch`` is the planner batch width (``"auto"``
+    # until the Ray runtime's startup probe rewrites it to an int),
+    # ``train_segments`` marks which multi-segment outputs are trainable, and
+    # ``trajectory_storage`` is applied worker-side before tensors cross the wire.
+    samples_per_generation_batch: int | Literal["auto"] | None = None
+    train_segments: dict[str, bool] | None = None
+    trajectory_storage: TrajectoryStoragePolicy | None = None
     runtime_debug: bool = False
     policy_version: int | None = None
 
@@ -84,6 +93,9 @@ class GenerationRequest:
         inputs: list[GenerationInput | str],
         samples_per_prompt: int,
         sampling: dict[str, Any] | None = None,
+        samples_per_generation_batch: int | Literal["auto"] | None = None,
+        train_segments: dict[str, bool] | None = None,
+        trajectory_storage: TrajectoryStoragePolicy | None = None,
         runtime_debug: bool = False,
         policy_version: int | None = None,
     ) -> None:
@@ -103,6 +115,9 @@ class GenerationRequest:
         self.inputs = normalized_inputs
         self.samples_per_prompt = samples_per_prompt
         self.sampling = dict(sampling or {})
+        self.samples_per_generation_batch = samples_per_generation_batch
+        self.train_segments = None if train_segments is None else dict(train_segments)
+        self.trajectory_storage = trajectory_storage
         self.runtime_debug = runtime_debug
         self.policy_version = policy_version
         self.__post_init__()
@@ -124,6 +139,11 @@ class GenerationRequest:
             raise ValueError("GenerationRequest.inputs must be non-empty")
         if self.samples_per_prompt < 1:
             raise ValueError("GenerationRequest.samples_per_prompt must be >= 1")
+        width = self.samples_per_generation_batch
+        if width is not None and width != "auto" and width < 1:
+            raise ValueError(
+                "GenerationRequest.samples_per_generation_batch must be >= 1 or 'auto'",
+            )
         if not isinstance(self.runtime_debug, bool):
             raise TypeError("GenerationRequest.runtime_debug must be a bool")
         if self.policy_version is not None and self.policy_version < 0:

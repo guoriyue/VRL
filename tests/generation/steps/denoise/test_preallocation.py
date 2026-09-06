@@ -13,6 +13,7 @@ from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
 from vrl.generation.steps.denoise.loop import preallocate_denoise_buffers
 from vrl.generation.types import GenerationRequest
+from vrl.trajectory import TrajectoryStoragePolicy
 
 
 def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> None:
@@ -378,7 +379,7 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
         task="t2i",
         inputs=["p"],
         samples_per_prompt=2,
-        sampling={"trajectory_storage": {"dtype": "float16"}},
+        trajectory_storage=TrajectoryStoragePolicy(dtype="float16"),
     )
     out = executor.apply_wire_storage_policy(request, batch)
 

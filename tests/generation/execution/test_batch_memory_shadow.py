@@ -206,7 +206,8 @@ def _request(samples_per_prompt: int = 10) -> GenerationRequest:
         task="t2i",
         inputs=["p"],
         samples_per_prompt=samples_per_prompt,
-        sampling={"num_steps": 20, "samples_per_generation_batch": "auto"},
+        sampling={"num_steps": 20},
+        samples_per_generation_batch="auto",
         policy_version=1,
     )
 
@@ -391,7 +392,7 @@ def test_runtime_resolves_auto_once_and_rewrites_requests() -> None:
 
     # Fleet answer = min across workers; probed once, cached for request 2.
     assert calls == ["w0", "w1"]
-    assert [req.sampling["samples_per_generation_batch"] for req in executed] == [4, 4]
+    assert [req.samples_per_generation_batch for req in executed] == [4, 4]
 
 
 def test_planner_rejects_unresolved_auto() -> None:

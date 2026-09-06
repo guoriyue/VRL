@@ -72,12 +72,10 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
         task="ar_t2i_r1",
         inputs=["draw a chart"],
         samples_per_prompt=2,
-        sampling={
-            "train_segments": {
-                "initial_image": True,
-                "selfcheck_text": True,
-                "final_image": True,
-            },
+        train_segments={
+            "initial_image": True,
+            "selfcheck_text": True,
+            "final_image": True,
         },
     )
     trajectory = build_ar_multisegment_trajectory(

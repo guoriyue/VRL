@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from vrl.generation import GenerationInput
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
@@ -69,28 +67,20 @@ def test_engine_request_builder_applies_request_overrides_last() -> None:
     assert collector_request.request.sampling == {"alpha": 2, "beta": 3}
 
 
-@pytest.mark.parametrize(
-    ("storage", "expected"),
-    [
-        (TrajectoryStoragePolicy(), None),
-        (
-            TrajectoryStoragePolicy(device="cpu", dtype="float16"),
-            {"device": "cpu", "dtype": "float16"},
-        ),
-    ],
-)
-def test_engine_request_builder_derives_trajectory_storage_for_wire(
-    storage: TrajectoryStoragePolicy,
-    expected: dict[str, str] | None,
-) -> None:
+def test_engine_request_builder_carries_the_engine_fields_off_the_sampling_dict() -> None:
+    storage = TrajectoryStoragePolicy(device="cpu", dtype="float16")
     builder = GenerationRequestBuilder(
         entry=get_model_family_entry("sd3_5"),
-        config=RolloutCollectorConfig(trajectory_storage=storage),
+        config=RolloutCollectorConfig(
+            samples_per_generation_batch="auto",
+            train_segments={"final_image": True},
+            trajectory_storage=storage,
+        ),
     )
 
-    sampling = builder.build(["prompt"], 1).request.sampling
+    request = builder.build(["prompt"], 1).request
 
-    if expected is None:
-        assert "trajectory_storage" not in sampling
-    else:
-        assert sampling["trajectory_storage"] == expected
+    assert request.samples_per_generation_batch == "auto"
+    assert request.train_segments == {"final_image": True}
+    assert request.trajectory_storage == storage
+    assert request.sampling == {}

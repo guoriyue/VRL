@@ -56,7 +56,7 @@ def test_r1_train_segments_derive_from_algorithm_config() -> None:
 
     rollout = RolloutCollectorConfig.from_root(parse_config(cfg))
 
-    assert rollout.request_sampling.get("train_segments") == {
+    assert rollout.train_segments == {
         "initial_image": False,
         "selfcheck_text": True,
         "final_image": True,
@@ -74,11 +74,11 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
             "max_text_length": 256,
             "max_reflect_len": 32,
             "final_image_policy": "always_generate",
-            "train_segments": {
-                "initial_image": True,
-                "selfcheck_text": False,
-                "final_image": True,
-            },
+        },
+        train_segments={
+            "initial_image": True,
+            "selfcheck_text": False,
+            "final_image": True,
         },
     )
     collector = build_rollout_collector(

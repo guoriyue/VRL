@@ -550,6 +550,7 @@ async def test_generate_requires_explicit_activation() -> None:
     request = SimpleNamespace(
         request_id="request-0",
         sampling={},
+        samples_per_generation_batch=None,
         policy_version=None,
     )
 
@@ -829,6 +830,7 @@ async def test_active_health_race_propagates_session_first_failure() -> None:
     request = SimpleNamespace(
         request_id="health-race",
         sampling={},
+        samples_per_generation_batch=None,
         policy_version=None,
     )
 
@@ -930,7 +932,7 @@ async def test_auto_probe_timeout_force_kills_the_session_owner(
         task="text_to_image",
         inputs=["prompt"],
         samples_per_prompt=2,
-        sampling={"samples_per_generation_batch": "auto"},
+        samples_per_generation_batch="auto",
         policy_version=None,
     )
 
@@ -981,6 +983,7 @@ async def test_submitted_cancellation_force_kills_the_session_owner(
     request = SimpleNamespace(
         request_id="req-cancelled",
         sampling={},
+        samples_per_generation_batch=None,
         policy_version=None,
     )
 
@@ -1134,6 +1137,7 @@ async def test_generate_rejects_in_flight_offload() -> None:
     request = SimpleNamespace(
         request_id="offload-race",
         sampling={},
+        samples_per_generation_batch=None,
         policy_version=None,
     )
     with pytest.raises(RuntimeError, match="offload to be idle"):
@@ -1156,6 +1160,7 @@ async def test_generate_rejects_in_flight_activation() -> None:
     request = SimpleNamespace(
         request_id="activation-race",
         sampling={},
+        samples_per_generation_batch=None,
         policy_version=None,
     )
 

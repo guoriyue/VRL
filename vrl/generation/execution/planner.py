@@ -24,7 +24,7 @@ class EnginePlan:
         """Plan the batches consumed by direct and distributed executors.
 
         THE single batch-width resolution: explicit ``max_samples_per_batch``
-        argument, then the request's ``sampling["samples_per_generation_batch"]``,
+        argument, then the request's ``samples_per_generation_batch``,
         then ``samples_per_prompt`` (the whole group in one batch). Every
         planner — Ray placement and in-process alike — goes through this one
         fallback.
@@ -35,16 +35,15 @@ class EnginePlan:
         if max_samples_per_batch is not None:
             batch_size = max(1, int(max_samples_per_batch))
         else:
-            raw = request.sampling.get(
-                "samples_per_generation_batch",
-                request.samples_per_prompt,
-            )
+            raw = request.samples_per_generation_batch
+            if raw is None:
+                raw = request.samples_per_prompt
             if raw == "auto":
                 # Resolved to an int by the Ray runtime's startup probe before
                 # a request reaches planning; seeing it here means the request
                 # bypassed that runtime (e.g. a local/direct executor).
                 raise ValueError(
-                    "sampling.samples_per_generation_batch: auto requires the Ray "
+                    "rollout.samples_per_generation_batch: auto requires the Ray "
                     "generation runtime (startup batch-size probe); set an "
                     "explicit int here",
                 )

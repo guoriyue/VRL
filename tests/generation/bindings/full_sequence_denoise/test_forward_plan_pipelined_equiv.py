@@ -45,7 +45,7 @@ def _request(num_samples: int) -> GenerationRequest:
         task="t2i",
         inputs=["p"],
         samples_per_prompt=num_samples,
-        sampling={"samples_per_generation_batch": 2},
+        samples_per_generation_batch=2,
     )
 
 

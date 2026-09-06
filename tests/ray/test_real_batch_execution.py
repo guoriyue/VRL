@@ -83,7 +83,8 @@ def _request() -> GenerationRequest:
         task="t2i",
         inputs=["a test prompt"],
         samples_per_prompt=8,
-        sampling={"height": 64, "width": 64, "num_steps": 10, "samples_per_generation_batch": 2},
+        sampling={"height": 64, "width": 64, "num_steps": 10},
+        samples_per_generation_batch=2,
         runtime_debug=True,
     )
 

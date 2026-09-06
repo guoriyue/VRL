@@ -48,7 +48,7 @@ class GenerationRequestBuilder:
     ) -> CollectorRequest:
         sampling = {
             str(field_name): list(value) if isinstance(value, tuple) else value
-            for field_name, value in self.config.generation_sampling().items()
+            for field_name, value in self.config.request_sampling.items()
         }
         sampling.update(dict(request_overrides or {}))
 
@@ -78,6 +78,9 @@ class GenerationRequestBuilder:
             # its layer; distinct from any external evaluation sampling policy.
             samples_per_prompt=group_size,
             sampling=sampling,
+            samples_per_generation_batch=self.config.samples_per_generation_batch,
+            train_segments=self.config.train_segments,
+            trajectory_storage=self.config.trajectory_storage,
             runtime_debug=runtime_debug,
             policy_version=policy_version,
         )

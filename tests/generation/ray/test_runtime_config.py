@@ -1074,7 +1074,8 @@ def _auto_chunk_request() -> GenerationRequest:
         task="t2i",
         inputs=["p"],
         samples_per_prompt=10,
-        sampling={"num_steps": 20, "samples_per_generation_batch": "auto"},
+        sampling={"num_steps": 20},
+        samples_per_generation_batch="auto",
         policy_version=1,
     )
 
@@ -1205,10 +1206,7 @@ async def test_concurrent_auto_chunk_requests_share_one_probe_before_submission(
     assert await first == executed_requests[0]
     assert await second == executed_requests[1]
     assert probe_requests == ["req-probe"]
-    assert [request.sampling["samples_per_generation_batch"] for request in executed_requests] == [
-        3,
-        3,
-    ]
+    assert [request.samples_per_generation_batch for request in executed_requests] == [3, 3]
 
 
 class _Arrivals:
@@ -1246,7 +1244,7 @@ class _ProbeWorker:
         # Asserted inside the actor process: the request really survived Ray
         # serialization with its type and fields intact. Nothing else checks this.
         assert isinstance(request, GenerationRequest), type(request).__name__
-        assert request.sampling["samples_per_generation_batch"] == "auto"
+        assert request.samples_per_generation_batch == "auto"
         assert request.inputs[0].prompt == "p"
         assert max_samples == 10
         self._calls += 1
@@ -1314,7 +1312,7 @@ def test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet(local_ray) -
 
         # Fleet answer is the min, and it is probed once: the second request is
         # rewritten from the cached verdict, so no actor sees a second probe.
-        assert [request.sampling["samples_per_generation_batch"] for request in executed] == [4, 4]
+        assert [request.samples_per_generation_batch for request in executed] == [4, 4]
         assert local_ray.get([actor.calls.remote() for actor in actors]) == [1, 1]
     finally:
         for actor in (*actors, arrivals):

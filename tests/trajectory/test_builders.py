@@ -126,11 +126,9 @@ def test_multisegment_primary_rejects_unknown_or_nontrainable_segment(
         task="ar_t2i_r1",
         inputs=["draw"],
         samples_per_prompt=1,
-        sampling={
-            "train_segments": {
-                "initial_image": True,
-                "final_image": final_trainable,
-            },
+        train_segments={
+            "initial_image": True,
+            "final_image": final_trainable,
         },
     )
 
@@ -152,7 +150,7 @@ def _segment_payload(
     batch_size: int = 1,
     token_count: int = 2,
 ) -> dict[str, object]:
-    # Trainability is driven by ``request.sampling['train_segments']`` (or the
+    # Trainability is driven by ``request.train_segments`` (or the
     # ``visual`` default when the request omits it), never by a payload key.
     return {
         "token_ids": torch.ones(batch_size, token_count, dtype=torch.long),

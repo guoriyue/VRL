@@ -413,7 +413,8 @@ def test_rollout_config_is_projected_from_yaml() -> None:
 
     assert rollout.request_sampling["width"] == 1280
     assert rollout.request_sampling["num_steps"] == 35
-    assert rollout.request_sampling["samples_per_generation_batch"] == 8
+    assert rollout.samples_per_generation_batch == 8
+    assert "samples_per_generation_batch" not in rollout.request_sampling
     assert rollout.request_sampling["sde_window_range"] == [0, 10]
     assert rollout.request_sampling["return_kl"] is True
     assert rollout.kl_reward_coef == pytest.approx(0.25)
@@ -421,10 +422,6 @@ def test_rollout_config_is_projected_from_yaml() -> None:
         device="cpu",
         dtype="float16",
     )
-    assert rollout.generation_sampling()["trajectory_storage"] == {
-        "device": "cpu",
-        "dtype": "float16",
-    }
 
 
 def test_typed_collector_projects_only_the_selected_sampling_schema() -> None:
@@ -516,10 +513,10 @@ def test_request_sampling_projects_only_generation_owned_rollout_values() -> Non
     )
 
     rollout = RolloutCollectorConfig.from_root(parse_config(cfg))
-    sampling = rollout.generation_sampling()
+    sampling = rollout.request_sampling
 
     assert sampling["width"] == 1280
-    assert sampling["samples_per_generation_batch"] == 8
+    assert rollout.samples_per_generation_batch == 8
     assert sampling["sde_type"] == "flow_grpo"
     assert sampling["sde_window_range"] == [0, 10]
     assert sampling["return_kl"] is False
@@ -534,9 +531,7 @@ def test_all_registry_entries_build_collectors_from_the_same_entry() -> None:
         collector = build_rollout_collector(
             entry,
             reward_runtime=RewardFunctionRuntime(None),
-            config=RolloutCollectorConfig(
-                request_sampling={"samples_per_generation_batch": 1},
-            ),
+            config=RolloutCollectorConfig(samples_per_generation_batch=1),
         )
         assert collector.request_builder.entry is entry
         assert callable(collector.collect_unscored)

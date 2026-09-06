@@ -617,7 +617,7 @@ def build_ar_multisegment_trajectory(
         token_count = int(token_ids.shape[1])
         axes[axis_name] = TrajectoryAxis(axis_name, "discrete_token", token_count)
         modality = "image" if bool(payload.get("visual", not name.endswith("_text"))) else "text"
-        trainable = _segment_trainable(request.sampling.get("train_segments"), name, payload)
+        trainable = _segment_trainable(request.train_segments, name, payload)
         trajectory_segments[name] = TrajectorySegment(
             name=name,
             modality=modality,
@@ -792,13 +792,16 @@ def _reward_modality_for_task(task: str) -> str:
     return task_modality(task)
 
 
-def _segment_trainable(value: Any, name: str, payload: dict[str, Any]) -> bool:
-    # ``value`` is ``request.sampling['train_segments']`` — a ``dict[str, bool]``
-    # validated at factory startup (grpo.multisegment train_segments field),
-    # or ``None`` when the request omits it. No producer supplies any other
-    # shape (a non-dict crashes config resolution) and the generation-side
-    # payload never carries a train/enabled key, so the only live branches
-    # are the dict lookup and the visual-default fallback.
+def _segment_trainable(
+    value: dict[str, bool] | None,
+    name: str,
+    payload: dict[str, Any],
+) -> bool:
+    # ``value`` is ``request.train_segments`` — validated at factory startup
+    # (grpo.multisegment train_segments field), or ``None`` when the request
+    # omits it. The generation-side payload never carries a train/enabled key,
+    # so the only live branches are the dict lookup and the visual-default
+    # fallback.
     if value is None:
         return bool(payload.get("visual", True))
     return bool(value.get(name, False))

@@ -45,6 +45,7 @@ def _request() -> SimpleNamespace:
     return SimpleNamespace(
         request_id="request-0",
         sampling={},
+        samples_per_generation_batch=None,
         policy_version=None,
     )
 
@@ -756,11 +757,13 @@ async def test_timeout_prevents_sibling_generation_from_returning_output() -> No
     timeout_request = SimpleNamespace(
         request_id="timeout",
         sampling={},
+        samples_per_generation_batch=None,
         policy_version=None,
     )
     sibling_request = SimpleNamespace(
         request_id="sibling",
         sampling={},
+        samples_per_generation_batch=None,
         policy_version=None,
     )
     timeout_task = asyncio.create_task(runtime.generate(timeout_request))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -23,24 +24,21 @@ def build_preview_request(
     """Adapt one real training example into a one-image production request."""
 
     overrides = dict(example.request_overrides)
-    configured_chunk_size = overrides.get(
-        "samples_per_generation_batch",
-        builder.config.request_sampling.get("samples_per_generation_batch"),
-    )
-    # Ray resolves ``auto`` from runtime memory. The direct preview has exactly
-    # one sample, so only that unresolved sentinel needs a local value. Preserve
-    # every explicit numeric batch size from the experiment YAML.
-    if configured_chunk_size == "auto":
-        overrides["samples_per_generation_batch"] = 1
     # Preserve the current precedence: an explicit seed in the example's
     # request_overrides wins; otherwise the deterministic preview seed is used.
     overrides.setdefault("seed", seed)
-    return builder.build(
+    request = builder.build(
         [example.generation_input()],
         group_size=1,
         metadata=example.reward_metadata(),
         request_overrides=overrides,
     ).request
+    # Ray resolves ``auto`` from runtime memory. The direct preview has exactly
+    # one sample, so only that unresolved sentinel needs a local value. Preserve
+    # every explicit numeric batch size from the experiment YAML.
+    if request.samples_per_generation_batch == "auto":
+        request = replace(request, samples_per_generation_batch=1)
+    return request
 
 
 def write_preview_image(

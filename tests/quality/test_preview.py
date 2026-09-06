@@ -52,11 +52,11 @@ def test_preview_request_uses_real_prompt_overrides_and_one_sample(
 
     assert request.prompts == ["a red apple"]
     assert request.samples_per_prompt == 1
+    assert request.samples_per_generation_batch == expected_chunk_size
     assert request.sampling == {
         "guidance_scale": 4.5,
         "negative_prompt": "text",
         "num_steps": 10,
-        "samples_per_generation_batch": expected_chunk_size,
         "seed": 101,
     }
     assert not hasattr(request.inputs[0], "metadata")

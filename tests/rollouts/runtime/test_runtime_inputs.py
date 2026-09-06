@@ -329,12 +329,9 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
     )
 
     assert "samples_per_generation_batch" not in inputs.launch_contract.executor_kwargs
-    assert (
-        RolloutCollectorConfig.from_root(parse_config(cfg)).request_sampling[
-            "samples_per_generation_batch"
-        ]
-        == "auto"
-    )
+    collector = RolloutCollectorConfig.from_root(parse_config(cfg))
+    assert collector.samples_per_generation_batch == "auto"
+    assert "samples_per_generation_batch" not in collector.request_sampling
 
 
 @pytest.mark.parametrize(
@@ -404,12 +401,9 @@ def test_executor_kwargs_use_configured_chunk_size() -> None:
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
     assert "samples_per_generation_batch" not in inputs.launch_contract.executor_kwargs
-    assert (
-        RolloutCollectorConfig.from_root(parse_config(cfg)).request_sampling[
-            "samples_per_generation_batch"
-        ]
-        == 8
-    )
+    collector = RolloutCollectorConfig.from_root(parse_config(cfg))
+    assert collector.samples_per_generation_batch == 8
+    assert "samples_per_generation_batch" not in collector.request_sampling
 
 
 def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
