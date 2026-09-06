@@ -67,7 +67,7 @@ class OptimizationPass(Protocol):
         ...
 
 
-def require_every_core_quantized(model: Any, scheme: str) -> None:
+def validate_every_core_quantized(model: Any, scheme: str) -> None:
     """Every declared policy core must carry ``scheme``, not just the first.
 
     Checks the MODULES, not the pass's own account of what it did. A pass that
@@ -115,7 +115,7 @@ class QuantizationPass:
         count = apply_rollout_quantization(model, build)
         quantization = build.precision.quantization
         if count:
-            require_every_core_quantized(model, quantization.format)
+            validate_every_core_quantized(model, quantization.format)
         return PassResult(
             name=self.name,
             applied=bool(count),
@@ -304,7 +304,7 @@ def apply_rollout_optimizations(
     # config keys this build object does not carry, so a per-pass conflicts()
     # seam here could never fire — it existed and never did.
     # Each pass verifies its own EFFECT on the real modules (see
-    # ``require_every_core_quantized`` and CompilePass.apply). There is no
+    # ``validate_every_core_quantized`` and CompilePass.apply). There is no
     # coverage check here, because a pass reporting which roots it touched would
     # be certifying itself -- and a pass buggy enough to miss a root is exactly
     # the one whose self-report is wrong.

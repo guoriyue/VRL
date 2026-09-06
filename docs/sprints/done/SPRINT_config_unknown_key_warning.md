@@ -7,7 +7,7 @@
 落地记录：
 - **最终形态（2026-06-11 第二轮，回应 owner「警告应该覆盖整棵树，不该取决于哪个类
   继承了谁」）**：警告收敛为**一个全树遍历器** `vrl/config/unknown_keys.py` ——
-  单入口（validate_training_config / validate_reward_config 各调一次），整棵树
+  单入口（require_training_config / validate_reward_config 各调一次），整棵树
   每一层对照该层的已知 key 集；已知集**从真正消费它的类型派生**（pydantic
   `model_fields` / dataclass `fields()`），嵌套块（sde、lora、optim、
   distributed.resources 各角色、orchestration、torch_profiler…）全部覆盖。

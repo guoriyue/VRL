@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 
 from vrl.trainers.data.artifacts import (
-    validate_artifact_manifest,
-    validate_artifact_manifest_pair,
-    validate_source_backed_video_world_manifest_pair,
+    require_artifact_manifest,
+    require_artifact_manifest_pair,
+    require_source_backed_video_world_manifest_pair,
 )
 from vrl.utils.artifacts import ArtifactManifestError
 
@@ -59,7 +59,7 @@ def test_video_world_manifests_validate_reference_artifacts(tmp_path: Path) -> N
         },
     )
 
-    report = validate_artifact_manifest_pair(
+    report = require_artifact_manifest_pair(
         train_manifest,
         eval_manifest,
         data_root=data_root,
@@ -96,7 +96,7 @@ def test_source_backed_video_world_manifest_requires_provenance(tmp_path: Path) 
         },
     )
 
-    report = validate_source_backed_video_world_manifest_pair(
+    report = require_source_backed_video_world_manifest_pair(
         train_manifest,
         eval_manifest,
         data_root=data_root,
@@ -134,7 +134,7 @@ def test_source_backed_video_world_manifest_can_require_target_video(tmp_path: P
         },
     )
 
-    report = validate_source_backed_video_world_manifest_pair(
+    report = require_source_backed_video_world_manifest_pair(
         train_manifest,
         eval_manifest,
         data_root=data_root,
@@ -161,7 +161,7 @@ def test_source_backed_video_world_manifest_rejects_missing_required_target_vide
     _write_jsonl(eval_manifest, row)
 
     with pytest.raises(ArtifactManifestError, match="missing required field target_video"):
-        validate_source_backed_video_world_manifest_pair(
+        require_source_backed_video_world_manifest_pair(
             train_manifest,
             eval_manifest,
             data_root=data_root,
@@ -184,7 +184,7 @@ def test_source_backed_video_world_manifest_rejects_placeholder_rows(tmp_path: P
     _write_jsonl(eval_manifest, row)
 
     with pytest.raises(ArtifactManifestError, match=r"metadata\.source_repo is required"):
-        validate_source_backed_video_world_manifest_pair(
+        require_source_backed_video_world_manifest_pair(
             train_manifest,
             eval_manifest,
             data_root=data_root,
@@ -205,7 +205,7 @@ def test_video_world_source_episode_overlap_is_reported(tmp_path: Path) -> None:
     _write_jsonl(train, row)
     _write_jsonl(eval_manifest, row)
 
-    report = validate_artifact_manifest_pair(
+    report = require_artifact_manifest_pair(
         train,
         eval_manifest,
         data_root=tmp_path,
@@ -222,7 +222,7 @@ def test_video_world_v2w_manifest_requires_reference_image(tmp_path: Path) -> No
     manifest.write_text(json.dumps({"prompt": "no reference"}) + "\n", encoding="utf-8")
 
     with pytest.raises(ArtifactManifestError, match="missing required field reference_image"):
-        validate_artifact_manifest(
+        require_artifact_manifest(
             manifest,
             data_root=tmp_path,
             required_artifact_fields=("reference_image",),

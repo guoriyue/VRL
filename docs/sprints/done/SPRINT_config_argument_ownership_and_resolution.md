@@ -11,12 +11,12 @@
 OmegaConf、Pydantic、resolver/builder 和 runtime config 四层都保留。要删除的是层间重复决策：
 
 ```python
-def validate_training_config(cfg):
+def require_training_config(cfg):
     warn_unknown_keys(cfg)
     parse_config(cfg)                 # result discarded
     resolve_precision_policy(cfg)
 
-validate_training_config(cfg)
+require_training_config(cfg)
 precision = resolve_precision_policy(cfg)  # parsed again
 ```
 

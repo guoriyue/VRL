@@ -96,9 +96,9 @@
 
 ### 1.8 `_validate_scheduler` — dead-function（risk=low，RELOCATED）
 
-- 位置：`vrl/scripts/eval/sana_checkpoint_compare.py:40`（import，**行号已移动**，旧树 36）、`:55`（`_validate_scheduler = validate_scheduler` 别名，**行号已移动**，旧树 49）（长期资产：eval 对比脚本）
-- 判死证据：`:40`（import）+ `:55`（别名），模块内零调用点（生产用 `_load_official_scheduler`/`_generate_prompt_group`）。跨仓 → 只有测试调用 `checkpoint_compare._validate_scheduler`（`test_sana_checkpoint_compare.py:204,553,561,566`——**行号已移动**，旧树 173,441,449,454；仅调用、从不 monkeypatch）。与两个 sibling 别名不同：`_validate_scheduler` 从不被 `run_comparison` 或任何生产路径调用，是只被测试续命的 re-export。删除不削弱生产校验——`load_official_scheduler`/`generate_prompt_images` 内部各自调 `validate_scheduler`（`sana_inference.py:55,99`）。
-- 动作：删除 `_validate_scheduler = validate_scheduler` 别名（`:55`）与 `validate_scheduler` import（`:40`）；把 `test_sana_checkpoint_compare.py:204,553,561,566` 改为直接调 `vrl.scripts.eval.sana_inference.validate_scheduler`（`__all__` 导出、同一函数对象）——无 `test_sana_inference.py`，这四个测试是 `validate_scheduler` 协议逻辑的唯一覆盖，须 repoint 而非删。**保留** sibling 别名 `_generate_prompt_group`（生产调用）与 `_load_official_scheduler`（生产调用 + 测试的 monkeypatch seam）——它们是活 monkeypatch 边界。
+- 位置：`vrl/scripts/eval/sana_checkpoint_compare.py:40`（import，**行号已移动**，旧树 36）、`:55`（`_validate_scheduler = require_scheduler` 别名，**行号已移动**，旧树 49）（长期资产：eval 对比脚本）
+- 判死证据：`:40`（import）+ `:55`（别名），模块内零调用点（生产用 `_load_official_scheduler`/`_generate_prompt_group`）。跨仓 → 只有测试调用 `checkpoint_compare._validate_scheduler`（`test_sana_checkpoint_compare.py:204,553,561,566`——**行号已移动**，旧树 173,441,449,454；仅调用、从不 monkeypatch）。与两个 sibling 别名不同：`_validate_scheduler` 从不被 `run_comparison` 或任何生产路径调用，是只被测试续命的 re-export。删除不削弱生产校验——`load_official_scheduler`/`generate_prompt_images` 内部各自调 `require_scheduler`（`sana_inference.py:55,99`）。
+- 动作：删除 `_validate_scheduler = require_scheduler` 别名（`:55`）与 `require_scheduler` import（`:40`）；把 `test_sana_checkpoint_compare.py:204,553,561,566` 改为直接调 `vrl.scripts.eval.sana_inference.require_scheduler`（`__all__` 导出、同一函数对象）——无 `test_sana_inference.py`，这四个测试是 `require_scheduler` 协议逻辑的唯一覆盖，须 repoint 而非删。**保留** sibling 别名 `_generate_prompt_group`（生产调用）与 `_load_official_scheduler`（生产调用 + 测试的 monkeypatch seam）——它们是活 monkeypatch 边界。
 
 ---
 
@@ -173,7 +173,7 @@
   - §1.5 `firsts_by_episode`：无测试改动。
   - §1.6 `--keep-model-between-checkpoints`：`tests/scripts/test_cosmos_predict25_kling_eval.py`（更新/删除 flag 与互斥 error 用例；以当前 checkout 行号为准）。
   - §1.7 `evaluate` 阈值：`tests/scripts/eval/test_sana_aesthetic_curve_verdict.py`（读回显输出，无需改）。
-  - §1.8 `_validate_scheduler`：`tests/scripts/eval/test_sana_checkpoint_compare.py:204,553,561,566`（repoint 到 `sana_inference.validate_scheduler`）。
+  - §1.8 `_validate_scheduler`：`tests/scripts/eval/test_sana_checkpoint_compare.py:204,553,561,566`（repoint 到 `sana_inference.require_scheduler`）。
   - §1.9 `_run_prefix(tf)`：无测试（probe 无测试）。
   - §1.10 `_new_report(args)`：无测试。
   - §1.11 `logprobs`：`tests/scripts/test_full_sequence_denoise_generate.py`（不进 denoise 循环，无需改）。

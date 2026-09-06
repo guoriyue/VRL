@@ -32,7 +32,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from vrl.models.checkpoint_identity import validate_checkpoint_source_member
+from vrl.models.checkpoint_identity import require_checkpoint_source_member
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.llamagen.config import (
     LLAMAGEN_CAPTION_DIM,
@@ -416,7 +416,7 @@ def _resolve_checkpoint_file(
     revision: str | None,
 ) -> str:
     """Local dir join or HF hub download for one LlamaGen ``.pt`` file."""
-    filename = validate_checkpoint_source_member(
+    filename = require_checkpoint_source_member(
         filename,
         field_name="LlamaGen checkpoint filename",
     )

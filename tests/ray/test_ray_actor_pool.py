@@ -11,10 +11,10 @@ import pytest
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.operation_deadline import RayOperationTimeout
-from vrl.ray.placement import validate_actor_gpu_ids
+from vrl.ray.placement import require_actor_gpu_ids
 
 # The two real-Ray tests here share the package cluster (tests/ray/conftest.py);
-# the five validate_actor_gpu_ids tests below are pure, but stay in the nightly
+# the five require_actor_gpu_ids tests below are pure, but stay in the nightly
 # lane with them so this module has one lane instead of two.
 pytestmark = pytest.mark.slow_test
 
@@ -255,7 +255,7 @@ def test_validate_actor_gpu_ids_rejects_unexpected_assignment() -> None:
     """Single-node: a worker holding a GPU outside the resolved device set is a
     hard error -- that GPU belongs to another role."""
     with pytest.raises(RuntimeError, match="outside resolved reward devices"):
-        validate_actor_gpu_ids(
+        require_actor_gpu_ids(
             [{"worker_id": "reward-0", "gpu_ids": [2]}],
             expected_gpu_ids=(1,),
             role="reward",
@@ -265,7 +265,7 @@ def test_validate_actor_gpu_ids_rejects_unexpected_assignment() -> None:
 def test_validate_actor_gpu_ids_cross_node_accepts_remote_local_zero() -> None:
     """Cross-node: every remote node has its own ordinal space, so two workers
     both reporting local GPU 0 on different nodes is correct, not a collision."""
-    result = validate_actor_gpu_ids(
+    result = require_actor_gpu_ids(
         [
             {"worker_id": "generation-0", "node_ip": "10.0.0.2", "gpu_ids": [0]},
             {"worker_id": "generation-1", "node_ip": "10.0.0.3", "gpu_ids": [0]},
@@ -283,7 +283,7 @@ def test_validate_actor_gpu_ids_cross_node_rejects_driver_node() -> None:
     """Cross-node drops the placement-group trainer reservation, so a rollout
     worker that landed on the head node would sit on the trainer's GPU."""
     with pytest.raises(RuntimeError, match="driver/head node"):
-        validate_actor_gpu_ids(
+        require_actor_gpu_ids(
             [{"worker_id": "generation-0", "node_ip": "10.0.0.1", "gpu_ids": [0]}],
             expected_gpu_ids=(1,),
             role="generation",
@@ -296,7 +296,7 @@ def test_validate_actor_gpu_ids_cross_node_rejects_shared_gpu() -> None:
     """Cross-node uniqueness is per ``(node_ip, gpu_id)``: the same local ordinal
     twice on ONE node means two workers time-share a physical GPU."""
     with pytest.raises(RuntimeError, match="share GPU"):
-        validate_actor_gpu_ids(
+        require_actor_gpu_ids(
             [
                 {"worker_id": "generation-0", "node_ip": "10.0.0.2", "gpu_ids": [0]},
                 {"worker_id": "generation-1", "node_ip": "10.0.0.2", "gpu_ids": [0]},
@@ -312,7 +312,7 @@ def test_validate_actor_gpu_ids_cross_node_requires_gpu() -> None:
     """A rollout worker with no GPU at all fails closed instead of silently
     running the model on CPU."""
     with pytest.raises(RuntimeError, match="no assigned GPU ids"):
-        validate_actor_gpu_ids(
+        require_actor_gpu_ids(
             [{"worker_id": "generation-0", "node_ip": "10.0.0.2", "gpu_ids": []}],
             expected_gpu_ids=(1,),
             role="generation",

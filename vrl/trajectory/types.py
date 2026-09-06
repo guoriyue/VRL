@@ -45,7 +45,7 @@ DistributionKind = Literal[
 ]
 
 
-def require_string_tuple(name: str, values: tuple[str, ...]) -> None:
+def validate_string_tuple(name: str, values: tuple[str, ...]) -> None:
     """Raise ValueError if any element of ``values`` is not a non-empty string.
 
     Guards the ``tensor_refs`` tuples that name tensors inside a segment — here
@@ -100,7 +100,7 @@ class ReplayInput:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("ReplayInput.name must be non-empty")
-        require_string_tuple("ReplayInput.tensor_refs", self.tensor_refs)
+        validate_string_tuple("ReplayInput.tensor_refs", self.tensor_refs)
 
 
 @dataclass(slots=True)

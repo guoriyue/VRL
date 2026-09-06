@@ -638,7 +638,7 @@ def _resolve_cross_node_visible_devices(
     size the visible pool from explicit per-role GPU counts. The resulting ordinals
     are budget tokens only: trainer keeps the head-local ordinal, rollout ordinals
     are never used as real remote device ids (placement is by Ray + node, and
-    ``validate_actor_gpu_ids`` switches to a node-aware check).
+    ``require_actor_gpu_ids`` switches to a node-aware check).
     """
 
     explicit = _parse_devices(config.visible_devices)

@@ -383,7 +383,7 @@ def test_masked_physical_ordinal_comes_from_the_config_knob_not_the_auto_path():
     """
     cfg = load_config("experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_4x_l4")
     OmegaConf.update(cfg, "distributed.resources.visible_devices", [1], force_add=True)
-    validate_training_config(cfg)
+    require_training_config(cfg)
     r = resolve_distributed_resources(cfg)
     assert r.trainer_devices == r.rollout_devices == (1,)
 ```

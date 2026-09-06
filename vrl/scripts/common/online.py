@@ -826,9 +826,9 @@ async def run_online_recipe(
         for example in examples
     ]
     if family_entry.task in {"i2v", "v2w"}:
-        from vrl.trainers.data.artifacts import require_reference_images
+        from vrl.trainers.data.artifacts import validate_reference_images
 
-        require_reference_images(
+        validate_reference_images(
             examples,
             manifest_path=Path(str(data_config.manifest or "manifest")),
             default_reference_image=(

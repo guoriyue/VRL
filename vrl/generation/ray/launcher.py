@@ -23,7 +23,7 @@ from vrl.ray.actor_group import RayActorGroup, RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.dependencies import current_node_ip, require_ray
 from vrl.ray.operation_deadline import get_ray_refs
-from vrl.ray.placement import RolePlacement, validate_actor_gpu_ids
+from vrl.ray.placement import RolePlacement, require_actor_gpu_ids
 
 logger = logging.getLogger(__name__)
 
@@ -317,7 +317,7 @@ def _validate_rank_gpu_ids(
 
     # The placement owner supplies the role's expected GPUs (empty under
     # cross-node, where the node-aware check applies instead).
-    validate_actor_gpu_ids(
+    require_actor_gpu_ids(
         metadata,
         expected_gpu_ids=expected_gpu_ids,
         role="generation",

@@ -16,8 +16,8 @@
 ## 1. 证据:两个契约零共享
 
 **契约 A — manifest（留在原文件,内聚）:**
-`resolve_prompt_example_artifacts`、`validate_artifact_manifest[_pair]`、
-`validate_source_backed_video_world_manifest_pair`、`ResolvedArtifact`、`ArtifactManifestReport`,
+`resolve_prompt_example_artifacts`、`require_artifact_manifest[_pair]`、
+`require_source_backed_video_world_manifest_pair`、`ResolvedArtifact`、`ArtifactManifestReport`,
 以及 `_artifact_values`/`_source_episodes`/`_assert_readable`。常量
 `DEFAULT_ARTIFACT_FIELDS`(已按 derive-from-source 规则从 `fields(PromptExample)` 派生)、
 `IMAGE_SUFFIXES`、`SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS`。这半是真内聚,和 docstring 相符。
@@ -63,7 +63,7 @@
 
 ## 4. 明确不动
 
-- **manifest 核心的 3 个 `_` helper 不合并**:`_artifact_values` 在 `validate_artifact_manifest`
+- **manifest 核心的 3 个 `_` helper 不合并**:`_artifact_values` 在 `require_artifact_manifest`
   内有 2 个调用点(lines 205,210),是可复用的字段规范化器,不是 1:1 单调用者拆分。
   `_source_episodes`/`_assert_readable` 同理是命名的校验步骤。
 - **`SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS` 不改成自动派生**:手写但注释说明 tuple 顺序

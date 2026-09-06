@@ -146,7 +146,7 @@ def _allow_minimal_protocol(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         sana_report,
-        "validate_training_log_provenance",
+        "require_training_log_provenance",
         lambda run_dir, cfg: {
             "path": "supervisor.log",
             "sha256": "test-log",
@@ -765,7 +765,7 @@ def test_snapshot_materialization_uses_all_four_pinned_revisions(monkeypatch) ->
 def test_training_log_binds_configured_revisions_without_network_log_scraping(tmp_path) -> None:
     cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
     with pytest.raises(FileNotFoundError, match=r"no supervisor\.log launch evidence"):
-        sana_report.validate_training_log_provenance(tmp_path, parse_config(cfg))
+        sana_report.require_training_log_provenance(tmp_path, parse_config(cfg))
 
     reward_kwargs = OmegaConf.to_container(cfg.reward.kwargs, resolve=True)
     expected = {
@@ -779,14 +779,14 @@ def test_training_log_binds_configured_revisions_without_network_log_scraping(tm
     log = tmp_path / "supervisor.log"
     log.write_text("all artifacts were cache hits\n", encoding="utf-8")
 
-    record = sana_report.validate_training_log_provenance(tmp_path, parse_config(cfg))
+    record = sana_report.require_training_log_provenance(tmp_path, parse_config(cfg))
 
     assert record["configured_model_revisions"] == expected
     assert record["sha256"] == sha256_file(log)
 
     cfg.reward.kwargs.pickscore.model_revision = None
     with pytest.raises(ValueError, match="requires pinned"):
-        sana_report.validate_training_log_provenance(tmp_path, parse_config(cfg))
+        sana_report.require_training_log_provenance(tmp_path, parse_config(cfg))
 
 
 def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None:

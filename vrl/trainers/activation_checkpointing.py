@@ -96,7 +96,7 @@ def resolve_gradient_checkpointing_mode(root: RootConfig) -> str:
     return _normalize_gradient_checkpointing(enabled)
 
 
-def require_compile_checkpointing_compatible(root: RootConfig) -> None:
+def validate_compile_checkpointing_compatible(root: RootConfig) -> None:
     """Refuse compiling the replay policy combined with grad-checkpointing.
 
     compile + manual checkpointing collide: torch.compile traces
@@ -105,7 +105,7 @@ def require_compile_checkpointing_compatible(root: RootConfig) -> None:
     already does automatic selective recompute -- so compiling makes manual
     checkpointing both broken and redundant. Mirrors the FSDP+compile guard in
     trainers/strategy.py. Called from BOTH the runtime apply below and
-    config-load validation (validate_training_config): a model-layer default can
+    config-load validation (require_training_config): a model-layer default can
     flip compile on underneath a ckpt recipe, so the collision must fail at load
     time (where config tests see it), not as a cryptic mid-run dynamo crash.
     """
@@ -142,7 +142,7 @@ def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> 
     mode = resolve_gradient_checkpointing_mode(root)
     if mode == "off":
         return
-    require_compile_checkpointing_compatible(root)
+    validate_compile_checkpointing_compatible(root)
 
     trainable_modules = getattr(bundle, "trainable_modules", None) or {
         "transformer": bundle.model.transformer,
@@ -168,7 +168,7 @@ def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> 
 
 __all__ = [
     "enable_transformer_gradient_checkpointing",
-    "require_compile_checkpointing_compatible",
     "resolve_gradient_checkpointing_mode",
     "selective_checkpoint_func",
+    "validate_compile_checkpointing_compatible",
 ]

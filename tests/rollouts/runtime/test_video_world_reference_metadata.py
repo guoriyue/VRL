@@ -7,9 +7,9 @@ from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trainers.data import load_prompt_manifest
 from vrl.trainers.data.artifacts import (
-    require_reference_images,
     resolve_prompt_example_artifacts,
     resolve_prompt_example_references,
+    validate_reference_images,
 )
 
 
@@ -62,7 +62,7 @@ def test_cosmos_per_sample_reference_uses_vrl_data_root(monkeypatch, tmp_path: P
         resolve_prompt_example_references(example, allow_absolute=True)
         for example in load_prompt_manifest(manifest)
     ]
-    require_reference_images(
+    validate_reference_images(
         examples,
         manifest_path=manifest,
     )
@@ -84,7 +84,7 @@ def test_cosmos_per_sample_reference_uses_artifact_data_root(tmp_path: Path) -> 
         )
         for example in load_prompt_manifest(manifest)
     ]
-    require_reference_images(
+    validate_reference_images(
         examples,
         manifest_path=manifest,
     )

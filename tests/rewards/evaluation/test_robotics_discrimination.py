@@ -8,8 +8,8 @@ import torch
 from vrl.rewards.evaluation.robotics_discrimination import (
     aggregate_axis_scores,
     build_discrimination_candidates,
+    require_robotics_scores,
     robotics_reward_verdict,
-    validate_robotics_scores,
 )
 
 
@@ -122,7 +122,7 @@ def test_robotics_gate_checks_the_actual_training_compound() -> None:
 
 
 def test_validated_scores_derives_training_compound() -> None:
-    assert validate_robotics_scores(
+    assert require_robotics_scores(
         {"alignment": 3.25, "physics": 2.75, "overall": 9.0},
     ) == {
         "alignment": 3.25,
@@ -130,4 +130,4 @@ def test_validated_scores_derives_training_compound() -> None:
         "alignment+physics": 6.0,
     }
     with pytest.raises(ValueError, match=r"in \[1, 5\]"):
-        validate_robotics_scores({"alignment": 5.1, "physics": 2.0})
+        require_robotics_scores({"alignment": 5.1, "physics": 2.0})

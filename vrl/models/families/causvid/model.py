@@ -24,7 +24,7 @@ from vrl.generation.bindings.chunk_autoregressive_denoise import (
     ChunkAutoregressiveDenoiseResult,
 )
 from vrl.math.denoise.renoise import renoise_step_with_logprob
-from vrl.models.checkpoint_identity import validate_checkpoint_source_member
+from vrl.models.checkpoint_identity import require_checkpoint_source_member
 from vrl.models.families.causvid.config import (
     CAUSVID_CHECKPOINT_FILE,
     CAUSVID_SOURCE_REVISION,
@@ -907,7 +907,7 @@ def _resolve_checkpoint(build: ModelBuild) -> Path:
     if local.is_file():
         checkpoint = local
     elif local.is_dir():
-        relative_file = validate_checkpoint_source_member(
+        relative_file = require_checkpoint_source_member(
             relative_file,
             field_name="model.checkpoint_file",
         )
@@ -915,7 +915,7 @@ def _resolve_checkpoint(build: ModelBuild) -> Path:
         if not checkpoint.is_file():
             raise FileNotFoundError(f"CausVid checkpoint file not found: {checkpoint}")
     else:
-        relative_file = validate_checkpoint_source_member(
+        relative_file = require_checkpoint_source_member(
             relative_file,
             field_name="model.checkpoint_file",
         )

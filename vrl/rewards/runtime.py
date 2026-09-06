@@ -42,7 +42,7 @@ from vrl.utils.cuda_memory import (
     release_cuda_memory_for_parking,
     validate_parking_residual,
 )
-from vrl.utils.deadline import OperationDeadline, validate_timeout
+from vrl.utils.deadline import OperationDeadline, require_timeout
 from vrl.utils.lifecycle import RuntimeLifecycle, RuntimePhase
 
 # Matches the HTTP reward client's default request timeout so the two
@@ -62,7 +62,7 @@ class RewardFunctionRuntime:
         if reward_function is not None and not isinstance(reward_function, RewardFunction):
             raise TypeError("reward_function must be a RewardFunction or None")
         self._reward_function = reward_function
-        self._score_timeout_s = validate_timeout(score_timeout_s, name="score_timeout_s")
+        self._score_timeout_s = require_timeout(score_timeout_s, name="score_timeout_s")
         self._operation_lock = asyncio.Lock()
         # Same terminal FSM as the generation runtime: RUNNING accepts work,
         # SHUTTING_DOWN closes admission (retryable teardown), TERMINATED is

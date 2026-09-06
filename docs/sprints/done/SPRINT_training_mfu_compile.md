@@ -67,7 +67,7 @@ registry descriptor 让 Wan、Anima、Predict2/2.5 等 denoise family 共用这�
 - **修雷 ×4**：`fullparam_8bit_240p` / `droid_target_240p` / `droid_full_target_240p` / `v2w_reference_fullparam_240p` 曾同时 resolve 出 compile=True（继承 model 层 `predict2_2b.yaml` 的 true）+ ckpt=True → 自 fab16aca 起启动即 ValueError。已各自显式 `torch_compile.enable=false` + 注释（与 droid 480p 同款处置：240p 32GB fullparam 摘不掉 ckpt，走 eager+ckpt，放弃 compile 的 ~1.25x）。
 - **anima model 层翻 true**：`anima_preview3.yaml` 原注释自设的条件"等 anima experiment 落地"已满足（两个 aesthetic recipe 存在），parity 借 predict2.5 家族已绿（1.31x/1.33x、fp32 drift ~2e-6）。
 - **motion_physics 补 compile-both 块**：它自称"nft_kling 的同骨架换 reward"，对齐 nft_kling 的 compile-both。
-- **不变量下沉**：`require_compile_checkpointing_compatible`（`vrl/trainers/activation_checkpointing.py`）现在同时被 trainer 启动路径和 `validate_training_config`（config load）调用 → `test_load_all_experiments` 对每个 experiment 兜底，这类雷以后在测试里就炸，不用等 launch。附带单测（compile × true/full/selective 三态拒绝、off 放行）。
+- **不变量下沉**：`validate_compile_checkpointing_compatible`（`vrl/trainers/activation_checkpointing.py`）现在同时被 trainer 启动路径和 `require_training_config`（config load）调用 → `test_load_all_experiments` 对每个 experiment 兜底，这类雷以后在测试里就炸，不用等 launch。附带单测（compile × true/full/selective 三态拒绝、off 放行）。
 
 ## 3. 三个约束（决定一个 recipe 能不能开）
 
@@ -140,7 +140,7 @@ compile 后 batch 2 = 20.1GB  → 有头寸尝试 batch 3/4；是否 OOM/是否�
 - `backward_mfu_probe --compile` before/after:目标 recipe 分辨率下 train fwd+bwd MFU 上升、peak GB 下降(复现 §0 量级)。**工具边界**：硬编码 `StableDiffusion3Pipeline`（:57），video recipe 不能"同分辨率跑"；旧 `video_dit_mfu_probe` 已退役，video 侧应使用短 real-run 计时。
 - 短 RL dry-run:reward 曲线、`ratio_abs_dev`、TIS/RS 触发率与 eager 基线一致(parity 绿的 e2e 兜底)。
 - 不开 compile 的 recipe(FSDP/ckpt-locked/validation)明确标注原因,不留"为什么这条没开"的悬念——ckpt-locked 组的原因注释已随 07-02 修雷写进各 yaml。
-- ✅ compile×ckpt 不变量已下沉 config load 层(`validate_training_config`),`test_load_all_experiments` 全量兜底。
+- ✅ compile×ckpt 不变量已下沉 config load 层(`require_training_config`),`test_load_all_experiments` 全量兜底。
 
 ## 7. 非目标
 
@@ -156,7 +156,7 @@ compile 后 batch 2 = 20.1GB  → 有头寸尝试 batch 3/4；是否 OOM/是否�
 - `vrl/models/steps/denoise/base.py` —— family model 的 `torch_compile_transformer` 能力
 - `vrl/config/schema.py`（`torch_compile`、`microbatch_size`、`gradient_checkpointing`）
 - `vrl/trainers/strategy.py` —— compile+FSDP2 硬门
-- `vrl/trainers/activation_checkpointing.py` —— compile×ckpt 硬门（`require_compile_checkpointing_compatible`，trainer 启动 + config load 双层）
+- `vrl/trainers/activation_checkpointing.py` —— compile×ckpt 硬门（`validate_compile_checkpointing_compatible`，trainer 启动 + config load 双层）
 - `vrl/scripts/perf/compile_benchmark.py` —— rollout+train parity + launch-bound profile（验收复用；仅 4 家 family）
 - `vrl/scripts/perf/backward_mfu_probe.py`（`--compile`）—— train fwd+bwd MFU before/after（SD3.5 专用）
 - 证据记忆：`project_rollout_bound_class_probe`、`project_torch_compile_wan`、`project_cosmos_compile_p2`

@@ -139,7 +139,7 @@ class RayGenerationConfig:
             # Cross-node: the driver's head-local cuda ordinal and a remote rollout
             # GPU live in different ordinal spaces, so a set-intersection overlap
             # check is meaningless. Node-level isolation is enforced by the launcher
-            # preflight (head --num-gpus=0) and validate_actor_gpu_ids node check.
+            # preflight (head --num-gpus=0) and require_actor_gpu_ids node check.
             return
         overlap = driver_cuda_devices & set(resources.rollout_devices)
         if not overlap:

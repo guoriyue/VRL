@@ -12,8 +12,8 @@ from vrl.config.schema import DataConfig
 from vrl.scripts.data import bootstrap, common, danbooru, setup, video_world
 from vrl.trainers.data import load_prompt_examples_from_config, load_prompt_manifest
 from vrl.trainers.data.artifacts import (
-    require_reference_images,
     resolve_prompt_example_references,
+    validate_reference_images,
 )
 
 
@@ -225,7 +225,7 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
         resolve_prompt_example_references(example, allow_absolute=True)
         for example in load_prompt_manifest(manifest)
     ]
-    require_reference_images(
+    validate_reference_images(
         examples,
         manifest_path=manifest,
     )

@@ -259,7 +259,7 @@ class PassResult:
 > 已经有了** —— rollout 与 training precision 不同会让 `stages_match` 变 False，
 > trainer 自动装上 TIS correction + `mode="auto"` 的 drift guard（解析成
 > `"fail"`）。真正的缺口只在 TeaCache：它改 `noise_pred` 而不改 precision label，
-> 所有自动纠正全部不生效（证据见 §8.1 ②）。因此 `require_guarded_rollout_drift`
+> 所有自动纠正全部不生效（证据见 §8.1 ②）。因此 `validate_guarded_rollout_drift`
 > 只拦 request-scoped 那一类，并保留与 precision-split 相同的 expert 逃生舱。
 
 ### 3.5 命名
@@ -442,7 +442,7 @@ rollout≠training precision 时解析成 `"fail"`。量化会改 rollout precis
 `stages_match` 保持 True，所有自动纠正**全部不生效**。grep 确认
 `vrl/trainers/`、`vrl/config/`、`vrl/algorithms/` 里没有任何 `teacache` 引用。
 
-实际做法：`require_guarded_rollout_drift` 只拦 request-scoped 的那一类，并保留
+实际做法：`validate_guarded_rollout_drift` 只拦 request-scoped 的那一类，并保留
 与 precision-split 路径相同的 expert 逃生舱（显式 `trainer.precision_*` 块）。
 
 **③ magi_1 需要显式声明"无 policy core"**

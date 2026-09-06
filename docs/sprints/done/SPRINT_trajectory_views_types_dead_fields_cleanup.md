@@ -29,7 +29,7 @@
   → RewardView receiver 零读取，已删；连带孤儿别名 `RewardModality`；5 处 RewardView 构造的 `modality=` kwarg 一并清掉
   （`builders.py` ×4 + `tests/rollouts/collector/test_runtime.py` ×1）。
 - **`RewardView.prompt_refs` / `target_refs`**（`views.py:28,29`）：唯一「reader」是各自 `__post_init__` 里的
-  `require_string_tuple` 自校验；全仓无任何构造传入它们（始终默认 `()`），无下游消费者。→ 自指型死字段，已删（连带自校验行）。
+  `validate_string_tuple` 自校验；全仓无任何构造传入它们（始终默认 `()`），无下游消费者。→ 自指型死字段，已删（连带自校验行）。
 - **`LossUnit.metadata`**（`views.py:59`）：全仓零 reader，`validate_loss_unit` 也**不**校验它，构造（`views.py:110`）从不传值。
   → 真死，已删。
 

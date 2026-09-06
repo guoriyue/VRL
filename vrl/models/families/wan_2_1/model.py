@@ -61,7 +61,7 @@ from vrl.models.steps.denoise.common import (
     pack_eval_timestep,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
-from vrl.models.weight_utils import load_weights_into, validate_weights_for
+from vrl.models.weight_utils import load_weights_into, require_weights_for
 
 logger = logging.getLogger(__name__)
 
@@ -491,7 +491,7 @@ class WanT2VDiffusersModel(
         for name, module in modules.items():
             prefix = f"{name}."
             module_state = {key: value for key, value in state.items() if key.startswith(prefix)}
-            validated[name] = validate_weights_for(module, module_state, prefix=name)
+            validated[name] = require_weights_for(module, module_state, prefix=name)
         return validated
 
     def _set_wan_transformer(self, name: str, transformer: Any) -> None:

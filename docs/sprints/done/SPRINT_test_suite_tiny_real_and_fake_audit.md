@@ -234,7 +234,7 @@ assert cfg.data.sampler.dataloader_num_workers == 4
     `test_schema.py::test_valid_data_loaders_are_accepted`（参数化全 3 个 loader）+
     `test_prompt_image_manifest_requires_image_caption_fields` + `test_unknown_sampler_type_raises` 钉住；
     (2) 每个 dataset group 都被某 experiment 消费，`test_load_all_experiments.py::test_all_experiments_load_and_validate`
-    对每个 experiment 跑 `validate_training_config`，真实 merged `DataConfig` 已被验证。
+    对每个 experiment 跑 `require_training_config`，真实 merged `DataConfig` 已被验证。
   - **执行注意**：不要塌缩成"每个 YAML parse 一下"的裸 smoke（会与 all-experiments 循环重复）；该文件唯一
     边际价值是"每个 dataset **group** 文件单独 parse 成 valid `DataConfig`"（group 是可独立复用的 building
     block）。保留一个 per-group 结构 smoke（构造 `DataConfig` + 断言 loader 是合法 discriminator +
@@ -253,7 +253,7 @@ assert cfg.data.sampler.dataloader_num_workers == 4
   - "每个 reward 配置恰好一个 component" 已被 `test_load_all_experiments.py::test_reward_configs_are_single_reward_building_blocks`
     对全部 7 个 reward YAML 用 `len(components)==1` 值无关地覆盖。
   - **唯一独有的是"component KEY 名 == 注册 reward 名"**——`RewardConfig.components` 在 `schema.py:52-53`
-    是 `Annotated[dict, OPEN]`（注释明写 reward 名 user-chosen，open by design），`validate_training_config`
+    是 `Annotated[dict, OPEN]`（注释明写 reward 名 user-chosen，open by design），`require_training_config`
     不校验 key 是否注册；真正消费 key 的是 `MultiReward.from_dict→get_reward(name)`（运行时 KeyError）。
   - **执行**：改成通用测试——对每个 reward YAML 断言 component key 解析到注册名（或由文件名派生），而非
     2 条字面表。这样新增第三个 prompt reward 不会漏守。
@@ -448,7 +448,7 @@ vLLM-parity 脚手架（`ci_envs.py` docstring 写明 "structure identical to vL
 
 > **关键修正：** **不要**用自动结论的 option (a)（给 `tests/ray/test_ray_actor_pool.py` 加
 > `@pytest.mark.distributed`）——那些 `cross_node=True` 测试是纯 in-process 单元测试（调
-> `validate_actor_gpu_ids()` 配手搭 dict，不起 Ray、不需第二节点/GPU），已带 file-level
+> `require_actor_gpu_ids()` 配手搭 dict，不起 Ray、不需第二节点/GPU），已带 file-level
 > `pytestmark = slow_test`；加 distributed marker 会误标 + 双 marker 隐藏真实覆盖。全仓**没有**真正的
 > distributed 测试（`grep mp.spawn/torchrun/init_process_group` 零命中），没有诚实的 lane member。
 

@@ -73,7 +73,7 @@ plumbing（280 个 PEFT 层）」。
   rollout-only 是结构保证，不需要再用一个字段去表达。
 - `update_weights` 每次同步后重折（`vrl/generation/execution/worker.py`）。
 - `require_every_core_merged` 查**层**不查自报，照抄
-  `require_every_core_quantized` 的理由（Wan 双专家半覆盖 bug）。
+  `validate_every_core_quantized` 的理由（Wan 双专家半覆盖 bug）。
 - **`OnlineTrainer` 拒绝折叠过的策略**（`vrl/trainers/online/trainer.py`）。
   PEFT 把已 merge 的层直接路由到冻结的 base layer，adapter **离开 autograd 图**
   —— 训练要么当场 `does not require grad`，要么梯度缺失，总之策略不再更新。
@@ -227,5 +227,5 @@ fp8 对照）。三个数字未来还会有人需要：
 - 杠杆出处：`docs/sprints/done/SPRINT_gemm_utilization.md:195`
 - elementwise 归因：`docs/sprints/info/SPRINT_cross_model_performance.md` §0
 - 挂载 seam：`docs/sprints/SPRINT_plug_and_play_optimization_layer.md`
-- 半覆盖反模式：`vrl/nn/optimization/passes.py` 的 `require_every_core_quantized`
+- 半覆盖反模式：`vrl/nn/optimization/passes.py` 的 `validate_every_core_quantized`
 - 父 program：`docs/sprints/done/SPRINT_train_phase_efficiency_program.md`

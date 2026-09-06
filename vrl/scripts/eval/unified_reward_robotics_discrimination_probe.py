@@ -38,8 +38,8 @@ import torch
 from vrl.rewards.evaluation.robotics_discrimination import (
     aggregate_axis_scores,
     build_discrimination_candidates,
+    require_robotics_scores,
     robotics_reward_verdict,
-    validate_robotics_scores,
 )
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
@@ -105,7 +105,7 @@ async def _score_anchor(
         candidate = candidate_by_artifact.get(result.artifact_id)
         if candidate is None:
             raise ValueError(f"UnifiedReward returned unknown artifact {result.artifact_id!r}")
-        candidate_scores = validate_robotics_scores(result.scores)
+        candidate_scores = require_robotics_scores(result.scores)
         scores[candidate] = candidate_scores
     missing = sorted(set(candidates) - set(scores))
     if missing:

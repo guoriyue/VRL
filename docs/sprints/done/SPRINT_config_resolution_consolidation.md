@@ -129,7 +129,7 @@ owner**（或抽一个共享 helper），而不是新建任何抽象。这是一
 
 - `build_configs`（`vrl/config/builders.py:427`）返回 frozen `BuiltConfigs`
   （root/algorithm/precision/trainer/reward/resume），是 online/offline 训练脚本**唯一**顶层入口。
-- `validate_training_config`（`vrl/config/validation.py:328`）返回 `(RootConfig, PrecisionPolicy)`
+- `require_training_config`（`vrl/config/validation.py:328`）返回 `(RootConfig, PrecisionPolicy)`
   **对**，专为“precision 不被二次 resolve”而设计；`build_trainer_config` 用
   `precision or resolve_precision_policy(cfg)` 兜底。
 - `builders.py` 把 merged tree 切成 per-layer typed config；`schema.py` 拥有 pydantic typed
@@ -271,7 +271,7 @@ ray / trajectory 五个 area 里**已经基本不存在**。本 sprint 只处理
 - **单文件 checkpoint 解析同 precedence 抄 3 份**：anima `_resolve_artifact`
   （`cosmos/anima/model.py:578`，最干净、已用 `hf_hub_download`）、echo
   `_resolve_echo_checkpoint`、llamagen `_resolve_checkpoint_file`（`llamagen/model.py:429`）
-  共享“explicit > local-root > hub + validate_checkpoint_source_member”precedence。
+  共享“explicit > local-root > hub + require_checkpoint_source_member”precedence。
 - **online.py 深处重读 raw cfg**：`model.use_lora` 经 `OmegaConf.select` 读了 **4 处**
   （`_default_reference_model:375`、`_export_transformer_lora:414`、
   `_export_language_model_lora:440`、gradient-checkpointing 路径）；`algorithm.kl_coef`/
@@ -429,7 +429,7 @@ P3–P6 是收尾质量项，可按需排期。
 **已成型的 owner（不要动）：**
 
 - `vrl/config/builders.py:427`（build_configs → BuiltConfigs）、`:223`（build_trainer_config）
-- `vrl/config/validation.py:328`（validate_training_config → typed pair）
+- `vrl/config/validation.py:328`（require_training_config → typed pair）
 - `vrl/families/registry.py:235`（resolve_model_build，唯一 config→ModelBuild 边界）
 - `vrl/ray/resources.py:162`（resolve_distributed_resources，唯一 config→resource 边界）
 

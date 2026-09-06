@@ -38,7 +38,7 @@ class OperationTimeout(TerminalRuntimeError):
         super().__init__(message)
 
 
-def validate_timeout(
+def require_timeout(
     timeout_s: float,
     *,
     name: str = "timeout_s",
@@ -71,7 +71,7 @@ class OperationDeadline:
     _expires_at: float = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        timeout_s = validate_timeout(self.timeout_s)
+        timeout_s = require_timeout(self.timeout_s)
         if not self.operation:
             raise ValueError("deadline operation must not be empty")
         object.__setattr__(self, "timeout_s", timeout_s)
@@ -101,5 +101,5 @@ class OperationDeadline:
 __all__ = [
     "OperationDeadline",
     "OperationTimeout",
-    "validate_timeout",
+    "require_timeout",
 ]

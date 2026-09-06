@@ -20,7 +20,7 @@ from omegaconf import OmegaConf
 
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
-from vrl.config.validation import require_guarded_rollout_drift
+from vrl.config.validation import validate_guarded_rollout_drift
 
 
 def _cfg(**overrides) -> OmegaConf:
@@ -46,19 +46,19 @@ def test_teacache_without_any_correction_is_refused() -> None:
     cfg = _cfg(sampling={"teacache": True})
 
     with pytest.raises(ValueError, match=r"teacache.*no drift guard"):
-        require_guarded_rollout_drift(cfg, _precision(cfg))
+        validate_guarded_rollout_drift(cfg, _precision(cfg))
 
 
 def test_validate_training_config_refuses_unguarded_teacache() -> None:
     """The check runs on the real entry point, not only when called directly."""
 
     from vrl.config.loading import load_config
-    from vrl.config.validation import validate_training_config
+    from vrl.config.validation import require_training_config
 
     cfg = load_config("experiment/sd3_5/online_grpo_ocr", overrides=["sampling.teacache=true"])
 
     with pytest.raises(ValueError, match="teacache"):
-        validate_training_config(cfg)
+        require_training_config(cfg)
 
 
 def test_teacache_mapping_form_is_refused_too() -> None:
@@ -67,7 +67,7 @@ def test_teacache_mapping_form_is_refused_too() -> None:
     cfg = _cfg(sampling={"teacache": {"threshold": 0.2}})
 
     with pytest.raises(ValueError, match="teacache"):
-        require_guarded_rollout_drift(cfg, _precision(cfg))
+        validate_guarded_rollout_drift(cfg, _precision(cfg))
 
 
 @pytest.mark.parametrize(
@@ -81,7 +81,7 @@ def test_teacache_mapping_form_is_refused_too() -> None:
 def test_teacache_off_passes(sampling: dict) -> None:
     cfg = _cfg(sampling=sampling)
 
-    require_guarded_rollout_drift(cfg, _precision(cfg))
+    validate_guarded_rollout_drift(cfg, _precision(cfg))
 
 
 def test_quantized_rollout_needs_no_extra_check() -> None:
@@ -101,7 +101,7 @@ def test_quantized_rollout_needs_no_extra_check() -> None:
     )
     assert not _precision(cfg).stages_match
 
-    require_guarded_rollout_drift(cfg, _precision(cfg))
+    validate_guarded_rollout_drift(cfg, _precision(cfg))
 
 
 @pytest.mark.parametrize(
@@ -122,7 +122,7 @@ def test_explicit_expert_block_is_honored(expert_block: str) -> None:
     }[expert_block]
     cfg = _cfg(sampling={"teacache": True}, trainer={expert_block: explicit})
 
-    require_guarded_rollout_drift(cfg, _precision(cfg))
+    validate_guarded_rollout_drift(cfg, _precision(cfg))
 
 
 # --- the compile compatibility matrix ----------------------------------------
@@ -205,10 +205,10 @@ def test_several_conflicts_are_reported_together() -> None:
 
 
 def test_require_compile_compatible_raises_with_every_reason() -> None:
-    from vrl.config.validation import require_compile_compatible
+    from vrl.config.validation import validate_compile_compatible
 
     with pytest.raises(ValueError) as excinfo:
-        require_compile_compatible(
+        validate_compile_compatible(
             parse_config(
                 _compile_cfg(
                     actor={"gradient_checkpointing": True},

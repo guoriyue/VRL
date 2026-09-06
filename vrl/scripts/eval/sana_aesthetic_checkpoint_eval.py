@@ -112,7 +112,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     if not prompts:
         raise ValueError(f"evaluation manifest has no prompts: {eval_manifest_path}")
-    training_log = sana_report.validate_training_log_provenance(run_dir, root)
+    training_log = sana_report.require_training_log_provenance(run_dir, root)
 
     targets = _discover_checkpoint_targets(run_dir, root)
     device = resolve_eval_device(args.device)
@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> None:
         raise RuntimeError("SANA checkpoint evaluation produced no summary rows")
     # The supervisor may append its final shutdown line while a long evaluation
     # is running. Reparse at publication so the report binds the final log bytes.
-    training_log = sana_report.validate_training_log_provenance(run_dir, root)
+    training_log = sana_report.require_training_log_provenance(run_dir, root)
 
     provenance = {
         "run": {

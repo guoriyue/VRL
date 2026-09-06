@@ -21,7 +21,7 @@ from vrl.trajectory import (
     build_chunk_autoregressive_denoise_trajectory,
     build_chunk_autoregressive_generation_trajectory,
 )
-from vrl.trajectory.validation import require_shape_prefix
+from vrl.trajectory.validation import validate_shape_prefix
 
 if TYPE_CHECKING:
     from vrl.generation.bindings.chunk_autoregressive_denoise.executor import (
@@ -118,10 +118,10 @@ def _validate_trainable_chunk(batch: ChunkAutoregressiveDenoiseResult) -> None:
         transition_count,
     )
     for field_name in ("observations", "actions", "old_log_prob", "mask", "timesteps"):
-        require_shape_prefix(f"batch {field_name}", getattr(batch, field_name), transition_prefix)
+        validate_shape_prefix(f"batch {field_name}", getattr(batch, field_name), transition_prefix)
     if batch.kl is not None:
-        require_shape_prefix("batch kl", batch.kl, transition_prefix)
-    require_shape_prefix(
+        validate_shape_prefix("batch kl", batch.kl, transition_prefix)
+    validate_shape_prefix(
         "batch finalized_chunk_latents",
         batch.finalized_chunk_latents,
         (batch.batch.sample_count, batch.temporal_chunk_count),

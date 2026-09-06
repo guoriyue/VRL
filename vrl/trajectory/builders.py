@@ -17,8 +17,8 @@ from vrl.trajectory.types import (
 )
 from vrl.trajectory.validation import (
     TrajectoryValidator,
-    require_shape_prefix,
     tensor_ref,
+    validate_shape_prefix,
 )
 from vrl.trajectory.views import RewardView
 
@@ -167,12 +167,12 @@ def build_chunk_autoregressive_denoise_trajectory(
         ("mask", mask),
         ("timesteps", timesteps),
     ):
-        require_shape_prefix(
+        validate_shape_prefix(
             name,
             value,
             (batch_size, chunk_count, transition_count),
         )
-    require_shape_prefix(
+    validate_shape_prefix(
         "finalized_chunk_latents",
         finalized_chunk_latents,
         (batch_size, chunk_count),
@@ -180,7 +180,7 @@ def build_chunk_autoregressive_denoise_trajectory(
     if kl is None:
         kl = torch.zeros_like(old_log_prob)
     else:
-        require_shape_prefix(
+        validate_shape_prefix(
             "kl",
             kl,
             (batch_size, chunk_count, transition_count),

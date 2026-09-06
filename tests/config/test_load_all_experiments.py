@@ -32,7 +32,7 @@ from vrl.config.loading import (
 from vrl.config.schema import parse_config
 from vrl.config.validation import (
     RewardConfig,
-    validate_training_config,
+    require_training_config,
 )
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
@@ -258,7 +258,7 @@ def test_all_experiments_load_and_validate() -> None:
         assert "output_dir" in cfg.trainer, f"{name} missing trainer.output_dir"
         assert "kind" in cfg.algorithm, f"{name} missing algorithm.kind"
         assert "adv_estimator" not in cfg.algorithm, f"{name} still uses adv_estimator"
-        root, _ = validate_training_config(cfg)
+        root, _ = require_training_config(cfg)
         raw_model = OmegaConf.to_container(cfg.model, resolve=True)
         typed_model = root.model
         assert isinstance(raw_model, dict)
@@ -337,7 +337,7 @@ def test_validate_rejects_compile_with_gradient_checkpointing() -> None:
     """compile x grad-ckpt must fail at config load, not as a mid-run dynamo crash.
 
     The trainer refuses the combination at startup (activation_checkpointing.py);
-    this checks validate_training_config rejects it too, because a model-layer
+    this checks require_training_config rejects it too, because a model-layer
     torch_compile.enable=true default can silently flip compile on underneath an
     experiment that sets checkpointing (that exact collision shipped in four
     cosmos_predict2 240p recipes before this load-time check existed).
@@ -347,11 +347,11 @@ def test_validate_rejects_compile_with_gradient_checkpointing() -> None:
     for ckpt in ("true", "full", "selective"):
         cfg = load_config(base, overrides=[f"actor.gradient_checkpointing={ckpt}"])
         with pytest.raises(ValueError, match="cannot combine"):
-            validate_training_config(cfg)
+            require_training_config(cfg)
 
     # Explicit off (either spelling) keeps compile allowed.
     cfg = load_config(base, overrides=["actor.gradient_checkpointing=off"])
-    validate_training_config(cfg)
+    require_training_config(cfg)
 
 
 def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
@@ -376,7 +376,7 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
     """The reusable hardware gate must preserve the topology it validates."""
 
     cfg = load_config("experiment/sd3_5/online_grpo_ocr_continuous_4gpu_acceptance")
-    validate_training_config(cfg)
+    require_training_config(cfg)
     built = build_configs(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
@@ -410,7 +410,7 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
     name = "experiment/cosmos_predict2/online_grpo_droid_overfit_validation_fsdp_4x_l4"
     cfg = load_config(name)
     parent = load_config("experiment/cosmos_predict2/online_grpo_droid_overfit_validation")
-    validate_training_config(cfg)
+    require_training_config(cfg)
     built = build_configs(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
@@ -446,7 +446,7 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
     name = "experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve_fsdp_4x_l4"
     cfg = load_config(name)
     parent = load_config("experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve")
-    validate_training_config(cfg)
+    require_training_config(cfg)
     built = build_configs(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
@@ -512,7 +512,7 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     cfg = load_config(
         "experiment/wan_2_1/online_grpo_robotics_physics_4x_l4_continuous",
     )
-    validate_training_config(cfg)
+    require_training_config(cfg)
     built = build_configs(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
@@ -539,7 +539,7 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
     cfg = load_config(
         "experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_3x_l4",
     )
-    validate_training_config(cfg)
+    require_training_config(cfg)
     built = build_configs(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
@@ -563,7 +563,7 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devi
     cfg = load_config(
         "experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_4x_l4",
     )
-    validate_training_config(cfg)
+    require_training_config(cfg)
     built = build_configs(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
@@ -596,7 +596,7 @@ def test_masked_physical_ordinal_comes_from_the_config_knob_not_the_auto_path() 
 
     cfg = load_config("experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_4x_l4")
     OmegaConf.update(cfg, "distributed.resources.visible_devices", [1], force_add=True)
-    validate_training_config(cfg)
+    require_training_config(cfg)
 
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
 
@@ -693,7 +693,7 @@ def test_cosmos_v2w_production_validation_accepts_source_backed_data(
         ],
     )
 
-    validate_training_config(cfg)
+    require_training_config(cfg)
 
 
 def test_cosmos_target_v2w_production_validation_requires_target_clip(
@@ -778,7 +778,7 @@ def test_cosmos_target_v2w_production_validation_requires_target_clip(
         ],
     )
 
-    validate_training_config(cfg)
+    require_training_config(cfg)
 
 
 def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path) -> None:
@@ -858,7 +858,7 @@ def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path
         ],
     )
 
-    validate_training_config(cfg)
+    require_training_config(cfg)
 
 
 def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> None:
@@ -866,7 +866,7 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> No
 
     cuda_devices(1)
     cfg = load_config("experiment/wan_2_1/online_grpo_i2v_fsdp_2x_l4")
-    validate_training_config(cfg)
+    require_training_config(cfg)
     built = build_configs(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
@@ -888,7 +888,7 @@ def test_wan_video_reward_production_config_requires_reward_name() -> None:
     cfg.reward.kwargs.kling_video_reward.reward_name = ""
 
     with pytest.raises(ValueError, match="reward_name"):
-        validate_training_config(cfg)
+        require_training_config(cfg)
 
 
 def test_wan_video_reward_production_rejects_extra_loader_fields() -> None:
@@ -897,13 +897,13 @@ def test_wan_video_reward_production_rejects_extra_loader_fields() -> None:
     cfg.reward.kwargs.kling_video_reward.worker_config.import_path = "fake:thing"
 
     with pytest.raises(ValueError, match="remove extra loader fields"):
-        validate_training_config(cfg)
+        require_training_config(cfg)
 
     cfg = load_config("experiment/wan_2_1/online_grpo_kling_video_reward")
     cfg.reward.kwargs.kling_video_reward.worker_config.model_factory = "fake:factory"
 
     with pytest.raises(ValueError, match="remove extra loader fields"):
-        validate_training_config(cfg)
+        require_training_config(cfg)
 
 
 def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
@@ -1050,7 +1050,7 @@ def test_required_training_fields_fail_fast() -> None:
     cfg = load_config("experiment/wan_2_1/online_grpo_ocr")
     cfg.trainer.output_dir = "???"
     with pytest.raises(ValueError, match=r"trainer\.output_dir"):
-        validate_training_config(cfg)
+        require_training_config(cfg)
 
 
 def test_dpo_allows_explicit_null_max_train_samples() -> None:
@@ -1059,7 +1059,7 @@ def test_dpo_allows_explicit_null_max_train_samples() -> None:
     cfg.data.max_train_samples = None
 
     assert parse_config(cfg).data.max_train_samples is None
-    validate_training_config(cfg)
+    require_training_config(cfg)
 
 
 def test_reward_collection_mode_accepts_the_three_acceptance_arms() -> None:

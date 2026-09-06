@@ -83,7 +83,7 @@ def generate_rollout_preview(
     if not torch.cuda.is_available():
         raise RuntimeError("rollout preview requires a CUDA GPU")
 
-    from vrl.config.validation import validate_training_config
+    from vrl.config.validation import require_training_config
     from vrl.models.dtypes import dtype_to_wire_name
     from vrl.models.families.registry import (
         GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
@@ -94,7 +94,7 @@ def generate_rollout_preview(
     from vrl.trainers.data import load_prompt_examples_from_config
     from vrl.utils.config import import_from_path, to_builtin_deep
 
-    validated = validate_training_config(cfg)
+    validated = require_training_config(cfg)
     root = validated.root
     if root.model is None:
         raise ValueError("rollout preview requires model configuration")

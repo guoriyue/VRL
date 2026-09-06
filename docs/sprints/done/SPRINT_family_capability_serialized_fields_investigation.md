@@ -43,7 +43,7 @@
 
 ## 2. 落地（删除 + 同步序列化点）
 
-- `capabilities.py`：删 `FamilyCapability` 5 字段 + `__post_init__` 三处 `require_string_tuple`（连带删 unused import）+ `to_dict` 五 key + `from_value` 五读 + `with_runtime_caps`（bool_fields 去 `supports_batched_requests`/`supports_batched_forward`、删 `cache_kinds` 块、nested update 去 `trainable_segments`/`reward_views`）；删 `ExecutionStageCapability.metadata` + 其 `to_dict`/`from_value`。
+- `capabilities.py`：删 `FamilyCapability` 5 字段 + `__post_init__` 三处 `validate_string_tuple`（连带删 unused import）+ `to_dict` 五 key + `from_value` 五读 + `with_runtime_caps`（bool_fields 去 `supports_batched_requests`/`supports_batched_forward`、删 `cache_kinds` 块、nested update 去 `trainable_segments`/`reward_views`）；删 `ExecutionStageCapability.metadata` + 其 `to_dict`/`from_value`。
 - `planner.py:312`：去掉 `metadata=dict(stage.metadata)` kwarg（运行期 `ExecutionStage.metadata` 保留默认 `{}`，与其它 4 个构造点一致；该字段属 planner 运行期结构，非本 sprint 范围，不在此动）。
 - 构造模板：`vrl/models/ar/capabilities.py`（两模板）、`vrl/models/diffusion/capabilities.py` 去掉 `trainable_segments=`/`reward_views=`/`cache_kinds=` 字段赋值（模板的 `trainable_segment(s)` **参数**仍用于构造 `execution_stages`，保留）。
 - 测试：`tests/generation/test_capabilities.py` 两处构造去掉已删字段 kwarg（往返测试仍成立）。

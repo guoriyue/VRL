@@ -289,7 +289,7 @@ def tensor_ref(segment: str, tensor: str) -> str:
     return f"{segment}.{tensor}"
 
 
-def require_shape_prefix(name: str, value: Any, expected: tuple[int, ...]) -> None:
+def validate_shape_prefix(name: str, value: Any, expected: tuple[int, ...]) -> None:
     """Require ``value.shape`` to start with the ``expected`` leading dimensions."""
 
     shape = getattr(value, "shape", None)
@@ -303,6 +303,6 @@ def require_shape_prefix(name: str, value: Any, expected: tuple[int, ...]) -> No
 __all__ = [
     "TrajectoryValidationError",
     "TrajectoryValidator",
-    "require_shape_prefix",
     "tensor_ref",
+    "validate_shape_prefix",
 ]

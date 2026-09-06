@@ -7,7 +7,7 @@ from typing import Any, Protocol
 from vrl.generation.ray.engine import RayGenerationEngine, uniform_rank_result
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.dependencies import require_ray
-from vrl.utils.deadline import validate_timeout
+from vrl.utils.deadline import require_timeout
 
 
 class GenerationWeightSync(Protocol):
@@ -43,7 +43,7 @@ class RayGenerationWeightSync:
                 f"{actor_dispatcher.worker_ids} != {expected_engine_ids}",
             )
         self.actor_dispatcher = actor_dispatcher
-        self.worker_rpc_timeout_s = validate_timeout(
+        self.worker_rpc_timeout_s = require_timeout(
             worker_rpc_timeout_s,
             name="worker_rpc_timeout_s",
         )

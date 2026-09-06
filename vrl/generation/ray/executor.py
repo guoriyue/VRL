@@ -38,7 +38,7 @@ from vrl.ray.operation_deadline import (
     RayCallDeadline,
     cancel_ray_refs,
 )
-from vrl.utils.deadline import validate_timeout
+from vrl.utils.deadline import require_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ class RayGenerationExecutor:
                 f"{actor_dispatcher.worker_ids} != {expected_engine_ids}",
             )
         self.actor_dispatcher = actor_dispatcher
-        self.generation_stall_timeout_s = validate_timeout(
+        self.generation_stall_timeout_s = require_timeout(
             generation_stall_timeout_s,
             name="generation_stall_timeout_s",
         )

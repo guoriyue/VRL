@@ -9,7 +9,7 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 
-def validate_http_origin(url: str, *, context: str) -> str:
+def require_http_origin(url: str, *, context: str) -> str:
     """Validate one operator-service origin URL and return it normalized.
 
     The trainer-side client and this config are the two producers of service
@@ -70,7 +70,7 @@ class RewardInferenceConfig:
                 )
             object.__setattr__(self, "endpoint", endpoint)
             return
-        endpoint = validate_http_origin(endpoint, context="reward inference.endpoint")
+        endpoint = require_http_origin(endpoint, context="reward inference.endpoint")
         object.__setattr__(self, "endpoint", endpoint)
         if not expected_model:
             raise ValueError(
@@ -105,5 +105,5 @@ _INFERENCE_FIELDS = frozenset(field.name for field in fields(RewardInferenceConf
 __all__ = [
     "RewardInferenceConfig",
     "RewardInferenceConfig",
-    "validate_http_origin",
+    "require_http_origin",
 ]

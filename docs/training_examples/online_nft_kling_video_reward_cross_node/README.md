@@ -121,7 +121,7 @@ RAY_ADDRESS=10.0.0.1:6379 \
   with rollout on the worker bundle. The resolved resource plan should report
   `reward=[]`; Kling follows the driver's rank-local trainer device instead of
   consuming a Ray bundle.
-- **Rollout lands off-head.** Node-aware validation (`validate_actor_gpu_ids`,
+- **Rollout lands off-head.** Node-aware validation (`require_actor_gpu_ids`,
   cross-node path) raises if a worker lands on the head node, so a clean start
   means generation is on node B.
 - **Training proceeds** with weight syncs between epochs; judge learning by

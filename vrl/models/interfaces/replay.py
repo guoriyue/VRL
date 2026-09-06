@@ -145,7 +145,7 @@ class RuntimeModel(ReplayModel, Protocol):
         ...
 
 
-def require_replay_segments(
+def validate_replay_segments(
     request: ReplayRequest | None,
     supported_segments: tuple[str, ...],
     *,
@@ -164,7 +164,7 @@ def require_replay_segments(
     )
 
 
-def require_zero_replay_timestep(timestep_idx: int, *, owner: str) -> None:
+def validate_zero_replay_timestep(timestep_idx: int, *, owner: str) -> None:
     """Reject denoise-step selection for a replay path with no timestep axis."""
 
     if timestep_idx != 0:
@@ -201,7 +201,7 @@ class ReplayRequestContract:
         """No-op for families that do index timesteps."""
 
         if not self.replay_indexes_timesteps:
-            require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+            validate_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
 
     def reject_unsupported_replay_segments(
         self,
@@ -211,7 +211,7 @@ class ReplayRequestContract:
     ) -> None:
         """``segments`` overrides the declared set for a request-dependent contract."""
 
-        require_replay_segments(
+        validate_replay_segments(
             request,
             self.replay_segments if segments is None else segments,
             owner=type(self).__name__,
@@ -299,8 +299,8 @@ __all__ = [
     "RuntimeModel",
     "replay_context_image_size",
     "require_replay_model",
-    "require_replay_segments",
     "require_runtime_model",
-    "require_zero_replay_timestep",
     "single_segment_result",
+    "validate_replay_segments",
+    "validate_zero_replay_timestep",
 ]

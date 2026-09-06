@@ -13,10 +13,10 @@ from vrl.models.interfaces.replay import (
     RuntimeModel,
     replay_context_image_size,
     require_replay_model,
-    require_replay_segments,
     require_runtime_model,
-    require_zero_replay_timestep,
     single_segment_result,
+    validate_replay_segments,
+    validate_zero_replay_timestep,
 )
 from vrl.models.interfaces.runtime import (
     ModelBuild,
@@ -42,8 +42,8 @@ __all__ = [
     "register_checkpoint_owned_state",
     "replay_context_image_size",
     "require_replay_model",
-    "require_replay_segments",
     "require_runtime_model",
-    "require_zero_replay_timestep",
     "single_segment_result",
+    "validate_replay_segments",
+    "validate_zero_replay_timestep",
 ]

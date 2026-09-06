@@ -512,7 +512,7 @@ def _parse_sampling_section(
     return _revalidate_section(section_cls, payload, section="sampling")
 
 
-def validate_sampling_overrides(family: Any, overrides: Mapping[str, Any]) -> dict[str, Any]:
+def require_sampling_overrides(family: Any, overrides: Mapping[str, Any]) -> dict[str, Any]:
     """Validate per-prompt ``request_overrides`` against the family sampling class.
 
     The override vocabulary is the family's ``SamplingSection`` fields, so a typo
@@ -1064,6 +1064,6 @@ __all__ = [
     "TrainerSection",
     "generation_request_rollout_fields",
     "parse_config",
+    "require_sampling_overrides",
     "sampling_section_class_for_family",
-    "validate_sampling_overrides",
 ]

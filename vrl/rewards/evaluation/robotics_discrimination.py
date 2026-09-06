@@ -249,7 +249,7 @@ def robotics_reward_verdict(
     }
 
 
-def validate_robotics_scores(scores: dict[str, Any]) -> dict[str, float]:
+def require_robotics_scores(scores: dict[str, Any]) -> dict[str, float]:
     """Validate public UnifiedReward axes and derive the training compound."""
 
     selected: dict[str, float] = {}
@@ -268,6 +268,6 @@ __all__ = [
     "RoboticsRewardGatePolicy",
     "aggregate_axis_scores",
     "build_discrimination_candidates",
+    "require_robotics_scores",
     "robotics_reward_verdict",
-    "validate_robotics_scores",
 ]

@@ -105,7 +105,7 @@ def test_checkpointing_rejects_replay_compile_but_accepts_rollout_scope() -> Non
     compile leaves the checkpointed trainer eager and must pass."""
 
     from vrl.trainers.activation_checkpointing import (
-        require_compile_checkpointing_compatible,
+        validate_compile_checkpointing_compatible,
     )
 
     def _cfg(compile_block: dict) -> OmegaConf:
@@ -117,8 +117,8 @@ def test_checkpointing_rejects_replay_compile_but_accepts_rollout_scope() -> Non
         )
 
     with pytest.raises(ValueError, match="gradient_checkpointing"):
-        require_compile_checkpointing_compatible(_cfg({"enable": True}))
+        validate_compile_checkpointing_compatible(_cfg({"enable": True}))
 
-    require_compile_checkpointing_compatible(
+    validate_compile_checkpointing_compatible(
         _cfg({"enable": True, "scope": "rollout"}),
     )

@@ -53,11 +53,11 @@ def load_official_scheduler(build: ModelBuild) -> Any:
         build.model_name_or_path,
         **kwargs,
     )
-    validate_scheduler(scheduler)
+    require_scheduler(scheduler)
     return scheduler
 
 
-def validate_scheduler(scheduler: Any) -> dict[str, Any]:
+def require_scheduler(scheduler: Any) -> dict[str, Any]:
     """Require SANA's pinned DPM-Solver++ scheduler identity."""
 
     config = getattr(scheduler, "config", None)
@@ -97,7 +97,7 @@ def generate_prompt_images(
         raise ValueError(f"num_images must be >= 1; got {num_images}")
     if _is_autocast_enabled(device):
         raise RuntimeError("SANA native inference must run without an outer autocast context")
-    validate_scheduler(scheduler)
+    require_scheduler(scheduler)
     protocol = dict(OFFICIAL_SAMPLING_PROTOCOL if sampling is None else sampling)
     if require_official and protocol != OFFICIAL_SAMPLING_PROTOCOL:
         raise ValueError(
@@ -148,5 +148,5 @@ __all__ = [
     "SCHEDULER_PROTOCOL",
     "generate_prompt_images",
     "load_official_scheduler",
-    "validate_scheduler",
+    "require_scheduler",
 ]

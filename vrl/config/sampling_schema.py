@@ -19,7 +19,7 @@ class SamplingSection(ConfigBase):
 
     The declared fields are also the per-prompt ``request_overrides`` vocabulary:
     the collector validates every override against the selected family class
-    before it reaches a ``GenerationRequest`` (``validate_sampling_overrides``).
+    before it reaches a ``GenerationRequest`` (``require_sampling_overrides``).
     """
 
     # Usually a per-prompt request override (paired rollouts/evals); a YAML value

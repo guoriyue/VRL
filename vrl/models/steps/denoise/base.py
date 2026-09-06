@@ -31,7 +31,7 @@ from vrl.models.precision import model_autocast
 from vrl.models.weight_utils import (
     TrainableStateSlots,
     load_weights_into,
-    validate_weights_for,
+    require_weights_for,
 )
 from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE
 
@@ -327,7 +327,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         """Validate a sync payload without mutating the active policy."""
 
         transformer = self._require_transformer()
-        validate_weights_for(transformer, state_dict, prefix="transformer")
+        require_weights_for(transformer, state_dict, prefix="transformer")
 
     # -- versioned trainable-state slots (non-draining weight sync) ---------
     # Diffusion families support versioned slots generically: activation reuses

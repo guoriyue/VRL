@@ -431,7 +431,7 @@ def _is_configured(value: Any) -> bool:
     return value is not None and (not isinstance(value, str) or bool(value.strip()))
 
 
-def validate_checkpoint_source_member(value: Any, *, field_name: str) -> str:
+def require_checkpoint_source_member(value: Any, *, field_name: str) -> str:
     """Return one safe POSIX-relative member of a checkpoint source.
 
     Local directories and Hugging Face repositories share this contract. An
@@ -457,7 +457,7 @@ def validate_checkpoint_source_member(value: Any, *, field_name: str) -> str:
     return member
 
 
-def validate_remote_checkpoint_source_pin(
+def require_remote_checkpoint_source_pin(
     reference: Any,
     revision: Any,
     *,
@@ -572,7 +572,7 @@ def _resolve_source(
             "files": content.files,
         }, content.kind == "file"
 
-    remote = validate_remote_checkpoint_source_pin(
+    remote = require_remote_checkpoint_source_pin(
         text,
         revision,
         field_name=field_name,
@@ -729,7 +729,7 @@ def resolve_checkpoint_model_identity(
         for field_name, value, metadata in members:
             if metadata.get("omit_for_source_file") and source_is_file[source_name]:
                 continue
-            value = validate_checkpoint_source_member(
+            value = require_checkpoint_source_member(
                 value,
                 field_name=f"model.{field_name}",
             )
@@ -819,8 +819,8 @@ __all__ = [
     "LocalCheckpointContent",
     "checkpoint_identity_metadata",
     "local_checkpoint_content",
+    "require_checkpoint_source_member",
+    "require_remote_checkpoint_source_pin",
     "resolve_checkpoint_model_identity",
     "validate_checkpoint_identity_schema",
-    "validate_checkpoint_source_member",
-    "validate_remote_checkpoint_source_pin",
 ]

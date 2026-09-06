@@ -238,7 +238,7 @@
   form-1 死形参 + form-2 死 False 分支。历史 `require_method=False` 的 producer（cosmos `_after_bundle_built`，见 [[SPRINT_grab_bag_file_audit]]）已删。`require_method` 恒 True 时 `continue`（静默跳过）分支不可达。
 - 动作：删除 `require_method` 形参，把 `if require_method: raise / continue` 收为「trainable module 缺 `enable_gradient_checkpointing` 时无条件 raise」。无 test 更新（`test_online_lifecycle.py` monkeypatch 是 `lambda *args, **kwargs`，另有直接测试 `test_activation_checkpointing.py:35/46/59/73/96` 均不传 `require_method`）。
 
-### 1.20 `validate_artifact_manifest(allow_absolute_paths, require_readable, reject_metadata_domain)` — dead-arg（form-1，risk=low · STILL_VALID）
+### 1.20 `require_artifact_manifest(allow_absolute_paths, require_readable, reject_metadata_domain)` — dead-arg（form-1，risk=low · STILL_VALID）
 - 位置（当前）：`vrl/trainers/data/artifacts.py:167-169`（三参），使用 `:180/:201/:208`
 - 复核 2026-07-24：三 kw-only 参全在（:167 `allow_absolute_paths=False`、:168 `require_readable=True`、:169 `reject_metadata_domain=True`）。`require_readable`/`reject_metadata_domain` 出 `artifacts.py` 零命中；`allow_absolute_paths` 出文件仅命中 `target_dino_similarity.py`（另一函数 `resolve_artifact_path`）。caller 是 `__init__` re-export + 测试，均不传三参。**较原引用 160-229 一致**。**仍全部不可达**。
 - 判死证据（原始审计）：
@@ -247,7 +247,7 @@
   vrl/trainers/data/artifacts.py:167/168/169/180/201/208  ← 三参定义+内部读
   vrl/rewards/models/target_dino_similarity.py:60/150     ← 无关：喂给 resolve_artifact_path 的 reward 旋钮，另一个函数
   ```
-  三个 keyword-only 参非默认路径不可达。唯一 `**kwargs` 路由 `validate_artifact_manifest_pair` 及其固定签名 wrapper 只转发固定字段集；直接 caller 与 test caller 只传 `data_root`/`required_artifact_fields`。内联默认行为等价，且测试正打这些默认行为（如 `test_production_metadata_domain_is_rejected`）。
+  三个 keyword-only 参非默认路径不可达。唯一 `**kwargs` 路由 `require_artifact_manifest_pair` 及其固定签名 wrapper 只转发固定字段集；直接 caller 与 test caller 只传 `data_root`/`required_artifact_fields`。内联默认行为等价，且测试正打这些默认行为（如 `test_production_metadata_domain_is_rejected`）。
 - 动作：删除三参并内联默认（`allow_absolute=False`、恒 `_assert_readable`、恒 reject `metadata.domain`）。无 test 更新。
 
 ### 1.21 `PhaseTimer.__init__(sync)` — dead-arg（risk=low · STILL_VALID）

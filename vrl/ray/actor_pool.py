@@ -22,7 +22,7 @@ from vrl.ray.operation_deadline import (
     cancel_ray_refs,
 )
 from vrl.runtime_errors import TerminalRuntimeError
-from vrl.utils.deadline import validate_timeout
+from vrl.utils.deadline import require_timeout
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +107,7 @@ class RayActorDispatcher:
 
         if not operation:
             raise ValueError("Ray actor operation must not be empty")
-        call_timeout_s = validate_timeout(
+        call_timeout_s = require_timeout(
             call_timeout_s,
             name="call_timeout_s",
         )
@@ -420,7 +420,7 @@ class RayActorDispatcher:
 
         if not operation:
             raise ValueError("Ray actor operation must not be empty")
-        call_timeout_s = validate_timeout(
+        call_timeout_s = require_timeout(
             call_timeout_s,
             name="call_timeout_s",
         )

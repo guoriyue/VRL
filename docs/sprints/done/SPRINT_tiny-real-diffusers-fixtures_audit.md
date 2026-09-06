@@ -531,10 +531,10 @@ class DPMSolverMultistepScheduler:
         self.config = config
 ...
 def test_scheduler_protocol_accepts_official_identity() -> None:
-    assert sana_inference.validate_scheduler(DPMSolverMultistepScheduler()) == checkpoint_compare.SCHEDULER_PROTOCOL
+    assert sana_inference.require_scheduler(DPMSolverMultistepScheduler()) == checkpoint_compare.SCHEDULER_PROTOCOL
 ```
 
-`validate_scheduler`（`vrl/scripts/eval/sana_inference.py:60-80`）读 `type(scheduler).__name__` +
+`require_scheduler`（`vrl/scripts/eval/sana_inference.py:60-80`）读 `type(scheduler).__name__` +
 6 个 config 键，然后和 `SCHEDULER_PROTOCOL` 比。替身的类名是本地写的 `DPMSolverMultistepScheduler`，
 config 是 `SCHEDULER_PROTOCOL` 本身。**这个测试在构造上不可能失败**，而它要挡的事故正是
 「diffusers 改了 `use_flow_sigmas` / `flow_shift` 的名字或默认值」。
@@ -556,7 +556,7 @@ def build_official_sana_scheduler(**overrides: Any) -> Any:
     return DPMSolverMultistepScheduler(**kwargs)
 ```
 
-**实测**：构建 1.0 ms；`validate_scheduler(real)` 返回值与 `SCHEDULER_PROTOCOL` 完全相等；
+**实测**：构建 1.0 ms；`require_scheduler(real)` 返回值与 `SCHEDULER_PROTOCOL` 完全相等；
 `test_scheduler_protocol_rejects_wrong_config` 的**全部 6 个参数化 drift 用例**在真类上逐个
 `rejected (good)`：
 
@@ -626,7 +626,7 @@ use_flow_sigmas=False             flow_shift=1.0  prediction_type='epsilon'
 | 保留项 | 位置 | 为什么不能转 |
 |---|---|---|
 | `_IdentityDecodeVAE` | `tests/models/steps/denoise/common/test_decode_layout_parity.py:33` | 它是 **identity 探针**，不是模型替身。真 VAE 会做空间上采样，测试要钉的 `image == latents / 2.0 + 0.5`（`:75`）这种逐元素等式当场失效——被测的是 wrapper 的**反归一化与 layout 变换算术**，透明探针是唯一能让这段算术可观测的仪器。上一轮审计（`:539`）对它的裁定是对的，本轨道明确背书。 |
-| `test_scheduler_protocol_rejects_wrong_class` 里的假 `FlowMatchEulerDiscreteScheduler` | `tests/scripts/eval/test_sana_checkpoint_compare.py:567-572` | 它要造的状态是「**config 全对、只有类名错**」。真 `FlowMatchEulerDiscreteScheduler` 的 config 里根本没有 `algorithm_type` / `solver_order`，换成真类会让 class 与 config **同时**不匹配，从而无法定位 `validate_scheduler` 里 class-name 那一半是否还在起作用。这是隔离半个校验的正当仪器。 |
+| `test_scheduler_protocol_rejects_wrong_class` 里的假 `FlowMatchEulerDiscreteScheduler` | `tests/scripts/eval/test_sana_checkpoint_compare.py:567-572` | 它要造的状态是「**config 全对、只有类名错**」。真 `FlowMatchEulerDiscreteScheduler` 的 config 里根本没有 `algorithm_type` / `solver_order`，换成真类会让 class 与 config **同时**不匹配，从而无法定位 `require_scheduler` 里 class-name 那一半是否还在起作用。这是隔离半个校验的正当仪器。 |
 | `_ConstantAnimaTransformer` 的**载荷注入**思路 | 被删的 `anima/test_forward_step.py:38` | 常量输出确实能钉分支顺序，但 §6.1 证明同一主张可以用 `record_forward_calls` 在**真** transformer 上表达得更强（直接断言每次 forward 收到的是哪个 embeds 张量）。所以这里不是「保留替身」，是「主张搬家后替身失去存在理由」——**先加后删**，不允许直接删。 |
 
 ### (c) 进程/包边界替身（真对应物不在本进程）

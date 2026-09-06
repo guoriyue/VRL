@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from vrl.scripts.data.common import emit, write_jsonl, write_report
-from vrl.trainers.data.artifacts import validate_artifact_manifest_pair
+from vrl.trainers.data.artifacts import require_artifact_manifest_pair
 from vrl.utils.artifacts import SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS, sha256_file
 
 COMMAND_NAME = "derive-text-video-targets"
@@ -127,7 +127,7 @@ def _cmd_derive_text_video_targets(args: argparse.Namespace) -> None:
     write_jsonl(train_output, train_rows)
     write_jsonl(eval_output, eval_rows)
 
-    validation = validate_artifact_manifest_pair(
+    validation = require_artifact_manifest_pair(
         train_output,
         eval_output,
         data_root=data_root,

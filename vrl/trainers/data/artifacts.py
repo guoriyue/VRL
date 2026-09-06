@@ -162,7 +162,7 @@ def resolve_prompt_example_references(
     )
 
 
-def validate_artifact_manifest(
+def require_artifact_manifest(
     manifest_path: str | Path,
     *,
     data_root: str | Path | None = None,
@@ -229,15 +229,15 @@ def validate_artifact_manifest(
     )
 
 
-def validate_artifact_manifest_pair(
+def require_artifact_manifest_pair(
     train_manifest: str | Path,
     eval_manifest: str | Path,
     **kwargs: Any,
 ) -> ArtifactManifestReport:
     """Validate train/eval artifact manifests and report source-episode overlap."""
 
-    train = validate_artifact_manifest(train_manifest, **kwargs)
-    eval_report = validate_artifact_manifest(eval_manifest, **kwargs)
+    train = require_artifact_manifest(train_manifest, **kwargs)
+    eval_report = require_artifact_manifest(eval_manifest, **kwargs)
     overlap = tuple(
         sorted(set(train.source_episodes).intersection(eval_report.source_episodes)),
     )
@@ -260,7 +260,7 @@ def validate_artifact_manifest_pair(
     )
 
 
-def validate_source_backed_video_world_manifest_pair(
+def require_source_backed_video_world_manifest_pair(
     train_manifest: str | Path,
     eval_manifest: str | Path,
     *,
@@ -273,7 +273,7 @@ def validate_source_backed_video_world_manifest_pair(
         ("reference_image", "target_video") if require_target_video else ("reference_image",)
     )
     required_artifact_fields = artifact_fields
-    return validate_artifact_manifest_pair(
+    return require_artifact_manifest_pair(
         train_manifest,
         eval_manifest,
         data_root=data_root,
@@ -283,7 +283,7 @@ def validate_source_backed_video_world_manifest_pair(
     )
 
 
-def require_reference_images(
+def validate_reference_images(
     examples: Sequence[PromptExample],
     *,
     manifest_path: str | Path,
@@ -360,10 +360,10 @@ __all__ = [
     "SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS",
     "ArtifactManifestReport",
     "ResolvedArtifact",
-    "require_reference_images",
+    "require_artifact_manifest",
+    "require_artifact_manifest_pair",
+    "require_source_backed_video_world_manifest_pair",
     "resolve_prompt_example_artifacts",
     "resolve_prompt_example_references",
-    "validate_artifact_manifest",
-    "validate_artifact_manifest_pair",
-    "validate_source_backed_video_world_manifest_pair",
+    "validate_reference_images",
 ]

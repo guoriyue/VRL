@@ -207,7 +207,7 @@ def test_run_generates_base_before_strict_restore_and_current(
         assert actual_build is build
         scheduler = DPMSolverMultistepScheduler()
         schedulers.append(scheduler)
-        sana_inference.validate_scheduler(scheduler)
+        sana_inference.require_scheduler(scheduler)
         return scheduler
 
     entry = SimpleNamespace(
@@ -552,7 +552,7 @@ def test_scheduler_protocol_rejects_wrong_config(key, wrong_value) -> None:
     scheduler = DPMSolverMultistepScheduler(**{key: wrong_value})
 
     with pytest.raises(ValueError, match="official DPM-Solver"):
-        sana_inference.validate_scheduler(scheduler)
+        sana_inference.require_scheduler(scheduler)
 
 
 def test_scheduler_protocol_rejects_wrong_class() -> None:
@@ -560,11 +560,11 @@ def test_scheduler_protocol_rejects_wrong_class() -> None:
         config = DPMSolverMultistepScheduler().config
 
     with pytest.raises(ValueError, match="official DPM-Solver"):
-        sana_inference.validate_scheduler(FlowMatchEulerDiscreteScheduler())
+        sana_inference.require_scheduler(FlowMatchEulerDiscreteScheduler())
 
 
 def test_scheduler_protocol_accepts_official_identity() -> None:
     assert (
-        sana_inference.validate_scheduler(DPMSolverMultistepScheduler())
+        sana_inference.require_scheduler(DPMSolverMultistepScheduler())
         == checkpoint_compare.SCHEDULER_PROTOCOL
     )

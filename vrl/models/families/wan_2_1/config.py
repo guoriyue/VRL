@@ -11,7 +11,7 @@ from pydantic import Field
 from vrl.config.model_schema import ModelSection
 from vrl.models.checkpoint_identity import (
     checkpoint_identity_metadata,
-    validate_remote_checkpoint_source_pin,
+    require_remote_checkpoint_source_pin,
 )
 
 if TYPE_CHECKING:
@@ -93,7 +93,7 @@ def normalize_wan_model_build(build: ModelBuild) -> ModelBuild:
     if build.family not in {"wan_2_1", "wan_2_1_i2v"}:
         raise ValueError(f"Wan build normalizer received family {build.family!r}")
 
-    validate_remote_checkpoint_source_pin(
+    require_remote_checkpoint_source_pin(
         build.model_name_or_path,
         build.revision,
         field_name="model.path",

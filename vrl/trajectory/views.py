@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from vrl.trajectory.types import TrajectorySegment, TrajectoryTensor, require_string_tuple
+from vrl.trajectory.types import TrajectorySegment, TrajectoryTensor, validate_string_tuple
 
 RewardValueRange = Literal["unit", "tanh"]
 
@@ -29,7 +29,7 @@ class RewardView:
             raise ValueError(
                 f"RewardView.value_range must be 'unit' or 'tanh', got {self.value_range!r}",
             )
-        require_string_tuple("RewardView.tensor_refs", self.tensor_refs)
+        validate_string_tuple("RewardView.tensor_refs", self.tensor_refs)
 
 
 def role_tensor(segment: TrajectorySegment, role: str) -> TrajectoryTensor:

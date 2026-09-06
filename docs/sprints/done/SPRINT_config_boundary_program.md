@@ -81,7 +81,7 @@ dataclass、七个访问器——全部是"schema 没定型"的补偿机器。�
 
 ### 1.3 unknown-key 只在一条路上生效
 
-`require_no_unknown_keys(cfg)` 只被 `validate_training_config` ← `build_configs` ←
+`require_no_unknown_keys(cfg)` 只被 `require_training_config` ← `build_configs` ←
 `run.resolve_online_run` 调到。**十个**只走 `load_config + parse_config` 的脚本
 （encode_targets / anima_fixed_eval / cosmos_predict25_{frame_prefix_gate,kling_eval} /
 anima/generate / generation_bottleneck_profile / native_denoise_probe / teacache_drift_probe /
@@ -142,7 +142,7 @@ sana_checkpoint_compare / wan_robotics_checkpoint_eval）拼错 key 静默放行
 
 落地（决策 A 已由 owner 批准）：
 - `require_no_unknown_keys` 折进 `parse_config`：十个只走 `load_config + parse_config` 的脚本
-  自动获得守门；`validate_training_config` 不再单独调用。
+  自动获得守门；`require_training_config` 不再单独调用。
 - unknown-key 报错文案统一为一种：`unknown <a.b.c>[, <d.e>]`——walker 与 pydantic
   `extra="forbid"`（`_extract_error_message`）现在产出同一句话。之前两套文案为同一件事。
 - 两处 `force_add` 后置改写 → `load_config(overrides=[...])`：`generation_bottleneck_profile`
@@ -287,7 +287,7 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
 - 测试：构造函数改名 + 参数包 `parse_config(...)`（同 S4 的机械脚本）；`test_setup.py` 的
   prompt-loader 用例改喂 `DataConfig`——顺带暴露 3 个 fixture 本来就不满足 loader 契约
   （缺 `sampler.type` / `eval_manifest` / `conditioning`），旧鸭子路径从不检查。
-- **未做（有据）**：`require_guarded_rollout_drift(cfg, precision)` 仍读 raw cfg。原因：它判断的
+- **未做（有据）**：`validate_guarded_rollout_drift(cfg, precision)` 仍读 raw cfg。原因：它判断的
   `sampling.teacache` **不在任何 family 的 SamplingSection 里**，也没有 preset 用它——TeaCache 从
   YAML 根本不可达，只有测试用 raw dict 喂得进去。这是 S6 的一个决策：给 sampling section 加
   `teacache` 字段（让功能可达）或删掉这条 guard 分支。
@@ -324,7 +324,7 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
 - `kling_video_reward._from_dataclass` 的 ignore-extras **保留并注明理由**：它读的是上游 checkpoint
   的 `model_config.json`（第三方 artifact，词汇会扩展），不是 VRL 的配置面。
 - TeaCache：`sampling.teacache: bool | TeaCacheSection` 进 `DenoiseImageSamplingSection`（功能从
-  YAML 可达），collector 把 bool / mapping 两种形式投到 request；`require_guarded_rollout_drift(root)`
+  YAML 可达），collector 把 bool / mapping 两种形式投到 request；`validate_guarded_rollout_drift(root)`
   改读 typed root——S5b 留下的最后一处 raw 读关闭。
 
 ## 3.1 收官对账（2026-09-05）
@@ -346,7 +346,7 @@ raw 读的函数被测试用微型 DictConfig 直喂，随 S6 脚本层一起改
 - `sampling_schema.py` 各 family section 的 37 个标量仍是 `Any = None`——值类型由各 family 的
   request boundary 校验；把它们收成 `StrictInt`/`float`/`Literal` 是同款机械活，但要逐 family 核对
   request 层的宽容语义（例如 `guidance_scale` 允许 int）。
-- `require_guarded_rollout_drift` 现在读 typed root，但 `unguarded_drift_sources` 仍以 dict 为接口
+- `validate_guarded_rollout_drift` 现在读 typed root，但 `unguarded_drift_sources` 仍以 dict 为接口
   （它同时服务 wire 侧）；若以后 TeaCache 之外再加 request 级近似，考虑让它直接吃
   `SamplingSection`。
 - `vrl/scripts/eval/sana_aesthetic_report.normalize_run_config` 仍持有一台手写递归 dict differ

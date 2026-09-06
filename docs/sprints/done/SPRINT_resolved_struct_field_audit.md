@@ -89,7 +89,7 @@ scan 级、**没逐字段证**，属"待同等审计"而非"已证清白"（见 
 |---|---|---|
 | `visible_devices` | **LOGGING_ONLY**（KEEP+注释） | 仅 `resources.py:292` 日志；承载不可派生的"完整可见 GPU 池"溯源 |
 | `trainer_devices` | NECESSARY | `placement.py:46` 按它建 trainer 预留 bundle；`trainer_torch_device()`→`online.py:161`/`train_dpo.py:144` 定 trainer device |
-| `rollout_devices` | NECESSARY | `config.py:165` driver/rollout 重叠校验 raise；`launcher.py:261`→`validate_actor_gpu_ids` |
+| `rollout_devices` | NECESSARY | `config.py:165` driver/rollout 重叠校验 raise；`launcher.py:261`→`require_actor_gpu_ids` |
 | `reward_devices` | NECESSARY | `resources.py:852` `expected_gpu_ids`→reward Ray runtime（`ray/runtime.py:99/110/116` 门控+校验） |
 | `rollout_num_gpus` | NECESSARY | `launcher.py:295` 跨节点 preflight `if non_driver_gpus < needed: raise` |
 | `rollout_num_workers` | NECESSARY | `config.py:74`→`RayGenerationConfig.num_workers`→`placement.py:51` 每 worker 一个 bundle |

@@ -18,7 +18,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from vrl.generation.types import DenoiseRequest
-from vrl.models.checkpoint_identity import validate_checkpoint_source_member
+from vrl.models.checkpoint_identity import require_checkpoint_source_member
 from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.families.cosmos.anima.adapter import AnimaLLMAdapter
 from vrl.models.interfaces.runtime import ModelBuild
@@ -622,7 +622,7 @@ def _resolve_artifact(
         return explicit_path
     if not (root and relative_file):
         return ""
-    relative_file = validate_checkpoint_source_member(
+    relative_file = require_checkpoint_source_member(
         relative_file,
         field_name=f"model.{field_name.removesuffix('_path')}_file",
     )

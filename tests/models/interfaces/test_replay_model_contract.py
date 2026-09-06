@@ -10,8 +10,8 @@ from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
     ReplaySegmentResult,
-    require_replay_segments,
-    require_zero_replay_timestep,
+    validate_replay_segments,
+    validate_zero_replay_timestep,
 )
 
 # ReplayModel's required surface. Derived from the protocol's
@@ -46,7 +46,7 @@ def test_replay_request_requires_non_empty_segment_names() -> None:
 
 def test_replay_segment_guard_rejects_unsupported_selection() -> None:
     with pytest.raises(ValueError, match="supports segments"):
-        require_replay_segments(
+        validate_replay_segments(
             ReplayRequest(segment_names=("unsupported",)),
             ("denoise",),
             owner="test",
@@ -54,9 +54,9 @@ def test_replay_segment_guard_rejects_unsupported_selection() -> None:
 
 
 def test_replay_timestep_guard_rejects_nonzero_index() -> None:
-    require_zero_replay_timestep(0, owner="test")
+    validate_zero_replay_timestep(0, owner="test")
     with pytest.raises(ValueError, match="timestep_idx must be 0"):
-        require_zero_replay_timestep(1, owner="test")
+        validate_zero_replay_timestep(1, owner="test")
 
 
 @pytest.mark.parametrize(

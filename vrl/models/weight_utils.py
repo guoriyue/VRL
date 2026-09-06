@@ -25,7 +25,7 @@ def unwrap_compile_and_ddp(module: Any) -> Any:
     Sync payload keys live in the policy's uncompiled, unwrapped namespace. Both
     ends peel through here: the sync sender
     (``trainers.weight_sync.flatten_trainable_module_state``) and the receiver
-    (:func:`load_weights_into` / :func:`validate_weights_for` below), so neither
+    (:func:`load_weights_into` / :func:`require_weights_for` below), so neither
     wrapper prefix may leak into the rollout payload. PEFT is deliberately NOT
     peeled — LoRA keys (``base_model.model.*``) are part of the policy-facing
     namespace. Loop because wrapper nesting/order varies (e.g. compile(DDP(m)) vs
@@ -60,12 +60,12 @@ def load_weights_into(
     silently leaving weights stale.
     """
 
-    stripped = validate_weights_for(module, state_dict, prefix=prefix)
+    stripped = require_weights_for(module, state_dict, prefix=prefix)
     module = unwrap_compile_and_ddp(module)
     return module.load_state_dict(stripped, strict=False)
 
 
-def validate_weights_for(
+def require_weights_for(
     module: Any,
     state_dict: Mapping[str, Any],
     *,

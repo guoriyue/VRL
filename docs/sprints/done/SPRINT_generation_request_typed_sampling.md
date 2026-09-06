@@ -187,7 +187,7 @@ SDE evaluator 与 nextstep runtime 读同一对象。
 runtime 的 `sampling.get(key, self.model.config.default)` 在 section 字段默认 `None` 的前提下
 只会变成 `x if x is not None else default`，类型化收益为零。fail-closed 的价值在边界拿到：
 
-- `vrl/config/schema.py::validate_sampling_overrides(family, overrides)`：用家族的
+- `vrl/config/schema.py::require_sampling_overrides(family, overrides)`：用家族的
   `SamplingSection`（`extra="forbid"`）校验每条 prompt 的 `request_overrides`，错误信息与
   YAML 同形（`unknown sampling.typo_key`）。`GenerationRequestBuilder.build` 在构造请求时
   调用；去噪旋钮的覆盖走 `replace(DenoiseRequestOptions)`。

@@ -176,7 +176,7 @@ def validate_training_metrics(path: Path, root: RootConfig) -> None:
         )
 
 
-def validate_training_log_provenance(run_dir: Path, root: RootConfig) -> dict[str, Any]:
+def require_training_log_provenance(run_dir: Path, root: RootConfig) -> dict[str, Any]:
     """Bind the supervisor log to revisions pinned in the resolved config."""
 
     path = run_dir / "supervisor.log"
@@ -785,7 +785,7 @@ def _validate_report_provenance(
     cfg = normalize_run_config(load_config(config_path))
     root = parse_config(cfg)
     validate_training_metrics(training_metrics_path, root)
-    if provenance["training_log"] != validate_training_log_provenance(run_dir, root):
+    if provenance["training_log"] != require_training_log_provenance(run_dir, root):
         raise ValueError("SANA evaluation training-log provenance changed")
     if root.model is None:
         raise ValueError("SANA evaluation report requires model configuration")

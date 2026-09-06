@@ -282,7 +282,7 @@ production: Annotated[dict[str, Any] | None, OPEN] = None
 
 - **KEEP** `DEFAULT_CHECKPOINT_STRICT`：它是 checkpoint restore protocol默认，不是业务词表。
 - **KEEP** closed production section：两个薄 dataclass承担 public schema/unknown-key边界。
-- **KEEP** `require_replay_segments()`、`require_zero_replay_timestep()`：它们统一跨 family
+- **KEEP** `validate_replay_segments()`、`validate_zero_replay_timestep()`：它们统一跨 family
   protocol backstop，避免每个实现复制且漂移。
 - **KEEP** family-uniform `encode_prompt()` / `replay_forward()` 形状：一致性、可 grep性和 evaluator
   协议价值高于减少参数行数。

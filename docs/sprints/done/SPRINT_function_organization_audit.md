@@ -190,7 +190,7 @@ These were the only two files where a split was even plausible. On acting:
 - **`vrl/config/validation.py` → LEFT (deliberately).** The ~226-line Kling production-reward
   gate is a distinct concern, but the file is only 357 lines (not a large-file problem), and a
   split would need a second new module **plus a lazy back-import** to dodge a cycle (the new
-  module needs `require`/`path_exists` from `validation.py`, whose `validate_training_config`
+  module needs `require`/`path_exists` from `validation.py`, whose `require_training_config`
   calls the gate). Complexity-for-marginal-gain on a small file — the cure is worse than the
   itch. Left as-is.
 

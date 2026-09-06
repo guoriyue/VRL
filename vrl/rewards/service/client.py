@@ -62,7 +62,7 @@ class HttpRewardScorer:
     ) -> None:
         from vrl.config.reward_inference import (
             RewardInferenceConfig,
-            validate_http_origin,
+            require_http_origin,
         )
 
         if isinstance(service, RewardInferenceConfig):
@@ -85,7 +85,7 @@ class HttpRewardScorer:
             expected_model = service.expected_model
             expected_model_version = service.expected_model_version
         else:
-            service_url = validate_http_origin(
+            service_url = require_http_origin(
                 str(service),
                 context="reward service endpoint",
             )

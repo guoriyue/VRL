@@ -13,7 +13,7 @@ from vrl.config.precision import (
 )
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.config.schema import RewardConfig, RootConfig
-from vrl.config.validation import validate_training_config
+from vrl.config.validation import require_training_config
 
 if TYPE_CHECKING:
     from vrl.algorithms.dpo import DiffusionDPOConfig
@@ -199,7 +199,7 @@ def build_configs(cfg: DictConfig) -> BuiltConfigs:
     )
     from vrl.trainers.online.config import TrainerConfig
 
-    root, precision = validate_training_config(cfg)
+    root, precision = require_training_config(cfg)
     resume = TrainingResumeConfig.from_root(root)
     # A full checkpoint, not model.lora.path, owns trainable state on resume.
     # Clear it in both the parsed root and the merged source so persisted

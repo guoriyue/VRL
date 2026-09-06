@@ -225,7 +225,7 @@ def cross_node_preflight(ray: Any, resources: ResolvedDistributedResources) -> N
         )
 
 
-def validate_actor_gpu_ids(
+def require_actor_gpu_ids(
     metadata: Sequence[_ActorPlacementInput],
     *,
     expected_gpu_ids: Sequence[int],
@@ -636,5 +636,5 @@ __all__ = [
     "RolePlacement",
     "actor_scheduling_strategy",
     "cross_node_preflight",
-    "validate_actor_gpu_ids",
+    "require_actor_gpu_ids",
 ]

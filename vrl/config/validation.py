@@ -81,7 +81,7 @@ def validate_production_reward_contract(root: RootConfig) -> None:
 
 
 def _validate_video_world_production_data(root: RootConfig) -> None:
-    from vrl.trainers.data.artifacts import validate_source_backed_video_world_manifest_pair
+    from vrl.trainers.data.artifacts import require_source_backed_video_world_manifest_pair
 
     data = root.data
     assert data is not None
@@ -92,7 +92,7 @@ def _validate_video_world_production_data(root: RootConfig) -> None:
     # pixel-L1 target_video_similarity); it consumes metadata['target_video'], so its
     # presence is what makes target clips a hard manifest requirement.
     require_target_video = "target_dino_similarity" in reward_components
-    validate_source_backed_video_world_manifest_pair(
+    require_source_backed_video_world_manifest_pair(
         str(data.manifest),
         str(data.eval_manifest),
         require_target_video=require_target_video,
@@ -255,7 +255,7 @@ def _validate_image_to_video_source_report(
         raise ValueError("data.source_report eval_rows does not match data.eval_manifest")
 
 
-def validate_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPolicy]:
+def require_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPolicy]:
     """Validate config once and return the typed config plus its precision policy.
 
     Returns the pair rather than a wrapper struct: the precision policy is a pure
@@ -268,8 +268,8 @@ def validate_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPoli
     # the all-experiments test sees it — because a model-layer
     # torch_compile.enable=true default can silently flip compile on underneath a
     # recipe that needs checkpointing, FSDP, or a multi-rank engine.
-    require_compile_compatible(root)
-    require_guarded_rollout_drift(root, precision)
+    validate_compile_compatible(root)
+    validate_guarded_rollout_drift(root, precision)
     if root.production is not None and root.production.kling_video_reward.enabled:
         validate_production_kling_video_reward_config(root)
     return root, precision
@@ -355,7 +355,7 @@ def compile_conflicts(root: RootConfig) -> tuple[str, ...]:
     return tuple(conflicts)
 
 
-def require_compile_compatible(root: RootConfig) -> None:
+def validate_compile_compatible(root: RootConfig) -> None:
     """Refuse a config that enables torch.compile beside an incompatible feature."""
 
     conflicts = compile_conflicts(root)
@@ -367,7 +367,7 @@ def require_compile_compatible(root: RootConfig) -> None:
     )
 
 
-def require_guarded_rollout_drift(root: RootConfig, precision: PrecisionPolicy) -> None:
+def validate_guarded_rollout_drift(root: RootConfig, precision: PrecisionPolicy) -> None:
     """Refuse a rollout approximation that no drift correction will cover.
 
     Quantization needs no check here: it changes the rollout precision label, so
@@ -407,7 +407,7 @@ def require_guarded_rollout_drift(root: RootConfig, precision: PrecisionPolicy) 
 
 __all__ = [
     "RewardConfig",
+    "require_training_config",
     "validate_production_kling_video_reward_config",
     "validate_production_reward_contract",
-    "validate_training_config",
 ]
