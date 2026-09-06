@@ -13,7 +13,7 @@ teaching the trainer which distributed mechanism is active.
 from __future__ import annotations
 
 import gc
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol
@@ -783,23 +783,9 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
         *,
         strict: bool = True,
     ) -> None:
-        from vrl.models.weight_utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import load_checkpoint_state_dict
 
-        modules = require_trainable_modules(bundle)
-        missing = sorted(set(modules) - set(state))
-        extra = sorted(set(state) - set(modules))
-        if strict and (missing or extra):
-            raise ValueError(
-                f"checkpoint module roots mismatch: missing={missing}, unexpected={extra}",
-            )
-        for name, module in modules.items():
-            if name in state:
-                load_checkpoint_state_dict(
-                    unwrap_compile_and_ddp(module),
-                    state[name],
-                    strict=strict,
-                )
+        self._load_module_states(bundle, state, strict=strict, load_one=load_checkpoint_state_dict)
 
     def load_full_checkpoint_state(
         self,
@@ -808,8 +794,21 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
         *,
         strict: bool = True,
     ) -> None:
-        from vrl.models.weight_utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import load_full_state_dict
+
+        self._load_module_states(bundle, state, strict=strict, load_one=load_full_state_dict)
+
+    def _load_module_states(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool,
+        load_one: Callable[..., None],
+    ) -> None:
+        """Check the module roots, then scatter each module's state with ``load_one``."""
+
+        from vrl.models.weight_utils import unwrap_compile_and_ddp
 
         modules = require_trainable_modules(bundle)
         missing = sorted(set(modules) - set(state))
@@ -820,11 +819,7 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
             )
         for name, module in modules.items():
             if name in state:
-                load_full_state_dict(
-                    unwrap_compile_and_ddp(module),
-                    state[name],
-                    strict=strict,
-                )
+                load_one(unwrap_compile_and_ddp(module), state[name], strict=strict)
 
     def export_optimizer_state(
         self,
