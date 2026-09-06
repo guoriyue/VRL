@@ -1,6 +1,7 @@
-# SPRINT: reward 侧 tiny-real 仓库，以及 optional 车道的第一批真成员（planned）
+# SPRINT: reward 侧 tiny-real 仓库，以及 optional 车道的第一批真成员（done）
 
-状态：**planned / CPU-only（两个 opt-in 测试需要 `--optional`，一个需要 `--extra reward`）**。
+状态：**done（2026-09-05 re-baseline 后当日落地 RW-01/02/03/04-A/B/C/06/07/08/11；RW-04-D 未做，见 §11）**。
+原计划状态：planned / CPU-only（两个 opt-in 测试需要 `--optional`，一个需要 `--extra reward`）。
 基线：main @ `812cc3cf`。分层判据见
 `docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md`
 （Tier Policy：T1 / T2 / T2-PIPE / T3）。
@@ -624,3 +625,45 @@ WM_RUN_REAL_MODEL_TESTS=1 .venv/bin/python -m pytest tests/rewards/functions/tes
 7. **RW-04 D**（e2e 真模型 case）——优先级最低，只在 A/B/C 全绿之后做，且必须先把 `_local_reward_overrides` 参数化和 Qwen2-VL-2B 守卫补上。
 
 风险：**medium**。风险集中在两处：RW-02 的生产 sniff 修改（有兄弟实现可抄、四种布局实测通过）、RW-04 C 的 `_prepare_batch` 拆分（改的是生产文件结构，但抽出的是纯字典装配、无行为变化）。其余全部是测试侧新增或等价替换。
+
+---
+
+## 11. 执行记录（2026-09-05）
+
+### 11.1 Re-baseline：8 月 9 日基线到当天代码的差异
+
+| 条目 | 基线说 | 当天核对 |
+|---|---|---|
+| RW-02 生产 bug | `pickscore.py:66-68` 切通道轴 | **已在 28210cf6 单独修掉**（嗅探写法照抄 nsfw_safety），本 sprint 只剩测试转换 |
+| §4.6 `real_cover` | 不引入 marker | marker 与 AST 守卫已落地；本次直接给保留的替身贴 `real_cover` 标签（aesthetic revision → in-process 真 CLIP gate；pickscore revision → `None` + `tracked_in` 本文；两条 kling recorder → 新的 tiny-real `_create_model_and_processor` 测试） |
+| `tests/rewards/test_model_protocol.py` 已付 transformers import | 该文件在 test-slop 批次 6 删除 | 不影响：`kling_video_reward.py` 模块级 import 仍由 `tests/rewards/kling_video_reward/test_function.py` 触发 |
+| RW-07 环境 | `paddleocr` 未装、真引擎测试 skip | 本机装的是 **2.9.1（2.x）**，权重已缓存；旧的 `importorskip` 测试在默认车道里**真跑过引擎**，本次按动作四改为 `WM_RUN_REAL_MODEL_TESTS=1` 门控 |
+| RW-11 环境 | `vllm.v1.worker.block_table` import 失败（缺 cbor2/gguf） | 本机 `cbor2` 已装，内部 API import **成功**；门控修改仍按 §2.8 落地（只有 vLLM 缺席才 skip） |
+| 依赖 | `qwen_vl_utils` / `decord` / `cv2` 缺席 | 三者本机均在，`_prepare_batch` 的 optional 测试可以真跑 |
+| 实测数字 | tiny CLIP 108K/60K 参数；RAFT 54x | 本次 tiny 配置更小（34,369 / 10,305）；RAFT 本机纹理 **38x**（static 0.001175，moving 0.0448）；阈值不变仍留 ~2x 余量 |
+
+### 11.2 落地内容
+
+- **RW-01/02**（`tests/rewards/fixtures.py::build_tiny_clip_repo`，`shipped_aesthetic_projection_dim` 从资产推导 = 768）：aesthetic 断言 head 形状、非零权重、黑白图分数不等、批量形状；PickScore 用 `logit_scale=log 26` 对 `cosine_similarity` oracle 做 differential 断言，另加 NCHW 派发与非媒体返回 0.0 两条。`_aesthetic_head_state_dict()` 与两处 `torch.load` monkeypatch 删除。
+- **RW-03**（`tests/rewards/kling_video_reward/fixtures.py` + `test_scoring.py`）：31,824 参数真模型；八条测试按 §2.3 表逐条落地，期望值全部由同一模型的 `head_logits` 当场重算。
+- **RW-04 A/B/C**：`test_checkpoint_loader_strict_loads_a_live_model_in_either_key_layout`（真 peft 包裹 + 当前与 legacy 两种 key 布局的 `strict=True` 加载 + `_remap_qwen2vl_state_dict` 集合比对）；`test_create_model_and_processor_runs_offline_on_a_tiny_repo`（真 `Qwen2VLProcessor` 往返、special token 三个、pad/padding_side 进 config、`lora_namespan_exclude` 真的挡住 rm_head/embed_tokens/visual）；`_prepare_batch` 的纯字典段抽成模块级 `_build_chat_payload(video_paths, prompts, *, data_config, max_pixels, min_pixels)`（比 §2.4-C 多一个 `data_config` 参数，因为 fps/nframes/eval_dim 都来自它），T1 测试覆盖 budget 回落、min_pixels 条件写入、nframes 优先于 fps、非 uniform 拒绝。
+- **§5 第一条缺口已补上**：`test_prepare_batch_decodes_a_real_clip_through_the_real_processor`（`@pytest.mark.optional` + `importorskip("qwen_vl_utils")`）用 `write_mp4` 写 8 帧 mp4，走真 decode + 真 chat template + tiny 真处理器，tiny 模型前向得到 `(1, 3)` logits。tiny 处理器带一个测试拥有的最小 chat template（视频占位 + 文本），不是 hub 文件的拷贝。
+- **RW-06**（`tests/rewards/functions/test_motion_dynamics.py`）：banded flow 三条参数化 + 饱和 + 线性 + 单帧 + `divisible by 8`（默认车道 7 条）；`test_real_raft_separates_a_static_clip_from_a_panning_clip` 是 optional 车道第一个真成员。
+- **RW-08**（`tests/rewards/videoscore2/fixtures.py::build_tiny_marker_tokenizer`）：真 `PreTrainedTokenizerFast` + byte-level BPE，marker 形状与真 tokenizer 逐项一致（`consistency` 无空格形式两 token）；三条软打分测试改为喂真文本；新增双拼写 / 多 token 与无前缀多 token 两条；optional 车道第二个真成员 `test_real_videoscore2_tokenizer_has_the_marker_shape_the_fixture_assumes`。
+- **RW-07**：`_PaddleOCR2x` / `_PaddleOCR3x` 双协议参数化（substring 满分、视频编辑距离、视频不享受 image-only 捷径三条）；视频编辑距离断言收紧为 `0.875`；新增视频逐字包含目标仍得 0.0 的不变量；列长度不一致的 `zip` 截断单独成测；真引擎测试按 `WM_RUN_REAL_MODEL_TESTS=1` 门控、显式 TrueType 字体、断言形状与差分。`OCRReward.__init__` 未加参数，`_engine` seam 保留。
+- **RW-11**：`find_spec("vllm") is None` 才 skip，装了却 import 不到内部 API 直接红。
+
+### 11.3 未做
+
+- **RW-04-D**（真 2B 权重的 e2e case）：需要 GPU 与整块显存，本机有训练在跑，按"不启动整 GPU 任务"的约束不做。§2.4-D 列的三处必补项仍然成立。
+- 补 vLLM 依赖清单进 `pyproject.toml`（§2.8 的后续项）。
+
+### 11.4 验收数字
+
+| 命令 | 结果 |
+|---|---|
+| `pytest tests/rewards tests/nn/kernels/test_vllm_paged_attention_real_ops.py` | 322 passed / 6 skipped，**6.49 s**（§9.2 门槛 < 6.5 s） |
+| `--optional -k "real_raft or real_videoscore2_tokenizer or prepare_batch"` | 3 passed（0.12 s / 0.48 s / 0.41 s） |
+| `WM_RUN_REAL_MODEL_TESTS=1 ... -k real_paddleocr` | 1 passed（真 PaddleOCR 2.9.1 读出 HELLO，匹配目标分数 > 不匹配） |
+| `tests/architecture/test_real_cover_labels.py` | 10 passed（新标签全部解析） |
+| 全量 CPU 套件 | 见提交信息 |
