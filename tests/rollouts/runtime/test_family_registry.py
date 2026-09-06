@@ -14,6 +14,7 @@ from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.sampling_schema import SamplingSection
 from vrl.config.schema import parse_config
+from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.models.families.names import (
     _FAMILY_BY_ALIAS,
     normalize_model_family,
@@ -415,8 +416,14 @@ def test_rollout_config_is_projected_from_yaml() -> None:
     assert rollout.request_sampling["num_steps"] == 35
     assert rollout.samples_per_generation_batch == 8
     assert "samples_per_generation_batch" not in rollout.request_sampling
-    assert rollout.request_sampling["sde_window_range"] == [0, 10]
-    assert rollout.request_sampling["return_kl"] is True
+    assert rollout.denoise == DenoiseRequestOptions(
+        noise_level=1.0,
+        sde_type="flow_grpo",
+        sde_window_size=0,
+        sde_window_range=(0, 10),
+        return_kl=True,
+    )
+    assert "noise_level" not in rollout.request_sampling
     assert rollout.kl_reward_coef == pytest.approx(0.25)
     assert rollout.trajectory_storage == TrajectoryStoragePolicy(
         device="cpu",
@@ -517,9 +524,10 @@ def test_request_sampling_projects_only_generation_owned_rollout_values() -> Non
 
     assert sampling["width"] == 1280
     assert rollout.samples_per_generation_batch == 8
-    assert sampling["sde_type"] == "flow_grpo"
-    assert sampling["sde_window_range"] == [0, 10]
-    assert sampling["return_kl"] is False
+    assert rollout.denoise is not None
+    assert rollout.denoise.sde_type == "flow_grpo"
+    assert rollout.denoise.sde_window_range == (0, 10)
+    assert rollout.denoise.return_kl is False
     for driver_key in ("kl_reward_coef", "n_samples_per_prompt", "prompts_per_batch"):
         assert driver_key not in sampling
     assert "trajectory_storage" not in sampling

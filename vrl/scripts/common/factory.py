@@ -7,6 +7,7 @@ from typing import Any
 
 from vrl.algorithms.base import Algorithm
 from vrl.config.builders import BuiltConfigs
+from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import ModelFamilyEntry
 from vrl.ray.resources import ResolvedDistributedResources
@@ -201,6 +202,7 @@ def build_algorithm_and_evaluator(
             )
 
         math_dtype = resolve_torch_dtype(precision.diffusion_math)
+        denoise = collector_config.denoise or DenoiseRequestOptions()
         from vrl.rollouts.evaluators.denoise.sde_logprob import (
             DiffusionSDELogProbEvaluator,
         )
@@ -209,12 +211,8 @@ def build_algorithm_and_evaluator(
             algorithm=algorithm,
             evaluator=DiffusionSDELogProbEvaluator(
                 scheduler,
-                noise_level=float(
-                    collector_config.request_sampling.get("noise_level", 1.0),
-                ),
-                sde_type=str(
-                    collector_config.request_sampling.get("sde_type", "flow_grpo"),
-                ),
+                noise_level=denoise.noise_level,
+                sde_type=denoise.sde_type or "flow_grpo",
                 math_dtype=math_dtype,
             ),
         )

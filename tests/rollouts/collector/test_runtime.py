@@ -296,7 +296,9 @@ def test_nextstep_noise_level_reaches_generation_request_from_rollout_owner() ->
 
     request = builder.build(["draw text"], group_size=1).request
 
-    assert request.sampling["noise_level"] == pytest.approx(0.37)
+    assert request.denoise is not None
+    assert request.denoise.noise_level == pytest.approx(0.37)
+    assert "noise_level" not in request.sampling
 
 
 @pytest.mark.asyncio

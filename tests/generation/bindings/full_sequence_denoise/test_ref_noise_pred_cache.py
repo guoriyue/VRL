@@ -19,7 +19,11 @@ import torch
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.generation.bindings.full_sequence_denoise.layout import DiffusionRequestLayout
-from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
+from vrl.generation.steps.denoise.config import (
+    DenoiseLoopConfig,
+    DenoiseRequestOptions,
+    DenoiseSDEParams,
+)
 from vrl.generation.steps.denoise.loop import preallocate_denoise_buffers
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.models.steps.denoise import DiffusionModelBase
@@ -84,13 +88,7 @@ def test_layout_parses_cache_ref_noise_pred_flag() -> None:
         default_max_sequence_length=512,
         sde_type="flow_grpo",
     )
-    sampling = {
-        "num_steps": 3,
-        "guidance_scale": 1.0,
-        "height": 16,
-        "width": 16,
-        "cache_ref_noise_pred": True,
-    }
+    sampling = {"num_steps": 3, "guidance_scale": 1.0, "height": 16, "width": 16}
     request = GenerationRequest(
         request_id="req",
         family="sd3_5",
@@ -98,17 +96,18 @@ def test_layout_parses_cache_ref_noise_pred_flag() -> None:
         inputs=["p"],
         samples_per_prompt=1,
         sampling=sampling,
+        denoise=DenoiseRequestOptions(cache_ref_noise_pred=True),
     )
     params = layout.parse_sampling_params(request)
     assert params.sde.cache_ref_noise_pred is True
-    # Default stays off when the key is absent.
+    # Default stays off when the request carries no options.
     default_request = GenerationRequest(
         request_id="req-default",
         family="sd3_5",
         task="t2i",
         inputs=["p"],
         samples_per_prompt=1,
-        sampling={key: value for key, value in sampling.items() if key != "cache_ref_noise_pred"},
+        sampling=sampling,
     )
     assert layout.parse_sampling_params(default_request).sde.cache_ref_noise_pred is False
 

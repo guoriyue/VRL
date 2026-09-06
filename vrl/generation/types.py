@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    from vrl.generation.steps.denoise.config import DenoiseRequestOptions
     from vrl.trajectory import TrajectoryBatch, TrajectoryStoragePolicy
 
 
@@ -82,6 +83,9 @@ class GenerationRequest:
     samples_per_generation_batch: int | Literal["auto"] | None = None
     train_segments: dict[str, bool] | None = None
     trajectory_storage: TrajectoryStoragePolicy | None = None
+    # Rollout-owned denoise knobs (rollout.* / rollout.sde.*), projected once by
+    # the collector. ``None`` on hand-built requests means the option defaults.
+    denoise: DenoiseRequestOptions | None = None
     runtime_debug: bool = False
     policy_version: int | None = None
 
@@ -96,6 +100,7 @@ class GenerationRequest:
         samples_per_generation_batch: int | Literal["auto"] | None = None,
         train_segments: dict[str, bool] | None = None,
         trajectory_storage: TrajectoryStoragePolicy | None = None,
+        denoise: DenoiseRequestOptions | None = None,
         runtime_debug: bool = False,
         policy_version: int | None = None,
     ) -> None:
@@ -118,6 +123,7 @@ class GenerationRequest:
         self.samples_per_generation_batch = samples_per_generation_batch
         self.train_segments = None if train_segments is None else dict(train_segments)
         self.trajectory_storage = trajectory_storage
+        self.denoise = denoise
         self.runtime_debug = runtime_debug
         self.policy_version = policy_version
         self.__post_init__()

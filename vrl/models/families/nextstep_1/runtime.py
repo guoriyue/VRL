@@ -18,6 +18,7 @@ from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
     require_matching_batch_context,
 )
+from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
@@ -77,7 +78,6 @@ class NextStep1BatchExecutor(ARBatchExecutorBase):
 
     - ``guidance_scale``: float
     - ``num_steps``: int
-    - ``noise_level``: float
     - ``image_token_num``: int (L_img — number of continuous image tokens)
     - ``image_size``: int (passed to ``decode_image_tokens``)
     - ``max_text_length``: int
@@ -118,7 +118,7 @@ class NextStep1BatchExecutor(ARBatchExecutorBase):
 
         guidance_scale = float(sampling["guidance_scale"])
         num_steps = int(sampling["num_steps"])
-        noise_level = float(sampling["noise_level"])
+        noise_level = (request.denoise or DenoiseRequestOptions()).noise_level
 
         repeated_prompts = [request.inputs[batch.prompt_index].prompt] * batch.sample_count
         prompt_ids, prompt_mask = self._tokenize_prompts(

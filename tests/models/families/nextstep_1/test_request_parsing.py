@@ -14,6 +14,7 @@ from vrl.config.schema import parse_config
 from vrl.generation import GenerationRequest
 from vrl.generation.bindings.token_autoregressive import ARRequestLayout
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
+from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.models.families.nextstep_1 import runtime as nextstep_runtime
 from vrl.models.families.nextstep_1.config import (
     NextStep1Config,
@@ -308,12 +309,12 @@ def test_batch_context_keeps_only_flow_replay_parameters(
         sampling={
             "guidance_scale": 2.5,
             "num_steps": 4,
-            "noise_level": 0.8,
             "image_token_num": 4,
             "image_size": 32,
             "max_text_length": 8,
             "ar_scheduler_batch_size": 3,
         },
+        denoise=DenoiseRequestOptions(noise_level=0.8),
     )
 
     result = executor.forward_batch(

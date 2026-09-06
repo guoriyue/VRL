@@ -11,7 +11,7 @@ from typing import Any, TypeVar
 import torch
 
 from vrl.generation.execution.sample_batches import ordered_covering_batches
-from vrl.generation.steps.denoise.config import DenoiseSDEParams
+from vrl.generation.steps.denoise.config import DenoiseRequestOptions, DenoiseSDEParams
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig
 from vrl.generation.types import (
     DenoiseRequest,
@@ -83,6 +83,7 @@ class DiffusionRequestLayout:
         """Parse shared diffusion sampling fields from GenerationRequest."""
 
         sampling = request.sampling
+        options = request.denoise if request.denoise is not None else DenoiseRequestOptions()
         num_steps = int(sampling["num_steps"])
         fps_value = sampling.get("fps", self.default_fps)
         max_sequence_length = sampling.get(
@@ -108,23 +109,15 @@ class DiffusionRequestLayout:
             model_request_kwargs["negative_prompt"] = sampling["negative_prompt"]
         if seed is not None:
             model_request_kwargs["seed"] = int(seed)
-        denoise_mode = self._parse_denoise_mode(sampling.get("denoise_mode", "sde"))
-        sde_window_range = self._parse_sde_window_range(
-            sampling.get("sde_window_range", (0, num_steps)),
-            num_steps=num_steps,
-        )
-        sde_window_size = int(sampling.get("sde_window_size", 0))
-        self._validate_sde_window_size(sde_window_size, sde_window_range)
+        # The typed options carry the rollout-owned knobs; only the two values
+        # that depend on the executor or the schedule resolve here.
+        sde_window_range = options.resolve_sde_window_range(num_steps)
         sde = DenoiseSDEParams(
-            noise_level=float(sampling.get("noise_level", 1.0)),
-            sde_type=self._parse_sde_type(sampling.get("sde_type", self.sde_type)),
-            return_kl=bool(sampling.get("return_kl", False)),
-            return_prev_sample_mean=bool(
-                sampling.get("return_prev_sample_mean", False),
-            ),
-            cache_ref_noise_pred=bool(
-                sampling.get("cache_ref_noise_pred", False),
-            ),
+            noise_level=options.noise_level,
+            sde_type=options.sde_type or self.sde_type,
+            return_kl=options.return_kl,
+            return_prev_sample_mean=options.return_prev_sample_mean,
+            cache_ref_noise_pred=options.cache_ref_noise_pred,
         )
         params = DiffusionSamplingParams(
             model_request=DenoiseRequest(**model_request_kwargs),
@@ -132,10 +125,10 @@ class DiffusionRequestLayout:
                 None if max_sequence_length is None else int(max_sequence_length)
             ),
             sde=sde,
-            sde_window_size=sde_window_size,
+            sde_window_size=options.sde_window_size,
             sde_window_range=sde_window_range,
-            denoise_mode=denoise_mode,
-            teacache=TeaCacheConfig.from_sampling(sampling.get("teacache")),
+            denoise_mode=options.denoise_mode,
+            teacache=options.teacache,
         )
         # Resolve the stochastic window HERE, once per request, so every sample
         # batch built from these params shares it (see select_sde_window).
@@ -212,52 +205,6 @@ class DiffusionRequestLayout:
         else:
             start = random.randint(lo, hi - sde_window_size)
         return (start, start + sde_window_size)
-
-    @staticmethod
-    def _parse_sde_window_range(value: Any, *, num_steps: int) -> tuple[int, int]:
-        try:
-            lo = int(value[0])
-            hi = int(value[1])
-        except (TypeError, IndexError, ValueError) as exc:
-            raise ValueError(
-                "sampling.sde_window_range must contain two integer values",
-            ) from exc
-        if lo < 0 or hi <= lo or hi > num_steps:
-            raise ValueError(
-                "sampling.sde_window_range must satisfy 0 <= lo < hi <= num_steps",
-            )
-        return lo, hi
-
-    @staticmethod
-    def _validate_sde_window_size(
-        sde_window_size: int,
-        sde_window_range: tuple[int, int],
-    ) -> None:
-        if sde_window_size < 0:
-            raise ValueError("sampling.sde_window_size must be >= 0")
-        lo, hi = sde_window_range
-        if sde_window_size > hi - lo:
-            raise ValueError(
-                "sampling.sde_window_size cannot exceed sampling.sde_window_range",
-            )
-
-    @staticmethod
-    def _parse_sde_type(value: Any) -> str:
-        sde_type = str(value)
-        if sde_type not in {"flow_grpo", "cps", "ddim"}:
-            raise ValueError(
-                "sampling.sde_type must be 'flow_grpo', 'cps', or 'ddim'",
-            )
-        return sde_type
-
-    @staticmethod
-    def _parse_denoise_mode(value: Any) -> str:
-        denoise_mode = str(value).strip().lower()
-        if denoise_mode not in {"native", "sde"}:
-            raise ValueError(
-                "sampling.denoise_mode must be 'native' or 'sde'",
-            )
-        return denoise_mode
 
 
 __all__ = [

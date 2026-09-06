@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
+from dataclasses import fields, replace
 from typing import Any, NamedTuple
 
 from vrl.generation import GenerationInput, GenerationRequest
+from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.models.families.registry import ModelFamilyEntry
 from vrl.models.families.semantics import task_type_for
 from vrl.rollouts.collector.config import RolloutCollectorConfig
+
+_DENOISE_FIELDS = frozenset(item.name for item in fields(DenoiseRequestOptions))
 
 
 class CollectorRequest(NamedTuple):
@@ -50,7 +54,16 @@ class GenerationRequestBuilder:
             str(field_name): list(value) if isinstance(value, tuple) else value
             for field_name, value in self.config.request_sampling.items()
         }
-        sampling.update(dict(request_overrides or {}))
+        overrides = dict(request_overrides or {})
+        # A per-prompt override of a denoise knob lands on the typed options
+        # (re-validated by replace); everything else stays a sampling key.
+        denoise = self.config.denoise
+        denoise_overrides = {
+            name: overrides.pop(name) for name in tuple(overrides) if name in _DENOISE_FIELDS
+        }
+        if denoise_overrides:
+            denoise = replace(denoise or DenoiseRequestOptions(), **denoise_overrides)
+        sampling.update(overrides)
 
         group_metadata = dict(metadata or {})
         if "fps" in sampling:
@@ -81,6 +94,7 @@ class GenerationRequestBuilder:
             samples_per_generation_batch=self.config.samples_per_generation_batch,
             train_segments=self.config.train_segments,
             trajectory_storage=self.config.trajectory_storage,
+            denoise=denoise,
             runtime_debug=runtime_debug,
             policy_version=policy_version,
         )
