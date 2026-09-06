@@ -1,80 +1,97 @@
-"""Tests for CLIP-backed in-process reward models."""
+"""Tests for CLIP-backed in-process reward models.
+
+Scoring runs on tiny real CLIP repositories (``tests/rewards/fixtures.py``): the
+production loaders read a genuine ``CLIPModel``/``CLIPProcessor`` from disk, the
+aesthetic head loads the shipped LAION asset, and PickScore's arithmetic is
+checked against an independent oracle. The revision-forwarding tests keep a
+recorder because a local directory has no revision to observe (see their labels).
+"""
 
 from __future__ import annotations
 
+import math
+from pathlib import Path
+
+import numpy as np
 import pytest
 import torch
+from PIL import Image
+
+from tests.rewards.fixtures import build_tiny_clip_repo, shipped_aesthetic_projection_dim
+
+pytest.importorskip("transformers")
 
 
-def _aesthetic_head_state_dict() -> dict[str, torch.Tensor]:
-    layers = (
-        (0, 768, 1024),
-        (2, 1024, 128),
-        (4, 128, 64),
-        (6, 64, 16),
-        (7, 16, 1),
+@pytest.fixture(scope="session")
+def aesthetic_clip_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A tiny CLIP whose projection width matches the shipped aesthetic head."""
+
+    return build_tiny_clip_repo(
+        tmp_path_factory.mktemp("tiny-clip-aesthetic"),
+        projection_dim=shipped_aesthetic_projection_dim(),
+        logit_scale_init_value=0.0,
     )
-    state_dict: dict[str, torch.Tensor] = {}
-    for index, in_features, out_features in layers:
-        state_dict[f"layers.{index}.weight"] = torch.zeros(out_features, in_features)
-        state_dict[f"layers.{index}.bias"] = torch.zeros(out_features)
-    return state_dict
 
 
-def test_aesthetic_model_reads_transformers_5_projected_image_features(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.fixture(scope="session")
+def pickscore_clip_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A tiny CLIP whose logit scale makes PickScore's ``/26`` cancel exactly."""
+
+    return build_tiny_clip_repo(
+        tmp_path_factory.mktemp("tiny-clip-pickscore"),
+        projection_dim=16,
+        logit_scale_init_value=math.log(26.0),
+    )
+
+
+def _solid_image(value: int, size: int = 12) -> Image.Image:
+    return Image.fromarray(np.full((size, size, 3), value, dtype=np.uint8))
+
+
+def test_aesthetic_model_loads_the_shipped_head_over_a_real_clip(
+    aesthetic_clip_repo: Path,
 ) -> None:
-    """Checks the LAION head receives CLIP's projected Transformers 5 output."""
-    transformers = pytest.importorskip("transformers")
-    from transformers.modeling_outputs import BaseModelOutputWithPooling
+    """The LAION head really loads and the projected CLIP feature really drives it.
+
+    A zero-weight head returns 0.0 for every input, so only a genuinely loaded
+    head can make two images score differently. Scores are compared, never
+    pinned: their values depend on the tiny CLIP's random init.
+    """
 
     from vrl.rewards.models.aesthetic import AestheticRewardModel
 
-    class _FakeClip(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.anchor = torch.nn.Parameter(torch.zeros(()))
-
-        def get_image_features(self, *, pixel_values: torch.Tensor):
-            batch_size = pixel_values.shape[0]
-            return BaseModelOutputWithPooling(
-                last_hidden_state=torch.zeros(batch_size, 2, 1024),
-                pooler_output=torch.ones(batch_size, 768),
-            )
-
-    class _FakeProcessor:
-        def __call__(self, *, images, return_tensors: str):
-            assert return_tensors == "pt"
-            return {"pixel_values": torch.zeros(len(images), 3, 2, 2)}
-
-    monkeypatch.setattr(
-        transformers.CLIPModel,
-        "from_pretrained",
-        staticmethod(lambda *args, **kwargs: _FakeClip()),
+    model = AestheticRewardModel(
+        {"device": "cpu", "dtype": "float32", "model_name": str(aesthetic_clip_repo)},
     )
-    monkeypatch.setattr(
-        transformers.CLIPProcessor,
-        "from_pretrained",
-        staticmethod(lambda *args, **kwargs: _FakeProcessor()),
-    )
-    monkeypatch.setattr(torch, "load", lambda *args, **kwargs: _aesthetic_head_state_dict())
-
-    model = AestheticRewardModel({"device": "cpu", "dtype": "float32"})
     model.prepare_for_inference()
 
-    scores = model._module([object(), object()])
+    head = model._module.mlp.layers[0]
+    assert tuple(head.weight.shape) == (1024, shipped_aesthetic_projection_dim())
+    assert float(head.weight.detach().abs().sum()) > 0.0
 
-    assert scores.shape == (2,)
-    assert torch.isfinite(scores).all()
+    black = model.score_media(media=torch.zeros(3, 12, 12), prompt="")
+    white = model.score_media(media=torch.ones(3, 12, 12), prompt="")
+    assert black["aesthetic"] != white["aesthetic"]
+    # Batched images come back as one score per image (the ``.squeeze(1)`` contract).
+    assert model._module([_solid_image(0), _solid_image(255)]).shape == (2,)
 
 
+@pytest.mark.real_cover(
+    "tests/rewards/inference/test_in_process_runtime.py"
+    "::test_real_aesthetic_score_parks_stably_across_two_cycles",
+    why=(
+        "a local directory has no revision: CLIPModel.from_pretrained(<dir>, revision=...) "
+        "silently ignores the argument, so which revision reached the hub loaders can only "
+        "be observed by recording the call; the counterpart loads the real hub checkpoint"
+    ),
+)
 @pytest.mark.parametrize("revision", [None, "aesthetic-immutable-revision"])
 def test_aesthetic_model_passes_optional_revision_to_clip_loaders(
     monkeypatch: pytest.MonkeyPatch,
     revision: str | None,
 ) -> None:
     """The model and processor resolve the same optional CLIP revision."""
-    transformers = pytest.importorskip("transformers")
+    import transformers
 
     from vrl.rewards.models.aesthetic import AestheticRewardModel
 
@@ -100,7 +117,6 @@ def test_aesthetic_model_passes_optional_revision_to_clip_loaders(
         "from_pretrained",
         staticmethod(load_processor),
     )
-    monkeypatch.setattr(torch, "load", lambda *args, **kwargs: _aesthetic_head_state_dict())
     config = {"device": "cpu", "dtype": "float32"}
     if revision is not None:
         config["model_revision"] = revision
@@ -114,44 +130,66 @@ def test_aesthetic_model_passes_optional_revision_to_clip_loaders(
     ]
 
 
-def test_pickscore_reads_transformers_5_projected_image_and_text_features() -> None:
-    """Checks PickScore unwraps both projected Transformers 5 feature outputs."""
-    pytest.importorskip("transformers")
-    from transformers.modeling_outputs import BaseModelOutputWithPooling
+def test_pickscore_matches_an_independent_cosine_oracle(pickscore_clip_repo: Path) -> None:
+    """With ``logit_scale == 26`` the production ``logit_scale * (t @ i.T) / 26``
+    collapses to the mean matched-pair cosine similarity, which
+    ``F.cosine_similarity`` computes by a different route. Change ``/26`` to
+    ``/13`` and the score doubles.
+
+    The ``.diag()`` choice is not observable here: every image shares one prompt,
+    so the diagonal mean equals the full-matrix mean. That needs per-image
+    prompts, which is a real end-to-end concern, not this test's.
+    """
 
     from vrl.rewards.models.pickscore import PickScoreRewardModel
 
-    class _FakeProcessor:
-        def __call__(self, *, images=None, text=None, **kwargs):
-            del kwargs
-            if images is not None:
-                return {"pixel_values": torch.zeros(len(images), 3, 2, 2)}
-            return {"input_ids": torch.zeros(len(text), 2, dtype=torch.long)}
+    model = PickScoreRewardModel(
+        {
+            "device": "cpu",
+            "model_name": str(pickscore_clip_repo),
+            "processor_name": str(pickscore_clip_repo),
+        },
+    )
+    images = [_solid_image(0), _solid_image(128), _solid_image(255)]
+    prompt = "a green square"
 
-    class _FakeModel:
-        logit_scale = torch.tensor(0.0)
+    score = model._score(prompt, images)
 
-        def get_image_features(self, *, pixel_values: torch.Tensor):
-            batch_size = pixel_values.shape[0]
-            return BaseModelOutputWithPooling(
-                last_hidden_state=torch.zeros(batch_size, 2, 1024),
-                pooler_output=torch.eye(batch_size),
-            )
+    clip = model._module_for_inference()
+    with torch.no_grad():
+        image_inputs = model._processor(images=images, return_tensors="pt")
+        image_embeds = clip.get_image_features(**image_inputs).pooler_output
+        text_inputs = model._processor(
+            text=[prompt] * len(images), padding=True, return_tensors="pt"
+        )
+        text_embeds = clip.get_text_features(**text_inputs).pooler_output
+        expected = torch.nn.functional.cosine_similarity(text_embeds, image_embeds, dim=-1).mean()
+    assert float(clip.logit_scale.exp()) == pytest.approx(26.0, rel=1e-6)
+    assert score == pytest.approx(float(expected), abs=1e-6)
 
-        def get_text_features(self, *, input_ids: torch.Tensor):
-            batch_size = input_ids.shape[0]
-            return BaseModelOutputWithPooling(
-                last_hidden_state=torch.zeros(batch_size, 2, 1024),
-                pooler_output=torch.eye(batch_size),
-            )
 
-    model = PickScoreRewardModel({"device": "cpu"})
-    model._processor = _FakeProcessor()
-    model._module = _FakeModel()
+def test_pickscore_score_media_dispatches_tensors_and_rejects_non_media(
+    pickscore_clip_repo: Path,
+) -> None:
+    """NCHW tensors reach the scorer as PIL images; unknown media scores 0.0."""
 
-    score = model._score("prompt", [object(), object()])
+    from vrl.rewards.models.pickscore import PickScoreRewardModel
 
-    assert score == pytest.approx(1.0 / 26.0)
+    model = PickScoreRewardModel(
+        {
+            "device": "cpu",
+            "model_name": str(pickscore_clip_repo),
+            "processor_name": str(pickscore_clip_repo),
+        },
+    )
+    batch = torch.zeros(2, 3, 12, 12)
+    batch[1] = 1.0
+
+    scored = model.score_media(media=batch, prompt="a square")
+    reference = model._score("a square", [_solid_image(0), _solid_image(255)])
+
+    assert scored == {"pickscore": pytest.approx(reference)}
+    assert model.score_media(media="not-media", prompt="a square") == {"pickscore": 0.0}
 
 
 @pytest.mark.parametrize("layout", ["BCTHW", "BTCHW"])
@@ -180,6 +218,16 @@ def test_pickscore_score_media_scores_the_middle_frame_of_a_video(
     assert all(image.getextrema() == ((255, 255),) * 3 for image in images)
 
 
+@pytest.mark.real_cover(
+    None,
+    why=(
+        "a local directory has no revision: CLIPModel.from_pretrained(<dir>, revision=...) "
+        "silently ignores the argument, so which revision reached the hub loaders can only "
+        "be observed by recording the call; the real PickScore_v1 hub load has no "
+        "opt-in counterpart yet"
+    ),
+    tracked_in="docs/sprints/done/SPRINT_reward-tiny-real-and-optional-lanes.md",
+)
 @pytest.mark.parametrize(
     ("processor_revision", "model_revision"),
     [
@@ -193,7 +241,7 @@ def test_pickscore_passes_optional_revisions_to_matching_loaders(
     model_revision: str | None,
 ) -> None:
     """Processor and model revisions remain independent optional boundaries."""
-    transformers = pytest.importorskip("transformers")
+    import transformers
 
     from vrl.rewards.models.pickscore import PickScoreRewardModel
 
