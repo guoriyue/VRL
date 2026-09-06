@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 
+from vrl.models.interfaces import RuntimeBundle
 from vrl.models.weight_utils import unwrap_compile_and_ddp
 from vrl.trajectory.device import map_tensor_tree
 
@@ -95,7 +96,7 @@ class RayRuntimeWeightSyncer(WeightSyncer):
         return self.runtime.current_policy_version
 
 
-def build_trainable_state_sync_getter(bundle: Any) -> TrainableStateGetter:
+def build_trainable_state_sync_getter(bundle: RuntimeBundle) -> TrainableStateGetter:
     """Build the flattened trainable-state getter used by rollout sync.
 
     Checkpoints store trainable modules as a nested mapping keyed by module
@@ -167,9 +168,9 @@ def _resolve_next_policy_version(
     return int(current) + 1
 
 
-def require_trainable_modules(bundle: Any) -> Mapping[str, Any]:
-    modules = getattr(bundle, "trainable_modules", None)
-    if not isinstance(modules, Mapping) or not modules:
+def require_trainable_modules(bundle: RuntimeBundle) -> Mapping[str, Any]:
+    modules = bundle.trainable_modules
+    if not modules:
         raise ValueError("RuntimeBundle.trainable_modules must be a non-empty mapping")
     return modules
 

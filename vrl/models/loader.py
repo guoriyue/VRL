@@ -83,19 +83,19 @@ def load_flow_match_scheduler(
     return rebuilt
 
 
-def validate_rollout_quantization_support(build: Any) -> None:
+def validate_rollout_quantization_support(build: ModelBuild) -> None:
     """Fail before model mutation when the requested rollout format cannot run."""
 
-    quantization = getattr(getattr(build, "precision", None), "quantization", None)
+    quantization = build.precision.quantization
     if quantization is None or quantization.format != "nvfp4":
         return
     from vrl.nn.quantization import nvfp4_available
 
-    if not nvfp4_available(getattr(build, "device", None)):
+    if not nvfp4_available(build.device):
         raise RuntimeError(
             "precision.rollout.quantization.format='nvfp4' requires an "
             "NVFP4-capable CUDA target (Blackwell-class, compute capability "
-            f">= 10.0); got {getattr(build, 'device', None)!r}",
+            f">= 10.0); got {build.device!r}",
         )
 
 

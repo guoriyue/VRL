@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from vrl.rollouts.orchestration.continuous import (
     ContinuousRolloutSchedule,
@@ -18,6 +18,10 @@ from vrl.rollouts.orchestration.types import (
     RolloutScheduleMode,
 )
 from vrl.rollouts.stats import RolloutStats
+
+if TYPE_CHECKING:
+    from vrl.ray.resources import ResolvedDistributedResources
+    from vrl.trainers.core.types import RolloutOrchestrationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +96,10 @@ def build_rollout_schedule(
     raise AssertionError(f"unreachable rollout schedule mode: {mode}")
 
 
-def validate_rollout_schedule_topology(config: Any, resources: Any) -> None:
+def validate_rollout_schedule_topology(
+    config: RolloutOrchestrationConfig,
+    resources: ResolvedDistributedResources,
+) -> None:
     """Reject a schedule whose phase semantics contradict resolved GPU ownership.
 
     The online entrypoint calls this after resource resolution and before model or

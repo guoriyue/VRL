@@ -12,11 +12,16 @@ and model-build resolver facades are gone.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.models.precision import apply_float32_precision
+
+if TYPE_CHECKING:
+    # The registry imports this module lazily inside its build methods; a
+    # module-level import back would close that cycle.
+    from vrl.models.families.registry import ModelFamilyEntry
 
 
 def _validate_token_lora_path(build: ModelBuild) -> None:
@@ -72,7 +77,7 @@ def build_token_family_bundle(
     build: ModelBuild,
     *,
     replay: bool,
-    entry: Any,
+    entry: ModelFamilyEntry,
 ) -> RuntimeBundle:
     if build.family != entry.family:
         raise ValueError(
