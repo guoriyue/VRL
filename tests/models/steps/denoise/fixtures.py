@@ -483,12 +483,20 @@ def build_tiny_pipeline_shell(
     )
 
 
-def build_tiny_wan_vae(*, seed: int = 0, z_dim: int = 4) -> Any:
+def build_tiny_wan_vae(
+    *,
+    seed: int = 0,
+    z_dim: int = 4,
+    latents_mean: float = 0.0,
+    latents_std: float = 1.0,
+) -> Any:
     """A real tiny ``AutoencoderKLWan`` on CPU, random-init from a seed.
 
     Wan's VAE carries ``z_dim`` / ``latents_mean`` / ``latents_std`` as genuine
     diffusers config fields, which is the point: production reads them off
     ``vae.config``, so a double that re-declares them cannot catch a rename.
+    Non-trivial ``latents_mean`` / ``latents_std`` make a denormalizing decode
+    observable (the identity stats hide a dropped mean or a swapped std).
     """
 
     from diffusers import AutoencoderKLWan
@@ -499,6 +507,98 @@ def build_tiny_wan_vae(*, seed: int = 0, z_dim: int = 4) -> Any:
         z_dim=z_dim,
         dim_mult=[1, 1],
         num_res_blocks=1,
-        latents_mean=[0.0] * z_dim,
-        latents_std=[1.0] * z_dim,
+        latents_mean=[latents_mean] * z_dim,
+        latents_std=[latents_std] * z_dim,
+    )
+
+
+# Tiny real Cosmos3 Omni geometry: the transformer's latent channel count is
+# the VAE's ``z_dim``; ``patch_latent_dim = latent_channel * latent_patch_size**2``
+# and ``sum(mrope_section) == head_dim // 2`` are construction constraints, so
+# the numbers below are honest, not coincidental.
+TINY_COSMOS3_LATENT_CHANNELS = 4
+TINY_COSMOS3_HEAD_DIM = 16
+TINY_COSMOS3_LATENT_PATCH_SIZE = 2
+
+
+def build_tiny_cosmos3_tokenizer() -> Any:
+    """A real ``PreTrainedTokenizerFast`` carrying what ``Cosmos3OmniPipeline`` reads.
+
+    The pipeline's ``__init__`` calls ``convert_tokens_to_ids("<|vision_start|>")``
+    and reads ``eos_token_id``; ``tokenize_prompt`` renders a Qwen-style chat
+    template. A word-level vocabulary with those special tokens and a minimal
+    template satisfies all three through the library's own code paths.
+    """
+
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    specials = ["<unk>", "<|endoftext|>", "<|im_start|>", "<|im_end|>", "<|vision_start|>"]
+    words = ["system", "user", "assistant", "a", "cat", "video", "the", "is", "of", "long"]
+    vocab = {token: index for index, token in enumerate([*specials, *words])}
+    core = Tokenizer(models.WordLevel(vocab, unk_token="<unk>"))
+    core.pre_tokenizer = pre_tokenizers.Whitespace()
+    template = (
+        "{% for m in messages %}<|im_start|>{{ m['role'] }}\n{{ m['content'] }}<|im_end|>\n"
+        "{% endfor %}{% if add_generation_prompt %}<|im_start|>assistant\n{% endif %}"
+    )
+    return PreTrainedTokenizerFast(
+        tokenizer_object=core,
+        eos_token="<|endoftext|>",
+        pad_token="<|endoftext|>",
+        unk_token="<unk>",
+        additional_special_tokens=["<|im_start|>", "<|im_end|>", "<|vision_start|>"],
+        chat_template=template,
+    )
+
+
+def build_tiny_cosmos3_transformer(*, vocab_size: int, seed: int = 0) -> Any:
+    """Tiny real ``Cosmos3OmniTransformer`` (~30K params) on CPU, cache-free."""
+
+    from diffusers import Cosmos3OmniTransformer
+
+    torch.manual_seed(seed)
+    return Cosmos3OmniTransformer(
+        head_dim=TINY_COSMOS3_HEAD_DIM,
+        hidden_size=32,
+        intermediate_size=64,
+        latent_channel=TINY_COSMOS3_LATENT_CHANNELS,
+        latent_patch_size=TINY_COSMOS3_LATENT_PATCH_SIZE,
+        patch_latent_dim=TINY_COSMOS3_LATENT_CHANNELS * TINY_COSMOS3_LATENT_PATCH_SIZE**2,
+        num_attention_heads=2,
+        num_hidden_layers=1,
+        num_key_value_heads=1,
+        vocab_size=vocab_size,
+        rope_scaling={"mrope_section": [TINY_COSMOS3_HEAD_DIM // 4, 2, 2]},
+        dtype="float32",
+    )
+
+
+def build_tiny_cosmos3_pipeline(
+    *,
+    seed: int = 0,
+    latents_mean: float = 0.0,
+    latents_std: float = 1.0,
+) -> Any:
+    """Tiny real ``Cosmos3OmniPipeline``: real transformer + VAE + scheduler + tokenizer.
+
+    ``enable_safety_checker=False`` mirrors ``Cosmos3Model.from_build`` and keeps
+    the cosmos_guardrail dependency out; the pipeline still registers the two
+    ``None`` slots (``sound_tokenizer`` / ``safety_checker``) in ``.components``.
+    """
+
+    from diffusers import Cosmos3OmniPipeline, UniPCMultistepScheduler
+
+    tokenizer = build_tiny_cosmos3_tokenizer()
+    return Cosmos3OmniPipeline(
+        transformer=build_tiny_cosmos3_transformer(vocab_size=len(tokenizer), seed=seed),
+        text_tokenizer=tokenizer,
+        vae=build_tiny_wan_vae(
+            seed=seed,
+            z_dim=TINY_COSMOS3_LATENT_CHANNELS,
+            latents_mean=latents_mean,
+            latents_std=latents_std,
+        ),
+        scheduler=UniPCMultistepScheduler(),
+        enable_safety_checker=False,
     )
