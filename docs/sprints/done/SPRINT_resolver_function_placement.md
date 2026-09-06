@@ -334,6 +334,59 @@ assert (sana_inference.require_scheduler(DPMSolverMultistepScheduler())
 accept-path 的观测口。改名后调用点变成 `require_*(...)` 却不接返回值，这个「丢弃」是显式可见的，
 比原来叫 `validate_*` 时更诚实。
 
+## 4sexies. 第五轮：改名之后真正并进类里（48 → 42）
+
+改名不是目的，是前置——名字统一之后才能按「第一参数是什么类型」把 48 个一次看完。这一轮搬了 6 个。
+
+### 4s.1 我漏掉的三个构造器
+
+`ArtifactManifestReport` 和这三个函数在同一模块（`vrl/trainers/data/artifacts.py:36`），
+函数体里唯一的构造调用就是它——**完全符合 §2 的判据，前四轮都漏了**，因为我只扫了
+`resolve_/parse_/compute_` 前缀，没扫 `validate_`（改名后它们才叫 `require_*`）：
+
+| 之前 | 之后 |
+|---|---|
+| `require_artifact_manifest(path, ...)` | `ArtifactManifestReport.from_manifest(...)` |
+| `require_artifact_manifest_pair(train, eval, ...)` | `ArtifactManifestReport.from_pair(...)` |
+| `require_source_backed_video_world_manifest_pair(...)` | `ArtifactManifestReport.from_video_world_pair(...)` |
+
+**教训**：判据是按「函数名 vs 返回类型」定的，扫描却是按前缀做的——前缀集合不全就会漏。
+第四轮的改名把 `validate_* -> 值` 这一半暴露出来，这三个才浮上来。
+
+### 4s.2 三个真正有主人的校验器
+
+先用第四轮学到的那条过滤（**名义类型还是结构类型**）：查每个调用点传的是真实例还是桩。
+三个都是名义的（测试构造真实例 19 / 95 / `.load()` 次，零 `SimpleNamespace`/`_Fake`），所以可以搬：
+
+| 之前 | 之后 |
+|---|---|
+| `require_prompt_and_video_path(artifact, *, family)` | `artifact.require_prompt_and_video_path(family=...)` |
+| `validate_batch_range(request, *, prompt_index, ...)` | `request.validate_batch_range(...)` |
+| `validate_paired_generation_archives(base, checkpoint)` | `AnimaGenerationArchive.validate_pair(base, checkpoint)` |
+
+`require_prompt_and_video_path` 的 `family=` 参数在每个调用点都是调用者自己的字面量
+（`"HPSv3"` / `"VideoScore2"`），按 Rule 1 是所有权信号——但被命名的行为（取 prompt +
+解析媒体路径）属于 **artifact**，`family` 只进错误消息，正好落在 Rule 1 的反例（错误域标签）上。
+所以方法挂在 artifact 上，`family=` 保留为关键字参数。
+
+### 4s.3 顺手修掉一处潜在断裂
+
+`vrl/trainers/data/__init__.py` 的 lazy 导出表还指着被删掉的两个名字。测试全绿**是因为没人走那条路**——
+`from vrl.trainers.data import require_artifact_manifest` 会在访问时才炸。已清理。
+**门面模块的 lazy 导出表不会被符号改名波及，每次删导出都要单独查。**
+
+### 4s.4 剩下的 42 个：为什么不能再并
+
+- **10 个原始值收窄器**（`require_exact_int` / `require_http_origin` / `require_plain_dtype` /
+  `require_timeout` / `validate_string_tuple` …）：入参是 `str`/`int`/原始 YAML，没有主人。
+- **4 个跨 section 配置校验器**（`validate_compile_compatible` / `validate_guarded_rollout_drift` /
+  `validate_production_*`）：见 §3.3，且有**硬技术阻断**——`tests/config/test_load_all_experiments.py`
+  的 `test_config_parsing_stays_torch_free` 要求 config 解析不加载 torch，而这四个都要惰性 import
+  碰 torch 的模块。挂到 `RootConfig` 上就会把 torch 拽进解析路径。
+- **2 个结构类型**（`require_trainable_modules` / `validate_rollout_quantization_support`）：见 §4quater，
+  实测搬家会红 146 条。
+- 其余是序列/多参数入口，没有单一所有者。
+
 ## 5. 未决项（唯一一条）
 
 `Any` + `owner=`/`what=` 字符串的 4 个收窄器，按 Rule 1 + Rule 2 都可疑，但它们做的是
@@ -378,9 +431,10 @@ vrl/models/dtypes.py:104              require_plain_dtype(value: Any, *, what: s
 
 ## 8. 总账
 
-四轮合计：**9 个自由函数变成 classmethod（命名统一为 `from_<输入>`），23 处 `require_`/`validate_`
-按「是否返回值」统一，6 个防御性 `getattr` 删除，4 个 `Any` 参数标注，2 次搬家尝试被实测否决
-并记录了原因**。
+五轮合计：**15 个自由函数并进了类（9 个 classmethod 构造器 + 3 个 manifest 构造器 + 3 个方法），
+23 处 `require_`/`validate_` 按「是否返回值」统一命名，6 个防御性 `getattr` 删除，4 个 `Any` 参数
+标注，1 处失效的门面导出清理，2 次搬家尝试被实测否决并记录了原因**。
+`require_`/`validate_` 自由函数从 48 降到 42，剩下的每一个都有 §4s.4 里的具体理由。
 审过的函数总数 123 + 约 120 = 约 240 个；判定「该搬家」的比例约 4%。
 这个比例本身是结论：仓库里 `require_/build_/resolve_/validate_` 密集**不是**设计问题，
 绝大多数有正当理由；值得改的是那一小撮「名字和返回类型指同一个概念」的构造器。
