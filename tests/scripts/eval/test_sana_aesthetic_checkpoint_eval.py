@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +9,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 
+from tests.scripts.eval.fixtures import build_official_sana_scheduler
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
@@ -790,14 +790,6 @@ def test_training_log_binds_configured_revisions_without_network_log_scraping(tm
 
 
 def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None:
-    class DPMSolverMultistepScheduler:
-        def __init__(self) -> None:
-            self.config = {
-                key: value
-                for key, value in sana_inference.SCHEDULER_PROTOCOL.items()
-                if key != "class_name"
-            }
-
     class FakePipeline:
         scheduler = None
 
@@ -817,7 +809,7 @@ def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None
     )
     decoded = sana_inference.generate_prompt_images(
         model,
-        scheduler=DPMSolverMultistepScheduler(),
+        scheduler=build_official_sana_scheduler(),
         prompt="fox",
         seed=sana_report.group_seed(0),
         num_images=sana_report.EVAL_SAMPLES_PER_PROMPT,
@@ -841,25 +833,20 @@ def test_official_scheduler_uses_build_revision_projection(
     revision,
     expected_revision,
 ) -> None:
+    import diffusers
+
     calls: list[tuple[object, dict]] = []
 
-    class DPMSolverMultistepScheduler:
-        def __init__(self) -> None:
-            self.config = {
-                key: value
-                for key, value in sana_inference.SCHEDULER_PROTOCOL.items()
-                if key != "class_name"
-            }
+    # Recorder on the REAL class: a local directory has no revision to observe,
+    # so which revision/subfolder reached the hub loader is only visible here.
+    def record_from_pretrained(_cls, path, **kwargs):
+        calls.append((path, kwargs))
+        return build_official_sana_scheduler()
 
-        @classmethod
-        def from_pretrained(cls, path, **kwargs):
-            calls.append((path, kwargs))
-            return cls()
-
-    monkeypatch.setitem(
-        sys.modules,
-        "diffusers",
-        SimpleNamespace(DPMSolverMultistepScheduler=DPMSolverMultistepScheduler),
+    monkeypatch.setattr(
+        diffusers.DPMSolverMultistepScheduler,
+        "from_pretrained",
+        classmethod(record_from_pretrained),
     )
     build = ModelBuild(
         model_name_or_path="test/sana",
@@ -875,19 +862,11 @@ def test_official_scheduler_uses_build_revision_projection(
     expected_kwargs = {"subfolder": "scheduler"}
     if expected_revision is not None:
         expected_kwargs["revision"] = expected_revision
-    assert isinstance(scheduler, DPMSolverMultistepScheduler)
+    assert isinstance(scheduler, diffusers.DPMSolverMultistepScheduler)
     assert calls == [("test/sana", expected_kwargs)]
 
 
 def test_official_generation_rejects_sampling_drift() -> None:
-    class DPMSolverMultistepScheduler:
-        def __init__(self) -> None:
-            self.config = {
-                key: value
-                for key, value in sana_inference.SCHEDULER_PROTOCOL.items()
-                if key != "class_name"
-            }
-
     changed = sana_report.resolve_sampling()
     changed["height"] = 512
 
@@ -897,7 +876,7 @@ def test_official_generation_rejects_sampling_drift() -> None:
                 pipeline=SimpleNamespace(),
                 precision=SANA_PRECISION,
             ),
-            scheduler=DPMSolverMultistepScheduler(),
+            scheduler=build_official_sana_scheduler(),
             prompt="fox",
             seed=0,
             num_images=2,

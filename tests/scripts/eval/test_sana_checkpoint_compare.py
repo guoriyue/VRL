@@ -10,6 +10,7 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 import vrl.models.families.registry as model_families
+from tests.scripts.eval.fixtures import build_official_sana_scheduler
 from vrl.config.precision import RolePrecision
 from vrl.models import checkpoint_identity
 from vrl.models.interfaces.runtime import ModelBuild
@@ -31,14 +32,6 @@ def _effective_ieee_backend(monkeypatch: pytest.MonkeyPatch) -> None:
         "float32_precision_state",
         lambda: {"matmul": "ieee", "cudnn": "ieee"},
     )
-
-
-class DPMSolverMultistepScheduler:
-    def __init__(self, **overrides) -> None:
-        config = dict(checkpoint_compare.SCHEDULER_PROTOCOL)
-        config.pop("class_name")
-        config.update(overrides)
-        self.config = config
 
 
 class _FakePipeline:
@@ -180,7 +173,7 @@ def test_run_generates_base_before_strict_restore_and_current(
         precision=SANA_PRECISION,
         model_config={},
     )
-    schedulers: list[DPMSolverMultistepScheduler] = []
+    schedulers: list[object] = []
 
     def fake_load_checkpoint(path):
         assert Path(path) == run_dir / "checkpoint-final"
@@ -205,7 +198,7 @@ def test_run_generates_base_before_strict_restore_and_current(
 
     def fake_load_scheduler(actual_build):
         assert actual_build is build
-        scheduler = DPMSolverMultistepScheduler()
+        scheduler = build_official_sana_scheduler()
         schedulers.append(scheduler)
         sana_inference.require_scheduler(scheduler)
         return scheduler
@@ -530,7 +523,7 @@ def test_generation_rejects_an_active_outer_autocast() -> None:
     ):
         checkpoint_compare._generate_one(
             model,
-            scheduler=DPMSolverMultistepScheduler(),
+            scheduler=build_official_sana_scheduler(),
             prompt="test",
             seed=1,
             height=8,
@@ -549,7 +542,7 @@ def test_generation_rejects_an_active_outer_autocast() -> None:
     ],
 )
 def test_scheduler_protocol_rejects_wrong_config(key, wrong_value) -> None:
-    scheduler = DPMSolverMultistepScheduler(**{key: wrong_value})
+    scheduler = build_official_sana_scheduler(**{key: wrong_value})
 
     with pytest.raises(ValueError, match="official DPM-Solver"):
         sana_inference.require_scheduler(scheduler)
@@ -557,7 +550,7 @@ def test_scheduler_protocol_rejects_wrong_config(key, wrong_value) -> None:
 
 def test_scheduler_protocol_rejects_wrong_class() -> None:
     class FlowMatchEulerDiscreteScheduler:
-        config = DPMSolverMultistepScheduler().config
+        config = build_official_sana_scheduler().config
 
     with pytest.raises(ValueError, match="official DPM-Solver"):
         sana_inference.require_scheduler(FlowMatchEulerDiscreteScheduler())
@@ -565,6 +558,6 @@ def test_scheduler_protocol_rejects_wrong_class() -> None:
 
 def test_scheduler_protocol_accepts_official_identity() -> None:
     assert (
-        sana_inference.require_scheduler(DPMSolverMultistepScheduler())
+        sana_inference.require_scheduler(build_official_sana_scheduler())
         == checkpoint_compare.SCHEDULER_PROTOCOL
     )
