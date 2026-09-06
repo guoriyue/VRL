@@ -8,7 +8,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from vrl.config.validation import validate_reward_config
+from vrl.config.validation import RewardConfig
 from vrl.rewards.functions.hpsv3 import HPSv3Reward
 from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.types import RewardSample
@@ -118,4 +118,4 @@ def test_config_accepts_hpsv3() -> None:
             },
         },
     )
-    validate_reward_config(cfg)
+    RewardConfig.from_cfg(cfg)

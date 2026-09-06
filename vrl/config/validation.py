@@ -11,27 +11,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from omegaconf import DictConfig, OmegaConf
-from pydantic import ValidationError
+from omegaconf import DictConfig
 
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import (
     RewardConfig,
     RootConfig,
-    _extract_error_message,
     parse_config,
 )
-
-
-def validate_reward_config(cfg: DictConfig) -> RewardConfig:
-    """Validate reward component shape and model-backed reward kwargs."""
-    if "reward" not in cfg:
-        raise ValueError("config missing required field: reward")
-    reward_raw = OmegaConf.to_container(cfg.reward, resolve=True, throw_on_missing=True) or {}
-    try:
-        return RewardConfig.model_validate(reward_raw)
-    except ValidationError as exc:
-        raise ValueError(_extract_error_message(exc, section="reward")) from exc
 
 
 def validate_production_kling_video_reward_config(root: RootConfig) -> None:
@@ -419,8 +406,8 @@ def require_guarded_rollout_drift(root: RootConfig, precision: PrecisionPolicy) 
 
 
 __all__ = [
+    "RewardConfig",
     "validate_production_kling_video_reward_config",
     "validate_production_reward_contract",
-    "validate_reward_config",
     "validate_training_config",
 ]

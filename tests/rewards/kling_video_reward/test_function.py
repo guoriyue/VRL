@@ -9,7 +9,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from vrl.config.validation import validate_reward_config
+from vrl.config.validation import RewardConfig
 from vrl.rewards.functions.kling_video_reward import KlingVideoReward
 from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.types import RewardSample
@@ -152,4 +152,4 @@ async def test_video_reward_releases_artifacts_after_success_by_default(
 
 def test_video_reward_config_accepts_ray_runtime() -> None:
     """Checks video reward config accepts Ray runtime."""
-    validate_reward_config(_video_reward_config())
+    RewardConfig.from_cfg(_video_reward_config())

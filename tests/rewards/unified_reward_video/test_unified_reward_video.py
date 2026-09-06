@@ -8,7 +8,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from vrl.config.validation import validate_reward_config
+from vrl.config.validation import RewardConfig
 from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
 from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.models.unified_reward_video import _load_rubric, _parse_axis_scores
@@ -145,4 +145,4 @@ def test_config_validates() -> None:
             },
         },
     )
-    validate_reward_config(cfg)
+    RewardConfig.from_cfg(cfg)

@@ -40,7 +40,6 @@ from vrl.config.model_schema import ModelSection
 from vrl.config.precision import PrecisionConfig
 from vrl.config.reward_inference import (
     RewardInferenceConfig,
-    parse_reward_inference_config,
 )
 from vrl.config.sampling_schema import SamplingSection
 from vrl.generation.execution.types import BatchPlacementStrategy
@@ -86,7 +85,7 @@ class RewardConfig(ConfigBase):
         if not isinstance(value, Mapping):
             return value
         return {
-            str(name): parse_reward_inference_config(
+            str(name): RewardInferenceConfig.parse(
                 entry,
                 context=f"reward.inference.{name}",
             )
@@ -120,6 +119,17 @@ class RewardConfig(ConfigBase):
             if weight < 0:
                 raise ValueError(f"reward.components.{name} must be >= 0, got {weight}")
         return self
+
+    @classmethod
+    def from_cfg(cls, cfg: DictConfig) -> RewardConfig:
+        """Validate reward component shape and model-backed reward kwargs."""
+        if "reward" not in cfg:
+            raise ValueError("config missing required field: reward")
+        reward_raw = OmegaConf.to_container(cfg.reward, resolve=True, throw_on_missing=True) or {}
+        try:
+            return cls.model_validate(reward_raw)
+        except ValidationError as exc:
+            raise ValueError(_extract_error_message(exc, section="reward")) from exc
 
 
 # ── Algorithm section ─────────────────────────────────────────────────────────

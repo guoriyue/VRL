@@ -15,21 +15,21 @@ class HuggingFaceRepoRevision:
     repo_id: str
     revision: str
 
+    @classmethod
+    def parse(cls, model_reference: str) -> HuggingFaceRepoRevision:
+        """Parse ``repo_id@revision`` with a default revision for bare repo ids."""
 
-def parse_hf_repo_revision(model_reference: str) -> HuggingFaceRepoRevision:
-    """Parse ``repo_id@revision`` with a default revision for bare repo ids."""
-
-    text = str(model_reference).strip()
-    repo_id, separator, revision = text.rpartition("@")
-    if not separator:
-        repo_id = text
-        revision = "main"
-    else:
-        repo_id = repo_id.strip()
-        revision = revision.strip() or "main"
-    if not repo_id:
-        raise ValueError("Hugging Face model reference must include a repo id")
-    return HuggingFaceRepoRevision(repo_id=repo_id, revision=str(revision))
+        text = str(model_reference).strip()
+        repo_id, separator, revision = text.rpartition("@")
+        if not separator:
+            repo_id = text
+            revision = "main"
+        else:
+            repo_id = repo_id.strip()
+            revision = revision.strip() or "main"
+        if not repo_id:
+            raise ValueError("Hugging Face model reference must include a repo id")
+        return cls(repo_id=repo_id, revision=str(revision))
 
 
 def resolve_model_root(
@@ -56,7 +56,7 @@ def resolve_model_root(
     reward_model_name = str(worker_config.get("reward_model_name", "")).strip()
     if not reward_model_name:
         reward_model_name = default_model
-    model_ref = parse_hf_repo_revision(reward_model_name)
+    model_ref = HuggingFaceRepoRevision.parse(reward_model_name)
 
     from huggingface_hub import snapshot_download
 
@@ -71,6 +71,6 @@ def resolve_model_root(
 
 __all__ = [
     "HuggingFaceRepoRevision",
-    "parse_hf_repo_revision",
+    "HuggingFaceRepoRevision",
     "resolve_model_root",
 ]

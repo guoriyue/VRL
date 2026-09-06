@@ -53,9 +53,9 @@ class RewardRuntimeConfig:
         reward.
         """
 
-        from vrl.config.validation import validate_reward_config
+        from vrl.config.validation import RewardConfig
 
-        reward = cfg if isinstance(cfg, RewardConfig) else validate_reward_config(cfg)
+        reward = cfg if isinstance(cfg, RewardConfig) else RewardConfig.from_cfg(cfg)
         weights = {name: float(weight) for name, weight in reward.components.items()}
         unknown_kwargs = sorted(set(reward.kwargs) - set(weights))
         if unknown_kwargs:

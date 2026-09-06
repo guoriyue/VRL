@@ -77,32 +77,33 @@ class RewardInferenceConfig:
                 "reward inference.kind=http requires expected_model for startup identity validation",
             )
 
+    @classmethod
+    def parse(
+        cls,
+        value: Mapping[str, Any] | RewardInferenceConfig | None,
+        *,
+        context: str,
+    ) -> RewardInferenceConfig:
+        """Parse one component's config without duplicating its typed field list."""
+
+        if value is None:
+            return cls()
+        if isinstance(value, RewardInferenceConfig):
+            return value
+        if not isinstance(value, Mapping):
+            raise TypeError(f"{context} must be a mapping, got {type(value).__name__}")
+        payload = dict(value)
+        unknown = sorted(set(payload) - _INFERENCE_FIELDS)
+        if unknown:
+            raise ValueError(f"unsupported {context} keys: {unknown}")
+        return cls(**payload)
+
 
 _INFERENCE_FIELDS = frozenset(field.name for field in fields(RewardInferenceConfig))
 
 
-def parse_reward_inference_config(
-    value: Mapping[str, Any] | RewardInferenceConfig | None,
-    *,
-    context: str,
-) -> RewardInferenceConfig:
-    """Parse one component's config without duplicating its typed field list."""
-
-    if value is None:
-        return RewardInferenceConfig()
-    if isinstance(value, RewardInferenceConfig):
-        return value
-    if not isinstance(value, Mapping):
-        raise TypeError(f"{context} must be a mapping, got {type(value).__name__}")
-    payload = dict(value)
-    unknown = sorted(set(payload) - _INFERENCE_FIELDS)
-    if unknown:
-        raise ValueError(f"unsupported {context} keys: {unknown}")
-    return RewardInferenceConfig(**payload)
-
-
 __all__ = [
     "RewardInferenceConfig",
-    "parse_reward_inference_config",
+    "RewardInferenceConfig",
     "validate_http_origin",
 ]

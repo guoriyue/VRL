@@ -6,7 +6,7 @@ logprob no longer equals the freshly recomputed replay logprob, and the GRPO
 importance ratio drifts from 1. This module is the shared, algorithm-agnostic
 toolkit for that drift:
 
-- :func:`compute_logprob_mismatch_stats` MEASURES it (the source of truth for both
+- :func:`LogprobMismatchStats` MEASURES it (the source of truth for both
   the per-step training metrics and the precision drift guard).
 - :class:`PrecisionCorrectionConfig` + :func:`apply_truncated_importance_weight`
   CORRECT it via truncated importance sampling (TIS) — the counterpart to the
@@ -90,39 +90,40 @@ class LogprobMismatchStats:
             finite=all(value.finite for value in values),
         )
 
+    @classmethod
+    def compute(
+        cls,
+        fresh_log_prob: torch.Tensor,
+        old_log_prob: torch.Tensor,
+    ) -> LogprobMismatchStats:
+        """Stats on replay-vs-rollout-behavior log-probability drift.
 
-def compute_logprob_mismatch_stats(
-    fresh_log_prob: torch.Tensor,
-    old_log_prob: torch.Tensor,
-) -> LogprobMismatchStats:
-    """Stats on replay-vs-rollout-behavior log-probability drift.
+        ``fresh_log_prob`` is the freshly recomputed replay logprob (compute dtype);
+        ``old_log_prob`` is the rollout behavior logprob (rollout dtype). Reductions run
+        in fp32 so a bf16 input does not itself add noise to the measurement.
+        """
 
-    ``fresh_log_prob`` is the freshly recomputed replay logprob (compute dtype);
-    ``old_log_prob`` is the rollout behavior logprob (rollout dtype). Reductions run
-    in fp32 so a bf16 input does not itself add noise to the measurement.
-    """
+        import torch
 
-    import torch
+        fresh = fresh_log_prob.detach().to(torch.float32)
+        old = old_log_prob.detach().to(torch.float32)
+        if fresh.numel() == 0:
+            return cls()
 
-    fresh = fresh_log_prob.detach().to(torch.float32)
-    old = old_log_prob.detach().to(torch.float32)
-    if fresh.numel() == 0:
-        return LogprobMismatchStats()
-
-    delta = fresh - old  # replay - rollout
-    abs_diff = delta.abs()
-    ratio = torch.exp(delta)
-    ratio_dev = (ratio - 1.0).abs()
-    finite = bool(torch.isfinite(delta).all() and torch.isfinite(ratio).all())
-    return LogprobMismatchStats(
-        logprob_abs_diff_mean=float(abs_diff.mean()),
-        logprob_abs_diff_max=float(abs_diff.max()),
-        ratio_abs_dev_mean=float(ratio_dev.mean()),
-        ratio_abs_dev_max=float(ratio_dev.max()),
-        mismatch_kl=float((-delta).mean()),  # mean(old - fresh)
-        mismatch_k3_kl=float((ratio - delta - 1.0).mean()),  # mean(exp(d) - d - 1)
-        finite=finite,
-    )
+        delta = fresh - old  # replay - rollout
+        abs_diff = delta.abs()
+        ratio = torch.exp(delta)
+        ratio_dev = (ratio - 1.0).abs()
+        finite = bool(torch.isfinite(delta).all() and torch.isfinite(ratio).all())
+        return cls(
+            logprob_abs_diff_mean=float(abs_diff.mean()),
+            logprob_abs_diff_max=float(abs_diff.max()),
+            ratio_abs_dev_mean=float(ratio_dev.mean()),
+            ratio_abs_dev_max=float(ratio_dev.max()),
+            mismatch_kl=float((-delta).mean()),  # mean(old - fresh)
+            mismatch_k3_kl=float((ratio - delta - 1.0).mean()),  # mean(exp(d) - d - 1)
+            finite=finite,
+        )
 
 
 @dataclass(slots=True)
@@ -163,7 +164,7 @@ class PrecisionCorrectionConfig:
     bounded: run the drift guard (``auto``/``fail``, which checks parity before
     the first step) together with RS (``seq_mean_k1``), so the guard fail-stops
     on a catastrophic precision split while RS keeps out-of-band trajectories out
-    of the per-step gradient. Both read the same ``compute_logprob_mismatch_stats``
+    of the per-step gradient. Both read the same ``LogprobMismatchStats``
     so their drift judgement cannot diverge. TIS and RS are orthogonal and may be
     enabled together.
     """
@@ -332,9 +333,9 @@ def combine_keep_masks(*masks: torch.Tensor | None) -> torch.Tensor | None:
 
 __all__ = [
     "LogprobMismatchStats",
+    "LogprobMismatchStats",
     "PrecisionCorrectionConfig",
     "apply_rejection_sample_mask",
     "apply_truncated_importance_weight",
     "combine_keep_masks",
-    "compute_logprob_mismatch_stats",
 ]

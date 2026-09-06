@@ -12,7 +12,7 @@ WHAT it does, all on the GPU, through the ACTUAL codebase code paths:
      logprobs two ways: bf16 (the replay/training forward) and the production
      FP8/NVFP4 ``torch._scaled_mm`` module. The quantized logprob is the
      behavior ``old_log_prob``; the bf16 logprob is the fresh replay ``log_prob``.
-  2. Measure the drift with ``compute_logprob_mismatch_stats`` (the one shared
+  2. Measure the drift with ``LogprobMismatchStats`` (the one shared
      stats helper used by metrics + guard) -- abs diff, ratio dev, mismatch KL.
   3. Run the exact catastrophic guard and correction defaults produced by
      ``build_precision_split_safety_configs`` for a rollout/train precision split.
@@ -43,8 +43,8 @@ from torch import nn
 
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.algorithms.logprob_mismatch import (
+    LogprobMismatchStats,
     PrecisionCorrectionConfig,
-    compute_logprob_mismatch_stats,
 )
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.config.builders import build_precision_split_safety_configs
@@ -221,11 +221,11 @@ def main() -> None:
     replay_logprob = _logprob_from_logits(logits_replay, actions)  # fresh log_prob
     rollout_logprob = _logprob_from_logits(logits_rollout, actions)
 
-    stats = compute_logprob_mismatch_stats(replay_logprob, rollout_logprob)
+    stats = LogprobMismatchStats.compute(replay_logprob, rollout_logprob)
     print(f"== {scheme.upper()} rollout drift probe on {dev_name} ==")
     print(f"recipe={rollout_head.recipe} profile=synthetic_full_head")
     print(f"samples={n_samples} hidden={hidden} vocab={vocab}  (rollout={scheme}, replay=bf16)")
-    print("-- measured logprob drift (compute_logprob_mismatch_stats) --")
+    print("-- measured logprob drift (LogprobMismatchStats) --")
     print(
         f"  abs_diff   mean={stats.logprob_abs_diff_mean:.4e}  max={stats.logprob_abs_diff_max:.4e}"
     )
@@ -256,7 +256,7 @@ def main() -> None:
     traj_actions = torch.distributions.Categorical(logits=traj_logits_quantized.float()).sample()
     step_replay_logprob = _step_logprob(traj_logits_replay, traj_actions)
     step_rollout_logprob = _step_logprob(traj_logits_quantized, traj_actions)
-    step_stats = compute_logprob_mismatch_stats(step_replay_logprob, step_rollout_logprob)
+    step_stats = LogprobMismatchStats.compute(step_replay_logprob, step_rollout_logprob)
     advantages = torch.randn(n_traj, device=device)  # mix of +/- advantages
     cap = correction_cfg.tis_imp_weight_cap
     step_ratio = torch.exp(step_replay_logprob - step_rollout_logprob)
@@ -335,7 +335,7 @@ def main() -> None:
     # guard in this repository consumes this trajectory product.
     trajectory_replay_logprob = step_replay_logprob.sum(dim=-1)
     trajectory_rollout_logprob = step_rollout_logprob.sum(dim=-1)
-    trajectory_stats = compute_logprob_mismatch_stats(
+    trajectory_stats = LogprobMismatchStats.compute(
         trajectory_replay_logprob,
         trajectory_rollout_logprob,
     )

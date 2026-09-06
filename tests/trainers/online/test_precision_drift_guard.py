@@ -15,7 +15,7 @@ from tests.trainers.online._helpers import (
     _EvaluatorAlgorithmFake,
     _stamp_model_precision,
 )
-from vrl.algorithms.logprob_mismatch import compute_logprob_mismatch_stats
+from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 from vrl.trainers.online.precision_guard import (
     PrecisionDriftError,
@@ -214,7 +214,7 @@ def test_measure_precision_drift_selects_one_whole_worst_rank_record(monkeypatch
         max_abs_log_ratio=0.1,
         max_ratio_abs_dev=0.1,
     )
-    remote_stats = compute_logprob_mismatch_stats(
+    remote_stats = LogprobMismatchStats.compute(
         torch.full((4,), -5.0),
         torch.zeros(4),
     )

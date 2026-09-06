@@ -25,7 +25,6 @@ from typing import Any
 
 from vrl.config.reward_inference import (
     RewardInferenceConfig,
-    parse_reward_inference_config,
 )
 from vrl.rewards.base import RewardCleanupError, RewardFunction
 from vrl.rewards.inference import (
@@ -501,7 +500,7 @@ def build_reward_scorer(
             "worker_config.service_url was removed; configure "
             "reward.inference.<component>.kind=http and its endpoint",
         )
-    deployment = parse_reward_inference_config(
+    deployment = RewardInferenceConfig.parse(
         inference,
         context="reward inference",
     )

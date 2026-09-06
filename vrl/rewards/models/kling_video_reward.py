@@ -24,7 +24,7 @@ from vrl.rewards.assets.kling_prompt_templates import (
 )
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import require_prompt_and_video_path
-from vrl.rewards.models.hub import parse_hf_repo_revision
+from vrl.rewards.models.hub import HuggingFaceRepoRevision
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -476,7 +476,7 @@ def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
         ).strip()
         if not reward_model_name:
             raise ValueError("Kling VideoReward requires worker_config.reward_model_name")
-        model_ref = parse_hf_repo_revision(reward_model_name)
+        model_ref = HuggingFaceRepoRevision.parse(reward_model_name)
         if model_ref.repo_id != _DEFAULT_REWARD_MODEL:
             raise ValueError(
                 "Kling VideoReward loader currently supports only "

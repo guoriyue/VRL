@@ -31,7 +31,7 @@ from vrl.config.loading import (
 )
 from vrl.config.schema import parse_config
 from vrl.config.validation import (
-    validate_reward_config,
+    RewardConfig,
     validate_training_config,
 )
 from vrl.ray.resources import ResolvedDistributedResources
@@ -1033,7 +1033,7 @@ def test_negative_reward_component_weights_are_rejected() -> None:
     cfg.reward.components.nsfw_safety = -0.5
 
     with pytest.raises(ValueError, match=r"reward\.components\.nsfw_safety must be >= 0"):
-        validate_reward_config(cfg)
+        RewardConfig.from_cfg(cfg)
 
 
 def test_public_reward_builder_validates_its_input() -> None:

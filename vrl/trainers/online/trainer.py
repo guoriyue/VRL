@@ -21,7 +21,6 @@ from vrl.algorithms.advantages import all_reduce_sufficient_stats
 from vrl.algorithms.base import Algorithm, ComponentAdvantageAlgorithm
 from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
-    compute_logprob_mismatch_stats,
 )
 from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
 from vrl.models.precision import (
@@ -955,7 +954,7 @@ class OnlineTrainer:
             raise RuntimeError(
                 "evaluator-backed policy loss produced no replay/rollout log-prob pair",
             )
-        metrics.logprob_mismatch = compute_logprob_mismatch_stats(
+        metrics.logprob_mismatch = LogprobMismatchStats.compute(
             torch.cat(fresh_parts),
             torch.cat(old_parts),
         )

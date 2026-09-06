@@ -4,7 +4,7 @@ When rollout and replay use different role precision policies, the collection
 time logprob no longer equals the freshly recomputed replay logprob, so the GRPO
 importance ratio is != 1 at the first real update. This guard recomputes parity
 before that optimizer update and either warns or fails,
-using the shared :func:`compute_logprob_mismatch_stats`.
+using the shared :func:`LogprobMismatchStats`.
 
 It is the enforcement side of the same fact the per-step mismatch metrics (P1)
 report; both read the one shared stats helper so debug, metrics, and gate never
@@ -21,7 +21,6 @@ from typing import Any
 
 from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
-    compute_logprob_mismatch_stats,
 )
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 
@@ -165,7 +164,7 @@ def measure_precision_drift(
     violated = False
     for timestep in select_guard_timesteps(timestep_indices, config.max_timestep_checks):
         primary = evaluate_fn(timestep).primary
-        stats = compute_logprob_mismatch_stats(primary.log_prob, primary.old_log_prob)
+        stats = LogprobMismatchStats.compute(primary.log_prob, primary.old_log_prob)
         stats_violated = (
             stats.ratio_abs_dev_max > config.max_ratio_abs_dev
             or stats.logprob_abs_diff_max > config.max_abs_log_ratio

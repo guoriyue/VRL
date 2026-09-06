@@ -15,7 +15,7 @@ WHAT (two passes per threshold, through the actual code paths):
     real ``noise_pred`` actually used).
   Pass 2 (replay, exact): at each recorded input latent run the FULL forward
     (no skip) and score the SAME action's logprob under the exact ``noise_pred``.
-  Drift = ``compute_logprob_mismatch_stats(fresh=replay, old=rollout)`` — ratio
+  Drift = ``LogprobMismatchStats.compute(fresh=replay, old=rollout)`` — ratio
     abs-dev (mean/max) + mismatch KL, the exact stats the drift guard / TIS read.
 
 A ``threshold=None`` baseline (no skips) must read ~0 drift — it validates the
@@ -35,7 +35,7 @@ import argparse
 
 import torch
 
-from vrl.algorithms.logprob_mismatch import compute_logprob_mismatch_stats
+from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
@@ -229,7 +229,7 @@ def main(argv=None):
     print("-" * 80)
     for thr in thresholds:
         rollout_lp, replay_lp, skip = _measure(model, root, device, dtype, thr)
-        stats = compute_logprob_mismatch_stats(fresh_log_prob=replay_lp, old_log_prob=rollout_lp)
+        stats = LogprobMismatchStats.compute(fresh_log_prob=replay_lp, old_log_prob=rollout_lp)
         name = "baseline(no teacache)" if thr is None else f"teacache(thr={thr})"
         print(
             f"{name:>22} | {skip * 100:5.0f}% | {stats.ratio_abs_dev_mean:14.4%} | "
