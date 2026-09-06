@@ -254,7 +254,7 @@ def test_reward_models_live_under_models() -> None:
     model_modules = _registered_model_reward_modules()
     assert model_modules <= present
     # Only scaffolding may live alongside the per-reward modules.
-    scaffolding = {"__init__.py", "base.py", "hub.py", "media.py"}
+    scaffolding = {"__init__.py", "base.py", "hub.py", "media.py", "qwen_vl_judge.py"}
     extras = present - model_modules - scaffolding
     assert not extras, f"unexpected modules under rewards/models/: {extras}"
 
