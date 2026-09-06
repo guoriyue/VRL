@@ -37,7 +37,7 @@ _SIGMA = 0.7
 _GUIDANCE = 2.0
 
 
-def _state() -> AnimaSamplingState:
+def _state(*, do_cfg: bool = True) -> AnimaSamplingState:
     b = TINY_COSMOS_LATENT_SHAPE[0]
     _, _, _, h, w = TINY_COSMOS_LATENT_SHAPE
     return AnimaSamplingState(
@@ -47,17 +47,14 @@ def _state() -> AnimaSamplingState:
         timesteps=torch.tensor([700.0]),
         scheduler=SimpleNamespace(sigmas=torch.tensor([_SIGMA])),
         prompt_embeds=torch.randn(b, 3, TINY_COSMOS_TEXT_DIM),
-        negative_prompt_embeds=torch.randn(b, 3, TINY_COSMOS_TEXT_DIM),
+        negative_prompt_embeds=torch.randn(b, 3, TINY_COSMOS_TEXT_DIM) if do_cfg else None,
         guidance_scale=_GUIDANCE,
-        do_cfg=True,
+        do_cfg=do_cfg,
         padding_mask=torch.zeros(1, 1, h, w),
     )
 
 
-def test_anima_forward_step_runs_real_unbatched_cfg() -> None:
-    """Checks Anima forward step runs real unbatched CFG on a real backbone."""
-    transformer = build_tiny_anima_transformer()
-    calls = record_forward_calls(transformer)
+def _model(transformer: torch.nn.Module) -> AnimaModel:
     model = AnimaModel(
         transformer=transformer,
         text_encoder=None,
@@ -71,6 +68,14 @@ def test_anima_forward_step_runs_real_unbatched_cfg() -> None:
         dtype=torch.float32,
     )
     stamp_model_precision(model)
+    return model
+
+
+def test_anima_forward_step_runs_real_unbatched_cfg() -> None:
+    """Two separate forwards on the real backbone, combined the CONST-path way."""
+    transformer = build_tiny_anima_transformer()
+    calls = record_forward_calls(transformer)
+    model = _model(transformer)
     state = _state()
 
     out = model.forward_step(state, 0)
@@ -90,3 +95,34 @@ def test_anima_forward_step_runs_real_unbatched_cfg() -> None:
     torch.testing.assert_close(calls[0]["hidden_states"], state.latents)
     # The real transformer responds to the prompt (cond vs uncond differ).
     assert not torch.allclose(cond, uncond)
+
+
+def test_cond_branch_runs_first_on_the_positive_embeds() -> None:
+    """Branch order is load-bearing: the CFG combine treats the first forward as cond.
+
+    Swapping the two forwards keeps every shape and dtype and only shifts the
+    guided result, which the parity test above cannot see. Pinning WHICH embeds
+    each call received (by identity, not by value) is the only way to catch it.
+    """
+    transformer = build_tiny_anima_transformer()
+    calls = record_forward_calls(transformer)
+    state = _state()
+
+    out = _model(transformer).forward_step(state, 0)
+
+    assert calls[0]["encoder_hidden_states"] is state.prompt_embeds
+    assert calls[1]["encoder_hidden_states"] is state.negative_prompt_embeds
+    # Clean-data training reads the raw conditional velocity, never the guided one.
+    assert AnimaModel.diffusion_pretraining_prediction(None, out) is out["noise_pred_cond"]
+
+
+def test_cfg_off_runs_one_forward_and_reports_a_zero_uncond() -> None:
+    """CFG-off must not fabricate a second forward; ``noise_pred`` is the raw cond."""
+    transformer = build_tiny_anima_transformer()
+    calls = record_forward_calls(transformer)
+
+    out = _model(transformer).forward_step(_state(do_cfg=False), 0)
+
+    assert len(calls) == 1
+    torch.testing.assert_close(out["noise_pred"], out["noise_pred_cond"])
+    assert torch.count_nonzero(out["noise_pred_uncond"]) == 0
