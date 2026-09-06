@@ -1,14 +1,26 @@
 """Tests for KlingVideoReward model loading: repo-root resolution, checkpoint
 paths, materialized-artifact validation, repo-owned model build, and Qwen2VL
-checkpoint key remapping."""
+checkpoint key remapping.
+
+The loader, the checkpoint remap, and ``_create_model_and_processor`` run on a
+tiny real Qwen2-VL reward model (``fixtures.py``); the two recorder tests that
+remain observe hub arguments a local directory cannot express (see their labels).
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
+import torch
 
+from tests.rewards.kling_video_reward.fixtures import (
+    build_tiny_kling_reward_model,
+    build_tiny_qwen2vl_repo,
+)
 from vrl.rewards.inference import RewardInferenceArtifact
+
+_LORA_EXCLUDE = ["lm_head", "rm_head", "embed_tokens", "visual"]
 
 
 def _video_reward_root(tmp_path: Path) -> Path:
@@ -68,6 +80,15 @@ def test_kling_video_reward_requires_materialized_artifact_path() -> None:
         model(artifact)
 
 
+@pytest.mark.real_cover(
+    "tests/rewards/kling_video_reward/test_model_loading.py"
+    "::test_create_model_and_processor_runs_offline_on_a_tiny_repo",
+    why=(
+        "this pins the constructor's wiring (dtype, attention flag, offline flag, "
+        "checkpoint dir) with recorders; the counterpart drives the same "
+        "_create_model_and_processor and checkpoint loader on a real tiny model"
+    ),
+)
 def test_kling_video_reward_builds_repo_owned_model(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -204,6 +225,15 @@ def test_kling_video_reward_snapshot_download_honors_local_files_only(
     assert captured["local_files_only"] is True
 
 
+@pytest.mark.real_cover(
+    "tests/rewards/kling_video_reward/test_model_loading.py"
+    "::test_create_model_and_processor_runs_offline_on_a_tiny_repo",
+    why=(
+        "hf_hub falls back to the cache on a connection error, so whether "
+        "local_files_only reached the loaders is unobservable in-process; only the "
+        "recorded kwarg proves it, while the counterpart runs the real loaders offline"
+    ),
+)
 def test_kling_video_reward_base_loader_honors_local_files_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -324,3 +354,175 @@ def test_kling_normalize_scores_renames_drops_missing_and_never_leaks() -> None:
 
     # Undocumented raw key -> never crosses into the public scoring contract.
     assert _normalize_scores({"VQ": 1.0, "BOGUS": 9.0}) == {"visual_quality": 1.0}
+
+
+def _lora_wrapped(seed: int):
+    from peft import LoraConfig, get_peft_model
+
+    return get_peft_model(
+        build_tiny_kling_reward_model(seed=seed),
+        LoraConfig(r=2, target_modules=["q_proj", "v_proj"]),
+    )
+
+
+def _legacy_layout(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """The pre-transformers-5 key layout: no ``language_model`` nesting, top-level ``visual``."""
+
+    return {
+        key.replace(
+            "base_model.model.model.language_model.", "base_model.model.model.", 1
+        ).replace("base_model.model.model.visual.", "base_model.model.visual.", 1): value
+        for key, value in state.items()
+    }
+
+
+def test_checkpoint_loader_strict_loads_a_live_model_in_either_key_layout(tmp_path: Path) -> None:
+    """``_remap_qwen2vl_state_dict`` compares against the LIVE model's keys and the
+    loader then ``strict=True``-loads; both the current and the legacy layout must
+    land on a fresh model bit-for-bit."""
+    from vrl.rewards.models.kling_video_reward import (
+        _remap_qwen2vl_state_dict,
+        load_kling_video_reward_checkpoint,
+    )
+
+    source = _lora_wrapped(seed=0)
+    checkpoint = tmp_path / "checkpoint-11352"
+    checkpoint.mkdir()
+    torch.save(source.state_dict(), checkpoint / "model.pth")
+
+    loaded, step = load_kling_video_reward_checkpoint(_lora_wrapped(seed=1), tmp_path)
+    assert step == "11352"
+    for key, value in source.state_dict().items():
+        assert torch.equal(loaded.state_dict()[key], value), key
+
+    legacy = _legacy_layout(source.state_dict())
+    assert legacy.keys() != source.state_dict().keys()
+    assert set(_remap_qwen2vl_state_dict(legacy, source.state_dict())) == set(source.state_dict())
+    torch.save(legacy, checkpoint / "model.pth")
+    relocated, _ = load_kling_video_reward_checkpoint(_lora_wrapped(seed=2), tmp_path)
+    for key, value in source.state_dict().items():
+        assert torch.equal(relocated.state_dict()[key], value), key
+
+
+def test_create_model_and_processor_runs_offline_on_a_tiny_repo(tmp_path: Path) -> None:
+    """The real loaders read a tiny repo: special tokens are added and resized,
+    the pad token and padding side reach the model config, and the shipped
+    ``lora_namespan_exclude`` keeps LoRA off the reward head, embeddings and vision."""
+    from vrl.rewards.models.kling_video_reward import (
+        _SPECIAL_TOKENS,
+        _create_model_and_processor,
+        _find_target_linear_names,
+        _ModelConfig,
+        _PeftLoraConfig,
+    )
+
+    repo = build_tiny_qwen2vl_repo(tmp_path / "tiny-qwen2vl")
+
+    model, processor = _create_model_and_processor(
+        _ModelConfig(
+            model_name_or_path=str(repo),
+            model_revision="main",
+            output_dim=1,
+            use_special_tokens=True,
+            reward_token="special",
+        ),
+        _PeftLoraConfig(lora_enable=True, lora_r=2, lora_namespan_exclude=_LORA_EXCLUDE),
+        dtype=torch.float32,
+        disable_flash_attn2=True,
+        local_files_only=True,
+    )
+
+    base = model.base_model.model
+    assert model.config.pad_token_id == processor.tokenizer.pad_token_id
+    assert model.config.tokenizer_padding_side == "right"
+    assert base.special_token_ids == processor.tokenizer.convert_tokens_to_ids(_SPECIAL_TOKENS)
+    assert len(base.special_token_ids) == 3
+    assert base.reward_token == "special"
+    targets = _find_target_linear_names(base, lora_namespan_exclude=_LORA_EXCLUDE)
+    assert targets
+    assert not any(
+        bad in name for name in targets for bad in ("rm_head", "embed_tokens", "visual")
+    )
+
+
+def test_chat_payload_applies_the_checkpoint_frame_budget_and_frame_policy() -> None:
+    """``max_pixels`` falls back to the checkpoint budget, ``min_pixels`` is written
+    only when set, and ``nframes`` displaces ``fps``: these decide whether the
+    reward scores in-distribution."""
+    from vrl.rewards.models.kling_video_reward import _build_chat_payload, _DataConfig
+
+    by_fps = _DataConfig(max_frame_pixels=200704, fps=2.0, eval_dim=["VQ", "MQ", "TA"])
+    (conversation,) = _build_chat_payload(
+        ["/tmp/clip.mp4"], ["a robot arm"], data_config=by_fps, max_pixels=None, min_pixels=None
+    )
+    (turn,) = conversation
+    video, text = turn["content"]
+    assert turn["role"] == "user"
+    assert video == {
+        "type": "video",
+        "video": "file:///tmp/clip.mp4",
+        "max_pixels": 200704,
+        "fps": 2.0,
+    }
+    assert text["type"] == "text"
+    assert "a robot arm" in text["text"]
+
+    by_frames = _DataConfig(max_frame_pixels=200704, num_frames=8, fps=2.0)
+    (conversation,) = _build_chat_payload(
+        ["/tmp/clip.mp4"], ["p"], data_config=by_frames, max_pixels=1024, min_pixels=256
+    )
+    video = conversation[0]["content"][0]
+    assert video["max_pixels"] == 1024
+    assert video["min_pixels"] == 256
+    assert video["nframes"] == 8
+    assert "fps" not in video
+
+    with pytest.raises(ValueError, match="uniform"):
+        _build_chat_payload(
+            ["/tmp/clip.mp4"],
+            ["p"],
+            data_config=_DataConfig(sample_type="random"),
+            max_pixels=None,
+            min_pixels=None,
+        )
+
+
+@pytest.mark.optional
+def test_prepare_batch_decodes_a_real_clip_through_the_real_processor(tmp_path: Path) -> None:
+    """The decode + chat-template half of ``_prepare_batch`` needs the ``[reward]``
+    extra (qwen_vl_utils / decord); with it, an 8-frame mp4 goes through the tiny
+    real processor and the tiny model scores it."""
+    pytest.importorskip("qwen_vl_utils")
+    from vrl.rewards.models.kling_video_reward import (
+        KlingVideoRewardModel,
+        _create_model_and_processor,
+        _DataConfig,
+        _ModelConfig,
+        _PeftLoraConfig,
+    )
+    from vrl.utils.media import write_mp4
+
+    repo = build_tiny_qwen2vl_repo(tmp_path / "tiny-qwen2vl", output_dim=3)
+    clip = tmp_path / "clip.mp4"
+    write_mp4(torch.rand(3, 8, 32, 32), clip, fps=4.0)
+    model, processor = _create_model_and_processor(
+        _ModelConfig(model_name_or_path=str(repo), model_revision="main", output_dim=3),
+        _PeftLoraConfig(lora_enable=False),
+        dtype=torch.float32,
+        disable_flash_attn2=True,
+        local_files_only=True,
+    )
+    reward_model = KlingVideoRewardModel.__new__(KlingVideoRewardModel)
+    reward_model.model = model
+    reward_model.processor = processor
+    reward_model.device = "cpu"
+    reward_model.data_config = _DataConfig(max_frame_pixels=28 * 28 * 4, num_frames=4)
+
+    batch = reward_model._prepare_batch([str(clip)], ["a robot arm"])
+
+    assert batch["input_ids"].shape[0] == 1
+    assert batch["pixel_values_videos"].ndim == 2
+    assert batch["video_grid_thw"].shape == (1, 3)
+    with torch.no_grad():
+        logits = model(return_dict=True, **batch)["logits"]
+    assert logits.shape == (1, 3)
