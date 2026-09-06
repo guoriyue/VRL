@@ -246,55 +246,57 @@ class AnimaGenerationArchive:
             anchor_manifest_sha256=sha256_file(anchor_path),
         )
 
+    @staticmethod
+    def validate_pair(
+        base_archive: AnimaGenerationArchive,
+        checkpoint_archive: AnimaGenerationArchive,
+    ) -> None:
+        """Require two archives to differ only in treatment and generated pixels."""
 
-def validate_paired_generation_archives(
-    base_archive: AnimaGenerationArchive,
-    checkpoint_archive: AnimaGenerationArchive,
-) -> None:
-    """Require two archives to differ only in treatment and generated pixels."""
-
-    base_protocol = AnimaPixelPairingProtocol.from_generation_protocol(
-        base_archive.protocol,
-    )
-    checkpoint_protocol = AnimaPixelPairingProtocol.from_generation_protocol(
-        checkpoint_archive.protocol,
-    )
-    protocol_mismatches = [
-        field.name
-        for field in fields(AnimaPixelPairingProtocol)
-        if getattr(base_protocol, field.name) != getattr(checkpoint_protocol, field.name)
-    ]
-    if protocol_mismatches:
-        raise ValueError(
-            f"checkpoint generation protocol differs from base: fields={protocol_mismatches}",
+        base_protocol = AnimaPixelPairingProtocol.from_generation_protocol(
+            base_archive.protocol,
         )
-
-    base_cells = {cell.key: cell for cell in base_archive.cells}
-    checkpoint_cells = {cell.key: cell for cell in checkpoint_archive.cells}
-    if len(base_cells) != len(base_archive.cells):
-        raise ValueError(f"base archive contains duplicate cell keys: {base_archive.directory}")
-    if len(checkpoint_cells) != len(checkpoint_archive.cells):
-        raise ValueError(
-            f"checkpoint archive contains duplicate cell keys: {checkpoint_archive.directory}",
+        checkpoint_protocol = AnimaPixelPairingProtocol.from_generation_protocol(
+            checkpoint_archive.protocol,
         )
-    if set(base_cells) != set(checkpoint_cells):
-        missing = sorted(set(base_cells) - set(checkpoint_cells))
-        extra = sorted(set(checkpoint_cells) - set(base_cells))
-        raise ValueError(
-            f"checkpoint cell grid differs from base: missing={missing} extra={extra}",
-        )
-    for key in sorted(base_cells):
-        base_cell = base_cells[key]
-        checkpoint_cell = checkpoint_cells[key]
-        cell_mismatches = [
-            name
-            for name in ("prompt", "seed", "prompt_metadata", "reward_metadata")
-            if getattr(base_cell, name) != getattr(checkpoint_cell, name)
+        protocol_mismatches = [
+            field.name
+            for field in fields(AnimaPixelPairingProtocol)
+            if getattr(base_protocol, field.name) != getattr(checkpoint_protocol, field.name)
         ]
-        if cell_mismatches:
+        if protocol_mismatches:
             raise ValueError(
-                f"paired generation cell differs at {key}: fields={cell_mismatches}",
+                f"checkpoint generation protocol differs from base: fields={protocol_mismatches}",
             )
+
+        base_cells = {cell.key: cell for cell in base_archive.cells}
+        checkpoint_cells = {cell.key: cell for cell in checkpoint_archive.cells}
+        if len(base_cells) != len(base_archive.cells):
+            raise ValueError(
+                f"base archive contains duplicate cell keys: {base_archive.directory}"
+            )
+        if len(checkpoint_cells) != len(checkpoint_archive.cells):
+            raise ValueError(
+                f"checkpoint archive contains duplicate cell keys: {checkpoint_archive.directory}",
+            )
+        if set(base_cells) != set(checkpoint_cells):
+            missing = sorted(set(base_cells) - set(checkpoint_cells))
+            extra = sorted(set(checkpoint_cells) - set(base_cells))
+            raise ValueError(
+                f"checkpoint cell grid differs from base: missing={missing} extra={extra}",
+            )
+        for key in sorted(base_cells):
+            base_cell = base_cells[key]
+            checkpoint_cell = checkpoint_cells[key]
+            cell_mismatches = [
+                name
+                for name in ("prompt", "seed", "prompt_metadata", "reward_metadata")
+                if getattr(base_cell, name) != getattr(checkpoint_cell, name)
+            ]
+            if cell_mismatches:
+                raise ValueError(
+                    f"paired generation cell differs at {key}: fields={cell_mismatches}",
+                )
 
 
 def _load_cells(
@@ -581,5 +583,4 @@ __all__ = [
     "AnimaGenerationCell",
     "AnimaGenerationProtocol",
     "AnimaPixelPairingProtocol",
-    "validate_paired_generation_archives",
 ]

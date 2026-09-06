@@ -46,7 +46,6 @@ from vrl.rewards.assets.video_judge_prompts import (
     COSMOS3_USER_TEMPLATE,
 )
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -155,8 +154,7 @@ class Cosmos3ReasonerRewardModel:
         self,
         artifact: RewardInferenceArtifact,
     ) -> dict[str, float]:
-        prompt, video_path = require_prompt_and_video_path(
-            artifact,
+        prompt, video_path = artifact.require_prompt_and_video_path(
             family="Cosmos3 reasoner judge",
         )
         return self._score_video(video_path, prompt)

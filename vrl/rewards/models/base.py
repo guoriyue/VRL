@@ -28,33 +28,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any, Protocol
 
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact
-
-
-def require_prompt_and_video_path(
-    artifact: RewardInferenceArtifact,
-    *,
-    family: str,
-) -> tuple[str, str]:
-    """Shared ``__call__`` prelude for caption-conditioned video judges.
-
-    Fails fast when the artifact carries no prompt — the consumers' rubrics
-    are caption-conditioned, so an empty prompt would silently score garbage.
-    Returns ``(prompt, resolved_media_path)``.
-    """
-
-    prompt = artifact.prompt or str(artifact.metadata.get("prompt", ""))
-    if not prompt:
-        raise ValueError(
-            f"{family} requires a prompt for artifact {artifact.artifact_id!r}; "
-            "found none on artifact.prompt or artifact.metadata['prompt']",
-        )
-    video_path = str(Path(artifact.as_path()).expanduser().resolve())
-    return prompt, video_path
 
 
 class RewardModel(Protocol):
@@ -123,5 +100,4 @@ __all__ = [
     "LazyTorchModule",
     "RewardModel",
     "TorchRewardModel",
-    "require_prompt_and_video_path",
 ]

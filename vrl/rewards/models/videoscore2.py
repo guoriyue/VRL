@@ -44,7 +44,6 @@ from vrl.rewards.assets.video_judge_prompts import (
     VIDEOSCORE2_USER_TEMPLATE,
 )
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.rewards.models.hub import resolve_model_root
 from vrl.utils.logging import init_logger, kv
 
@@ -123,7 +122,7 @@ class VideoScore2Model:
         self,
         artifact: RewardInferenceArtifact,
     ) -> dict[str, float]:
-        prompt, video_path = require_prompt_and_video_path(artifact, family="VideoScore2")
+        prompt, video_path = artifact.require_prompt_and_video_path(family="VideoScore2")
         return self._score_video(video_path, prompt)
 
     def _score_video(self, video_path: str, prompt: str) -> dict[str, float]:

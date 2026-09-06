@@ -15,12 +15,6 @@ if TYPE_CHECKING:
     from vrl.trainers.data.artifacts import ArtifactManifestReport as ArtifactManifestReport
     from vrl.trainers.data.artifacts import ResolvedArtifact as ResolvedArtifact
     from vrl.trainers.data.artifacts import (
-        require_artifact_manifest as require_artifact_manifest,
-    )
-    from vrl.trainers.data.artifacts import (
-        require_artifact_manifest_pair as require_artifact_manifest_pair,
-    )
-    from vrl.trainers.data.artifacts import (
         resolve_prompt_example_artifacts as resolve_prompt_example_artifacts,
     )
     from vrl.trainers.data.artifacts import (
@@ -68,11 +62,6 @@ _PUBLIC_EXPORTS = {
     "resolve_prompt_example_references": (
         "vrl.trainers.data.artifacts",
         "resolve_prompt_example_references",
-    ),
-    "require_artifact_manifest": ("vrl.trainers.data.artifacts", "require_artifact_manifest"),
-    "require_artifact_manifest_pair": (
-        "vrl.trainers.data.artifacts",
-        "require_artifact_manifest_pair",
     ),
 }
 

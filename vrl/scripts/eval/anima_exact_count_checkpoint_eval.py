@@ -53,7 +53,6 @@ from vrl.scripts.families.cosmos.anima.generation_protocol import (
     ANIMA_ANCHOR_MANIFEST_SCHEMA,
     AnimaGenerationArchive,
     AnimaGenerationCell,
-    validate_paired_generation_archives,
 )
 
 # Persisted report protocol and its fixed blinding policy.
@@ -203,7 +202,7 @@ def create_report(
         checkpoint_archive,
         label=checkpoint_label,
     )
-    validate_paired_generation_archives(base_archive, checkpoint_archive)
+    AnimaGenerationArchive.validate_pair(base_archive, checkpoint_archive)
 
     if reward_backend == "codex":
         countgd_options = {

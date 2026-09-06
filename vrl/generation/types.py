@@ -183,6 +183,28 @@ class GenerationRequest:
                 )
         return rows
 
+    def validate_batch_range(
+        self,
+        *,
+        prompt_index: int,
+        sample_start: int,
+        sample_count: int,
+    ) -> None:
+        """Validate a batch's prompt/sample range against its source request."""
+
+        if prompt_index < 0 or prompt_index >= len(self.prompts):
+            raise ValueError(f"batch.prompt_index={prompt_index} is out of range")
+        sample_end = sample_start + sample_count
+        if sample_start < 0 or sample_count < 1:
+            raise ValueError(
+                "batch sample range must have non-negative start and positive count",
+            )
+        if sample_end > self.samples_per_prompt:
+            raise ValueError(
+                "batch sample range exceeds self.samples_per_prompt: "
+                f"{sample_start}:{sample_end} > {self.samples_per_prompt}",
+            )
+
 
 @dataclass(slots=True)
 class GenerationSampleRow:

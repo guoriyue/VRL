@@ -8,7 +8,7 @@ import pytest
 from vrl.scripts.data import setup as setup_cli
 from vrl.trainers.data import PromptExample, load_prompt_manifest
 from vrl.trainers.data.artifacts import (
-    require_artifact_manifest,
+    ArtifactManifestReport,
     resolve_prompt_example_references,
 )
 from vrl.utils.artifacts import ArtifactManifestError, resolve_artifact_path
@@ -39,7 +39,7 @@ def test_artifact_manifest_resolves_relative_references_via_data_root(tmp_path: 
     )
 
     examples = load_prompt_manifest(manifest)
-    report = require_artifact_manifest(
+    report = ArtifactManifestReport.from_manifest(
         manifest,
         data_root=data_root,
         required_artifact_fields=("reference_image",),
@@ -69,7 +69,7 @@ def test_target_artifacts_are_prompt_fields_and_validate(tmp_path: Path) -> None
     )
 
     examples = load_prompt_manifest(manifest)
-    report = require_artifact_manifest(
+    report = ArtifactManifestReport.from_manifest(
         manifest,
         data_root=data_root,
         required_artifact_fields=("reference_image", "target_image"),
@@ -128,7 +128,7 @@ def test_missing_reference_image_fails_with_manifest_row(tmp_path: Path) -> None
     )
 
     with pytest.raises(ArtifactManifestError, match=r"row 0 reference_image does not exist"):
-        require_artifact_manifest(
+        ArtifactManifestReport.from_manifest(
             manifest,
             data_root=tmp_path,
             required_artifact_fields=("reference_image",),
@@ -159,7 +159,7 @@ def test_production_metadata_domain_is_rejected(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ArtifactManifestError, match=r"metadata\.domain"):
-        require_artifact_manifest(
+        ArtifactManifestReport.from_manifest(
             manifest,
             data_root=tmp_path,
             required_artifact_fields=("reference_image",),

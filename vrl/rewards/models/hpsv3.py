@@ -42,7 +42,6 @@ from vrl.rewards.assets.hpsv3_prompts import (
     build_hpsv3_frame_prompt,
 )
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.rewards.models.hub import resolve_model_root
 from vrl.utils.logging import init_logger, kv
 
@@ -237,7 +236,7 @@ class HPSv3Model:
         model.load_state_dict(state_dict, strict=True)
 
     def __call__(self, artifact: RewardInferenceArtifact) -> dict[str, float]:
-        prompt, video_path = require_prompt_and_video_path(artifact, family="HPSv3")
+        prompt, video_path = artifact.require_prompt_and_video_path(family="HPSv3")
         return self._score_video(video_path, prompt)
 
     def _score_video(self, video_path: str, prompt: str) -> dict[str, float]:

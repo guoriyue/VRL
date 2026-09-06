@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -83,6 +84,27 @@ class RewardInferenceArtifact:
             f"reward artifact {self.artifact_id!r} has no materialized path; "
             "materialize the artifact before calling a file-based reward model",
         )
+
+    def require_prompt_and_video_path(
+        self,
+        *,
+        family: str,
+    ) -> tuple[str, str]:
+        """Prompt plus resolved media path, for caption-conditioned video judges.
+
+        Fails fast when the artifact carries no prompt — the consumers' rubrics
+        are caption-conditioned, so an empty prompt would silently score garbage.
+        Returns ``(prompt, resolved_media_path)``.
+        """
+
+        prompt = self.prompt or str(self.metadata.get("prompt", ""))
+        if not prompt:
+            raise ValueError(
+                f"{family} requires a prompt for artifact {self.artifact_id!r}; "
+                "found none on self.prompt or self.metadata['prompt']",
+            )
+        video_path = str(Path(self.as_path()).expanduser().resolve())
+        return prompt, video_path
 
 
 @dataclass(frozen=True, slots=True)

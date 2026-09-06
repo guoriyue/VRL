@@ -8,7 +8,6 @@ from typing import Any
 from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
-    validate_batch_range,
 )
 from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.types import GenerationRequest
@@ -99,8 +98,7 @@ class ChunkAutoregressiveDenoiseExecutorBase(BatchExecutorBase):
         request: GenerationRequest,
         batch: GenerationSampleBatch,
     ) -> ChunkAutoregressiveDenoiseResult:
-        validate_batch_range(
-            request,
+        request.validate_batch_range(
             prompt_index=batch.prompt_index,
             sample_start=batch.sample_start,
             sample_count=batch.sample_count,

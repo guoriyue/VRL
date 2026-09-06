@@ -14,7 +14,6 @@ from vrl.scripts.families.cosmos.anima.generation_protocol import (
     ANIMA_GENERATION_SCHEMA,
     AnimaGenerationArchive,
     AnimaPixelPairingProtocol,
-    validate_paired_generation_archives,
 )
 from vrl.utils.artifacts import sha256_file
 
@@ -241,7 +240,7 @@ def test_pixel_pairing_ignores_device_ordinal_and_broad_tree_hash(tmp_path: Path
 
     assert protocol.execution_device_type == "cuda"
     assert protocol.generator_packages == {"torch": "2.11.0", "diffusers": "0.39.0"}
-    validate_paired_generation_archives(base, checkpoint)
+    AnimaGenerationArchive.validate_pair(base, checkpoint)
 
 
 def test_pixel_pairing_rejects_a_different_device_backend(tmp_path: Path) -> None:
@@ -259,7 +258,7 @@ def test_pixel_pairing_rejects_a_different_device_backend(tmp_path: Path) -> Non
     )
 
     with pytest.raises(ValueError, match="execution_device_type"):
-        validate_paired_generation_archives(base, checkpoint)
+        AnimaGenerationArchive.validate_pair(base, checkpoint)
 
 
 def test_pixel_pairing_rejects_different_cell_metadata(tmp_path: Path) -> None:
@@ -281,7 +280,7 @@ def test_pixel_pairing_rejects_different_cell_metadata(tmp_path: Path) -> None:
     checkpoint = AnimaGenerationArchive.load(checkpoint_dir)
 
     with pytest.raises(ValueError, match=r"cell differs.*reward_metadata"):
-        validate_paired_generation_archives(base, checkpoint)
+        AnimaGenerationArchive.validate_pair(base, checkpoint)
 
 
 def test_exact_count_target_must_match_prompt_metadata(tmp_path: Path) -> None:

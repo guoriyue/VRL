@@ -11,7 +11,6 @@ import torch
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
     ordered_covering_batches,
-    validate_batch_range,
 )
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 
@@ -129,8 +128,7 @@ class ARRequestLayout:
     def validate_chunk(self, request: GenerationRequest, batch: GenerationSampleBatch) -> None:
         """Validate one prompt/sample AR batch against its request."""
 
-        validate_batch_range(
-            request,
+        request.validate_batch_range(
             prompt_index=batch.prompt_index,
             sample_start=batch.sample_start,
             sample_count=batch.sample_count,

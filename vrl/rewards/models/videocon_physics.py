@@ -29,7 +29,6 @@ from vrl.rewards.assets.video_judge_prompts import (
     VIDEOCON_SEMANTIC_TEMPLATE,
 )
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.rewards.models.hub import resolve_model_root
 from vrl.utils.logging import init_logger
 
@@ -106,8 +105,7 @@ class VideoConPhysicsModel:
         self,
         artifact: RewardInferenceArtifact,
     ) -> dict[str, float]:
-        prompt, video_path = require_prompt_and_video_path(
-            artifact,
+        prompt, video_path = artifact.require_prompt_and_video_path(
             family="VideoCon-Physics",
         )
 

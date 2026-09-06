@@ -73,6 +73,130 @@ class ArtifactManifestReport:
             "source_episode_overlap": list(self.source_episode_overlap),
         }
 
+    @classmethod
+    def from_manifest(
+        cls,
+        manifest_path: str | Path,
+        *,
+        data_root: str | Path | None = None,
+        artifact_fields: Sequence[str] = DEFAULT_ARTIFACT_FIELDS,
+        required_artifact_fields: Sequence[str] = (),
+        required_metadata_fields: Sequence[str] = (),
+    ) -> ArtifactManifestReport:
+        """Validate one prompt manifest that references external binary artifacts."""
+
+        path = Path(manifest_path)
+        examples = load_prompt_manifest(path)
+        root = coerce_data_root(data_root)
+        resolved: list[ResolvedArtifact] = []
+        warnings: list[str] = []
+        for row_index, example in enumerate(examples):
+            metadata = dict(getattr(example, "metadata", None) or {})
+            if "domain" in metadata:
+                raise ArtifactManifestError(
+                    f"{path}: row {row_index} metadata.domain is reserved; "
+                    "use metadata.source or metadata.dataset instead",
+                )
+            for field_name in required_metadata_fields:
+                value = metadata.get(field_name)
+                if value is None or str(value).strip() == "":
+                    raise ArtifactManifestError(
+                        f"{path}: row {row_index} metadata.{field_name} is required",
+                    )
+            for field_name in required_artifact_fields:
+                if not _artifact_values(example, field_name):
+                    raise ArtifactManifestError(
+                        f"{path}: row {row_index} is missing required field {field_name}",
+                    )
+            for field_name in artifact_fields:
+                for raw_value in _artifact_values(example, field_name):
+                    resolved_path = resolve_artifact_path(
+                        raw_value,
+                        data_root=root,
+                        allow_absolute=False,
+                    )
+                    if not resolved_path.exists():
+                        raise ArtifactManifestError(
+                            f"{path}: row {row_index} {field_name} does not exist: {resolved_path}",
+                        )
+                    _assert_readable(resolved_path, manifest_path=path, row_index=row_index)
+                    resolved.append(
+                        ResolvedArtifact(
+                            row_index=row_index,
+                            field=field_name,
+                            raw_path=str(raw_value),
+                            resolved_path=resolved_path,
+                        ),
+                    )
+        source_episodes = tuple(sorted(_source_episodes(examples)))
+        if not examples:
+            warnings.append(f"{path}: manifest is empty")
+        return cls(
+            manifest_path=path,
+            data_root=root,
+            row_count=len(examples),
+            artifact_count=len(resolved),
+            resolved_artifacts=tuple(resolved),
+            warnings=tuple(warnings),
+            source_episodes=source_episodes,
+        )
+
+    @classmethod
+    def from_pair(
+        cls,
+        train_manifest: str | Path,
+        eval_manifest: str | Path,
+        **kwargs: Any,
+    ) -> ArtifactManifestReport:
+        """Validate train/eval artifact manifests and report source-episode overlap."""
+
+        train = cls.from_manifest(train_manifest, **kwargs)
+        eval_report = cls.from_manifest(eval_manifest, **kwargs)
+        overlap = tuple(
+            sorted(set(train.source_episodes).intersection(eval_report.source_episodes)),
+        )
+        warnings = list(train.warnings)
+        if overlap:
+            warnings.append(
+                "train/eval source_episode overlap: " + ", ".join(overlap),
+            )
+        return cls(
+            manifest_path=train.manifest_path,
+            data_root=train.data_root,
+            row_count=train.row_count,
+            artifact_count=train.artifact_count,
+            resolved_artifacts=train.resolved_artifacts,
+            warnings=tuple(warnings),
+            source_episodes=train.source_episodes,
+            eval_manifest_path=eval_report.manifest_path,
+            eval_source_episodes=eval_report.source_episodes,
+            source_episode_overlap=overlap,
+        )
+
+    @classmethod
+    def from_video_world_pair(
+        cls,
+        train_manifest: str | Path,
+        eval_manifest: str | Path,
+        *,
+        data_root: str | Path | None = None,
+        require_target_video: bool = False,
+    ) -> ArtifactManifestReport:
+        """Validate real Video2World manifests and first-frame reference provenance."""
+
+        artifact_fields = (
+            ("reference_image", "target_video") if require_target_video else ("reference_image",)
+        )
+        required_artifact_fields = artifact_fields
+        return cls.from_pair(
+            train_manifest,
+            eval_manifest,
+            data_root=data_root,
+            artifact_fields=artifact_fields,
+            required_artifact_fields=required_artifact_fields,
+            required_metadata_fields=SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
+        )
+
 
 def resolve_prompt_example_artifacts(
     example: PromptExample,
@@ -162,127 +286,6 @@ def resolve_prompt_example_references(
     )
 
 
-def require_artifact_manifest(
-    manifest_path: str | Path,
-    *,
-    data_root: str | Path | None = None,
-    artifact_fields: Sequence[str] = DEFAULT_ARTIFACT_FIELDS,
-    required_artifact_fields: Sequence[str] = (),
-    required_metadata_fields: Sequence[str] = (),
-) -> ArtifactManifestReport:
-    """Validate one prompt manifest that references external binary artifacts."""
-
-    path = Path(manifest_path)
-    examples = load_prompt_manifest(path)
-    root = coerce_data_root(data_root)
-    resolved: list[ResolvedArtifact] = []
-    warnings: list[str] = []
-    for row_index, example in enumerate(examples):
-        metadata = dict(getattr(example, "metadata", None) or {})
-        if "domain" in metadata:
-            raise ArtifactManifestError(
-                f"{path}: row {row_index} metadata.domain is reserved; "
-                "use metadata.source or metadata.dataset instead",
-            )
-        for field_name in required_metadata_fields:
-            value = metadata.get(field_name)
-            if value is None or str(value).strip() == "":
-                raise ArtifactManifestError(
-                    f"{path}: row {row_index} metadata.{field_name} is required",
-                )
-        for field_name in required_artifact_fields:
-            if not _artifact_values(example, field_name):
-                raise ArtifactManifestError(
-                    f"{path}: row {row_index} is missing required field {field_name}",
-                )
-        for field_name in artifact_fields:
-            for raw_value in _artifact_values(example, field_name):
-                resolved_path = resolve_artifact_path(
-                    raw_value,
-                    data_root=root,
-                    allow_absolute=False,
-                )
-                if not resolved_path.exists():
-                    raise ArtifactManifestError(
-                        f"{path}: row {row_index} {field_name} does not exist: {resolved_path}",
-                    )
-                _assert_readable(resolved_path, manifest_path=path, row_index=row_index)
-                resolved.append(
-                    ResolvedArtifact(
-                        row_index=row_index,
-                        field=field_name,
-                        raw_path=str(raw_value),
-                        resolved_path=resolved_path,
-                    ),
-                )
-    source_episodes = tuple(sorted(_source_episodes(examples)))
-    if not examples:
-        warnings.append(f"{path}: manifest is empty")
-    return ArtifactManifestReport(
-        manifest_path=path,
-        data_root=root,
-        row_count=len(examples),
-        artifact_count=len(resolved),
-        resolved_artifacts=tuple(resolved),
-        warnings=tuple(warnings),
-        source_episodes=source_episodes,
-    )
-
-
-def require_artifact_manifest_pair(
-    train_manifest: str | Path,
-    eval_manifest: str | Path,
-    **kwargs: Any,
-) -> ArtifactManifestReport:
-    """Validate train/eval artifact manifests and report source-episode overlap."""
-
-    train = require_artifact_manifest(train_manifest, **kwargs)
-    eval_report = require_artifact_manifest(eval_manifest, **kwargs)
-    overlap = tuple(
-        sorted(set(train.source_episodes).intersection(eval_report.source_episodes)),
-    )
-    warnings = list(train.warnings)
-    if overlap:
-        warnings.append(
-            "train/eval source_episode overlap: " + ", ".join(overlap),
-        )
-    return ArtifactManifestReport(
-        manifest_path=train.manifest_path,
-        data_root=train.data_root,
-        row_count=train.row_count,
-        artifact_count=train.artifact_count,
-        resolved_artifacts=train.resolved_artifacts,
-        warnings=tuple(warnings),
-        source_episodes=train.source_episodes,
-        eval_manifest_path=eval_report.manifest_path,
-        eval_source_episodes=eval_report.source_episodes,
-        source_episode_overlap=overlap,
-    )
-
-
-def require_source_backed_video_world_manifest_pair(
-    train_manifest: str | Path,
-    eval_manifest: str | Path,
-    *,
-    data_root: str | Path | None = None,
-    require_target_video: bool = False,
-) -> ArtifactManifestReport:
-    """Validate real Video2World manifests and first-frame reference provenance."""
-
-    artifact_fields = (
-        ("reference_image", "target_video") if require_target_video else ("reference_image",)
-    )
-    required_artifact_fields = artifact_fields
-    return require_artifact_manifest_pair(
-        train_manifest,
-        eval_manifest,
-        data_root=data_root,
-        artifact_fields=artifact_fields,
-        required_artifact_fields=required_artifact_fields,
-        required_metadata_fields=SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
-    )
-
-
 def validate_reference_images(
     examples: Sequence[PromptExample],
     *,
@@ -360,9 +363,6 @@ __all__ = [
     "SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS",
     "ArtifactManifestReport",
     "ResolvedArtifact",
-    "require_artifact_manifest",
-    "require_artifact_manifest_pair",
-    "require_source_backed_video_world_manifest_pair",
     "resolve_prompt_example_artifacts",
     "resolve_prompt_example_references",
     "validate_reference_images",

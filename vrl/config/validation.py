@@ -81,7 +81,7 @@ def validate_production_reward_contract(root: RootConfig) -> None:
 
 
 def _validate_video_world_production_data(root: RootConfig) -> None:
-    from vrl.trainers.data.artifacts import require_source_backed_video_world_manifest_pair
+    from vrl.trainers.data.artifacts import ArtifactManifestReport
 
     data = root.data
     assert data is not None
@@ -92,7 +92,7 @@ def _validate_video_world_production_data(root: RootConfig) -> None:
     # pixel-L1 target_video_similarity); it consumes metadata['target_video'], so its
     # presence is what makes target clips a hard manifest requirement.
     require_target_video = "target_dino_similarity" in reward_components
-    require_source_backed_video_world_manifest_pair(
+    ArtifactManifestReport.from_video_world_pair(
         str(data.manifest),
         str(data.eval_manifest),
         require_target_video=require_target_video,

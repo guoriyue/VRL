@@ -23,7 +23,6 @@ from vrl.rewards.assets.kling_prompt_templates import (
     build_kling_video_reward_prompt,
 )
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.rewards.models.hub import HuggingFaceRepoRevision
 from vrl.utils.logging import init_logger, kv
 
@@ -162,8 +161,7 @@ class KlingVideoRewardModel:
         self,
         artifact: RewardInferenceArtifact,
     ) -> dict[str, float]:
-        prompt, artifact_path = require_prompt_and_video_path(
-            artifact,
+        prompt, artifact_path = artifact.require_prompt_and_video_path(
             family="Kling VideoReward",
         )
         rewards = self._reward(

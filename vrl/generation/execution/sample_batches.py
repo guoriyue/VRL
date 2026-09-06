@@ -34,29 +34,6 @@ class SampleAlignedValues:
             raise ValueError("SampleAlignedValues.values must be non-empty")
 
 
-def validate_batch_range(
-    request: GenerationRequest,
-    *,
-    prompt_index: int,
-    sample_start: int,
-    sample_count: int,
-) -> None:
-    """Validate a batch's prompt/sample range against its source request."""
-
-    if prompt_index < 0 or prompt_index >= len(request.prompts):
-        raise ValueError(f"batch.prompt_index={prompt_index} is out of range")
-    sample_end = sample_start + sample_count
-    if sample_start < 0 or sample_count < 1:
-        raise ValueError(
-            "batch sample range must have non-negative start and positive count",
-        )
-    if sample_end > request.samples_per_prompt:
-        raise ValueError(
-            "batch sample range exceeds request.samples_per_prompt: "
-            f"{sample_start}:{sample_end} > {request.samples_per_prompt}",
-        )
-
-
 def _require_rows(name: str, value: Any, count: int) -> None:
     """Require a batch payload to have ``count`` leading batch rows.
 
@@ -231,8 +208,7 @@ def ordered_covering_batches[TBatch: BatchResultWithIdentity](
         prompt_index = int(batch.prompt_index)
         sample_start = int(batch.sample_start)
         sample_count = int(batch.sample_count)
-        validate_batch_range(
-            request,
+        request.validate_batch_range(
             prompt_index=prompt_index,
             sample_start=sample_start,
             sample_count=sample_count,
@@ -363,5 +339,4 @@ __all__ = [
     "ordered_covering_batches",
     "require_matching_batch_context",
     "run_sample_batches_with_oom_retry",
-    "validate_batch_range",
 ]

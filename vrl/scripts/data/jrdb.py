@@ -26,7 +26,7 @@ from typing import Any
 
 from vrl.scripts.data.common import default_data_root, emit, write_jsonl, write_report
 from vrl.scripts.data.video_world import build_target_video_world_rows
-from vrl.trainers.data.artifacts import require_source_backed_video_world_manifest_pair
+from vrl.trainers.data.artifacts import ArtifactManifestReport
 
 COMMAND_NAME = "jrdb-targets"
 SOURCE_REPO = "jrdb.erc.monash.edu"
@@ -195,7 +195,7 @@ def _cmd_jrdb_targets(args: Any) -> None:
     validation_summary: dict[str, Any] | None = None
     if eval_rows:
         write_jsonl(eval_manifest, eval_rows)
-        validation = require_source_backed_video_world_manifest_pair(
+        validation = ArtifactManifestReport.from_video_world_pair(
             train_manifest,
             eval_manifest,
             data_root=data_root,

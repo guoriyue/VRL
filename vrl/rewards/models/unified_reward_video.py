@@ -33,7 +33,6 @@ from vrl.rewards.assets.video_judge_prompts import (
     UNIFIED_REWARD_VIDEO_PROBLEM_TEMPLATE,
 )
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.rewards.models.hub import resolve_model_root
 from vrl.utils.logging import init_logger, kv
 
@@ -92,8 +91,7 @@ class UnifiedRewardVideoModel:
     ) -> dict[str, float]:
         # The rubric is caption-conditioned, so an empty prompt must fail fast
         # (drift fix: this raise was silently missing here).
-        prompt, video_path = require_prompt_and_video_path(
-            artifact,
+        prompt, video_path = artifact.require_prompt_and_video_path(
             family="UnifiedReward-2.0",
         )
         frames = _sample_frames(video_path, self.num_frames)
