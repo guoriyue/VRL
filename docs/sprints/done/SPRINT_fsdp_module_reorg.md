@@ -1,6 +1,6 @@
 # SPRINT: fsdp.py 归位与去重 — process-group 生命周期归 distributed.py，DTensor 物化三份合一
 
-**日期**: 2026-08-16  **状态**: PLANNED
+**日期**: 2026-08-16  **状态**: DONE（2026-09-05 落地，见 §8）
 **触发**: 用户问 "fsdp.py 能不能更有条理？_COORDINATION_GROUP 是干什么的？能否参考 deepspeed？"
 **证据来源**: 全文件逐函数普查（15 个顶层函数 × 全仓调用方 grep，.venv 除外）+
 DeepSpeed 0.x 本地源码对照（`~/miniconda3/.../deepspeed/runtime/zero/`）。
@@ -242,3 +242,43 @@ A → B → C，各自独立 commit，彼此可单独回滚。每个 commit 前�
 - `docs/sprints/done/SPRINT_grab_bag_file_audit.md`（前审判例：风格合法 + 误判撤销记录）
 - `abb8e4da` — Xid 79 修复，`_COORDINATION_GROUP` 的出生 commit
 - DeepSpeed 本地源：`runtime/zero/`（大文件与全局先例）、`checkpoint/`（关切切分先例）
+
+---
+
+## 8. 落地记录（2026-09-05）
+
+三个 commit 各自独立，顺序 A → B → C：
+
+| Sprint | commit | 内容 |
+|---|---|---|
+| A | `f86d49516` | `cpu_coordination_group` / `init_training_process_group` / `shutdown_training_process_group` + 全局（改名 `_CPU_COORDINATION_GROUP`）整块移入 `vrl/trainers/distributed.py`；fsdp.py 零 re-export；distributed.py 两处"本模块不建 PG、见 fsdp.py"的免责 docstring 改为声明拥有身份 + 生命周期两半 |
+| B | `bf6190ef7` | `_gather_named_full_cpu(sharded_state, names, *, keep, what)` 吃掉两个模型 gather 的 missing-key 块 + 平铺循环；`_full_cpu_tensor(value, *, keep)` 是唯一的 (D)Tensor→CPU clone 步骤，`_materialize_full_cpu` 的两个 tensor 分支也改调它。两个 gather 函数本身、各自的 DCP options 与真机注释一字未动 |
+| C | `483c3cafb` | `FSDPStrategy._load_module_states(bundle, state, *, strict, load_one)`；两个公开 loader 各变 3 行委托，root-key 校验与 `"checkpoint module roots mismatch"` 异常逐字保留 |
+
+### 与 §2 计划的两处偏差
+
+1. **strategy.py 改为模块级 import，不是"延迟 import 换源"。** 计划表里写的是
+   把 `from vrl.trainers.fsdp import …` 就地换成 `from vrl.trainers.distributed import …`。
+   实际 `strategy.py:24` 早已在模块级 `from vrl.trainers.distributed import DistributedTrainingContext`，
+   distributed.py 也不 import 任何 trainers 模块——对它做函数内延迟 import 没有任何
+   边界可守，只是 cargo-cult。三个函数并入那一行 import。
+   相应地，测试补丁目标不是 `vrl.trainers.distributed.X` 而是 **`vrl.trainers.strategy.X`**
+   （`tests/trainers/test_ddp.py` 的 patch 字符串、`tests/trainers/test_fsdp.py` 的 spy
+   改 `import vrl.trainers.strategy as strategy_mod`）——补丁打在消费方绑定的名字上，
+   这才是模块级 import 下唯一生效的位置。
+2. **`init_training_process_group` docstring 首行改了一个词**："for an fsdp rank" →
+   "for a ddp/fsdp rank"。§2 说 docstring 不改写指的是 Xid 79 的 WHY 段，那段逐字保留；
+   首行原文与本 sprint 的动机（它服务两个策略）直接矛盾，留着就是新的过时注释。
+
+### 验收结果
+
+- grep 验收：`grep -rn 'init_training_process_group\|shutdown_training_process_group\|cpu_coordination_group\|_COORDINATION_GROUP' vrl/ tests/` 中 `vrl.trainers.fsdp` / `fsdp_mod` 零命中。
+- `CUDA_VISIBLE_DEVICES="" pytest tests/trainers -q`：A 之后与 B+C 之后各跑一次，均 425 passed / 10 skipped。
+- 全仓 CPU gate（`CUDA_VISIBLE_DEVICES="" HF_HUB_OFFLINE=1 pytest tests -q`）：3444 passed / 63 skipped，与改动前基线相同。
+- §3 提到的 NCCL lane（`test_fsdp_gather_distributed.py` 真多卡）本机 GPU 被占用，未跑；
+  改动只在 `full_tensor()` 之后的 CPU 搬运段，集合通信顺序（排序遍历）未变。
+
+### 行数
+
+`fsdp.py` 725 → 673，`distributed.py` 160 → 233，`strategy.py` 1158 → 1149。
+fsdp.py 现在模块级只剩 `logger` 一个全局，与 §2 "文件名与内容第一次对齐"的预期一致。
