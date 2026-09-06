@@ -1,6 +1,6 @@
 # SPRINT: 完成 tiny-real diffusers fixtures 转换（轨道四剩余工作）
 
-状态：**done（2026-09-05，七项中六项落地；cosmos3 一项被环境卡住，见文末）**。轨道顺序 4 / 6。风险：medium。
+状态：**done（2026-09-05 六项落地；2026-09-06 环境同步后第 4 项 cosmos3 也落地，见文末）**。轨道顺序 4 / 6。风险：medium。
 
 审计与已完成子集见
 `docs/sprints/done/SPRINT_tiny-real-diffusers-fixtures_audit.md`。commit `300ef8c7`
@@ -58,13 +58,26 @@
 | 6 | SANA | `bb9c6bfd8` | `tests/scripts/eval/fixtures.py::build_official_sana_scheduler(**overrides)` 由 `SCHEDULER_PROTOCOL` 派生 kwargs 构造真类；四份 echo 替身删除；revision recorder 改为 patch 真类的 `from_pretrained`，不再替换 `sys.modules["diffusers"]` |
 | 7 | real_cover | 随 2 / 5 | nextstep decode → `tests/e2e/test_real_checkpoint_rl.py::test_real_checkpoint_online_rl_updates_trainable_weights`；mochi/pixart ladder → `tests/models/steps/denoise/test_scheduler_logprob_parity.py::test_family_scheduler_sample_replay_parity`；架构守卫 `tests/architecture/test_real_cover_labels.py` 绿 |
 
-### 未落地：第 4 项 cosmos3（环境阻塞，不是代码阻塞）
+### 第 4 项 cosmos3（2026-09-06 补齐，commit `d1b238a8b`）
 
-`vrl/models/families/cosmos/cosmos3/model.py:89` 需要 `diffusers.Cosmos3OmniPipeline`。
-`pyproject.toml` / `uv.lock` 已钉 diffusers 0.39.0，但本机两个解释器都没装到：
-`.venv` 是 0.38.0、miniconda base 是 0.37.1，两者均无 `Cosmos3Omni*`。补齐需要
-`uv sync`，而当前机器上有正在跑的训练进程，改动共享环境的包不在本次施工范围。
-审计 §6.2 的 builder / 三个 T2 测试设计原样有效，环境同步后按 §6.2 执行即可。
+9 月 5 日时两个解释器都没有 diffusers 0.39 的 `Cosmos3OmniPipeline`；GPU 空出来后
+`uv sync --inexact --extra cosmos --extra reward` 把 `.venv` 同步到 lock（`--inexact`
+保住了 pytest / ruff 等不在所选 extra 里的已装包；miniconda base 仍是 0.37.1，未动）。
+
+落地形态与审计 §6.2 一致，差异只在数字：`build_tiny_cosmos3_tokenizer`（真
+`PreTrainedTokenizerFast` + word-level 词表 + 最小 chat template，`<|vision_start|>` /
+`eos_token_id` 都是 pipeline `__init__` 真读的）、`build_tiny_cosmos3_transformer`
+（30,256 参数，`patch_latent_dim = 4 * 2²`、`mrope_section` 和为 `head_dim // 2`）、
+`build_tiny_cosmos3_pipeline`（`enable_safety_checker=False`，与 `from_build` 同）。
+`build_tiny_wan_vae` 加了 `latents_mean` / `latents_std` 参数，让 decode 的反归一化可观测。
+四个测试：packed_static 装配（一个样本、`num_steps` 个 timestep、11 个 transformer kwarg
+名、`sequence_length = und_len + num_vision_tokens`、noisy token 数由 latent 与 patch 算出）；
+flow 域 CFG combine `uncond + g*(cond-uncond)` 与 float32 raw velocity；cfg-off 单次 forward；
+`latents_mean/std` 反归一化后走真 VAE decode。实测 4 passed，首个测试 1.22 s（含
+diffusers cosmos3 懒加载），其余 < 50 ms。
+
+这些测试**不 skip**低版本 diffusers：lock 钉的是 0.39，装了旧版是环境错误，按 RW-11
+的原则让它红而不是无声跳过。
 
 ### 有意不做的标注
 
