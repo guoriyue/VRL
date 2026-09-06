@@ -21,7 +21,7 @@ the torchrun↔Ray rollout coordination, and optimizer/EMA state sharding.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from typing import Any
 
 import torch
@@ -219,7 +219,6 @@ def gather_trainable_state_dict(
         StateDictOptions,
         get_model_state_dict,
     )
-    from torch.distributed.tensor import DTensor
 
     trainable_names = {
         str(name) for name, parameter in module.named_parameters() if parameter.requires_grad
@@ -235,26 +234,16 @@ def gather_trainable_state_dict(
             ignore_frozen_params=True,
         ),
     )
-    missing = sorted(trainable_names - set(sharded_state))
-    if missing:
-        preview = ", ".join(missing[:5])
-        suffix = " ..." if len(missing) > 5 else ""
-        raise ValueError(f"sharded state is missing trainable parameters: {preview}{suffix}")
 
     import torch.distributed as dist
 
     keep = not rank0_only or not dist.is_initialized() or dist.get_rank() == 0
-    gathered: dict[str, Any] = {}
-    # All ranks must enter DTensor collectives in the same order.
-    for name in sorted(trainable_names):
-        value = sharded_state[name]
-        if isinstance(value, DTensor):
-            value = value.full_tensor()
-        if not isinstance(value, torch.Tensor):
-            raise TypeError(f"trainable state {name!r} must be a tensor")
-        if keep:
-            gathered[name] = value.detach().cpu().clone()
-    return gathered
+    return _gather_named_full_cpu(
+        sharded_state,
+        trainable_names,
+        keep=keep,
+        what="trainable parameters",
+    )
 
 
 def gather_checkpoint_state_dict(module: nn.Module) -> dict[str, Any]:
@@ -270,7 +259,6 @@ def gather_checkpoint_state_dict(module: nn.Module) -> dict[str, Any]:
         StateDictOptions,
         get_model_state_dict,
     )
-    from torch.distributed.tensor import DTensor
 
     owned_names = checkpoint_owned_state_names(module)
     if not owned_names:
@@ -289,21 +277,59 @@ def gather_checkpoint_state_dict(module: nn.Module) -> dict[str, Any]:
             ignore_frozen_params=not has_registered_frozen_state,
         ),
     )
-    missing = sorted(owned_names - set(sharded_state))
+    return _gather_named_full_cpu(
+        sharded_state,
+        owned_names,
+        keep=True,
+        what="checkpoint-owned state",
+    )
+
+
+def _full_cpu_tensor(value: torch.Tensor, *, keep: bool) -> torch.Tensor | None:
+    """Gather one (D)Tensor to a full CPU clone; ``keep=False`` releases it at once.
+
+    Every rank must call this for a DTensor (the all-gather is collective) even
+    when only some ranks keep the result. ``Tensor.cpu()`` aliases an already-CPU
+    tensor such as Adam's step counter; a checkpoint snapshot must not change
+    when the live optimizer takes its next step, so plain tensors are cloned too.
+    """
+
+    from torch.distributed.tensor import DTensor
+
+    if isinstance(value, DTensor):
+        value = value.full_tensor()
+    return value.detach().cpu().clone() if keep else None
+
+
+def _gather_named_full_cpu(
+    sharded_state: Mapping[str, Any],
+    names: Iterable[str],
+    *,
+    keep: bool,
+    what: str,
+) -> dict[str, Any]:
+    """Gather ``names`` out of a sharded model state as full CPU tensors.
+
+    ``what`` is the error domain ("trainable parameters", "checkpoint-owned
+    state"); the caller has already decided which names the DCP options expose.
+    """
+
+    names = sorted(names)
+    missing = sorted(set(names) - set(sharded_state))
     if missing:
         preview = ", ".join(missing[:5])
         suffix = " ..." if len(missing) > 5 else ""
-        raise ValueError(f"sharded state is missing checkpoint-owned state: {preview}{suffix}")
+        raise ValueError(f"sharded state is missing {what}: {preview}{suffix}")
 
     gathered: dict[str, Any] = {}
-    # All ranks must enter selected DTensor collectives in the same order.
-    for name in sorted(owned_names):
+    # All ranks must enter DTensor collectives in the same order.
+    for name in names:
         value = sharded_state[name]
-        if isinstance(value, DTensor):
-            value = value.full_tensor()
         if not isinstance(value, torch.Tensor):
-            raise TypeError(f"checkpoint-owned state {name!r} must be a tensor")
-        gathered[name] = value.detach().cpu().clone()
+            raise TypeError(f"{what} entry {name!r} must be a tensor")
+        full = _full_cpu_tensor(value, keep=keep)
+        if keep:
+            gathered[name] = full
     return gathered
 
 
@@ -400,16 +426,8 @@ def _materialize_full_cpu(value: Any, *, keep: bool = True) -> Any:
     non-primary ranks so only the file-writing rank retains the full CPU tree.
     """
 
-    from torch.distributed.tensor import DTensor
-
-    if isinstance(value, DTensor):
-        full = value.full_tensor()
-        return full.detach().cpu().clone() if keep else None
     if isinstance(value, torch.Tensor):
-        # ``Tensor.cpu()`` aliases an already-CPU scalar such as Adam's step
-        # counter. A checkpoint snapshot must not change when the live optimizer
-        # takes its next step, so clone every ordinary tensor as well as DTensors.
-        return value.detach().cpu().clone() if keep else None
+        return _full_cpu_tensor(value, keep=keep)
     if isinstance(value, dict):
         if keep:
             return {key: _materialize_full_cpu(inner, keep=True) for key, inner in value.items()}
