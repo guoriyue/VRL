@@ -69,9 +69,9 @@ vrl/models/families/registry.py:955   "vrl.models.families.echo.runtime:build_ec
 | 函数 | 读到的 section 数 |
 |---|---|
 | `vrl/config/validation.py:291 compile_conflicts(root)` | **4**：`model.torch_compile` + `actor.gradient_checkpointing` + `distributed.training.strategy` + `distributed.resources.rollout.gpus_per_engine` |
-| `vrl/config/validation.py:371 require_compile_compatible(root)` | 同上（薄封装） |
-| `vrl/config/validation.py:383 require_guarded_rollout_drift(root, precision)` | `sampling` + 外部 `PrecisionPolicy` |
-| `vrl/trainers/activation_checkpointing.py:99 require_compile_checkpointing_compatible(root)` | 2：`actor` + `model` |
+| `vrl/config/validation.py:371 validate_compile_compatible(root)` | 同上（薄封装） |
+| `vrl/config/validation.py:383 validate_guarded_rollout_drift(root, precision)` | `sampling` + 外部 `PrecisionPolicy` |
+| `vrl/trainers/activation_checkpointing.py:99 validate_compile_checkpointing_compatible(root)` | 2：`actor` + `model` |
 | `vrl/config/validation.py:37,55 validate_production_*(root)` | `production` + `reward` + `data` |
 
 `compile_conflicts` 的 docstring 自己写了为什么必须集中：
@@ -88,8 +88,8 @@ several owners」。挂到 `RootConfig` 上既造 god object，又抹掉这段�
 
 `vrl/utils/config.py:45 require_exact_int(value, *, path="actor.train_batch_size")`（8 个调用点）。
 那个字符串命名的是**配置键**，不是调用者身份。同理
-`vrl/trajectory/types.py:48 require_string_tuple(name, values)`、
-`vrl/trajectory/validation.py:292 require_shape_prefix(name, value, expected)` —— 命名的是错误域。
+`vrl/trajectory/types.py:48 validate_string_tuple(name, values)`、
+`vrl/trajectory/validation.py:292 validate_shape_prefix(name, value, expected)` —— 命名的是错误域。
 
 ### 3.5 单 section 读取但目标不是自己 —— 不动
 
@@ -179,7 +179,7 @@ format_ 7      parse_ 3        compute_ 3  to_ 5      make_/create_/derive_ 各 
 按 Rule 2「`Any` 需要收据」逐个查。**28 个在 `vrl/trajectory/builders.py`**——全是张量参数，
 该模块必须 import-time torch-free（config 解析会走到它），收据成立，不动。
 `resolve_torch_dtype` / `require_plain_dtype` / `require_pipeline_offload_mode` /
-`validate_checkpoint_source_member` 收的是原始 YAML / manifest 值，收据成立。
+`require_checkpoint_source_member` 收的是原始 YAML / manifest 值，收据成立。
 `to_cpu_snapshot` / `to_builtin_deep` 是泛型递归遍历，收据成立。
 
 真正无收据、且 `getattr` 正在守护一个**已声明字段**的有 5 处：
@@ -283,6 +283,57 @@ docstring 里写明为什么不是方法。另外 `require_trainable_modules` �
 `vrl/models/interfaces/` 的 `RuntimeBundle` 上还会把 trainer 的不变量推进 model 接口层——
 即使测试问题不存在，这也是反对搬家的第二个独立理由。
 
+## 4quinquies. 第四轮：`require_` 和 `validate_` 是同义词
+
+### 4q.1 先证伪假设
+
+假设「`require_` 收窄并返回值，`validate_` 是纯守卫」。**实测推翻**：
+
+```
+require_*:   返回 None 9,  返回值 11
+validate_*:  返回 None 14, 返回值 14
+```
+
+48 个函数，两个前缀各占一半，**没有任何区分**。后果不是审美：`validate_timeout(x)` 返回
+必须使用的 `float`，`require_string_tuple(n, v)` 什么都不返回——从调用点看不出返回值要不要接。
+
+### 4q.2 定规则并统一（23 处改名）
+
+> `require_X(...) -> X` —— 收窄/归一化并**返回**，返回值必须用
+> `validate_X(...) -> None` —— 纯守卫，抛或过
+
+9 个 `require_*` 返回 None → 改为 `validate_*`；14 个 `validate_*` 返回值 → 改为 `require_*`。
+共 205 处引用、84 个文件，零行为变化，改名后无撞名。历史 sprint 文档按约定不改写。
+
+### 4q.3 「双职责」核查：6 个丢返回值的调用点，全部正当
+
+改名前有 6 个调用点丢掉了返回值，怀疑是「一个函数做两件事」。逐个读完调用点，**结论是它们
+都对**——这些函数校验并归一化，有的调用者要归一化结果，有的只要那道检查：
+
+| 函数 | 用返回值 | 只当守卫 | 判定 |
+|---|---|---|---|
+| `require_weights_for` | 2（`load_weights_into` 要剥掉前缀的 state） | 1（`validate_trainable_state` 刻意不改权重） | 正当 |
+| `require_source_backed_video_world_manifest_pair` | 5（data CLI 要 report） | 3（config 校验只要检查） | 正当 |
+| `require_remote_checkpoint_source_pin` | 1（`checkpoint_identity` 要 pin） | 1（wan config 只要检查） | 正当 |
+| `require_artifact_manifest_pair` | 4 | 0 | 正当 |
+| `require_actor_gpu_ids` | 仅 1 个测试 | 5 | 见下 |
+| `require_scheduler` | 仅 1 个测试 | 6 | 见下 |
+
+最后两个的返回值**没有生产消费者**，只有一个测试读它：
+
+```python
+result = require_actor_gpu_ids(..., cross_node=True, ...)
+assert result == (0, 0)          # 两个 worker 各自的本地 GPU 0 都被接受
+
+assert (sana_inference.require_scheduler(DPMSolverMultistepScheduler())
+        == checkpoint_compare.SCHEDULER_PROTOCOL)
+```
+
+按「只有测试读 = 死」的规则该删。**这里不删，理由要写清楚**：这两个函数的失败路径靠抛异常观测，
+**接受路径没有别的可观测量**；删掉返回值会把这两条测试削弱成「没抛」。返回值在这里就是
+accept-path 的观测口。改名后调用点变成 `require_*(...)` 却不接返回值，这个「丢弃」是显式可见的，
+比原来叫 `validate_*` 时更诚实。
+
 ## 5. 未决项（唯一一条）
 
 `Any` + `owner=`/`what=` 字符串的 4 个收窄器，按 Rule 1 + Rule 2 都可疑，但它们做的是
@@ -291,7 +342,7 @@ docstring 里写明为什么不是方法。另外 `require_trainable_modules` �
 ```
 vrl/models/interfaces/replay.py:280   require_replay_model(value: Any, *, owner="model") -> ReplayModel
 vrl/models/interfaces/replay.py:286   require_runtime_model(value: Any, *, owner="model") -> RuntimeModel
-vrl/models/interfaces/replay.py:169   require_zero_replay_timestep(timestep_idx: int, *, owner: str)
+vrl/models/interfaces/replay.py:169   validate_zero_replay_timestep(timestep_idx: int, *, owner: str)
 vrl/models/dtypes.py:104              require_plain_dtype(value: Any, *, what: str, detail="")
 ```
 
@@ -327,8 +378,9 @@ vrl/models/dtypes.py:104              require_plain_dtype(value: Any, *, what: s
 
 ## 8. 总账
 
-三轮合计：**9 个自由函数变成 classmethod（命名统一为 `from_<输入>`），6 个防御性 `getattr`
-删除，4 个 `Any` 参数标注，2 次搬家尝试被实测否决并记录了原因**。
+四轮合计：**9 个自由函数变成 classmethod（命名统一为 `from_<输入>`），23 处 `require_`/`validate_`
+按「是否返回值」统一，6 个防御性 `getattr` 删除，4 个 `Any` 参数标注，2 次搬家尝试被实测否决
+并记录了原因**。
 审过的函数总数 123 + 约 120 = 约 240 个；判定「该搬家」的比例约 4%。
 这个比例本身是结论：仓库里 `require_/build_/resolve_/validate_` 密集**不是**设计问题，
 绝大多数有正当理由；值得改的是那一小撮「名字和返回类型指同一个概念」的构造器。
