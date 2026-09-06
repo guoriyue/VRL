@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from vrl.generation import GenerationInput
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
@@ -55,16 +57,27 @@ def test_engine_request_builder_applies_request_overrides_last() -> None:
     """Checks engine request builder applies request overrides last."""
     builder = GenerationRequestBuilder(
         entry=get_model_family_entry("sd3_5"),
-        config=RolloutCollectorConfig(request_sampling={"alpha": 1}),
+        config=RolloutCollectorConfig(request_sampling={"num_steps": 1}),
     )
 
     collector_request = builder.build(
         ["prompt"],
         1,
-        request_overrides={"alpha": 2, "beta": 3},
+        request_overrides={"num_steps": 2, "guidance_scale": 3.0},
     )
 
-    assert collector_request.request.sampling == {"alpha": 2, "beta": 3}
+    assert collector_request.request.sampling == {"num_steps": 2, "guidance_scale": 3.0}
+
+
+def test_engine_request_builder_rejects_a_request_override_outside_the_family_vocabulary() -> None:
+    """A typo in a manifest's request_overrides fails when the request is built."""
+    builder = GenerationRequestBuilder(
+        entry=get_model_family_entry("sd3_5"),
+        config=RolloutCollectorConfig(),
+    )
+
+    with pytest.raises(ValueError, match=r"unknown sampling\.typo_key"):
+        builder.build(["prompt"], 1, request_overrides={"typo_key": 1})
 
 
 def test_engine_request_builder_carries_the_engine_fields_off_the_sampling_dict() -> None:

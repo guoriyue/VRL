@@ -512,6 +512,22 @@ def _parse_sampling_section(
     return _revalidate_section(section_cls, payload, section="sampling")
 
 
+def validate_sampling_overrides(family: Any, overrides: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate per-prompt ``request_overrides`` against the family sampling class.
+
+    The override vocabulary is the family's ``SamplingSection`` fields, so a typo
+    fails with the same ``unknown sampling.<key>`` message as a YAML typo instead
+    of riding the wire to a runtime that ignores it. Returns the validated values.
+    """
+
+    section = _revalidate_section(
+        sampling_section_class_for_family(family),
+        dict(overrides),
+        section="sampling",
+    )
+    return section.model_dump(mode="python", exclude_unset=True)
+
+
 # ── actor / trainer sections ──────────────────────────────────────────────────
 
 
@@ -1049,4 +1065,5 @@ __all__ = [
     "generation_request_rollout_fields",
     "parse_config",
     "sampling_section_class_for_family",
+    "validate_sampling_overrides",
 ]

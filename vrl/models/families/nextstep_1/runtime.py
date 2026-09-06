@@ -107,7 +107,6 @@ class NextStep1BatchExecutor(ARBatchExecutorBase):
     ) -> NextStep1ARBatchResult:
         """Run one prompt-major AR batch through the black-box sampling path."""
 
-        self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, batch)
         scheduler_batch_size = self.resolve_scheduler_batch_size(
             request,

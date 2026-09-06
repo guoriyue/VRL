@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import fields, replace
 from typing import Any, NamedTuple
 
+from vrl.config.schema import validate_sampling_overrides
 from vrl.generation import GenerationInput, GenerationRequest
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.models.families.registry import ModelFamilyEntry
@@ -56,14 +57,16 @@ class GenerationRequestBuilder:
         }
         overrides = dict(request_overrides or {})
         # A per-prompt override of a denoise knob lands on the typed options
-        # (re-validated by replace); everything else stays a sampling key.
+        # (re-validated by replace); the rest must be the family's own sampling
+        # vocabulary, so an unknown key fails here rather than riding the wire.
         denoise = self.config.denoise
         denoise_overrides = {
             name: overrides.pop(name) for name in tuple(overrides) if name in _DENOISE_FIELDS
         }
         if denoise_overrides:
             denoise = replace(denoise or DenoiseRequestOptions(), **denoise_overrides)
-        sampling.update(overrides)
+        if overrides:
+            sampling.update(validate_sampling_overrides(self.entry.family, overrides))
 
         group_metadata = dict(metadata or {})
         if "fps" in sampling:

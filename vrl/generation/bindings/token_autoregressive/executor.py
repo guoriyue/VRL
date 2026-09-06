@@ -143,20 +143,6 @@ class ARBatchExecutorBase(BatchExecutorBase):
 
         return right_pad(ids, mask, target_length=max_text_length, pad_id=pad_id)
 
-    def require_native_ar_engine(self, request: GenerationRequest) -> str:
-        """Reject unsupported full-engine AR selectors before native parity runs."""
-
-        engine = str(request.sampling.get("ar_engine", "native"))
-        if engine == "native":
-            return engine
-        if engine == "vllm":
-            raise ValueError(
-                "request.sampling.ar_engine='vllm' is not a supported full-engine "
-                "backend. AR paged attention is wired inside family runners, not "
-                "through a vLLM LLMEngine adapter.",
-            )
-        raise ValueError("request.sampling.ar_engine must be 'native' if set")
-
 
 @dataclass(slots=True)
 class ARBatchInputs:
@@ -249,7 +235,6 @@ class ARDiscreteBatchExecutorBase(ARBatchExecutorBase):
         )
         from vrl.utils.profiling import profile_range
 
-        self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, batch)
         scheduler_batch_size = self.resolve_scheduler_batch_size(
             request,

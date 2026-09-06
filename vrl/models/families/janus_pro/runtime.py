@@ -240,7 +240,6 @@ class JanusProR1BatchExecutor(JanusProBatchExecutor):
     ) -> JanusProR1BatchPayload:
         from vrl.utils.profiling import profile_range
 
-        self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, batch)
         scheduler_batch_size = self.resolve_scheduler_batch_size(
             request,

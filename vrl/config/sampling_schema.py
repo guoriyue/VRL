@@ -15,7 +15,16 @@ from vrl.config.base import ConfigBase
 
 
 class SamplingSection(ConfigBase):
-    """Base for family-selected public sampling configuration."""
+    """Base for family-selected public sampling configuration.
+
+    The declared fields are also the per-prompt ``request_overrides`` vocabulary:
+    the collector validates every override against the selected family class
+    before it reaches a ``GenerationRequest`` (``validate_sampling_overrides``).
+    """
+
+    # Usually a per-prompt request override (paired rollouts/evals); a YAML value
+    # seeds every request identically.
+    seed: StrictInt | None = None
 
 
 class TeaCacheSection(ConfigBase):
@@ -37,6 +46,7 @@ class DenoiseImageSamplingSection(SamplingSection):
     height: Any = None
     num_steps: Any = None
     width: Any = None
+    negative_prompt: str | None = None
     # Rollout-only forward approximation (skips denoise steps on a cached
     # noise_pred). A request-scoped drift source: config validation refuses it
     # unless a drift guard or importance-sampling correction is armed.
@@ -105,6 +115,9 @@ class SharedAttentionARSamplingSection(TextEncodedARSamplingSection):
     """AR sampling for families using the shared selectable attention adapter."""
 
     attention_backend: Literal["vllm_paged", "torch_native"] | None = None
+    # vllm_paged knobs; readers: token_autoregressive/executor.py _ar_runner.
+    ar_paged_block_size: StrictInt | None = None
+    ar_paged_cache_dtype: str | None = None
 
 
 class JanusProSamplingSection(SharedAttentionARSamplingSection):

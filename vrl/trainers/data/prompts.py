@@ -36,6 +36,9 @@ class PromptExample:
     # Empty delegates the modality to the selected model-family registry entry.
     # A video default silently mislabeled image-family JSONL rows such as Anima.
     task_type: str = ""
+    # Per-prompt sampling overrides. Keys are the selected family's sampling
+    # section fields (plus the rollout denoise knobs); the collector rejects any
+    # other key when it builds the generation request.
     request_overrides: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
