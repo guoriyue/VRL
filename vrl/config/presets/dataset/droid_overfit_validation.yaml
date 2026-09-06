@@ -5,7 +5,7 @@
 # eval episodes in droid_full_targets_eval.jsonl were scored with target_dino_similarity
 # against an adversarial candidate battery and the top-4 by (exact - static_frozen) were
 # kept (the probe script that did this has since been removed in favor of human review;
-# the battery builder survives in vrl/rewards/evaluation/robotics_discrimination.py).
+# the battery builder survives in vrl/scripts/eval/robotics_discrimination.py).
 # Each row carries a fixed
 # request_overrides.seed so rollouts/eval are paired across epochs (a fixed seed
 # with samples_per_generation_batch=1 is also what makes group members share the initial

@@ -35,7 +35,7 @@ from typing import Any
 
 import torch
 
-from vrl.rewards.evaluation.robotics_discrimination import (
+from vrl.scripts.eval.robotics_discrimination import (
     aggregate_axis_scores,
     build_discrimination_candidates,
     require_robotics_scores,

@@ -29,7 +29,7 @@ from pathlib import Path
 
 import torch
 
-from vrl.rewards.evaluation.robotics_discrimination import build_discrimination_candidates
+from vrl.scripts.eval.robotics_discrimination import build_discrimination_candidates
 from vrl.rewards.models.idm_action_following import load_idm_checkpoint, score_action_following
 from vrl.utils.media import read_video_frames
 
