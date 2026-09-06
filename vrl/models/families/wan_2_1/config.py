@@ -129,7 +129,6 @@ def normalize_wan_model_build(build: ModelBuild) -> ModelBuild:
     # the CPU-offload decision. Kept in the same normalizer as topology so both
     # immutable projections happen once, before replay or rollout construction.
     from dataclasses import replace
-    from typing import get_args
 
     from vrl.models.interfaces.runtime import PipelineOffloadMode
 
@@ -149,10 +148,10 @@ def normalize_wan_model_build(build: ModelBuild) -> ModelBuild:
     if mode is None or mode == "":
         mode = "none"
     mode = str(mode)
-    allowed_modes = get_args(PipelineOffloadMode)
+    allowed_modes = [m.value for m in PipelineOffloadMode]
     if mode not in allowed_modes:
         raise ValueError(
-            f"model.offload_mode must be one of {list(allowed_modes)}, got {mode!r}",
+            f"model.offload_mode must be one of {allowed_modes}, got {mode!r}",
         )
     model_config.pop("offload_mode", None)
 

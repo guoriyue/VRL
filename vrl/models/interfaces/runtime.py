@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast, get_args
+from enum import StrEnum
+from typing import Any, Literal
 
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.generation_memory import GenerationMemoryPolicy
@@ -18,13 +19,52 @@ from vrl.models.interfaces.replay import RuntimeModel
 # Single source of truth for the model_config compile block that the
 # ``ModelBuild.torch_compile`` property below consumes.
 TORCH_COMPILE_MODEL_KEY = "torch_compile"
+
+
 # Which build roles ``model.torch_compile`` applies to. ``rollout`` exists
 # because the trainer's constraints (gradient checkpointing, FSDP2) forbid
 # compiling the replay policy while the rollout policy — a plain inference
 # module — remains compile-clean; ``replay`` is the mirror for sequence-parallel
 # rollouts whose worker mutates the module tree after tracing.
-TorchCompileScope = Literal["all", "rollout", "replay"]
-PipelineOffloadMode = Literal["none", "model", "sequential"]
+class TorchCompileScope(StrEnum):
+    """Which build role(s) ``model.torch_compile`` applies to.
+
+    An enum rather than a Literal so the vocabulary validates itself:
+    ``TorchCompileScope(value)`` is the one definition shared by the config-load
+    compile matrix (which reads the raw block before any ``ModelBuild`` exists)
+    and the typed ``torch_compile`` property, so the two readers cannot drift.
+    """
+
+    ALL = "all"
+    ROLLOUT = "rollout"
+    REPLAY = "replay"
+
+    @classmethod
+    def _missing_(cls, value: object) -> None:
+        raise ValueError(
+            f"model.torch_compile.scope must be one of {[m.value for m in cls]}, got {value!r}",
+        )
+
+
+class PipelineOffloadMode(StrEnum):
+    """Diffusers/Accelerate residency hook for a full generation pipeline.
+
+    Same shape as ``TorchCompileScope``: the Ray launch contract carries the
+    rollout block as a primitive mapping and reads this field before anyone
+    rebuilds the typed ``RolloutBuildOptions`` from it, so the wire path and the
+    typed path validate through this one enum.
+    """
+
+    NONE = "none"
+    MODEL = "model"
+    SEQUENTIAL = "sequential"
+
+    @classmethod
+    def _missing_(cls, value: object) -> None:
+        raise ValueError(
+            f"rollout pipeline_offload_mode must be one of {[m.value for m in cls]}, got {value!r}",
+        )
+
 
 # Internal module attribute carrying the non-derivable part of checkpoint
 # ownership. The complete set is derived from this plus trainable parameters.
@@ -115,7 +155,7 @@ class RolloutBuildOptions:
 
     prompt_encoder_dtype: Any
     base_weight_sync: bool = True
-    pipeline_offload_mode: PipelineOffloadMode = "none"
+    pipeline_offload_mode: PipelineOffloadMode = PipelineOffloadMode.NONE
 
     def __post_init__(self) -> None:
         from vrl.models.dtypes import require_plain_dtype
@@ -128,44 +168,9 @@ class RolloutBuildOptions:
 
         if not isinstance(self.base_weight_sync, bool):
             raise TypeError("rollout base_weight_sync must be a bool")
-        require_pipeline_offload_mode(self.pipeline_offload_mode)
-
-
-def require_pipeline_offload_mode(value: Any) -> PipelineOffloadMode:
-    """Validate one ``rollout.pipeline_offload_mode`` value and return it.
-
-    A free function, not a method: the Ray launch contract carries the rollout
-    block as a serializable primitive mapping and must read this field BEFORE
-    anyone reconstructs the typed ``RolloutBuildOptions`` from it. Both readers
-    share this one definition so the wire path and the typed path cannot drift
-    into accepting different vocabularies.
-    """
-
-    allowed = get_args(PipelineOffloadMode)
-    if value not in allowed:
-        raise ValueError(
-            f"rollout pipeline_offload_mode must be one of {list(allowed)}, got {value!r}",
+        object.__setattr__(
+            self, "pipeline_offload_mode", PipelineOffloadMode(self.pipeline_offload_mode)
         )
-    return cast("PipelineOffloadMode", value)
-
-
-def require_torch_compile_scope(value: Any) -> TorchCompileScope:
-    """Validate one ``model.torch_compile.scope`` value and return it.
-
-    A free function, not a method: the config-load compile matrix
-    (``vrl.config.validation.compile_conflicts``) must read this field before
-    any ``ModelBuild`` exists, and the typed ``torch_compile`` property reads it
-    per build. Both share this one definition so the two readers cannot drift
-    into accepting different vocabularies (the ``require_pipeline_offload_mode``
-    pattern above).
-    """
-
-    allowed = get_args(TorchCompileScope)
-    if value not in allowed:
-        raise ValueError(
-            f"model.torch_compile.scope must be one of {list(allowed)}, got {value!r}",
-        )
-    return cast("TorchCompileScope", value)
 
 
 def torch_compile_for_role(
@@ -196,7 +201,7 @@ def torch_compile_for_role(
         block = TorchCompileSection.model_validate(dict(block))
     if not block.enable:
         return None
-    scope = require_torch_compile_scope(block.scope or "all")
+    scope = TorchCompileScope(block.scope or "all")
     if scope not in ("all", role):
         return None
     return {"enable": True, "mode": block.mode or "default"}

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.models.interfaces.runtime import require_pipeline_offload_mode
+from vrl.models.interfaces.runtime import PipelineOffloadMode
 from vrl.utils.cuda_memory import (
     CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
     CumemPool,
@@ -100,7 +100,7 @@ class WorkerMemoryParking:
         # The wire mapping is read before anyone rebuilds the typed
         # RolloutBuildOptions from it, so share that type's validator rather than
         # writing the vocabulary check a second time.
-        require_pipeline_offload_mode(pipeline_offload_mode)
+        PipelineOffloadMode(pipeline_offload_mode)
         if pipeline_offload_mode != "none":
             # Accelerate already owns the model's active residency, so the
             # worker must not claim a CuMem build scope around CPU/meta weights.
