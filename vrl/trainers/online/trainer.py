@@ -2095,12 +2095,12 @@ class OnlineTrainer:
         import torch.nn.functional as F
 
         from vrl.math.denoise.flow_matching import diffusion_pretraining_pair
-        from vrl.trainers.data.sft_latents import resolve_clean_target
+        from vrl.trainers.data.sft_latents import CleanTargetRef
         from vrl.trajectory import TrajectoryResolver
 
         assert self._sft_latents is not None  # ctor validated
         reward_metadata = group_batch.context.get("reward_metadata", {})
-        target_key = resolve_clean_target(reward_metadata).key
+        target_key = CleanTargetRef.resolve(reward_metadata).key
         if target_key not in self._sft_latents:
             raise ValueError(
                 f"data.sft_latents has no entry for clean target {target_key!r}; "

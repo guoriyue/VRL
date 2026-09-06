@@ -30,35 +30,35 @@ class CleanTargetRef:
     field: Literal["target_image", "target_video"]
     key: str
 
+    @classmethod
+    def resolve(cls, source: Mapping[str, object] | PromptExample) -> CleanTargetRef:
+        """Resolve the one clean target shared by the shard producer and consumer.
 
-def resolve_clean_target(source: Mapping[str, object] | PromptExample) -> CleanTargetRef:
-    """Resolve the one clean target shared by the shard producer and consumer.
+        ``source`` is either a typed ``PromptExample`` or rollout metadata received
+        across the collector boundary. Requiring exactly one field prevents a shard
+        from being encoded under one identity and looked up under another.
+        """
 
-    ``source`` is either a typed ``PromptExample`` or rollout metadata received
-    across the collector boundary. Requiring exactly one field prevents a shard
-    from being encoded under one identity and looked up under another.
-    """
-
-    candidates = (
-        (
-            ("target_image", source.get("target_image")),
-            ("target_video", source.get("target_video")),
+        candidates = (
+            (
+                ("target_image", source.get("target_image")),
+                ("target_video", source.get("target_video")),
+            )
+            if isinstance(source, Mapping)
+            else (("target_image", source.target_image), ("target_video", source.target_video))
         )
-        if isinstance(source, Mapping)
-        else (("target_image", source.target_image), ("target_video", source.target_video))
-    )
-    targets = [
-        CleanTargetRef(field=field, key=str(value).strip())
-        for field, value in candidates
-        if value is not None and str(value).strip()
-    ]
-    if len(targets) != 1:
-        present = [target.field for target in targets]
-        raise ValueError(
-            "the diffusion regularizer requires exactly one clean target field "
-            f"(target_image or target_video); found {present}",
-        )
-    return targets[0]
+        targets = [
+            cls(field=field, key=str(value).strip())
+            for field, value in candidates
+            if value is not None and str(value).strip()
+        ]
+        if len(targets) != 1:
+            present = [target.field for target in targets]
+            raise ValueError(
+                "the diffusion regularizer requires exactly one clean target field "
+                f"(target_image or target_video); found {present}",
+            )
+        return targets[0]
 
 
 def save_sft_latents(
@@ -152,6 +152,5 @@ __all__ = [
     "SFT_LATENTS_SCHEMA_VERSION",
     "CleanTargetRef",
     "load_sft_latents",
-    "resolve_clean_target",
     "save_sft_latents",
 ]

@@ -10,7 +10,7 @@ from omegaconf import OmegaConf
 
 import vrl.scripts.train as train
 from vrl.config.schema import parse_config
-from vrl.ray.resources import resolve_distributed_resources
+from vrl.ray.resources import ResolvedDistributedResources
 
 
 def _cfg(family: str, algorithm_kind: str) -> Any:
@@ -97,7 +97,7 @@ def test_same_host_fsdp_selects_one_physical_gpu_per_rank(
         cfg,
         {"distributed": {"resources": {"visible_devices": [int(selected)]}}},
     )
-    resources = resolve_distributed_resources(parse_config(narrowed))
+    resources = ResolvedDistributedResources.resolve(parse_config(narrowed))
     assert resources.trainer_devices == (int(expected),)
     assert resources.rollout_devices == (int(expected),)
 

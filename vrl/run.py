@@ -23,7 +23,7 @@ schedule or model YAML.
 
 The composers deliberately call their dependencies through the source modules
 (``builders.build_configs``, ``registry.get_model_family_entry``,
-``ray_resources.resolve_distributed_resources``,
+``ray_resources.ResolvedDistributedResources``,
 ``checkpoint_identity.resolve_checkpoint_model_identity``) instead of
 importing the bare names. Attribute lookup happens at call time, so tests that
 stub a seam at its owning module (the established pattern in the recipe test
@@ -283,7 +283,7 @@ def resolve_run(cfg: DictConfig) -> ResolvedRun:
 
     built = builders.build_configs(cfg)
     family = _model_family(built)
-    resources = ray_resources.resolve_distributed_resources(
+    resources = ray_resources.ResolvedDistributedResources.resolve(
         built.root,
         reward_inference=built.reward.inference_configs if built.reward else None,
     )
@@ -308,7 +308,7 @@ def resolve_online_run(cfg: DictConfig) -> ResolvedOnlineRun:
     built = builders.build_configs(cfg)
     run = OnlineRunConfig.from_root(built.root)
     family = _model_family(built)
-    resources = ray_resources.resolve_distributed_resources(
+    resources = ray_resources.ResolvedDistributedResources.resolve(
         built.root,
         reward_inference=built.reward.inference_configs if built.reward else None,
     )

@@ -10,8 +10,8 @@ from omegaconf import OmegaConf
 from vrl.config.schema import parse_config
 from vrl.ray.placement import BundleLayout
 from vrl.ray.resources import (
+    ResolvedDistributedResources,
     format_distributed_resource_plan,
-    resolve_distributed_resources,
 )
 
 
@@ -48,7 +48,7 @@ def _cfg(
 
 def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
     """Checks auto split uses remaining visible gpus for rollout."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -72,7 +72,7 @@ def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
 
 
 def test_resolved_resource_summaries_are_derived_from_topology() -> None:
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -104,7 +104,7 @@ def test_resolved_resource_summaries_are_derived_from_topology() -> None:
 
 def test_explicit_split_devices_do_not_overlap() -> None:
     """Checks explicit split devices do not overlap."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -123,7 +123,7 @@ def test_explicit_split_devices_do_not_overlap() -> None:
 
 def test_pinned_device_intersection_declares_colocation() -> None:
     """Hand-pinning intersecting devices sets IS the sharing declaration."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -141,7 +141,7 @@ def test_pinned_device_intersection_declares_colocation() -> None:
 
 def test_colocate_via_gpu_pool_trainer() -> None:
     """gpu_pool=trainer declares sharing by pool word instead of pinned ids."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -162,7 +162,7 @@ def test_colocate_via_gpu_pool_trainer() -> None:
 
 def test_colocate_auto_pins_rollout_to_trainer_gpu() -> None:
     """Auto rollout placement is forced onto the trainer GPU, not a spare one."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -184,7 +184,7 @@ def test_colocate_auto_pins_rollout_to_trainer_gpu() -> None:
 def test_colocate_rejects_explicit_disjoint_rollout_devices() -> None:
     """Checks colocate cannot be silently reinterpreted as split-GPU resident."""
     with pytest.raises(ValueError, match="disjoint from trainer"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -209,7 +209,7 @@ def test_devices_must_be_subset_of_visible_devices() -> None:
             r"distributed\.resources\.visible_devices"
         ),
     ):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -225,7 +225,7 @@ def test_devices_must_be_subset_of_visible_devices() -> None:
 def test_num_engines_must_match_the_resolved_gpu_count() -> None:
     """A contradicting explicit num_engines fails against the derivation."""
     with pytest.raises(ValueError, match="num_engines must equal rollout GPUs"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -243,7 +243,7 @@ def test_num_engines_must_match_the_resolved_gpu_count() -> None:
 
 def test_gpus_per_engine_derives_engine_count() -> None:
     """4 rollout GPUs at 2 ranks per engine = 2 sequence-parallel engines."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -263,7 +263,7 @@ def test_gpus_per_engine_derives_engine_count() -> None:
 
 def test_gpus_per_engine_requires_divisible_gpu_count() -> None:
     with pytest.raises(ValueError, match="not divisible into engines of 2"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -278,7 +278,7 @@ def test_gpus_per_engine_requires_divisible_gpu_count() -> None:
 
 def test_explicit_num_engines_must_match_the_engine_derivation() -> None:
     with pytest.raises(ValueError, match="num_engines must equal rollout GPUs / "):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -297,7 +297,7 @@ def test_explicit_num_engines_must_match_the_engine_derivation() -> None:
 
 def test_gpus_per_engine_rejects_cross_node_and_cpu_fleets() -> None:
     with pytest.raises(ValueError, match="cross_node"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -310,7 +310,7 @@ def test_gpus_per_engine_rejects_cross_node_and_cpu_fleets() -> None:
             ),
         )
     with pytest.raises(ValueError, match="CPU engine"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -325,7 +325,7 @@ def test_gpus_per_engine_rejects_cross_node_and_cpu_fleets() -> None:
 
 def test_single_gpu_auto_split_shares_the_trainer_gpu() -> None:
     """The auto pool is spare-first-else-share: no spare -> colocate on trainer."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -349,7 +349,7 @@ def test_single_gpu_auto_split_shares_the_trainer_gpu() -> None:
 def test_single_gpu_dedicated_rollout_pool_requires_a_spare() -> None:
     """gpu_pool=dedicated never falls back to sharing the trainer GPU."""
     with pytest.raises(ValueError, match="gpu_pool=dedicated requires spare"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -368,7 +368,7 @@ def test_single_gpu_dedicated_rollout_pool_requires_a_spare() -> None:
 
 def test_cpu_only_rollout_uses_no_gpu_bundles() -> None:
     """Checks CPU only rollout uses no GPU bundles."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -391,7 +391,7 @@ def test_cpu_only_rollout_uses_no_gpu_bundles() -> None:
 
 def test_pinned_devices_supersede_a_zero_gpu_count() -> None:
     """Pinned devices are the authoritative count, even over num_gpus: 0."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -414,7 +414,7 @@ def test_pinned_devices_supersede_a_zero_gpu_count() -> None:
 def test_cpu_only_reward_rejects_a_gpu_device_assignment() -> None:
     """A CPU reward slot cannot carry an ignored GPU reservation."""
     with pytest.raises(ValueError, match=r"requires distributed\.resources\.reward\.device=gpu"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -430,7 +430,7 @@ def test_cpu_only_reward_rejects_a_gpu_device_assignment() -> None:
 
 def test_trainer_only_plan_allows_zero_rollout_workers() -> None:
     """Checks trainer only plan allows zero rollout workers."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -453,7 +453,7 @@ def test_trainer_only_plan_allows_zero_rollout_workers() -> None:
 
 def test_reward_torch_device_uses_the_reserved_local_gpu() -> None:
     """A local reward reservation, not the trainer default, owns model placement."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -479,7 +479,7 @@ def test_reward_torch_device_translates_narrowed_rank_plan_ordinals(monkeypatch)
     """
     import torch
 
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -501,7 +501,7 @@ def test_reward_torch_device_translates_narrowed_rank_plan_ordinals(monkeypatch)
 
 def test_reward_torch_device_without_a_reservation_follows_the_rank_local_trainer() -> None:
     """An unreserved in-process reward shares the caller's actual trainer device."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -518,7 +518,7 @@ def test_reward_torch_device_without_a_reservation_follows_the_rank_local_traine
 
 def test_reward_torch_device_honors_an_explicit_cpu_slot() -> None:
     """A CPU reward request must not silently inherit the trainer CUDA device."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -537,7 +537,7 @@ def test_reward_torch_device_honors_an_explicit_cpu_slot() -> None:
 def test_multi_gpu_local_reward_is_rejected_at_resolution() -> None:
     """One driver-local reward runtime cannot consume an actor-pool-shaped plan."""
     with pytest.raises(ValueError, match="exactly one GPU"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -554,7 +554,7 @@ def test_multi_gpu_local_reward_is_rejected_at_resolution() -> None:
 def test_cross_node_reward_gpu_is_rejected_at_resolution() -> None:
     """A remote Ray ordinal cannot be used as a CUDA device in the driver process."""
     with pytest.raises(ValueError, match="cannot reserve a local reward GPU"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -574,7 +574,7 @@ def test_cross_node_reward_gpu_is_rejected_at_resolution() -> None:
 
 def test_resource_plan_formatter_includes_key_fields() -> None:
     """Checks resource plan formatter includes key fields."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -599,7 +599,7 @@ def test_resource_plan_formatter_includes_key_fields() -> None:
 
 def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
     """Checks cross-node rollout satisfies budget from explicit counts."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -623,7 +623,7 @@ def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
 
 def test_cross_node_scales_to_multiple_rollout_workers() -> None:
     """Checks cross-node scales to multiple rollout workers."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -645,7 +645,7 @@ def test_cross_node_scales_to_multiple_rollout_workers() -> None:
 def test_cross_node_requires_explicit_rollout_count() -> None:
     """Checks cross-node requires explicit rollout count."""
     with pytest.raises(ValueError, match="cross_node"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -661,7 +661,7 @@ def test_cross_node_requires_explicit_rollout_count() -> None:
 
 def test_cross_node_plan_formatter_reports_flag() -> None:
     """Checks cross-node plan formatter reports flag."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -685,7 +685,7 @@ def test_cross_node_preset_resolves() -> None:
 
     preset = bundled_config_resource("base/distributed/ray_rollout_cross_node")
     with preset.open("r", encoding="utf-8") as stream:
-        resolved = resolve_distributed_resources(parse_config(OmegaConf.load(stream)))
+        resolved = ResolvedDistributedResources.resolve(parse_config(OmegaConf.load(stream)))
 
     assert resolved.cross_node is True
     assert resolved.trainer_devices == (0,)
@@ -701,7 +701,7 @@ def test_cross_node_kling_recipe_keeps_the_local_reward_on_the_driver() -> None:
     cfg = load_config(
         "experiment/cosmos_predict2_5/online_nft_kling_video_reward_cross_node",
     )
-    resolved = resolve_distributed_resources(parse_config(cfg))
+    resolved = ResolvedDistributedResources.resolve(parse_config(cfg))
 
     assert resolved.cross_node is True
     assert resolved.rollout_devices == (1,)
@@ -711,7 +711,7 @@ def test_cross_node_kling_recipe_keeps_the_local_reward_on_the_driver() -> None:
 
 def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
     """Checks reward role resolves after trainer and rollout devices."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -734,7 +734,7 @@ def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
 
 def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
     """Fully disjoint trainer/rollout/reward GPUs -> every role resident, no handoff."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -757,7 +757,7 @@ def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
 
 def test_lifecycle_plan_on_demand_for_shared_reward() -> None:
     """Shared reward GPU -> rollout/reward on_demand, but no trainer handoff."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -780,7 +780,7 @@ def test_lifecycle_plan_on_demand_for_shared_reward() -> None:
 
 def test_lifecycle_plan_colocated_rollout_is_on_demand_before_train() -> None:
     """Trainer/rollout share a GPU -> rollout on_demand, releases before train only."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -803,7 +803,7 @@ def test_lifecycle_plan_colocated_rollout_is_on_demand_before_train() -> None:
 
 def test_in_process_reward_without_reservation_follows_trainer_topology() -> None:
     """An active configured reward cannot disappear behind reward_devices=[]."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -828,7 +828,7 @@ def test_in_process_reward_without_reservation_follows_trainer_topology() -> Non
 
 def test_explicit_cpu_reward_does_not_create_gpu_handoffs() -> None:
     """CPU execution is a resource fact, independent of parking capability."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -851,7 +851,7 @@ def test_explicit_cpu_reward_does_not_create_gpu_handoffs() -> None:
 def test_http_only_reward_owns_no_local_resource_or_handoff() -> None:
     """Inherited local reward reservations disappear for external-only scoring."""
 
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -884,7 +884,7 @@ def test_http_only_reward_owns_no_local_resource_or_handoff() -> None:
 def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> None:
     """A remote sibling does not erase a real local component's CPU execution."""
 
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -915,7 +915,7 @@ def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> N
 
 def test_resource_plan_formatter_includes_lifecycle() -> None:
     """Acceptance #8: the resource plan log shows the lifecycle plan at a glance."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -940,7 +940,7 @@ def test_resource_plan_formatter_includes_lifecycle() -> None:
 
 def test_reward_auto_placement_prefers_dedicated_spare_gpu() -> None:
     """Checks unset gpu_pool takes the spare GPU on multi-GPU boxes."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -960,7 +960,7 @@ def test_reward_auto_placement_prefers_dedicated_spare_gpu() -> None:
 
 def test_reward_auto_placement_falls_back_to_shared_pool_on_single_gpu() -> None:
     """Checks unset gpu_pool shares the rollout GPU when none is spare."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -981,7 +981,7 @@ def test_reward_auto_placement_falls_back_to_shared_pool_on_single_gpu() -> None
 
 def test_reward_can_share_rollout_pool_when_phases_release() -> None:
     """Checks reward can share rollout pool when phases release."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -1003,7 +1003,7 @@ def test_reward_can_share_rollout_pool_when_phases_release() -> None:
 def test_reward_shared_pool_requires_a_rollout_gpu() -> None:
     """gpu_pool=rollout with a CPU-only rollout has no GPU to share."""
     with pytest.raises(ValueError, match="Not enough rollout GPUs"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -1019,7 +1019,7 @@ def test_reward_shared_pool_requires_a_rollout_gpu() -> None:
 
 def test_pinned_reward_on_the_trainer_gpu_declares_sharing() -> None:
     """A reward reservation pinned onto the trainer GPU is a sharing declaration."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -1043,7 +1043,7 @@ def test_colocated_reward_on_dedicated_gpu_owns_its_own_bundle() -> None:
     """Colocated trainer+rollout on GPU 0; a dedicated reward GPU 1 owns its own
     bundle (the run-level layout targets it directly, no reservation offset)."""
 
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -1070,7 +1070,7 @@ def test_colocated_reward_on_dedicated_gpu_owns_its_own_bundle() -> None:
 def test_shared_single_gpu_reward_reuses_rollout_bundle() -> None:
     """Shared single-GPU reward sits on the rollout device: same bundle index."""
 
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -1106,7 +1106,7 @@ def _cfg_training(resources: dict, training: dict) -> object:
 
 def test_fsdp_trainer_allows_multi_gpu_disjoint_from_rollout() -> None:
     """fsdp lifts the single-device cap: trainer can own N GPUs."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg_training(
                 {
@@ -1125,7 +1125,7 @@ def test_fsdp_trainer_allows_multi_gpu_disjoint_from_rollout() -> None:
 def test_fsdp_trainer_count_must_equal_world_size() -> None:
     """fsdp trainer device count must match num_nodes*gpus_per_node."""
     with pytest.raises(ValueError, match=r"must own num_nodes\*gpus_per_node=2"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg_training(
                     {
@@ -1142,7 +1142,7 @@ def test_fsdp_trainer_count_must_equal_world_size() -> None:
 def test_fsdp_trainer_must_be_disjoint_from_rollout_even_with_overlap() -> None:
     """fsdp rejects trainer/rollout GPU overlap even when pinned deliberately."""
     with pytest.raises(ValueError, match="fsdp requires trainer GPUs disjoint"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg_training(
                     {
@@ -1159,7 +1159,7 @@ def test_fsdp_trainer_must_be_disjoint_from_rollout_even_with_overlap() -> None:
 def test_single_process_still_rejects_multi_gpu_trainer() -> None:
     """The single-device cap is preserved for single_process (default)."""
     with pytest.raises(ValueError, match="0 or 1 GPU"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg_training(
                     {
@@ -1178,7 +1178,7 @@ def test_single_process_still_rejects_multi_gpu_trainer() -> None:
 
 def test_reward_gpu_pool_rollout_shares_rollout_gpu() -> None:
     """reward.gpu_pool=rollout forces the reward pool onto the rollout GPU."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -1198,7 +1198,7 @@ def test_reward_gpu_pool_rollout_shares_rollout_gpu() -> None:
 
 def test_reward_gpu_pool_auto_prefers_spare_gpu() -> None:
     """reward.gpu_pool=auto takes a dedicated spare GPU when one exists."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             _cfg(
                 {
@@ -1219,7 +1219,7 @@ def test_reward_gpu_pool_auto_prefers_spare_gpu() -> None:
 def test_reward_gpu_pool_rejects_unknown_value() -> None:
     """reward.gpu_pool only accepts auto/rollout/dedicated."""
     with pytest.raises(ValueError, match=r"unknown distributed\.resources\.reward\.gpu_pool"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -1243,7 +1243,7 @@ def test_ddp_colocate_resolves_per_rank_local_single_gpu() -> None:
     (trainer + colocated rollout on it); world_size drives only the grad
     all-reduce, NOT the per-rank GPU plan (ddp follows the single-GPU rule, not
     fsdp's world-covering one)."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             OmegaConf.create(
                 {
@@ -1272,7 +1272,7 @@ def test_fsdp_colocate_resolves_per_rank_local_single_gpu() -> None:
     rank resolves only its LOCAL single GPU (trainer + colocated rollout on it),
     NOT fsdp's world-covering asymmetric plan. Signaled by rollout.gpu_pool=trainer,
     so the world-size trainer rule and the disjoint rule do not apply."""
-    resolved = resolve_distributed_resources(
+    resolved = ResolvedDistributedResources.resolve(
         parse_config(
             OmegaConf.create(
                 {
@@ -1300,7 +1300,7 @@ def test_fsdp_colocate_resolves_per_rank_local_single_gpu() -> None:
     None,
     why=(
         "torch reports the host's own GPU count, so a fixed rank-local topology cannot be "
-        "manufactured in-process: unpinned, resolve_training_context hands back "
+        "manufactured in-process: unpinned, DistributedTrainingContext.from_root hands back "
         "cuda:<local_rank> from the real device count and the cuda:0 assertion breaks on any "
         "host with more than one visible GPU"
     ),
@@ -1309,7 +1309,7 @@ def test_fsdp_colocate_resolves_per_rank_local_single_gpu() -> None:
 def test_rollout_gpu_pool_rejects_unknown_value() -> None:
     """rollout.gpu_pool only accepts auto/trainer/dedicated."""
     with pytest.raises(ValueError, match=r"unknown distributed\.resources\.rollout\.gpu_pool"):
-        resolve_distributed_resources(
+        ResolvedDistributedResources.resolve(
             parse_config(
                 _cfg(
                     {
@@ -1345,7 +1345,7 @@ def test_cosmos_async_reward_recipe_resolves_resident_reward_overlap() -> None:
     # the 3-GPU box the disjoint layout targets; the resolver derives the rest.
     cfg.distributed.resources.visible_devices = [0, 1, 2]
 
-    resolved = resolve_distributed_resources(parse_config(cfg))
+    resolved = ResolvedDistributedResources.resolve(parse_config(cfg))
 
     # Disjoint reward placement is the load-bearing topology: reward must not share
     # the rollout GPU, otherwise reward(N) serializes after rollout(N).

@@ -3,7 +3,7 @@
 Pure (no Ray spin-up): the cluster topology is a stand-in (see
 ``tests/ray/_helpers.py``) and ``current_node_ip`` is monkeypatched, so these run
 in the fast PR subset unlike the slow_test launcher integration tests. The
-resources argument is the real ``resolve_distributed_resources`` output, so the
+resources argument is the real ``ResolvedDistributedResources`` output, so the
 whole cross_node config -> resolution -> preflight chain is exercised.
 """
 
@@ -15,7 +15,7 @@ from omegaconf import OmegaConf
 from tests.ray._helpers import fake_ray, node
 from vrl.config.schema import parse_config
 from vrl.ray import dependencies, placement
-from vrl.ray.resources import resolve_distributed_resources
+from vrl.ray.resources import ResolvedDistributedResources
 
 _MULTI_NODE_TOPOLOGY = pytest.mark.real_cover(
     None,
@@ -32,13 +32,13 @@ def _resources():
     """The real resolver, not a namespace with one attribute on it.
 
     ``cross_node_preflight``'s second argument is always
-    ``resolve_distributed_resources(parse_config(cfg))`` output in production. Standing in a
+    ``ResolvedDistributedResources.resolve(parse_config(cfg))`` output in production. Standing in a
     ``SimpleNamespace(rollout_num_gpus=...)`` skipped the entire cross_node
     config -> resolution chain, so a resolution change that produced the wrong
     rollout GPU budget could not fail this test. Costs ~0.13ms resolved.
     """
 
-    return resolve_distributed_resources(
+    return ResolvedDistributedResources.resolve(
         parse_config(
             OmegaConf.create(
                 {

@@ -27,7 +27,7 @@ from vrl.generation import GenerationOutput, GenerationRequest
 from vrl.generation.execution.planner import EnginePlan
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
-from vrl.ray.resources import resolve_distributed_resources
+from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
@@ -599,7 +599,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 build_reward_function(
                     resolve_reward_inputs(
                         built,
-                        resolve_distributed_resources(parse_config(cfg)),
+                        ResolvedDistributedResources.resolve(parse_config(cfg)),
                         trainer_device=device,
                     ),
                 )

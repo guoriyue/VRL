@@ -60,7 +60,7 @@ from vrl.trainers.data import (
     load_prompt_examples_from_config,
     resolve_prompt_example_references,
 )
-from vrl.trainers.distributed import DistributedTrainingContext, resolve_training_context
+from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.metrics_io import (
     OnlineMetricRow,
     format_online_metric_row,
@@ -804,7 +804,7 @@ async def run_online_recipe(
     # Resolve the training process identity (rank/device) and fail-fast on
     # strategies the online recipe can't yet drive end-to-end, before building the
     # model / Ray runtime.
-    training_context = resolve_training_context(built.root, device=device)
+    training_context = DistributedTrainingContext.from_root(built.root, device=device)
     _require_supported_online_strategy(training_context)
     _require_supported_distributed_rollout_topology(training_context, resources)
     # Construct the strategy before any model or Ray actor. Shared-GPU on-demand
@@ -816,7 +816,7 @@ async def run_online_recipe(
         or resources.lifecycle.release_trainer_before_reward
     ):
         strategy.validate_training_state_parking()
-    # Under ddp every torchrun rank owns a distinct GPU: resolve_training_context
+    # Under ddp every torchrun rank owns a distinct GPU: DistributedTrainingContext.from_root
     # returns cuda:<local_rank>, which overrides the resolver's (rank-agnostic)
     # trainer device so the trainer model, rollout, and weight sync all land on
     # this rank's card. single_process passes the resolver device straight through.

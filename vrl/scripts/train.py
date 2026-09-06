@@ -79,7 +79,7 @@ def _narrow_rank_local_cuda_visibility(
     local_rank_raw = environment.get("LOCAL_RANK")
     world_size_raw = environment.get("WORLD_SIZE")
     if local_rank_raw is None or world_size_raw is None:
-        # resolve_training_context owns the complete missing torchrun-env error.
+        # DistributedTrainingContext.from_root owns the complete missing torchrun-env error.
         return None
     try:
         local_rank = int(local_rank_raw)

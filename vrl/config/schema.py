@@ -764,14 +764,14 @@ class RolloutRuntimeSection(ConfigBase):
 class DistributedSection(ConfigBase):
     """Key registry for distributed.*; values validated by vrl.ray.resources."""
 
-    # reader: vrl/ray/resources.py resolve_distributed_resources(root); the
+    # reader: vrl/ray/resources.py ResolvedDistributedResources.resolve(root); the
     # consuming dataclass is the section type, so pydantic validates it here.
     resources: DistributedResourceConfig | None = None
     # reader: vrl/generation/ray/config.py RayGenerationConfig.from_root (worker
     # runtime knobs). batch_placement_strategy / sync_trainable_state Literals reject
     # bad values here at parse time. Colocation lives in resources.rollout.gpu_pool.
     rollout: RolloutRuntimeSection | None = None
-    # readers: vrl/trainers/distributed.py resolve_training_context (rank/device)
+    # readers: vrl/trainers/distributed.py DistributedTrainingContext.from_root (rank/device)
     # + vrl/ray/resources.py strategy-aware trainer GPU validation
     training: TrainingSection | None = None
 

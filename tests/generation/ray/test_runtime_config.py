@@ -36,7 +36,7 @@ from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import GlobalRayPlacementOwner, RolePlacement
-from vrl.ray.resources import resolve_distributed_resources
+from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.run import (
     OnlineRunConfig,
@@ -203,7 +203,7 @@ def _resource_cfg(
 def _ray_config(cfg: Any) -> RayGenerationConfig:
     return RayGenerationConfig.from_root(
         parse_config(cfg),
-        resources=resolve_distributed_resources(parse_config(cfg)),
+        resources=ResolvedDistributedResources.resolve(parse_config(cfg)),
     )
 
 
@@ -556,7 +556,7 @@ def test_base_rollout_presets_pin_only_the_cpu_override(preset_name: str) -> Non
 
 def test_ray_generation_config_requires_an_explicit_worker_snapshot() -> None:
     cfg = _cfg()
-    resources = resolve_distributed_resources(parse_config(cfg))
+    resources = ResolvedDistributedResources.resolve(parse_config(cfg))
 
     with pytest.raises(TypeError, match="worker"):
         RayGenerationConfig(resources=resources)  # type: ignore[call-arg]
@@ -735,7 +735,7 @@ def test_pipelined_rejects_multiple_resolved_engines() -> None:
     with pytest.raises(ValueError, match="requires exactly one rollout engine"):
         RayGenerationConfig.from_root(
             parse_config(cfg),
-            resources=resolve_distributed_resources(parse_config(cfg)),
+            resources=ResolvedDistributedResources.resolve(parse_config(cfg)),
         )
 
 
@@ -753,7 +753,7 @@ def test_pipelined_rejects_multiple_placement_bundles_before_ray_start(
     }
     config = RayGenerationConfig.from_root(
         parse_config(cfg),
-        resources=resolve_distributed_resources(parse_config(cfg)),
+        resources=ResolvedDistributedResources.resolve(parse_config(cfg)),
     )
     entry = get_model_family_entry("sd3_5")
     launch_inputs = RayGenerationLaunchInputs(

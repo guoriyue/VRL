@@ -189,6 +189,18 @@ class TrainingResumeConfig:
     checkpoint_path: str | None = None
     strict: bool = DEFAULT_CHECKPOINT_STRICT
 
+    @classmethod
+    def from_root(cls, root: RootConfig) -> TrainingResumeConfig:
+        """Resolve the public checkpoint inputs once at the config-build boundary."""
+
+        trainer = root.trainer
+        resume_from = str((trainer.resume_from if trainer is not None else None) or "").strip()
+        strict = trainer.resume_strict if trainer is not None else None
+        return cls(
+            checkpoint_path=resume_from or None,
+            strict=DEFAULT_CHECKPOINT_STRICT if strict is None else strict,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class _CheckpointStateForRestore:
@@ -825,18 +837,6 @@ def load_training_checkpoint(path: str | Path) -> TrainingCheckpoint:
         checkpoint_path=checkpoint_path,
         payload=payload,
         meta=meta,
-    )
-
-
-def resolve_training_resume_config(root: RootConfig) -> TrainingResumeConfig:
-    """Resolve the public checkpoint inputs once at the config-build boundary."""
-
-    trainer = root.trainer
-    resume_from = str((trainer.resume_from if trainer is not None else None) or "").strip()
-    strict = trainer.resume_strict if trainer is not None else None
-    return TrainingResumeConfig(
-        checkpoint_path=resume_from or None,
-        strict=DEFAULT_CHECKPOINT_STRICT if strict is None else strict,
     )
 
 
@@ -1810,7 +1810,6 @@ __all__ = [
     "load_training_checkpoint_for_resume",
     "prepare_model_config_for_training_resume",
     "read_checkpoint_meta",
-    "resolve_training_resume_config",
     "restore_model_checkpoint",
     "restore_rng_state",
     "restore_training_checkpoint",

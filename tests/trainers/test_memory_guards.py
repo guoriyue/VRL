@@ -9,7 +9,7 @@ from omegaconf import OmegaConf
 
 from vrl.config.schema import parse_config
 from vrl.generation.ray.config import RayGenerationConfig
-from vrl.ray.resources import resolve_distributed_resources
+from vrl.ray.resources import ResolvedDistributedResources
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
 from vrl.utils.memory import HostMemorySnapshot, format_host_memory
 
@@ -42,7 +42,7 @@ def _ray_config(*, colocated: bool) -> RayGenerationConfig:
     )
     return RayGenerationConfig.from_root(
         parse_config(cfg),
-        resources=resolve_distributed_resources(parse_config(cfg)),
+        resources=ResolvedDistributedResources.resolve(parse_config(cfg)),
     )
 
 

@@ -174,9 +174,9 @@ def test_offline_dpo_builds_its_full_model_through_the_family_registry(
         _entry_for,
     )
     monkeypatch.setattr(
-        ray_resources,
-        "resolve_distributed_resources",
-        lambda _cfg, **_kwargs: SimpleNamespace(trainer_torch_device="cpu"),
+        ray_resources.ResolvedDistributedResources,
+        "resolve",
+        classmethod(lambda _cls, _cfg, **_kwargs: SimpleNamespace(trainer_torch_device="cpu")),
     )
     monkeypatch.setattr(ray_resources, "format_distributed_resource_plan", lambda _plan: "")
 
@@ -286,9 +286,9 @@ def test_offline_dpo_uses_shared_gradient_checkpointing_policy(
         lambda _build: {"schema": "test"},
     )
     monkeypatch.setattr(
-        ray_resources,
-        "resolve_distributed_resources",
-        lambda _cfg, **_kwargs: SimpleNamespace(trainer_torch_device="cpu"),
+        ray_resources.ResolvedDistributedResources,
+        "resolve",
+        classmethod(lambda _cls, _cfg, **_kwargs: SimpleNamespace(trainer_torch_device="cpu")),
     )
     monkeypatch.setattr(ray_resources, "format_distributed_resource_plan", lambda _plan: "")
 

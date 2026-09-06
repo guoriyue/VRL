@@ -457,9 +457,9 @@ def _install_common_fakes(
     )
     monkeypatch.setattr(online, "validate_checkpoint_compatibility", _validate_checkpoint)
     monkeypatch.setattr(
-        resolved_run.ray_resources,
-        "resolve_distributed_resources",
-        lambda cfg, **kwargs: resources,
+        resolved_run.ray_resources.ResolvedDistributedResources,
+        "resolve",
+        classmethod(lambda _cls, cfg, **kwargs: resources),
     )
     monkeypatch.setattr(online, "format_distributed_resource_plan", lambda resources: "resources")
     monkeypatch.setattr(
@@ -859,14 +859,14 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
         device=torch.device("cuda:0"),
     )
     monkeypatch.setattr(
-        resolved_run.ray_resources,
-        "resolve_distributed_resources",
-        lambda _cfg, **_kwargs: resources,
+        resolved_run.ray_resources.ResolvedDistributedResources,
+        "resolve",
+        classmethod(lambda _cls, _cfg, **_kwargs: resources),
     )
     monkeypatch.setattr(
-        online,
-        "resolve_training_context",
-        lambda _cfg, *, device: context,
+        online.DistributedTrainingContext,
+        "from_root",
+        classmethod(lambda _cls, _cfg, *, device: context),
     )
 
     with pytest.raises(
@@ -908,9 +908,9 @@ async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
         ),
     )
     monkeypatch.setattr(
-        resolved_run.ray_resources,
-        "resolve_distributed_resources",
-        lambda _cfg, **_kwargs: resources,
+        resolved_run.ray_resources.ResolvedDistributedResources,
+        "resolve",
+        classmethod(lambda _cls, _cfg, **_kwargs: resources),
     )
     monkeypatch.setattr(
         online,

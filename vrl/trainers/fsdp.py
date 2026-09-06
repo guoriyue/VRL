@@ -69,7 +69,7 @@ def init_training_process_group(
     No-op for ``single_process`` and when a group already exists. The owning
     ``Strategy.shutdown`` calls the matching ``shutdown_training_process_group``.
     ``torchrun`` has already exported ``RANK`` / ``WORLD_SIZE`` / ``MASTER_ADDR``;
-    ``resolve_training_context`` validated them, so ``init_method='env'`` is the
+    ``DistributedTrainingContext.from_root`` validated them, so ``init_method='env'`` is the
     only contract we rely on here.
     """
 

@@ -54,6 +54,95 @@ class DistributedTrainingContext:
     def is_primary(self) -> bool:
         return self.rank == 0
 
+    @classmethod
+    def from_root(
+        cls,
+        root: RootConfig,
+        *,
+        device: torch.device,
+        env: Mapping[str, str] | None = None,
+    ) -> DistributedTrainingContext:
+        """Resolve the training process identity from config + torchrun env.
+
+        ``single_process`` always returns rank0 / world1 / primary and keeps the
+        resource-resolved ``device``; it ignores env entirely. ``fsdp`` parses and
+        validates ``RANK`` / ``LOCAL_RANK`` / ``WORLD_SIZE`` (fail-fast on missing or
+        inconsistent values) and derives a per-process ``cuda:<local_rank>`` device. It
+        does NOT create a process group; ``vrl/trainers/strategy.py`` build_strategy
+        turns this context into the matching strategy, and ``vrl/trainers/fsdp.py``
+        owns the process-group setup and model wrapping.
+        """
+
+        env = os.environ if env is None else env
+        distributed = root.distributed
+        training = None if distributed is None else distributed.training
+        strategy = "single_process" if training is None else str(training.strategy)
+
+        if strategy == "single_process":
+            return cls(
+                strategy=strategy,
+                rank=0,
+                world_size=1,
+                device=device,
+            )
+
+        if strategy in {"fsdp", "ddp"}:
+            # Both are torchrun multi-rank strategies: one process per GPU, identity +
+            # per-process cuda:<local_rank> device derived from the launcher env. No
+            # process group is created here (build_strategy's strategy does that).
+            rank = _require_env_int(env, "RANK")
+            local_rank = _require_env_int(env, "LOCAL_RANK")
+            world_size = _require_env_int(env, "WORLD_SIZE")
+            assert training is not None  # strategy came from it
+            num_nodes = int(training.num_nodes)
+            gpus_per_node = int(training.gpus_per_node)
+            expected = num_nodes * gpus_per_node
+            if world_size != expected:
+                raise ValueError(
+                    f"distributed.training: WORLD_SIZE={world_size} must equal "
+                    f"num_nodes*gpus_per_node={expected} "
+                    f"(num_nodes={num_nodes}, gpus_per_node={gpus_per_node})."
+                )
+            if not 0 <= local_rank < gpus_per_node:
+                raise ValueError(
+                    f"distributed.training: LOCAL_RANK={local_rank} is out of range for "
+                    f"gpus_per_node={gpus_per_node} (expected 0..{gpus_per_node - 1})."
+                )
+            # The rank's device is an index into the devices THIS PROCESS can see,
+            # which is not always the local rank. Symmetric-colocated placement is
+            # resolved per rank as "my one local GPU" (vrl/ray/resources.py), so a
+            # single-node launch narrows each rank to its own card with
+            # CUDA_VISIBLE_DEVICES; that rank then sees exactly one device and
+            # cuda:<local_rank> would be out of range for every rank but 0. Only the
+            # two known shapes map implicitly; a partial mask (more ranks than
+            # visible devices, but not exactly one) must fail here instead of
+            # silently double-mapping ranks onto one card and dying later in NCCL.
+            visible_device_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+            if visible_device_count == 0 or local_rank < visible_device_count:
+                device_index = local_rank
+            elif visible_device_count == 1:
+                device_index = 0
+            else:
+                raise ValueError(
+                    f"distributed.training: LOCAL_RANK={local_rank} but this process sees "
+                    f"only {visible_device_count} CUDA devices; either expose every GPU "
+                    "(unset/expand CUDA_VISIBLE_DEVICES) or narrow each rank to exactly "
+                    "its own single device.",
+                )
+            return cls(
+                strategy=strategy,
+                rank=rank,
+                world_size=world_size,
+                device=torch.device(f"cuda:{device_index}"),
+            )
+
+        # Schema (TrainingSection.strategy Literal) rejects other values before we get
+        # here; this guards direct callers that bypass schema validation.
+        raise ValueError(
+            f"unknown distributed.training.strategy={strategy!r}; "
+            "expected 'single_process', 'fsdp', or 'ddp'"
+        )
+
 
 def _require_env_int(env: Mapping[str, str], key: str) -> int:
     raw = env.get(key)
@@ -69,91 +158,3 @@ def _require_env_int(env: Mapping[str, str], key: str) -> int:
         return int(raw)
     except ValueError as exc:
         raise ValueError(f"distributed.training: {key}={raw!r} is not an integer") from exc
-
-
-def resolve_training_context(
-    root: RootConfig,
-    *,
-    device: torch.device,
-    env: Mapping[str, str] | None = None,
-) -> DistributedTrainingContext:
-    """Resolve the training process identity from config + torchrun env.
-
-    ``single_process`` always returns rank0 / world1 / primary and keeps the
-    resource-resolved ``device``; it ignores env entirely. ``fsdp`` parses and
-    validates ``RANK`` / ``LOCAL_RANK`` / ``WORLD_SIZE`` (fail-fast on missing or
-    inconsistent values) and derives a per-process ``cuda:<local_rank>`` device. It
-    does NOT create a process group; ``vrl/trainers/strategy.py`` build_strategy
-    turns this context into the matching strategy, and ``vrl/trainers/fsdp.py``
-    owns the process-group setup and model wrapping.
-    """
-
-    env = os.environ if env is None else env
-    distributed = root.distributed
-    training = None if distributed is None else distributed.training
-    strategy = "single_process" if training is None else str(training.strategy)
-
-    if strategy == "single_process":
-        return DistributedTrainingContext(
-            strategy=strategy,
-            rank=0,
-            world_size=1,
-            device=device,
-        )
-
-    if strategy in {"fsdp", "ddp"}:
-        # Both are torchrun multi-rank strategies: one process per GPU, identity +
-        # per-process cuda:<local_rank> device derived from the launcher env. No
-        # process group is created here (build_strategy's strategy does that).
-        rank = _require_env_int(env, "RANK")
-        local_rank = _require_env_int(env, "LOCAL_RANK")
-        world_size = _require_env_int(env, "WORLD_SIZE")
-        assert training is not None  # strategy came from it
-        num_nodes = int(training.num_nodes)
-        gpus_per_node = int(training.gpus_per_node)
-        expected = num_nodes * gpus_per_node
-        if world_size != expected:
-            raise ValueError(
-                f"distributed.training: WORLD_SIZE={world_size} must equal "
-                f"num_nodes*gpus_per_node={expected} "
-                f"(num_nodes={num_nodes}, gpus_per_node={gpus_per_node})."
-            )
-        if not 0 <= local_rank < gpus_per_node:
-            raise ValueError(
-                f"distributed.training: LOCAL_RANK={local_rank} is out of range for "
-                f"gpus_per_node={gpus_per_node} (expected 0..{gpus_per_node - 1})."
-            )
-        # The rank's device is an index into the devices THIS PROCESS can see,
-        # which is not always the local rank. Symmetric-colocated placement is
-        # resolved per rank as "my one local GPU" (vrl/ray/resources.py), so a
-        # single-node launch narrows each rank to its own card with
-        # CUDA_VISIBLE_DEVICES; that rank then sees exactly one device and
-        # cuda:<local_rank> would be out of range for every rank but 0. Only the
-        # two known shapes map implicitly; a partial mask (more ranks than
-        # visible devices, but not exactly one) must fail here instead of
-        # silently double-mapping ranks onto one card and dying later in NCCL.
-        visible_device_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
-        if visible_device_count == 0 or local_rank < visible_device_count:
-            device_index = local_rank
-        elif visible_device_count == 1:
-            device_index = 0
-        else:
-            raise ValueError(
-                f"distributed.training: LOCAL_RANK={local_rank} but this process sees "
-                f"only {visible_device_count} CUDA devices; either expose every GPU "
-                "(unset/expand CUDA_VISIBLE_DEVICES) or narrow each rank to exactly "
-                "its own single device.",
-            )
-        return DistributedTrainingContext(
-            strategy=strategy,
-            rank=rank,
-            world_size=world_size,
-            device=torch.device(f"cuda:{device_index}"),
-        )
-
-    # Schema (TrainingSection.strategy Literal) rejects other values before we get
-    # here; this guards direct callers that bypass schema validation.
-    raise ValueError(
-        f"unknown distributed.training.strategy={strategy!r}; "
-        "expected 'single_process', 'fsdp', or 'ddp'"
-    )

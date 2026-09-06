@@ -207,13 +207,13 @@ def build_configs(cfg: DictConfig) -> BuiltConfigs:
     """Bundle typed configs for downstream training scripts."""
 
     from vrl.trainers.checkpointing import (
+        TrainingResumeConfig,
         prepare_model_config_for_training_resume,
-        resolve_training_resume_config,
     )
     from vrl.trainers.online.config import TrainerConfig
 
     root, precision = validate_training_config(cfg)
-    resume = resolve_training_resume_config(root)
+    resume = TrainingResumeConfig.from_root(root)
     # A full checkpoint, not model.lora.path, owns trainable state on resume.
     # Clear it in both the parsed root and the merged source so persisted
     # config and all runtime consumers receive one truthful model tree.

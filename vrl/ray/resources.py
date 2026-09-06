@@ -212,7 +212,7 @@ class RayLifecyclePlan:
     bits in the trainer/rollout/reward topology triangle. Every handoff flag
     and lease mode is a phase-ordered *view* over them, derived by property,
     so no stored flag can drift from the sharing fact that implies it. Built
-    by :func:`resolve_distributed_resources`; the launcher, collector, and
+    by :func:`ResolvedDistributedResources`; the launcher, collector, and
     reward runtime read this one declarative plan instead of re-deriving
     releases from raw device sets.
     """
@@ -366,176 +366,179 @@ class ResolvedDistributedResources:
             return visible.index(plan_ordinal)
         return plan_ordinal
 
+    @classmethod
+    def resolve(
+        cls,
+        root: RootConfig,
+        *,
+        reward_inference: dict[str, RewardInferenceConfig] | None = None,
+    ) -> ResolvedDistributedResources:
+        """Resolve role-level resource config into concrete CUDA ordinals.
+
+        This is the single source of truth for trainer/rollout/reward GPU
+        ownership. It intentionally does static ownership checks only; memory
+        pressure is still a runtime concern.
+
+        ``reward_inference`` is the already-resolved per-component deployment map
+        (``BuiltConfigs.reward.inference_configs``); training scripts pass it so the
+        reward inference is resolved once at config-build time. When omitted (e.g.
+        isolated resource tests) it is resolved from ``root.reward``.
+        """
+
+        distributed = root.distributed
+        config = (
+            distributed.resources
+            if distributed is not None and distributed.resources is not None
+            else DistributedResourceConfig()
+        )
+        if reward_inference is None:
+            if root.reward is None:
+                reward_inference = {}
+            else:
+                from vrl.config.builders import RewardRuntimeConfig
+
+                reward_inference = RewardRuntimeConfig.from_cfg(root.reward).inference_configs
+        local_reward_configured = any(
+            inference.kind == "in_process" for inference in reward_inference.values()
+        )
+        if reward_inference and not local_reward_configured:
+            # External services own their accelerator and process placement. Ignore
+            # inherited reward presets here instead of creating a phantom local GPU
+            # or CPU bundle; the HTTP runtime is a driver-side client.
+            config = replace(config, reward=RewardResourceConfig())
+        training = None if distributed is None else distributed.training
+        training_strategy = "single_process" if training is None else str(training.strategy)
+        training_world_size = (
+            1 if training is None else int(training.num_nodes) * int(training.gpus_per_node)
+        )
+        if config.cross_node:
+            visible_devices = _resolve_cross_node_visible_devices(config)
+        else:
+            parsed_visible_devices = _parse_devices(config.visible_devices)
+            visible_devices = (
+                _auto_visible_cuda_devices()
+                if parsed_visible_devices == "auto"
+                else tuple(
+                    _dedupe_ints(
+                        parsed_visible_devices,
+                        field_name="distributed.resources.visible_devices",
+                    ),
+                )
+            )
+
+        # fsdp has two topologies. ASYMMETRIC: one resolver owns the whole training
+        # world (trainer = num_nodes*gpus_per_node GPUs, rollout/reward on separate
+        # cards) — the single-node multi-GPU model. SYMMETRIC COLOCATED: one torchrun
+        # rank per node, each owning its 1 local GPU with a colocated rollout — the same
+        # per-rank-local model ddp uses (SPRINT_symmetric_colocated_ddp), signaled by
+        # rollout.gpu_pool=trainer. Only asymmetric fsdp sizes the trainer to the whole
+        # world; symmetric fsdp follows the per-rank single-GPU rule like ddp.
+        fsdp_symmetric_colocated = (
+            training_strategy == "fsdp" and config.rollout.gpu_pool == "trainer"
+        )
+        fsdp_asymmetric = training_strategy == "fsdp" and not fsdp_symmetric_colocated
+        trainer_default_auto = (
+            training_world_size if fsdp_asymmetric else (1 if visible_devices else 0)
+        )
+        trainer_devices = _resolve_role_devices(
+            visible_devices=visible_devices,
+            role_config=config.trainer,
+            default_auto_count=trainer_default_auto,
+        )
+        _validate_trainer_device_count(
+            training_strategy,
+            trainer_devices,
+            training_world_size,
+            symmetric_colocated=fsdp_symmetric_colocated,
+        )
+
+        rollout_gpus_per_engine = config.rollout.parsed_gpus_per_engine()
+        if rollout_gpus_per_engine > 1:
+            if config.cross_node:
+                raise ValueError(
+                    "distributed.resources.rollout.gpus_per_engine > 1 is not "
+                    "supported with cross_node=true: an engine's ranks must share "
+                    "one node for its process group and PACK placement",
+                )
+            if config.rollout.requests_cpu_fleet():
+                raise ValueError(
+                    "distributed.resources.rollout.gpus_per_engine > 1 requires a "
+                    "GPU fleet; a CPU engine (num_gpus: 0) has no ranks to group",
+                )
+        rollout_devices = _resolve_rollout_devices(
+            visible_devices=visible_devices,
+            trainer_devices=trainer_devices,
+            rollout_config=config.rollout,
+        )
+        rollout_num_gpus = len(rollout_devices)
+        rollout_num_engines = config.rollout.resolve_num_engines(
+            resolved_gpu_count=rollout_num_gpus,
+        )
+
+        # Sharing is consent: an intersection can only arise from hand-pinned
+        # ``devices`` sets, a sharing pool word, or the auto spare-first-else-share
+        # fallback. All are declarations; the startup receipt announces the plan.
+        colocated = bool(set(trainer_devices) & set(rollout_devices))
+
+        reward_mode = config.reward.device
+        if config.cross_node and reward_mode == "gpu":
+            raise ValueError(
+                "distributed.resources.cross_node=true cannot reserve a local reward "
+                "GPU: cross-node device ids are Ray budget tokens, not driver-local "
+                "CUDA ordinals. Use reward.device=trainer to score on the trainer "
+                "device, or an HTTP reward service.",
+            )
+        reward_devices = _resolve_reward_devices(
+            visible_devices=visible_devices,
+            trainer_devices=trainer_devices,
+            rollout_devices=rollout_devices,
+            reward_config=config.reward,
+        )
+
+        # Asymmetric fsdp owns the whole training world with rollout/reward on separate
+        # cards, so the trainer set must be disjoint from both regardless of any
+        # declared sharing. Symmetric colocated fsdp (rollout.gpu_pool=trainer) is the
+        # opposite by design — each rank's rollout shares its trainer GPU, exactly like
+        # ddp — so the disjoint rule does not apply to it.
+        if fsdp_asymmetric:
+            _validate_fsdp_trainer_disjoint(trainer_devices, rollout_devices, reward_devices)
+
+        reward_runs_on_cpu = reward_mode == "cpu"
+        # Rewards execute in-process. With no GPU reservation of their own, an active
+        # reward follows the trainer's rank-local device instead of disappearing from
+        # the topology — which is what makes trainer/reward sharing visible to the
+        # lifecycle plan below.
+        reward_uses_trainer_device = bool(
+            local_reward_configured and reward_mode == "trainer" and trainer_devices
+        )
+        reward_execution_devices = (
+            tuple(trainer_devices) if reward_uses_trainer_device else tuple(reward_devices)
+        )
+        reward_shared_with_rollout = bool(set(reward_execution_devices) & set(rollout_devices))
+        reward_shared_with_trainer = bool(set(reward_execution_devices) & set(trainer_devices))
+
+        # Release scheduling is derived entirely from the resolved GPU topology:
+        # the plan stores the three sharing facts; handoffs and lease modes are
+        # its derived views.
+        lifecycle = RayLifecyclePlan(
+            trainer_and_rollout_share_gpu=colocated,
+            rollout_and_reward_share_gpu=reward_shared_with_rollout,
+            trainer_and_reward_share_gpu=reward_shared_with_trainer,
+        )
+        return cls(
+            visible_devices=visible_devices,
+            trainer_devices=trainer_devices,
+            rollout_devices=rollout_devices,
+            reward_devices=reward_devices,
+            reward_runs_on_cpu=reward_runs_on_cpu,
+            rollout_num_engines=rollout_num_engines,
+            rollout_gpus_per_engine=rollout_gpus_per_engine,
+            cross_node=config.cross_node,
+            lifecycle=lifecycle,
+        )
+
 
 _MISSING = object()
-
-
-def resolve_distributed_resources(
-    root: RootConfig,
-    *,
-    reward_inference: dict[str, RewardInferenceConfig] | None = None,
-) -> ResolvedDistributedResources:
-    """Resolve role-level resource config into concrete CUDA ordinals.
-
-    This is the single source of truth for trainer/rollout/reward GPU
-    ownership. It intentionally does static ownership checks only; memory
-    pressure is still a runtime concern.
-
-    ``reward_inference`` is the already-resolved per-component deployment map
-    (``BuiltConfigs.reward.inference_configs``); training scripts pass it so the
-    reward inference is resolved once at config-build time. When omitted (e.g.
-    isolated resource tests) it is resolved from ``root.reward``.
-    """
-
-    distributed = root.distributed
-    config = (
-        distributed.resources
-        if distributed is not None and distributed.resources is not None
-        else DistributedResourceConfig()
-    )
-    if reward_inference is None:
-        if root.reward is None:
-            reward_inference = {}
-        else:
-            from vrl.config.builders import RewardRuntimeConfig
-
-            reward_inference = RewardRuntimeConfig.from_cfg(root.reward).inference_configs
-    local_reward_configured = any(
-        inference.kind == "in_process" for inference in reward_inference.values()
-    )
-    if reward_inference and not local_reward_configured:
-        # External services own their accelerator and process placement. Ignore
-        # inherited reward presets here instead of creating a phantom local GPU
-        # or CPU bundle; the HTTP runtime is a driver-side client.
-        config = replace(config, reward=RewardResourceConfig())
-    training = None if distributed is None else distributed.training
-    training_strategy = "single_process" if training is None else str(training.strategy)
-    training_world_size = (
-        1 if training is None else int(training.num_nodes) * int(training.gpus_per_node)
-    )
-    if config.cross_node:
-        visible_devices = _resolve_cross_node_visible_devices(config)
-    else:
-        parsed_visible_devices = _parse_devices(config.visible_devices)
-        visible_devices = (
-            _auto_visible_cuda_devices()
-            if parsed_visible_devices == "auto"
-            else tuple(
-                _dedupe_ints(
-                    parsed_visible_devices,
-                    field_name="distributed.resources.visible_devices",
-                ),
-            )
-        )
-
-    # fsdp has two topologies. ASYMMETRIC: one resolver owns the whole training
-    # world (trainer = num_nodes*gpus_per_node GPUs, rollout/reward on separate
-    # cards) — the single-node multi-GPU model. SYMMETRIC COLOCATED: one torchrun
-    # rank per node, each owning its 1 local GPU with a colocated rollout — the same
-    # per-rank-local model ddp uses (SPRINT_symmetric_colocated_ddp), signaled by
-    # rollout.gpu_pool=trainer. Only asymmetric fsdp sizes the trainer to the whole
-    # world; symmetric fsdp follows the per-rank single-GPU rule like ddp.
-    fsdp_symmetric_colocated = training_strategy == "fsdp" and config.rollout.gpu_pool == "trainer"
-    fsdp_asymmetric = training_strategy == "fsdp" and not fsdp_symmetric_colocated
-    trainer_default_auto = (
-        training_world_size if fsdp_asymmetric else (1 if visible_devices else 0)
-    )
-    trainer_devices = _resolve_role_devices(
-        visible_devices=visible_devices,
-        role_config=config.trainer,
-        default_auto_count=trainer_default_auto,
-    )
-    _validate_trainer_device_count(
-        training_strategy,
-        trainer_devices,
-        training_world_size,
-        symmetric_colocated=fsdp_symmetric_colocated,
-    )
-
-    rollout_gpus_per_engine = config.rollout.parsed_gpus_per_engine()
-    if rollout_gpus_per_engine > 1:
-        if config.cross_node:
-            raise ValueError(
-                "distributed.resources.rollout.gpus_per_engine > 1 is not "
-                "supported with cross_node=true: an engine's ranks must share "
-                "one node for its process group and PACK placement",
-            )
-        if config.rollout.requests_cpu_fleet():
-            raise ValueError(
-                "distributed.resources.rollout.gpus_per_engine > 1 requires a "
-                "GPU fleet; a CPU engine (num_gpus: 0) has no ranks to group",
-            )
-    rollout_devices = _resolve_rollout_devices(
-        visible_devices=visible_devices,
-        trainer_devices=trainer_devices,
-        rollout_config=config.rollout,
-    )
-    rollout_num_gpus = len(rollout_devices)
-    rollout_num_engines = config.rollout.resolve_num_engines(
-        resolved_gpu_count=rollout_num_gpus,
-    )
-
-    # Sharing is consent: an intersection can only arise from hand-pinned
-    # ``devices`` sets, a sharing pool word, or the auto spare-first-else-share
-    # fallback. All are declarations; the startup receipt announces the plan.
-    colocated = bool(set(trainer_devices) & set(rollout_devices))
-
-    reward_mode = config.reward.device
-    if config.cross_node and reward_mode == "gpu":
-        raise ValueError(
-            "distributed.resources.cross_node=true cannot reserve a local reward "
-            "GPU: cross-node device ids are Ray budget tokens, not driver-local "
-            "CUDA ordinals. Use reward.device=trainer to score on the trainer "
-            "device, or an HTTP reward service.",
-        )
-    reward_devices = _resolve_reward_devices(
-        visible_devices=visible_devices,
-        trainer_devices=trainer_devices,
-        rollout_devices=rollout_devices,
-        reward_config=config.reward,
-    )
-
-    # Asymmetric fsdp owns the whole training world with rollout/reward on separate
-    # cards, so the trainer set must be disjoint from both regardless of any
-    # declared sharing. Symmetric colocated fsdp (rollout.gpu_pool=trainer) is the
-    # opposite by design — each rank's rollout shares its trainer GPU, exactly like
-    # ddp — so the disjoint rule does not apply to it.
-    if fsdp_asymmetric:
-        _validate_fsdp_trainer_disjoint(trainer_devices, rollout_devices, reward_devices)
-
-    reward_runs_on_cpu = reward_mode == "cpu"
-    # Rewards execute in-process. With no GPU reservation of their own, an active
-    # reward follows the trainer's rank-local device instead of disappearing from
-    # the topology — which is what makes trainer/reward sharing visible to the
-    # lifecycle plan below.
-    reward_uses_trainer_device = bool(
-        local_reward_configured and reward_mode == "trainer" and trainer_devices
-    )
-    reward_execution_devices = (
-        tuple(trainer_devices) if reward_uses_trainer_device else tuple(reward_devices)
-    )
-    reward_shared_with_rollout = bool(set(reward_execution_devices) & set(rollout_devices))
-    reward_shared_with_trainer = bool(set(reward_execution_devices) & set(trainer_devices))
-
-    # Release scheduling is derived entirely from the resolved GPU topology:
-    # the plan stores the three sharing facts; handoffs and lease modes are
-    # its derived views.
-    lifecycle = RayLifecyclePlan(
-        trainer_and_rollout_share_gpu=colocated,
-        rollout_and_reward_share_gpu=reward_shared_with_rollout,
-        trainer_and_reward_share_gpu=reward_shared_with_trainer,
-    )
-    return ResolvedDistributedResources(
-        visible_devices=visible_devices,
-        trainer_devices=trainer_devices,
-        rollout_devices=rollout_devices,
-        reward_devices=reward_devices,
-        reward_runs_on_cpu=reward_runs_on_cpu,
-        rollout_num_engines=rollout_num_engines,
-        rollout_gpus_per_engine=rollout_gpus_per_engine,
-        cross_node=config.cross_node,
-        lifecycle=lifecycle,
-    )
 
 
 def _validate_trainer_device_count(
@@ -994,5 +997,4 @@ __all__ = [
     "RayLifecyclePlan",
     "ResolvedDistributedResources",
     "format_distributed_resource_plan",
-    "resolve_distributed_resources",
 ]

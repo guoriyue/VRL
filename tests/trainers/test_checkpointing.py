@@ -21,13 +21,13 @@ from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
     AdapterExport,
     TrainingCheckpoint,
+    TrainingResumeConfig,
     build_adapter_exports,
     export_checkpoint_state,
     infer_next_epoch,
     load_checkpoint_state,
     load_training_checkpoint,
     prepare_model_config_for_training_resume,
-    resolve_training_resume_config,
     restore_model_checkpoint,
     restore_training_checkpoint,
     save_training_checkpoint,
@@ -51,7 +51,7 @@ def test_resume_strict_uses_checkpoint_policy(
     trainer = {} if value is None else {"resume_strict": value}
     cfg = OmegaConf.create({"trainer": trainer})
 
-    assert resolve_training_resume_config(parse_config(cfg)).strict is expected
+    assert TrainingResumeConfig.from_root(parse_config(cfg)).strict is expected
 
 
 def test_resume_strict_rejects_string_truthiness() -> None:
@@ -73,7 +73,7 @@ def test_resume_config_resolves_fresh_and_checkpoint_paths(
         {"trainer": {"resume_from": resume_from, "resume_strict": False}},
     )
 
-    resolved = resolve_training_resume_config(parse_config(cfg))
+    resolved = TrainingResumeConfig.from_root(parse_config(cfg))
 
     assert resolved.checkpoint_path == expected_path
     assert resolved.strict is False
@@ -91,7 +91,7 @@ def test_nonstrict_resume_clears_the_warm_start_adapter_path() -> None:
     assert prepare_model_config_for_training_resume(
         cfg,
         root,
-        resolve_training_resume_config(root),
+        TrainingResumeConfig.from_root(root),
     )
 
     assert cfg.model.lora.path == ""
@@ -1733,7 +1733,7 @@ def _context(*, rank: int = 0, world_size: int = 1) -> DistributedTrainingContex
 
     ``is_primary`` is derived (``rank == 0``), so the two can no longer be written
     independently: a hand-rolled namespace let a test claim "not primary, world
-    size 1", a state ``resolve_training_context`` cannot produce. ``strategy``
+    size 1", a state ``DistributedTrainingContext.from_root`` cannot produce. ``strategy``
     follows the same rule the resolver enforces — ``single_process`` is world 1.
 
     The context is real; the strategies that carry it stay recording doubles,

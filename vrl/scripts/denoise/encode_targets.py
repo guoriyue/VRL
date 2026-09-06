@@ -93,7 +93,7 @@ def _target_at_sampling_geometry(
         frames = read_image_as_frames(path)
     elif media_type == "target_video":
         frames = read_video_frames(path, num_frames=num_frames)
-    else:  # pragma: no cover - resolve_clean_target owns this closed set
+    else:  # pragma: no cover - CleanTargetRef.resolve owns this closed set
         raise ValueError(f"unsupported clean target field: {media_type}")
     if int(frames.shape[0]) != num_frames:
         raise ValueError(
@@ -122,13 +122,13 @@ def _resolve_clean_targets(
     """Resolve and validate stable target identities before loading a model."""
 
     from vrl.trainers.data.artifacts import resolve_prompt_example_artifacts
-    from vrl.trainers.data.sft_latents import resolve_clean_target
+    from vrl.trainers.data.sft_latents import CleanTargetRef
 
     targets: list[tuple[str, str, str]] = []
     seen_target_keys: set[str] = set()
     for index, example in enumerate(examples):
         try:
-            target = resolve_clean_target(example)
+            target = CleanTargetRef.resolve(example)
         except ValueError as exc:
             raise ValueError(f"manifest row {index} ({example.prompt!r}): {exc}") from exc
         if target.key in seen_target_keys:
