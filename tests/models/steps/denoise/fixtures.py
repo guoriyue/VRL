@@ -447,6 +447,42 @@ def build_tiny_autoencoder_kl(
     )
 
 
+def build_tiny_pipeline_shell(
+    *,
+    transformer: Any,
+    vae: Any,
+    scheduler: Any,
+    text_encoder: Any = None,
+) -> Any:
+    """A real ``DiffusionPipeline`` whose ``.components`` diffusers itself derives.
+
+    Every slot is a REQUIRED ``__init__`` parameter, so diffusers'
+    ``_get_signature_keys`` keeps all of them in ``.components`` -- including
+    the ``None`` slot (``text_encoder`` by default) and the non-module
+    scheduler. That is the shape ``move_frozen_components`` has to survive,
+    and a hand-written dict cannot promise it.
+    """
+
+    from diffusers import DiffusionPipeline
+
+    class _TinyPipelineShell(DiffusionPipeline):
+        def __init__(self, transformer: Any, vae: Any, scheduler: Any, text_encoder: Any) -> None:
+            super().__init__()
+            self.register_modules(
+                transformer=transformer,
+                vae=vae,
+                scheduler=scheduler,
+                text_encoder=text_encoder,
+            )
+
+    return _TinyPipelineShell(
+        transformer=transformer,
+        vae=vae,
+        scheduler=scheduler,
+        text_encoder=text_encoder,
+    )
+
+
 def build_tiny_wan_vae(*, seed: int = 0, z_dim: int = 4) -> Any:
     """A real tiny ``AutoencoderKLWan`` on CPU, random-init from a seed.
 
