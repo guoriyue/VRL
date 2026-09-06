@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.config.validation import require_guarded_rollout_drift
 
@@ -39,7 +39,7 @@ def _cfg(**overrides) -> OmegaConf:
 
 
 def _precision(root) -> object:
-    return resolve_precision_policy(root.precision)
+    return PrecisionPolicy.from_section(root.precision)
 
 
 def test_teacache_without_any_correction_is_refused() -> None:

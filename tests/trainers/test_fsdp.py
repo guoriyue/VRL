@@ -765,7 +765,7 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
     from omegaconf import OmegaConf
     from torch.distributed.tensor import DTensor
 
-    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
     from vrl.models.families.registry import get_model_family_entry
     from vrl.models.steps.denoise import build as denoise_build
@@ -819,7 +819,7 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
         },
     )
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     entry = get_model_family_entry("wan_2_1_i2v")
     build = entry.resolve_model_build(
         root,

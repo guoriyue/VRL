@@ -8,7 +8,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.scripts.perf.common.diffusion_runtime import (
     build_runtime,
@@ -42,7 +42,7 @@ def test_build_runtime_hands_the_resolved_build_to_the_family_rollout_builder(
             },
         ),
     )
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     device = torch.device("cpu")
     resolved_build = object()
     runtime = object()

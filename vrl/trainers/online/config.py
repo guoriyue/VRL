@@ -270,7 +270,7 @@ class TrainerConfig:
         collected and reported together with full YAML paths.
         """
 
-        from vrl.config.precision import resolve_precision_policy
+        from vrl.config.precision import PrecisionPolicy
         from vrl.config.schema import ActorSection, TrainerSection
 
         sections = {"actor": root.actor, "trainer": root.trainer}
@@ -315,7 +315,7 @@ class TrainerConfig:
 
         # Resolve the public policy once; trainer fields are its runtime projection.
         if precision is None:
-            precision = resolve_precision_policy(root.precision)
+            precision = PrecisionPolicy.from_section(root.precision)
         payload.update(
             batch_plan=OnlineBatchPlan.from_root(root),
             train_precision=precision.training.label,

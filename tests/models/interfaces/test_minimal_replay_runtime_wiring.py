@@ -158,7 +158,7 @@ def test_model_build_reconstructs_nested_rollout_payload() -> None:
 def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> None:
     from omegaconf import OmegaConf
 
-    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
     from vrl.models.families.registry import get_model_family_entry
 
@@ -177,7 +177,7 @@ def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> No
         },
     )
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
 
     build = get_model_family_entry("sd3_5").resolve_model_build(
         root,
@@ -207,7 +207,7 @@ def test_full_generation_build_with_training_role_excludes_rollout_quantization(
 
     from omegaconf import OmegaConf
 
-    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
     from vrl.models.families.registry import get_model_family_entry
 
@@ -236,7 +236,7 @@ def test_full_generation_build_with_training_role_excludes_rollout_quantization(
         },
     )
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
 
     build = get_model_family_entry("wan_2_1").resolve_model_build(
         root,
@@ -614,11 +614,11 @@ def test_anima_model_build_uses_explicit_local_paths() -> None:
             "model.use_lora=false",
         ],
     )
-    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
 
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     entry = get_model_family_entry("cosmos-predict2-anima")
     full = entry.resolve_model_build(root, "cpu", precision=precision)
     replay = entry.resolve_model_build(
@@ -654,11 +654,11 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
             "model.use_lora=false",
         ],
     )
-    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
 
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     build = get_model_family_entry("cosmos-predict2-anima").resolve_model_build(
         root,
         "cpu",

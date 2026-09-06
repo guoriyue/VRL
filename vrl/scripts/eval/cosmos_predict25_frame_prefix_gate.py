@@ -24,7 +24,7 @@ import torch.nn.functional as F
 
 from vrl import run
 from vrl.config.loading import load_config
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig, parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval._device import resolve_eval_device
@@ -126,7 +126,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     device = resolve_eval_device(str(args.device))
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     resolved = run.resolve_model(entry, root, device, precision=precision, for_rollout=True)
     bundle = None
     try:

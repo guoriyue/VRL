@@ -77,9 +77,9 @@ def test_build_resolves_public_config_precision_and_reward_once(
         counted("parse", validation.parse_config),
     )
     monkeypatch.setattr(
-        validation,
-        "resolve_precision_policy",
-        counted("precision", validation.resolve_precision_policy),
+        validation.PrecisionPolicy,
+        "from_section",
+        classmethod(counted("precision", validation.PrecisionPolicy.from_section.__func__)),
     )
     monkeypatch.setattr(
         builders.RewardRuntimeConfig,

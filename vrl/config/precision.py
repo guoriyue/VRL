@@ -16,7 +16,7 @@ policy because PyTorch process defaults are not a stable trainer/worker contract
 
 The pydantic sections below are the single declaration of the YAML shape:
 ``parse_config`` validates them (vocabulary, required keys, unknown keys), and
-:func:`resolve_precision_policy` turns the validated section into the two role
+:func:`PrecisionPolicy` turns the validated section into the two role
 policies. Training quantization is part of the structural schema so the
 eventual training runtime will use the same role shape, but policy resolution
 fails until a real autograd-capable consumer exists. This module remains
@@ -218,6 +218,47 @@ class PrecisionPolicy:
 
         return self.training == self.rollout
 
+    @classmethod
+    def from_section(cls, section: PrecisionConfig | None) -> PrecisionPolicy:
+        """Resolve the parsed ``precision`` section (``RootConfig.precision``)."""
+
+        if section is None:
+            raise ValueError(
+                "top-level `precision` is required. Configure "
+                "`precision.training.dtype`; add a `precision.rollout` block only "
+                "for a rollout-specific override.",
+            )
+        if not isinstance(section, PrecisionConfig):
+            raise TypeError(
+                "PrecisionPolicy.from_section takes the parsed precision section "
+                f"(RootConfig.precision), got {type(section).__name__}",
+            )
+        float32_precision = section.float32_precision
+        training = RolePrecision(
+            dtype=section.training.dtype,
+            float32_precision=float32_precision,
+            outer_autocast=section.training.outer_autocast,
+            quantization=_quantization_policy(section.training.quantization),
+        )
+        rollout_section = section.rollout or RolloutPrecisionConfig()
+        rollout = RolePrecision(
+            dtype=rollout_section.dtype or training.dtype,
+            float32_precision=float32_precision,
+            outer_autocast=(
+                training.outer_autocast
+                if rollout_section.outer_autocast is None
+                else rollout_section.outer_autocast
+            ),
+            quantization=_quantization_policy(rollout_section.quantization),
+        )
+        prompt_encoders = rollout_section.prompt_encoders
+        return cls(
+            training=training,
+            rollout=rollout,
+            diffusion_math=section.diffusion_math.dtype if section.diffusion_math else "fp32",
+            prompt_encoder_dtype=prompt_encoders.dtype if prompt_encoders else rollout.dtype,
+        )
+
 
 # ── Public YAML sections ──────────────────────────────────────────────────────
 
@@ -312,47 +353,6 @@ def _quantization_policy(section: QuantizationConfig | None) -> QuantizationPoli
     return QuantizationPolicy(format=section.format, recipe=section.recipe)
 
 
-def resolve_precision_policy(section: PrecisionConfig | None) -> PrecisionPolicy:
-    """Resolve the parsed ``precision`` section (``RootConfig.precision``)."""
-
-    if section is None:
-        raise ValueError(
-            "top-level `precision` is required. Configure "
-            "`precision.training.dtype`; add a `precision.rollout` block only "
-            "for a rollout-specific override.",
-        )
-    if not isinstance(section, PrecisionConfig):
-        raise TypeError(
-            "resolve_precision_policy takes the parsed precision section "
-            f"(RootConfig.precision), got {type(section).__name__}",
-        )
-    float32_precision = section.float32_precision
-    training = RolePrecision(
-        dtype=section.training.dtype,
-        float32_precision=float32_precision,
-        outer_autocast=section.training.outer_autocast,
-        quantization=_quantization_policy(section.training.quantization),
-    )
-    rollout_section = section.rollout or RolloutPrecisionConfig()
-    rollout = RolePrecision(
-        dtype=rollout_section.dtype or training.dtype,
-        float32_precision=float32_precision,
-        outer_autocast=(
-            training.outer_autocast
-            if rollout_section.outer_autocast is None
-            else rollout_section.outer_autocast
-        ),
-        quantization=_quantization_policy(rollout_section.quantization),
-    )
-    prompt_encoders = rollout_section.prompt_encoders
-    return PrecisionPolicy(
-        training=training,
-        rollout=rollout,
-        diffusion_math=section.diffusion_math.dtype if section.diffusion_math else "fp32",
-        prompt_encoder_dtype=prompt_encoders.dtype if prompt_encoders else rollout.dtype,
-    )
-
-
 __all__ = [
     "DiffusionMathPrecisionConfig",
     "Float32Precision",
@@ -365,5 +365,4 @@ __all__ = [
     "RolloutPrecisionConfig",
     "TrainingPrecisionConfig",
     "normalize_precision",
-    "resolve_precision_policy",
 ]

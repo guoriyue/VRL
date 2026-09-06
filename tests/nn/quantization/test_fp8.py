@@ -524,7 +524,7 @@ def test_apply_rollout_quantization_dispatches_by_scheme():
 def test_resolve_model_build_derives_fp8_from_precision_rollout():
     from omegaconf import OmegaConf
 
-    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
     from vrl.models.families.registry import get_model_family_entry
 
@@ -542,7 +542,7 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
         }
     )
     fp8_root = parse_config(fp8_cfg)
-    fp8_precision = resolve_precision_policy(fp8_root.precision)
+    fp8_precision = PrecisionPolicy.from_section(fp8_root.precision)
     entry = get_model_family_entry("sd3_5")
     build = entry.resolve_model_build(
         fp8_root,
@@ -568,7 +568,7 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
         }
     )
     bf16_root = parse_config(bf16_cfg)
-    bf16_precision = resolve_precision_policy(bf16_root.precision)
+    bf16_precision = PrecisionPolicy.from_section(bf16_root.precision)
     plain_build = entry.resolve_model_build(
         bf16_root,
         "cuda",

@@ -13,7 +13,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
-from vrl.config.precision import PrecisionConfig, resolve_precision_policy
+from vrl.config.precision import PrecisionConfig, PrecisionPolicy
 from vrl.config.sampling_schema import SamplingSection
 from vrl.config.schema import parse_config
 from vrl.models.families.names import (
@@ -44,7 +44,7 @@ from vrl.utils.config import import_from_path
 def _typed_model_build_inputs(payload):
     cfg = OmegaConf.create(payload)
     root = parse_config(cfg)
-    return cfg, root, resolve_precision_policy(root.precision)
+    return cfg, root, PrecisionPolicy.from_section(root.precision)
 
 
 def test_model_build_projects_typed_sections_without_losing_falsy_presence() -> None:
@@ -183,7 +183,7 @@ def test_model_build_cannot_bypass_unknown_model_keys_with_raw_config() -> None:
         get_model_family_entry("sana").resolve_model_build(
             cfg,
             "cpu",
-            precision=resolve_precision_policy(
+            precision=PrecisionPolicy.from_section(
                 PrecisionConfig.model_validate(OmegaConf.to_container(cfg.precision)),
             ),
         )

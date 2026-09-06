@@ -359,7 +359,7 @@ def test_loader_allows_torch_compile_after_shape_gate(monkeypatch) -> None:
 def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
     from omegaconf import OmegaConf
 
-    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
     from vrl.models.families.registry import get_model_family_entry
 
@@ -377,7 +377,7 @@ def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
         },
     )
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     build = get_model_family_entry("sd3_5").resolve_model_build(
         root,
         "cuda",

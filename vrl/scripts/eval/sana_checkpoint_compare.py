@@ -25,7 +25,7 @@ from typing import Any
 
 import torch
 
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig
 from vrl.models import checkpoint_identity
 from vrl.models.dtypes import dtype_to_wire_name
@@ -108,7 +108,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     run_dir = args.run_dir.expanduser().resolve()
     config_path = run_dir / RESOLVED_CONFIG_NAME
     _, root = load_resolved_run_config(run_dir)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     _validate_resolved_config(root)
     _validate_sampling_args(args)
 

@@ -14,7 +14,7 @@ import torch
 from omegaconf import DictConfig
 
 from vrl.config.loading import load_config
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig, parse_config
 from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.families.registry import get_model_family_entry
@@ -130,7 +130,7 @@ def main(argv: list[str] | None = None) -> None:
 
     cfg = load_config(args.config, overrides=args.overrides)
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     prompts = _load_prompts(args, root)
     if args.limit:
         prompts = prompts[: args.limit]

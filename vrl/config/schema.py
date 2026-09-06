@@ -815,7 +815,7 @@ class RootConfig(ConfigBase):
     trainer: TrainerSection | None = None
     actor: ActorSection | None = None
     distributed: DistributedSection | None = None
-    # resolver: vrl/config/precision.py resolve_precision_policy(root.precision)
+    # resolver: vrl/config/precision.py PrecisionPolicy.from_section(root.precision)
     precision: PrecisionConfig | None = None
 
     @field_validator("model", mode="before")

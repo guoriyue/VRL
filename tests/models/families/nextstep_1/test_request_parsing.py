@@ -9,7 +9,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.generation import GenerationRequest
 from vrl.generation.bindings.token_autoregressive import ARRequestLayout
@@ -88,7 +88,7 @@ def test_config_projection_preserves_boolean_states(
     entry = get_model_family_entry("nextstep_1")
     cfg = _build_cfg(use_lora=use_lora, freeze_vae=freeze_vae)
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     build = entry.resolve_model_build(
         root,
         device="cpu",
@@ -114,7 +114,7 @@ def test_config_projection_ignores_sampling_fields_without_schema_producers() ->
     entry = get_model_family_entry("nextstep_1")
     cfg = _build_cfg(use_lora=False, freeze_vae=True)
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     build = entry.resolve_model_build(
         root,
         device="cpu",
@@ -195,7 +195,7 @@ def test_replay_build_resolves_gradient_checkpointing_mode(
     )
 
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     build = get_model_family_entry("nextstep_1").resolve_model_build(
         root,
         "cpu",
@@ -221,7 +221,7 @@ def test_replay_build_rejects_selective_gradient_checkpointing() -> None:
     )
 
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     with pytest.raises(ValueError, match="does not support selective"):
         get_model_family_entry("nextstep_1").resolve_model_build(
             root,
@@ -245,7 +245,7 @@ def test_rollout_build_disables_gradient_checkpointing() -> None:
     )
 
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     build = get_model_family_entry("nextstep_1").resolve_model_build(
         root,
         "cpu",

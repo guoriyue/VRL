@@ -8,7 +8,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
@@ -48,7 +48,7 @@ def test_resolve_model_build_defaults_to_glm_image_checkpoint() -> None:
     )
 
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     build = get_model_family_entry("glm_image").resolve_model_build(
         root,
         device="cpu",
@@ -85,7 +85,7 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
     )
 
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     build = get_model_family_entry("glm_image").resolve_model_build(
         root,
         device="cpu",

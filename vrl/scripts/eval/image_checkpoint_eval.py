@@ -430,7 +430,7 @@ def select_prompts(
 
 def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     from vrl.config.loading import load_config
-    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import RewardConfig, parse_config
     from vrl.models.families.registry import get_model_family_entry
     from vrl.run import resolve_model
@@ -470,7 +470,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         entry,
         root,
         resolve_eval_device(args.device),
-        precision=resolve_precision_policy(root.precision),
+        precision=PrecisionPolicy.from_section(root.precision),
         for_rollout=True,
     )
     for target in targets[1:]:

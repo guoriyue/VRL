@@ -42,7 +42,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.families.registry import get_model_family_entry
@@ -144,7 +144,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
     cfg = _load_run_config(args.run_dir)
     root = parse_config(cfg)
     device = resolve_eval_device(args.device)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     dtype = resolve_eval_dtype(
         "auto",
         root,

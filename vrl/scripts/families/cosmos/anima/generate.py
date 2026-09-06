@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 from omegaconf import DictConfig
 
 from vrl.config.loading import load_config
-from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.dtypes import resolve_torch_dtype
@@ -151,7 +151,7 @@ def main(argv: list[str] | None = None) -> None:
     if lora_overrides:
         cfg = load_config(args.config, overrides=[*overrides, *lora_overrides])
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     prompts = _load_prompts(args, root)
     manifest_path = _resolve_manifest_path(args, root)
     if args.limit:

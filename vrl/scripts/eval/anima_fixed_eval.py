@@ -112,7 +112,7 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
     import torch
 
     from vrl.config.loading import load_config
-    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
     from vrl.generation.types import DenoiseRequest
     from vrl.models.dtypes import resolve_torch_dtype
@@ -143,7 +143,7 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
         overrides += ["model.use_lora=false"]
     cfg = load_config(args.config, overrides=overrides)
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
 
     prompts = [example.prompt for example in load_prompt_manifest(args.manifest)][: args.limit]
     sampling = resolve_eval_sampling(

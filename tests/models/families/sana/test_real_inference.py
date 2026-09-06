@@ -22,7 +22,7 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
     from huggingface_hub import snapshot_download
 
     from vrl.config.loading import load_config
-    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
     from vrl.generation.types import DenoiseRequest
     from vrl.math.denoise.flow_matching import sde_step_with_logprob
@@ -36,7 +36,7 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
     cfg.model.revision = None
     cfg.model.use_lora = False
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
 
     device = torch.device("cuda")
     entry = get_model_family_entry("sana")

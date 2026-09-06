@@ -16,7 +16,7 @@ from tests.config.test_load_all_experiments import (
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
@@ -33,7 +33,7 @@ def test_bridge_uses_aligned_public_precision(experiment):
     """Checks bridge derives trainer precision from public precision."""
     cfg = _load_experiment_for_static_validation(experiment)
     trainer_config = build_configs(cfg).trainer
-    policy = resolve_precision_policy(parse_config(cfg).precision)
+    policy = PrecisionPolicy.from_section(parse_config(cfg).precision)
     # The bridge contract is the role-label equality below (train/rollout labels
     # equal the resolved policy labels); the label -> torch dtype resolution is
     # covered by the plain-policy cases and resolve_torch_dtype's own tests.
@@ -182,14 +182,16 @@ def _rollout_quantization_policy(format_name: str) -> dict:
 def test_math_axis_resolves_to_dtype(math, expected):
     # P2: the `math` axis resolves to the evaluator's log-prob math dtype.
     """Checks math axis resolves to dtype."""
-    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.precision import PrecisionPolicy
     from vrl.models.dtypes import resolve_torch_dtype
 
     block = _plain_policy("fp32")
     block["diffusion_math"] = {"dtype": math}
     cfg = _with_precision("sd3_5/online_grpo_ocr", block)
     assert (
-        resolve_torch_dtype(resolve_precision_policy(parse_config(cfg).precision).diffusion_math)
+        resolve_torch_dtype(
+            PrecisionPolicy.from_section(parse_config(cfg).precision).diffusion_math
+        )
         is expected
     )
     assert build_configs(cfg).precision.diffusion_math == math

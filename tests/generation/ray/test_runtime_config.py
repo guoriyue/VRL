@@ -16,7 +16,7 @@ from omegaconf import OmegaConf
 
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import bundled_config_resource
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.generation.execution.types import BatchSizeProbeResult
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
@@ -264,7 +264,7 @@ def _capture_launch_inputs(
 
     config = _ray_config(cfg)
     root = parse_config(cfg)
-    precision = resolve_precision_policy(root.precision)
+    precision = PrecisionPolicy.from_section(root.precision)
     schedule_mode = str(
         OmegaConf.select(
             cfg,

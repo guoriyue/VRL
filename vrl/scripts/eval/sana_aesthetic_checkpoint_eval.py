@@ -24,7 +24,7 @@ from typing import Any
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
-from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig, parse_config
 from vrl.models import checkpoint_identity
 from vrl.scripts.eval import sana_aesthetic_report as sana_report
@@ -119,7 +119,7 @@ def main(argv: list[str] | None = None) -> None:
     sampling = sana_report.resolve_sampling()
     if root.model is None:
         raise ValueError("SANA checkpoint evaluation requires model configuration")
-    identity_precision = resolve_precision_policy(root.precision)
+    identity_precision = PrecisionPolicy.from_section(root.precision)
     from vrl.models.families.registry import get_model_family_entry
     from vrl.run import resolve_model
 
@@ -140,7 +140,7 @@ def main(argv: list[str] | None = None) -> None:
                 strict=True,
             )
     build_root = _materialize_model_snapshot(cfg)
-    build_precision = resolve_precision_policy(build_root.precision)
+    build_precision = PrecisionPolicy.from_section(build_root.precision)
     reward_models = _materialize_reward_model_snapshots(
         sana_report.build_reward_model_definitions(root, generation_device=str(device)),
     )

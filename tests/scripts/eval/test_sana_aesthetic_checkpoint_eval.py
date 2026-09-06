@@ -1161,7 +1161,7 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
             },
         ),
     )
-    precision = checkpoint_eval.resolve_precision_policy(root.precision)
+    precision = checkpoint_eval.PrecisionPolicy.from_section(root.precision)
     generated = checkpoint_eval._generate_images(
         root,
         precision,
@@ -1253,7 +1253,7 @@ def test_generate_images_rejects_materialized_source_drift_before_generation(
     ):
         checkpoint_eval._generate_images(
             root,
-            checkpoint_eval.resolve_precision_policy(root.precision),
+            checkpoint_eval.PrecisionPolicy.from_section(root.precision),
             [checkpoint_eval.CheckpointTarget("baseline", -1, None, None, None)],
             ["fox"],
             output_dir=tmp_path / "eval",
