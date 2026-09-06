@@ -43,10 +43,23 @@ class QwenVLVideoJudge:
         self.max_new_tokens = int(
             self.worker_config.get("max_new_tokens", _DEFAULT_MAX_NEW_TOKENS),
         )
-        # Optional per-frame pixel bound for qwen smart_resize, matching the
-        # Kling reward's knob; None keeps the processor default.
+        # Optional per-frame pixel bounds for qwen smart_resize, matching the
+        # Kling reward's knobs; None keeps the processor default. qwen-vl-utils
+        # asserts max >= min, and its video default min is well above a small
+        # max, so a caller who bounds one side must bound the other too.
         max_frame_pixels = self.worker_config.get("max_frame_pixels")
+        min_frame_pixels = self.worker_config.get("min_frame_pixels")
         self.max_frame_pixels = None if max_frame_pixels is None else int(max_frame_pixels)
+        self.min_frame_pixels = None if min_frame_pixels is None else int(min_frame_pixels)
+        if (
+            self.max_frame_pixels is not None
+            and self.min_frame_pixels is not None
+            and self.min_frame_pixels > self.max_frame_pixels
+        ):
+            raise ValueError(
+                f"{self.family}: min_frame_pixels={self.min_frame_pixels} exceeds "
+                f"max_frame_pixels={self.max_frame_pixels}",
+            )
         self.local_files_only = bool(self.worker_config.get("local_files_only", False))
         # Large judges: allow sharding / attention backend without a code change.
         self.attn_implementation = self.worker_config.get("attn_implementation")
@@ -111,6 +124,8 @@ class QwenVLVideoJudge:
         }
         if self.max_frame_pixels is not None:
             content["max_pixels"] = self.max_frame_pixels
+        if self.min_frame_pixels is not None:
+            content["min_pixels"] = self.min_frame_pixels
         return content
 
     def _judge_inputs(self, video_path: str, prompt: str) -> tuple[Any, list[dict[str, Any]]]:

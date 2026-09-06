@@ -25,7 +25,10 @@ _WORKER_CONFIG = {
     "dtype": "float32",
     "local_files_only": True,
     "max_new_tokens": 8,
+    # Both bounds: qwen-vl-utils' default video minimum is far above this tiny
+    # budget and it asserts max >= min.
     "max_frame_pixels": 28 * 28 * 4,
+    "min_frame_pixels": 28 * 28 * 4,
 }
 
 
