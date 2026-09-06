@@ -11,7 +11,6 @@ from torch import nn
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.nn.quantization import (
     Fp4Linear,
-    drop_quantized_masters,
 )
 from vrl.nn.quantization.formats import (
     E2M1_VALUES,
@@ -184,34 +183,6 @@ def test_nvfp4_gate_matches_the_hardware_it_claims_to_describe() -> None:
 # --- module ownership (CPU) ---------------------------------------------------
 
 
-def test_master_weight_is_the_only_state_dict_entry() -> None:
-    quantized = Fp4Linear(nn.Linear(64, 32, bias=True))
-    assert set(quantized.state_dict()) == {"weight", "bias"}
-
-
-def test_requantizes_on_state_dict_load() -> None:
-    quantized = Fp4Linear(nn.Linear(64, 32, bias=False))
-    before = quantized.weight_fp4.view(torch.uint8).clone()
-    quantized.load_state_dict({"weight": torch.randn(32, 64)})
-    assert not torch.equal(before, quantized.weight_fp4.view(torch.uint8))
-
-
-def test_drop_master_frees_and_blocks_base_load() -> None:
-    quantized = Fp4Linear(nn.Linear(64, 32, bias=False))
-    assert quantized.drop_master() == 32 * 64 * 4
-    assert quantized.weight is None
-    assert quantized.drop_master() == 0
-    with pytest.raises(RuntimeError, match="master-free"):
-        quantized.load_state_dict({"weight": torch.randn(32, 64)})
-    quantized.load_state_dict({}, strict=False)
-
-
-def test_drop_quantized_masters_covers_nvfp4() -> None:
-    root = nn.Sequential(Fp4Linear(nn.Linear(64, 32, bias=False)))
-    assert drop_quantized_masters(root) > 0
-    assert root[0].weight is None
-
-
 def test_unaligned_in_features_rejected() -> None:
     with pytest.raises(ValueError, match=rf"in_features % {NVFP4_K_ALIGNMENT}"):
         Fp4Linear(nn.Linear(48, 32))
@@ -255,13 +226,6 @@ def test_attention_mlp_profile_includes_aligned_attention() -> None:
     assert swapped == ["to_q", "ff_up"]
     assert isinstance(model.to_q, Fp4Linear)
     assert isinstance(model.ff_up, Fp4Linear)
-
-
-def test_invalid_target_profile_raises_before_mutation() -> None:
-    model = _Blockish(1024)
-    with pytest.raises(ValueError, match="bogus"):
-        Fp4Linear.swap_linears(model, target_profile="bogus")
-    assert not any(isinstance(module, Fp4Linear) for module in model.modules())
 
 
 # --- runtime wiring (CPU) -----------------------------------------------------

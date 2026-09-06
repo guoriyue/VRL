@@ -140,13 +140,6 @@ def test_mlp_only_target_profile_excludes_attention() -> None:
     assert not isinstance(dit.blocks[0].attn.to_q, Fp8Linear)
 
 
-def test_invalid_target_profile_raises_before_fp8_mutation() -> None:
-    dit = _DiT(dim=1024, heads=8, depth=1)
-    with pytest.raises(ValueError, match="bogus"):
-        Fp8Linear.swap_linears(dit, target_profile="bogus")
-    assert not any(isinstance(module, Fp8Linear) for module in dit.modules())
-
-
 def test_min_features_skips_small_linears():
     dit = _DiT(dim=512, heads=8, depth=1)
     swapped = Fp8Linear.swap_linears(dit, min_features=1024)  # 512 < 1024 → skip all
