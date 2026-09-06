@@ -1,6 +1,7 @@
 # SPRINT：`require_*` / `build_*` / `resolve_*` 自由函数的归属审计（done）
 
-状态：**done（2026-09-05）**。基线：main @ `8c7ed939`。
+状态：**done（2026-09-05，第二轮扩审同日）**。基线：main @ `8c7ed939`，
+扩审基线 `7b8cb15b`（上游「拆 guard / 删防御性测试」8 连提交之后）。
 判据来自 AGENTS.md「Placement — where a shared helper belongs (the four rules)」。
 起因：用户观察「仓库里有很多 `require_xx` / `build_xx` / `resolve_xx` 这种孤立函数，
 能不能塞进一个干净的 dataclass」。
@@ -147,6 +148,78 @@ monkeypatch.setattr(
 `tests/config/test_builders.py:83` 本来就有正确写法（`RewardRuntimeConfig.from_cfg.__func__`），
 照抄即可。
 
+## 4bis. 第二轮：把同一条判据推到其余前缀
+
+第一轮只审了 `require_/build_/resolve_`（123 个）。第二轮把剩下的前缀全过了一遍：
+
+```
+validate_ 28   normalize_ 11   apply_ 12   load_ 32   select_ 9
+format_ 7      parse_ 3        compute_ 3  to_ 5      make_/create_/derive_ 各 1
+```
+
+### 4bis.1 又找到 4 个构造器形状（已改）
+
+| 之前 | 之后 | 调用点 |
+|---|---|---|
+| `validate_reward_config(cfg) -> RewardConfig` | `RewardConfig.from_cfg(cfg)` | 6 |
+| `parse_hf_repo_revision(str) -> HuggingFaceRepoRevision` | `HuggingFaceRepoRevision.parse(ref)` | 6 |
+| `parse_reward_inference_config(value, *, context) -> RewardInferenceConfig` | `RewardInferenceConfig.parse(...)` | 7 |
+| `compute_logprob_mismatch_stats(a, b) -> LogprobMismatchStats` | `LogprobMismatchStats.compute(a, b)` | 14 |
+
+前三个类与函数同模块。`validate_reward_config` 是唯一跨模块的：函数在
+`vrl/config/validation.py`，`RewardConfig` 和它用的 `_extract_error_message` 都在
+`vrl/config/schema.py`，而 schema **不** import validation，所以方法落在 schema 侧无环。
+
+**判据在这一轮的意义**：它把「名字前缀」和「实际形状」解耦了。`validate_`、`parse_`、
+`compute_` 三个不同的动词下面藏着同一个东西——返回类型即概念的构造器。反过来，
+27 个 `validate_*` 里只有 1 个符合，说明这条判据不是「凡是自由函数都该变方法」的托词。
+
+### 4bis.2 `Any` 参数：51 个里只有 5 处该改（已改）
+
+按 Rule 2「`Any` 需要收据」逐个查。**28 个在 `vrl/trajectory/builders.py`**——全是张量参数，
+该模块必须 import-time torch-free（config 解析会走到它），收据成立，不动。
+`resolve_torch_dtype` / `require_plain_dtype` / `require_pipeline_offload_mode` /
+`validate_checkpoint_source_member` 收的是原始 YAML / manifest 值，收据成立。
+`to_cpu_snapshot` / `to_builtin_deep` 是泛型递归遍历，收据成立。
+
+真正无收据、且 `getattr` 正在守护一个**已声明字段**的有 5 处：
+
+```python
+# vrl/trainers/weight_sync.py —— 错误信息自己就写着 RuntimeBundle
+-def require_trainable_modules(bundle: Any) -> Mapping[str, Any]:
+-    modules = getattr(bundle, "trainable_modules", None)
+-    if not isinstance(modules, Mapping) or not modules:
++def require_trainable_modules(bundle: RuntimeBundle) -> Mapping[str, Any]:
++    modules = bundle.trainable_modules
++    if not modules:
+
+# vrl/models/loader.py —— 三个 getattr 守的都是 ModelBuild 的声明字段
+-    quantization = getattr(getattr(build, "precision", None), "quantization", None)
+-    if not nvfp4_available(getattr(build, "device", None)):
++    quantization = build.precision.quantization
++    if not nvfp4_available(build.device):
+```
+
+另外两处用 `TYPE_CHECKING` 标注，**刻意不新增运行时 import 边**：
+`validate_rollout_schedule_topology(config: RolloutOrchestrationConfig,
+resources: ResolvedDistributedResources)`，以及
+`build_token_family_bundle(entry: ModelFamilyEntry)`——registry 是在方法体里惰性 import
+这个模块的，模块级 import 回去会把环闭合。
+
+标注之后**没有**出现新的所有权信号：这 5 个函数的必需参数标注后仍是多个，或所属类型在
+另一个包，所以它们留在原地。Rule 2 的收益在这里是「删掉 6 个 `getattr` 防御」，不是搬家。
+
+### 4bis.3 其余前缀：全部保留
+
+- `normalize_wan_model_build` / `normalize_magi_1_model_build`：看着是同型双胞胎，
+  但和 §3.2 一样由 registry 点号字符串分派
+  （`registry.py:660,823,843`），改成方法会打断分派。
+- `parse_config(cfg) -> RootConfig`：形状上符合判据，但它是全仓唯一的未知键关口、被多份
+  sprint 文档当作契约引用，作为 public facade 保留。**这是判据的例外，明确记下来。**
+- `load_* (32)` / `save_* (3)` 是 IO，`format_* (7)` 是渲染，`to_* (5)` 是纯转换，
+  `select_* (9)` / `apply_* (12)` 是无主语的纯函数——判据都不命中。
+- `normalize_wan_boundary_ratio(value, *, field_name)` 的字符串参数命名配置键，Rule 1 反例。
+
 ## 5. 未决项（唯一一条）
 
 `Any` + `owner=`/`what=` 字符串的 4 个收窄器，按 Rule 1 + Rule 2 都可疑，但它们做的是
@@ -173,9 +246,25 @@ vrl/models/dtypes.py:104              require_plain_dtype(value: Any, *, what: s
 
 ## 7. 验收
 
+第一轮（基线 `8c7ed939`）：
+
 ```bash
 .venv/bin/python -m pytest tests -q -p no:randomly --ignore=tests/e2e
 # 4429 passed, 13 skipped
-.venv/bin/ruff check vrl tests && .venv/bin/ruff format --check vrl tests
-# All checks passed! / 912 files already formatted
 ```
+
+第二轮（基线 `7b8cb15b`，上游删防御性测试之后基数变小）：
+
+```bash
+.venv/bin/python -m pytest tests -q -p no:randomly --ignore=tests/e2e
+# 3445 passed, 13 skipped
+.venv/bin/ruff check vrl tests && .venv/bin/ruff format --check vrl tests
+# All checks passed!
+```
+
+## 8. 总账
+
+两轮合计：**9 个自由函数变成 classmethod，6 个防御性 `getattr` 删除，4 个 `Any` 参数标注**。
+审过的函数总数 123 + 约 120 = 约 240 个；判定「该搬家」的比例约 4%。
+这个比例本身是结论：仓库里 `require_/build_/resolve_/validate_` 密集**不是**设计问题，
+绝大多数有正当理由；值得改的是那一小撮「名字和返回类型指同一个概念」的构造器。
