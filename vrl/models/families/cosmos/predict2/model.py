@@ -522,18 +522,17 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             init_latents=replay_tensors["init_latents"],
             cond_mask=replay_tensor(replay_tensors, batch_context, "cond_mask"),
-            uncond_mask=replay_tensor(replay_tensors, batch_context, "uncond_mask"),
+            # CFG off: prepare_latents hands back no uncond mask/indicator, the
+            # export carries None, and the trajectory builder drops None replay
+            # tensors -- so these keys are absent rather than present-and-None.
+            uncond_mask=replay_tensors.get("uncond_mask"),
             padding_mask=shared_replay_tensor(
                 replay_tensors,
                 batch_context,
                 "padding_mask",
             ),
             cond_indicator=replay_tensor(replay_tensors, batch_context, "cond_indicator"),
-            uncond_indicator=replay_tensor(
-                replay_tensors,
-                batch_context,
-                "uncond_indicator",
-            ),
+            uncond_indicator=replay_tensors.get("uncond_indicator"),
             fps=batch_context["fps"],
         )
 

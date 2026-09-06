@@ -23,6 +23,7 @@ covered by ``wan_2_1/test_backbone_parity.py``.
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -129,3 +130,39 @@ def test_replay_export_is_sample_aligned_at_batch_gt_1(
             f"(shape {tuple(value.shape)}); the trajectory builder would "
             "silently drop it and replay restore would KeyError"
         )
+
+
+def test_predict2_restore_tolerates_the_absent_uncond_bundle_when_cfg_is_off() -> None:
+    """``guidance_scale=1.0``: the pipeline returns no uncond mask/indicator.
+
+    The export carries None for them and the trajectory builder drops None
+    replay tensors, so restore must read them as optional instead of falling
+    through to a ``batch_context`` KeyError (the real-checkpoint GPU lane hit
+    exactly that on cosmos_predict2 with CFG off).
+    """
+    state = _predict2_state(batch_size=1)
+    state.do_cfg = False
+    state.guidance_scale = 1.0
+    state.uncond_mask = None
+    state.uncond_indicator = None
+    model = object.__new__(CosmosPredict2Model)
+    object.__setattr__(
+        model,
+        "_pipeline",
+        SimpleNamespace(scheduler=SimpleNamespace(timesteps=state.timesteps)),
+    )
+
+    exported = model.export_replay_tensors(state)
+    survives_builder = {name: value for name, value in exported.items() if value is not None}
+    assert "uncond_mask" not in survives_builder
+    restored = model.restore_eval_state(
+        survives_builder,
+        model.export_batch_context(state),
+        state.latents,
+        step_idx=0,
+    )
+
+    assert restored.do_cfg is False
+    assert restored.uncond_mask is None
+    assert restored.uncond_indicator is None
+    torch.testing.assert_close(restored.cond_mask, state.cond_mask)
