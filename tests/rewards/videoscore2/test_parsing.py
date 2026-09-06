@@ -2,26 +2,31 @@
 
 These exercise the pure helpers without loading the 7B judge, so the risky
 parts — the upstream regex and the digit-token alignment used for continuous
-scores — are covered deterministically.
+scores — are covered deterministically. The soft path runs on a tiny real
+byte-level BPE (``tests/rewards/videoscore2/fixtures.py``) whose marker
+tokenizations have the same shape as the real Qwen2 tokenizer's; the
+``optional`` lane checks that shape against the real tokenizer.
 """
 
 from __future__ import annotations
 
 import re
-from typing import ClassVar
 
 import pytest
 import torch
 
+from tests.rewards.videoscore2.fixtures import build_tiny_marker_tokenizer
 from vrl.rewards.assets.video_judge_prompts import (
     VIDEOSCORE2_SYSTEM_PROMPT,
     VIDEOSCORE2_USER_TEMPLATE,
 )
 from vrl.rewards.models.videoscore2 import (
     _DIMENSION_MARKERS,
+    _marker_token_ids,
     _merge_soft_with_hard,
     _normalize_scores,
     _parse_integer_scores,
+    _resolve_digit_token_ids,
     _soft_scores_from_generation,
 )
 
@@ -93,75 +98,64 @@ def test_normalize_scores_public_keys_and_mean() -> None:
     assert scores["overall"] == (4.0 + 2.0 + 3.0) / 3.0
 
 
-class _FakeTokenizer:
-    """Minimal token vocabulary for the soft-score alignment test.
+@pytest.fixture(scope="module")
+def tokenizer():
+    return build_tiny_marker_tokenizer()
 
-    digits 1..5 -> ids 1..5; marker words -> dedicated ids; everything else is a
-    filler id. Marker tokenization is space-insensitive here, matching how the
-    real helper searches both " quality" and "quality".
+
+def _soft_scores(tokenizer, text: str) -> dict[str, float | None]:
+    """Tokenize the judge's output with the real BPE and read the soft scores back.
+
+    The step logits realize exactly the generated token at every position, so the
+    expected value at a located digit slot is that digit.
     """
 
-    _vocab: ClassVar[dict[str, int]] = {
-        "1": 1,
-        "2": 2,
-        "3": 3,
-        "4": 4,
-        "5": 5,
-        "quality": 10,
-        "alignment": 20,
-        "consistency": 30,
-    }
-
-    def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
-        key = text.strip()
-        return [self._vocab[key]] if key in self._vocab else [99]
-
-
-def _logits_for(realized_id: int, vocab: int = 100) -> torch.Tensor:
-    # vocab spans all fake ids (markers/filler up to 99); only digit-slot logits
-    # are read by the soft path, but every step needs an indexable row.
-    logits = torch.zeros(vocab)
-    logits[realized_id] = 10.0
-    return logits
-
-
-def test_soft_scores_align_to_digit_after_each_marker() -> None:
-    tokenizer = _FakeTokenizer()
-    # "... quality : 4 ; ... alignment : 2 , ... consistency : 5"
-    generated_ids = [10, 99, 4, 99, 20, 99, 2, 99, 30, 99, 5]
-    step_logits = [_logits_for(tid) for tid in generated_ids]
-    digit_token_ids = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}
-
-    soft = _soft_scores_from_generation(
+    generated_ids = tokenizer.encode(text, add_special_tokens=False)
+    vocab = len(tokenizer)
+    step_logits = []
+    for token_id in generated_ids:
+        logits = torch.zeros(vocab)
+        logits[token_id] = 10.0
+        step_logits.append(logits)
+    return _soft_scores_from_generation(
         generated_ids,
         step_logits,
-        digit_token_ids,
+        _resolve_digit_token_ids(tokenizer),
         tokenizer=tokenizer,
     )
+
+
+def test_marker_search_covers_both_spacings_and_multi_token_markers(tokenizer) -> None:
+    """Both " marker" and "marker" are searched, and a marker may span tokens.
+
+    ``consistency`` without a leading space tokenizes to two pieces here, as it
+    does in the real Qwen2 vocabulary, so the multi-token needle path is live.
+    """
+
+    variants = {marker: _marker_token_ids(tokenizer, marker) for _, marker in _DIMENSION_MARKERS}
+
+    assert all(len(ids) == 2 for ids in variants.values())
+    assert any(len(needle) > 1 for needle in variants["consistency"])
+    assert set(_resolve_digit_token_ids(tokenizer)) == {1, 2, 3, 4, 5}
+
+
+def test_soft_scores_align_to_digit_after_each_marker(tokenizer) -> None:
+    soft = _soft_scores(tokenizer, "quality: 4; alignment: 2, consistency: 5")
 
     assert soft["visual_quality"] == pytest.approx(4.0, abs=1e-2)
     assert soft["text_alignment"] == pytest.approx(2.0, abs=1e-2)
     assert soft["physical_common_sense"] == pytest.approx(5.0, abs=1e-2)
 
 
-def test_soft_scores_anchor_last_marker_not_cot_mention() -> None:
+def test_soft_scores_anchor_last_marker_not_cot_mention(tokenizer) -> None:
     """Reproduces the live misalignment: CoT mentions the marker digit-free,
     then the numbered answer list "(1) visual quality: 3 ..." follows. The
     list numeral "1" is the first digit after the CoT mention and must NOT be
     read as the score (it produced soft=1.0 vs hard=3 on real weights)."""
 
-    tokenizer = _FakeTokenizer()
-    # CoT "quality ..." (no digits), then "( 1 ) quality : 3 ( 2 ) alignment : 4
-    # ( 3 ) consistency : 4"
-    generated_ids = [10, 99, 99, 99, 1, 10, 3, 99, 2, 20, 4, 99, 3, 30, 4]
-    step_logits = [_logits_for(tid) for tid in generated_ids]
-    digit_token_ids = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}
-
-    soft = _soft_scores_from_generation(
-        generated_ids,
-        step_logits,
-        digit_token_ids,
-        tokenizer=tokenizer,
+    soft = _soft_scores(
+        tokenizer,
+        "quality looks fine overall (1) quality: 3 (2) alignment: 4 (3) consistency: 4",
     )
 
     assert soft["visual_quality"] == pytest.approx(3.0, abs=1e-2)
@@ -169,23 +163,42 @@ def test_soft_scores_anchor_last_marker_not_cot_mention() -> None:
     assert soft["physical_common_sense"] == pytest.approx(4.0, abs=1e-2)
 
 
-def test_soft_scores_return_none_when_marker_missing() -> None:
-    tokenizer = _FakeTokenizer()
-    # No "alignment"/"consistency" markers -> those axes cannot be located.
-    generated_ids = [10, 99, 4]
-    step_logits = [_logits_for(tid) for tid in generated_ids]
-    digit_token_ids = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}
+def test_unprefixed_multi_token_marker_still_anchors(tokenizer) -> None:
+    """ "(3)consistency" has no leading space: only the two-token needle can match."""
 
-    soft = _soft_scores_from_generation(
-        generated_ids,
-        step_logits,
-        digit_token_ids,
-        tokenizer=tokenizer,
-    )
+    soft = _soft_scores(tokenizer, "(1) quality: 3, (2) alignment: 4, (3)consistency: 5")
+
+    assert soft["physical_common_sense"] == pytest.approx(5.0, abs=1e-2)
+
+
+def test_soft_scores_return_none_when_marker_missing(tokenizer) -> None:
+    # No "alignment"/"consistency" markers -> those axes cannot be located.
+    soft = _soft_scores(tokenizer, "quality: 4")
 
     assert soft["visual_quality"] == pytest.approx(4.0, abs=1e-2)
     assert soft["text_alignment"] is None
     assert soft["physical_common_sense"] is None
+
+
+@pytest.mark.optional
+def test_real_videoscore2_tokenizer_has_the_marker_shape_the_fixture_assumes() -> None:
+    """The tiny BPE encodes our belief about Qwen2's vocabulary; only the real
+    tokenizer can tell us that belief has expired. Digits must be single tokens
+    or the soft path silently disables itself."""
+
+    from transformers import AutoTokenizer
+
+    try:
+        real = AutoTokenizer.from_pretrained("TIGER-Lab/VideoScore2", local_files_only=True)
+    except Exception as exc:  # pragma: no cover - offline machines without the cache
+        pytest.skip(f"VideoScore2 tokenizer is not cached: {exc}")
+
+    variants = {marker: _marker_token_ids(real, marker) for _, marker in _DIMENSION_MARKERS}
+    assert all(len(ids) == 2 for ids in variants.values())
+    assert [len(needle) for needle in variants["quality"]] == [1, 1]
+    assert [len(needle) for needle in variants["alignment"]] == [1, 1]
+    assert [len(needle) for needle in variants["consistency"]] == [2, 1]
+    assert set(_resolve_digit_token_ids(real)) == {1, 2, 3, 4, 5}
 
 
 def test_merge_rejects_soft_far_from_hard_keeps_near() -> None:
