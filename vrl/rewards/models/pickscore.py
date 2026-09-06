@@ -60,13 +60,14 @@ class PickScoreRewardModel(TorchRewardModel):
 
         if isinstance(media, torch.Tensor):
             arr = to_uint8(media).cpu().numpy()
+            if arr.ndim == 5:
+                # Score the middle frame. The canonical video layout is [B,C,T,H,W];
+                # [B,T,C,H,W] wins the ambiguous case, matching nsfw_safety.
+                frame_axis = 1 if arr.shape[2] in (1, 3, 4) else 2
+                arr = arr.take(arr.shape[frame_axis] // 2, axis=frame_axis)
             if arr.ndim == 3:
                 arr = arr[None]
-            if arr.ndim == 4:
-                arr = arr.transpose(0, 2, 3, 1)  # NCHW -> NHWC
-            elif arr.ndim == 5:
-                mid = arr.shape[1] // 2
-                arr = arr[:, mid].transpose(0, 2, 3, 1)
+            arr = arr.transpose(0, 2, 3, 1)  # NCHW -> NHWC
             images = [Image.fromarray(a) for a in arr]
         elif isinstance(media, np.ndarray):
             images = (

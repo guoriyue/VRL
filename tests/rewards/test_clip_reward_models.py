@@ -154,6 +154,32 @@ def test_pickscore_reads_transformers_5_projected_image_and_text_features() -> N
     assert score == pytest.approx(1.0 / 26.0)
 
 
+@pytest.mark.parametrize("layout", ["BCTHW", "BTCHW"])
+def test_pickscore_score_media_scores_the_middle_frame_of_a_video(
+    layout: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both video layouts reach the scorer as one RGB PIL image per sample."""
+    from vrl.rewards.models.pickscore import PickScoreRewardModel
+
+    frames = torch.zeros(2, 3, 5, 12, 12)
+    frames[:, :, 2] = 1.0  # only the middle frame is white
+    media = frames if layout == "BCTHW" else frames.permute(0, 2, 1, 3, 4)
+    seen: list[list[object]] = []
+    monkeypatch.setattr(
+        PickScoreRewardModel,
+        "_score",
+        lambda self, prompt, images: seen.append(images) or 0.5,
+    )
+
+    result = PickScoreRewardModel({"device": "cpu"}).score_media(media=media, prompt="p")
+
+    assert result == {"pickscore": 0.5}
+    (images,) = seen
+    assert [(image.mode, image.size) for image in images] == [("RGB", (12, 12))] * 2
+    assert all(image.getextrema() == ((255, 255),) * 3 for image in images)
+
+
 @pytest.mark.parametrize(
     ("processor_revision", "model_revision"),
     [
