@@ -21,7 +21,12 @@ from typing import TYPE_CHECKING, Any, Protocol
 import torch
 from torch import nn
 
-from vrl.trainers.distributed import DistributedTrainingContext
+from vrl.trainers.distributed import (
+    DistributedTrainingContext,
+    cpu_coordination_group,
+    init_training_process_group,
+    shutdown_training_process_group,
+)
 from vrl.trainers.weight_sync import require_trainable_modules
 from vrl.utils.cuda_memory import empty_cuda_cache
 
@@ -334,8 +339,6 @@ class _ProcessGroupStrategy:
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         del restore_parked
-        from vrl.trainers.fsdp import shutdown_training_process_group
-
         shutdown_training_process_group()
 
 
@@ -644,7 +647,6 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
         """Shard the policy's trainable transformer in place and return the policy."""
         from vrl.trainers.fsdp import (
             apply_fsdp,
-            init_training_process_group,
             mixed_precision_policy,
             normalize_fsdp_parameter_dtype,
         )
@@ -942,8 +944,6 @@ class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
         """
         from torch.nn.parallel import DistributedDataParallel
 
-        from vrl.trainers.fsdp import init_training_process_group
-
         # Validate the trainable handles BEFORE touching the process group so a bad
         # model fails fast (and the guard tests need no live PG).
         handles = _trainable_module_handles(model)
@@ -1111,8 +1111,6 @@ def _cpu_coordination_barrier() -> None:
 
     import torch.distributed as dist
 
-    from vrl.trainers.fsdp import cpu_coordination_group
-
     group = cpu_coordination_group()
     if group is not None:
         dist.barrier(group=group)
@@ -1130,8 +1128,6 @@ def _distributed_all_ranks_succeeded(
     """
 
     import torch.distributed as dist
-
-    from vrl.trainers.fsdp import cpu_coordination_group
 
     if not dist.is_initialized():
         return succeeded

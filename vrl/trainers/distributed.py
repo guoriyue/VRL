@@ -6,8 +6,11 @@ actor lifecycle stay in ``vrl/ray/``. The strategy seam (backward / clip / state
 export) lives in ``vrl/trainers/strategy.py`` and consumes the context produced
 here.
 
-This module only resolves and validates the context. The FSDP2 strategy layer
-(``fully_shard`` wrapping + DTensor full-state export) now lives in
+Two things live here: the context (``DistributedTrainingContext``) and the
+process-group lifecycle every multi-rank strategy shares -- ``ddp`` and ``fsdp``
+both create the group from the context, tear it down on shutdown, and exchange
+park/wake coordination messages over the CPU-capable group. The FSDP2 strategy
+layer (``fully_shard`` wrapping + DTensor full-state export) lives in
 ``vrl/trainers/fsdp.py`` + ``FSDPStrategy``, built from this context by
 ``vrl/trainers/strategy.py`` build_strategy. The online recipe supports the
 symmetric colocated torchrun path for ``ddp`` and ``fsdp``: each rank owns its
@@ -20,7 +23,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -69,8 +72,8 @@ class DistributedTrainingContext:
         validates ``RANK`` / ``LOCAL_RANK`` / ``WORLD_SIZE`` (fail-fast on missing or
         inconsistent values) and derives a per-process ``cuda:<local_rank>`` device. It
         does NOT create a process group; ``vrl/trainers/strategy.py`` build_strategy
-        turns this context into the matching strategy, and ``vrl/trainers/fsdp.py``
-        owns the process-group setup and model wrapping.
+        turns this context into the matching strategy, whose ``prepare_model`` calls
+        ``init_training_process_group`` below.
         """
 
         env = os.environ if env is None else env
@@ -158,3 +161,73 @@ def _require_env_int(env: Mapping[str, str], key: str) -> int:
         return int(raw)
     except ValueError as exc:
         raise ValueError(f"distributed.training: {key}={raw!r} is not an integer") from exc
+
+
+_CPU_COORDINATION_GROUP: Any = None
+
+
+def cpu_coordination_group() -> Any:
+    """The CPU-capable group for phase-boundary coordination, or ``None``.
+
+    Park/wake windows unmap multi-GB cumem pools; coordination messages inside
+    those windows (quiesce barriers, park-success flags) must therefore issue
+    ZERO GPU kernels — a NCCL all-reduce right after this rank's unmap runs a
+    kernel on the just-parked card while slower peers are still unmapping
+    theirs (the load pattern in the 2026-08-16 Xid 79 postmortem). NCCL runs
+    get a dedicated gloo subgroup; a gloo default group is already CPU-capable
+    and is returned as-is.
+    """
+
+    import torch.distributed as dist
+
+    if not dist.is_initialized():
+        return None
+    if _CPU_COORDINATION_GROUP is not None:
+        return _CPU_COORDINATION_GROUP
+    if dist.get_backend() == "gloo":
+        return dist.group.WORLD
+    return None
+
+
+def init_training_process_group(
+    context: DistributedTrainingContext,
+    *,
+    backend: str = "nccl",
+) -> None:
+    """Create the torch.distributed process group for a ddp/fsdp rank.
+
+    No-op for ``single_process`` and when a group already exists. The owning
+    ``Strategy.shutdown`` calls the matching ``shutdown_training_process_group``.
+    ``torchrun`` has already exported ``RANK`` / ``WORLD_SIZE`` / ``MASTER_ADDR``;
+    ``DistributedTrainingContext.from_root`` validated them, so ``init_method='env'`` is the
+    only contract we rely on here.
+    """
+
+    import torch.distributed as dist
+
+    global _CPU_COORDINATION_GROUP
+    if not context.distributed or dist.is_initialized():
+        return
+    if context.device.type == "cuda":
+        # ``context.device`` is the CUDA ordinal inside this rank's masked view.
+        torch.cuda.set_device(context.device)
+    dist.init_process_group(
+        backend=backend,
+        rank=context.rank,
+        world_size=context.world_size,
+    )
+    if backend == "nccl":
+        # Collective creation: every rank reaches this line inside the same
+        # init call, so the subgroup handshake cannot mismatch.
+        _CPU_COORDINATION_GROUP = dist.new_group(backend="gloo")
+
+
+def shutdown_training_process_group() -> None:
+    """Tear down the process group if one is live (safe to call unconditionally)."""
+
+    import torch.distributed as dist
+
+    global _CPU_COORDINATION_GROUP
+    _CPU_COORDINATION_GROUP = None
+    if dist.is_initialized():
+        dist.destroy_process_group()

@@ -200,7 +200,7 @@ def test_ddp_wraps_resolved_device_after_per_rank_mask(monkeypatch) -> None:
     )
     wrap_calls: list[dict[str, object]] = []
     monkeypatch.setattr(
-        "vrl.trainers.fsdp.init_training_process_group",
+        "vrl.trainers.strategy.init_training_process_group",
         lambda _context, *, backend: None,
     )
 

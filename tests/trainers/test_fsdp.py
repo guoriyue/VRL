@@ -23,12 +23,11 @@ from torch import nn
 from tests.trainers._state_dict_helpers import gather_full_state_dict
 from vrl.config.schema import FSDPConfig, RootConfig, parse_config
 from vrl.models.interfaces.runtime import register_checkpoint_owned_state
-from vrl.trainers.distributed import DistributedTrainingContext
+from vrl.trainers.distributed import DistributedTrainingContext, init_training_process_group
 from vrl.trainers.fsdp import (
     apply_fsdp,
     build_fsdp_mesh,
     gather_checkpoint_state_dict,
-    init_training_process_group,
     iter_blocks,
     load_full_state_dict,
     mixed_precision_policy,
@@ -828,16 +827,16 @@ def test_fsdp_prepare_model_initializes_process_group(cpu_process_group, monkeyp
     init is a no-op — we assert the call, with the cpu-context gloo backend).
     """
 
-    import vrl.trainers.fsdp as fsdp_mod
+    import vrl.trainers.strategy as strategy_mod
 
     calls: list[tuple] = []
-    real = fsdp_mod.init_training_process_group
+    real = strategy_mod.init_training_process_group
 
     def _spy(context, *, backend):
         calls.append((context.strategy, backend))
         return real(context, backend=backend)
 
-    monkeypatch.setattr(fsdp_mod, "init_training_process_group", _spy)
+    monkeypatch.setattr(strategy_mod, "init_training_process_group", _spy)
 
     policy = _FakePolicy(_ToyTransformer())
     _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
