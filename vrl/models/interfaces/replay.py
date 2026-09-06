@@ -145,34 +145,6 @@ class RuntimeModel(ReplayModel, Protocol):
         ...
 
 
-def validate_replay_segments(
-    request: ReplayRequest | None,
-    supported_segments: tuple[str, ...],
-    *,
-    owner: str,
-) -> None:
-    """Reject an explicit segment selection the replay implementation cannot honor."""
-
-    if request is None or request.segment_names is None:
-        return
-    requested = request.segment_names
-    unsupported = tuple(name for name in requested if name not in supported_segments)
-    if requested and not unsupported:
-        return
-    raise ValueError(
-        f"{owner} replay supports segments {supported_segments!r}; got {requested!r}",
-    )
-
-
-def validate_zero_replay_timestep(timestep_idx: int, *, owner: str) -> None:
-    """Reject denoise-step selection for a replay path with no timestep axis."""
-
-    if timestep_idx != 0:
-        raise ValueError(
-            f"{owner} replay has no timestep axis; timestep_idx must be 0, got {timestep_idx}",
-        )
-
-
 class ReplayRequestContract:
     """Per-type replay request contract: which segments a model can replay and
     whether it indexes a timestep axis.
@@ -200,8 +172,12 @@ class ReplayRequestContract:
     def reject_replay_timestep_selection(self, timestep_idx: int) -> None:
         """No-op for families that do index timesteps."""
 
-        if not self.replay_indexes_timesteps:
-            validate_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+        if self.replay_indexes_timesteps or timestep_idx == 0:
+            return
+        raise ValueError(
+            f"{type(self).__name__} replay has no timestep axis; "
+            f"timestep_idx must be 0, got {timestep_idx}",
+        )
 
     def reject_unsupported_replay_segments(
         self,
@@ -211,10 +187,15 @@ class ReplayRequestContract:
     ) -> None:
         """``segments`` overrides the declared set for a request-dependent contract."""
 
-        validate_replay_segments(
-            request,
-            self.replay_segments if segments is None else segments,
-            owner=type(self).__name__,
+        if request is None or request.segment_names is None:
+            return
+        supported = self.replay_segments if segments is None else segments
+        requested = request.segment_names
+        unsupported = tuple(name for name in requested if name not in supported)
+        if requested and not unsupported:
+            return
+        raise ValueError(
+            f"{type(self).__name__} replay supports segments {supported!r}; got {requested!r}",
         )
 
 
@@ -301,6 +282,4 @@ __all__ = [
     "require_replay_model",
     "require_runtime_model",
     "single_segment_result",
-    "validate_replay_segments",
-    "validate_zero_replay_timestep",
 ]

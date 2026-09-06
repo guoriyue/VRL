@@ -15,8 +15,6 @@ from vrl.models.interfaces.replay import (
     require_replay_model,
     require_runtime_model,
     single_segment_result,
-    validate_replay_segments,
-    validate_zero_replay_timestep,
 )
 from vrl.models.interfaces.runtime import (
     ModelBuild,
@@ -44,6 +42,4 @@ __all__ = [
     "require_replay_model",
     "require_runtime_model",
     "single_segment_result",
-    "validate_replay_segments",
-    "validate_zero_replay_timestep",
 ]
