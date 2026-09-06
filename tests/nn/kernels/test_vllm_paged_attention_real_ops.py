@@ -2,25 +2,28 @@
 
 from __future__ import annotations
 
+import importlib.util
 from types import SimpleNamespace
 
 import pytest
 import torch
 
 from vrl.nn.kernels.attention.vllm_paged import VllmPagedAttentionKernels
-from vrl.nn.layers.attention.paged import (
-    ARAttentionUnavailable,
-    VllmPagedAttentionConfig,
-)
+from vrl.nn.layers.attention.paged import VllmPagedAttentionConfig
 
 
 @pytest.mark.gpu
 def test_vllm_paged_attention_writes_real_cuda_kv_cache() -> None:
-    """Checks vLLM paged attention writes real cuda KV cache."""
-    try:
-        kernels = VllmPagedAttentionKernels(VllmPagedAttentionConfig(family="janus_pro"))
-    except ARAttentionUnavailable as exc:
-        pytest.skip(f"vLLM paged-attention internals are unavailable: {exc}")
+    """Checks vLLM paged attention writes real cuda KV cache.
+
+    Only a missing vLLM is a capability gap worth skipping. An installed vLLM whose
+    internal API does not import (``pip install --no-deps`` leaves its declared
+    dependencies out) is a broken environment, and the only real kernel test in the
+    repo must say so instead of silently skipping.
+    """
+    if importlib.util.find_spec("vllm") is None:
+        pytest.skip("vLLM is not installed")
+    kernels = VllmPagedAttentionKernels(VllmPagedAttentionConfig(family="janus_pro"))
 
     assert kernels.get_kv_cache_shape(
         num_blocks=1,
