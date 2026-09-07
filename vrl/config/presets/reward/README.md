@@ -122,6 +122,22 @@ training. Character and rating tags are not scored.
 update existing launch overrides accordingly. The `adherence_tags` metadata
 field and scoring behavior are unchanged.
 
+## GenEval (OWLv2 + CLIP)
+
+Select `+reward=geneval_owl` with a manifest whose rows carry `metadata.geneval`
+(the Flow-GRPO GenEval manifests under `datasets/geneval`, including the anime
+restyle selected by `+dataset=geneval_anime`). The official GenEval decision
+rules run in-process over `google/owlv2-base-patch16-ensemble` detections and
+`openai/clip-vit-large-patch14` colour classification, so no mmdet stack or
+reward server is needed; absolute scores are therefore not comparable to
+published GenEval tables, only before/after on this detector.
+
+The `geneval_owl` score is the fraction of satisfied conditions (object
+presence, count, colour, relative position); the strict all-or-nothing verdict
+is reported by `vrl.scripts.eval.anima_geneval_eval`. The model stays resident
+on the reward device (~2.3 GB). `geneval` remains the adapter for an external
+evaluator supplied by `import_path`.
+
 ## Video Score Keys
 
 Do not treat every video reward's default score as an orthogonal training

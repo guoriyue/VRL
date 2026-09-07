@@ -1,0 +1,21 @@
+# GenEval compositional reward scored in-process: OWLv2 open-vocabulary
+# detection + CLIP colour classification under the official GenEval rules.
+# Every prompt row must carry `metadata.geneval` ({include, exclude, tag}) —
+# the Flow-GRPO manifests under datasets/geneval do. The score key is the
+# graded satisfied-condition fraction; the strict all-or-nothing verdict is
+# what the held-out eval reports. Runs on the trainer GPU by default
+# (distributed.resources.reward.device: trainer), ~2.3 GB resident.
+reward:
+  components:
+    geneval_owl: 1.0
+  kwargs:
+    geneval_owl:
+      detector_model: google/owlv2-base-patch16-ensemble
+      clip_model: openai/clip-vit-large-patch14
+      # OWLv2 score floor. 0.2 dropped clearly drawn objects (traffic light
+      # 0.18, dining table 0.16) on the Anima base grid; 0.15 kept every
+      # hand-checked pass and recovered those.
+      detection_threshold: 0.15
+      nms_iou: 0.5
+      # Official GenEval box-centre margin for position relations.
+      position_threshold: 0.1
