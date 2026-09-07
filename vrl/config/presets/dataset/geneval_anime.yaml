@@ -1,0 +1,13 @@
+# GenEval prompts restyled for an anime generator: the Flow-GRPO training and
+# official evaluation prompts with `a photo of` replaced by `an anime
+# illustration of`; the GenEval specs in metadata are unchanged. Train and
+# held-out prompts are disjoint (checked 2026-09-06). train_anime.jsonl is a
+# one-line derivation of train.jsonl and is regenerated the same way.
+data:
+  loader: prompt_manifest
+  manifest: datasets/geneval/train_anime.jsonl
+  eval_manifest: datasets/geneval/official_eval_553_anime.jsonl
+  preprocessing:
+    format: jsonl
+  sampler:
+    type: random_without_replacement
