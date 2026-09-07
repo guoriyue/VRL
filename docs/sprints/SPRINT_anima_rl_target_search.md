@@ -2533,6 +2533,103 @@ checkpoint 20/30/40/50。评测规则：每个 checkpoint 对 `base_matched`（�
 manifest 生成，§11.5）做配对比较；同时看 KL 是否随更新次数上升——**KL 不动**则下一个
 杠杆是 `clip_ratio`（当前 3e-3 极紧，可能限制了每次更新能移动的幅度），而不是再加步数。
 
+### 11.7 续跑重启：入口迁移到中性模板（2026-09-06）
+
+§11.6 的长 run（2026-09-04 18:08 启动）**只跑了 2 次更新（metrics epoch 10、11）就被
+操作员信号停掉**（`train_tag_adherence_long.log` 末尾 `supervisor stopped by operator
+signal; not restarting`），没有报错或 OOM，所以 §11.6 的假设等于没有验证。两步的读数与
+前 10 步一致：reward_mean 1.051 / 1.055，KL 惩罚 8.5e-4 / 8.5e-5，grad_norm 0.0037 / 0.0019。
+
+重启前发现三处仓库变化，全部与本线相关：
+
+| 变化 | 提交 | 影响 |
+|---|---|---|
+| `tag_adherence` 奖励改名 `wd_tagger`（kwargs、打分、`adherence_tags` 元数据不变） | `f532e823`（09-05） | 启动覆盖和 metrics 列名 `r_tag_adherence` → `r_wd_tagger` |
+| anima 目录只保留两个中性模板，专用 preset 全部删除并用测试锁死 | `d9cf6812`（09-04） | `online_grpo_tag_adherence_nsfw.yaml`（从未提交）随清理消失 |
+| metrics 表头新增 11 个 `continuous_*` 列 | 上游 | 旧 `metrics.csv` 被 `prepare_metrics_csv` 拒绝追加 |
+
+处理：
+
+- **启动改为中性模板 + 覆盖**（`docs/CONFIGURATION.md` 的规范），不再恢复专用 preset：
+  `--config experiment/anima_preview3/online_grpo +reward=wd_tagger +reward=image_sharpness
+  +dataset=anime_safety_c_adherence reward.components.wd_tagger=1.0
+  reward.components.image_sharpness=0.25 actor.optim.lr=1e-4
+  algorithm.advantage_combine=normalized_sum rollout.n_samples_per_prompt=16
+  rollout.prompts_per_batch=16 trainer.output_dir=outputs/anima_tag_adherence_nsfw
+  trainer.total_epochs=50 trainer.save_freq=10 trainer.debug.first_step=true
+  actor.timestep_fraction=0.25 actor.timestep_selection=random`，经 `vrl.scripts.supervise
+  --health-metrics --health-max-grad-norm 0.5`（supervisor 自动追加
+  `trainer.resume_from=checkpoint-10`）。解析结果与 `resume_config_20260905_010801.yaml`
+  逐键对比，差异只有：奖励名（等价）、模板自带 `actor.max_norm=0.1`（本线 grad_norm
+  ≈ 0.002，不会触发）、模板的 replay 平价 / 精度漂移守卫（阈值 1e-6；本线平价恒 0.0000）。
+- **评测脚本从清理备份恢复**：`vrl/scripts/eval/anima_tag_adherence_eval.py` 改用
+  `WDTaggerRewardModel`，默认 `--config model/cosmos/anima_preview3`（fixed-eval 会自动补
+  512 / 20 步 cfg 4.5 / tf32-bf16），新增 `--override` 透传；测试同步恢复。3 行冒烟与
+  `outputs/eval_c_adherence/base_matched` 图**逐像素 max|diff| = 0**，§11.5 的 seed 对齐链路完好。
+- 旧 `metrics.csv` 改名 `metrics.csv.epochs-0-11.tag_adherence-schema` 留档；续跑从 epoch 10
+  起写新文件，分析时两段拼接。
+
+**预定判据（沿用 §11.3，训练前写死）**：累计 50 次更新后，checkpoint 20/30/40/50 各对
+`base_matched` 做 170 行配对比较（同 manifest、seed 7777）。KL 惩罚仍 < 1e-3 且各
+checkpoint 的召回 delta 都落在自举 CI 内 → 下一个杠杆是放宽 `clip_ratio`（当前 3e-3）
+再跑一轮；仍然平 → 记为 null，关线。任一护栏（explicit 兑现 ≥ 95%、锐度 median ≥ 15、
+肉眼抽查）破 = 不算成功。
+
+**已启动（2026-09-06 00:42）**，与另一作业（VACE 14B 渲染，10 GB）共用 5090；日志
+`train_tag_adherence_long2.log`，第一次拉起因 metrics 表头问题被断路器停掉的日志留在
+`train_tag_adherence_long2.metrics-schema-fail.log`。
+
+**checkpoint-20（2026-09-06 03:32，续跑第 10 次更新）配对评估**（170 行、seed 7777、
+与 `base_matched` 同 manifest；配对脚本先复现了 §11.4 的 ck5/ck10 数字）：
+
+| 臂 | 召回 | 完全正确 | explicit 兑现 | 锐度 median | delta | z | W/T/L | 自举 CI95 |
+|---|---|---|---|---|---|---|---|---|
+| base_matched | 0.9232 | 67.1% | 100% | 16.08 | | | | |
+| ck10 | 0.9178 | 64.1% | 97.6% | 15.15 | −0.0054 | −0.64 | 17/139/14 | [−0.023, +0.010] |
+| **ck20** | **0.9043** | **59.4%** | 98.8% | **14.44** | **−0.0189** | **−1.94** | **13/132/25** | [−0.039, +0.001] |
+
+训练侧 epoch 10–19：reward_mean 1.035–1.102（无趋势），KL 惩罚 9e-5–8.6e-4，grad_norm
+0.001–0.007，健康门未触发。held-out 却在**变差**：召回 −0.019 逼近显著，锐度 median
+14.44 **破了 §11.3 的 ≥ 15 护栏**。肉眼抽查（最差 3 行 + 最好 2 行 + 3 行随机，同 seed
+并排）：构图一致、无画质崩坏，退化是局部的——row 125 把人物头部裁出画面（丢发色/脸部
+标签），row 32 发色棕→黑（丢 `brown_hair`）。掉得最多的仍是 `bent_over` 6/13、
+`bottomless` 6/8（base 4/8）、`bow` 5/18（base 3/18）。
+
+按 §11.7 预定判据：ck20 不成功且护栏已破；继续按计划跑到 50、评 30/40/50，判断趋势
+是漂移（单调下行）还是噪声（回到 CI 内）。训练奖励平而 held-out 下行，意味着每次更新
+的 256 样本奖励信号没有转化为泛化的标签遵循。
+
+**checkpoint-30（2026-09-06 06:2x，续跑第 20 次更新）配对评估**（同一协议）：
+
+| 臂 | 召回 | 完全正确 | explicit 兑现 | 锐度 median | delta | z | W/T/L | 自举 CI95 |
+|---|---|---|---|---|---|---|---|---|
+| ck30 | 0.9203 | 62.4% | 97.6% | 14.85 | −0.0030 | −0.39 | 19/129/22 | [−0.017, +0.011] |
+
+ck20 的 −0.019 在 ck30 回到 −0.003（CI 内），说明那是噪声回摆而非单调漂移；但 30 次更新
+后仍无任何正向信号（W/T/L 19/129/22，打平 129/170），锐度 median 14.85 仍略低于 15
+护栏，掉标签榜单与 base 相同（`bent_over` 6/13、`bottomless` 6/8、`bow` 4/18）。训练侧
+epoch 20–29：reward_mean 1.033–1.125，KL 惩罚 1.2e-4–7.0e-4，grad_norm 0.001–0.009。
+
+**checkpoint-40（2026-09-06 09:1x，续跑第 30 次更新）配对评估**（同一协议）：
+
+| 臂 | 召回 | 完全正确 | explicit 兑现 | 锐度 median | delta | z | W/T/L | 自举 CI95 |
+|---|---|---|---|---|---|---|---|---|
+| ck40 | 0.9240 | 64.7% | 98.8% | 14.43 | +0.0007 | +0.09 | 22/126/22 | [−0.015, +0.016] |
+
+40 次更新后与 base 完全打平（赢 22 / 输 22），`bent_over` 反而掉得更多（8/13，base 6/13）。
+锐度 median 14.43 持续低于 15。训练侧 epoch 30–39：reward_mean 1.050–1.120，KL 惩罚
+7.4e-5–4.9e-4，grad_norm 0.001–0.004。
+
+**2026-09-06 10:22 操作员停止**（累计 43 次更新，epoch 0–42；最后完整 checkpoint 为
+checkpoint-40）。四个 checkpoint 对 base 的配对 delta：−0.005 / −0.019 / −0.003 / +0.001，
+全部落在自举 CI 内、正负交替；KL 惩罚全程 < 1e-3；锐度 median 自 ck20 起持续在 14.4–14.9
+（低于 15 护栏）；explicit 兑现 ≥ 97.6%；图像无崩坏。按 §11.3 判据：**不成功**；按 §11.7
+判据落到"KL < 1e-3 且 held-out 不动"这一支，下一杠杆是放宽 `clip_ratio`（当前 3e-3）——
+是否执行由后续决定。续跑可从 checkpoint-40 恢复（同一启动命令，supervisor 自动选最新
+完整 checkpoint）。
+
+**结论（2026-09-06，操作员）**：40 次更新已足以说明问题，target C 记为 null，关线。
+
 ## Worktree cleanup (2026-09-04)
 
 This audit examined the uncommitted changes, their consumers, tests, and existing
