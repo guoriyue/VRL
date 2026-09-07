@@ -15,6 +15,8 @@ import csv
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
+from vrl.rewards.models.media import artifact_middle_frame_image
+
 if TYPE_CHECKING:
     import numpy as np
     from PIL import Image
@@ -53,20 +55,7 @@ class WDTaggerRewardModel:
         # Validate every artifact's tag list before running the tagger so a
         # malformed manifest row fails fast instead of after a full batch.
         wanted = [self._wanted_tags(artifact) for artifact in artifacts]
-        from PIL import Image
-
-        from vrl.rewards.models.media import decode_artifact_frames
-        from vrl.utils.media import to_pil_image
-
-        images = []
-        for artifact in artifacts:
-            if not artifact.path or artifact.path.endswith(".pt"):
-                media = artifact.as_media()
-                if isinstance(media, Image.Image):
-                    images.append(media.convert("RGB"))
-                    continue
-            frames = decode_artifact_frames(artifact, 1)
-            images.append(to_pil_image(frames[frames.shape[0] // 2]))
+        images = [artifact_middle_frame_image(artifact) for artifact in artifacts]
         return [
             {"wd_tagger": self._recall(tags, probs)}
             for tags, probs in zip(wanted, self.tag_images(images), strict=True)
@@ -133,12 +122,7 @@ class WDTaggerRewardModel:
                 f"non-empty list of tag strings on artifact {artifact.artifact_id!r}, "
                 f"got {type(raw).__name__}",
             )
-        if any(not isinstance(tag, str) for tag in raw):
-            raise ValueError(
-                f"wd_tagger metadata[{self._metadata_key!r}] must contain only tag strings "
-                f"on artifact {artifact.artifact_id!r}",
-            )
-        wanted = {tag.strip().lower() for tag in raw if tag.strip()}
+        wanted = {str(tag).strip().lower() for tag in raw if str(tag).strip()}
         if not wanted:
             raise ValueError(
                 f"wd_tagger requires a non-empty metadata[{self._metadata_key!r}] "

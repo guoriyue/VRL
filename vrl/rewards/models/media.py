@@ -63,6 +63,26 @@ def decode_artifact_frames(
     )
 
 
+def artifact_middle_frame_image(artifact: RewardInferenceArtifact) -> Image.Image:
+    """Middle frame of a reward artifact as an RGB PIL image.
+
+    The input every image-domain detector/tagger reward consumes: an in-memory
+    PIL image passes through, a tensor or media path is decoded to frames and
+    the middle one is taken (a still image has exactly one frame).
+    """
+
+    from PIL import Image
+
+    from vrl.utils.media import to_pil_image
+
+    if not artifact.path or artifact.path.endswith(".pt"):
+        media = artifact.as_media()
+        if isinstance(media, Image.Image):
+            return media.convert("RGB")
+    frames = decode_artifact_frames(artifact, 1)
+    return to_pil_image(frames[frames.shape[0] // 2])
+
+
 def pil_frames_from_media(media: Any) -> list[list[Image.Image]]:
     """Per-sample RGB PIL frame lists from a ``score_media`` payload.
 
