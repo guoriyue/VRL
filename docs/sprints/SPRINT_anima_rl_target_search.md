@@ -2701,3 +2701,17 @@ was not changed. Do not restore the snapshot over the current worktree wholesale
   absent, the inspected runtime modules byte-identical to source, and all four
   retained critic protocol assets present and byte-identical.
 - No GPU training or reward-quality claim was validated by this cleanup.
+
+## 更正（2026-09-07）：本文的多个 null 结论受一个探索设置混杂
+
+`SPRINT_anima_geneval_spatial_rl.md` §6.11 用固定 prompt 过拟合探测定位到：Anima 的
+`rollout.noise_level` 从 2026-08-18（5090 sprint run 9）起被设为 0.3，而仓库其余所有家族用
+0.7 或 1.0。在 8 条固定题 + 确定性锐度奖励上，0.3 六步单调下降（−3.0 标准误），0.7 十步
+单调上升（+7.7 标准误）；同配方的 SD3.5 也上升（+4.4）。`noise_level` 是 flow_grpo Eq.9 的
+SDE 探索温度，也是组内唯一可归因给策略的奖励差异来源；压到 0.3 后 advantage 主要由每个
+样本自己的初始 latent 决定，梯度失去信息，参数随机游走。
+
+因此本文中 2026-08-18 之后跑出的 null 结论——OCR v2 80 步、精确人数、以及第二个 §11 的
+目标 C（tag adherence，43 次更新、四个 checkpoint 全在自举 CI 内）——都在一个坏掉的探索
+设置下取得，**不能读作"该目标或该奖励不可训"**。平价、奖励确定性、评测 seed 对齐等结论
+不受影响（它们不依赖探索强度）。若要重开其中任何一条，先确认 `noise_level` 为 0.7。

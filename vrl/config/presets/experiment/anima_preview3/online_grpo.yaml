@@ -34,7 +34,17 @@ algorithm:
   clip_ratio: 3.0e-3
 
 rollout:
-  noise_level: 0.3
+  # flow_grpo Eq.9 SDE exploration temperature, and the ONLY source of the
+  # within-group diversity a policy gradient can act on: every sample also
+  # draws its own initial latent, and that share of the reward spread is not
+  # attributable to the policy. Anima ran at 0.3 from 2026-08-18 (it was
+  # lowered to make rollouts resemble eval images) and every reward since then
+  # produced a flat or declining curve. Measured on 8 fixed prompts x 16
+  # samples with the deterministic sharpness reward: 0.3 falls 0.605 -> 0.518
+  # over 6 updates (-3.0 SEM), 0.7 climbs 0.669 -> 0.844 over 10 (+7.7 SEM).
+  # A rollout is not supposed to look like an eval sample; the injected noise
+  # IS the action being graded.
+  noise_level: 0.7
   n_samples_per_prompt: 8
   prompts_per_batch: 4
   samples_per_generation_batch: 1
