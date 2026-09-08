@@ -11,13 +11,28 @@ separate conda env behind an HTTP reward server):
   official 0.1 size margin);
 * ``exclude`` — fewer than ``count`` detections of ``class``.
 
-``geneval_owl_strict`` is 1 only when every condition holds — the official
-GenEval score. ``geneval_owl`` is the satisfied-condition fraction, a graded
-training signal that keeps groups from collapsing to all-zero advantages
-(Flow-GRPO's reward server likewise trains on a partial score and reports the
-strict one). Same image, same score: there is no sampling anywhere. Absolute
-numbers are not comparable to published GenEval tables because the detector
-differs; before/after comparisons on one detector are.
+Three scores come out of one detector pass:
+
+* ``geneval_owl_strict`` is 1 only when every condition holds — the official
+  GenEval score, and what a held-out evaluation reports;
+* ``geneval_owl_partial`` is the satisfied-condition fraction;
+* ``geneval_owl_dense`` replaces each condition's yes/no with the continuous
+  quantity the verdict thresholds, and is the training signal.
+
+The dense score exists because GRPO consumes the *ordering* of rewards within a
+prompt group, and a thresholded verdict barely orders anything: measured on 8
+prompts x 16 samples, the partial score took only 2-4 distinct values per group
+(2 on counting prompts), so the advantage collapsed to "which half of the batch
+am I in" and the policy could not move (SPRINT_anima_geneval_spatial_rl 7.5).
+Detection confidence, colour probability, and position margin are continuous in
+exactly the region the thresholds cut, so scoring them directly restores a full
+ordering without changing what the objective means. Detection runs at a lower
+floor so a near-miss is visible; the strict verdict still sees only boxes above
+its own threshold and is unchanged.
+
+Same image, same score: there is no sampling anywhere. Absolute numbers are not
+comparable to published GenEval tables because the detector differs;
+before/after comparisons on one detector are.
 """
 
 from __future__ import annotations
@@ -46,20 +61,25 @@ GENEVAL_COLORS = (
 Box = tuple[float, float, float, float]
 Detection = tuple[Box, float]
 Detector = Callable[[list[Any], list[str]], Sequence[Mapping[str, Sequence[Detection]]]]
-ColorClassifier = Callable[[Any, Box, str], str]
+ColorClassifier = Callable[[Any, Box, str], "str | Mapping[str, float]"]
 
 
 @dataclass(frozen=True, slots=True)
 class GenEvalVerdict:
-    """One image's GenEval outcome: strict pass, graded score, and why."""
+    """One image's GenEval outcome: strict pass, graded scores, and why."""
 
     strict: float
     partial: float
+    dense: float
     why: str
 
     @property
     def scores(self) -> dict[str, float]:
-        return {"geneval_owl": self.partial, "geneval_owl_strict": self.strict}
+        return {
+            "geneval_owl_dense": self.dense,
+            "geneval_owl_partial": self.partial,
+            "geneval_owl_strict": self.strict,
+        }
 
 
 class GenEvalOwlRewardModel(LazyTorchModule):
@@ -72,10 +92,15 @@ class GenEvalOwlRewardModel(LazyTorchModule):
         self._detector_model = str(cfg.get("detector_model", "google/owlv2-base-patch16-ensemble"))
         self._clip_model = str(cfg.get("clip_model", "openai/clip-vit-large-patch14"))
         self._detection_threshold = float(cfg.get("detection_threshold", 0.15))
+        # Detection floor for the dense score only: a box between this and
+        # detection_threshold is a near-miss the dense term should still see,
+        # while the strict verdict keeps ignoring it.
+        self._dense_detection_threshold = float(cfg.get("dense_detection_threshold", 0.05))
         self._nms_iou = float(cfg.get("nms_iou", 0.5))
         self._position_threshold = float(cfg.get("position_threshold", 0.1))
         for name, value in (
             ("detection_threshold", self._detection_threshold),
+            ("dense_detection_threshold", self._dense_detection_threshold),
             ("nms_iou", self._nms_iou),
             ("position_threshold", self._position_threshold),
         ):
@@ -111,27 +136,53 @@ class GenEvalOwlRewardModel(LazyTorchModule):
         return [self.judge(image, spec) for image, spec in zip(images, specs, strict=True)]
 
     def judge(self, image: Any, spec: Mapping[str, Any]) -> GenEvalVerdict:
+        """Score one image against one GenEval spec: strict, partial, and dense.
+
+        One detection pass at the dense floor feeds both readings. The strict
+        and partial scores see only boxes above ``detection_threshold``, so they
+        are exactly what a verdict-only evaluator would report; the dense score
+        sees the whole set and reads each condition's underlying continuous
+        quantity instead of its yes/no.
+        """
+
         include = list(spec.get("include") or [])
         exclude = list(spec.get("exclude") or [])
         if not include and not exclude:
             raise ValueError("geneval spec carries neither include nor exclude items")
         classes = sorted({str(item["class"]) for item in include + exclude})
-        detections = self._detect([image], classes)[0]
+        raw = self._detect([image], classes)[0]
+        dense_dets = {cls: nms(dets, self._nms_iou) for cls, dets in raw.items()}
+        strict_dets = {
+            cls: nms([d for d in dets if d[1] >= self._detection_threshold], self._nms_iou)
+            for cls, dets in raw.items()
+        }
+
         satisfied = 0
         total = 0
+        dense_terms: list[float] = []
         failures: list[str] = []
         # Reference boxes for position items, indexed like ``include``; None
         # when that item found nothing.
         matched: list[Box | None] = []
+        dense_matched: list[Box | None] = []
         for item in include:
             cls = str(item["class"])
             count = int(item.get("count", 1))
-            objs = list(detections.get(cls, ()))
+            objs = list(strict_dets.get(cls, ()))
+            # A couple of spares past ``count`` is enough to order near-misses,
+            # and the colour term runs CLIP once per candidate.
+            dense_objs = list(dense_dets.get(cls, ()))[: count + 2]
             total += 1
             if len(objs) >= count:
                 satisfied += 1
             else:
                 failures.append(f"missing:{cls}")
+            dense_terms.append(
+                self._mean_top(
+                    [self._soft_detection(obj[1]) for obj in dense_objs],
+                    count,
+                )
+            )
             if "color" in item:
                 total += 1
                 wanted = str(item["color"])
@@ -141,33 +192,73 @@ class GenEvalOwlRewardModel(LazyTorchModule):
                     objs = colored
                 else:
                     failures.append(f"color:{cls}!={wanted}")
+                dense_terms.append(
+                    self._mean_top(
+                        [
+                            self._color_probs(image, obj[0], cls).get(wanted, 0.0)
+                            for obj in dense_objs
+                        ],
+                        count,
+                    )
+                )
             if "position" in item:
                 total += 1
                 relation, ref_index = item["position"]
+                relation = str(relation)
                 reference = matched[int(ref_index)] if int(ref_index) < len(matched) else None
                 if reference is not None and any(
-                    str(relation) in relative_position(obj[0], reference, self._position_threshold)
+                    relation in relative_position(obj[0], reference, self._position_threshold)
                     for obj in objs
                 ):
                     satisfied += 1
                 else:
                     failures.append(f"position:{relation}")
+                dense_reference = (
+                    dense_matched[int(ref_index)] if int(ref_index) < len(dense_matched) else None
+                )
+                dense_terms.append(
+                    0.0
+                    if dense_reference is None or not dense_objs
+                    else max(
+                        relative_position_margin(
+                            obj[0], dense_reference, self._position_threshold, relation
+                        )
+                        for obj in dense_objs
+                    )
+                )
             matched.append(objs[0][0] if objs else None)
+            dense_matched.append(dense_objs[0][0] if dense_objs else None)
         for item in exclude:
             cls = str(item["class"])
             count = int(item.get("count", 1))
             total += 1
-            if len(detections.get(cls, ())) < count:
+            if len(strict_dets.get(cls, ())) < count:
                 satisfied += 1
             else:
                 failures.append(f"exclude:{cls}>={count}")
+            # How far the forbidden count is from being reached: the confidence
+            # of the count-th instance, inverted.
+            dense_objs = list(dense_dets.get(cls, ()))
+            nth = dense_objs[count - 1][1] if len(dense_objs) >= count else 0.0
+            dense_terms.append(1.0 - self._soft_detection(nth))
         return GenEvalVerdict(
             strict=0.0 if failures else 1.0,
             partial=satisfied / total,
+            dense=sum(dense_terms) / len(dense_terms),
             why=";".join(failures) or "ok",
         )
 
-    # -- detector / colour backends ----------------------------------------
+    def _soft_detection(self, score: float) -> float:
+        """Detection confidence in ``[0, 1]``, saturating at twice the verdict floor."""
+
+        return min(max(score / (2.0 * self._detection_threshold), 0.0), 1.0)
+
+    @staticmethod
+    def _mean_top(values: Sequence[float], count: int) -> float:
+        """Mean of the ``count`` largest values, missing slots counting as zero."""
+
+        top = sorted(values, reverse=True)[:count]
+        return (sum(top) + 0.0) / count if count else 0.0
 
     def _spec(self, artifact: Any) -> Mapping[str, Any]:
         raw = artifact.metadata.get(self._metadata_key)
@@ -218,7 +309,7 @@ class GenEvalOwlRewardModel(LazyTorchModule):
                 )
                 result = owl_processor.post_process_grounded_object_detection(
                     detector(**inputs),
-                    threshold=self._detection_threshold,
+                    threshold=min(self._detection_threshold, self._dense_detection_threshold),
                     target_sizes=torch.tensor([image.size[::-1]], device=self.device),
                 )[0]
                 per_class: dict[str, list[Detection]] = {cls: [] for cls in classes}
@@ -229,12 +320,32 @@ class GenEvalOwlRewardModel(LazyTorchModule):
                     strict=True,
                 ):
                     per_class[classes[int(label)]].append((tuple(box), float(score)))
-                out.append({cls: nms(dets, self._nms_iou) for cls, dets in per_class.items()})
+                out.append(
+                    {cls: sorted(dets, key=lambda det: -det[1]) for cls, dets in per_class.items()}
+                )
         return out
 
     def _color_of(self, image: Any, box: Box, cls: str) -> str:
+        """Verdict colour of one detection: the most likely of the vocabulary."""
+
+        probs = self._color_probs(image, box, cls)
+        return max(probs, key=lambda color: probs[color])
+
+    def _color_probs(self, image: Any, box: Box, cls: str) -> dict[str, float]:
+        """Distribution over the GenEval colour vocabulary for one detection.
+
+        The dense score reads the requested colour's probability, which orders
+        images the argmax verdict cannot: "almost yellow" and "clearly blue"
+        are the same failure to the verdict and different numbers here.
+        """
+
         if self._color_fn is not None:
-            return str(self._color_fn(image, box, cls))
+            # Test seam: a label is read as a certain classification, a mapping
+            # as the distribution itself.
+            chosen = self._color_fn(image, box, cls)
+            if isinstance(chosen, Mapping):
+                return {color: float(chosen.get(color, 0.0)) for color in GENEVAL_COLORS}
+            return {color: float(color == str(chosen)) for color in GENEVAL_COLORS}
         import torch
 
         _, clip = self._module_for_inference()
@@ -246,8 +357,8 @@ class GenEvalOwlRewardModel(LazyTorchModule):
             inputs = clip_processor(text=texts, images=crop, return_tensors="pt", padding=True).to(
                 self.device
             )
-            logits = clip(**inputs).logits_per_image[0]
-        return GENEVAL_COLORS[int(logits.argmax())]
+            probs = clip(**inputs).logits_per_image[0].softmax(dim=-1)
+        return dict(zip(GENEVAL_COLORS, (float(v) for v in probs), strict=True))
 
 
 def nms(detections: Sequence[Detection], iou_threshold: float) -> list[Detection]:
@@ -306,15 +417,46 @@ def relative_position(box: Box, reference: Box, threshold: float) -> set[str]:
         return set()
     unit = revised / np.linalg.norm(offset)
     relations: set[str] = set()
-    if unit[0] < -0.5:
-        relations.add("left of")
-    if unit[0] > 0.5:
-        relations.add("right of")
-    if unit[1] < -0.5:
-        relations.add("above")
-    if unit[1] > 0.5:
-        relations.add("below")
+    for relation, component in _RELATION_COMPONENTS.items():
+        axis, sign = component
+        if sign * unit[axis] > 0.5:
+            relations.add(relation)
     return relations
+
+
+# Each relation reads one signed component of the unit offset; the verdict is
+# that component exceeding 0.5. The dense score reads the component itself.
+_RELATION_COMPONENTS: dict[str, tuple[int, float]] = {
+    "left of": (0, -1.0),
+    "right of": (0, 1.0),
+    "above": (1, -1.0),
+    "below": (1, 1.0),
+}
+
+
+def relative_position_margin(box: Box, reference: Box, threshold: float, relation: str) -> float:
+    """How far ``box`` sits in ``relation`` to ``reference``, in ``[0, 1]``.
+
+    The signed unit-offset component :func:`relative_position` thresholds at
+    0.5, clamped to ``[0, 1]``. Continuous where the verdict is a step, so a
+    group of samples that all fail the relation still orders by how close each
+    one came.
+    """
+
+    import numpy as np
+
+    if relation not in _RELATION_COMPONENTS:
+        raise ValueError(f"unknown GenEval position relation: {relation!r}")
+    a = np.asarray(box, dtype=float).reshape(2, 2)
+    b = np.asarray(reference, dtype=float).reshape(2, 2)
+    offset = a.mean(axis=0) - b.mean(axis=0)
+    norm = float(np.linalg.norm(offset))
+    if norm == 0.0:
+        return 0.0
+    extents = np.abs(a[1] - a[0]) + np.abs(b[1] - b[0])
+    revised = np.maximum(np.abs(offset) - threshold * extents, 0.0) * np.sign(offset)
+    axis, sign = _RELATION_COMPONENTS[relation]
+    return float(min(max(sign * revised[axis] / norm, 0.0), 1.0))
 
 
 __all__ = [
@@ -323,4 +465,5 @@ __all__ = [
     "GenEvalVerdict",
     "nms",
     "relative_position",
+    "relative_position_margin",
 ]

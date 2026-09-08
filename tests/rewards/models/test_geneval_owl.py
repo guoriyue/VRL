@@ -161,3 +161,73 @@ def test_nms_keeps_a_box_that_contains_only_one_other() -> None:
     """A single nested detection is a duplicate, not a group; both survive IoU rules."""
     kept = nms([((0, 0, 100, 100), 0.9), ((10, 10, 30, 30), 0.5)], 0.5)
     assert kept == [((0, 0, 100, 100), 0.9), ((10, 10, 30, 30), 0.5)]
+
+
+def test_dense_presence_orders_near_misses_the_verdict_calls_identical() -> None:
+    """Two images the verdict both fails must still be ordered by detection confidence."""
+    spec = {"include": [{"class": "cow", "count": 1}]}
+    weak = _model({"cow": [((0, 0, 5, 5), 0.06)]}).judge(_IMAGE, spec)
+    nearly = _model({"cow": [((0, 0, 5, 5), 0.14)]}).judge(_IMAGE, spec)
+
+    assert (weak.strict, nearly.strict) == (0.0, 0.0)
+    assert (weak.partial, nearly.partial) == (0.0, 0.0)
+    assert weak.dense < nearly.dense
+    # Saturates at twice the verdict floor, so a confident detection reads 1.0.
+    assert _model({"cow": [((0, 0, 5, 5), 0.9)]}).judge(_IMAGE, spec).dense == pytest.approx(1.0)
+
+
+def test_dense_counting_credits_each_found_instance() -> None:
+    """Three asked for, two confidently found: partial says 0, dense says two thirds."""
+    dets = {"apple": [((0, 0, 5, 5), 0.9), ((10, 0, 15, 5), 0.9)]}
+    verdict = _model(dets).judge(_IMAGE, {"include": [{"class": "apple", "count": 3}]})
+
+    assert verdict.partial == 0.0
+    assert verdict.dense == pytest.approx(2.0 / 3.0)
+
+
+def test_dense_color_reads_the_probability_not_the_argmax() -> None:
+    spec = {"include": [{"class": "bus", "color": "yellow", "count": 1}]}
+    dets = {"bus": [((0, 0, 10, 10), 0.9)]}
+    close = _model(dets, {(0.0, 0.0, 10.0, 10.0): {"yellow": 0.45, "orange": 0.55}}).judge(
+        _IMAGE, spec
+    )
+    far = _model(dets, {(0.0, 0.0, 10.0, 10.0): {"yellow": 0.02, "blue": 0.98}}).judge(
+        _IMAGE, spec
+    )
+
+    assert (close.strict, far.strict) == (0.0, 0.0)
+    assert close.dense > far.dense
+    # Presence term is 1.0 for both; only the colour term separates them.
+    assert close.dense == pytest.approx((1.0 + 0.45) / 2)
+
+
+def test_dense_position_reads_the_margin() -> None:
+    spec = {
+        "include": [
+            {"class": "kite", "count": 1},
+            {"class": "wine glass", "count": 1, "position": ["above", 0]},
+        ]
+    }
+    near = {"kite": [((0, 40, 10, 50), 0.9)], "wine glass": [((0, 25, 10, 35), 0.9)]}
+    far = {"kite": [((0, 40, 10, 50), 0.9)], "wine glass": [((0, 0, 10, 10), 0.9)]}
+
+    assert _model(near).judge(_IMAGE, spec).dense < _model(far).judge(_IMAGE, spec).dense
+
+
+def test_dense_exclude_falls_as_the_forbidden_instance_gets_confident() -> None:
+    spec = {
+        "include": [{"class": "clock", "count": 2}],
+        "exclude": [{"class": "clock", "count": 3}],
+    }
+    two = _model({"clock": [((0, 0, 5, 5), 0.9), ((10, 0, 15, 5), 0.9)]}).judge(_IMAGE, spec)
+    faint_third = _model(
+        {"clock": [((0, 0, 5, 5), 0.9), ((10, 0, 15, 5), 0.9), ((20, 0, 25, 5), 0.09)]}
+    ).judge(_IMAGE, spec)
+
+    assert (two.strict, faint_third.strict) == (1.0, 1.0)
+    assert faint_third.dense < two.dense == pytest.approx(1.0)
+
+
+def test_reward_rejects_an_unknown_score_key() -> None:
+    with pytest.raises(ValueError, match="score_key"):
+        GenEvalOwlReward(device="cpu", score_key="geneval_owl")

@@ -8,11 +8,13 @@ from vrl.scripts.eval import anima_geneval_eval as eval_script
 
 
 def _score(index: int, tag: str, strict: float, why: str = "ok", partial: float | None = None):
+    graded = strict if partial is None else partial
     return eval_script.RowScore(
         index=index,
         tag=tag,
         strict=strict,
-        partial=strict if partial is None else partial,
+        partial=graded,
+        dense=graded,
         why=why,
         sharpness=10.0 + index,
     )
@@ -34,7 +36,12 @@ def test_summarize_reports_per_task_and_headline_task_mean() -> None:
             _score(2, "position", 0.0, "missing:kite;position:above", partial=1 / 3),
         ]
     )
-    assert report["per_task"]["counting"] == {"n": 2, "strict": 0.5, "partial": 0.75}
+    assert report["per_task"]["counting"] == {
+        "n": 2,
+        "strict": 0.5,
+        "partial": 0.75,
+        "dense": 0.75,
+    }
     assert report["strict_overall"] == pytest.approx(1 / 3)
     assert report["strict_task_mean"] == pytest.approx(0.25)
     assert report["failure_reasons"] == {"missing": 2, "position": 1}

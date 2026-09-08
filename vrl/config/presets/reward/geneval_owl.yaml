@@ -19,3 +19,10 @@ reward:
       nms_iou: 0.5
       # Official GenEval box-centre margin for position relations.
       position_threshold: 0.1
+      # Detection floor for the dense score only; the strict verdict keeps
+      # ignoring anything below detection_threshold.
+      dense_detection_threshold: 0.05
+      # Which reading drives training: geneval_owl_dense (continuous, the only
+      # one measured to move this policy), geneval_owl_partial (satisfied
+      # condition fraction), or geneval_owl_strict (official verdict).
+      score_key: geneval_owl_dense

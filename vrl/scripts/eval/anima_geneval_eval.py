@@ -46,6 +46,7 @@ class RowScore:
     tag: str
     strict: float
     partial: float
+    dense: float
     why: str
     sharpness: float
 
@@ -164,6 +165,7 @@ def score_rows(
                 tag=row.tag,
                 strict=verdict.strict,
                 partial=verdict.partial,
+                dense=verdict.dense,
                 why=verdict.why,
                 sharpness=laplacian_sharpness(image),
             )
@@ -184,6 +186,7 @@ def summarize(scores: Sequence[RowScore]) -> dict[str, Any]:
             "n": len(group),
             "strict": statistics.fmean(s.strict for s in group),
             "partial": statistics.fmean(s.partial for s in group),
+            "dense": statistics.fmean(s.dense for s in group),
         }
         for tag, group in by_tag.items()
     }
@@ -200,6 +203,7 @@ def summarize(scores: Sequence[RowScore]) -> dict[str, Any]:
         if per_task
         else 0.0,
         "partial_mean": statistics.fmean(s.partial for s in scores) if scores else 0.0,
+        "dense_mean": statistics.fmean(s.dense for s in scores) if scores else 0.0,
         "per_task": per_task,
         "failure_reasons": dict(sorted(reasons.items(), key=lambda kv: -kv[1])),
         "sharpness_x1e-3": {
@@ -246,7 +250,7 @@ def paired_delta(
 def format_summary(report: Mapping[str, Any]) -> str:
     lines = [
         f"label={report['label']} rows={report['row_count']} lora={report['lora_path'] or '-'}",
-        f"{'task':<16}{'n':>5}{'strict':>9}{'partial':>9}",
+        f"{'task':<16}{'n':>5}{'strict':>9}{'partial':>9}{'dense':>9}",
     ]
     for tag in (*_TASK_ORDER, *sorted(set(report["per_task"]) - set(_TASK_ORDER))):
         if tag in report["per_task"]:
@@ -256,7 +260,7 @@ def format_summary(report: Mapping[str, Any]) -> str:
             )
     lines.append(
         f"{'task mean':<16}{report['row_count']:>5}{report['strict_task_mean']:>9.3f}"
-        f"{report['partial_mean']:>9.3f}"
+        f"{report['partial_mean']:>9.3f}{report['dense_mean']:>9.3f}"
     )
     lines.append(
         f"sharpness x1e-3 median {report['sharpness_x1e-3']['median']:.2f} "
