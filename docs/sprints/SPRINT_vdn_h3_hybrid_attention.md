@@ -97,3 +97,28 @@ scheduler log-prob parity 套件加了 `vdn_h3` 的 pin fixture（沿用 H3 的 
 多卡环境上：`python -m vrl.scripts.generation.full_sequence_denoise_probe --family vdn_h3
 --path MiniMaxAI/MiniMax-H3 --dtype bf16 --check-replay`，再跑
 `experiment/vdn_h3/online_grpo_kling_video_reward` 的 smoke，把 README 提到 Runnable。
+
+## 7. 同期评估但不接：Sol-H3（2026-09-07）
+
+NVLabs Sol-H3（`nvlabs.github.io/Sana/Sol-Engine/Sol-H3/`，代码在 `NVlabs/Sana` 的
+`sol-engine` 分支，head `2936c476`）是**推理引擎**，不是模型：权重仍是 MiniMax-H3，变的是执行
+（query-dependent 稀疏注意力 Sol-Attn、融合 kernel、Ulysses、并行 VAE 解码、预计算 AdaLN）。
+按 family 接等于把 `minimax_h3` 复制一份只换 runtime，轴是错的。
+
+**不接的决定性理由**：Sol-Attn 是 drift source。rollout 跑稀疏注意力而 trainer replay 跑 dense，
+采集时 log-prob 就不再等于 replay 前向；两侧 precision label 相同 → `stages_match` 保持 True →
+所有自动纠正（TIS、drift guard）都不开。这正是 `REQUEST_SCOPED_DRIFT_SOURCES`
+（`vrl/nn/optimization/passes.py`，今天只有 `teacache`）存在的空窗。要用它训练，必须先在那里登记
+并强制 armed 的纠正策略。用户 2026-09-07 判定：既然是 drift，就不接。
+
+另两点存档，省得下次重评：
+
+- 它的加速大部分是 forward-only（融合 kernel、预计算 AdaLN、并行 VAE 解码），和 VDN 的
+  `set_inference_mode` 同类，训练路径用不上，只能进 rollout 侧。
+- 唯一 family 形状的部分是它默认配置里的 **FastH3 four-step adapter**——蒸馏 adapter，与 VDN 的
+  8-NFE DMD artifact 同形。RL 真正吃到的加速在这里（rollout NFE 是扩散 RL 的成本大头：
+  4 步 vs VDN 8 步 vs dense 50 步），一旦有权重可按 §2 的 artifact 加载路子接。
+
+作为 execution provider，它在仓库已有的排序里是第三个，卡在
+`docs/sprints/planned/SPRINT_flashdreams_execution_provider.md` 的 generic provider core 上
+（`parked/SPRINT_sglang_diffusion_execution_provider.md` 自称第二个）。
