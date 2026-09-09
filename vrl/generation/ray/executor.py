@@ -192,28 +192,22 @@ class RayGenerationExecutor:
                     f"engine {engine.engine_id!r} does not support the "
                     "batch-size probe required by samples_per_generation_batch: auto",
                 )
-            if callable(getattr(probe, "remote", None)):
-                remote_jobs.append(
-                    RayActorJob(
-                        job_index=job_index,
-                        worker_id=engine.engine_id,
-                        remote_method=engine.remote("probe_batch_size"),
-                        payload=request,
-                        keyword_args={"max_samples": max_samples},
-                    ),
-                )
-            else:
-                result_pairs.append(
-                    (job_index, probe(request, max_samples=max_samples)),
-                )
-        if remote_jobs:
-            result_pairs.extend(
-                await self.actor_dispatcher.run(
-                    remote_jobs,
-                    operation="rollout.generation.batch_size_probe",
-                    call_timeout_s=self.generation_stall_timeout_s,
+            remote_jobs.append(
+                RayActorJob(
+                    job_index=job_index,
+                    worker_id=engine.engine_id,
+                    remote_method=engine.remote("probe_batch_size"),
+                    payload=request,
+                    keyword_args={"max_samples": max_samples},
                 ),
             )
+        result_pairs.extend(
+            await self.actor_dispatcher.run(
+                remote_jobs,
+                operation="rollout.generation.batch_size_probe",
+                call_timeout_s=self.generation_stall_timeout_s,
+            ),
+        )
         results = [result for _, result in sorted(result_pairs, key=lambda pair: pair[0])]
         for engine, result in zip(self.engines, results, strict=True):
             if not isinstance(result, BatchSizeProbeResult):
@@ -281,22 +275,16 @@ class RayGenerationExecutor:
                 )
                 continue
             engine = engine_by_id[assignment.engine_id]
-            execute_batch = engine.primary.actor.execute_batch
-            if callable(getattr(execute_batch, "remote", None)):
-                remote_jobs.append(
-                    RayActorJob(
-                        job_index=job_index,
-                        worker_id=engine.engine_id,
-                        remote_method=engine.remote(
-                            "execute_batch", combine=self._select_batch_rank_result
-                        ),
-                        payload=assignment.envelope,
+            remote_jobs.append(
+                RayActorJob(
+                    job_index=job_index,
+                    worker_id=engine.engine_id,
+                    remote_method=engine.remote(
+                        "execute_batch", combine=self._select_batch_rank_result
                     ),
-                )
-            else:
-                result_pairs.append(
-                    (job_index, execute_batch(assignment.envelope)),
-                )
+                    payload=assignment.envelope,
+                ),
+            )
 
         if remote_jobs:
             worker_methods = None
@@ -470,54 +458,49 @@ class RayGenerationExecutor:
 
         engine = self.engines[0]
         primary = engine.primary
-        call = primary.actor.execute_request_pipelined
-        remote = getattr(call, "remote", None)
-        if callable(remote):
-            # Progress is a rank-0 read on the health concurrency group.
-            progress = getattr(primary.actor, "pipelined_progress", None)
-            progress_remote = getattr(progress, "remote", None)
-            if not callable(progress_remote):
-                raise PipelinedProgressError(
-                    "pipelined Ray generation requires rank progress reporting",
-                )
-
-            async def await_pipelined_result(
-                result_ref: Any,
-                initial_deadline: RayCallDeadline,
-            ) -> Any:
-                try:
-                    return await self._await_pipelined_result(
-                        result_ref=result_ref,
-                        progress_remote=progress_remote,
-                        request_id=request.request_id,
-                        total_batches=len(engine_plan.sample_batches),
-                        initial_deadline=initial_deadline,
-                    )
-                except StaleSlotDiscard as error:
-                    # A stale version is a known, graceful business outcome. Let
-                    # the fleet dispatcher release the actor slot before the
-                    # public executor re-raises the typed discard.
-                    return error
-
-            result = await self.actor_dispatcher.run_one(
-                RayActorJob(
-                    job_index=0,
-                    worker_id=engine.engine_id,
-                    remote_method=engine.remote(
-                        "execute_request_pipelined", combine=self._select_request_rank_result
-                    ),
-                    payload=request,
-                    keyword_args={
-                        "engine_plan": engine_plan,
-                        "sample_rows": sample_rows,
-                    },
-                ),
-                operation="rollout.generation.pipelined",
-                call_timeout_s=self.generation_stall_timeout_s,
-                await_result=await_pipelined_result,
+        # Progress is a rank-0 read on the health concurrency group.
+        progress = getattr(primary.actor, "pipelined_progress", None)
+        progress_remote = getattr(progress, "remote", None)
+        if not callable(progress_remote):
+            raise PipelinedProgressError(
+                "pipelined Ray generation requires rank progress reporting",
             )
-        else:
-            result = call(request, engine_plan, sample_rows)
+
+        async def await_pipelined_result(
+            result_ref: Any,
+            initial_deadline: RayCallDeadline,
+        ) -> Any:
+            try:
+                return await self._await_pipelined_result(
+                    result_ref=result_ref,
+                    progress_remote=progress_remote,
+                    request_id=request.request_id,
+                    total_batches=len(engine_plan.sample_batches),
+                    initial_deadline=initial_deadline,
+                )
+            except StaleSlotDiscard as error:
+                # A stale version is a known, graceful business outcome. Let
+                # the fleet dispatcher release the actor slot before the
+                # public executor re-raises the typed discard.
+                return error
+
+        result = await self.actor_dispatcher.run_one(
+            RayActorJob(
+                job_index=0,
+                worker_id=engine.engine_id,
+                remote_method=engine.remote(
+                    "execute_request_pipelined", combine=self._select_request_rank_result
+                ),
+                payload=request,
+                keyword_args={
+                    "engine_plan": engine_plan,
+                    "sample_rows": sample_rows,
+                },
+            ),
+            operation="rollout.generation.pipelined",
+            call_timeout_s=self.generation_stall_timeout_s,
+            await_result=await_pipelined_result,
+        )
         if isinstance(result, StaleSlotDiscard):
             raise result
         if not isinstance(result, (GenerationOutput, PipelinedRequestOutOfMemory)):
@@ -665,7 +648,6 @@ class RayGenerationExecutor:
         splits: list[dict[str, Any]] = []
         while pending:
             retry_jobs: list[RayActorJob] = []
-            local_calls: list[tuple[Any, Any]] = []
             for result in pending:
                 parent_envelope = envelope_by_batch_key[result.batch.batch_key]
                 if not result.error:
@@ -700,24 +682,19 @@ class RayGenerationExecutor:
                         "children": [child.batch_key for child in children],
                     },
                 )
-                execute_batch = engine.primary.actor.execute_batch
-                remote_capable = callable(getattr(execute_batch, "remote", None))
                 for child in children:
                     child_envelope = replace(parent_envelope, batch=child)
                     envelope_by_batch_key[child_envelope.batch_key] = child_envelope
-                    if remote_capable:
-                        retry_jobs.append(
-                            RayActorJob(
-                                job_index=len(retry_jobs),
-                                worker_id=engine.engine_id,
-                                remote_method=engine.remote(
-                                    "execute_batch", combine=self._select_batch_rank_result
-                                ),
-                                payload=child_envelope,
+                    retry_jobs.append(
+                        RayActorJob(
+                            job_index=len(retry_jobs),
+                            worker_id=engine.engine_id,
+                            remote_method=engine.remote(
+                                "execute_batch", combine=self._select_batch_rank_result
                             ),
-                        )
-                    else:
-                        local_calls.append((execute_batch, child_envelope))
+                            payload=child_envelope,
+                        ),
+                    )
             pending = []
             if retry_jobs:
                 pairs = await self.actor_dispatcher.run(
@@ -726,7 +703,6 @@ class RayGenerationExecutor:
                     call_timeout_s=self.generation_stall_timeout_s,
                 )
                 pending.extend(result for _, result in pairs)
-            pending.extend(call(envelope) for call, envelope in local_calls)
             for result in pending:
                 self._validate_result_identity(result, envelope_by_batch_key)
         return final, splits

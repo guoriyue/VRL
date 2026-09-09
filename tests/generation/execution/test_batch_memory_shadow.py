@@ -18,6 +18,7 @@ import torch
 
 import vrl.generation.execution.worker as worker_module
 from tests.generation.execution._helpers import launch_contract
+from tests.generation.ray._helpers import RemoteFace
 from vrl.generation.execution.batch_memory import (
     AffinePeakFit,
 )
@@ -321,7 +322,7 @@ def _probe_worker(
     answer: int,
     calls: list[str],
 ) -> RayGenerationEngine:
-    """Build the executor's supported local-callable engine shape.
+    """Build a probe engine wearing the Ray actor method face.
 
     This covers result ordering and cache reuse without pretending to exercise
     Ray serialization or ObjectRef deadlines.
@@ -340,7 +341,10 @@ def _probe_worker(
         [
             RayActorHandle(
                 worker_id=worker_id,
-                actor=SimpleNamespace(probe_batch_size=probe),
+                actor=RemoteFace(
+                    SimpleNamespace(probe_batch_size=probe),
+                    "probe_batch_size",
+                ),
             ),
         ],
     )

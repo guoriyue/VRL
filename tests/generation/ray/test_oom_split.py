@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 import torch
 
+from tests.generation.ray._helpers import RemoteFace
 from vrl.generation.execution.batch_placement import (
     DeviceAssignment,
     DistributedGenerationPlan,
@@ -165,7 +166,12 @@ def _executor(
     engines = [
         RayGenerationEngine(
             worker.worker_id,
-            [RayActorHandle(worker_id=worker.worker_id, actor=worker)],
+            [
+                RayActorHandle(
+                    worker_id=worker.worker_id,
+                    actor=RemoteFace(worker, "execute_batch"),
+                ),
+            ],
         )
         for worker in workers
     ]
@@ -332,7 +338,12 @@ async def test_stale_slot_routes_to_graceful_discard_not_failure() -> None:
         engines=[
             RayGenerationEngine(
                 worker.worker_id,
-                [RayActorHandle(worker_id=worker.worker_id, actor=worker)],
+                [
+                    RayActorHandle(
+                        worker_id=worker.worker_id,
+                        actor=RemoteFace(worker, "execute_batch"),
+                    ),
+                ],
             ),
         ],
         gatherer=_CoverageGatherer(),
@@ -391,6 +402,12 @@ class _RoutingWorker:
             output={"batch_key": envelope.batch.batch_key, "samples": envelope.batch.sample_count},
         )
 
+    def pipelined_progress(self, request_id: str) -> None:
+        """No batch has completed yet; the real worker answers the same way."""
+
+        del request_id
+        return None
+
     def execute_request_pipelined(
         self,
         request,
@@ -422,7 +439,17 @@ def _routing_executor(batches, workers, *, pipelined):
     engines = [
         RayGenerationEngine(
             w.worker_id,
-            [RayActorHandle(worker_id=w.worker_id, actor=w)],
+            [
+                RayActorHandle(
+                    worker_id=w.worker_id,
+                    actor=RemoteFace(
+                        w,
+                        "execute_batch",
+                        "execute_request_pipelined",
+                        "pipelined_progress",
+                    ),
+                ),
+            ],
         )
         for w in workers
     ]

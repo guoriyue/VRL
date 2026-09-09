@@ -36,6 +36,44 @@ class ResolvedRef:
         return resolve().__await__()
 
 
+class _RemoteCall:
+    """One synchronous method wearing Ray's ``.remote()`` submission face."""
+
+    def __init__(self, call: Any) -> None:
+        self._call = call
+
+    def remote(self, *args: Any, **kwargs: Any) -> ResolvedRef:
+        # A real ObjectRef surfaces the worker's exception on await, not on
+        # submit, so a raising double must behave the same way here.
+        try:
+            return ResolvedRef(self._call(*args, **kwargs))
+        except BaseException as error:  # re-raised when the ref is awaited
+            return ResolvedRef(error)
+
+
+class RemoteFace:
+    """A synchronous test worker wearing the Ray actor method face.
+
+    Production submits every engine call as ``actor.<method>.remote(...)`` and
+    awaits the returned ref. A plain object has no such face, which is what the
+    executor's per-dispatch-site "else: call it directly" branches used to
+    accommodate -- a production branch that only test doubles could reach.
+    Wearing the face here instead keeps the production path single. Attributes
+    that are not part of the face fall through to the worker, so tests keep
+    asserting on the state it records.
+    """
+
+    def __init__(self, worker: Any, *methods: str) -> None:
+        self._worker = worker
+        self._remote = {name: _RemoteCall(getattr(worker, name)) for name in methods}
+
+    def __getattr__(self, name: str) -> Any:
+        remote = self.__dict__["_remote"]
+        if name in remote:
+            return remote[name]
+        return getattr(self.__dict__["_worker"], name)
+
+
 def parking_snapshot(
     worker_id: str = "rollout-0",
     *,
