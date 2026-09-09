@@ -2085,13 +2085,11 @@ class OnlineTrainer:
             d["grad_scaler"] = self._grad_scaler.state_dict()
         ema = self._ensure_ema()
         if ema is not None:
-            checkpoint_ema = getattr(ema, "checkpoint_state_dict", None)
-            if checkpoint_primary_only and callable(checkpoint_ema):
-                d["ema"] = checkpoint_ema(
-                    is_primary=self._strategy.context.is_primary,
-                )
-            else:
-                d["ema"] = ema.state_dict()
+            d["ema"] = (
+                ema.checkpoint_state_dict(is_primary=self._strategy.context.is_primary)
+                if checkpoint_primary_only
+                else ema.state_dict()
+            )
         return d
 
     def load_state_dict(

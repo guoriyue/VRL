@@ -196,9 +196,15 @@ def gather_trainable_state_dict(
 ) -> dict[str, Any]:
     """Gather only trainable parameters as full CPU tensors on every rank.
 
-    This is both the rollout weight-sync gather (``rank0_only=False``: every
-    rank pushes its own gathered weights to its colocated rollout) and the
-    rank0-only checkpoint gather.
+    In production this is the rollout weight-sync gather and nothing else
+    (``FSDPStrategy.export_rollout_state``, which never passes ``rank0_only``):
+    every rank pushes its own gathered weights to its colocated rollout. The
+    checkpoint model gather is ``gather_checkpoint_state_dict``, which keeps on
+    every rank. ``rank0_only`` is therefore driven only by the two-rank test
+    today; it is kept because it is the same seam
+    ``gather_full_optimizer_state_dict`` already exposes to checkpoint export,
+    and pointing the checkpoint model gather at it is the open way to stop
+    every FSDP rank retaining a full host copy of the model state.
 
     Asking DCP for a full state before filtering materializes the frozen base on
     every rank, which defeats LoRA's memory scaling. Keep the state sharded while
