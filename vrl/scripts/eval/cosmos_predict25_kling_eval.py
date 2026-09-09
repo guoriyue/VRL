@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -226,35 +225,9 @@ def _load_prompts(args: argparse.Namespace, root: RootConfig) -> list[str]:
 
 
 def _parse_checkpoint_targets(values: list[str]) -> list[CheckpointTarget]:
-    targets = [_parse_checkpoint_target(value) for value in values]
-    labels = [target.label for target in targets]
-    if len(set(labels)) != len(labels):
-        raise ValueError(f"checkpoint labels must be unique: {labels}")
-    return targets
-
-
-def _parse_checkpoint_target(value: str) -> CheckpointTarget:
-    text = str(value).strip()
-    if not text:
-        raise ValueError("--checkpoint values must be non-empty")
-    if "=" in text:
-        label, raw_path = text.split("=", 1)
-        label = _normalize_checkpoint_label(label)
-        path = Path(raw_path).expanduser().resolve()
-    else:
-        path = Path(text).expanduser().resolve()
-        label = _normalize_checkpoint_label(
-            path.parent.name if path.name == "checkpoint-final" else path.name,
-        )
-    if not label:
-        raise ValueError(f"checkpoint label resolved empty for {value!r}")
-    if not path.exists():
-        raise FileNotFoundError(f"checkpoint path does not exist: {path}")
-    return CheckpointTarget(label=label, path=path)
-
-
-def _normalize_checkpoint_label(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value).strip()).strip("._-")
+    # A cosmos arm may name a single weights file, so the path need not be a
+    # directory; wan_hpsv3 loads published checkpoint directories and requires one.
+    return CheckpointTarget.from_cli_values(values, require_directory=False)
 
 
 def _resolve_sampling(args: argparse.Namespace, root: RootConfig) -> dict[str, Any]:

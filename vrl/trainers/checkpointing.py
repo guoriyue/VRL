@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -63,6 +64,53 @@ class CheckpointTarget:
     @classmethod
     def base(cls, label: str = "base") -> CheckpointTarget:
         return cls(label=label, path=None)
+
+    @classmethod
+    def from_cli_values(
+        cls,
+        values: Sequence[str],
+        *,
+        require_directory: bool = True,
+        reserved_label: str | None = None,
+    ) -> list[CheckpointTarget]:
+        """Parse ``--checkpoint [LABEL=]PATH`` arguments into distinct arms.
+
+        An omitted label is derived from the path, taking the parent directory
+        when the leaf is the conventional ``checkpoint-final``, and is
+        sanitized to characters that survive both a filename and a report key.
+        Labels must be distinct because they name the report's columns.
+
+        ``require_directory`` rejects a plain file, which an entrypoint that
+        loads a published checkpoint directory wants and one that accepts a
+        single weights file does not. ``reserved_label`` is the name an
+        entrypoint keeps for an arm of its own, such as an adapter-disabled
+        baseline.
+        """
+
+        targets: list[CheckpointTarget] = []
+        for value in values:
+            text = str(value).strip()
+            if not text:
+                raise ValueError("--checkpoint values must be non-empty")
+            raw_label, separator, raw_path = text.partition("=")
+            if separator:
+                path = Path(raw_path).expanduser().resolve()
+            else:
+                path = Path(text).expanduser().resolve()
+                raw_label = path.parent.name if path.name == "checkpoint-final" else path.name
+            label = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_label.strip()).strip("._-")
+            if not label:
+                raise ValueError(f"checkpoint label resolved empty for {value!r}")
+            if not (path.is_dir() if require_directory else path.exists()):
+                raise FileNotFoundError(f"checkpoint path does not exist: {path}")
+            targets.append(cls(label=label, path=path))
+
+        labels = [target.label for target in targets]
+        if len(set(labels)) != len(labels):
+            raise ValueError(f"checkpoint labels must be unique: {labels}")
+        if reserved_label is not None and reserved_label in labels:
+            raise ValueError(f"{reserved_label!r} is reserved for the entrypoint's own arm")
+        return targets
 
     @classmethod
     def load(cls, path: str | Path, *, label: str, digest: bool = False) -> CheckpointTarget:

@@ -59,7 +59,7 @@ def test_parse_checkpoint_accepts_label_and_path(tmp_path) -> None:
     checkpoint = tmp_path / "checkpoint-final"
     checkpoint.mkdir()
 
-    target = eval_script._parse_checkpoint_target(f"baseline={checkpoint}")
+    (target,) = eval_script._parse_checkpoint_targets([f"baseline={checkpoint}"])
 
     assert target.label == "baseline"
     assert target.path == checkpoint.resolve()

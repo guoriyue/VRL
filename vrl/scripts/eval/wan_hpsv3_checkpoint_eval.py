@@ -32,7 +32,6 @@ import argparse
 import contextlib
 import json
 import logging
-import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -366,31 +365,7 @@ def _load_run_config(run_dir: Path) -> DictConfig:
 
 
 def _parse_targets(values: list[str]) -> list[CheckpointTarget]:
-    targets = [_parse_target(value) for value in values]
-    labels = [target.label for target in targets]
-    if len(set(labels)) != len(labels):
-        raise ValueError(f"checkpoint labels must be unique: {labels}")
-    if BASE_LABEL in labels:
-        raise ValueError(f"{BASE_LABEL!r} is reserved for the adapter-disabled arm")
-    return targets
-
-
-def _parse_target(value: str) -> CheckpointTarget:
-    text = str(value).strip()
-    if not text:
-        raise ValueError("--checkpoint values must be non-empty")
-    if "=" in text:
-        raw_label, raw_path = text.split("=", 1)
-        path = Path(raw_path).expanduser().resolve()
-    else:
-        path = Path(text).expanduser().resolve()
-        raw_label = path.parent.name if path.name == "checkpoint-final" else path.name
-    label = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_label.strip()).strip("._-")
-    if not label:
-        raise ValueError(f"checkpoint label resolved empty for {value!r}")
-    if not path.is_dir():
-        raise FileNotFoundError(f"checkpoint path does not exist: {path}")
-    return CheckpointTarget(label=label, path=path)
+    return CheckpointTarget.from_cli_values(values, reserved_label=BASE_LABEL)
 
 
 def _row_of(video: GeneratedVideo) -> dict[str, Any]:
