@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from importlib import import_module
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from vrl.utils.config import install_lazy_exports
 
 if TYPE_CHECKING:
     from vrl.trainers.online.config import OnlineBatchPlan as OnlineBatchPlan
@@ -12,25 +13,8 @@ if TYPE_CHECKING:
 
 
 _PUBLIC_EXPORTS = {
-    "OnlineBatchPlan": ("vrl.trainers.online.config", "OnlineBatchPlan"),
-    "OnlineTrainer": ("vrl.trainers.online.trainer", "OnlineTrainer"),
-    "TrainerConfig": ("vrl.trainers.online.config", "TrainerConfig"),
+    "OnlineBatchPlan": "vrl.trainers.online.config",
+    "OnlineTrainer": "vrl.trainers.online.trainer",
+    "TrainerConfig": "vrl.trainers.online.config",
 }
-
-__all__ = list(_PUBLIC_EXPORTS)
-
-
-def __getattr__(name: str) -> Any:
-    """Load a public online trainer symbol only when it is requested."""
-
-    try:
-        module_name, symbol_name = _PUBLIC_EXPORTS[name]
-    except KeyError as exc:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
-    value = getattr(import_module(module_name), symbol_name)
-    globals()[name] = value
-    return value
-
-
-def __dir__() -> list[str]:
-    return sorted({*globals(), *__all__})
+install_lazy_exports(globals(), _PUBLIC_EXPORTS)

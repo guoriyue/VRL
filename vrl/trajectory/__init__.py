@@ -8,8 +8,9 @@ for the tensor builders. Deferring per symbol keeps both import paths honest.
 
 from __future__ import annotations
 
-from importlib import import_module
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from vrl.utils.config import install_lazy_exports
 
 if TYPE_CHECKING:
     from vrl.trajectory.builders import (
@@ -47,57 +48,29 @@ if TYPE_CHECKING:
     from vrl.trajectory.views import RewardInputSpec as RewardInputSpec
 
 _PUBLIC_EXPORTS = {
-    "AxisKind": ("vrl.trajectory.types", "AxisKind"),
-    "DistributionKind": ("vrl.trajectory.types", "DistributionKind"),
-    "ReplayInput": ("vrl.trajectory.types", "ReplayInput"),
-    "RewardInputSpec": ("vrl.trajectory.views", "RewardInputSpec"),
-    "SegmentModality": ("vrl.trajectory.types", "SegmentModality"),
-    "TensorRole": ("vrl.trajectory.types", "TensorRole"),
-    "TrajectoryAxis": ("vrl.trajectory.types", "TrajectoryAxis"),
-    "TrajectoryBatch": ("vrl.trajectory.types", "TrajectoryBatch"),
-    "TrajectoryReader": ("vrl.trajectory.reader", "TrajectoryReader"),
-    "TrajectoryReaderError": ("vrl.trajectory.reader", "TrajectoryReaderError"),
-    "TrajectorySegment": ("vrl.trajectory.types", "TrajectorySegment"),
-    "TrajectoryStoragePolicy": ("vrl.trajectory.storage", "TrajectoryStoragePolicy"),
-    "TrajectoryTensor": ("vrl.trajectory.types", "TrajectoryTensor"),
-    "TrajectoryValidationError": ("vrl.trajectory.validation", "TrajectoryValidationError"),
-    "TrajectoryValidator": ("vrl.trajectory.validation", "TrajectoryValidator"),
-    "build_ar_continuous_trajectory": (
-        "vrl.trajectory.builders",
-        "build_ar_continuous_trajectory",
-    ),
-    "build_ar_discrete_trajectory": ("vrl.trajectory.builders", "build_ar_discrete_trajectory"),
-    "build_ar_multisegment_trajectory": (
-        "vrl.trajectory.builders",
-        "build_ar_multisegment_trajectory",
-    ),
-    "build_chunk_autoregressive_denoise_trajectory": (
-        "vrl.trajectory.builders",
-        "build_chunk_autoregressive_denoise_trajectory",
-    ),
-    "build_chunk_autoregressive_generation_trajectory": (
-        "vrl.trajectory.builders",
-        "build_chunk_autoregressive_generation_trajectory",
-    ),
-    "build_diffusion_trajectory": ("vrl.trajectory.builders", "build_diffusion_trajectory"),
-    "tensor_ref": ("vrl.trajectory.validation", "tensor_ref"),
-    "trajectory_tensor_bytes": ("vrl.trajectory.storage", "trajectory_tensor_bytes"),
+    "AxisKind": "vrl.trajectory.types",
+    "DistributionKind": "vrl.trajectory.types",
+    "ReplayInput": "vrl.trajectory.types",
+    "RewardInputSpec": "vrl.trajectory.views",
+    "SegmentModality": "vrl.trajectory.types",
+    "TensorRole": "vrl.trajectory.types",
+    "TrajectoryAxis": "vrl.trajectory.types",
+    "TrajectoryBatch": "vrl.trajectory.types",
+    "TrajectoryReader": "vrl.trajectory.reader",
+    "TrajectoryReaderError": "vrl.trajectory.reader",
+    "TrajectorySegment": "vrl.trajectory.types",
+    "TrajectoryStoragePolicy": "vrl.trajectory.storage",
+    "TrajectoryTensor": "vrl.trajectory.types",
+    "TrajectoryValidationError": "vrl.trajectory.validation",
+    "TrajectoryValidator": "vrl.trajectory.validation",
+    "build_ar_continuous_trajectory": "vrl.trajectory.builders",
+    "build_ar_discrete_trajectory": "vrl.trajectory.builders",
+    "build_ar_multisegment_trajectory": "vrl.trajectory.builders",
+    "build_chunk_autoregressive_denoise_trajectory": "vrl.trajectory.builders",
+    "build_chunk_autoregressive_generation_trajectory": "vrl.trajectory.builders",
+    "build_diffusion_trajectory": "vrl.trajectory.builders",
+    "tensor_ref": "vrl.trajectory.validation",
+    "trajectory_tensor_bytes": "vrl.trajectory.storage",
 }
 
-__all__ = list(_PUBLIC_EXPORTS)
-
-
-def __getattr__(name: str) -> Any:
-    """Load a public trajectory symbol only when it is requested."""
-
-    try:
-        module_name, symbol_name = _PUBLIC_EXPORTS[name]
-    except KeyError as exc:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
-    value = getattr(import_module(module_name), symbol_name)
-    globals()[name] = value
-    return value
-
-
-def __dir__() -> list[str]:
-    return sorted({*globals(), *__all__})
+install_lazy_exports(globals(), _PUBLIC_EXPORTS)

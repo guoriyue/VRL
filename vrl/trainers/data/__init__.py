@@ -8,8 +8,9 @@ here charged all config parsing for the Pick-a-Pic and prompt datasets.
 
 from __future__ import annotations
 
-from importlib import import_module
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from vrl.utils.config import install_lazy_exports
 
 if TYPE_CHECKING:
     from vrl.trainers.data.artifacts import DatasetFileReport as DatasetFileReport
@@ -36,46 +37,21 @@ if TYPE_CHECKING:
     from vrl.trainers.data.prompts import load_prompt_image_manifest as load_prompt_image_manifest
 
 _PUBLIC_EXPORTS = {
-    "DatasetFileReport": ("vrl.trainers.data.artifacts", "DatasetFileReport"),
-    "ImageCaptionPromptDataset": ("vrl.trainers.data.prompts", "ImageCaptionPromptDataset"),
-    "JsonlPromptDataset": ("vrl.trainers.data.prompts", "JsonlPromptDataset"),
-    "PickAPicPreferenceDataset": ("vrl.trainers.data.preferences", "PickAPicPreferenceDataset"),
-    "PreferenceBatch": ("vrl.trainers.data.preferences", "PreferenceBatch"),
-    "PromptBatchSampler": ("vrl.trainers.data.prompt_sampler", "PromptBatchSampler"),
-    "PromptExample": ("vrl.trainers.data.prompts", "PromptExample"),
-    "PromptSamplingStrategy": ("vrl.trainers.data.prompt_sampler", "PromptSamplingStrategy"),
-    "ResolvedArtifact": ("vrl.trainers.data.artifacts", "ResolvedArtifact"),
-    "load_prompt_examples_from_config": (
-        "vrl.trainers.data.prompts",
-        "load_prompt_examples_from_config",
-    ),
-    "load_prompt_image_manifest": ("vrl.trainers.data.prompts", "load_prompt_image_manifest"),
-    "load_prompt_dataset_index": ("vrl.trainers.data.prompts", "load_prompt_dataset_index"),
-    "DatasetProvenance": ("vrl.trainers.data.provenance", "DatasetProvenance"),
-    "resolve_prompt_example_artifacts": (
-        "vrl.trainers.data.artifacts",
-        "resolve_prompt_example_artifacts",
-    ),
-    "resolve_prompt_example_references": (
-        "vrl.trainers.data.artifacts",
-        "resolve_prompt_example_references",
-    ),
+    "DatasetFileReport": "vrl.trainers.data.artifacts",
+    "ImageCaptionPromptDataset": "vrl.trainers.data.prompts",
+    "JsonlPromptDataset": "vrl.trainers.data.prompts",
+    "PickAPicPreferenceDataset": "vrl.trainers.data.preferences",
+    "PreferenceBatch": "vrl.trainers.data.preferences",
+    "PromptBatchSampler": "vrl.trainers.data.prompt_sampler",
+    "PromptExample": "vrl.trainers.data.prompts",
+    "PromptSamplingStrategy": "vrl.trainers.data.prompt_sampler",
+    "ResolvedArtifact": "vrl.trainers.data.artifacts",
+    "load_prompt_examples_from_config": "vrl.trainers.data.prompts",
+    "load_prompt_image_manifest": "vrl.trainers.data.prompts",
+    "load_prompt_dataset_index": "vrl.trainers.data.prompts",
+    "DatasetProvenance": "vrl.trainers.data.provenance",
+    "resolve_prompt_example_artifacts": "vrl.trainers.data.artifacts",
+    "resolve_prompt_example_references": "vrl.trainers.data.artifacts",
 }
 
-__all__ = list(_PUBLIC_EXPORTS)
-
-
-def __getattr__(name: str) -> Any:
-    """Load a public trainer-data symbol only when it is requested."""
-
-    try:
-        module_name, symbol_name = _PUBLIC_EXPORTS[name]
-    except KeyError as exc:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
-    value = getattr(import_module(module_name), symbol_name)
-    globals()[name] = value
-    return value
-
-
-def __dir__() -> list[str]:
-    return sorted({*globals(), *__all__})
+install_lazy_exports(globals(), _PUBLIC_EXPORTS)

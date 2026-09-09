@@ -61,6 +61,43 @@ def to_builtin_deep(value: Any) -> Any:
     return value
 
 
+def install_lazy_exports(namespace: dict[str, Any], exports: Mapping[str, str]) -> None:
+    """Give a package a per-symbol lazy public boundary.
+
+    ``exports`` maps each public name to the submodule that defines it; the
+    symbol is looked up under the same name there. The caller keeps its own
+    ``if TYPE_CHECKING`` re-exports, so type checkers and IDEs still see the
+    whole surface while nothing is imported at runtime until it is asked for.
+
+    Pass the package's own ``globals()`` as ``namespace``: ``__all__``,
+    ``__getattr__`` and ``__dir__`` are installed there, and a resolved symbol
+    is cached there too, so each import is paid once. This exists because
+    ``vrl.config.schema`` reaches a torch-free type out of packages whose other
+    submodules pull torch — an eager re-export would charge every config parse
+    for the tensor code.
+    """
+
+    names = list(exports)
+
+    def __getattr__(name: str) -> Any:
+        try:
+            module_name = exports[name]
+        except KeyError as exc:
+            raise AttributeError(
+                f"module {namespace['__name__']!r} has no attribute {name!r}",
+            ) from exc
+        value = getattr(importlib.import_module(module_name), name)
+        namespace[name] = value
+        return value
+
+    def __dir__() -> list[str]:
+        return sorted({*namespace, *names})
+
+    namespace["__all__"] = names
+    namespace["__getattr__"] = __getattr__
+    namespace["__dir__"] = __dir__
+
+
 def import_from_path(path: str) -> Any:
     """Load a ``module:attribute`` import path.
 
@@ -80,6 +117,7 @@ def import_from_path(path: str) -> Any:
 
 __all__ = [
     "import_from_path",
+    "install_lazy_exports",
     "plain_mapping",
     "to_builtin_deep",
 ]
