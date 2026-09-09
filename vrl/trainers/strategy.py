@@ -154,6 +154,20 @@ class Strategy(Protocol):
         """Checkpoint-facing optimizer state (full tensors under sharding)."""
         ...
 
+    def export_checkpoint_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+    ) -> dict[str, Any]:
+        """The same state, for the primary-only checkpoint writer.
+
+        Separate from ``export_optimizer_state`` because a sharded backend can
+        let every rank join the gather while only the writing rank retains the
+        full host tree. Where nothing is sharded there is nothing to save, and
+        the two are the same call.
+        """
+        ...
+
     def load_optimizer_state(
         self,
         model: nn.Module,
@@ -343,10 +357,10 @@ class _UnshardedStateStrategy:
     The shared precondition is "every rank already holds the full unsharded
     tensor": single process trivially, DDP because it *replicates* the module
     instead of splitting it. Under that precondition a rank's own
-    ``state_dict()`` already is the full policy-facing state, so these six
+    ``state_dict()`` already is the full policy-facing state, so these seven
     methods can call the plain checkpoint helpers with no collective at all.
 
-    ``FSDPStrategy`` is the counterexample and overrides all six: its
+    ``FSDPStrategy`` is the counterexample and overrides all seven: its
     parameters, gradients, and optimizer moments live as DTensor shards, so
     every one of these operations becomes an all-gather (or a re-scatter on
     load) through ``vrl/trainers/fsdp.py``.
@@ -408,6 +422,15 @@ class _UnshardedStateStrategy:
         # every rank, so torch's native (positional-id) format suffices.
         del model
         return optimizer.state_dict()
+
+    def export_checkpoint_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+    ) -> dict[str, Any]:
+        # Nothing is sharded, so there is no gather to join and nothing for a
+        # non-writing rank to skip retaining.
+        return self.export_optimizer_state(model, optimizer)
 
     def load_optimizer_state(
         self,

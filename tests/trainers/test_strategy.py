@@ -479,3 +479,34 @@ def test_checkpoint_and_rollout_state_have_distinct_ownership() -> None:
     assert set(rollout) == {"adapter.weight"}
     assert "adapter.previous" not in rollout
     assert "cache" not in checkpoint
+
+
+def test_every_strategy_answers_the_checkpoint_optimizer_export() -> None:
+    """The primary-only optimizer export is part of the contract, not a probe.
+
+    The trainer used to reach for it with getattr and fall back when it was
+    absent, which made a capability of the consumer contract invisible to the
+    consumer. FSDP is the one that has to do real work; the unsharded backends
+    answer with the same state, because there is no gather to join.
+    """
+
+    from vrl.trainers.strategy import (
+        DDPStrategy,
+        FSDPStrategy,
+        Strategy,
+        _UnshardedStateStrategy,
+    )
+
+    for strategy in (SingleProcessStrategy, DDPStrategy, FSDPStrategy):
+        assert callable(getattr(strategy, "export_checkpoint_optimizer_state", None)), strategy
+    assert hasattr(Strategy, "export_checkpoint_optimizer_state")
+    assert "export_checkpoint_optimizer_state" in vars(FSDPStrategy)
+    assert "export_checkpoint_optimizer_state" not in vars(SingleProcessStrategy)
+    assert "export_checkpoint_optimizer_state" not in vars(DDPStrategy)
+
+    model = nn.Linear(2, 2)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    unsharded = _UnshardedStateStrategy()
+    assert unsharded.export_checkpoint_optimizer_state(model, optimizer) == (
+        unsharded.export_optimizer_state(model, optimizer)
+    )

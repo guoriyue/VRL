@@ -2066,14 +2066,9 @@ class OnlineTrainer:
             "global_step": self.state.global_step,
         }
         if self._optimizer is not None:
-            checkpoint_exporter = getattr(
-                self._strategy,
-                "export_checkpoint_optimizer_state",
-                None,
-            )
             exporter = (
-                checkpoint_exporter
-                if checkpoint_primary_only and callable(checkpoint_exporter)
+                self._strategy.export_checkpoint_optimizer_state
+                if checkpoint_primary_only
                 else self._strategy.export_optimizer_state
             )
             d["optimizer"] = exporter(
