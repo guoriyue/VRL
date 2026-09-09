@@ -74,32 +74,10 @@ class RayGenerationWeightSync:
         if self.update_weight_buffer_size is not None and trainable_state is not None:
             await self._push_bucketed(trainable_state, policy_version)
             return
-        verification = {"verify_content": True} if self.verify_content else {}
-        remote_engines: list[tuple[RayGenerationEngine, Any]] = []
-        for engine in self.engines:
-            update_weights = engine.primary.actor.update_weights
-            if callable(getattr(update_weights, "remote", None)):
-                remote_engines.append(
-                    (
-                        engine,
-                        engine.remote(
-                            "update_weights",
-                            combine=uniform_rank_result("update_weights"),
-                        ),
-                    ),
-                )
-            else:
-                # Local test double: call the single rank directly.
-                acknowledged_policy_version = update_weights(
-                    trainable_state, policy_version, **verification
-                )
-                self._validate_policy_version_match(
-                    engine, acknowledged_policy_version, policy_version
-                )
-
-        if not remote_engines:
+        if not self.engines:
             return
 
+        verification = {"verify_content": True} if self.verify_content else {}
         ray = require_ray()
         # Serialize the (potentially large) state dict once into the object
         # store and hand every rank the same ObjectRef. Passing the dict
@@ -112,19 +90,22 @@ class RayGenerationWeightSync:
             RayActorJob(
                 job_index=job_index,
                 worker_id=engine.engine_id,
-                remote_method=remote,
+                remote_method=engine.remote(
+                    "update_weights",
+                    combine=uniform_rank_result("update_weights"),
+                ),
                 payload=shared_state_ref,
                 keyword_args={"policy_version": policy_version, **verification},
             )
-            for job_index, (engine, remote) in enumerate(remote_engines)
+            for job_index, engine in enumerate(self.engines)
         ]
         policy_version_acks = await self.actor_dispatcher.run(
             remote_jobs,
             operation="rollout.weight_sync",
             call_timeout_s=self.worker_rpc_timeout_s,
         )
-        for (engine, _remote), (_job_index, acknowledged_policy_version) in zip(
-            remote_engines,
+        for engine, (_job_index, acknowledged_policy_version) in zip(
+            self.engines,
             policy_version_acks,
             strict=True,
         ):

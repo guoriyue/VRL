@@ -51,6 +51,8 @@ def _runtime(
 
 
 class _LocalWorker:
+    """A worker double for paths that never dispatch (validation happens first)."""
+
     def __init__(self, installed_version: Any) -> None:
         self.installed_version = installed_version
         self.calls: list[tuple[Any, int]] = []
@@ -129,21 +131,6 @@ def test_ray_worker_returns_core_install_ack() -> None:
 
 
 @pytest.mark.asyncio
-async def test_local_update_return_is_the_commit_ack() -> None:
-    actor = _LocalWorker(installed_version=3)
-    sync = RayGenerationWeightSync(
-        [_engine("rollout-0", actor)],
-        actor_dispatcher=RayActorDispatcher(("rollout-0",)),
-        worker_rpc_timeout_s=30.0,
-    )
-
-    result = await sync.push_to_rollout_engines({"w": 1}, policy_version=3)
-
-    assert result is None
-    assert actor.calls == [({"w": 1}, 3)]
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("version", [object(), 3.9, "3", True, -1])
 async def test_invalid_policy_version_does_not_terminalize_resident_runtime(version) -> None:
     class _RecordingSync:
@@ -170,23 +157,6 @@ async def test_invalid_policy_version_does_not_terminalize_resident_runtime(vers
     assert runtime.lifecycle.phase is RuntimePhase.RUNNING
 
 
-@pytest.mark.asyncio
-async def test_local_update_rejects_wrong_installed_version() -> None:
-    sync = RayGenerationWeightSync(
-        [
-            _engine(
-                "rollout-0",
-                _LocalWorker(installed_version=2),
-            ),
-        ],
-        actor_dispatcher=RayActorDispatcher(("rollout-0",)),
-        worker_rpc_timeout_s=30.0,
-    )
-
-    with pytest.raises(RuntimeError, match=r"rollout-0.*version 2.*expected 3"):
-        await sync.push_to_rollout_engines({"w": 1}, policy_version=3)
-
-
 @_OBJECT_STORE_LEDGER
 @pytest.mark.asyncio
 async def test_remote_update_results_are_verified_without_second_ack_rpc(
@@ -205,8 +175,10 @@ async def test_remote_update_results_are_verified_without_second_ack_rpc(
         worker_rpc_timeout_s=30.0,
     )
 
-    await sync.push_to_rollout_engines({"w": 1}, policy_version=4)
+    result = await sync.push_to_rollout_engines({"w": 1}, policy_version=4)
 
+    # The install ACK is validated here and consumed; callers never see it.
+    assert result is None
     assert ray.put_calls == [{"w": 1}]
     shared_state = ("state", {"w": 1})
     assert first.update_weights.calls == [(shared_state, 4)]
@@ -237,6 +209,23 @@ async def test_remote_update_rejects_partial_wrong_version(
 
     with pytest.raises(RuntimeError, match=r"rollout-1.*version 4.*expected 5"):
         await sync.push_to_rollout_engines({"w": 1}, policy_version=5)
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_an_ack_that_is_not_a_policy_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker that answers with something uncastable is a failure, not a zero."""
+
+    monkeypatch.setattr(weight_sync_module, "require_ray", lambda: _FakeRay())
+    sync = RayGenerationWeightSync(
+        [_engine("rollout-0", _RemoteWorker(installed_version="not-a-version"))],
+        actor_dispatcher=RayActorDispatcher(("rollout-0",)),
+        worker_rpc_timeout_s=30.0,
+    )
+
+    with pytest.raises(RuntimeError, match=r"rollout-0.*invalid policy version acknowledgment"):
+        await sync.push_to_rollout_engines({"w": 1}, policy_version=3)
 
 
 @_OBJECT_STORE_LEDGER
@@ -975,7 +964,7 @@ async def test_real_ray_bucket_transfer_commits_only_complete_state(local_ray, d
 @pytest.mark.parametrize("installed", [3.9, "3", True, -1, None])
 async def test_weight_sync_rejects_coerced_ack(installed: Any) -> None:
     sync = RayGenerationWeightSync(
-        [_engine("rollout-0", _LocalWorker(installed_version=installed))],
+        [_engine("rollout-0", _RemoteWorker(installed_version=installed))],
         actor_dispatcher=RayActorDispatcher(("rollout-0",)),
         worker_rpc_timeout_s=30.0,
     )
