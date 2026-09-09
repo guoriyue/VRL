@@ -69,6 +69,28 @@ def prepare_sampling_state(model, root):
     return model.prepare_sampling(request, prompt)
 
 
+def denoise_step(model, state, step_idx: int) -> None:
+    """Advance ``state`` by one production denoise step, in place.
+
+    Every probe in this package must measure the same step, so the timing
+    closure and the end-to-end path share this body rather than each spelling
+    the forward plus the SDE conversion. ``deterministic=True`` keeps the walk
+    reproducible across probes; the caller owns ``torch.no_grad``.
+    """
+
+    noise_pred = model.forward_step(state, step_idx)["noise_pred"]
+    result = sde_step_with_logprob(
+        state.scheduler,
+        noise_pred.float(),
+        state.timesteps[step_idx].unsqueeze(0),
+        state.latents.float(),
+        generator=None,
+        deterministic=True,
+        sde_type="cps",
+    )
+    state.latents = result.prev_sample
+
+
 def make_step_fn(runtime: RuntimeBundle, root):
     """Return a closure for one production denoise step."""
 
@@ -81,19 +103,8 @@ def make_step_fn(runtime: RuntimeBundle, root):
         torch.cuda.empty_cache()
 
     def one_step(idx: int):
-        step_idx = idx % int(sampling.num_steps)
         with torch.no_grad():
-            noise_pred = model.forward_step(state, step_idx)["noise_pred"]
-            result = sde_step_with_logprob(
-                state.scheduler,
-                noise_pred.float(),
-                state.timesteps[step_idx].unsqueeze(0),
-                state.latents.float(),
-                generator=None,
-                deterministic=True,
-                sde_type="cps",
-            )
-            state.latents = result.prev_sample
+            denoise_step(model, state, idx % int(sampling.num_steps))
 
     return one_step
 
@@ -106,17 +117,7 @@ def _e2e_once(runtime: RuntimeBundle, root):
     state = prepare_sampling_state(model, root)
     with torch.no_grad():
         for step_idx in range(int(sampling.num_steps)):
-            noise_pred = model.forward_step(state, step_idx)["noise_pred"]
-            result = sde_step_with_logprob(
-                state.scheduler,
-                noise_pred.float(),
-                state.timesteps[step_idx].unsqueeze(0),
-                state.latents.float(),
-                generator=None,
-                deterministic=True,
-                sde_type="cps",
-            )
-            state.latents = result.prev_sample
+            denoise_step(model, state, step_idx)
         return model.decode_latents(state.latents)
 
 
