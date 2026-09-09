@@ -134,6 +134,21 @@ class EMAModuleWrapper:
             param.data.copy_(temp_param.data)
         self.temp_stored_parameters = None
 
+    def _snapshot(self, parameter: torch.Tensor, *, keep: bool) -> torch.Tensor | None:
+        """Gather one shadow, and keep it as a tensor that cannot alias it.
+
+        Mirrors ``_full_cpu_tensor`` in ``vrl/trainers/fsdp.py``, including why
+        the clone is not optional: ``.cpu()`` aliases storage when the shadow
+        already lives on CPU, and a written checkpoint must not change when the
+        next optimizer step moves the shadow. The gather runs whether or not
+        the result is kept, because it is a collective every rank must enter.
+        """
+
+        from torch.distributed.tensor import DTensor
+
+        full = parameter.full_tensor() if isinstance(parameter, DTensor) else parameter
+        return full.detach().cpu().clone() if keep else None
+
     def state_dict(self) -> dict[str, Any]:
         """Checkpoint-facing state; always plain full tensors.
 
@@ -143,27 +158,20 @@ class EMAModuleWrapper:
         trainer.state_dict() on all ranks before its primary-only file write).
         """
 
-        from torch.distributed.tensor import DTensor
-
         return {
             "decay": self.decay,
-            "ema_parameters": [
-                p.full_tensor().detach().cpu() if isinstance(p, DTensor) else p
-                for p in self.ema_parameters
-            ],
+            "ema_parameters": [self._snapshot(p, keep=True) for p in self.ema_parameters],
             "num_updates": self.num_updates,
         }
 
     def checkpoint_state_dict(self, *, is_primary: bool) -> dict[str, Any]:
         """Join FSDP gathers everywhere while retaining shadows only on rank0."""
 
-        from torch.distributed.tensor import DTensor
-
         gathered: list[torch.Tensor] = []
         for parameter in self.ema_parameters:
-            full = parameter.full_tensor() if isinstance(parameter, DTensor) else parameter
-            if is_primary:
-                gathered.append(full.detach().cpu().clone())
+            full = self._snapshot(parameter, keep=is_primary)
+            if full is not None:
+                gathered.append(full)
         if not is_primary:
             return {}
         return {

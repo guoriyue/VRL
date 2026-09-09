@@ -121,3 +121,32 @@ def test_repeated_ema_swap_preserves_original_snapshot() -> None:
     assert param.item() == pytest.approx(3.0)
     ema.copy_temp_to([param])
     assert param.item() == pytest.approx(10.0)
+
+
+@pytest.mark.parametrize("is_primary", [True, False])
+def test_both_checkpoint_paths_snapshot_away_from_the_live_shadow(is_primary: bool) -> None:
+    """A written checkpoint must not change when the next step moves the shadow.
+
+    `state_dict` used to hand back the live shadow tensor whenever it was not a
+    DTensor, so a later EMA step silently rewrote an already-taken snapshot;
+    `checkpoint_state_dict` always cloned. Both take the same copy now.
+    """
+
+    param = _single_param(1.0)
+    ema = EMAModuleWrapper([param], decay=0.5, update_step_interval=1)
+
+    plain = ema.state_dict()["ema_parameters"][0]
+    sharded = ema.checkpoint_state_dict(is_primary=is_primary).get("ema_parameters")
+
+    param.data.fill_(100.0)
+    ema.step([param], 0)
+
+    assert ema.ema_parameters[0].item() != pytest.approx(1.0)
+    assert plain.item() == pytest.approx(1.0)
+    assert plain.data_ptr() != ema.ema_parameters[0].data_ptr()
+    if is_primary:
+        assert sharded is not None
+        assert sharded[0].item() == pytest.approx(1.0)
+    else:
+        # Non-primary ranks join the gather and keep nothing.
+        assert sharded is None
