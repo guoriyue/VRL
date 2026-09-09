@@ -1178,7 +1178,7 @@ class OnlineTrainer:
 
     def _sample_batch_train_indices(
         self,
-        sample_batch: Any,
+        sample_batch: _TrainingGenerationSampleBatch,
         default_indices: list[int],
         selection: str,
     ) -> list[int]:
@@ -1221,13 +1221,13 @@ class OnlineTrainer:
 
     def _run_replay_pass(
         self,
-        batches: list[Any],
-        advantages: Any,
+        batches: list[RolloutBatch],
+        advantages: list[torch.Tensor],
         *,
         total_groups: int,
         train_indices: list[int],
-        algorithm_adapter: Any,
-        agg: Any,
+        algorithm_adapter: AlgorithmAdapter,
+        agg: _ReplayMetrics,
         capture_initial_replay: bool,
         defer_replay_tensors: bool,
         timer: PhaseTimer | None = None,
