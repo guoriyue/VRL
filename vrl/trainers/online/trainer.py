@@ -2235,6 +2235,8 @@ class OnlineTrainer:
             self.config.rollout_precision or training_precision
         )
         return {
+            # The three role labels are consumed: resolve_guard_mode compares them
+            # to decide whether the drift guard arms at all.
             "training_precision": training_precision,
             "rollout_precision": rollout_precision,
             # Report the dtype the evaluator actually consumes instead of carrying a
@@ -2242,6 +2244,12 @@ class OnlineTrainer:
             "math_precision": dtype_to_precision_token(
                 getattr(self.evaluator, "math_dtype", None) or torch.float32,
             ),
+            # display/provenance-only: nothing branches on these two, and that is
+            # the point. They record what the process turned out to be rather than
+            # what it was configured to be -- the global float32 matmul state, and
+            # the dtype the transformer actually materialized in -- so a diagnostic
+            # record can show a configured policy disagreeing with the live model.
+            # Neither is derivable from the config that produced them.
             "effective_float32_precision": float32_precision_state(),
             "trainer_transformer_dtype": (
                 str(transformer_dtype).removeprefix("torch.")

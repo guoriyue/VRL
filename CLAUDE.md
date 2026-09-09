@@ -21,3 +21,7 @@
 
 - Do not count name-only changes as structural cleanup. Rename only when the user explicitly requests clearer naming; describe such work as a rename, not as architectural completion.
 - Cleanup must identify the concrete duplication, state, ownership, dependency, or control-flow complexity it removes. Moving the same branches into a classmethod alone does not prove simplification.
+
+## Tests
+
+- Tests are written for the reader: prefer self-contained tests; a shared builder/fixture is allowed only when the same construction is genuinely reused by 3+ test files. Delete on sight: tests that echo a constructor's fields or a default back, and parametrized matrices whose rows all exercise the same code path.

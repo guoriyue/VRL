@@ -9,7 +9,8 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 from vrl.config.schema import DataConfig
-from vrl.scripts.data import bootstrap, danbooru, setup, video_world
+from vrl.scripts.data import bootstrap, setup, video_world
+from vrl.scripts.data.danbooru import assets as danbooru_assets
 from vrl.trainers.data import load_prompt_dataset_index, load_prompt_examples_from_config
 from vrl.trainers.data.artifacts import (
     resolve_prompt_example_references,
@@ -343,7 +344,7 @@ def test_anime_positives_prepares_both_manifests_end_to_end(monkeypatch, tmp_pat
     def fake_fetch(url: str, target: Path) -> None:
         target.write_bytes(b"fake-image-bytes")
 
-    monkeypatch.setattr(danbooru, "http_download", fake_fetch)
+    monkeypatch.setattr(danbooru_assets, "http_download", fake_fetch)
 
     setup.main(
         [

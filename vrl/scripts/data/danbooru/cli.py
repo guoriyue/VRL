@@ -55,7 +55,7 @@ def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
 def main(
     argv: Sequence[str] | None,
     *,
-    fetch: Callable[[str, Path], None],
+    fetch: Callable[[str, Path], None] | None = None,
 ) -> None:
     if argv is None:
         import sys
@@ -76,7 +76,7 @@ def main(
 def register(
     subparsers: Any,
     *,
-    fetch: Callable[[str, Path], None],
+    fetch: Callable[[str, Path], None] | None = None,
 ) -> None:
     prompts = subparsers.add_parser(ANIME_PROMPTS_COMMAND)
     prompts.add_argument("--metadata", type=Path, default=None)
@@ -119,7 +119,7 @@ def _cmd_anime_safety_prompts(args: argparse.Namespace) -> None:
 def _cmd_anime_positives(
     args: argparse.Namespace,
     *,
-    fetch: Callable[[str, Path], None],
+    fetch: Callable[[str, Path], None] | None,
 ) -> None:
     report = build_positive_images(
         metadata=args.metadata,
@@ -139,7 +139,7 @@ def _cmd_anime_positives(
 def _cmd_anime_fetch_images(
     args: argparse.Namespace,
     *,
-    fetch: Callable[[str, Path], None],
+    fetch: Callable[[str, Path], None] | None,
 ) -> None:
     image_root = Path(
         args.image_root or (default_data_root() / "danbooru" / "images"),

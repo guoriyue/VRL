@@ -51,7 +51,7 @@ def build_positive_images(
         downloaded, skipped, failed = download_danbooru_images(
             metadata,
             targets,
-            fetch=fetch or http_download,
+            fetch=fetch,
             overwrite=overwrite,
         )
         fetched = {
@@ -95,11 +95,17 @@ def download_danbooru_images(
     metadata_path: str | Path,
     targets: Mapping[str, Path],
     *,
-    fetch: Callable[[str, Path], None],
+    fetch: Callable[[str, Path], None] | None = None,
     overwrite: bool = False,
 ) -> tuple[int, int, int]:
-    """Download selected Danbooru images into their positive target paths."""
+    """Download selected Danbooru images into their positive target paths.
 
+    ``fetch`` defaults to ``http_download``, resolved here rather than at any
+    caller: this is the only function that performs a network read, so it is
+    the only place a test needs to replace.
+    """
+
+    fetch = fetch or http_download
     remaining: dict[str, Path] = {str(post_id): Path(path) for post_id, path in targets.items()}
     if not remaining:
         return 0, 0, 0

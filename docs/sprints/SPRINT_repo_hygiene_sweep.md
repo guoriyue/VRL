@@ -78,3 +78,52 @@ reason so they are not re-discovered.
 | 36 | three reward worker-config projections | changed | `_kling_reward.py` already declared itself the single owner and two other scripts had their own; `wan_hpsv3`'s read the reward block through raw `OmegaConf.select` rather than `RewardRuntimeConfig`, so two entrypoints read the same thing by different means. The recon's open question -- whether the shared path resolves interpolations -- is answered by `RewardConfig.from_cfg`, which does, with `throw_on_missing=True`, and which also already rejects a non-mapping `reward.kwargs.<name>` by config path. Module renamed to `_reward_worker.py` because it is no longer kling-specific. The stricter upstream validation wants the whole reward section, which only exposed an under-specified test fixture. | `a9620408` |
 | 37 | `load_resolved_run_config` re-implemented for want of an `overrides` parameter | changed | It calls itself the one reader for every checkpoint-evaluation entrypoint; `wan_hpsv3` could not use it because it evaluates with compile off and the LoRA path cleared. `overrides` is now a parameter applied before parsing. `sana_aesthetic_checkpoint_eval` keeps its own: it runs `normalize_run_config` *between* load and parse, which is a step inside the function, not a parameter of it. | `ee1c9ce3` |
 | 38 | two identical `--checkpoint [LABEL=]PATH` parsers | changed | Same body, same uniqueness wrapper, same error strings, same declared CLI contract; the only difference was whether a plain file is acceptable. Folded onto `CheckpointTarget`, which is what they both produce and which already owns `base()` and `load()`. `image_checkpoint_eval.load_target` looks like a third copy and is not -- it rejects an unusual label instead of sanitizing it, strips a LORA weights filename to its directory, and pins through `CheckpointTarget.load` with a digest. | `428518fe` |
+| 39 | `TrainingCheckpoint.trainable_state` | changed | A "compatibility facade for the schema-v1 property name" with nothing outside to be compatible with: its one production reader is in this repository, and `checkpoint_state` already selects the right key for either schema version. One of its two tests existed only to assert the alias was the same object. | `c4adcee9` |
+| 40 | `export_checkpoint_optimizer_state` dispatched by `getattr` | changed | Declared only on `FSDPStrategy`, so the trainer probed for it and fell back -- putting a real capability of the consumer contract where the consumer cannot see it, and making the branch look like it turns on the strategy when it turns on `checkpoint_primary_only`. Now on the `Strategy` protocol with an honest default on `_UnshardedStateStrategy` (nothing sharded, no gather to join), taking that mixin from six shared methods to seven. Negative control: deleting the default reddens the new conformance test. | `31fcbf53` |
+| 41 | `selection="strided"` default on the replay index helpers | changed | Every production caller passes `cfg.timestep_selection`, so the default was test-only -- and not innocuous: strided and random differ in which denoise steps ever receive gradient, strided always landing on the same ones. A test under an implicit policy cannot notice production changing which policy it configures. Required now; the five test call sites say which policy their expected result belongs to. | `d53303a2` |
+| 42 | danbooru's stacked fetch injection seam | changed | A package-level `_http_download` alias plus a lambda at each composition point, so a test could patch the package attribute. Its comment named "offline callers" that do not exist. `assets.py` already had the seam natively but only on one of the two paths; the fallback now lives in `download_danbooru_images`, the only function in the package that performs a network read, and `fetch` is optional the whole way down. The test patches the download site, which is what it actually stands in for. | `aec7d5f6` |
+| 43 | `effective_float32_precision` / `trainer_transformer_dtype` | kept (annotated) | No branch reads them, and that is the point: they record what the process turned out to be (the global float32 matmul state, the dtype the transformer actually materialized in) rather than what it was configured to be, so a diagnostic record can show a configured policy disagreeing with the live model. Neither is derivable from the config that produced them. Annotated `display/provenance-only` at the definition. | (this commit) |
+| 44 | `AdapterExport.adapter_name` | kept | Never given a non-default value in production; one test passes `"publish"`. It stays: `"default"` is the PEFT convention this repository uses throughout (`peft_adapter.py`, cosmos, the kling reward loader), `selected_adapters=[self.adapter_name]` is a real `save_pretrained` argument, and the `__post_init__` check against the module's `peft_config` is live fail-fast on every export. | — |
+| 45 | `resolve_guard_mode` / `select_guard_timesteps` in `precision_guard.__all__` | kept | Live inside the module, imported by nobody outside it except their own tests. `__all__` here documents the module's intended surface, and these two are its named decisions; removing them from the list changes nothing a reader or a caller can observe. | — |
+| 46 | `vrl/scripts/data/danbooru/__main__.py`, the only one in `vrl/` | kept | It enables `python -m vrl.scripts.data.danbooru` while the README routes data preparation through `python -m vrl.scripts.data.setup`, and nothing references it or the `main()` it calls. It is still a four-line CLI facade, which the thin-function keep-list protects, and deleting a working entrypoint buys tidiness only. Recorded so the next audit sees the reasoning rather than re-deriving it. | — |
+| 47 | `wan_hpsv3_checkpoint_eval` named by no document | kept | The recon read the absence as invisibility. Reading the file, its own docstring is the documentation: why a fixed prompt/seed grid is needed at all, why the base arm disables the adapter instead of rebuilding, and why all three HPSv3 keys are recorded (a rising `top_frame_mean` beside a falling `frame_min` is the reward-hacking signature). `vrl/scripts/README.md` is a rules document with no per-script index, so there is no list it is missing from. Its four duplications are rows 36-38 and 29. | — |
+| 48 | `OfflineDPOTrainerConfig` re-declares `OptimConfig`'s Adam fields | blocked | `lr` / `adam_beta1` / `adam_beta2` / `adam_weight_decay` / `adam_epsilon` duplicate fields `OptimConfig` already owns, and `builders.py` special-cases `actor.optim.optim_8bit` as unsupported there. The divergence itself is intentional -- the offline path owns Adafactor, the online path owns fused and 8-bit -- so the honest fix is renaming the DPO fields to match, which is a public config-key migration this sweep must not do. | — |
+| 49 | §1 A1: wan's `autocast_adapter_dtype=False` opt-out | kept | Queue item 2, and already settled by `a6a21420`; re-verified rather than re-decided. The audit framed it as "one of the two must be wrong" -- either the shared default is a bug for every LoRA family, or wan's comment lies. Neither: the shared helper now takes the flag with `True` as its default and names wan in its docstring with the reason, wan passes `False` at both its construction sites with the measurement recorded (hpsv3 FSDP 4-rank smoke, 2026-08-16), and the failure mode is loud -- `vrl/models/weight_utils.py:124` raises on a dtype mismatch at `load_trainable_state`. A coherent opt-out with a ringing failure does not get generalized preventively to families that have not run FSDP+LoRA. | — |
+| 50 | three `_read_jsonl` variants | kept | The write half of row 29 was real duplication; the read half is not. `wan_hpsv3` returns `[]` for an absent file because its `score` subcommand may run before `generate`; `wan_robotics` raises `TypeError` on a non-object row because it reconstructs typed records from them; `derive_text_video_targets` raises `ValueError` on a non-object row *and* on an empty file, because an empty manifest is the failure it exists to catch. Identical text asserting three different theorems -- merging them would delete the arguments, not the duplication. | — |
+
+## Correction (2026-09-10): rebase onto upstream `6f0d157e`
+
+Upstream landed the same work independently for several rows while this
+sweep was in flight. The rows above keep their original reasoning; this is
+what the rebase did with each, so the commit hashes cited there are read
+against the rebased history:
+
+- Row 3 (sana loader), row 5 (cosmos3 `set_num_steps`), row 7 (wan I2V MRO):
+  upstream `0accf019` made the identical source change. The rebased commits
+  keep only the tests and the wan `pipeline` error that names `type(self)`;
+  the source diff is upstream's.
+- Row 29 (`write_json_report`): **superseded, commit dropped.** Upstream
+  `71cec476` consolidated every JSON/JSONL writer into
+  `vrl/utils/json_files.py` (`write_json` / `write_jsonl` / `read_jsonl`),
+  atomic the same way. `write_json_report` does not exist. One difference
+  not carried over: upstream's writer does not set `allow_nan=False`.
+- Row 50 (three `_read_jsonl` variants, kept): overtaken -- upstream's
+  `read_jsonl` replaced all three with one reader that raises on a
+  non-object row and on a missing file. The per-script differences that row
+  defended are gone: `wan_hpsv3 score` before `generate` now fails on the
+  absent `generated.jsonl` instead of scoring an empty grid, which is the
+  better failure anyway.
+- The memory-parking fix (`gpu_used_bytes` per-process via `nvidia-smi`),
+  not a ledger row: **superseded, commit dropped.** Upstream
+  `gpu_process_used_bytes` reads NVML per-process accounting and fails
+  closed, which is the stronger contract.
+- Row 17 (weight-sync local branch): merged with upstream's bucketed
+  transport (`2951f892`) and `verify_content` (`b6fb4409`); the local
+  test-double branch is still gone.
+- `build_trainable_state_sync_getter` (single-caller sweep): upstream added
+  a new caller in `vrl/scripts/perf/weight_delivery_probe.py` after the
+  factory was deleted here. The probe invoked the closure on the same line
+  it built it, so it now calls
+  `flatten_trainable_module_state(require_trainable_modules(bundle))`;
+  folded into the deleting commit so no commit in the chain has a broken
+  import.

@@ -12,7 +12,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from vrl.scripts.data.danbooru.assets import http_download
 from vrl.scripts.data.danbooru.cli import main as _main
 from vrl.scripts.data.danbooru.cli import manifest_setup_hints
 from vrl.scripts.data.danbooru.cli import register as _register
@@ -21,19 +20,13 @@ from vrl.scripts.data.danbooru.cli import register as _register
 def register(subparsers: Any) -> None:
     """Register the Danbooru commands on a setup CLI parser."""
 
-    _register(
-        subparsers,
-        fetch=http_download,
-    )
+    _register(subparsers)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     """Run the Danbooru CLI through the package composition."""
 
-    _main(
-        argv,
-        fetch=http_download,
-    )
+    _main(argv)
 
 
 __all__ = [
