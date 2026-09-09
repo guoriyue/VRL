@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -192,3 +194,49 @@ def test_typed_root_is_a_strategy_builder_input() -> None:
 
     assert isinstance(strategy, DDPStrategy)
     assert strategy._find_unused_parameters is True
+
+
+def test_every_allow_listed_offline_dpo_actor_field_has_a_reader() -> None:
+    """The offline-DPO allow-list is hand-maintained; this is what keeps it honest.
+
+    The cross-section rules reject any ``actor`` key the user sets that is not
+    in the algorithm's ``config_contract.consumed_sections``, so the list *is*
+    the recipe's public surface.
+    Nothing mechanically ties it to what the recipe reads, and most of it is
+    read through ``required("name")`` -- a string access no symbol grep finds.
+    A field left on the list after its reader goes becomes a knob the user sets
+    and nothing consumes, which is the worst shape a config key can take.
+
+    The recipe reads its actor section through exactly two pure-config
+    resolvers, so instrumenting attribute access across both is the check.
+    """
+
+    from vrl.algorithms.dpo import DiffusionDPOConfig
+    from vrl.config.schema import parse_config
+    from vrl.trainers.activation_checkpointing import resolve_gradient_checkpointing_mode
+    from vrl.trainers.offline import OfflineDPOTrainerConfig
+
+    recipe = "experiment/wan_2_1/offline_dpo_pickapic"
+    root = parse_config(load_config(recipe))
+    assert root.actor is not None
+    read: set[str] = set()
+
+    class _RecordingActor:
+        def __getattr__(self, name: str) -> object:
+            read.add(name)
+            return getattr(root.actor, name)
+
+    recording_root = SimpleNamespace(actor=_RecordingActor())
+    OfflineDPOTrainerConfig.from_root(
+        recording_root,
+        build_configs(load_config(recipe)).algorithm,
+    )
+    resolve_gradient_checkpointing_mode(recording_root)
+
+    consumed = dict(DiffusionDPOConfig.config_contract.consumed_sections or ())
+    unread = sorted(consumed["actor"] - read)
+    assert unread == [], (
+        f"actor field(s) {unread} are accepted by the offline-DPO surface but no "
+        "resolver on the recipe reads them; drop them from "
+        "DiffusionDPOConfig.config_contract or wire a reader"
+    )

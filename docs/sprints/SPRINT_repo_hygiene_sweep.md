@@ -25,7 +25,13 @@ must not do (a GPU numerical gate, a public config-key migration).
 | 10 | scripts long-tail dead CLI flags | §8.2 | kept | The gate the audit installed answers it: `vrl.scripts.lint.dead_flags` reports **435 declared flags, all with a consumer** (350 at the audit's close). There is no long tail left to sweep. |
 | 11 | `--vbench-*` decision | §8.2 | kept | `vbench==0.1.5` is a declared extra in `pyproject.toml`, deliberately isolated because it hard-pins `transformers==4.33.2`; the flags are consumed at `video_reward_suite.py:150-160`, and absence degrades to empty `vbench_*` columns plus a warning rather than an error. Live and already designed for the missing-extra case. |
 | 12 | `init-dirs` | §8.2 | kept | Consumed by `tests/data/test_artifact_manifest_validation.py` and documented as a `vrl.scripts.data.setup` subcommand; its directory table was examined and kept by the ALL_CAPS audit for the same reason. |
+<<<<<<< HEAD
 >>>>>>> 613b9bba (docs(sprints): record five audit items examined and deliberately kept)
+=======
+| 13 | `_OFFLINE_DPO_*_FIELDS` cross-validation | §8.2 | changed (actor half) | The audit asked for derivation or a cross-check; derivation is out of scope because the list *is* the recipe's public config surface. A runtime cross-check instead: instrument attribute access on the actor section across the recipe's two pure-config resolvers and assert every allow-listed name is read. Adding an unread name to the list turns it red. Writing it found that a builder-only version reports a false positive on `gradient_checkpointing`, which `train_dpo.py` reads through `enable_transformer_gradient_checkpointing` -- the field is live and stays. The trainer half is left as-is: all seven of its names are read as plain `trainer.<name>` attributes and a symbol grep finds them, so they carry none of the `required("name")` rot risk. | (this commit) |
+| 14 | precision `_select` -> `cfg_path` | §8.2 | kept | Resolved upstream: `fab177b7` ("delete the duck-typed accessors; every reader takes the parsed root") removed both symbols. Neither `_select` nor `cfg_path` exists in `vrl/` any more. |
+| 15 | `model.lora.init` / `init_lora_weights` dual alias | §8.2 | blocked | Removing an alias is a public config-key migration, which this sweep must not do. |
+>>>>>>> d0c87069 (test(config): the offline-DPO actor allow-list must have a reader per field)
 
 ## Notes for the reviewer
 
