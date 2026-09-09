@@ -478,7 +478,6 @@ def test_save_training_checkpoint_routes_export_through_strategy(tmp_path) -> No
     checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-strategy")
     assert strategy.calls == [bundle]
     assert checkpoint.checkpoint_state["module"]["weight"].item() == pytest.approx(9.0)
-    assert checkpoint.trainable_state is checkpoint.checkpoint_state
 
 
 def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) -> None:
@@ -516,7 +515,7 @@ def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) 
     checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-primary-only")
     assert strategy.calls == [bundle]
     assert checkpoint.trainer_state == {"step": 3, "global_step": 8}
-    assert checkpoint.trainable_state["module"]["weight"].item() == pytest.approx(7.0)
+    assert checkpoint.checkpoint_state["module"]["weight"].item() == pytest.approx(7.0)
 
 
 def test_save_training_checkpoint_non_primary_gathers_but_writes_nothing(tmp_path) -> None:

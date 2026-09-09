@@ -384,12 +384,6 @@ class TrainingCheckpoint:
         return state
 
     @property
-    def trainable_state(self) -> dict[str, Any]:
-        """Compatibility facade for callers using the schema-v1 property name."""
-
-        return self.checkpoint_state
-
-    @property
     def model_identity(self) -> dict[str, Any] | None:
         model = self.payload.get("model")
         if not isinstance(model, dict):
