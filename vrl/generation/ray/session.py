@@ -140,12 +140,8 @@ class RayGenerationSession:
         release_refs: list[Any] = []
         if not self._force_close:
             for rank in self.rank_handles:
-                actor = rank.actor
-                remote = getattr(getattr(actor, "release_policy", None), "remote", None)
-                if not callable(remote):
-                    continue
                 try:
-                    release_refs.append(remote())
+                    release_refs.append(rank.actor.release_policy.remote())
                 except Exception:
                     logger.warning(
                         "generation rank %s policy release submission failed; "

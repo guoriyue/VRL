@@ -146,14 +146,15 @@ class RolloutWorkerHealthMonitor:
                     or self._resume_epoch != resume_epoch
                 ):
                     return
-            probe = getattr(worker.actor, "health", None)
-            remote = getattr(probe, "remote", None)
-            if not callable(remote):
-                continue
             try:
                 # Bounded on the driver side, unlike a plain ray.get: a wedged
-                # actor process must not also wedge its own monitor.
-                ray.get(remote(), timeout=self._timeout_s)
+                # actor process must not also wedge its own monitor. An actor
+                # with no probe face at all is unmonitorable, which is the same
+                # thing this monitor exists to report, so its AttributeError
+                # takes the same path as a failed probe rather than being
+                # skipped -- a monitor that silently watches nothing is worse
+                # than one that fails loudly.
+                ray.get(worker.actor.health.remote(), timeout=self._timeout_s)
             except BaseException as error:
                 self._terminalize(
                     ray,

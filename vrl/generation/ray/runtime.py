@@ -136,10 +136,7 @@ class RayGenerationRuntime:
             return
         refs = []
         for rank in session.rank_handles:
-            # Tolerate probe-less test doubles the way the health monitor does.
-            remote = getattr(getattr(rank.actor, "health", None), "remote", None)
-            if callable(remote):
-                refs.append(remote())
+            refs.append(rank.actor.health.remote())
         if not refs:
             return
         deadline = OperationDeadline(

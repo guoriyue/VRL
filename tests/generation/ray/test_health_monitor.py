@@ -406,10 +406,14 @@ def test_stop_joins_the_thread(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @_SCRIPTED_RAY_WIRE
-def test_workers_without_a_health_method_are_skipped(
+def test_a_worker_without_a_health_method_terminalizes_the_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Local (non-Ray) worker fakes have no remote probe and must not fail closed."""
+    """An actor with no probe face is unmonitorable, and that is a failure.
+
+    It used to be skipped, which left the monitor silently watching nothing.
+    The missing attribute now takes the same path as a failed probe.
+    """
 
     runtime = SimpleNamespace(
         _owned_ranks=[RayActorHandle(worker_id="local-0", actor=object())],
@@ -421,8 +425,11 @@ def test_workers_without_a_health_method_are_skipped(
 
     monitor._run_probes(resume_epoch=monitor._resume_epoch)
 
-    assert ray.killed == []
-    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
+    failure = runtime.lifecycle.failure
+    assert isinstance(failure, RolloutWorkerUnreachable)
+    assert failure.worker_id == "local-0"
+    assert isinstance(failure.__cause__, AttributeError)
+    assert runtime.lifecycle.phase is not RuntimePhase.RUNNING
 
 
 # ------------------------------------------------------- real cluster (real Ray)
