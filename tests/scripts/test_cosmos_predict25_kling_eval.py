@@ -124,7 +124,11 @@ def test_reward_worker_config_adds_reward_model_name_default() -> None:
         },
     )
 
-    worker_config = eval_script.resolve_kling_worker_config(cfg)
+    worker_config = eval_script.resolve_reward_worker_config(
+        cfg,
+        component="kling_video_reward",
+        default_reward_model_name="KlingTeam/VideoReward@main",
+    )
 
     assert worker_config["local_files_only"] is True
     assert worker_config["reward_model_name"] == "KlingTeam/VideoReward@main"

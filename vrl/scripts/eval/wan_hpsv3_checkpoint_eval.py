@@ -48,6 +48,7 @@ from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.scripts.eval._device import resolve_eval_device, resolve_eval_dtype
+from vrl.scripts.eval._reward_worker import resolve_reward_worker_config
 from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.denoise_generation import generate_one_video, seed_for
 from vrl.scripts.eval.score_report import summarize_paired_scores, write_scores
@@ -329,20 +330,12 @@ def score_grid(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _hpsv3_worker_config(cfg: DictConfig, *, device: torch.device) -> dict[str, Any]:
-    """Project the run's own reward block so eval scores on training's terms.
+    """Project the run's own reward block so eval scores on training's terms."""
 
-    ``resolve=True`` keeps an unresolved ``${...}`` literal from reaching the
-    reward loader, which is why the raw subtree is never passed through.
-    """
-
-    selected = OmegaConf.select(cfg, "reward.kwargs.hpsv3", default={})
-    reward_cfg = OmegaConf.to_container(selected, resolve=True) or {}
-    if not isinstance(reward_cfg, dict):
-        raise ValueError("reward.kwargs.hpsv3 must be a mapping")
-    worker_config = dict(reward_cfg.get("worker_config") or {})
-    worker_config.setdefault(
-        "reward_model_name",
-        str(reward_cfg.get("reward_name") or "MizzenAI/HPSv3@main"),
+    worker_config = resolve_reward_worker_config(
+        cfg,
+        component="hpsv3",
+        default_reward_model_name="MizzenAI/HPSv3@main",
     )
     worker_config["device"] = str(device)
     return worker_config

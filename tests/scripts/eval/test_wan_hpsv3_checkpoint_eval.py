@@ -209,6 +209,10 @@ def test_worker_config_projects_the_runs_own_reward_block() -> None:
     cfg = OmegaConf.create(
         {
             "reward": {
+                # A run's resolved config always carries components; the shared
+                # projection validates the whole reward section rather than
+                # selecting one subtree out of it.
+                "components": {"hpsv3": 1.0},
                 "kwargs": {
                     "hpsv3": {
                         "reward_name": "MizzenAI/HPSv3@main",

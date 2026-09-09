@@ -24,13 +24,13 @@ import torch
 from omegaconf import DictConfig
 
 from vrl import run
-from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.robotics_video_reward import RoboticsVideoRewardModel
 from vrl.scripts.eval._device import resolve_eval_device
+from vrl.scripts.eval._reward_worker import resolve_reward_worker_config
 from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.denoise_generation import generate_one_video
 from vrl.scripts.eval.score_report import summarize_paired_scores
@@ -685,8 +685,7 @@ def _build_scoring_artifacts(
 
 
 def _reward_worker_config(cfg: DictConfig, *, device: torch.device) -> dict[str, Any]:
-    reward_cfg = RewardRuntimeConfig.from_cfg(cfg).kwargs.get("robotics_video_reward") or {}
-    worker_config = dict(reward_cfg.get("worker_config") or {})
+    worker_config = resolve_reward_worker_config(cfg, component="robotics_video_reward")
     worker_config["device"] = str(device)
     worker_config["data_root"] = str(
         Path(str(worker_config.get("data_root") or cfg.data.artifact_data_root))

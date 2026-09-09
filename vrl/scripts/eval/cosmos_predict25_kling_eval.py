@@ -21,7 +21,7 @@ from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 from vrl.scripts.eval._device import resolve_eval_device, resolve_eval_dtype
-from vrl.scripts.eval._kling_reward import resolve_kling_worker_config
+from vrl.scripts.eval._reward_worker import resolve_reward_worker_config
 from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.denoise_generation import (
     generate_one_video,
@@ -391,7 +391,11 @@ def _score_generated_videos(
     *,
     score_key: str,
 ) -> list[dict[str, Any]]:
-    worker_config = resolve_kling_worker_config(cfg)
+    worker_config = resolve_reward_worker_config(
+        cfg,
+        component="kling_video_reward",
+        default_reward_model_name="KlingTeam/VideoReward@main",
+    )
     logger.info("Loading Kling VideoReward for %d videos", len(generated))
     model = KlingVideoRewardModel(worker_config)
     artifacts = [

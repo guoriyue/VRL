@@ -44,7 +44,7 @@ import torch
 from vrl.config.loading import load_config
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.scripts.eval._device import resolve_eval_device
-from vrl.scripts.eval._kling_reward import resolve_kling_worker_config
+from vrl.scripts.eval._reward_worker import resolve_reward_worker_config
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 
 logger = logging.getLogger(__name__)
@@ -208,7 +208,11 @@ def _score_kling(
 ) -> dict[str, dict[str, float]]:
     from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 
-    worker_config = resolve_kling_worker_config(load_config(kling_config))
+    worker_config = resolve_reward_worker_config(
+        load_config(kling_config),
+        component="kling_video_reward",
+        default_reward_model_name="KlingTeam/VideoReward@main",
+    )
     worker_config.setdefault("device", str(device))
     logger.info("loading Kling VideoReward for %d videos", len(videos))
     model = KlingVideoRewardModel(worker_config)
