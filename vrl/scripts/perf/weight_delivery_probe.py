@@ -26,7 +26,11 @@ from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.dependencies import require_ray
 from vrl.run import resolve_model, resolve_online_run
-from vrl.trainers.weight_sync import build_trainable_state_sync_getter, to_cpu_snapshot
+from vrl.trainers.weight_sync import (
+    flatten_trainable_module_state,
+    require_trainable_modules,
+    to_cpu_snapshot,
+)
 
 
 class WeightDeliveryProbeWorker(RayGenerationWorker):
@@ -104,7 +108,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         del checkpoint
     source_ready = time.perf_counter()
-    snapshot = to_cpu_snapshot(build_trainable_state_sync_getter(bundle)())
+    snapshot = to_cpu_snapshot(flatten_trainable_module_state(require_trainable_modules(bundle)))
     snapshot_ready = time.perf_counter()
     del bundle
     gc.collect()

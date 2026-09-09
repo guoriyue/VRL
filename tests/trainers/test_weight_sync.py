@@ -10,8 +10,8 @@ import torch
 
 from vrl.trainers.weight_sync import (
     RayRuntimeWeightSyncer,
-    build_trainable_state_sync_getter,
     flatten_trainable_module_state,
+    require_trainable_modules,
 )
 
 
@@ -191,14 +191,18 @@ def test_flatten_all_frozen_module_fails_fast() -> None:
         flatten_trainable_module_state({"adapter": module})
 
 
-def test_build_trainable_state_sync_getter_reads_bundle_trainable_modules() -> None:
-    """The getter reads the bundle at call time, so it tracks live weights, not a snapshot."""
+def test_flatten_reads_live_weights_rather_than_an_earlier_snapshot() -> None:
+    """Rollout sync must ship what the trainer holds now, not what it held before."""
     bundle = _Bundle()
-    getter = build_trainable_state_sync_getter(bundle)
-    state = getter()
+    modules = require_trainable_modules(bundle)
 
+    state = flatten_trainable_module_state(modules)
     assert set(state) == {"adapter.weight"}
     assert state["adapter.weight"].shape == (1, 2)
+
+    with torch.no_grad():
+        modules["adapter"].weight.fill_(7.0)
+    assert flatten_trainable_module_state(modules)["adapter.weight"].eq(7.0).all()
 
 
 @pytest.mark.parametrize("source", ["explicit", "runtime"])

@@ -919,9 +919,9 @@ async def test_rollout_sync_getter_routes_through_strategy(
     """The recipe binds the rollout sync getter to the strategy, not the raw helper.
 
     Locks sprint P3 ownership: the strategy seam -- not a direct
-    ``build_trainable_state_sync_getter(bundle)`` call -- is what produces
-    rollout-facing weights, so the future FSDP strategy controls what leaves the
-    trainer without the recipe changing.
+    ``flatten_trainable_module_state(bundle.trainable_modules)`` call -- is what
+    produces rollout-facing weights, so the FSDP strategy controls what leaves
+    the trainer without the recipe changing.
     """
     state = _state()
     _install_common_fakes(monkeypatch, tmp_path, state)

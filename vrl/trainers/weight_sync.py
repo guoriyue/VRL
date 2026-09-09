@@ -101,22 +101,6 @@ class RayRuntimeWeightSyncer(WeightSyncer):
         return self.runtime.current_policy_version
 
 
-def build_trainable_state_sync_getter(bundle: RuntimeBundle) -> TrainableStateGetter:
-    """Build the flattened trainable-state getter used by rollout sync.
-
-    Checkpoints store trainable modules as a nested mapping keyed by module
-    name. Rollout policies consume a flat policy-state payload so a worker can
-    call ``policy.load_trainable_state(payload)`` without knowing bundle shape.
-    """
-
-    modules = require_trainable_modules(bundle)
-
-    def _getter() -> dict[str, Any]:
-        return flatten_trainable_module_state(modules)
-
-    return _getter
-
-
 def require_trainable_modules(bundle: RuntimeBundle) -> Mapping[str, Any]:
     """Return the checkpoint-root mapping of a bundle, refusing an empty one.
 
@@ -134,7 +118,14 @@ def require_trainable_modules(bundle: RuntimeBundle) -> Mapping[str, Any]:
 
 
 def flatten_trainable_module_state(modules: Mapping[str, Any]) -> dict[str, Any]:
-    """Return trainable ``module_name.parameter_name`` keys for rollout sync."""
+    """Return trainable ``module_name.parameter_name`` keys for rollout sync.
+
+    Checkpoints store trainable modules as a nested mapping keyed by module
+    name; rollout policies consume this flat payload, so a worker can call
+    ``policy.load_trainable_state(payload)`` without knowing bundle shape. Each
+    module's ``state_dict()`` is read here, at call time, so the result tracks
+    the live weights rather than any earlier snapshot.
+    """
 
     state: dict[str, Any] = {}
     for module_name, module in modules.items():
