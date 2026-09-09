@@ -17,3 +17,9 @@ reward:
       # Preserve the existing general-tag detection threshold.
       threshold: 0.35
       metadata_key: adherence_tags
+      # Which reading drives training. wd_tagger_dense is each requested tag's
+      # confidence normalised to the threshold and capped there, so a group of
+      # samples orders fully instead of landing on the handful of values a
+      # thresholded count can take; wd_tagger_recall is that count, and is what
+      # an evaluation reports.
+      score_key: wd_tagger_dense

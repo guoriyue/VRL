@@ -1,8 +1,29 @@
-"""WD tagger recall over general tags supplied in artifact metadata.
+"""WD tagger adherence over general tags supplied in artifact metadata.
 
-The score measures requested-tag recall, not extra tags, full prompt semantics,
-or aesthetics. Repeatable predictions do not make the tagger ground truth or
-establish that optimizing its score improves generated images.
+Two scores come out of one tagger pass:
+
+* ``wd_tagger_recall`` is the fraction of requested tags detected at the
+  configured threshold — the verdict, and what an evaluation reports;
+* ``wd_tagger_dense`` replaces each tag's yes/no with its confidence
+  normalised to that same threshold and capped there, and is the training
+  signal.
+
+The dense score exists because GRPO consumes the *ordering* of rewards within a
+prompt group, and a thresholded count barely orders anything: with a median of
+six requested tags the recall can take seven values at most, and inside a
+16-sample group it took two to four, which collapsed the advantage and left the
+policy unable to move (SPRINT_anima_geneval_spatial_rl 7.5 measured the same
+failure on the GenEval verdict, and 8.2 measured a dense reward moving the same
+policy at t=+9.52). Capping each tag at the threshold is what keeps the dense
+score honest: once a tag is detected, pushing its probability higher pays
+nothing, so the gradient goes to the tags that are actually missing rather than
+to inflating confidence on tags already rendered. The two scores therefore
+agree exactly when every requested tag is either absent or confidently present,
+and the dense one interpolates in between.
+
+The score measures requested-tag adherence, not extra tags, full prompt
+semantics, or aesthetics. Repeatable predictions do not make the tagger ground
+truth or establish that optimizing its score improves generated images.
 
 Preprocessing preserves the existing imgutils-compatible white padding, bicubic
 resize, BGR order, and raw 0-255 scale. The model loads through onnxruntime
@@ -57,7 +78,10 @@ class WDTaggerRewardModel:
         wanted = [self._wanted_tags(artifact) for artifact in artifacts]
         images = [artifact_middle_frame_image(artifact) for artifact in artifacts]
         return [
-            {"wd_tagger": self._recall(tags, probs)}
+            {
+                "wd_tagger_dense": self._dense(tags, probs),
+                "wd_tagger_recall": self._recall(tags, probs),
+            }
             for tags, probs in zip(wanted, self.tag_images(images), strict=True)
         ]
 
@@ -131,8 +155,22 @@ class WDTaggerRewardModel:
         return wanted
 
     def _recall(self, wanted: set[str], probs: Mapping[str, float]) -> float:
+        """Fraction of requested tags the tagger detects at the threshold."""
+
         detected = {tag.lower() for tag, prob in probs.items() if prob >= self._threshold}
         return len(wanted & detected) / len(wanted)
+
+    def _dense(self, wanted: set[str], probs: Mapping[str, float]) -> float:
+        """Mean requested-tag confidence, normalised to the threshold and capped there.
+
+        Equals :meth:`_recall` when every requested tag is either absent or
+        confidently present; between those it orders images the verdict cannot.
+        """
+
+        lowered = {str(tag).lower(): float(prob) for tag, prob in probs.items()}
+        return sum(min(lowered.get(tag, 0.0) / self._threshold, 1.0) for tag in wanted) / len(
+            wanted
+        )
 
 
 def prepare_wd14_input(image: Image.Image, size: int = WD14_INPUT_SIZE) -> np.ndarray:

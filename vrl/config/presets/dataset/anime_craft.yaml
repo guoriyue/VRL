@@ -1,0 +1,26 @@
+# Anime craft adherence: camera angle, framing, pose, arm position, gaze.
+#
+# The axes an illustration request is actually made of, and the ones the base
+# misses. Measured on 120 held-out prompts at clean sampling (2026-09-08): WD
+# tagger recall 0.632 with only 25.8% of prompts fully satisfied, against 0.923
+# / 67.1% on the NSFW attribute set that turned out to have no headroom. The
+# worst axes are camera and arm placement -- dutch_angle and head_tilt missed on
+# every prompt that asked, arms_behind_back 86%, walking 82%, arm_up 69%,
+# from_above 60%, standing 57%, kneeling 56%.
+#
+# Scored tags are the craft tags only; hair, eyes and clothing ride along in the
+# prompt for a realistic ask but are never scored, and full_body /
+# looking_at_viewer are excluded because nearly every source post carries them.
+# Every target tag is validated against the tagger's own selected_tags.csv, the
+# check that a 0.731-vs-0.980 recall discrepancy once came down to.
+#
+# Built from the danbooru tag corpora already in datasets/danbooru by
+# scripts/build_anime_craft.py (source_post_ids recorded per row).
+data:
+  loader: prompt_manifest
+  manifest: datasets/danbooru/anime_craft/train_prompts.jsonl
+  eval_manifest: datasets/danbooru/anime_craft/eval_prompts.jsonl
+  preprocessing:
+    format: jsonl
+  sampler:
+    type: random_without_replacement

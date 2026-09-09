@@ -36,6 +36,7 @@ def _image() -> Image.Image:
 async def test_wd_tagger_reward_scores_recall_over_wanted_tags() -> None:
     """Checks tag adherence reward scores recall over wanted tags."""
     reward = WDTaggerReward(
+        score_key="wd_tagger_recall",
         threshold=0.35,
         tagger=lambda images: [{"long_hair": 0.9, "smile": 0.5, "lingerie": 0.1}] * len(images),
     )
@@ -49,6 +50,7 @@ async def test_wd_tagger_reward_scores_recall_over_wanted_tags() -> None:
 async def test_wd_tagger_reward_threshold_is_inclusive() -> None:
     """Checks tag adherence reward threshold is inclusive."""
     reward = WDTaggerReward(
+        score_key="wd_tagger_recall",
         threshold=0.5,
         tagger=lambda images: [{"long_hair": 0.5, "smile": 0.4999, "lingerie": 0.0}] * len(images),
     )
@@ -131,3 +133,60 @@ async def test_wd_tagger_rejects_non_string_tags_before_inference(invalid_tag) -
     with pytest.raises(ValueError, match="must contain only tag strings"):
         await reward.score(_sample(_image(), tags=["smile", invalid_tag]))
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_dense_score_orders_images_the_recall_calls_identical() -> None:
+    """Two images missing the same tag must still be ordered by how close they came."""
+
+    def reward_for(lingerie: float) -> WDTaggerReward:
+        return WDTaggerReward(
+            threshold=0.35,
+            tagger=lambda images, p=lingerie: (
+                [{"long_hair": 0.9, "smile": 0.9, "lingerie": p}] * len(images)
+            ),
+        )
+
+    faint = await reward_for(0.05).score(_sample(_image()))
+    nearly = await reward_for(0.30).score(_sample(_image()))
+    recall = await WDTaggerReward(
+        score_key="wd_tagger_recall",
+        threshold=0.35,
+        tagger=lambda images: [{"long_hair": 0.9, "smile": 0.9, "lingerie": 0.05}] * len(images),
+    ).score(_sample(_image()))
+
+    assert recall == pytest.approx(2.0 / 3.0)
+    assert faint < nearly
+    assert faint == pytest.approx((1.0 + 1.0 + 0.05 / 0.35) / 3)
+
+
+@pytest.mark.asyncio
+async def test_dense_score_caps_each_tag_at_the_threshold() -> None:
+    """Confidence beyond the threshold pays nothing, so gradient goes to missing tags."""
+    detected = WDTaggerReward(
+        threshold=0.35,
+        tagger=lambda images: [{"long_hair": 0.4, "smile": 0.4, "lingerie": 0.4}] * len(images),
+    )
+    certain = WDTaggerReward(
+        threshold=0.35,
+        tagger=lambda images: [{"long_hair": 1.0, "smile": 1.0, "lingerie": 1.0}] * len(images),
+    )
+
+    assert await detected.score(_sample(_image())) == pytest.approx(1.0)
+    assert await certain.score(_sample(_image())) == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_dense_equals_recall_when_every_tag_is_absent_or_confident() -> None:
+    tagger = lambda images: [{"long_hair": 0.9, "smile": 0.0, "lingerie": 0.0}] * len(images)  # noqa: E731
+    dense = await WDTaggerReward(threshold=0.35, tagger=tagger).score(_sample(_image()))
+    recall = await WDTaggerReward(
+        score_key="wd_tagger_recall", threshold=0.35, tagger=tagger
+    ).score(_sample(_image()))
+
+    assert dense == recall == pytest.approx(1.0 / 3.0)
+
+
+def test_reward_rejects_an_unknown_score_key() -> None:
+    with pytest.raises(ValueError, match="score_key"):
+        WDTaggerReward(score_key="wd_tagger")
