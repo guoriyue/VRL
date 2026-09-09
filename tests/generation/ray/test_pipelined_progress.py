@@ -13,6 +13,7 @@ import pytest
 import vrl.generation.ray.executor as executor_module
 import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
+from tests.generation.ray._helpers import GatedRef, ResolvedRef
 from vrl.generation.execution.types import (
     BatchProduceFence,
     PipelinedRequestOutOfMemory,
@@ -31,30 +32,6 @@ from vrl.ray.operation_deadline import (
     RayOperationCancelled,
     RayOperationTimeout,
 )
-
-
-class _ResolvedRef:
-    def __init__(self, value: Any) -> None:
-        self.value = value
-
-    def __await__(self):
-        async def resolve() -> Any:
-            return self.value
-
-        return resolve().__await__()
-
-
-class _GatedRef:
-    def __init__(self, event: asyncio.Event, value: Any) -> None:
-        self.event = event
-        self.value = value
-
-    def __await__(self):
-        async def resolve() -> Any:
-            await self.event.wait()
-            return self.value
-
-        return resolve().__await__()
 
 
 def _executor(*, timeout_s: float = 1.0) -> RayGenerationExecutor:
@@ -280,15 +257,15 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
         deadlines.append(operation)
         return real_deadline(operation, *args, **kwargs)
 
-    def submit_first(_payload: Any) -> _GatedRef:
+    def submit_first(_payload: Any) -> GatedRef:
         first_submitted.set()
-        return _GatedRef(gate, "first")
+        return GatedRef(gate, "first")
 
     class _PipelineMethod:
         @staticmethod
-        def remote(request: Any, **_kwargs: Any) -> _ResolvedRef:
+        def remote(request: Any, **_kwargs: Any) -> ResolvedRef:
             pipeline_calls.append(request.request_id)
-            return _ResolvedRef(
+            return ResolvedRef(
                 PipelinedRequestOutOfMemory(
                     request_id=request.request_id,
                     worker_id="w0",
@@ -298,7 +275,7 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
 
     class _ProgressMethod:
         @staticmethod
-        def remote(_request_id: str) -> _ResolvedRef:
+        def remote(_request_id: str) -> ResolvedRef:
             raise AssertionError("an immediately resolved pipeline needs no progress RPC")
 
     monkeypatch.setattr(actor_pool_module, "RayCallDeadline", recording_deadline)
@@ -351,15 +328,15 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
 async def test_pipelined_progress_resets_the_stall_deadline() -> None:
     executor = _executor(timeout_s=0.05)
     result_ready = asyncio.Event()
-    result_ref = _GatedRef(result_ready, "complete")
+    result_ref = GatedRef(result_ready, "complete")
     progress_calls = 0
 
-    def progress_remote(request_id: str) -> _ResolvedRef:
+    def progress_remote(request_id: str) -> ResolvedRef:
         nonlocal progress_calls
         progress_calls += 1
         if progress_calls == 2:
             result_ready.set()
-        return _ResolvedRef(
+        return ResolvedRef(
             PipelinedRequestProgress(
                 request_id=request_id,
                 completed_batches=min(progress_calls, 2),
@@ -384,15 +361,15 @@ async def test_short_stall_budget_queries_progress_before_initial_expiry() -> No
     assert executor_module._PIPELINED_PROGRESS_POLL_INTERVAL_S == 1.0
     executor = _executor(timeout_s=0.02)
     result_ready = asyncio.Event()
-    result_ref = _GatedRef(result_ready, "complete")
+    result_ref = GatedRef(result_ready, "complete")
     progress_calls = 0
 
-    def progress_remote(request_id: str) -> _ResolvedRef:
+    def progress_remote(request_id: str) -> ResolvedRef:
         nonlocal progress_calls
         progress_calls += 1
         if progress_calls == 2:
             result_ready.set()
-        return _ResolvedRef(
+        return ResolvedRef(
             PipelinedRequestProgress(
                 request_id=request_id,
                 completed_batches=min(progress_calls, 2),
@@ -417,7 +394,7 @@ async def test_pipelined_progress_reset_preserves_initial_deadline_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executor = _executor(timeout_s=1.0)
-    result_ref = _GatedRef(asyncio.Event(), "never")
+    result_ref = GatedRef(asyncio.Event(), "never")
     progress_calls = 0
 
     class _Ray:
@@ -427,10 +404,10 @@ async def test_pipelined_progress_reset_preserves_initial_deadline_identity(
 
     monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
 
-    def progress_remote(request_id: str) -> _ResolvedRef:
+    def progress_remote(request_id: str) -> ResolvedRef:
         nonlocal progress_calls
         progress_calls += 1
-        return _ResolvedRef(
+        return ResolvedRef(
             PipelinedRequestProgress(
                 request_id=request_id,
                 completed_batches=1,
@@ -463,7 +440,7 @@ async def test_pipelined_stall_cancels_the_result_ref(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executor = _executor(timeout_s=0.03)
-    result_ref = _GatedRef(asyncio.Event(), "never")
+    result_ref = GatedRef(asyncio.Event(), "never")
     cancelled: list[Any] = []
 
     class _Ray:
@@ -474,8 +451,8 @@ async def test_pipelined_stall_cancels_the_result_ref(
 
     monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
 
-    def progress_remote(request_id: str) -> _ResolvedRef:
-        return _ResolvedRef(
+    def progress_remote(request_id: str) -> ResolvedRef:
+        return ResolvedRef(
             PipelinedRequestProgress(
                 request_id=request_id,
                 completed_batches=0,
@@ -505,7 +482,7 @@ async def test_pipelined_stall_polling_does_not_accelerate_near_deadline(
         0.02,
     )
     executor = _executor(timeout_s=0.11)
-    result_ref = _GatedRef(asyncio.Event(), "never")
+    result_ref = GatedRef(asyncio.Event(), "never")
     progress_calls = 0
 
     class _Ray:
@@ -515,10 +492,10 @@ async def test_pipelined_stall_polling_does_not_accelerate_near_deadline(
 
     monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
 
-    def progress_remote(request_id: str) -> _ResolvedRef:
+    def progress_remote(request_id: str) -> ResolvedRef:
         nonlocal progress_calls
         progress_calls += 1
-        return _ResolvedRef(
+        return ResolvedRef(
             PipelinedRequestProgress(
                 request_id=request_id,
                 completed_batches=0,
@@ -543,8 +520,8 @@ async def test_pipelined_progress_rpc_stall_cancels_result_and_progress(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executor = _executor(timeout_s=0.04)
-    result_ref = _GatedRef(asyncio.Event(), "never")
-    progress_ref = _GatedRef(asyncio.Event(), "never")
+    result_ref = GatedRef(asyncio.Event(), "never")
+    progress_ref = GatedRef(asyncio.Event(), "never")
     cancelled: list[Any] = []
 
     class _Ray:
@@ -573,8 +550,8 @@ async def test_pipelined_caller_cancellation_cancels_active_refs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executor = _executor(timeout_s=0.1)
-    result_ref = _GatedRef(asyncio.Event(), "never")
-    progress_ref = _GatedRef(asyncio.Event(), "never")
+    result_ref = GatedRef(asyncio.Event(), "never")
+    progress_ref = GatedRef(asyncio.Event(), "never")
     progress_called = asyncio.Event()
     cancelled: list[Any] = []
 
@@ -586,7 +563,7 @@ async def test_pipelined_caller_cancellation_cancels_active_refs(
 
     monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
 
-    def progress_remote(_request_id: str) -> _GatedRef:
+    def progress_remote(_request_id: str) -> GatedRef:
         progress_called.set()
         return progress_ref
 
@@ -616,8 +593,8 @@ async def test_pipelined_result_cancels_a_losing_progress_rpc(
 ) -> None:
     executor = _executor(timeout_s=0.1)
     result_ready = asyncio.Event()
-    result_ref = _GatedRef(result_ready, "complete")
-    progress_ref = _GatedRef(asyncio.Event(), "never")
+    result_ref = GatedRef(result_ready, "complete")
+    progress_ref = GatedRef(asyncio.Event(), "never")
     cancelled: list[Any] = []
 
     class _Ray:
@@ -628,7 +605,7 @@ async def test_pipelined_result_cancels_a_losing_progress_rpc(
 
     monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
 
-    def progress_remote(_request_id: str) -> _GatedRef:
+    def progress_remote(_request_id: str) -> GatedRef:
         result_ready.set()
         return progress_ref
 
@@ -692,7 +669,7 @@ async def test_pipelined_progress_protocol_failure_is_terminal_and_cancels_resul
     message: str,
 ) -> None:
     executor = _executor(timeout_s=0.1)
-    result_ref = _GatedRef(asyncio.Event(), "never")
+    result_ref = GatedRef(asyncio.Event(), "never")
     remaining = list(snapshots)
     cancelled: list[Any] = []
 
@@ -704,9 +681,9 @@ async def test_pipelined_progress_protocol_failure_is_terminal_and_cancels_resul
 
     monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
 
-    def progress_remote(_request_id: str) -> _ResolvedRef:
+    def progress_remote(_request_id: str) -> ResolvedRef:
         snapshot = remaining.pop(0) if remaining else snapshots[-1]
-        return _ResolvedRef(snapshot)
+        return ResolvedRef(snapshot)
 
     with pytest.raises(PipelinedProgressError, match=message):
         await _await_pipelined_through_dispatcher(

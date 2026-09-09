@@ -10,7 +10,7 @@ from typing import Any, ClassVar
 
 import pytest
 
-from tests.generation.ray._helpers import ResolvedRef as _ResolvedRef
+from tests.generation.ray._helpers import NeverRef, ResolvedRef
 from tests.generation.ray._helpers import engine as _engine
 from tests.generation.ray._helpers import parking_snapshot as _parking_snapshot
 from vrl.generation.ray.executor import RayGenerationExecutor
@@ -186,22 +186,14 @@ def _attach_active_session(
     session.current_policy_version = policy_version
 
 
-class _NeverRef:
-    def __await__(self):
-        async def wait_forever() -> None:
-            await asyncio.Event().wait()
-
-        return wait_forever().__await__()
-
-
 class _RemoteResult:
     def __init__(self, value: Any) -> None:
         self.value = value
         self.calls = 0
 
-    def remote(self) -> _ResolvedRef:
+    def remote(self) -> ResolvedRef:
         self.calls += 1
-        return _ResolvedRef(self.value)
+        return ResolvedRef(self.value)
 
 
 class _ParkingActor:
@@ -381,7 +373,7 @@ async def test_worker_parking_deadline_force_kills_without_graceful_release(
 
     runtime = _parking_runtime(_parking_snapshot())
     actor = runtime._owned_ranks[0].actor
-    setattr(actor, remote_name, SimpleNamespace(remote=lambda: _NeverRef()))
+    setattr(actor, remote_name, SimpleNamespace(remote=lambda: NeverRef()))
     runtime._session_parked = workers_offloaded
     real_wait_for = asyncio.wait_for
 
@@ -885,7 +877,7 @@ async def test_auto_probe_timeout_force_kills_the_session_owner(
     import vrl.ray.operation_deadline as deadline_module
 
     runtime = _on_demand_runtime()
-    probe_ref = _NeverRef()
+    probe_ref = NeverRef()
 
     class _ProbeActor(_ReleaseActor):
         def __init__(self) -> None:

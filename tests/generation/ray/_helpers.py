@@ -7,6 +7,7 @@ weight-sync test modules; the parking snapshot keeps the superset signature
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
@@ -34,6 +35,37 @@ class ResolvedRef:
             return self.value
 
         return resolve().__await__()
+
+
+class NeverRef:
+    """A fake ObjectRef for a call that never completes."""
+
+    def __await__(self):
+        async def wait_forever() -> None:
+            await asyncio.Event().wait()
+
+        return wait_forever().__await__()
+
+
+class GatedRef:
+    """A fake ObjectRef that completes only once ``gate`` is set.
+
+    Resolves to ``value``, or raises it when it is an exception, which is the
+    same convention ``ResolvedRef`` uses.
+    """
+
+    def __init__(self, gate: asyncio.Event, value: Any) -> None:
+        self.gate = gate
+        self.value = value
+
+    def __await__(self):
+        async def wait() -> Any:
+            await self.gate.wait()
+            if isinstance(self.value, BaseException):
+                raise self.value
+            return self.value
+
+        return wait().__await__()
 
 
 class _RemoteCall:

@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from tests.generation.ray._helpers import ResolvedRef
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.generation.protocols import GenerationRankActor
 from vrl.generation.ray.engine import (
@@ -25,36 +26,24 @@ from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_group import RayActorHandle
 
 
-class _Ref:
-    def __init__(self, value: Any = None, error: BaseException | None = None) -> None:
-        self.value = value
-        self.error = error
-
-    def __await__(self):
-        async def _resolve() -> Any:
-            if self.error is not None:
-                raise self.error
-            return self.value
-
-        return _resolve().__await__()
-
-
 class _Method:
     """Recording remote method: returns scripted refs in submission order."""
 
-    def __init__(self, calls: list[tuple[str, tuple, dict]], rank_id: str, ref: _Ref) -> None:
+    def __init__(
+        self, calls: list[tuple[str, tuple, dict]], rank_id: str, ref: ResolvedRef
+    ) -> None:
         self._calls = calls
         self._rank_id = rank_id
         self._ref = ref
 
-    def remote(self, *args: Any, **kwargs: Any) -> _Ref:
+    def remote(self, *args: Any, **kwargs: Any) -> ResolvedRef:
         self._calls.append((self._rank_id, args, kwargs))
         return self._ref
 
 
 def _engine(
     calls: list[tuple[str, tuple, dict]],
-    refs: dict[str, _Ref],
+    refs: dict[str, ResolvedRef],
     *,
     method: str = "execute_batch",
 ) -> RayGenerationEngine:
@@ -70,7 +59,11 @@ async def test_broadcast_submits_to_every_rank_in_order_and_returns_rank0() -> N
     calls: list[tuple[str, tuple, dict]] = []
     engine = _engine(
         calls,
-        {"r0": _Ref("rank0-result"), "r1": _Ref("rank1-result"), "r2": _Ref("rank2-result")},
+        {
+            "r0": ResolvedRef("rank0-result"),
+            "r1": ResolvedRef("rank1-result"),
+            "r2": ResolvedRef("rank2-result"),
+        },
     )
 
     ref = engine.remote("execute_batch")("payload", flag=True)
@@ -88,7 +81,7 @@ async def test_broadcast_submits_to_every_rank_in_order_and_returns_rank0() -> N
 @pytest.mark.asyncio
 async def test_single_rank_returns_the_raw_rank_ref() -> None:
     calls: list[tuple[str, tuple, dict]] = []
-    raw = _Ref("only")
+    raw = ResolvedRef("only")
     engine = _engine(calls, {"r0": raw})
 
     ref = engine.remote("execute_batch")("payload")
@@ -105,7 +98,9 @@ async def test_any_rank_failure_fails_the_engine_call_and_cancels_siblings() -> 
     import vrl.generation.ray.engine as engine_module
 
     boom = RuntimeError("rank r1 died")
-    engine = _engine(calls, {"r0": _Ref("ok"), "r1": _Ref(error=boom), "r2": _Ref("ok")})
+    engine = _engine(
+        calls, {"r0": ResolvedRef("ok"), "r1": ResolvedRef(boom), "r2": ResolvedRef("ok")}
+    )
 
     def _record_cancel(_ray: Any, refs: Any, *, root_error: Any) -> tuple:
         cancelled.extend(refs)
@@ -127,14 +122,16 @@ async def test_any_rank_failure_fails_the_engine_call_and_cancels_siblings() -> 
 @pytest.mark.asyncio
 async def test_uniform_combine_requires_every_rank_to_agree() -> None:
     calls: list[tuple[str, tuple, dict]] = []
-    agree = _engine(calls, {"r0": _Ref(7), "r1": _Ref(7)}, method="update_weights")
+    agree = _engine(calls, {"r0": ResolvedRef(7), "r1": ResolvedRef(7)}, method="update_weights")
     result = await agree.remote(
         "update_weights",
         combine=uniform_rank_result("update_weights"),
     )("state", policy_version=7)
     assert result == 7
 
-    disagree = _engine(calls, {"r0": _Ref(7), "r1": _Ref(6)}, method="update_weights")
+    disagree = _engine(
+        calls, {"r0": ResolvedRef(7), "r1": ResolvedRef(6)}, method="update_weights"
+    )
     with pytest.raises(RuntimeError, match="ranks disagree on update_weights"):
         await disagree.remote(
             "update_weights",
@@ -157,7 +154,7 @@ async def test_sleep_validates_and_aggregates_per_rank_snapshots() -> None:
     calls: list[tuple[str, tuple, dict]] = []
     engine = _engine(
         calls,
-        {"r0": _Ref(snapshot("r0")), "r1": _Ref(snapshot("r1"))},
+        {"r0": ResolvedRef(snapshot("r0")), "r1": ResolvedRef(snapshot("r1"))},
         method="sleep",
     )
     snapshots = await engine.sleep()
@@ -165,7 +162,7 @@ async def test_sleep_validates_and_aggregates_per_rank_snapshots() -> None:
 
     mismatched = _engine(
         calls,
-        {"r0": _Ref(snapshot("someone-else"))},
+        {"r0": ResolvedRef(snapshot("someone-else"))},
         method="sleep",
     )
     with pytest.raises(RuntimeError, match="mismatched rank memory-parking report"):

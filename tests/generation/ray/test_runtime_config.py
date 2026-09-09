@@ -14,6 +14,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from tests.generation.ray._helpers import GatedRef, NeverRef
 from vrl.config.builders import BuiltConfigs
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
@@ -1086,18 +1087,11 @@ async def test_remote_batch_size_probe_timeout_is_terminal_and_cancels_refs(
 ) -> None:
     import vrl.ray.operation_deadline as deadline_module
 
-    class _NeverRef:
-        def __await__(self):
-            async def wait_forever() -> None:
-                await asyncio.Event().wait()
-
-            return wait_forever().__await__()
-
-    ref = _NeverRef()
+    ref = NeverRef()
 
     class _RemoteProbe:
         @staticmethod
-        def remote(_request: Any, *, max_samples: int) -> _NeverRef:
+        def remote(_request: Any, *, max_samples: int) -> NeverRef:
             assert max_samples == 10
             return ref
 
@@ -1154,20 +1148,12 @@ async def test_concurrent_auto_chunk_requests_share_one_probe_before_submission(
         trials=(),
     )
 
-    class _ProbeRef:
-        def __await__(self):
-            async def wait() -> BatchSizeProbeResult:
-                await gate.wait()
-                return probe_result
-
-            return wait().__await__()
-
     class _RemoteProbe:
         @staticmethod
-        def remote(request: GenerationRequest, *, max_samples: int) -> _ProbeRef:
+        def remote(request: GenerationRequest, *, max_samples: int) -> GatedRef:
             assert max_samples == 10
             probe_requests.append(request.request_id)
-            return _ProbeRef()
+            return GatedRef(gate, probe_result)
 
     engine = RayGenerationEngine(
         "w0",

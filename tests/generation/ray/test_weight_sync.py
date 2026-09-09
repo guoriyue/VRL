@@ -13,6 +13,7 @@ import torch
 import vrl.generation.ray.weight_sync as weight_sync_module
 import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
+from tests.generation.ray._helpers import GatedRef, NeverRef, ResolvedRef
 from tests.generation.ray._helpers import engine as _engine
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.runtime import RayGenerationRuntime
@@ -67,41 +68,9 @@ class _RemoteMethod:
         self.installed_version = installed_version
         self.calls: list[tuple[Any, int]] = []
 
-    def remote(self, state_ref: Any, policy_version: int) -> _FakeObjectRef:
+    def remote(self, state_ref: Any, policy_version: int) -> ResolvedRef:
         self.calls.append((state_ref, policy_version))
-        return _FakeObjectRef(self.installed_version)
-
-
-class _FakeObjectRef:
-    def __init__(self, value: Any) -> None:
-        self.value = value
-
-    def __await__(self):
-        async def _resolve() -> Any:
-            return self.value
-
-        return _resolve().__await__()
-
-
-class _NeverObjectRef:
-    def __await__(self):
-        async def _wait_forever() -> None:
-            await asyncio.Event().wait()
-
-        return _wait_forever().__await__()
-
-
-class _GatedObjectRef:
-    def __init__(self, gate: asyncio.Event, value: Any) -> None:
-        self.gate = gate
-        self.value = value
-
-    def __await__(self):
-        async def _wait() -> Any:
-            await self.gate.wait()
-            return self.value
-
-        return _wait().__await__()
+        return ResolvedRef(self.installed_version)
 
 
 class _RemoteWorker:
@@ -233,8 +202,8 @@ async def test_update_rejects_an_ack_that_is_not_a_policy_version(
 async def test_remote_update_timeout_rejects_partial_ack_and_cancels_every_ref(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    completed_ref = _FakeObjectRef(7)
-    stalled_ref = _NeverObjectRef()
+    completed_ref = ResolvedRef(7)
+    stalled_ref = NeverRef()
 
     class _Method:
         def __init__(self, ref: Any) -> None:
@@ -292,9 +261,9 @@ async def test_weight_sync_gets_a_full_deadline_after_shared_worker_admission(
         deadlines.append((operation, timeout_s))
         return real_deadline(operation, timeout_s, **kwargs)
 
-    def submit_generation(_payload: Any) -> _GatedObjectRef:
+    def submit_generation(_payload: Any) -> GatedRef:
         generation_submitted.set()
-        return _GatedObjectRef(gate, "generated")
+        return GatedRef(gate, "generated")
 
     ray = _FakeRay()
     monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
@@ -353,14 +322,14 @@ async def test_waiting_weight_sync_gets_fair_handoff_before_pending_chunks(
         submissions.append(payload)
         if payload == "generation-0":
             first_submitted.set()
-            return _GatedObjectRef(gate, payload)
-        return _FakeObjectRef(payload)
+            return GatedRef(gate, payload)
+        return ResolvedRef(payload)
 
     class _UpdateMethod:
         @staticmethod
-        def remote(_state_ref: Any, policy_version: int) -> _FakeObjectRef:
+        def remote(_state_ref: Any, policy_version: int) -> ResolvedRef:
             submissions.append("weight")
-            return _FakeObjectRef(policy_version)
+            return ResolvedRef(policy_version)
 
     ray = _FakeRay()
     monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
@@ -415,9 +384,9 @@ async def test_cancelling_weight_sync_before_submission_keeps_runtime_running(
     gate = asyncio.Event()
     generation_submitted = asyncio.Event()
 
-    def submit_generation(_payload: Any) -> _GatedObjectRef:
+    def submit_generation(_payload: Any) -> GatedRef:
         generation_submitted.set()
-        return _GatedObjectRef(gate, "generated")
+        return GatedRef(gate, "generated")
 
     ray = _FakeRay()
     monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
@@ -467,9 +436,9 @@ async def test_completed_weight_sync_wins_cancellation_and_publishes_version(
     submitted = asyncio.Event()
 
     class _GatedUpdateMethod:
-        def remote(self, _state_ref: Any, policy_version: int) -> _GatedObjectRef:
+        def remote(self, _state_ref: Any, policy_version: int) -> GatedRef:
             submitted.set()
-            return _GatedObjectRef(gate, policy_version)
+            return GatedRef(gate, policy_version)
 
     ray = _FakeRay()
     monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
@@ -511,10 +480,10 @@ async def test_completed_weight_sync_cancellation_still_validates_wrong_ack(
 
     class _WrongAckMethod:
         @staticmethod
-        def remote(_state_ref: Any, policy_version: int) -> _GatedObjectRef:
+        def remote(_state_ref: Any, policy_version: int) -> GatedRef:
             del policy_version
             submitted.set()
-            return _GatedObjectRef(gate, 99)
+            return GatedRef(gate, 99)
 
     ray = _FakeRay()
     monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
@@ -569,9 +538,9 @@ async def test_cancelling_partially_completed_weight_sync_terminalizes_runtime(
             return _resolve().__await__()
 
     completed_ref = _CompletedRef()
-    busy_ref = _GatedObjectRef(busy_gate, "generated")
+    busy_ref = GatedRef(busy_gate, "generated")
 
-    def occupy_w1(_payload: Any) -> _GatedObjectRef:
+    def occupy_w1(_payload: Any) -> GatedRef:
         busy_submitted.set()
         return busy_ref
 
@@ -604,7 +573,7 @@ async def test_cancelling_partially_completed_weight_sync_terminalizes_runtime(
     await busy_submitted.wait()
 
     w0_update = _UpdateMethod(completed_ref)
-    w1_update = _UpdateMethod(_FakeObjectRef(2))
+    w1_update = _UpdateMethod(ResolvedRef(2))
     sync = RayGenerationWeightSync(
         [
             _engine(
