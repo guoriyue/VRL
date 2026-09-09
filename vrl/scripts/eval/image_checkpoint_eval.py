@@ -464,7 +464,9 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         or args.tie_epsilon < 0
     ):
         raise ValueError("invalid sampling/statistics options")
-    config_path = args.run_dir.expanduser().resolve() / "resolved_config.yaml"
+    from vrl.trainers.checkpointing import RESOLVED_CONFIG_NAME
+
+    config_path = args.run_dir.expanduser().resolve() / RESOLVED_CONFIG_NAME
     cfg = load_config(config_path)
     root = parse_config(cfg)
     if root.model is None:

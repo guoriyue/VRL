@@ -52,6 +52,7 @@ from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.denoise_generation import generate_one_video, seed_for
 from vrl.scripts.eval.score_report import summarize_paired_scores, write_scores
 from vrl.trainers.checkpointing import (
+    RESOLVED_CONFIG_NAME,
     CheckpointTarget,
     TrainingCheckpoint,
     restore_model_checkpoint,
@@ -208,7 +209,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
     provenance = {
         "schema": REPORT_SCHEMA,
         "run_dir": str(args.run_dir),
-        "resolved_config_sha256": sha256_file(args.run_dir / "resolved_config.yaml"),
+        "resolved_config_sha256": sha256_file(args.run_dir / RESOLVED_CONFIG_NAME),
         "prompts": str(args.prompts),
         "limit": args.limit,
         "samples_per_prompt": args.samples_per_prompt,
@@ -361,9 +362,9 @@ def _load_run_config(run_dir: Path) -> DictConfig:
 
     # An absolute Path, not a string: load_config resolves a relative string
     # against the bundled preset tree.
-    path = (run_dir / "resolved_config.yaml").expanduser().resolve()
+    path = (run_dir / RESOLVED_CONFIG_NAME).expanduser().resolve()
     if not path.is_file():
-        raise FileNotFoundError(f"run directory has no resolved_config.yaml: {run_dir}")
+        raise FileNotFoundError(f"run directory has no {RESOLVED_CONFIG_NAME}: {run_dir}")
     cfg = load_config(
         path,
         overrides=["model.lora.path=", "model.torch_compile.enable=false"],
