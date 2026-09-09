@@ -1042,7 +1042,7 @@ class OnlineTrainer:
     def _train_timestep_indices(
         num_timesteps: int,
         timestep_fraction: float,
-        selection: str = "strided",
+        selection: str,
     ) -> list[int]:
         """Denoise timesteps that receive loss (single source of truth).
 
@@ -1057,6 +1057,10 @@ class OnlineTrainer:
           intervals and one index is drawn uniformly from each, resampled each
           call: every region of the schedule is covered on every update, with
           none of ``"strided"``'s fixed positions.
+
+        Required, with no default: the policies differ in which steps ever
+        receive gradient, so a caller that does not say which it wants is a
+        caller that has not decided.
         """
         train_timestep_count = max(1, int(num_timesteps * timestep_fraction))
         if train_timestep_count >= num_timesteps:
@@ -1083,7 +1087,7 @@ class OnlineTrainer:
         self,
         batch: RolloutBatch,
         timestep_fraction: float,
-        selection: str = "strided",
+        selection: str,
     ) -> list[int]:
         """Return evaluator invocations for one replay batch.
 

@@ -190,7 +190,7 @@ def test_unknown_replay_granularity_fails_fast() -> None:
     )
 
     with pytest.raises(ValueError, match="replay_granularity"):
-        trainer._train_replay_indices(batch, 1.0)
+        trainer._train_replay_indices(batch, 1.0, "strided")
 
 
 @pytest.mark.parametrize(
@@ -205,7 +205,7 @@ def test_token_evaluators_replay_multi_token_trajectories_once(evaluator: object
     trainer = object.__new__(OnlineTrainer)
     trainer.evaluator = evaluator
 
-    assert trainer._train_replay_indices(_chunk_denoise_batch(), 0.5) == [0]
+    assert trainer._train_replay_indices(_chunk_denoise_batch(), 0.5, "strided") == [0]
 
 
 def test_step_evaluator_uses_primary_action_axis_for_fractional_selection() -> None:
@@ -224,7 +224,7 @@ def test_step_evaluator_uses_primary_action_axis_for_fractional_selection() -> N
         role="observation",
     )
 
-    assert trainer._train_replay_indices(batch, 0.5) == [0, 2]
+    assert trainer._train_replay_indices(batch, 0.5, "strided") == [0, 2]
 
 
 def test_step_replay_rejects_multiple_primary_action_axes() -> None:
@@ -232,7 +232,7 @@ def test_step_replay_rejects_multiple_primary_action_axes() -> None:
     trainer.evaluator = object()
 
     with pytest.raises(ValueError, match="exactly one non-sample axis"):
-        trainer._train_replay_indices(_chunk_denoise_batch(), 1.0)
+        trainer._train_replay_indices(_chunk_denoise_batch(), 1.0, "strided")
 
 
 def test_evaluator_less_diffusion_uses_primary_action_axis() -> None:
@@ -244,4 +244,4 @@ def test_evaluator_less_diffusion_uses_primary_action_axis() -> None:
         num_steps=4,
     )
 
-    assert trainer._train_replay_indices(batch, 0.5) == [0, 2]
+    assert trainer._train_replay_indices(batch, 0.5, "strided") == [0, 2]
