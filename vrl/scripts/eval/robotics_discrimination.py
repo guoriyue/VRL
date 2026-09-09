@@ -20,7 +20,15 @@ from vrl.utils.media import align_frame_counts
 
 @dataclass(frozen=True, slots=True)
 class RoboticsRewardGatePolicy:
-    """Acceptance policy on the public UnifiedReward 1-5 axis scale."""
+    """Acceptance policy on the public UnifiedReward 1-5 axis scale.
+
+    The seven thresholds are one pre-registered protocol, which is why they are
+    a struct rather than seven loose constants: changing any of them changes
+    what the gate means. There is exactly one construction site,
+    ``robotics_reward_verdict``, and the verdict it returns records the values
+    it used -- a caller-supplied override would let a run report a PASS against
+    a bar nobody registered.
+    """
 
     exact_axis_min: float = 3.0
     low_information_axis_max: float = 2.5
@@ -123,12 +131,10 @@ def aggregate_axis_scores(
 def robotics_reward_verdict(
     anchors: list[dict[str, dict[str, float]]],
     aggregate: dict[str, dict[str, dict[str, float | int]]],
-    *,
-    policy: RoboticsRewardGatePolicy | None = None,
 ) -> dict[str, Any]:
     """Return a structured PASS/FAIL verdict for the robotics reward contract."""
 
-    policy = policy or RoboticsRewardGatePolicy()
+    policy = RoboticsRewardGatePolicy()
     missing = [name for name in _REQUIRED_CANDIDATES if name not in aggregate]
     if missing:
         raise ValueError(f"robotics reward gate missing candidates: {missing}")
