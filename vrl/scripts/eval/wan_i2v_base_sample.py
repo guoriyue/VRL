@@ -6,10 +6,12 @@ drives diffusers' ``WanImageToVideoPipeline`` directly against the locally
 cached ``Wan-AI/Wan2.2-I2V-A14B-Diffusers`` checkpoint, so we can eyeball base
 I2V quality before investing in a real runtime.
 
-Conditioning frames: by default we take the *first frame* of the existing T2V
-baseline clips under a directory you provide via --baseline-dir and reuse the same 5
-physics prompts. That needs zero new input assets and makes the I2V output
-directly comparable to the T2V baseline.
+Conditioning frames: we take the *first frame* of existing T2V baseline clips
+under the directory you pass to --baseline-dir, and reuse the same 5 physics
+prompts, so the I2V output is directly comparable to the T2V baseline. The flag
+is required: the clips are run outputs, so there is no in-repo location to
+default to, and a stale default pointing at one contributor's outputs/ tree
+fails with a confusing "no baseline clips found" instead of an argument error.
 
 Memory: A14B is a Mixture-of-Experts video model with two ~14B transformers
 (high-noise ``transformer`` + low-noise ``transformer_2``). Neither fits twice
@@ -122,8 +124,12 @@ def main() -> None:
     parser.add_argument("--out-dir", default="outputs/wan_i2v_a14b_base_samples")
     parser.add_argument(
         "--baseline-dir",
-        default="outputs/wan_phys_eval_AB/baseline",
-        help="T2V baseline clips whose first frame seeds each I2V sample.",
+        required=True,
+        help=(
+            "T2V baseline clips whose first frame seeds each I2V sample. One "
+            "clip per prompt index, named promptNN_seedN.mp4 (prompt00_seed0.mp4, "
+            "prompt01_seed1.mp4, ...) in the PROMPTS order below."
+        ),
     )
     parser.add_argument("--num-samples", type=int, default=2)
     parser.add_argument("--num-frames", type=int, default=49)

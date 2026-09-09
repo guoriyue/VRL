@@ -38,7 +38,15 @@ DEFAULT_ARTIFACT_FIELDS = tuple(
 
 @dataclass(frozen=True, slots=True)
 class ResolvedArtifact:
-    """One manifest artifact path resolved under the configured data root."""
+    """One manifest artifact path resolved under the configured data root.
+
+    display/provenance-only. Every field is read by ``to_dict`` and by tests,
+    never by a control-flow branch: validation raises inside the resolution
+    loop, before an instance is built. It is kept because the mapping it
+    records -- which raw manifest string became which absolute file under which
+    data root -- is the thing a dataset build report exists to preserve, and it
+    cannot be re-derived once the data root or the manifest moves.
+    """
 
     row_index: int
     field: str
@@ -48,17 +56,27 @@ class ResolvedArtifact:
 
 @dataclass(frozen=True, slots=True)
 class DatasetFileReport:
-    """Validation report for one or two artifact manifests."""
+    """Validation report for one or two artifact manifests.
+
+    The report is a payload, not a decision: the CLIs embed ``to_dict()`` under
+    ``validation_summary`` and anything that must fail has already raised.
+    ``artifact_count`` is the one field with an outside reader, and it is
+    exactly ``len(resolved_artifacts)``.
+    """
 
     manifest_path: Path
     data_root: Path
     row_count: int
     artifact_count: int
+    # display/provenance-only, per the ResolvedArtifact docstring above; grows
+    # with the manifest, so a caller that only wants the count reads that.
     resolved_artifacts: tuple[ResolvedArtifact, ...] = ()
     warnings: tuple[str, ...] = ()
     source_episodes: tuple[str, ...] = ()
     eval_manifest_path: Path | None = None
     eval_source_episodes: tuple[str, ...] = ()
+    # display/provenance-only, and deliberately alongside the prose warning
+    # built from it: the warning is for a reader, this is for a parser.
     source_episode_overlap: tuple[str, ...] = ()
 
     @staticmethod
