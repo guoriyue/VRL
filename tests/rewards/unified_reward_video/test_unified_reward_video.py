@@ -1,51 +1,17 @@
-"""UnifiedReward-2.0 video reward: parsing, rubric loading, and facade wiring."""
+"""UnifiedReward-2.0 judge output: axis parsing and rubric loading.
+
+The wrapper's adapter behavior (artifact materialization, ``score_key``
+selection, config shape) is shared with the other disk-artifact rewards and
+lives in ``tests/rewards/test_disk_artifact_reward_functions.py``.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-import torch
-from omegaconf import OmegaConf
 
-from vrl.config.schema import RewardConfig
-from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
-from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.models.unified_reward_video import _load_rubric, _parse_axis_scores
-from vrl.rewards.types import RewardSample
-
-_FAKE_SCORES = {"alignment": 4.0, "physics": 2.0, "style": 3.0, "overall": 3.0}
-
-
-class _FakeRuntime:
-    scoring_is_nonblocking = False
-    external_accelerator_isolation_verified = False
-
-    def __init__(self) -> None:
-        self.requests = []
-
-    async def score_batch(self, request):
-        self.requests.append(request)
-        return [
-            RewardInferenceResult(
-                artifact_id=artifact.artifact_id,
-                scores=dict(_FAKE_SCORES),
-                reward_model_version="fake",
-                timing_ms={"inference_ms": 1.0},
-            )
-            for artifact in request.artifacts
-        ]
-
-    async def shutdown(self) -> None:
-        return None
-
-
-def _sample() -> RewardSample:
-    return RewardSample(
-        prompt="a spinning dancer",
-        output=torch.ones(1, 2, 2, 2),
-        sample_id="sample-0",
-    )
 
 
 def test_parse_axis_scores_reads_floats() -> None:
@@ -104,48 +70,6 @@ def test_load_rubric_rejects_missing_prompt_slot(tmp_path: Path) -> None:
     rubric.write_text("problem_template: 'no slot here'\n", encoding="utf-8")
     with pytest.raises(ValueError, match="must contain a"):
         _load_rubric(str(rubric))
-
-
-@pytest.mark.asyncio
-async def test_facade_selects_physics_and_fails_fast(tmp_path: Path) -> None:
-    reward = UnifiedRewardVideoReward(
-        reward_name="unified_reward_video",
-        score_key="physics",
-        artifact_format="tensor",
-        artifact_dir=str(tmp_path / "a"),
-        scorer=_FakeRuntime(),
-    )
-    assert (await reward.score_batch([_sample()])).scores == pytest.approx([2.0])
-
-    bad = UnifiedRewardVideoReward(
-        reward_name="unified_reward_video",
-        score_key="identity_consistency",
-        artifact_format="tensor",
-        artifact_dir=str(tmp_path / "b"),
-        scorer=_FakeRuntime(),
-    )
-    with pytest.raises(KeyError, match="missing score keys"):
-        await bad.score_batch([_sample()])
-
-
-def test_config_validates() -> None:
-    cfg = OmegaConf.create(
-        {
-            "reward": {
-                "components": {"unified_reward_video": 1.0},
-                "kwargs": {
-                    "unified_reward_video": {
-                        "reward_name": "unified_reward_video",
-                        "score_key": "overall",
-                        "worker_config": {
-                            "reward_model_name": "CodeGoat24/UnifiedReward-2.0-qwen-7b@main"
-                        },
-                    },
-                },
-            },
-        },
-    )
-    RewardConfig.from_cfg(cfg)
 
 
 @pytest.mark.parametrize("failure_at", [None, "get", "read", "convert"])
