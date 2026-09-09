@@ -41,7 +41,6 @@ from typing import Any
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
@@ -56,6 +55,7 @@ from vrl.trainers.checkpointing import (
     RESOLVED_CONFIG_NAME,
     CheckpointTarget,
     TrainingCheckpoint,
+    load_resolved_run_config,
     restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
@@ -353,13 +353,8 @@ def _load_run_config(run_dir: Path) -> DictConfig:
     the comparison is not also a kernel comparison.
     """
 
-    # An absolute Path, not a string: load_config resolves a relative string
-    # against the bundled preset tree.
-    path = (run_dir / RESOLVED_CONFIG_NAME).expanduser().resolve()
-    if not path.is_file():
-        raise FileNotFoundError(f"run directory has no {RESOLVED_CONFIG_NAME}: {run_dir}")
-    cfg = load_config(
-        path,
+    cfg, _ = load_resolved_run_config(
+        run_dir,
         overrides=["model.lora.path=", "model.torch_compile.enable=false"],
     )
     # The registry resolves the config's family alias (a run records "wan"),

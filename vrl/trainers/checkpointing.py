@@ -1547,21 +1547,32 @@ def save_resolved_config(cfg: Any, output_dir: str | Path, *, resumed: bool) -> 
     OmegaConf.save(cfg, path / f"resume_config_{stamp}.yaml")
 
 
-def load_resolved_run_config(run_dir: str | Path) -> tuple[DictConfig, RootConfig]:
+def load_resolved_run_config(
+    run_dir: str | Path,
+    *,
+    overrides: list[str] | None = None,
+) -> tuple[DictConfig, RootConfig]:
     """Load and parse the config a training run persisted via ``save_resolved_config``.
 
     The one reader for every checkpoint-evaluation entrypoint: the merged tree
     (for provenance records and re-persisting) plus the parsed root every
     consumer reads. A retired key in an archived run fails here, by name.
+
+    ``overrides`` is for an entrypoint that must evaluate the run under
+    different runtime settings than it trained with -- disabling compile, or
+    dropping a LoRA path it will load itself -- and is applied before parsing,
+    so what comes back is what the evaluation will actually run.
     """
 
     from vrl.config.loading import load_config
     from vrl.config.schema import parse_config
 
+    # An absolute Path, not a string: load_config resolves a relative string
+    # against the bundled preset tree.
     path = Path(run_dir).expanduser().resolve() / RESOLVED_CONFIG_NAME
     if not path.is_file():
         raise FileNotFoundError(f"training run has no resolved config: {path}")
-    cfg = load_config(path)
+    cfg = load_config(path, overrides=list(overrides or []))
     return cfg, parse_config(cfg)
 
 
