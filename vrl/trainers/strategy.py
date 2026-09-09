@@ -343,10 +343,10 @@ class _UnshardedStateStrategy:
     The shared precondition is "every rank already holds the full unsharded
     tensor": single process trivially, DDP because it *replicates* the module
     instead of splitting it. Under that precondition a rank's own
-    ``state_dict()`` already is the full policy-facing state, so these five
+    ``state_dict()`` already is the full policy-facing state, so these six
     methods can call the plain checkpoint helpers with no collective at all.
 
-    ``FSDPStrategy`` is the counterexample and overrides all five: its
+    ``FSDPStrategy`` is the counterexample and overrides all six: its
     parameters, gradients, and optimizer moments live as DTensor shards, so
     every one of these operations becomes an all-gather (or a re-scatter on
     load) through ``vrl/trainers/fsdp.py``.
@@ -354,6 +354,23 @@ class _UnshardedStateStrategy:
     Concrete strategies inherit this implementation mixin directly. ``Strategy``
     stays outside their MRO as the structural contract consumed by the trainer.
     """
+
+    def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
+        """Flat trainable state for the rollout policy, with no collective.
+
+        Do NOT route this through the FSDP DCP full-state gather
+        (``get_model_state_dict(full_state_dict=True)``). At world_size>1 its
+        distributed all-gather path drops the PEFT LoRA keys for a *replicated*
+        (non-sharded) module, so ``select_trainable_state`` then reports every
+        lora_A/lora_B parameter "missing" and the first weight sync raises. The
+        ws=1 CPU test never hit that path, because the gather is a no-op at
+        ws=1; the real 2x1 NCCL run did. ``to_cpu_snapshot`` takes the
+        non-aliasing copy after the requires-grad keys are selected.
+        """
+
+        from vrl.trainers.weight_sync import flatten_trainable_module_state, to_cpu_snapshot
+
+        return to_cpu_snapshot(flatten_trainable_module_state(require_trainable_modules(bundle)))
 
     def export_checkpoint_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
         from vrl.trainers.checkpointing import export_checkpoint_state
@@ -444,11 +461,6 @@ class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy):
         max_norm: float,
     ) -> float:
         return float(nn.utils.clip_grad_norm_(parameters, max_norm))
-
-    def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
-        from vrl.trainers.weight_sync import build_trainable_state_sync_getter, to_cpu_snapshot
-
-        return to_cpu_snapshot(build_trainable_state_sync_getter(bundle)())
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         if self._parked_training_state is not None and restore_parked:
@@ -976,40 +988,6 @@ class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
         # Grads are already all-reduced (identical on every rank), so a local clip
         # is globally correct.
         return float(nn.utils.clip_grad_norm_(parameters, max_norm))
-
-    def _unwrapped_full_state(self, module: Any) -> tuple[Any, dict[str, Any]]:
-        from vrl.models.weight_utils import unwrap_compile_and_ddp
-
-        inner = unwrap_compile_and_ddp(module)
-        # DDP replicates the full module on every rank (no sharding), so the plain
-        # unwrapped state_dict() IS the full policy-facing state — same key space as
-        # inner.named_parameters(), which select_trainable_state() checks against.
-        #
-        # Do NOT route this through the FSDP DCP full-state gather
-        # (get_model_state_dict full_state_dict=True): at world_size>1 its distributed
-        # all-gather path drops the PEFT LoRA keys for a *replicated* (non-sharded)
-        # module, so select_trainable_state() then reports every lora_A/lora_B param
-        # "missing" and the first weight sync raises. The ws=1 CPU test never hit that
-        # path (gather is a no-op at ws=1); the real 2x1 NCCL run did. Callers perform
-        # Rollout export performs its own non-aliasing CPU snapshot after selecting
-        # the requires-grad policy keys.
-        full = {key: value.detach() for key, value in inner.state_dict().items()}
-        return inner, full
-
-    def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
-        from vrl.trainers.weight_sync import (
-            select_trainable_state,
-            to_cpu_snapshot,
-        )
-
-        modules = require_trainable_modules(bundle)
-        state: dict[str, Any] = {}
-        for module_name, module in modules.items():
-            inner, full = self._unwrapped_full_state(module)
-            state.update(select_trainable_state(inner, str(module_name), full))
-        if not state:
-            raise ValueError("trainable module state is empty")
-        return to_cpu_snapshot(state)
 
     def validate_training_state_parking(self) -> None:
         raise NotImplementedError(
