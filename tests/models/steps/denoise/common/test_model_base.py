@@ -22,6 +22,7 @@ from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.families.cosmos.predict2.model import CosmosPredict2Model
 from vrl.models.families.flux.model import FluxModel
 from vrl.models.families.mochi.model import MochiModel
+from vrl.models.families.sana.model import SanaModel
 from vrl.models.families.sd3_5.model import SD3_5Model
 from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
 from vrl.models.interfaces import ReplayResult
@@ -211,6 +212,81 @@ def test_shared_from_build_skips_an_absent_declared_encoder(monkeypatch) -> None
 
     assert model.pipeline is pipeline
     assert pipeline.text_encoder.to_calls == [("cuda:0", torch.float16)]
+
+
+def _sana_build(dtype: torch.dtype) -> ModelBuild:
+    return ModelBuild(
+        model_name_or_path="Efficient-Large-Model/Sana_1600M_1024px_diffusers",
+        revision=None,
+        device="cuda:0",
+        parameter_dtype=dtype,
+        family="sana",
+        precision=RolePrecision("bf16", "tf32"),
+        rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.float16),
+    )
+
+
+def _sana_pipeline() -> _LoadedPipeline:
+    from diffusers import DPMSolverMultistepScheduler
+
+    pipeline = _LoadedPipeline()
+    # What the SANA checkpoint actually ships: a DPM solver whose flow shift is
+    # spelled ``flow_shift``.
+    pipeline.scheduler = DPMSolverMultistepScheduler(use_flow_sigmas=True, flow_shift=3.0)
+    return pipeline
+
+
+def test_sana_swaps_the_shipped_dpm_solver_for_flow_match_and_keeps_its_shift(
+    monkeypatch,
+) -> None:
+    """SANA's checkpoint ships DPMSolverMultistep; per-step SDE log-prob needs
+    FlowMatchEuler on both sides, and the shift has to survive the swap.
+
+    Both halves have bitten before: rollout on DPM made ``index_for_timestep``
+    return empty at the first-step parity gate, and accepting FlowMatch's
+    default shift=1 instead of the checkpoint's 3 produced colour blocks.
+    """
+    from diffusers import FlowMatchEulerDiscreteScheduler, SanaPipeline
+
+    pipeline = _sana_pipeline()
+    monkeypatch.setattr(
+        SanaPipeline,
+        "from_pretrained",
+        staticmethod(lambda *args, **kwargs: pipeline),
+    )
+
+    model = SanaModel.from_build(_sana_build(torch.float16))
+
+    assert isinstance(model.scheduler, FlowMatchEulerDiscreteScheduler)
+    assert float(model.scheduler.config.shift) == 3.0
+    # Gemma-2-2B co-resides with the DiT: the shared loader must not park it.
+    assert pipeline.text_encoder.to_calls == [("cuda:0", torch.float16)]
+    assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]
+    assert pipeline.vae.requires_grad_enabled is False
+
+
+def test_sana_applies_the_saturation_clamp_only_off_fp16(monkeypatch) -> None:
+    """The clamp exists because non-fp16 SANA attention overflows; fp16 needs none."""
+    from diffusers import SanaPipeline
+
+    clamped: list[type] = []
+    monkeypatch.setattr(
+        SanaModel,
+        "_apply_fp16_saturation_clamp",
+        classmethod(lambda cls, transformer: clamped.append(transformer)),
+    )
+    monkeypatch.setattr(
+        SanaPipeline,
+        "from_pretrained",
+        staticmethod(lambda *args, **kwargs: _sana_pipeline()),
+    )
+
+    fp16_model = SanaModel.from_build(_sana_build(torch.float16))
+    assert clamped == []
+
+    bf16_model = SanaModel.from_build(_sana_build(torch.bfloat16))
+    assert clamped == [bf16_model.transformer]
+    assert fp16_model is not bf16_model
 
 
 def test_pipeline_model_base_discovers_primary_encoder_device() -> None:
