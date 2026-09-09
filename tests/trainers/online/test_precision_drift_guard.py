@@ -16,6 +16,7 @@ from tests.trainers.online._helpers import (
     _stamp_model_precision,
 )
 from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
+from vrl.config.precision import normalize_role_precision_label
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 from vrl.trainers.online.precision_guard import (
     PrecisionDriftError,
@@ -51,6 +52,38 @@ def _run(config, *, train, rollout, evaluate_fn, **kw):
         evaluate_fn=evaluate_fn,
         **kw,
     )
+
+
+# -- normalize_role_precision_label ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        # The legacy accelerate spelling of "no autocast", and its absence.
+        ("no", "fp32"),
+        ("", "fp32"),
+        (None, "fp32"),
+        # A torch dtype reaches the guard as its repr, via the evaluator's
+        # math_dtype; both long and short spellings land on one label.
+        (torch.float32, "fp32"),
+        (torch.bfloat16, "bf16"),
+        ("float16", "fp16"),
+        ("  BF16 ", "bf16"),
+        # Canonical and compound labels pass through untouched.
+        ("fp32", "fp32"),
+        ("bf16+fp8", "bf16+fp8"),
+    ],
+)
+def test_every_precision_spelling_lands_on_one_label(value, expected: str) -> None:
+    """The trainer's metadata and the guard's comparison must agree by construction.
+
+    They used to normalize separately, and the guard's copy handled neither a
+    torch dtype nor the long dtype names, so which spelling reached it decided
+    whether two equal roles compared equal.
+    """
+
+    assert normalize_role_precision_label(value) == expected
 
 
 # -- resolve_guard_mode ----------------------------------------------------

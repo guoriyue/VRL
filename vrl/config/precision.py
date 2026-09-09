@@ -58,11 +58,23 @@ _QUANTIZATION_FORMAT_RULES = {
 _PRECISION_TOKENS = (*_PLAIN_DTYPES, *_QUANTIZATION_FORMAT_RULES)
 
 
-def normalize_role_precision_label(precision: str) -> str:
-    """Normalize role labels while retaining quantization and autocast suffixes."""
+def normalize_role_precision_label(precision: Any) -> str:
+    """One spelling for a precision role, from config text or a torch dtype.
 
-    token = str(precision or "").strip().lower()
-    return "fp32" if token in ("", "no") else token
+    Retains quantization and autocast suffixes ("bf16+fp8" passes through).
+    "no" is the legacy accelerate spelling of no-autocast, and a
+    ``torch.dtype`` stringifies as "torch.float32"; every producer must reach
+    the drift guard through this so equal roles compare equal.
+    """
+
+    token = str(precision or "").strip().lower().removeprefix("torch.")
+    return {
+        "": "fp32",
+        "no": "fp32",
+        "float32": "fp32",
+        "bfloat16": "bf16",
+        "float16": "fp16",
+    }.get(token, token)
 
 
 def normalize_precision(value: Any, *, default: str = "fp32") -> str:
