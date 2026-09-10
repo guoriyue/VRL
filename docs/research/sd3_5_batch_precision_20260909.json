@@ -1,0 +1,183 @@
+{
+  "scope": "real checkpoint, one configured prompt, eager no-grad forward; no decode/reward/backward",
+  "prompt_index": 1971,
+  "arms": [
+    {
+      "mode": "bf16_tf32",
+      "steps": [
+        {
+          "step": 0,
+          "batch_noise_max": 0.6875,
+          "batch_logprob_max": 0.0004595518112182617,
+          "original_rollout_logprob_max": 0.0004595518112182617
+        },
+        {
+          "step": 1,
+          "batch_noise_max": 3.6015625,
+          "batch_logprob_max": 0.0002295970916748047,
+          "original_rollout_logprob_max": 0.0002295970916748047
+        },
+        {
+          "step": 2,
+          "batch_noise_max": 1.3515625,
+          "batch_logprob_max": 0.00012928247451782227,
+          "original_rollout_logprob_max": 0.00012928247451782227
+        },
+        {
+          "step": 3,
+          "batch_noise_max": 0.8984375,
+          "batch_logprob_max": 0.0002186894416809082,
+          "original_rollout_logprob_max": 0.0002186894416809082
+        },
+        {
+          "step": 4,
+          "batch_noise_max": 1.5234375,
+          "batch_logprob_max": 0.00046697258949279785,
+          "original_rollout_logprob_max": 0.00046697258949279785
+        },
+        {
+          "step": 5,
+          "batch_noise_max": 1.328125,
+          "batch_logprob_max": 0.0007525086402893066,
+          "original_rollout_logprob_max": 0.0007525086402893066
+        },
+        {
+          "step": 6,
+          "batch_noise_max": 2.8671875,
+          "batch_logprob_max": 0.0019491314888000488,
+          "original_rollout_logprob_max": 0.0019491314888000488
+        },
+        {
+          "step": 7,
+          "batch_noise_max": 2.75,
+          "batch_logprob_max": 0.005034700036048889,
+          "original_rollout_logprob_max": 0.005034700036048889
+        },
+        {
+          "step": 8,
+          "batch_noise_max": 1.654296875,
+          "batch_logprob_max": 0.018531210720539093,
+          "original_rollout_logprob_max": 0.018531210720539093
+        }
+      ]
+    },
+    {
+      "mode": "bf16_ieee",
+      "steps": [
+        {
+          "step": 0,
+          "batch_noise_max": 0.6875,
+          "batch_logprob_max": 0.0004595518112182617,
+          "original_rollout_logprob_max": 0.0004595518112182617
+        },
+        {
+          "step": 1,
+          "batch_noise_max": 3.6015625,
+          "batch_logprob_max": 0.0002295970916748047,
+          "original_rollout_logprob_max": 0.0002295970916748047
+        },
+        {
+          "step": 2,
+          "batch_noise_max": 1.3515625,
+          "batch_logprob_max": 0.00012928247451782227,
+          "original_rollout_logprob_max": 0.00012928247451782227
+        },
+        {
+          "step": 3,
+          "batch_noise_max": 0.8984375,
+          "batch_logprob_max": 0.0002186894416809082,
+          "original_rollout_logprob_max": 0.0002186894416809082
+        },
+        {
+          "step": 4,
+          "batch_noise_max": 1.5234375,
+          "batch_logprob_max": 0.00046697258949279785,
+          "original_rollout_logprob_max": 0.00046697258949279785
+        },
+        {
+          "step": 5,
+          "batch_noise_max": 1.328125,
+          "batch_logprob_max": 0.0007525086402893066,
+          "original_rollout_logprob_max": 0.0007525086402893066
+        },
+        {
+          "step": 6,
+          "batch_noise_max": 2.8671875,
+          "batch_logprob_max": 0.0019491314888000488,
+          "original_rollout_logprob_max": 0.0019491314888000488
+        },
+        {
+          "step": 7,
+          "batch_noise_max": 2.75,
+          "batch_logprob_max": 0.005034700036048889,
+          "original_rollout_logprob_max": 0.005034700036048889
+        },
+        {
+          "step": 8,
+          "batch_noise_max": 1.654296875,
+          "batch_logprob_max": 0.018531210720539093,
+          "original_rollout_logprob_max": 0.018531210720539093
+        }
+      ]
+    },
+    {
+      "mode": "fp32_ieee",
+      "steps": [
+        {
+          "step": 0,
+          "batch_noise_max": 7.963180541992188e-05,
+          "batch_logprob_max": 2.384185791015625e-07,
+          "original_rollout_logprob_max": 0.0005538463592529297
+        },
+        {
+          "step": 1,
+          "batch_noise_max": 0.0003001689910888672,
+          "batch_logprob_max": 1.1920928955078125e-07,
+          "original_rollout_logprob_max": 0.00013303756713867188
+        },
+        {
+          "step": 2,
+          "batch_noise_max": 0.0004181861877441406,
+          "batch_logprob_max": 1.1920928955078125e-07,
+          "original_rollout_logprob_max": 0.00015473365783691406
+        },
+        {
+          "step": 3,
+          "batch_noise_max": 0.0008424520492553711,
+          "batch_logprob_max": 5.960464477539063e-08,
+          "original_rollout_logprob_max": 0.0004677772521972656
+        },
+        {
+          "step": 4,
+          "batch_noise_max": 0.0008090734481811523,
+          "batch_logprob_max": 8.940696716308594e-08,
+          "original_rollout_logprob_max": 0.0004266500473022461
+        },
+        {
+          "step": 5,
+          "batch_noise_max": 0.0009655952453613281,
+          "batch_logprob_max": 5.960464477539063e-08,
+          "original_rollout_logprob_max": 0.0007738471031188965
+        },
+        {
+          "step": 6,
+          "batch_noise_max": 0.0010559558868408203,
+          "batch_logprob_max": 2.384185791015625e-07,
+          "original_rollout_logprob_max": 0.0014409422874450684
+        },
+        {
+          "step": 7,
+          "batch_noise_max": 0.0006968975067138672,
+          "batch_logprob_max": 1.341104507446289e-07,
+          "original_rollout_logprob_max": 0.003258347511291504
+        },
+        {
+          "step": 8,
+          "batch_noise_max": 0.0010275840759277344,
+          "batch_logprob_max": 4.76837158203125e-07,
+          "original_rollout_logprob_max": 0.011572189629077911
+        }
+      ]
+    }
+  ]
+}

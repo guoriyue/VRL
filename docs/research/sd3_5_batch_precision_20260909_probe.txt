@@ -1,0 +1,48 @@
+import dataclasses,gc,json
+import torch
+from vrl.config.loading import load_config
+from vrl.run import resolve_online_run,resolve_model
+from vrl.trainers.data import PromptBatchSampler,load_prompt_examples_from_config
+from vrl.generation.types import DenoiseRequest
+from vrl.models.precision import apply_float32_precision
+from vrl.math.denoise.flow_matching import sde_step_with_logprob
+c=load_config('experiment/sd3_5/online_grpo_ocr',overrides=['trainer.seed=17','trainer.deterministic=true','sampling.seed=17','model.torch_compile.enable=false'])
+r=resolve_online_run(c);r.run.initialize_process_rng()
+examples=load_prompt_examples_from_config(r.built.root.data)
+sampler=PromptBatchSampler(generator=torch.Generator().manual_seed(17),num_examples=len(examples),prompts_per_rank=8,num_replicas=1,rank=0,strategy=str(r.built.root.data.sampler.type))
+index=sampler.sample(epoch=0)[0];prompt=examples[index].prompt
+bundle=resolve_model(r.family,r.built.root,torch.device('cuda'),precision=r.built.precision,for_rollout=True).materialize(context='batch precision isolation')
+m=bundle.model
+with torch.no_grad():
+    encoded=m.encode_prompt([prompt],[''],guidance_scale=4.5,max_sequence_length=128)
+    for name in ('text_encoder','text_encoder_2','text_encoder_3','vae'):
+        component=getattr(m.pipeline,name,None)
+        if component is not None: component.to('cpu')
+    gc.collect();torch.cuda.empty_cache()
+    encoded={k:v.repeat_interleave(16,dim=0) if isinstance(v,torch.Tensor) else v for k,v in encoded.items()}
+    state=m.prepare_sampling(DenoiseRequest(width=512,height=512,frame_count=1,num_steps=10,guidance_scale=4.5,seed=17),encoded)
+    context=m.export_batch_context(state)
+    records=[];generator=torch.Generator(device='cuda').manual_seed(17)
+    for step in range(9):
+        tensors=dict(m.export_replay_tensors(state));tensors['timesteps']=state.timesteps[step].expand(16).clone()
+        latents=state.latents.clone()
+        output=m.forward_step(state,step)['noise_pred']
+        result=sde_step_with_logprob(state.scheduler,output,state.timesteps[step].unsqueeze(0),latents,generator=generator,noise_level=0.7,sde_type='flow_grpo',step_index=step)
+        records.append((step,latents,{k:v.clone() if isinstance(v,torch.Tensor) else v for k,v in tensors.items()},result.prev_sample.clone(),result.log_prob.clone()))
+        state.latents=result.prev_sample
+    report={'scope':'real checkpoint, one configured prompt, eager no-grad forward; no decode/reward/backward','prompt_index':int(index),'arms':[]}
+    for mode,dtype,autocast in [('bf16_tf32',torch.bfloat16,True),('bf16_ieee',torch.bfloat16,True),('fp32_ieee',torch.float32,False)]:
+        apply_float32_precision('tf32' if mode.endswith('tf32') else 'ieee')
+        m.transformer.to(dtype=dtype)
+        m.precision=dataclasses.replace(m.precision,dtype='bf16' if dtype==torch.bfloat16 else 'fp32',outer_autocast=autocast)
+        differences=[]
+        for step,latents,tensors,actions,old_logprob in records:
+            full=m.forward_step(m.restore_eval_state(tensors,context,latents,step),0)['noise_pred']
+            sliced=torch.cat([m.forward_step(m.restore_eval_state({k:v[i:i+1] if isinstance(v,torch.Tensor) else v for k,v in tensors.items()},context,latents[i:i+1],step),0)['noise_pred'] for i in range(16)])
+            kwargs=dict(prev_sample=actions,noise_level=0.7,sde_type='flow_grpo',step_index=step)
+            full_lp=sde_step_with_logprob(state.scheduler,full,tensors['timesteps'],latents,**kwargs).log_prob
+            small_lp=sde_step_with_logprob(state.scheduler,sliced,tensors['timesteps'],latents,**kwargs).log_prob
+            differences.append({'step':step,'batch_noise_max':float((full.float()-sliced.float()).abs().max()),'batch_logprob_max':float((full_lp-small_lp).abs().max()),'original_rollout_logprob_max':float((old_logprob-small_lp).abs().max())})
+            print(mode,differences[-1],flush=True)
+        report['arms'].append({'mode':mode,'steps':differences})
+    open('/tmp/vrl_sd3_batch_precision_probe.json','x').write(json.dumps(report,indent=2))
