@@ -1,0 +1,169 @@
+{
+  "arguments": {
+    "bucket_bytes": 33554432,
+    "device": "cuda:0",
+    "directory": "/tmp/vrl-optimizer-probe",
+    "elements": 1048576,
+    "parameters": 64,
+    "report": "/tmp/vrl-optimizer-streaming-5090-20260909-r2.json",
+    "steps": 3,
+    "timeout_s": 300
+  },
+  "arms": [
+    {
+      "arm": "resident",
+      "cuda_baseline_allocated_bytes": 536870912,
+      "cuda_device_uuid": "8d419270-59bc-1a7f-8739-f38dcd180530",
+      "cuda_end_allocated_bytes": 1073741824,
+      "cuda_peak_allocated_bytes": 1086324736,
+      "cuda_peak_reserved_bytes": 1090519040,
+      "cuda_runtime": "13.0",
+      "device": "NVIDIA GeForce RTX 5090",
+      "final_parameter_and_state_sha256": "938bc74cf4d6b292921b8ec3ffce9cb11739696c54bb1071010014a227703056",
+      "first_step_s": 0.0451440560282208,
+      "measured_at_utc": "2026-09-10T03:31:02.411286+00:00",
+      "median_steady_step_s": 0.006980203033890575,
+      "per_step_io": [
+        {
+          "cancelled_write_bytes": 0,
+          "rchar": 61396,
+          "read_bytes": 0,
+          "syscr": 45,
+          "syscw": 0,
+          "wchar": 0,
+          "write_bytes": 0
+        },
+        {
+          "cancelled_write_bytes": 0,
+          "rchar": 109,
+          "read_bytes": 0,
+          "syscr": 2,
+          "syscw": 0,
+          "wchar": 0,
+          "write_bytes": 0
+        },
+        {
+          "cancelled_write_bytes": 0,
+          "rchar": 109,
+          "read_bytes": 0,
+          "syscr": 2,
+          "syscw": 0,
+          "wchar": 0,
+          "write_bytes": 0
+        },
+        {
+          "cancelled_write_bytes": 0,
+          "rchar": 109,
+          "read_bytes": 0,
+          "syscr": 2,
+          "syscw": 0,
+          "wchar": 0,
+          "write_bytes": 0
+        }
+      ],
+      "process_peak_rss_bytes": 891166720,
+      "steady_step_s": [
+        0.00688773300498724,
+        0.006980203033890575,
+        0.0069991619675420225
+      ],
+      "torch": "2.11.0+cu130",
+      "window_io": {
+        "cancelled_write_bytes": 0,
+        "rchar": 62268,
+        "read_bytes": 0,
+        "syscr": 61,
+        "syscw": 0,
+        "wchar": 0,
+        "write_bytes": 0
+      }
+    },
+    {
+      "arm": "disk",
+      "cuda_baseline_allocated_bytes": 536870912,
+      "cuda_device_uuid": "8d419270-59bc-1a7f-8739-f38dcd180530",
+      "cuda_end_allocated_bytes": 536870912,
+      "cuda_peak_allocated_bytes": 574619648,
+      "cuda_peak_reserved_bytes": 587202560,
+      "cuda_runtime": "13.0",
+      "device": "NVIDIA GeForce RTX 5090",
+      "final_parameter_and_state_sha256": "938bc74cf4d6b292921b8ec3ffce9cb11739696c54bb1071010014a227703056",
+      "first_step_s": 0.5901252820040099,
+      "measured_at_utc": "2026-09-10T03:31:07.787033+00:00",
+      "median_steady_step_s": 0.9324206570163369,
+      "per_step_io": [
+        {
+          "cancelled_write_bytes": 0,
+          "rchar": 537005311,
+          "read_bytes": 0,
+          "syscr": 2165,
+          "syscw": 278,
+          "wchar": 536941662,
+          "write_bytes": 536961024
+        },
+        {
+          "cancelled_write_bytes": 0,
+          "rchar": 1611235808,
+          "read_bytes": 8192,
+          "syscr": 4706,
+          "syscw": 278,
+          "wchar": 536941662,
+          "write_bytes": 536961024
+        },
+        {
+          "cancelled_write_bytes": 0,
+          "rchar": 1611235815,
+          "read_bytes": 8192,
+          "syscr": 4706,
+          "syscw": 278,
+          "wchar": 536941662,
+          "write_bytes": 536961024
+        },
+        {
+          "cancelled_write_bytes": 0,
+          "rchar": 1611235816,
+          "read_bytes": 8192,
+          "syscr": 4706,
+          "syscw": 278,
+          "wchar": 536941662,
+          "write_bytes": 536961024
+        }
+      ],
+      "process_peak_rss_bytes": 954302464,
+      "steady_step_s": [
+        0.9299866530345753,
+        1.008786752994638,
+        0.9324206570163369
+      ],
+      "torch": "2.11.0+cu130",
+      "window_io": {
+        "cancelled_write_bytes": 0,
+        "rchar": 5370713371,
+        "read_bytes": 24576,
+        "syscr": 16293,
+        "syscw": 1112,
+        "wchar": 2147766648,
+        "write_bytes": 2147844096
+      }
+    }
+  ],
+  "disk_to_resident_step_ratio": 133.5807357592908,
+  "exact_final_state_match": true,
+  "git_commit": "8eb404569a45f7d656ec2f6002da930aa518c975",
+  "limitations": [
+    "Synthetic optimizer-only workload; no forward/backward or FP32 master copy.",
+    "Sequential arms on a shared device; no performance confidence interval.",
+    "RSS includes process startup; checkpoint hashing/export excluded from metrics.",
+    "Filesystem page cache is not flushed; physical reads can be zero."
+  ],
+  "moment_bytes": 536871168,
+  "parameter_bytes": 268435456,
+  "platform": "Linux-7.0.0-30-generic-x86_64-with-glibc2.39",
+  "python": "3.12.2 | packaged by conda-forge | (main, Feb 16 2024, 20:50:58) [GCC 12.3.0]",
+  "schema": "optimizer-streaming-probe/v1",
+  "source_sha256": {
+    "vrl/scripts/perf/optimizer_streaming_probe.py": "b8e1227a7b9606532d915858c5a9afc04f55cddf78971bfdba99bf196eb328db",
+    "vrl/trainers/disk_optimizer.py": "192f42063284a39f8758c97336482870fccdaee80b1c86acd36ab0e239aa5921"
+  },
+  "workload": "synthetic FP32 parameters with constant preallocated gradients"
+}

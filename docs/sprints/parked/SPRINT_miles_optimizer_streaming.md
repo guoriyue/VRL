@@ -51,6 +51,14 @@ path is also exercised in `tests/trainers/online/test_state_restore.py`.
 These tests do not establish CUDA peak HBM, host RSS, throughput, disk endurance,
 full-parameter recipe convergence, or distributed checkpoint compatibility.
 
+## Measured optimizer-only capacity probe
+
+The [shared RTX 5090 probe](../../research/optimizer_streaming_5090_20260909.md)
+measured 488 MiB lower peak CUDA allocation for 67,108,864 synthetic FP32 parameters,
+with exact final parameter/moment agreement and approximately 134 times slower
+optimizer steps. This is evidence of a residency tradeoff, not a real-recipe budget
+or a reason to enable disk state by default.
+
 ## Remaining acceptance
 
 Measure real recipe memory and I/O budgets before recommending this option. The
