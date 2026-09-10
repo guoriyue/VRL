@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import random
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from vrl.scripts.data.common import dedupe_text, write_jsonl
+from vrl.scripts.data.common import dedupe_text
 from vrl.scripts.data.danbooru.config import (
     CLOTHING_TAGS,
     DANBOORU_METADATA_FILE,
@@ -44,6 +43,7 @@ from vrl.scripts.data.danbooru.metadata import (
     record_score,
     resolve_metadata_path,
 )
+from vrl.utils.json_files import write_json, write_jsonl
 
 # Danbooru metadata writes ratings as a single letter. This protocol projection
 # is deliberately separate from the editable prompt taxonomy in config.yaml.
@@ -236,8 +236,7 @@ def write_safety_report(
         "eval_nsfw_tags_top": _nsfw_tag_counts(eval_rows, limit=50),
     }
     output = Path(path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_json(output, report)
 
 
 def _nsfw_tag_counts(rows: Sequence[Mapping[str, Any]], *, limit: int) -> dict[str, int]:

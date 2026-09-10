@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import random
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -10,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from vrl.scripts.data.common import dedupe_text, write_jsonl
+from vrl.scripts.data.common import dedupe_text
 from vrl.scripts.data.danbooru.config import (
     ACTION_BUCKET_TAGS,
     ANATOMY_EVAL_LIMIT,
@@ -52,6 +51,7 @@ from vrl.scripts.data.danbooru.metadata import (
     record_score,
     resolve_metadata_path,
 )
+from vrl.utils.json_files import write_json, write_jsonl
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,8 +363,7 @@ def write_prompt_report(
         "eval_prompt_styles": metadata_counts(eval_rows, key="prompt_style"),
     }
     output = Path(path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_json(output, report)
 
 
 def _resolve_prompt_style(prompt_style: str, index: int) -> str:

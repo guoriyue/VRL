@@ -256,10 +256,14 @@ def rank_run_verdict_name(rank: int) -> str:
     return f"run_verdict.rank-{rank}.json"
 
 
-def _run_verdict_identity(
+def _resolve_verdict_file(
     environ: MutableMapping[str, str],
 ) -> tuple[str, int | None, int | None]:
-    """Resolve a collision-free verdict name without masking a trainer failure."""
+    """Pick this process's verdict file name: per-rank under torchrun, else the aggregate.
+
+    Malformed ``RANK``/``WORLD_SIZE`` fall back to the single-process name rather
+    than raising, so a broken environment never masks the trainer's own failure.
+    """
 
     rank_raw = environ.get("RANK")
     world_size_raw = environ.get("WORLD_SIZE")
@@ -292,8 +296,9 @@ def write_run_verdict(
 
     if output_dir is None:
         return
-    import json
     from pathlib import Path
+
+    from vrl.utils.json_files import write_json
 
     if error is not None:
         from vrl.runtime_errors import failure_identity_cause
@@ -315,21 +320,13 @@ def write_run_verdict(
     else:
         verdict = {"verdict": "success"}
     environment = os.environ if environ is None else environ
-    file_name, rank, world_size = _run_verdict_identity(environment)
+    file_name, rank, world_size = _resolve_verdict_file(environment)
     verdict["schema_version"] = 1
     if rank is not None and world_size is not None:
         verdict["rank"] = rank
         verdict["world_size"] = world_size
     try:
-        path = Path(output_dir)
-        path.mkdir(parents=True, exist_ok=True)
-        destination = path / file_name
-        temporary = path / f".{file_name}.tmp-{os.getpid()}"
-        with temporary.open("w", encoding="utf-8") as handle:
-            handle.write(json.dumps(verdict, indent=2) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        temporary.replace(destination)
+        write_json(Path(output_dir) / file_name, verdict)
     except OSError:
         logging.getLogger(__name__).warning(
             "failed to write run verdict to %s",

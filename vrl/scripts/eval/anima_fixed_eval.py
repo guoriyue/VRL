@@ -19,6 +19,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from vrl.utils.json_files import write_json
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_NEGATIVE_PROMPT = "worst quality, low quality, score_1, score_2, score_3, artist name"
@@ -96,9 +98,7 @@ def main(argv: list[str] | None = None) -> None:
         report["pickscore_mean"] = sum(picks) / len(picks)
     variance = sum((s - report["quality_mean"]) ** 2 for s in scores) / len(scores)
     report["quality_std"] = variance**0.5
-    (out_dir / "eval_report.json").write_text(
-        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    write_json(out_dir / "eval_report.json", report)
     print(
         json.dumps(
             {k: v for k, v in report.items() if k != "per_image"},

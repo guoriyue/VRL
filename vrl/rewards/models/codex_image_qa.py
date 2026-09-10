@@ -30,6 +30,7 @@ from typing import Any
 
 from vrl.rewards.types import REWARD_GROUP_ID_METADATA_KEY
 from vrl.utils.artifacts import resolve_artifact_path
+from vrl.utils.json_files import write_json
 from vrl.utils.media import write_png
 
 DEFAULT_PROMPT_TEMPLATE = """You are a strict image-text alignment judge.
@@ -351,10 +352,7 @@ class CodexImageQARewardModel:
                 "rollout_policy_version": next(iter(policy_versions), None),
                 "items": items,
             }
-            (staging_dir / "manifest.json").write_text(
-                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
+            write_json(staging_dir / "manifest.json", manifest)
             staging_dir.replace(final_dir)
         self._saved_batch_index += 1
 

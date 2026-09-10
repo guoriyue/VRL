@@ -17,9 +17,6 @@ import argparse
 import gc
 import json
 import logging
-import os
-import tempfile
-from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +42,7 @@ from vrl.trainers.checkpointing import (
     validate_checkpoint_meta_compatibility,
 )
 from vrl.utils.artifacts import sha256_file
+from vrl.utils.json_files import write_json
 from vrl.utils.media import to_pil_image, write_png
 
 logger = logging.getLogger(__name__)
@@ -259,7 +257,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
             "side_by_side": _artifact_record(side_by_side_path, output_dir),
         },
     }
-    _write_json_atomic(manifest_path, manifest)
+    write_json(manifest_path, manifest)
     return {
         "base": str(base_path),
         "current": str(current_path),
@@ -397,22 +395,6 @@ def _artifact_record(path: Path, output_dir: Path) -> dict[str, Any]:
 # Canonical per-file digest lives in vrl.rewards.inference; keep the private name
 # as an alias so the pinned test ref (checkpoint_compare._sha256) keeps resolving.
 _sha256 = sha256_file
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp_name, path)
-    except BaseException:
-        with suppress(FileNotFoundError):
-            os.unlink(temp_name)
-        raise
 
 
 if __name__ == "__main__":

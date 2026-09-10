@@ -9,14 +9,14 @@ The source Video2World manifests remain unchanged.
 from __future__ import annotations
 
 import argparse
-import json
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from vrl.scripts.data.common import emit, write_jsonl, write_report
+from vrl.scripts.data.common import emit
 from vrl.trainers.data.artifacts import ArtifactManifestReport
 from vrl.utils.artifacts import SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS, sha256_file
+from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
 
 COMMAND_NAME = "derive-text-video-targets"
 
@@ -93,15 +93,8 @@ def derive_text_video_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, 
     return derived
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for index, line in enumerate(path.read_text(encoding="utf-8").splitlines()):
-        if not line.strip():
-            continue
-        value = json.loads(line)
-        if not isinstance(value, dict):
-            raise ValueError(f"{path}: row {index} must be a JSON object")
-        rows.append(value)
+def _read_manifest(path: Path) -> list[dict[str, Any]]:
+    rows = read_jsonl(path)
     if not rows:
         raise ValueError(f"{path}: manifest is empty")
     return rows
@@ -120,8 +113,8 @@ def _cmd_derive_text_video_targets(args: argparse.Namespace) -> None:
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    train_rows = derive_text_video_rows(_read_jsonl(train_source))
-    eval_rows = derive_text_video_rows(_read_jsonl(eval_source))
+    train_rows = derive_text_video_rows(_read_manifest(train_source))
+    eval_rows = derive_text_video_rows(_read_manifest(eval_source))
     train_output = output_dir / f"{args.name}_train.jsonl"
     eval_output = output_dir / f"{args.name}_eval.jsonl"
     write_jsonl(train_output, train_rows)
@@ -154,7 +147,7 @@ def _cmd_derive_text_video_targets(args: argparse.Namespace) -> None:
         "validation_summary": validation.to_dict(),
     }
     report_path = output_dir / f"{args.name}_report.json"
-    write_report(report_path, report)
+    write_json(report_path, report)
     emit({**report, "report": report_path.as_posix()})
 
 

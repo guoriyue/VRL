@@ -30,7 +30,6 @@ from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.robotics_video_reward import RoboticsVideoRewardModel
-from vrl.scripts.data.common import write_jsonl
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.denoise_generation import generate_one_video
@@ -45,6 +44,7 @@ from vrl.trainers.checkpointing import (
 from vrl.trainers.data import PromptExample, load_prompt_manifest
 from vrl.utils.artifacts import resolve_artifact_path, sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
+from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
 from vrl.utils.media import write_mp4
 
 logger = logging.getLogger(__name__)
@@ -281,7 +281,7 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
         "sample_count": len(generated),
     }
     write_jsonl(staging_dir / "generated.jsonl", [asdict(video) for video in generated])
-    _write_json(staging_dir / "provenance.json", provenance)
+    write_json(staging_dir / "provenance.json", provenance)
     _fsync_tree(staging_dir)
     generation_root.mkdir(parents=True, exist_ok=True)
     os.replace(staging_dir, final_dir)
@@ -363,7 +363,7 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
     }
     write_jsonl(staging_dir / "scores.jsonl", scored)
     _write_csv(staging_dir / "scores.csv", scored)
-    _write_json(staging_dir / "report.json", report)
+    write_json(staging_dir / "report.json", report)
     _fsync_tree(staging_dir)
     os.replace(staging_dir, scoring_dir)
     _fsync_directory(output_dir)
@@ -583,7 +583,7 @@ def _load_and_validate_shards(
             protocol_sha256 = observed_protocol_sha256
         elif observed_protocol_sha256 != protocol_sha256:
             raise ValueError("evaluation shards use different prompt/seed/sampling protocols")
-        rows = _read_jsonl(generated_path)
+        rows = read_jsonl(generated_path)
         if len(rows) != int(provenance.get("sample_count", -1)):
             raise ValueError(f"evaluation shard sample count changed: {shard_dir}")
         for row in rows:
@@ -722,22 +722,6 @@ def summarize_scores(rows: list[dict[str, Any]]) -> dict[str, Any]:
 def _json_sha256(value: Any) -> str:
     payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows = []
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            if line.strip():
-                row = json.loads(line)
-                if not isinstance(row, dict):
-                    raise TypeError(f"JSONL row must be an object: {path}")
-                rows.append(row)
-    return rows
-
-
-def _write_json(path: Path, value: Any) -> None:
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:

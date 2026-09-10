@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import tempfile
 import uuid
 from pathlib import Path
@@ -47,6 +46,7 @@ from vrl.scripts.eval.robotics_discrimination import (
 )
 from vrl.trainers.data.prompts import PromptExample, load_prompt_manifest
 from vrl.utils.artifacts import default_data_root, resolve_artifact_path, sha256_file
+from vrl.utils.json_files import write_json
 from vrl.utils.media import read_video_frames, write_mp4
 
 
@@ -276,8 +276,7 @@ async def _main_async(args: argparse.Namespace) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     report = asyncio.run(_main_async(args))
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_json(args.out, report)
     _print_report(report)
     if not report["verdict"]["passed"]:
         raise SystemExit(2)

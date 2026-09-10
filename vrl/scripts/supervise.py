@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from vrl.trainers.metrics_io import online_metric_columns
+from vrl.utils.json_files import write_json
 
 if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
@@ -460,10 +461,7 @@ class MetricsHealthGate:
                 ),
             },
         }
-        path = self.output_dir / HEALTH_VERDICT_NAME
-        temporary = path.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(verdict, indent=2, sort_keys=True) + "\n")
-        temporary.replace(path)
+        write_json(self.output_dir / HEALTH_VERDICT_NAME, verdict)
 
 
 @dataclass
@@ -589,7 +587,7 @@ class RunSupervisor:
             verdict = self._read_verdict(aggregate_path)
             if verdict is not None and exit_code is not None:
                 verdict["supervisor_exit_code"] = exit_code
-                self._write_aggregate_verdict(aggregate_path, verdict)
+                write_json(aggregate_path, verdict)
             return verdict
 
         rank_verdicts: dict[int, dict[str, Any]] = {}
@@ -610,7 +608,7 @@ class RunSupervisor:
         aggregate = self._aggregate_rank_verdicts(rank_verdicts, missing_ranks)
         if exit_code is not None:
             aggregate["supervisor_exit_code"] = exit_code
-        self._write_aggregate_verdict(aggregate_path, aggregate)
+        write_json(aggregate_path, aggregate)
         return aggregate
 
     def _aggregate_rank_verdicts(
@@ -687,16 +685,6 @@ class RunSupervisor:
                 "representative_rank": rank,
             }
         return {**common, "verdict": "success"}
-
-    @staticmethod
-    def _write_aggregate_verdict(path: Path, verdict: dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-        with temporary.open("w", encoding="utf-8") as handle:
-            handle.write(json.dumps(verdict, indent=2, sort_keys=True) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        temporary.replace(path)
 
     def _wait_with_health_checks(
         self,

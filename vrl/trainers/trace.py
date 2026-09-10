@@ -24,7 +24,7 @@ from omegaconf import OmegaConf
 
 from vrl.models.checkpoint_identity import local_checkpoint_content
 from vrl.models.precision import float32_precision_state
-from vrl.utils.artifacts import publish_evidence_record
+from vrl.utils.json_files import write_json
 
 if TYPE_CHECKING:
     from vrl.scripts.eval.image_checkpoint_eval import EvaluationArchive
@@ -106,7 +106,7 @@ class TrainingRunTrace:
         directory = Path(output_dir) / "run_evidence"
         directory.mkdir(parents=True, exist_ok=True)
         destination = directory / f"{record['launch_id']}.json"
-        publish_evidence_record(destination, record)
+        write_json(destination, record, overwrite=False)
         return cls.load(destination)
 
     def _read_launch(self) -> dict[str, Any]:
@@ -166,7 +166,7 @@ class TrainingRunTrace:
             "artifacts": artifacts,
         }
         destination = self.artifacts_path
-        publish_evidence_record(destination, record)
+        write_json(destination, record, overwrite=False)
         return destination
 
     def verify_artifacts(self) -> dict[str, Any]:

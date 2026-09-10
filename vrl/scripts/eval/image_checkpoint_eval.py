@@ -34,6 +34,7 @@ from vrl.scripts.eval.denoise_generation import (
     seed_for,
 )
 from vrl.utils.artifacts import sha256_file
+from vrl.utils.json_files import write_json
 
 if TYPE_CHECKING:
     from vrl.run import ResolvedModel
@@ -280,7 +281,7 @@ class EvaluationArchive:
 
     def publish_generation(self, rows: list[dict[str, Any]]) -> None:
         self.validate_images(rows)
-        _write_json(
+        write_json(
             self.directory / "generation_manifest.json",
             {"protocol": self.plan.record(), "images": rows},
         )
@@ -345,7 +346,7 @@ class EvaluationArchive:
                 seed=self.plan.seed,
             )
             _write_contact_sheets(self.plan, rows, staging)
-            _write_json(
+            write_json(
                 staging / "provenance.json",
                 {
                     "protocol": self.plan.record(),
@@ -361,7 +362,7 @@ class EvaluationArchive:
                 for path in staging.rglob("*")
                 if path.is_file()
             }
-            _write_json(
+            write_json(
                 staging / "evaluation_complete.json",
                 {"protocol": self.plan.record(), "artifacts": hashes},
             )
@@ -708,29 +709,11 @@ def _write_contact_sheets(
                 "prompt": plan.prompts[prompt_index].example.prompt,
             }
         )
-    _write_json(sheet_dir / "manifest.json", manifest)
-    _write_json(
+    write_json(sheet_dir / "manifest.json", manifest)
+    write_json(
         report_dir / "blind_key.json",
         {"note": "Review contact sheets before opening this key.", "orders": orders},
     )
-
-
-def _write_json(path: Path, value: Any) -> None:
-    """Publish a complete JSON file without exposing a truncated retry record."""
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=path.parent, delete=False
-        ) as handle:
-            temporary = Path(handle.name)
-            json.dump(value, handle, indent=2, sort_keys=True, allow_nan=False)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
 
 
 def build_parser() -> argparse.ArgumentParser:

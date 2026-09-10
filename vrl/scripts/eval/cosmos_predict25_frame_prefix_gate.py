@@ -30,6 +30,7 @@ from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
+from vrl.utils.json_files import write_json
 from vrl.utils.media import read_video_frames
 
 REPORT_SCHEMA = "vrl.cosmos-predict25-frame-prefix-gate/v1"
@@ -197,12 +198,6 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         release_cuda_memory()
 
 
-def _write_report(path: Path, report: dict[str, Any]) -> None:
-    path = path.expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     try:
@@ -214,10 +209,10 @@ def main(argv: list[str] | None = None) -> None:
             "error": f"{type(exc).__name__}: {exc}",
             "trace": traceback.format_exc(limit=8),
         }
-        _write_report(args.out, report)
+        write_json(args.out.expanduser(), report)
         print(json.dumps(report, indent=2, sort_keys=True))
         raise SystemExit(2) from exc
-    _write_report(args.out, report)
+    write_json(args.out.expanduser(), report)
     print(json.dumps(report, indent=2, sort_keys=True))
 
 

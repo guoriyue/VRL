@@ -60,6 +60,7 @@ from vrl.trainers.checkpointing import (
 from vrl.trainers.data import load_prompt_manifest
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
+from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
 from vrl.utils.media import write_mp4
 
 logger = logging.getLogger(__name__)
@@ -203,7 +204,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
         del model, bundle
         release_cuda_memory()
 
-    _write_jsonl(args.output_dir / "generated.jsonl", [_row_of(video) for video in videos])
+    write_jsonl(args.output_dir / "generated.jsonl", [_row_of(video) for video in videos])
     provenance = {
         "schema": REPORT_SCHEMA,
         "run_dir": str(args.run_dir),
@@ -219,7 +220,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
             target.label: {"path": str(target.path), "meta": target.meta} for target in targets
         },
     }
-    _write_json(args.output_dir / "provenance.json", provenance)
+    write_json(args.output_dir / "provenance.json", provenance)
     return {"videos": len(videos), "arms": provenance["arms"], "output_dir": str(args.output_dir)}
 
 
@@ -277,7 +278,7 @@ def _generate_arm(
 def score_grid(args: argparse.Namespace) -> dict[str, Any]:
     from vrl.rewards.models.hpsv3 import HPSv3Model
 
-    rows = _read_jsonl(args.output_dir / "generated.jsonl")
+    rows = read_jsonl(args.output_dir / "generated.jsonl")
     if not rows:
         raise ValueError(f"no generated.jsonl rows under {args.output_dir}")
     device = resolve_eval_device(args.device)
@@ -322,7 +323,7 @@ def score_grid(args: argparse.Namespace) -> dict[str, Any]:
         base_label=BASE_LABEL,
     )
     report = {"schema": REPORT_SCHEMA, "scored": len(scored), **summary}
-    _write_json(args.output_dir / "report.json", report)
+    write_json(args.output_dir / "report.json", report)
     return report
 
 
@@ -405,23 +406,6 @@ def _parse_target(value: str) -> CheckpointTarget:
 
 def _row_of(video: GeneratedVideo) -> dict[str, Any]:
     return asdict(video)
-
-
-def _write_json(path: Path, value: Any) -> None:
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    with path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, sort_keys=True) + "\n")
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    with path.open(encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
 
 
 if __name__ == "__main__":

@@ -24,7 +24,8 @@ from pathlib import Path
 import torch
 
 from vrl.trainers.disk_optimizer import DiskStreamingAdamW
-from vrl.utils.artifacts import publish_evidence_record, sha256_file
+from vrl.utils.artifacts import sha256_file
+from vrl.utils.json_files import write_json
 
 
 def _io_counters():
@@ -213,7 +214,7 @@ def main(argv=None):
         ],
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
-    publish_evidence_record(args.report, record)
+    write_json(args.report, record, overwrite=False)
     print(json.dumps(record, indent=2))
     if not exact:
         raise SystemExit("resident/disk final parameter or moment bytes differ")

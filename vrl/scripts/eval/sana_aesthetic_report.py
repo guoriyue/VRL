@@ -13,7 +13,6 @@ import csv
 import hashlib
 import json
 import math
-import os
 import statistics
 from collections.abc import Callable
 from copy import deepcopy
@@ -33,6 +32,7 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.data import load_prompt_manifest
 from vrl.utils.artifacts import sha256_file
+from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
 
 # Persisted protocol and asset identities. These constants are real schema
 # boundaries, not tunable experiment defaults or duplicated typed structures.
@@ -460,17 +460,12 @@ def write_sample_manifest(
 
     if not rows:
         raise ValueError("refusing to write an empty SANA evaluation sample manifest")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    try:
-        with temporary.open("w", encoding="utf-8") as handle:
-            for row in rows:
-                portable = dict(row)
-                portable["image_path"] = str(Path(str(row["image_path"])).relative_to(base_dir))
-                handle.write(json.dumps(portable, sort_keys=True) + "\n")
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    portable_rows = []
+    for row in rows:
+        portable = dict(row)
+        portable["image_path"] = str(Path(str(row["image_path"])).relative_to(base_dir))
+        portable_rows.append(portable)
+    write_jsonl(path, portable_rows)
 
 
 def publish_report(
@@ -484,22 +479,13 @@ def publish_report(
     if not metrics:
         raise ValueError("refusing to write a SANA evaluation report without metrics")
     path = run_dir / REPORT_RELATIVE_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
     payload = {
         "schema": REPORT_SCHEMA,
         "schema_version": REPORT_SCHEMA_VERSION,
         "provenance": provenance,
         "metrics": metrics,
     }
-    try:
-        temporary.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    write_json(path, payload)
     load_report_metrics(run_dir)
     return path
 
@@ -845,15 +831,7 @@ def _validate_report_provenance(
     sample_record = provenance["samples"]
     sample_path = run_dir / str(sample_record.get("path", ""))
     _require_matching_file(sample_path, sample_record, label="evaluation samples")
-    sample_rows: list[dict[str, Any]] = []
-    with sample_path.open(encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            if not line.strip():
-                continue
-            row = json.loads(line)
-            if not isinstance(row, dict):
-                raise TypeError(f"evaluation sample row {line_number} must be an object")
-            sample_rows.append(row)
+    sample_rows = read_jsonl(sample_path)
     if not sample_rows or len(sample_rows) != int(sample_record.get("count", -1)):
         raise ValueError(
             f"SANA evaluation sample manifest count changed: {len(sample_rows)} != "

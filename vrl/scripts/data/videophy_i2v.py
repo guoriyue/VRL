@@ -29,9 +29,8 @@ from vrl.scripts.data.common import (
     default_data_root,
     emit,
     repo_root,
-    write_jsonl,
-    write_report,
 )
+from vrl.utils.json_files import write_json, write_jsonl
 
 DEFAULT_REPO_ID = "videophysics/videophy_test_public"
 DEFAULT_CSV_FILE = "videophy_test_public.csv"
@@ -193,7 +192,7 @@ def prepare_videophy_i2v_dataset(
         ),
     }
     report_path = dataset_root / "report.json"
-    write_report(report_path, report)
+    write_json(report_path, report)
     report["source_report"] = report_path.as_posix()
     return report
 

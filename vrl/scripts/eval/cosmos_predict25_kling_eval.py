@@ -37,6 +37,7 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.data import load_prompt_manifest
 from vrl.utils.cuda_memory import release_cuda_memory
+from vrl.utils.json_files import write_json
 from vrl.utils.media import write_mp4
 
 logger = logging.getLogger(__name__)
@@ -180,10 +181,7 @@ def main(argv: list[str] | None = None) -> None:
         "score_key": _score_key(args, root),
         "keep_model_between_checkpoints": keep_model_between_checkpoints,
     }
-    (output_dir / "run_config.json").write_text(
-        json.dumps(run_config, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    write_json(output_dir / "run_config.json", run_config)
 
     generated = _generate_all(
         build,
@@ -206,10 +204,7 @@ def main(argv: list[str] | None = None) -> None:
     rows = _score_generated_videos(generated, cfg, score_key=score_key)
     write_scores(rows, output_dir)
     summary = _summarize_scores(rows)
-    (output_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    write_json(output_dir / "summary.json", summary)
     print(json.dumps({"output_dir": str(output_dir), "summary": summary}, indent=2))
 
 

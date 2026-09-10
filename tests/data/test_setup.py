@@ -9,12 +9,13 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 from vrl.config.schema import DataConfig
-from vrl.scripts.data import bootstrap, common, danbooru, setup, video_world
+from vrl.scripts.data import bootstrap, danbooru, setup, video_world
 from vrl.trainers.data import load_prompt_examples_from_config, load_prompt_manifest
 from vrl.trainers.data.artifacts import (
     resolve_prompt_example_references,
     validate_reference_images,
 )
+from vrl.utils.json_files import write_jsonl
 
 
 def _data_config(payload: dict) -> DataConfig:
@@ -221,7 +222,7 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
 
     manifest = data_root / "video_world" / "manifests" / "bridge_train.jsonl"
     manifest.parent.mkdir(parents=True, exist_ok=True)
-    common.write_jsonl(manifest, rows)
+    write_jsonl(manifest, rows)
 
     monkeypatch.setenv("VRL_DATA_ROOT", str(data_root))
     examples = [

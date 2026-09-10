@@ -199,7 +199,7 @@ def tensor_stats(value: Any) -> dict[str, Any]:
 def append_jsonl_record(path: str | Path, record: Mapping[str, Any]) -> None:
     """Append one JSON object to a JSONL file.
 
-    Named against ``vrl.scripts.data.common.write_jsonl``, which *overwrites*
+    Named against ``vrl.utils.json_files.write_jsonl``, which *overwrites*
     a file with many rows — same word, opposite semantics."""
 
     path = Path(path)

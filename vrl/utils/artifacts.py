@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
-import tempfile
 from pathlib import Path
-from typing import Any
 
 DATA_ROOT_ENV = "VRL_DATA_ROOT"
 
@@ -102,29 +99,6 @@ __all__ = [
     "ArtifactManifestError",
     "coerce_data_root",
     "default_data_root",
-    "publish_evidence_record",
     "repo_root",
     "resolve_artifact_path",
 ]
-
-
-def publish_evidence_record(destination: Path, record: dict[str, Any]) -> None:
-    """Share atomic, non-overwriting publication across evidence records."""
-
-    directory = destination.parent
-    encoded = json.dumps(record, indent=2, sort_keys=True, allow_nan=False) + "\n"
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=directory, delete=False
-        ) as handle:
-            temporary = Path(handle.name)
-            handle.write(encoded)
-            handle.flush()
-            os.fsync(handle.fileno())
-        # Atomic publication without overwriting a previous attempt, even if
-        # a launch identifier collides.
-        os.link(temporary, destination)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)

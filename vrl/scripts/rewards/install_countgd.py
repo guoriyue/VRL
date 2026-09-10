@@ -56,6 +56,7 @@ from vrl.scripts.rewards.countgd_environment_lock import (
     expected_environment_package_versions,
 )
 from vrl.utils.artifacts import default_data_root, sha256_file
+from vrl.utils.json_files import write_json
 
 _SOURCE_REPOSITORY = "https://github.com/niki-amini-naieni/CountGD"
 _SOURCE_ARCHIVE_SHA256 = "dcab136e4c1ce9a567a3f67bef084ec3efbcbe15c6f6155755fea4ac48457378"
@@ -441,10 +442,7 @@ def _build_staged_install(
         base_python=base_python,
         environment=environment,
     )
-    (staging / "install_manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    write_json(staging / "install_manifest.json", manifest)
     _verify_install(source_dir)
 
 

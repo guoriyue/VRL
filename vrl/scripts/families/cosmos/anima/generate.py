@@ -31,6 +31,7 @@ from vrl.scripts.eval.denoise_generation import (
 from vrl.scripts.families.cosmos.anima.generation_protocol import ANIMA_GENERATION_SCHEMA
 from vrl.trainers.data import PromptExample, load_prompt_manifest
 from vrl.utils.artifacts import sha256_file
+from vrl.utils.json_files import write_jsonl
 
 logger = logging.getLogger(__name__)
 
@@ -493,10 +494,7 @@ def _write_metadata(
     """Persist the evaluation index and its SFT-compatible target projection."""
 
     jsonl_path = out_dir / "metadata.jsonl"
-    jsonl_path.write_text(
-        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
-        encoding="utf-8",
-    )
+    write_jsonl(jsonl_path, rows)
     # The same generation run can directly become synthetic clean-data
     # supervision. Paths stay relative to the chosen artifact root (out_dir),
     # while run_config.json pins the model, sampling, and negative prompt that
@@ -515,10 +513,7 @@ def _write_metadata(
         }
         for row in rows
     ]
-    (out_dir / "anchor_manifest.jsonl").write_text(
-        "".join(json.dumps(row, sort_keys=True) + "\n" for row in anchor_rows),
-        encoding="utf-8",
-    )
+    write_jsonl(out_dir / "anchor_manifest.jsonl", anchor_rows)
 
 
 if __name__ == "__main__":

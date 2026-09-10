@@ -10,8 +10,6 @@ from vrl.scripts.data.common import (
     default_cache_dir,
     default_data_root,
     emit,
-    write_jsonl,
-    write_report,
 )
 from vrl.scripts.data.video_world.lerobot import (
     iter_lerobot_first_frames,
@@ -22,6 +20,7 @@ from vrl.scripts.data.video_world.manifests import (
     build_video_world_rows,
 )
 from vrl.trainers.data.artifacts import ArtifactManifestReport
+from vrl.utils.json_files import write_json, write_jsonl
 
 COMMAND_NAME = "video-world-bridge"
 TARGET_COMMAND_NAME = "video-world-targets"
@@ -185,7 +184,7 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
             "Reference frames live under data/external and are not committed to git."
         ),
     }
-    write_report(video_root / f"{args.name}_report.json", report)
+    write_json(video_root / f"{args.name}_report.json", report)
     emit(report)
 
 
@@ -267,7 +266,7 @@ def _cmd_video_world_targets(args: argparse.Namespace) -> None:
             "LeRobot videos and stored under data/external; do not commit them to git."
         ),
     }
-    write_report(video_root / f"{args.name}_report.json", report)
+    write_json(video_root / f"{args.name}_report.json", report)
     emit(report)
 
 

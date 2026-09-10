@@ -2,14 +2,14 @@
 
 Concrete, dependency-free utilities only. Each dataset lives in its own module
 (pickapic.py, danbooru/, video_world/, bootstrap.py); this module just holds
-the path/IO helpers they all need so no logic is duplicated.
+the path helpers they all need. File writers live in :mod:`vrl.utils.json_files`.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -27,22 +27,6 @@ def emit(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
-def write_jsonl(
-    path: str | Path,
-    rows: Iterable[Mapping[str, Any]],
-    *,
-    sort_keys: bool = True,
-) -> int:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    count = 0
-    with p.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(dict(row), sort_keys=sort_keys) + "\n")
-            count += 1
-    return count
-
-
 def dedupe_text(parts: Iterable[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
@@ -54,17 +38,10 @@ def dedupe_text(parts: Iterable[str]) -> list[str]:
     return out
 
 
-def write_report(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
 __all__ = [
     "dedupe_text",
     "default_cache_dir",
     "default_data_root",
     "emit",
     "repo_root",
-    "write_jsonl",
-    "write_report",
 ]

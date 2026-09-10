@@ -54,6 +54,7 @@ from vrl.scripts.families.cosmos.anima.generation_protocol import (
     AnimaGenerationArchive,
     AnimaGenerationCell,
 )
+from vrl.utils.json_files import write_json, write_jsonl
 
 # Persisted report protocol and its fixed blinding policy.
 REPORT_SCHEMA = "vrl.anima-exact-count-checkpoint-eval/v3"
@@ -279,9 +280,9 @@ def create_report(
     ) as temporary_root:
         staging = Path(temporary_root) / "report"
         staging.mkdir()
-        _write_jsonl(staging / "scores.jsonl", score_rows)
-        _write_jsonl(staging / "pairs.jsonl", pair_rows)
-        _write_json(staging / "summary.json", summary)
+        write_jsonl(staging / "scores.jsonl", score_rows)
+        write_jsonl(staging / "pairs.jsonl", pair_rows)
+        write_json(staging / "summary.json", summary)
         _write_contact_sheets(
             base_cells,
             checkpoint_cells,
@@ -766,8 +767,8 @@ def _write_contact_sheets(
                 "cell_to_arm": mapping,
             },
         )
-    _write_jsonl(output_dir / "contact_sheets" / "manifest.jsonl", manifest_rows)
-    _write_json(
+    write_jsonl(output_dir / "contact_sheets" / "manifest.jsonl", manifest_rows)
+    write_json(
         output_dir / "blind_key.json",
         {
             "schema": REPORT_SCHEMA,
@@ -850,17 +851,6 @@ def _two_sided_sign_test(improved: int, regressed: int) -> float:
         return 1.0
     lower_tail = sum(math.comb(count, index) for index in range(min(improved, regressed) + 1))
     return min(1.0, 2.0 * lower_tail / (2**count))
-
-
-def _write_json(path: Path, value: Any) -> None:
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _write_jsonl(path: Path, rows: Sequence[dict[str, Any]]) -> None:
-    path.write_text(
-        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
-        encoding="utf-8",
-    )
 
 
 if __name__ == "__main__":

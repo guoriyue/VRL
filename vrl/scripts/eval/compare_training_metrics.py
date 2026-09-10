@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from vrl.trainers.trace import compare_run_metrics
-from vrl.utils.artifacts import publish_evidence_record
+from vrl.utils.json_files import write_json
 
 
 def main(argv=None):
@@ -29,7 +29,7 @@ def main(argv=None):
         expected_epochs=args.expected_epochs,
     )
     args.report.parent.mkdir(parents=True, exist_ok=True)
-    publish_evidence_record(args.report, result)
+    write_json(args.report, result, overwrite=False)
     print(json.dumps(result, indent=2))
 
 

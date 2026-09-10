@@ -33,6 +33,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from vrl.utils.json_files import write_json
+
 
 def distribution(values: Sequence[float]) -> dict[str, float | int]:
     """Count/mean/median/std/stderr/min/max for one score column."""
@@ -335,10 +337,7 @@ def write_curve_report(
         writer = csv.DictWriter(handle, fieldnames=list(curve_rows[0]))
         writer.writeheader()
         writer.writerows(curve_rows)
-    (output_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    write_json(output_dir / "summary.json", summary)
     return summary
 
 

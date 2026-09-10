@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from vrl.scripts.data.common import default_data_root, write_jsonl
+from vrl.scripts.data.common import default_data_root
 from vrl.scripts.data.danbooru.anatomy import is_anatomy_positive
 from vrl.scripts.data.danbooru.config import (
     DOMAIN,
@@ -18,6 +18,7 @@ from vrl.scripts.data.danbooru.metadata import (
     record_id,
     record_score,
 )
+from vrl.utils.json_files import write_jsonl
 
 
 def build_positive_images(

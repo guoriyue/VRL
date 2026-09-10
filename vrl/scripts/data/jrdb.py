@@ -24,9 +24,10 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
-from vrl.scripts.data.common import default_data_root, emit, write_jsonl, write_report
+from vrl.scripts.data.common import default_data_root, emit
 from vrl.scripts.data.video_world import build_target_video_world_rows
 from vrl.trainers.data.artifacts import ArtifactManifestReport
+from vrl.utils.json_files import write_json, write_jsonl
 
 COMMAND_NAME = "jrdb-targets"
 SOURCE_REPO = "jrdb.erc.monash.edu"
@@ -229,5 +230,5 @@ def _cmd_jrdb_targets(args: Any) -> None:
             "clips must stay within that license."
         ),
     }
-    write_report(video_root / f"{args.name}_report.json", report)
+    write_json(video_root / f"{args.name}_report.json", report)
     emit(report)
