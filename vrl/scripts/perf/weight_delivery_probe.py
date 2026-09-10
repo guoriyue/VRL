@@ -94,6 +94,7 @@ def main(argv: list[str] | None = None) -> None:
     if num_gpus and torch.cuda.device_count() < args.workers:
         raise ValueError("one visible GPU per acceptance worker is required")
 
+    resolved.run.initialize_process_rng()
     source_started = time.perf_counter()
     bundle = replay.materialize(context="weight delivery acceptance source")
     if args.checkpoint is not None:
@@ -137,6 +138,10 @@ def main(argv: list[str] | None = None) -> None:
             "scope": "single-rank in-place trainable parameter bytes; no forward equivalence claim",
             "model_identity": replay.identity,
             "checkpoint": str(args.checkpoint) if args.checkpoint else None,
+            "source_initialization": {
+                "seed": resolved.run.seed,
+                "deterministic": resolved.run.deterministic,
+            },
             "source_build_restore_s": source_ready - source_started,
             "snapshot_export_s": snapshot_ready - source_ready,
             "receivers": receivers,

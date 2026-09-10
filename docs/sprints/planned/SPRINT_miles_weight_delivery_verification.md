@@ -189,3 +189,30 @@ See the [command, timings, raw report and limitations](../../research/weight_del
 This closes the real single-worker in-place byte check only. Multi-GPU/rank,
 converted/sharded and numerical forward acceptance remain open; the separate
 training parity failure is not resolved by this result.
+
+## 2026-09-09: Honor the configured source initialization seed
+
+The acceptance CLI now invokes the existing `OnlineRunConfig` process RNG
+initializer after preflight and before materializing its CPU replay source.
+Previously `trainer.seed=17` was accepted but did not seed newly initialized LoRA
+weights in this entrypoint. The byte comparison itself was still valid against
+the actual exported snapshot, but repeated source construction was not controlled
+by the requested seed. Optional checkpoint restore still follows construction.
+
+New reports include `source_initialization.seed` and
+`source_initialization.deterministic`. These describe source-process setup, not
+remote worker numerical determinism or forward equivalence. Historical reports
+are not rewritten or credited with seeded initialization.
+
+The existing RNG owner is reused; source construction, poisoning, all-receiver
+readback, cleanup-before-publication and refusal to overwrite reports remain
+unchanged. The isolated worker subclass is still a necessary destructive-test
+boundary. No new RNG helper, wrapper, registry or contract dataclass was added.
+
+Validation: six CLI tests passed. The successful real-Ray CPU fixture constructs
+a fresh actual linear source for each invocation, changes caller RNG state, and
+checks equal source parameters for repeated seed 17 and different parameters for
+seed 18. Each invocation still poisons and verifies two actual Ray receivers.
+Failure-injection coverage retains missed installation and cleanup failure,
+source nonmutation and no report overwrite. Ruff passed for the two touched
+Python files. This is a tiny CPU source test, not a repeated real SD3 GPU run.

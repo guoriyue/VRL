@@ -44,3 +44,8 @@ No runtime code, recipe, precision setting or acceptance threshold changed in
 this evidence commit. Existing RPC adapters, model-owned readback and immutable
 snapshot boundaries remain necessary. No new helper, contract or vocabulary table
 was added. Multi-worker/rank and forward equivalence acceptance remain open.
+
+A subsequent CLI repair initializes the source RNG through `OnlineRunConfig`
+and records its seed/deterministic setting. That does not retroactively seed
+this historical run or change its byte-acceptance result; see the
+[follow-up validation](../sprints/planned/SPRINT_miles_weight_delivery_verification.md).
