@@ -690,3 +690,30 @@ async def test_three_acceptance_arms_isolate_overlap_from_per_group_call_tax() -
     streaming_wall = arms[RewardCollectionMode.PER_GROUP_STREAMING].phase_seconds["collect.wall"]
     assert streaming_wall < serial_wall * 0.9
     assert streaming_wall < control_wall * 0.9
+
+
+@pytest.mark.asyncio
+async def test_generation_handoff_is_demand_driven_and_never_scores() -> None:
+    from vrl.rollouts.orchestration.prompt_collection import generate_prompt_groups
+
+    collector = _DeferredCollector()
+    groups = generate_prompt_groups(
+        collector=collector,
+        prompts=["plain", PromptExample(prompt="example"), "later"],
+        group_size=2,
+        runtime_debug=False,
+        policy_version=7,
+    )
+    first = await anext(groups)
+    assert first.prompt_indices == [0]
+    assert first.completed_at >= first.started_at
+    assert collector.events == ["generate:plain"]
+    second = await anext(groups)
+    assert second.prompt_indices == [1]
+    assert collector.events == ["generate:plain", "generate:example"]
+    await groups.aclose()
+    # Closing admission must not generate the remaining prompt or start reward.
+    assert collector.events == ["generate:plain", "generate:example"]
+    scored = await collector.score_rollouts([first.unscored, second.unscored])
+    assert len(scored) == 2
+    assert all(batch.rewards.shape == (2,) for batch in scored)

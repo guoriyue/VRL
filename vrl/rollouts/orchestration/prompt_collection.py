@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 from vrl.generation import GenerationInput
@@ -34,6 +36,77 @@ class PromptCollectionCleanupError(RuntimeError):
         super().__init__(
             f"prompt collection root cause: {type(root_cause).__name__}: {root_cause}; "
             f"in-flight reward cleanup failures: {cleanup}",
+        )
+
+
+@dataclass(slots=True)
+class GeneratedPromptGroup:
+    """Generation receipt retained until scoring and prompt remapping finish.
+
+    Both schedules use this handoff so deferred scoring preserves example
+    metadata and the original prompt indices without reconstructing requests.
+    Times use the local performance clock, never a remote worker clock.
+    """
+
+    unscored: Any
+    prompt_indices: list[int]
+    started_at: float
+    completed_at: float
+
+
+async def generate_prompt_groups(
+    *,
+    collector: Any,
+    prompts: list[Any],
+    group_size: int,
+    runtime_debug: bool,
+    policy_version: int | None,
+) -> AsyncIterator[GeneratedPromptGroup]:
+    """Yield generated groups without acquiring or running the reward runtime.
+
+    Consecutive plain prompts retain their batched request; structured examples
+    retain their own metadata and overrides. Iteration is demand-driven: the
+    caller owns admission, each yielded receipt, and any downstream scoring.
+    """
+
+    pending_prompts: list[str] = []
+    pending_indices: list[int] = []
+
+    async def generate(
+        inputs: list[Any], indices: list[int], **kwargs: Any
+    ) -> GeneratedPromptGroup:
+        started = time.perf_counter()
+        unscored = await collector.collect_unscored(
+            inputs,
+            group_size=group_size,
+            runtime_debug=runtime_debug,
+            policy_version=policy_version,
+            **kwargs,
+        )
+        return GeneratedPromptGroup(unscored, indices, started, time.perf_counter())
+
+    for prompt_idx, item in enumerate(prompts):
+        if not isinstance(item, (str, bytes)) and hasattr(item, "generation_input"):
+            if pending_prompts:
+                yield await generate(
+                    [GenerationInput(prompt=prompt) for prompt in pending_prompts],
+                    list(pending_indices),
+                )
+                pending_prompts.clear()
+                pending_indices.clear()
+            yield await generate(
+                [item.generation_input()],
+                [prompt_idx],
+                metadata=item.reward_metadata(),
+                request_overrides=dict(item.request_overrides or {}),
+            )
+        else:
+            pending_prompts.append(str(item))
+            pending_indices.append(prompt_idx)
+    if pending_prompts:
+        yield await generate(
+            [GenerationInput(prompt=prompt) for prompt in pending_prompts],
+            list(pending_indices),
         )
 
 
@@ -77,8 +150,6 @@ async def collect_prompt_groups(
     # batches, a single prompt index for PromptExample groups)
     unscored_groups: list[tuple[Any, list[int] | int]] = []
     scored_batches: list[RolloutBatch] = []
-    pending_prompts: list[str] = []
-    pending_indices: list[int] = []
     # The collector combines topology and reward-runtime execution semantics.
     # Only its capability may enable per-group collection: the acceptance
     # override can restrict a capable collector, but cannot grant the runtime
@@ -100,16 +171,6 @@ async def collect_prompt_groups(
         mode = reward_mode
     per_group_scoring = mode is not RewardCollectionMode.BATCHED_SERIAL
     score_task: asyncio.Task[list[RolloutBatch]] | None = None
-
-    async def collect_unscored(
-        inputs: list[Any],
-        **kwargs: Any,
-    ) -> Any:
-        started = time.perf_counter()
-        try:
-            return await collector.collect_unscored(inputs, **kwargs)
-        finally:
-            generation_intervals.append((started, time.perf_counter()))
 
     async def score_unscored(groups: list[Any]) -> list[RolloutBatch]:
         started = time.perf_counter()
@@ -159,39 +220,16 @@ async def collect_prompt_groups(
             name="rollout-reward-score",
         )
 
-    async def flush_pending_prompts() -> None:
-        if not pending_prompts:
-            return
-        unscored = await collect_unscored(
-            [GenerationInput(prompt=prompt) for prompt in pending_prompts],
+    try:
+        async for generated in generate_prompt_groups(
+            collector=collector,
+            prompts=prompts,
             group_size=group_size,
             runtime_debug=runtime_debug,
             policy_version=policy_version,
-        )
-        await record_unscored(unscored, list(pending_indices))
-        pending_prompts.clear()
-        pending_indices.clear()
-
-    try:
-        for prompt_idx, item in enumerate(prompts):
-            if not isinstance(item, (str, bytes)) and hasattr(item, "generation_input"):
-                await flush_pending_prompts()
-                # The example itself owns the field mapping (generation_input /
-                # reward_metadata) — no untyped kwargs relay in between.
-                unscored = await collect_unscored(
-                    [item.generation_input()],
-                    group_size=group_size,
-                    metadata=item.reward_metadata(),
-                    request_overrides=dict(item.request_overrides or {}),
-                    runtime_debug=runtime_debug,
-                    policy_version=policy_version,
-                )
-                await record_unscored(unscored, prompt_idx)
-            else:
-                pending_prompts.append(str(item))
-                pending_indices.append(prompt_idx)
-
-        await flush_pending_prompts()
+        ):
+            generation_intervals.append((generated.started_at, generated.completed_at))
+            await record_unscored(generated.unscored, generated.prompt_indices)
         if not unscored_groups:
             return []
 
@@ -295,6 +333,8 @@ def _interval_overlap_seconds(
 
 
 __all__ = [
+    "GeneratedPromptGroup",
     "PromptCollectionCleanupError",
     "collect_prompt_groups",
+    "generate_prompt_groups",
 ]

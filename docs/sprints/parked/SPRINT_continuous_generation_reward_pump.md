@@ -22,7 +22,7 @@ API。eval 不加入任一 pump。
 
 ## 1. Root cause / current behavior
 
-`ContinuousRolloutProducer._collect_group()` 当前 await `collect_prompt_batches()`。这个 helper
+`ContinuousRolloutProducer._collect_group()` 当前 await `collect_prompt_groups()`。这个 helper
 内部已经把 collector 拆成 `collect_unscored()` 和 `score_rollouts()`，但 producer 看见的仍是
 一个直到 reward 完成才结束的 task。
 
@@ -110,7 +110,7 @@ artifact ownership token
 
 ### T4 — Compatibility
 
-- strict schedule 继续使用 `collect_prompt_batches()`。
+- strict schedule 继续使用 `collect_prompt_groups()`。
 - continuous 可用 feature flag 做 static-vs-split A/B；flag 只在迁移期存在，GA 后删除或明确保留
   为 rollback，不留无人测试的双实现。
 
@@ -198,3 +198,19 @@ continuous.stage_handoff_s
 - `tests/rollouts/orchestration/test_prompt_collection.py`
 - `tests/rollouts/orchestration/continuous/test_contracts.py`
 - [Reward service](../done/SPRINT_reward_service.md)
+
+
+## 2026-09-09：按用户要求开始逐项实施
+
+本 sprint 已开始实施；暂保留路径以免打断已有引用，完成后再移入 done。
+Stage baseline 的 identity/timing 已落地；四 L4 硬件验证仍未完成，不能据此宣称性能验收。
+
+- 已提取 `generate_prompt_groups()`：只执行 generation，逐组交付 receipt，
+  保留 plain prompt 合批、PromptExample metadata/overrides 和全局 prompt indices。
+  原 `collect_prompt_groups()` 已使用同一路径，strict/serial 的打分行为保持。
+- `GeneratedPromptGroup` 是生成到打分的实际交付记录；包含产物、重映射索引和本地时间，
+  不携带算法名单或能力声明。它与 collector、trainer-ready queue 的边界各有消费者。
+- 验证包括既有 collection/continuous 回归，以及停止读取后不生成下一组、
+  不自动启动 reward 的阶段交付测试。
+- **尚未完成**：bounded unscored queue、独立 reward pump、admission/cleanup 接线、
+  versioned lookahead 及真实 GPU 性能验收。此提交仅为共享生成阶段的前置改动。
