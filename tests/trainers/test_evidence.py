@@ -138,3 +138,86 @@ def test_manifest_content_changes_are_recorded_even_when_config_is_identical(
         != after["configured_data_files"][str(manifest)]["sha256"]
     )
     assert after["configured_data_files"][str(manifest)]["changed_during_read"] is False
+
+
+@pytest.fixture
+def completed_loop(tmp_path, stable_environment):
+    launch = evidence.write_run_evidence(
+        OmegaConf.create({"seed": 17}),
+        tmp_path,
+        model_identity={"model": "fixture"},
+        resumed=False,
+    )
+    (tmp_path / "metrics.csv").write_text("epoch,reward\n0,0.25\n")
+    checkpoint = tmp_path / "checkpoint-final"
+    checkpoint.mkdir()
+    # Intentionally not a pickle: checking integrity must never deserialize it.
+    (checkpoint / "checkpoint.pt").write_bytes(b"opaque checkpoint fixture")
+    (checkpoint / "checkpoint_meta.json").write_text('{"global_step": 1}\n')
+    return launch
+
+
+def test_artifact_seal_binds_full_tree_and_is_relocatable(completed_loop, tmp_path):
+    import shutil
+
+    seal = evidence.seal_run_artifacts(completed_loop)
+    record = evidence.verify_run_artifacts(seal)
+    assert record["artifacts"]["final_checkpoint"]["content"]["files"] == 2
+    assert record["phase"] == "after-training-loop-before-cleanup"
+    assert "success" not in record and "verified" not in record
+    original = seal.read_bytes()
+    with pytest.raises(FileExistsError):
+        evidence.seal_run_artifacts(completed_loop)
+    assert seal.read_bytes() == original
+    copied = tmp_path.parent / (tmp_path.name + "-archived")
+    shutil.copytree(tmp_path, copied)
+    assert evidence.verify_run_artifacts(copied / "run_evidence" / seal.name) == record
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["metrics", "checkpoint", "extra-file", "missing-file", "model-identity", "config"],
+)
+def test_artifact_drift_is_rejected(completed_loop, tmp_path, change):
+    seal = evidence.seal_run_artifacts(completed_loop)
+    if change == "metrics":
+        (tmp_path / "metrics.csv").write_text("epoch,reward\n0,0.99\n")
+    elif change == "checkpoint":
+        (tmp_path / "checkpoint-final/checkpoint.pt").write_bytes(b"replacement checkpoint")
+    elif change == "extra-file":
+        (tmp_path / "checkpoint-final/extra.pt").write_bytes(b"extra shard")
+    elif change == "missing-file":
+        (tmp_path / "checkpoint-final/checkpoint_meta.json").unlink()
+    else:
+        launch = json.loads(completed_loop.read_text())
+        if change == "model-identity":
+            launch["model_identity"] = {"model": "replacement"}
+        else:
+            launch["config"]["seed"] = 99
+        completed_loop.write_text(json.dumps(launch))
+    with pytest.raises(ValueError, match="mismatch"):
+        evidence.verify_run_artifacts(seal)
+
+
+def test_missing_metrics_cannot_be_sealed(completed_loop, tmp_path):
+    (tmp_path / "metrics.csv").unlink()
+    with pytest.raises(RuntimeError, match="does not exist"):
+        evidence.seal_run_artifacts(completed_loop)
+    assert not completed_loop.with_suffix(".artifacts.json").exists()
+
+
+@pytest.mark.parametrize("change", ["missing-role", "external-path", "launch-id", "schema"])
+def test_incomplete_or_redirected_receipt_is_rejected(completed_loop, change):
+    seal = evidence.seal_run_artifacts(completed_loop)
+    record = json.loads(seal.read_text())
+    if change == "missing-role":
+        del record["artifacts"]["final_checkpoint"]
+    elif change == "external-path":
+        record["artifacts"]["metrics"]["path"] = "../../other/metrics.csv"
+    elif change == "launch-id":
+        record["launch_id"] = "another-launch"
+    else:
+        record["schema"] = "unknown/v2"
+    seal.write_text(json.dumps(record))
+    with pytest.raises(ValueError):
+        evidence.verify_run_artifacts(seal)

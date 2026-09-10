@@ -512,6 +512,7 @@ def _install_common_fakes(
         "if_supported",
         classmethod(lambda cls, *args, **kwargs: object()),
     )
+    monkeypatch.setattr(online, "seal_run_artifacts", lambda path: path)
     monkeypatch.setattr(online, "save_resolved_config", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         online, "write_run_evidence", lambda *args, **kwargs: tmp_path / "evidence.json"
@@ -1190,6 +1191,40 @@ async def test_launch_evidence_failure_stops_before_training_and_cleans_up(
     with pytest.raises(OSError, match="evidence storage full"):
         await online.run_online_recipe(_cfg())
     assert state["trainer_steps"] == 0
+    assert state["collector_shutdowns"] == 1
+    assert state["reward_shutdowns"] == 1
+    assert state["owner_shutdowns"] == 1
+
+
+@pytest.mark.asyncio
+async def test_artifact_sealing_runs_after_final_checkpoint_before_cleanup(monkeypatch, tmp_path):
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+    sealed = []
+
+    def seal(path):
+        assert state["checkpoint_paths"][-1] == "checkpoint-final"
+        assert state["collector_shutdowns"] == 0
+        sealed.append(path)
+        return path
+
+    monkeypatch.setattr(online, "seal_run_artifacts", seal)
+    await online.run_online_recipe(_cfg())
+    assert sealed == [tmp_path / "evidence.json"]
+    assert state["collector_shutdowns"] == 1
+
+
+@pytest.mark.asyncio
+async def test_artifact_sealing_failure_still_cleans_up(monkeypatch, tmp_path):
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+
+    def fail_seal(path):
+        raise OSError("artifact disk read failed")
+
+    monkeypatch.setattr(online, "seal_run_artifacts", fail_seal)
+    with pytest.raises(OSError, match="artifact disk read failed"):
+        await online.run_online_recipe(_cfg())
     assert state["collector_shutdowns"] == 1
     assert state["reward_shutdowns"] == 1
     assert state["owner_shutdowns"] == 1

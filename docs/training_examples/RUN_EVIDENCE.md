@@ -36,3 +36,36 @@ visible when assessing a recipe's reproducibility.
 Sampler restart and numerical restart are also different: restoring the prompt
 RNG preserves the next prompt draw, but an interrupted asynchronous run may lose
 old-policy preview trajectories and regenerate them with restored current weights.
+
+After the online loop saves `checkpoint-final`, rank 0 also publishes
+`run_evidence/<launch_id>.artifacts.json`. It binds the launch JSON, `metrics.csv`,
+and the entire final checkpoint directory by content. Checkpoint hashing reuses
+`local_checkpoint_content`: its SHA-256 includes file/tree structure and names,
+not just file bytes, and it detects mutation during each read. This streams bytes
+from disk and never deserializes checkpoint tensors. It adds one full checkpoint
+read at run end; account for that IO when timing large-model jobs.
+
+Verify an archived output directory with:
+
+```python
+from vrl.trainers.evidence import verify_run_artifacts
+
+record = verify_run_artifacts(
+    "outputs/my-run/run_evidence/<launch_id>.artifacts.json"
+)
+```
+
+Verification raises on missing, changed, added, or removed checkpoint files,
+changed metrics or launch contents, config digest mismatch, and incomplete or
+redirected artifact references. Paths are relative so the whole output directory
+can be archived elsewhere. The receipt is published without overwriting an
+existing receipt for that launch. Archive the output directory **before resuming**:
+resume appends metrics and replaces `checkpoint-final`, so the prior receipt will
+correctly fail against those newer files. The receipt does not retain old bytes.
+
+The phase is explicitly `after-training-loop-before-cleanup`. A later shutdown
+failure can still fail the run. The receipt neither binds the supervisor's final
+verdict nor includes held-out evaluations or intermediate checkpoints. Its hashes
+establish internal consistency, not authenticity: retain a trusted external digest
+or immutable archive if the receipt itself must be protected against replacement.
+No learning-curve or deterministic-regression grade is inferred from these files.

@@ -15,6 +15,7 @@ import platform
 import subprocess
 import tempfile
 import uuid
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,8 +23,11 @@ from typing import Any
 import torch
 from omegaconf import OmegaConf
 
+from vrl.models.checkpoint_identity import local_checkpoint_content
+
 # These are file/protocol and environment boundaries, not algorithm vocabulary.
 RUN_EVIDENCE_SCHEMA = "vrl.run-evidence/v1"
+RUN_ARTIFACTS_SCHEMA = "vrl.run-artifacts/v1"
 _RUNTIME_ENVIRONMENT_KEYS = (
     "RANK",
     "LOCAL_RANK",
@@ -176,6 +180,14 @@ def write_run_evidence(
     directory = Path(output_dir) / "run_evidence"
     directory.mkdir(parents=True, exist_ok=True)
     destination = directory / f"{record['launch_id']}.json"
+    _publish_record(destination, record)
+    return destination
+
+
+def _publish_record(destination: Path, record: dict[str, Any]) -> None:
+    """Share atomic, non-overwriting publication across evidence records."""
+
+    directory = destination.parent
     encoded = json.dumps(record, indent=2, sort_keys=True, allow_nan=False) + "\n"
     temporary: Path | None = None
     try:
@@ -192,4 +204,97 @@ def write_run_evidence(
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def _read_launch(path: Path) -> dict[str, Any]:
+    record = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(record, dict) or record.get("schema") != RUN_EVIDENCE_SCHEMA:
+        raise ValueError(f"unsupported launch evidence: {path}")
+    if record.get("launch_id") != path.stem:
+        raise ValueError(f"launch identifier does not match evidence filename: {path}")
+    canonical = json.dumps(
+        record["config"], sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+    if hashlib.sha256(canonical.encode()).hexdigest() != record.get("config_sha256"):
+        raise ValueError(f"launch config digest mismatch: {path}")
+    return record
+
+
+def seal_run_artifacts(launch_path: str | Path) -> Path:
+    """Bind final online-loop artifacts to this launch, before runtime cleanup.
+
+    Hash complete checkpoint contents without deserializing tensors. This is an
+    observation of bytes on disk, not a success verdict or recipe quality grade.
+    Resuming in the same output directory can invalidate the old observation;
+    archive the directory before resume to preserve independently verifiable runs.
+    """
+
+    launch_path = Path(launch_path)
+    if launch_path.parent.name != "run_evidence" or launch_path.suffix != ".json":
+        raise ValueError("launch evidence must be run_evidence/<launch_id>.json")
+    launch = _read_launch(launch_path)
+    output_dir = launch_path.parent.parent
+    paths = {
+        "launch": launch_path,
+        "metrics": output_dir / "metrics.csv",
+        "final_checkpoint": output_dir / "checkpoint-final",
+    }
+    artifacts = {
+        role: {
+            "path": path.relative_to(output_dir).as_posix(),
+            "content": asdict(local_checkpoint_content(path)),
+        }
+        for role, path in paths.items()
+    }
+    # Reject malformed/empty artifacts; a directory standing in for metrics or
+    # an empty checkpoint must not acquire a completion-looking receipt.
+    if artifacts["metrics"]["content"]["kind"] != "file":
+        raise ValueError("metrics artifact must be a file")
+    checkpoint = artifacts["final_checkpoint"]["content"]
+    if checkpoint["kind"] != "tree" or checkpoint["files"] == 0:
+        raise ValueError("final checkpoint artifact must be a nonempty directory")
+    record = {
+        "schema": RUN_ARTIFACTS_SCHEMA,
+        "launch_id": launch["launch_id"],
+        "captured_at": datetime.now(UTC).isoformat(),
+        "phase": "after-training-loop-before-cleanup",
+        "artifacts": artifacts,
+    }
+    destination = launch_path.with_suffix(".artifacts.json")
+    _publish_record(destination, record)
     return destination
+
+
+def verify_run_artifacts(seal_path: str | Path) -> dict[str, Any]:
+    """Fail on missing/replaced artifacts; never load checkpoint pickle payloads.
+
+    The receipt itself needs an external trusted hash/archive for authenticity.
+    Matching self-contained hashes establishes consistency, not authorship.
+    """
+
+    seal_path = Path(seal_path)
+    if seal_path.parent.name != "run_evidence" or not seal_path.name.endswith(".artifacts.json"):
+        raise ValueError("artifact evidence must be run_evidence/<launch_id>.artifacts.json")
+    record = json.loads(seal_path.read_text(encoding="utf-8"))
+    if not isinstance(record, dict) or record.get("schema") != RUN_ARTIFACTS_SCHEMA:
+        raise ValueError(f"unsupported artifact evidence: {seal_path}")
+    launch_path = seal_path.with_name(seal_path.name.removesuffix(".artifacts.json") + ".json")
+    launch = _read_launch(launch_path)
+    if record.get("launch_id") != launch["launch_id"]:
+        raise ValueError("artifact receipt belongs to a different launch")
+    expected = {
+        "launch": f"run_evidence/{launch_path.name}",
+        "metrics": "metrics.csv",
+        "final_checkpoint": "checkpoint-final",
+    }
+    artifacts = record.get("artifacts")
+    if not isinstance(artifacts, dict) or set(artifacts) != set(expected):
+        raise ValueError("artifact receipt must bind launch, metrics, and final checkpoint")
+    for role, relative in expected.items():
+        artifact = artifacts[role]
+        if not isinstance(artifact, dict) or artifact.get("path") != relative:
+            raise ValueError(f"unexpected {role} artifact path")
+        observed = asdict(local_checkpoint_content(seal_path.parent.parent / relative))
+        if observed != artifact.get("content"):
+            raise ValueError(f"{role} artifact content mismatch")
+    return record

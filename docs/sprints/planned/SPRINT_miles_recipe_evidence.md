@@ -76,3 +76,28 @@ manifest 内容变化、resume 不覆盖和发布冲突测试。一个警告来�
 使用及证据范围见 [说明](../../training_examples/RUN_EVIDENCE.md)。
 尚待：运行结束后的 metrics/checkpoint/eval 证据封存与校验、历史 recipe 盘点、真实重复短曲线、
 确定性/统计性比较和 GPU CI 接线。当前快照不是完整训练复现报告。
+
+## 2026-09-09: Final-loop artifact integrity
+
+The online runner now publishes a separate, non-overwriting artifact receipt
+following final checkpoint export. It binds the exact launch record, metrics,
+and complete final checkpoint tree. The verifier checks content without loading
+checkpoint pickle payloads, and rejects missing roles, redirected references,
+changed launch/config/model identity, and checkpoint tree additions/removals.
+Primary IO errors use the existing cross-rank propagation boundary and still
+enter lifecycle cleanup. No additional contract class or algorithm vocabulary
+was introduced. The shared atomic publisher removes duplicated publication logic;
+protocol constants and existing lifecycle boundaries remain necessary.
+
+This is an integrity observation before cleanup, not a run verdict or verification
+grade. It does not preserve pre-resume metrics/checkpoint bytes: archive the output
+directory before resuming. Final verdict and held-out evaluation binding, historical
+recipe inventory, actual repeated training curves, deterministic/statistical
+comparison, and GPU CI integration remain outstanding. Large checkpoints incur an
+additional streaming disk read when the receipt is written.
+
+Validation: 78 evidence, online lifecycle/metrics, and architecture tests passed.
+Coverage includes real file/tree drift and archive relocation, no-overwrite
+publication, final-checkpoint-before-seal ordering, and cleanup on sealing failure.
+One warning is the existing PyTorch TF32 API deprecation. These are CPU/integration
+checks, not real GPU learning or reproducibility evidence.
