@@ -140,6 +140,10 @@ def test_signed_zero_is_not_collapsed(make_run):
             },
             "runtime differs",
         ),
+        (
+            {"runtime_change": {"environment": {"TORCHINDUCTOR_EMULATE_PRECISION_CASTS": "1"}}},
+            "runtime differs",
+        ),
         ({"model": "different"}, "model_identity differs"),
         ({"data_text": "changed prompts\n"}, "configured_data_files differs"),
         ({"code_change": {"dirty": True}}, "identified clean checkout"),

@@ -324,3 +324,12 @@ policy, module table or numerical default is introduced. Validation uses a fresh
 process after production IEEE setup, toggles both real PyTorch switches, checks
 recorded values and verifies that collection leaves backend state unchanged.
 A comparison fixture rejects otherwise matching runs with differing BF16 modes.
+
+The launch environment allowlist also records
+`TORCHINDUCTOR_EMULATE_PRECISION_CASTS` when explicitly set. The SD3.5 experiments
+showed different compiled backward logprob errors with this switch, so omitting
+it could make different startup environments look identical. This records the
+startup variable, not arbitrary subsequent Python mutations of Inductor config
+or the settings inside remote actors. The existing whole-runtime comparison
+rejects a recorded environment difference. This is an environment-name boundary,
+not an expansion to unrestricted environment capture or a new compiler policy.

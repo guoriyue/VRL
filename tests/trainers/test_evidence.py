@@ -77,11 +77,13 @@ def test_invalid_config_or_missing_model_identity_is_not_published(tmp_path, sta
 def test_runtime_snapshot_records_cpu_scope_without_dumping_environment(monkeypatch):
     monkeypatch.setattr(evidence.torch.cuda, "is_available", lambda: False)
     monkeypatch.setenv("WORLD_SIZE", "1")
+    monkeypatch.setenv("TORCHINDUCTOR_EMULATE_PRECISION_CASTS", "1")
     monkeypatch.setenv("PRIVATE_API_TOKEN", "must-not-be-recorded")
     record = evidence._runtime_identity()
     assert record["device_scope"] == "trainer-process-visible-devices"
     assert record["devices"] == []
     assert record["environment"]["WORLD_SIZE"] == "1"
+    assert record["environment"]["TORCHINDUCTOR_EMULATE_PRECISION_CASTS"] == "1"
     assert "PRIVATE_API_TOKEN" not in record["environment"]
     assert "torch" in {name.lower() for name in record["packages"]}
     assert isinstance(record["deterministic_algorithms"], bool)
