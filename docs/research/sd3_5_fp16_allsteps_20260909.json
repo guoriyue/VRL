@@ -1,0 +1,229 @@
+{
+  "scope": "real initialized model, fresh FP16 compiled trajectory steps 0 through 8; BF16 prompt encoders, FP32 adapters; unscaled backward diagnostic only; no optimizer update",
+  "prompt_index": 1971,
+  "parameter_dtypes": {
+    "torch.float16": 908,
+    "torch.float32": 486
+  },
+  "trainable_dtypes": {
+    "torch.float32": 486
+  },
+  "arms": [
+    {
+      "step": 0,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 0.00012493133544921875,
+      "original_fp16_compiled_rollout_logprob_max": 0.00012493133544921875,
+      "cfg32_batch_logprob_max": 0.00012505054473876953,
+      "noise_max": 0.0771484375,
+      "cond_max": 0.013671875,
+      "uncond_max": 0.0205078125,
+      "finite_gradients": null
+    },
+    {
+      "step": 0,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 0.0001308917999267578,
+      "original_fp16_compiled_rollout_logprob_max": 0.0001308917999267578,
+      "cfg32_batch_logprob_max": 0.0001308917999267578,
+      "noise_max": 0.0732421875,
+      "cond_max": 0.015625,
+      "uncond_max": 0.017578125,
+      "finite_gradients": true
+    },
+    {
+      "step": 1,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 5.602836608886719e-06,
+      "original_fp16_compiled_rollout_logprob_max": 7.867813110351562e-06,
+      "cfg32_batch_logprob_max": 6.318092346191406e-06,
+      "noise_max": 0.140625,
+      "cond_max": 0.0283203125,
+      "uncond_max": 0.0302734375,
+      "finite_gradients": null
+    },
+    {
+      "step": 1,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 1.0132789611816406e-05,
+      "original_fp16_compiled_rollout_logprob_max": 1.0132789611816406e-05,
+      "cfg32_batch_logprob_max": 9.417533874511719e-06,
+      "noise_max": 0.296875,
+      "cond_max": 0.06640625,
+      "uncond_max": 0.0302734375,
+      "finite_gradients": true
+    },
+    {
+      "step": 2,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 1.6033649444580078e-05,
+      "original_fp16_compiled_rollout_logprob_max": 1.6510486602783203e-05,
+      "cfg32_batch_logprob_max": 1.5974044799804688e-05,
+      "noise_max": 0.275390625,
+      "cond_max": 0.041015625,
+      "uncond_max": 0.07415771484375,
+      "finite_gradients": null
+    },
+    {
+      "step": 2,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 2.0265579223632812e-05,
+      "original_fp16_compiled_rollout_logprob_max": 2.193450927734375e-05,
+      "cfg32_batch_logprob_max": 2.0444393157958984e-05,
+      "noise_max": 0.291015625,
+      "cond_max": 0.036376953125,
+      "uncond_max": 0.0849609375,
+      "finite_gradients": true
+    },
+    {
+      "step": 3,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 2.1696090698242188e-05,
+      "original_fp16_compiled_rollout_logprob_max": 1.5676021575927734e-05,
+      "cfg32_batch_logprob_max": 2.0444393157958984e-05,
+      "noise_max": 0.2529296875,
+      "cond_max": 0.0546875,
+      "uncond_max": 0.044921875,
+      "finite_gradients": null
+    },
+    {
+      "step": 3,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 2.7000904083251953e-05,
+      "original_fp16_compiled_rollout_logprob_max": 2.2411346435546875e-05,
+      "cfg32_batch_logprob_max": 2.7179718017578125e-05,
+      "noise_max": 0.2255859375,
+      "cond_max": 0.044921875,
+      "uncond_max": 0.064453125,
+      "finite_gradients": true
+    },
+    {
+      "step": 4,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 3.325939178466797e-05,
+      "original_fp16_compiled_rollout_logprob_max": 3.674626350402832e-05,
+      "cfg32_batch_logprob_max": 3.3974647521972656e-05,
+      "noise_max": 0.2685546875,
+      "cond_max": 0.04541015625,
+      "uncond_max": 0.07421875,
+      "finite_gradients": null
+    },
+    {
+      "step": 4,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 2.7924776077270508e-05,
+      "original_fp16_compiled_rollout_logprob_max": 3.141164779663086e-05,
+      "cfg32_batch_logprob_max": 2.8789043426513672e-05,
+      "noise_max": 0.28125,
+      "cond_max": 0.056640625,
+      "uncond_max": 0.076171875,
+      "finite_gradients": true
+    },
+    {
+      "step": 5,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 3.1322240829467773e-05,
+      "original_fp16_compiled_rollout_logprob_max": 4.693865776062012e-05,
+      "cfg32_batch_logprob_max": 3.0606985092163086e-05,
+      "noise_max": 0.24609375,
+      "cond_max": 0.05078125,
+      "uncond_max": 0.041015625,
+      "finite_gradients": null
+    },
+    {
+      "step": 5,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 4.9173831939697266e-05,
+      "original_fp16_compiled_rollout_logprob_max": 6.479024887084961e-05,
+      "cfg32_batch_logprob_max": 4.890561103820801e-05,
+      "noise_max": 0.30078125,
+      "cond_max": 0.0546875,
+      "uncond_max": 0.052734375,
+      "finite_gradients": true
+    },
+    {
+      "step": 6,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 5.415081977844238e-05,
+      "original_fp16_compiled_rollout_logprob_max": 6.407499313354492e-05,
+      "cfg32_batch_logprob_max": 5.555152893066406e-05,
+      "noise_max": 0.509765625,
+      "cond_max": 0.04315185546875,
+      "uncond_max": 0.15966796875,
+      "finite_gradients": null
+    },
+    {
+      "step": 6,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 6.753206253051758e-05,
+      "original_fp16_compiled_rollout_logprob_max": 8.20159912109375e-05,
+      "cfg32_batch_logprob_max": 6.791949272155762e-05,
+      "noise_max": 0.560546875,
+      "cond_max": 0.05078125,
+      "uncond_max": 0.17041015625,
+      "finite_gradients": true
+    },
+    {
+      "step": 7,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 0.00013390183448791504,
+      "original_fp16_compiled_rollout_logprob_max": 0.00017601251602172852,
+      "cfg32_batch_logprob_max": 0.00013349950313568115,
+      "noise_max": 0.587890625,
+      "cond_max": 0.13671875,
+      "uncond_max": 0.08984375,
+      "finite_gradients": null
+    },
+    {
+      "step": 7,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 0.00017209351062774658,
+      "original_fp16_compiled_rollout_logprob_max": 0.00021757185459136963,
+      "cfg32_batch_logprob_max": 0.00017440319061279297,
+      "noise_max": 0.5703125,
+      "cond_max": 0.1328125,
+      "uncond_max": 0.115234375,
+      "finite_gradients": true
+    },
+    {
+      "step": 8,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 0.00028471648693084717,
+      "original_fp16_compiled_rollout_logprob_max": 0.000399172306060791,
+      "cfg32_batch_logprob_max": 0.0002864822745323181,
+      "noise_max": 0.40625,
+      "cond_max": 0.06201171875,
+      "uncond_max": 0.11865234375,
+      "finite_gradients": null
+    },
+    {
+      "step": 8,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 0.0004872232675552368,
+      "original_fp16_compiled_rollout_logprob_max": 0.0005183592438697815,
+      "cfg32_batch_logprob_max": 0.0004872232675552368,
+      "noise_max": 0.61865234375,
+      "cond_max": 0.13037109375,
+      "uncond_max": 0.0927734375,
+      "finite_gradients": true
+    }
+  ]
+}
