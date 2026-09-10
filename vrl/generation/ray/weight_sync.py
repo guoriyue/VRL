@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import uuid
 from typing import Any, Protocol
 
 from vrl.generation.ray.engine import RayGenerationEngine, uniform_rank_result
@@ -37,7 +39,11 @@ class RayGenerationWeightSync:
         actor_dispatcher: RayActorDispatcher,
         worker_rpc_timeout_s: float,
         verify_content: bool = False,
+        bucket_bytes: int | None = None,
     ) -> None:
+        if bucket_bytes is not None and (type(bucket_bytes) is not int or bucket_bytes < 1):
+            raise ValueError("bucket_bytes must be a positive integer")
+        self.bucket_bytes = bucket_bytes
         self.verify_content = bool(verify_content)
         self.engines = list(engines)
         expected_engine_ids = tuple(engine.engine_id for engine in self.engines)
@@ -57,6 +63,9 @@ class RayGenerationWeightSync:
         state_ref: Any,
         policy_version: int,
     ) -> None:
+        if self.bucket_bytes is not None and state_ref is not None:
+            await self._push_bucketed(state_ref, policy_version)
+            return
         verification = {"verify_content": True} if self.verify_content else {}
         remote_engines: list[tuple[RayGenerationEngine, Any]] = []
         for engine in self.engines:
@@ -108,6 +117,69 @@ class RayGenerationWeightSync:
             strict=True,
         ):
             _require_installed_policy_version(engine, installed, policy_version)
+
+    async def _push_bucketed(self, state: Any, policy_version: int) -> None:
+        from vrl.generation.weight_transfer import iter_weight_buckets, weight_manifest
+
+        manifest = weight_manifest(state)
+        transfer_id = uuid.uuid4().hex
+        ray = require_ray()
+        assert self.bucket_bytes is not None
+
+        async def broadcast(method: str, payload: Any, **kwargs: Any) -> None:
+            shared = ray.put(payload)
+            jobs = [
+                RayActorJob(
+                    job_index=index,
+                    worker_id=engine.engine_id,
+                    remote_method=engine.remote(method, combine=uniform_rank_result(method)),
+                    payload=shared,
+                    keyword_args=kwargs,
+                )
+                for index, engine in enumerate(self.engines)
+            ]
+            installed = await self.actor_dispatcher.run(
+                jobs,
+                operation=f"rollout.weight_sync.{method}",
+                call_timeout_s=self.worker_rpc_timeout_s,
+            )
+            for engine, (_, version) in zip(self.engines, installed, strict=True):
+                _require_installed_policy_version(engine, version, policy_version)
+
+        try:
+            await broadcast(
+                "begin_weight_transfer",
+                manifest,
+                transfer_id=transfer_id,
+                policy_version=policy_version,
+            )
+            # Await every receiver before putting the next independently owned
+            # slice. Receiver copies ensure completed buckets can be reclaimed.
+            for chunk in iter_weight_buckets(state, self.bucket_bytes):
+                await broadcast("receive_weight_bucket", chunk, transfer_id=transfer_id)
+            await broadcast(
+                "commit_weight_transfer", transfer_id, verify_content=self.verify_content
+            )
+        except BaseException as error:
+            # The dispatcher may already reject admissions after a rank failure.
+            # Abort is cleanup, so bypass its normal admission path with a bound.
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(
+                        *[
+                            engine.remote("abort_weight_transfer")(transfer_id)
+                            for engine in self.engines
+                        ],
+                        return_exceptions=True,
+                    ),
+                    timeout=self.worker_rpc_timeout_s,
+                )
+                for result in results:
+                    if isinstance(result, BaseException):
+                        error.add_note(f"weight transfer abort failed: {result}")
+            except BaseException as cleanup_error:
+                error.add_note(f"weight transfer abort failed: {cleanup_error}")
+            raise
 
 
 def _require_installed_policy_version(

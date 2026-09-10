@@ -46,8 +46,13 @@ class RolloutWorkerConfig:
     # an omitted value previously meant silent stale-policy training. The syncer is
     # only built on the online launch path, so this never affects eval.
     sync_trainable_state: bool
+    weight_sync_bucket_bytes: int | None = None
 
     def __post_init__(self) -> None:
+        if self.weight_sync_bucket_bytes is not None and (
+            type(self.weight_sync_bucket_bytes) is not int or self.weight_sync_bucket_bytes < 1
+        ):
+            raise ValueError("weight_sync_bucket_bytes must be a positive integer")
         if not math.isfinite(self.cpus_per_worker) or self.cpus_per_worker <= 0:
             raise ValueError("cpus_per_worker must be finite and > 0")
         if not math.isfinite(self.health_check_interval_s):

@@ -680,6 +680,8 @@ class RolloutRuntimeSection(ConfigBase):
     # engine level: batch -> engine binding strategy.
     batch_placement_strategy: BatchPlacementStrategy = "round_robin"
     sync_trainable_state: bool = True
+    # Optional tensor bytes per wire chunk; receiver staging still holds full state.
+    weight_sync_bucket_bytes: int | None = Field(default=None, ge=1, strict=True)
     # engine level: opt-in single-engine pipelined rollout. Config resolution
     # rejects multiple engines; requests with fewer than two batches use the
     # standard per-batch path, and a pipeline OOM falls back to that path's

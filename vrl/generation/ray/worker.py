@@ -79,6 +79,25 @@ class RayGenerationWorker:
     def wake(self) -> None:
         self.core.wake()
 
+    def begin_weight_transfer(self, manifest: Any, transfer_id: str, policy_version: int) -> int:
+        return self.core.begin_weight_transfer(manifest, transfer_id, policy_version)
+
+    def receive_weight_chunk(self, chunk: Any, transfer_id: str) -> int:
+        return self.core.receive_weight_chunk(chunk, transfer_id)
+
+    def receive_weight_bucket(self, chunks: Any, transfer_id: str) -> int:
+        if not chunks:
+            raise ValueError("weight bucket must not be empty")
+        for chunk in chunks:
+            version = self.receive_weight_chunk(chunk, transfer_id)
+        return version
+
+    def commit_weight_transfer(self, transfer_id: str, *, verify_content: bool = False) -> int:
+        return self.core.commit_weight_transfer(transfer_id, verify_content=verify_content)
+
+    def abort_weight_transfer(self, transfer_id: str) -> None:
+        self.core.abort_weight_transfer(transfer_id)
+
     def verify_active_weights(self, state_ref: Any, policy_version: int) -> int:
         """Read back the state already active on this rank for acceptance."""
 

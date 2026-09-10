@@ -913,3 +913,60 @@ async def test_real_ray_active_slot_readback_follows_executed_request(local_ray)
     finally:
         for actor in actors:
             local_ray.kill(actor, no_restart=True)
+
+
+class _BucketReadbackWorker(_ContentReadbackWorker):
+    def __init__(self, drop_second=False):
+        super().__init__()
+        self.drop_second = drop_second
+
+    def receive_weight_chunk(self, chunk, transfer_id):
+        if self.drop_second and chunk[1] > 0:
+            return self.core._weight_transfer.policy_version
+        return super().receive_weight_chunk(chunk, transfer_id)
+
+    def transfer_pending(self):
+        return self.core._weight_transfer is not None
+
+
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drop_second", [False, True])
+async def test_real_ray_bucket_transfer_commits_only_complete_state(local_ray, drop_second):
+    from vrl.generation.ray.worker import HEALTH_CONCURRENCY_GROUP
+    from vrl.ray.actor_group import RayActorHandle
+
+    actor_cls = local_ray.remote(num_cpus=0, concurrency_groups={HEALTH_CONCURRENCY_GROUP: 1})(
+        _BucketReadbackWorker
+    )
+    actors = [actor_cls.remote(False), actor_cls.remote(drop_second)]
+    # One two-rank engine exercises the all-rank combiner on each bucket.
+    engine = RayGenerationEngine(
+        "engine", [RayActorHandle(f"rank-{i}", a) for i, a in enumerate(actors)]
+    )
+    sync = RayGenerationWeightSync(
+        [engine],
+        actor_dispatcher=RayActorDispatcher(("engine",)),
+        worker_rpc_timeout_s=30,
+        bucket_bytes=8,
+        verify_content=True,
+    )
+    state = {"transformer.weight": torch.arange(4, dtype=torch.float32).reshape(2, 2)}
+    try:
+        if drop_second:
+            with pytest.raises(actor_pool_module.RayActorCallError) as error:
+                await sync.push_to_rollout_engines(state, 2)
+            assert "incomplete weight transfer" in str(error.value.__cause__)
+            weight, version = local_ray.get(actors[1].installed_weight.remote())
+            assert version == 1 and torch.all(weight == -99)
+        else:
+            await sync.push_to_rollout_engines(state, 2)
+            installed = local_ray.get([a.installed_weight.remote() for a in actors])
+            assert all(
+                version == 2 and torch.equal(weight, state["transformer.weight"])
+                for weight, version in installed
+            )
+        assert local_ray.get([a.transfer_pending.remote() for a in actors]) == [False, False]
+    finally:
+        for actor in actors:
+            local_ray.kill(actor, no_restart=True)

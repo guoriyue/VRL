@@ -83,6 +83,7 @@ class GenerationWorkerCore:
         # the slot for each request's stamped version instead of comparing against
         # one global version (which is what makes a non-draining sync safe).
         self._uses_versioned_slots = False
+        self._weight_transfer = None
         self._profiler_config = TorchProfilerConfig(
             **dict(self.launch_contract.torch_profiler),
         )
@@ -131,6 +132,7 @@ class GenerationWorkerCore:
     def release_policy(self) -> None:
         """Drop loaded model state so the rank releases CUDA memory before exit."""
 
+        self._weight_transfer = None
         with self._memory_parking.release_scope():
             self.executor = None
         if self.rank_group is not None:
@@ -233,6 +235,35 @@ class GenerationWorkerCore:
         # their version from request.policy_version, not this field.
         self._policy_version = int(policy_version)
         return self._policy_version
+
+    def begin_weight_transfer(self, manifest: Any, transfer_id: str, policy_version: int) -> int:
+        from vrl.generation.weight_transfer import StagedWeightTransfer
+
+        if self._weight_transfer is not None:
+            raise RuntimeError("another weight transfer is already staged")
+        self._weight_transfer = StagedWeightTransfer(transfer_id, policy_version, manifest)
+        return int(policy_version)
+
+    def receive_weight_chunk(self, chunk: Any, transfer_id: str) -> int:
+        if self._weight_transfer is None:
+            raise RuntimeError("no staged weight transfer")
+        self._weight_transfer.receive(transfer_id, chunk)
+        return self._weight_transfer.policy_version
+
+    def commit_weight_transfer(self, transfer_id: str, *, verify_content: bool = False) -> int:
+        if self._weight_transfer is None:
+            raise RuntimeError("no staged weight transfer")
+        staged = self._weight_transfer
+        state = staged.finish(transfer_id)
+        try:
+            return self.update_weights(state, staged.policy_version, verify_content=verify_content)
+        finally:
+            self._weight_transfer = None
+
+    def abort_weight_transfer(self, transfer_id: str) -> None:
+        if self._weight_transfer is not None:
+            self._weight_transfer.require_id(transfer_id)
+            self._weight_transfer = None
 
     def verify_active_weights(self, state_ref: Any, policy_version: int) -> int:
         """Acceptance-only readback; never activate, load, or acknowledge a new version.

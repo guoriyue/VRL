@@ -1,7 +1,7 @@
 # SPRINT：权重同步传输——先测瓶颈，再选择传输
 
-状态：**parked**。触发：真实 full-parameter 多 GPU 作业证明权重传输占显著
-step wall-clock，并达到执行前声明的优化阈值。LoRA-only 不触发。
+状态：**implementing（用户已要求实现传输选择）；默认传输仍由真实测量决定。**
+真实 full-parameter 多 GPU 作业的性能验收尚未完成，LoRA-only 测试不能替代。
 2026-09-09 按当前代码和 [Miles v0.1 研究](../../research/miles_v01_2609_08368.md)
 重写旧的“全参默认 NCCL”计划；新默认必须由真实测量决定。
 
@@ -64,3 +64,52 @@ Miles 论文 §4 的借鉴是准备与传输分开，以及内容验证。
 
 不先添加 YAML 菜单再找消费者，不按 use_lora 布尔值自动断言最优传输。
 不迁移 Ray，不导入 Megatron，不为 LoRA 复制全参优化栈。
+
+
+## 2026-09-09: Optional staged bucket transport
+
+`distributed.rollout.weight_sync_bucket_bytes=67108864` selects the new transport
+for weight-bearing updates (64 MiB of tensor data per bucket). Omit it or use null
+to keep the existing one-put path. The public schema and frozen worker projection
+validate a positive integer and the launcher passes it to the existing sync owner;
+there is no second transport registry or automatic mode selection.
+
+The sender describes tensor shapes/dtypes, splits oversized tensors into independent
+storage slices, and packs small slices into buckets. It puts one bucket and waits
+for every engine rank before advancing. Metadata and serialization framing are
+outside the tensor-byte ceiling. Each receiver copies slices into owned CPU staging
+buffers so retained Ray views cannot pin all prior buckets. Missing/duplicate,
+out-of-order, wrong-shape/dtype and foreign-transfer chunks fail. Only a complete
+mapping is passed once to the existing model loader/slot installer, which retains
+its full-key validation and policy ACK behavior. No partial mapping reaches the
+model. None payloads keep their existing version-only behavior.
+
+Abort uses bounded direct cleanup calls because a failed dispatcher may already
+reject ordinary admissions. It clears matching staged state without touching a
+different transfer. Worker release also drops staging. A commit failure can leave
+another rank already updated; the driver still fails and the existing runtime
+quarantine prevents publication/admission. This is not a cross-rank rollback
+transaction. No new version is globally accepted merely because begin/chunk calls
+returned their transfer version.
+
+Memory/performance limits are explicit: the sender still owns a complete immutable
+CPU snapshot; each receiver needs a full host-side staging copy, and its existing
+model install may allocate more. Only live transport references are paced; Ray can
+cache evictable objects after their references are released. This is not a hard
+RSS/object-store-used ceiling, GPU direct transfer, RDMA, or a claim of faster
+training. Additional RPCs and copies may make small snapshots slower. The default
+remains unchanged pending real full-parameter measurements. Broadcast/GPU transport,
+large-model benchmarks and delta/alternative transport evaluation remain open.
+
+`StagedWeightTransfer` owns actual assembly state and validation, and the new Ray
+methods are RPC boundaries. The existing loader, version slots, default one-put
+sync, snapshot owner and runtime failure boundaries remain intact. No per-model
+ALL_CAPS vocabulary or declarative contract class was added.
+
+Validation: 262 Ray/execution/config/architecture tests passed before the final
+small-tensor packing addition. Then 29 focused transfer/Ray tests passed, including
+actual two-rank Ray transfer, lost-chunk rejection, abort cleanup, packed bucket
+sizes, independent backing storage, noncontiguous/BF16/NaN/negative-zero payloads,
+empty tensors and explicit CPU staging under a different default device. The
+real-process models are tiny CPU fixtures; no full-model/multi-GPU performance
+result is claimed. Source/checkpoint dtype policies are not changed by transport.
