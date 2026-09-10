@@ -152,3 +152,27 @@ Failure injection covers independently valid but mismatched model/checkpoint
 artifacts, edited scores/images, changed expected protocol, stale verdicts and
 nested completion-marker injection. The verification-only CLI test forbids
 regeneration and rescoring. These are CPU fixtures, not real learning evidence.
+
+## 2026-09-09: Repository evidence inventory
+
+The dated [inventory](../../training_examples/RECIPE_EVIDENCE_INVENTORY.md) and JSON
+snapshot enumerate all 75 experiment YAMLs, 12 real-checkpoint cases (including
+all overrides), and 35 existing real-cover labels. 73 presets compose without
+extra inputs; two Anima templates intentionally require composition. None of the
+configured output directories inspected contain metrics, launch records, complete
+checkpoint metadata, or completed evaluation markers. Five presets reference
+missing data exports. This scope excludes arbitrary external historical archives.
+
+Eleven real-checkpoint cases substitute reward; two also substitute replay
+rollouts. The SD3.5 qualitative note's old 8-sample recipe differs from today's
+16-sample, compile-enabled preset. These are explicit evidence gaps, not inferred
+recipe failures or a reason to rewrite historical notes. CASES and real-cover
+constants remain valid test fixture/protocol boundaries; no production registry
+was added to store this dated inventory.
+
+The SD3.5 model cache and OCR manifests are locally present, but Paddle/PaddleOCR
+are absent from the active environment and the single GPU remains shared. The
+existing smoke memory guard checks total capacity, not free capacity. No real
+training was launched. Validation: all 12 case configurations parsed in the
+existing CPU preflight test; 15 unrelated tests were deselected. The JSON was also
+checked for unique preset paths and consistency with the observed artifact counts.

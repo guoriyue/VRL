@@ -1,0 +1,2774 @@
+{
+  "captured_date": "2026-09-09",
+  "inspected_commit": "c78b3d34211f00bb9928d40110f90c3fba28611f",
+  "presets": [
+    {
+      "inspection_error": "ValueError: config is missing required key(s) declared as '???': actor.optim.lr, data, reward, trainer.output_dir. Set them in the experiment YAML or via dotlist overrides.",
+      "preset": "experiment/anima_preview3/online_grpo"
+    },
+    {
+      "inspection_error": "ValueError: config is missing required key(s) declared as '???': data, reward, trainer.output_dir. Set them in the experiment YAML or via dotlist overrides.",
+      "preset": "experiment/anima_preview3/online_grpo_fullparam"
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cogvideox_aesthetic_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cogvideox",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cogvideox/online_grpo_aesthetic_validation",
+      "resolved_config_sha256": "9562895460cb232891df0109e88d8b7541d8bb2cc6534c6a8ae2f3d48cdb0b8d",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/drawbench/eval_64.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/drawbench/train_192.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_pred2_2b_async_reward_480p",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2/online_grpo_async_reward",
+      "resolved_config_sha256": "bcd8ced712ade2db936bc7131d880e21696899b128d74c27d4bd550ec83b70b6",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/video_world/droid_full_targets_report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "data/external/video_world/manifests/droid_full_targets_eval.jsonl": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "data/external/video_world/manifests/droid_full_targets_train.jsonl": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_pred2_droid_full_target_480p",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2/online_grpo_droid_full_target_480p",
+      "resolved_config_sha256": "1aaa83d3f6b13dfe07899f9d49b8bb714e1564ecfd258abe83b8c2531a71e5d2",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/video_world/droid_full_targets_report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "data/external/video_world/manifests/droid_full_targets_eval.jsonl": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "data/external/video_world/manifests/droid_full_targets_train.jsonl": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_pred2_droid_full_target_480p_lora",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2/online_grpo_droid_full_target_480p_lora",
+      "resolved_config_sha256": "6dd60bd87ce4794ed72fd6a3dfc0595e11f9d510120b5089b7b520d2aec4ade2",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/video_world/droid_full_targets_report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "data/external/video_world/manifests/droid_full_targets_eval.jsonl": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "data/external/video_world/manifests/droid_full_targets_train.jsonl": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_pred2_droid_lora_480p_curve",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve",
+      "resolved_config_sha256": "730866b2cb445332243a9b6cd205d169d939b565547be81fab624d7bcd3e6630",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/video_world/droid_full_targets_report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "data/external/video_world/manifests/droid_full_targets_eval.jsonl": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "data/external/video_world/manifests/droid_full_targets_train.jsonl": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_pred2_droid_lora_480p_curve_fsdp_4x_l4",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve_fsdp_4x_l4",
+      "resolved_config_sha256": "175ada9ac58bc4bea203c4ef6c5da7a43798a57af9d74e73ce0c6fcfd71c321d",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/video_world/droid_full_targets_report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "data/external/video_world/manifests/droid_overfit_validation.jsonl": {
+          "exists": false,
+          "field": "eval_manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_pred2_droid_overfit_validation",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2/online_grpo_droid_overfit_validation",
+      "resolved_config_sha256": "253b14bb421213a6fdb2350f449dc15dbdf59db4b88b50ba91d616e83471fe2e",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/video_world/droid_full_targets_report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "data/external/video_world/manifests/droid_overfit_validation.jsonl": {
+          "exists": false,
+          "field": "eval_manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_pred2_droid_overfit_validation_fsdp_4x_l4",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2/online_grpo_droid_overfit_validation_fsdp_4x_l4",
+      "resolved_config_sha256": "d8324b97588dab1a7f79065a729f5caae326fd526a91409410a9ee35be5935fd",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/video_world/droid_targets_report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "data/external/video_world/manifests/droid_targets_eval.jsonl": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "data/external/video_world/manifests/droid_targets_train.jsonl": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_pred2_droid_target_480p",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2/online_grpo_droid_target_480p",
+      "resolved_config_sha256": "01f659a28b4c30fcb715f4ea80defd8092c073841ae2d227d685978008703b35",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/drawbench/eval_64.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/drawbench/train_192.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_pred2_2b_grpo",
+      "e2e_cases_using_preset": [
+        "cosmos_predict2",
+        "cosmos_predict2_kling_real_reward"
+      ],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2/online_grpo_kling_video_reward",
+      "resolved_config_sha256": "c954f53b2000cf941dd4544c01797c01ab99ccb45486841a53b61fc304928cd9",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/video_world/manifests/robot_eval.jsonl": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "data/external/video_world/manifests/robot_train.jsonl": {
+          "exists": true,
+          "field": "manifest"
+        },
+        "data/external/video_world/robot_report.json": {
+          "exists": true,
+          "field": "source_report"
+        }
+      },
+      "configured_output": "outputs/cosmos_predict2_v2w_kling_video_reward",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2/online_grpo_v2w_reference",
+      "resolved_config_sha256": "cbac526daebdc810155d282e7d75f91d1479ff37e96bafe3efffc0f0aa0e5919",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/video_world/manifests/robot_eval.jsonl": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "data/external/video_world/manifests/robot_train.jsonl": {
+          "exists": true,
+          "field": "manifest"
+        },
+        "data/external/video_world/robot_report.json": {
+          "exists": true,
+          "field": "source_report"
+        }
+      },
+      "configured_output": "outputs/cosmos_pred2_2b_v2w_480p",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2/online_grpo_v2w_reference_480p",
+      "resolved_config_sha256": "4d976cfe54494a718939a849b155116bbf90aeee5a75196d56ca05909423e31e",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/video_world/droid_full_targets_report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "data/external/video_world/manifests/droid_overfit_validation.jsonl": {
+          "exists": false,
+          "field": "eval_manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_predict25_sft_numerics_240p_33f",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2.5",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2_5/online_grpo_droid_sft_numerics_240p_33f",
+      "resolved_config_sha256": "432f89e851193f2a2a84269bb319604a1b5885aecfc5b958838deb89e0052c42",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_predict2_5_2b_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2.5",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2_5/online_grpo_kling_video_reward",
+      "resolved_config_sha256": "f4ce6dbbc411f8eb73f015e37162b43ff7ae8028eaa7e58700da555ac7f7c74b",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "diffusion_nft",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_predict2_5_2b_diffusionnft",
+      "e2e_cases_using_preset": [
+        "cosmos_predict2_5"
+      ],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2.5",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2_5/online_nft_kling_video_reward",
+      "resolved_config_sha256": "f75263a5441af1206886e18868195a90f5a2ed315b51436c53bd9a0c33dca910",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "diffusion_nft",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_predict2_5_2b_diffusionnft",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2.5",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2_5/online_nft_kling_video_reward_cross_node",
+      "resolved_config_sha256": "109818d578b8ae5ec4b70cf481fe883ada042bcfec8e56b38cc3a654e775f185",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "diffusion_nft",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_predict2_5_2b_diffusionnft",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2.5",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1",
+      "resolved_config_sha256": "5a2a6bca31a3c0eeaec04cf8005210b0cdf97876e8833564dd24a1beac75b2b2",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "diffusion_nft",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_predict2_5_2b_diffusionnft",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2.5",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2_5/online_nft_kling_video_reward_fsdp_2x1",
+      "resolved_config_sha256": "d9a8d91e208c36f50729b5f6f79f6ca3dd919920e3038956fad7b2ad53b41386",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "diffusion_nft",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/cosmos_predict2_5_2b_motion_physics",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "cosmos-predict2.5",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/cosmos_predict2_5/online_nft_motion_physics",
+      "resolved_config_sha256": "c5c50ad766115e49855625d97788f76651bf1e4539fd1810a27ea8f9d0dfffcf",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/echo_kling_video_reward",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "echo",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/echo/online_grpo_kling_video_reward",
+      "resolved_config_sha256": "d01afe65b1338ddca047e5197987dccadb161e0be1f76bcecffe9b6d6ffd5c48",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "token_grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/drawbench/eval_64.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/drawbench/train_192.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/emu3_pickscore_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "emu3",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/emu3/online_grpo_pickscore_validation",
+      "resolved_config_sha256": "dc1ac022baa598b95315e25c937f571f98248808a1a144b0d97bb6bf85b29ab1",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "dance_grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/drawbench/eval_64.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/drawbench/train_192.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/flux_dance_grpo_aesthetic_validation",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "flux",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/flux/online_dance_grpo_aesthetic_validation",
+      "resolved_config_sha256": "e14614b8cd0119d22ef54dd069e1ec46f4b7f820216571a039c5670b36b3b226",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "diffusion_nft",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/pickscore_sfw/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/pickscore_sfw/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/flux_diffusion_nft_pickscore_validation",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "flux",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/flux/online_diffusion_nft_pickscore_validation",
+      "resolved_config_sha256": "b62674538f1682e78b978db14738a7530c9b106165fb4ddc17850610808c003f",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "flow_dppo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/pickscore_sfw/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/pickscore_sfw/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/flux_flow_dppo_pickscore_validation",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "flux",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/flux/online_flow_dppo_pickscore_validation",
+      "resolved_config_sha256": "1d22499b7865d4050e916c2dc73b36ca1f72badecb20b30ccceb6de0fe4be4cf",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo_guard",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/pickscore_sfw/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/pickscore_sfw/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/flux_grpo_guard_pickscore_validation",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "flux",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/flux/online_grpo_guard_pickscore_validation",
+      "resolved_config_sha256": "4329903dffdccbccb69a47fb18ada4f29e7c236c78ca4a94ad0724d51b8cf914",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/ocr/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/ocr/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/flux_ocr_grpo_smoke_single_gpu",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "flux",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/flux/online_grpo_smoke_single_gpu",
+      "resolved_config_sha256": "181645551d53681191cad94d331c06475e0733dfbff353d8661119d88914e40b",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "token_grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/drawbench/eval_64.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/drawbench/train_192.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/glm_image_pickscore_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "glm_image",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/glm_image/online_grpo_pickscore_validation",
+      "resolved_config_sha256": "af8bfeb204516502cf0583ec6a9d715c69e0ddc9668b3013c25374d4951ae10b",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {},
+      "configured_output": "outputs/hunyuan_image_pickscore_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "hunyuan_image",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/hunyuan_image/online_grpo_pickscore_validation",
+      "resolved_config_sha256": "035eda541f3aac003969953770c6188d246f5926fe06defe27322759d5b68f75",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/hunyuan_video_aesthetic_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "hunyuan_video",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/hunyuan_video/online_grpo_aesthetic_validation",
+      "resolved_config_sha256": "665a15636b422dab664d63a1e9e3e8d19c37a37ac00eee8babd8031b15f96070",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "token_grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/drawbench/eval_64.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/drawbench/train_192.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/janus_pro_1b_aesthetic_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "janus_pro",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/janus_pro/online_grpo_aesthetic",
+      "resolved_config_sha256": "445b14b1ca4223c89174a9572491ef45b4b27014c2e8c5d45806e9774faf4210",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "token_grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/ocr/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/ocr/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/janus_pro_1b_ocr_grpo",
+      "e2e_cases_using_preset": [
+        "janus_pro"
+      ],
+      "evaluation_markers": 0,
+      "family": "janus_pro",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/janus_pro/online_grpo_ocr",
+      "resolved_config_sha256": "4cc493cab02abc7c3d0472415c43e62409d20ca554fb06fa0e53d2e6196f8d53",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "token_grpo_multisegment",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/drawbench/eval_64.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/drawbench/train_192.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/janus_pro_1b_r1_aesthetic_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "janus_pro_r1",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/janus_pro/online_r1_grpo_aesthetic",
+      "resolved_config_sha256": "8d7ba7eeefcfb588539c30449bed6cbde0de9cf9c4b4fbc704d3a383196aebe7",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "token_grpo_multisegment",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/ocr/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/ocr/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/janus_pro_1b_r1_ocr_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "janus_pro_r1",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/janus_pro/online_r1_grpo_ocr",
+      "resolved_config_sha256": "e593325206d64869de42ba93c9401e87785037365b6534d2103aafffca2d46ed",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "token_grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/drawbench/eval_64.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/drawbench/train_192.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/llamagen_pickscore_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "llamagen",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/llamagen/online_grpo_pickscore_validation",
+      "resolved_config_sha256": "a77280e91ca3d1ea1cb3cb0af1901fcde2f559ada7b2aca04cfb970348550b5d",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {},
+      "configured_output": "outputs/lumina2_pickscore_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "lumina2",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/lumina2/online_grpo_pickscore_validation",
+      "resolved_config_sha256": "36a8b12761b9a178edf001093b31642b2d5fb03f25282a94fc3cc1c9e8c9d5c2",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/minimax_h3_kling_video_reward",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "minimax_h3",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/minimax_h3/online_grpo_kling_video_reward",
+      "resolved_config_sha256": "e1ebb2e86bab9c8e4b706e110439173f4767cf66f9d81cee7f644c6df927caf8",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/mochi_aesthetic_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "mochi",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/mochi/online_grpo_aesthetic_validation",
+      "resolved_config_sha256": "ad446bf97b48fe68e31d20a30dae9b2ac1a8fe0d3e4289c991707ea7e7e98440",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "token_grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/ocr/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/ocr/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/nextstep_1_ocr_grpo",
+      "e2e_cases_using_preset": [
+        "nextstep_1"
+      ],
+      "evaluation_markers": 0,
+      "family": "nextstep_1",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/nextstep_1/online_grpo_ocr",
+      "resolved_config_sha256": "bc8e1500752f622ead3a517d4984dd97af6a1d3ae509707bbc80203be7041cad",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {},
+      "configured_output": "outputs/pixart_sigma_pickscore_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "pixart_sigma",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/pixart_sigma/online_grpo_pickscore_validation",
+      "resolved_config_sha256": "d4d76b21cefac6e0d743a614c6f64f37790869cdb2b5825d9e86d357f8086cfc",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/ocr/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/ocr/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/qwen_image_ocr_grpo_smoke_single_gpu",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "qwen_image",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/qwen_image/online_grpo_smoke_single_gpu",
+      "resolved_config_sha256": "466f2f039127bcf375202026cbadbe555391c9cf160a7d726454443cc61c937b",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/drawbench/eval_64.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/drawbench/train_192.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/sana_aesthetic_trustworthy_curve",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "sana",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/sana/online_grpo_aesthetic",
+      "resolved_config_sha256": "9c505b672391d7dc02bd333f70c51214675ae605b3e31fcbbb3d5b39c2d5fd2c",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/drawbench/eval_64.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/drawbench/train_192.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/sana_aesthetic_fullparam",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "sana",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/sana/online_grpo_aesthetic_fullparam",
+      "resolved_config_sha256": "35c4d21cf18c6add6f6ddf8e929ccbf1633a00264e4922558966c438693c39e7",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/drawbench/eval_64.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/drawbench/train_192.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/sana_aesthetic_fullparam_long",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "sana",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/sana/online_grpo_aesthetic_fullparam_long",
+      "resolved_config_sha256": "407d9aceb9cd42961eb34db9012d56ebdd7e3ac703d959b1cba04bc831bf7406",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/pickscore_sfw/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/pickscore_sfw/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/sana_aesthetic_pickapic_sfw",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "sana",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/sana/online_grpo_aesthetic_pickapic_sfw",
+      "resolved_config_sha256": "81af3d6432aae8def874db864340ba4625da644eee152b9d6e75ec721a731fc3",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/pickscore_sfw/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/pickscore_sfw/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/sana_pickscore_pickapic_sfw",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "sana",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/sana/online_grpo_pickscore_pickapic_sfw",
+      "resolved_config_sha256": "bb78663bb40d292aab528afc395a83e8b72f3a5904488574d37fe4cd61ccabde",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/pickscore_sfw/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/pickscore_sfw/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/sana_pickscore_pickapic_sfw_24x24",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "sana",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/sana/online_grpo_pickscore_pickapic_sfw_24x24",
+      "resolved_config_sha256": "9a17ad8cc5918f52d71fcb2538eba87d4c426b9b466c807effcc01f9cea72a86",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/pickscore_sfw/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/pickscore_sfw/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/sana_pickscore_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "sana",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/sana/online_grpo_pickscore_validation",
+      "resolved_config_sha256": "25711e300065929bf1cf9b87a218b3c1f19007e525a9c9714dfac0bf6f96fdf2",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/ocr/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/ocr/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/sd3_5_ocr_grpo",
+      "e2e_cases_using_preset": [
+        "sd3_5",
+        "sd3_5_dance_grpo",
+        "sd3_5_flow_dppo",
+        "sd3_5_grpo_guard"
+      ],
+      "evaluation_markers": 0,
+      "family": "sd3_5",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/sd3_5/online_grpo_ocr",
+      "resolved_config_sha256": "63bde55319d040d867b34667dd75e3f57b24d6dd69f3c70dcab3a3c358c97b1d",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/ocr/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/ocr/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/sd3_5_ocr_continuous_4gpu_acceptance",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "sd3_5",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/sd3_5/online_grpo_ocr_continuous_4gpu_acceptance",
+      "resolved_config_sha256": "436c78a462115f3de55e611c22960c8f9bafcbf56a2a0ae3bb5ffb2336605a09",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/ocr/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/ocr/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/sd3_5_ocr_grpo_crossnode_debug",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "sd3_5",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/sd3_5/online_grpo_ocr_crossnode_debug",
+      "resolved_config_sha256": "0ea347ac7a90760a3d1580d8ecb71c4b0ef19a2abed17d786e3eb17bb3a6bd20",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/ocr/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/ocr/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/sd3_5_ocr_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "sd3_5",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/sd3_5/online_grpo_ocr_fsdp_2x1_fullparam",
+      "resolved_config_sha256": "5453933e337200869df4abddf19f36db978de7984a60f80d19858062a1974e22",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/pickscore_sfw/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/pickscore_sfw/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/sd3_5_pickscore_grpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "sd3_5",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/sd3_5/online_grpo_pickscore",
+      "resolved_config_sha256": "5fb9ccc7db492f16dacf58fe97995100ad81b5f4fd0c830071be010be6efdae7",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "v_grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/pickscore_sfw/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/pickscore_sfw/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/sd3_5_v_grpo_pickscore",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "sd3_5",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/sd3_5/online_v_grpo_pickscore",
+      "resolved_config_sha256": "ae5e09cbf804984c5d5aaefe771e0a35b8f7ccf57d8c0a4bf1441bb590cb353d",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/vdn_h3_kling_video_reward",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "vdn_h3",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/vdn_h3/online_grpo_kling_video_reward",
+      "resolved_config_sha256": "e8a9cf1bb0ae4be7ab248c9f44a9337ce66260c15c35714f7cc43f5d434c0adc",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "diffusion_dpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {},
+      "configured_output": "outputs/wan_1_3b_dpo",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/offline_dpo_pickapic",
+      "resolved_config_sha256": "a55641021f582ebf8853091a5966925042aca77101d0224b14ccfec46f3b2a2e",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "diffusion_dpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {},
+      "configured_output": "outputs/wan_1_3b_dpo_pickapic_v1",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/offline_dpo_pickapic_v1",
+      "resolved_config_sha256": "f3f77decef7e8800c3dde6e79ce3036762051cde0b10f1134a4e2b0fc585e96a",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "flash_grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/wan_1_3b_flash_grpo_kling_video_reward",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_flash_grpo_kling_video_reward",
+      "resolved_config_sha256": "673fb839c9765a6f6ea3c14ee03931e3722126b768e0d353d4e6f3885e62d687",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/video_world/manifests/droid_full_targets_t2v_eval.jsonl": {
+          "exists": false,
+          "field": "eval_manifest"
+        },
+        "data/external/video_world/manifests/droid_full_targets_t2v_report.json": {
+          "exists": false,
+          "field": "source_report"
+        },
+        "data/external/video_world/manifests/droid_full_targets_t2v_train.jsonl": {
+          "exists": false,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/wan_robotics_physics_4x_l4/droid_fullparam_fsdp_3x_l4",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_3x_l4",
+      "resolved_config_sha256": "883fbfb823ec8b9a1ee0c4399b7d1657e92ed63ca6dd53e3c255c66ae400175f",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/video_world/manifests/droid_full_targets_t2v_eval.jsonl": {
+          "exists": false,
+          "field": "eval_manifest"
+        },
+        "data/external/video_world/manifests/droid_full_targets_t2v_report.json": {
+          "exists": false,
+          "field": "source_report"
+        },
+        "data/external/video_world/manifests/droid_full_targets_t2v_train.jsonl": {
+          "exists": false,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/wan_robotics_physics_4x_l4/droid_fullparam_fsdp_4x_l4",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_4x_l4",
+      "resolved_config_sha256": "20094cc7bbdb6a36fbd7f9c61ed23daa6630f7bdf4ef382f6bef83d18b7ef5fa",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/flash_grpo_video/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/flash_grpo_video/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/wan_hpsv3_flash_grpo/run",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_hpsv3_4x_l40s",
+      "resolved_config_sha256": "1940075435110ef1fe5dc97af27d440b311c2295fec4e1f82d25ee001055f761",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "flash_grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/flash_grpo_video/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/flash_grpo_video/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/wan_hpsv3_flash_grpo/fsdp_run",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_hpsv3_fsdp_4x_l40s",
+      "resolved_config_sha256": "57193f908f5b0dd7a5643f4b29835ee5567879451767641f7b0ddc4099764e85",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/videophy_i2v/manifests/eval.jsonl": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "data/external/videophy_i2v/manifests/train.jsonl": {
+          "exists": true,
+          "field": "manifest"
+        },
+        "data/external/videophy_i2v/report.json": {
+          "exists": true,
+          "field": "source_report"
+        }
+      },
+      "configured_output": "outputs/wan_i2v_14b_fsdp_2x_l4",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan_2_1_i2v",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_i2v_fsdp_2x_l4",
+      "resolved_config_sha256": "303c0371c45446d00fb73d18c774bc475695a177e911a9e3b80734a181fa981d",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/videophy_i2v/manifests/eval.jsonl": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "data/external/videophy_i2v/manifests/train.jsonl": {
+          "exists": true,
+          "field": "manifest"
+        },
+        "data/external/videophy_i2v/report.json": {
+          "exists": true,
+          "field": "source_report"
+        }
+      },
+      "configured_output": "outputs/wan_i2v_14b_kling_smoke_single_gpu",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan_2_1_i2v",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_i2v_smoke_single_gpu",
+      "resolved_config_sha256": "a752f7af116fe289983a5e2387f66d2aa516943af97bc88af5ef84ed6d387b99",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/wan_1_3b_kling_video_reward",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_kling_video_reward",
+      "resolved_config_sha256": "4dfd014f3fea72e0c024931cacf38cd0bc4906197b1a166f311e37899dc1c643",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/ocr/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/ocr/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/wan_1_3b_ocr_grpo",
+      "e2e_cases_using_preset": [
+        "wan_2_1"
+      ],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_ocr",
+      "resolved_config_sha256": "2f2b642f93e6c3c0f5a50f561a6e00325dd0dc7e40c92d4910107fc669f81768",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/ocr/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/ocr/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/wan_1_3b_ocr_fsdp",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_ocr_fsdp",
+      "resolved_config_sha256": "d40a4a0c672ea5cc68c4ff9a10abe6f6dcdedba7703fa02820e242c4a3db7e56",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/wan_1_3b_physics",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_physics",
+      "resolved_config_sha256": "4ea3f399b46f0d752e7337981788ae5a7d31fe4172403fac892ff22fd5d84235",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/videophy_i2v/manifests/eval.jsonl": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "data/external/videophy_i2v/manifests/train.jsonl": {
+          "exists": true,
+          "field": "manifest"
+        },
+        "data/external/videophy_i2v/report.json": {
+          "exists": true,
+          "field": "source_report"
+        }
+      },
+      "configured_output": "outputs/wan_i2v_14b_physics_smoke",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan_2_1_i2v",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_physics_i2v",
+      "resolved_config_sha256": "f872e9adedb4a143f7cf392ee7787bf4ec44a01d4662dc0529fada0fa36373c8",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/wan_robotics_physics_4x_l4/run",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_robotics_physics_4x_l4",
+      "resolved_config_sha256": "399488fda88cd63deed71c69a1dcfdcd8728d1fc9a3afc460fec6cf32aad5568",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/wan_robotics_physics_4x_l4/continuous_run",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_robotics_physics_4x_l4_continuous",
+      "resolved_config_sha256": "2eace073b7dc9cb45e86ca314a8a0fe826562f928dd029f97776348133a029b9",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/videophy/eval.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/videophy/report.json": {
+          "exists": true,
+          "field": "source_report"
+        },
+        "datasets/videophy/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/wan_videoscore2_overlap_gate",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_1/online_grpo_unified_reward_overlap_gate",
+      "resolved_config_sha256": "4be9a56369c82588ea1a69661d0b5bbb68642baa7028628fba9d27c6341c0c93",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "datasets/ocr/test.txt": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "datasets/ocr/train.txt": {
+          "exists": true,
+          "field": "manifest"
+        }
+      },
+      "configured_output": "outputs/wan_2_2_dual_expert_proof",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_2/online_grpo_dual_expert_proof",
+      "resolved_config_sha256": "3aaed80b8cd910c397570b5fd9872a1c69d47b7c4fbb57685116fe7cc197abc6",
+      "verdict_present": false
+    },
+    {
+      "algorithm": "grpo",
+      "checkpoint_metadata_files": 0,
+      "configured_manifests": {
+        "data/external/videophy_i2v/manifests/eval.jsonl": {
+          "exists": true,
+          "field": "eval_manifest"
+        },
+        "data/external/videophy_i2v/manifests/train.jsonl": {
+          "exists": true,
+          "field": "manifest"
+        },
+        "data/external/videophy_i2v/report.json": {
+          "exists": true,
+          "field": "source_report"
+        }
+      },
+      "configured_output": "outputs/wan_2_2_i2v_a14b_physics_smoke",
+      "e2e_cases_using_preset": [],
+      "evaluation_markers": 0,
+      "family": "wan_2_1_i2v",
+      "launch_records": 0,
+      "metrics_present": false,
+      "output_exists": false,
+      "preset": "experiment/wan_2_2/online_grpo_physics_i2v",
+      "resolved_config_sha256": "6e625a861c7bd1ab4dc2028ff55072272c91a6f4c9c74d50ce891e9732fdc6ff",
+      "verdict_present": false
+    }
+  ],
+  "real_checkpoint_cases": [
+    {
+      "case_id": "wan_2_1",
+      "checkpoints": [
+        {
+          "repo_id": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+          "required_files": [
+            "model_index.json"
+          ]
+        }
+      ],
+      "effective_reward_scope": "substituted-reward",
+      "family": "wan_2_1",
+      "minimum_cuda_memory_gib": 24.0,
+      "overrides": [
+        "model.family=wan_2_1",
+        "model.torch_compile.enable=false",
+        "algorithm.kl_coef=0.0",
+        "algorithm.kl_reward_coef=0.0",
+        "actor.drop_zero_advantage=false",
+        "rollout.n_samples_per_prompt=2",
+        "rollout.prompts_per_batch=1",
+        "rollout.samples_per_generation_batch=1",
+        "rollout.noise_level=0.7",
+        "rollout.sde.window_size=0",
+        "rollout.sde.window_range=[0,1]",
+        "sampling.num_steps=1",
+        "sampling.guidance_scale=1.0",
+        "sampling.height=128",
+        "sampling.width=128",
+        "sampling.num_frames=1",
+        "sampling.max_sequence_length=64"
+      ],
+      "preset": "experiment/wan_2_1/online_grpo_ocr",
+      "reward_model_factory": null,
+      "synthetic_replay_rollout": false,
+      "use_config_reward": false
+    },
+    {
+      "case_id": "sd3_5",
+      "checkpoints": [
+        {
+          "repo_id": "stabilityai/stable-diffusion-3.5-medium",
+          "required_files": [
+            "model_index.json"
+          ]
+        }
+      ],
+      "effective_reward_scope": "substituted-reward",
+      "family": "sd3_5",
+      "minimum_cuda_memory_gib": 24.0,
+      "overrides": [
+        "model.torch_compile.enable=false",
+        "precision.training.dtype=bf16",
+        "precision.rollout.dtype=bf16",
+        "actor.gradient_accumulation_steps=0",
+        "algorithm.kl_coef=0.0",
+        "algorithm.kl_reward_coef=0.0",
+        "actor.drop_zero_advantage=false",
+        "rollout.n_samples_per_prompt=2",
+        "rollout.prompts_per_batch=1",
+        "rollout.samples_per_generation_batch=1",
+        "rollout.noise_level=0.7",
+        "rollout.sde.window_size=0",
+        "rollout.sde.window_range=[0,1]",
+        "sampling.num_steps=1",
+        "sampling.guidance_scale=1.0",
+        "sampling.height=128",
+        "sampling.width=128",
+        "sampling.max_sequence_length=64"
+      ],
+      "preset": "experiment/sd3_5/online_grpo_ocr",
+      "reward_model_factory": null,
+      "synthetic_replay_rollout": false,
+      "use_config_reward": false
+    },
+    {
+      "case_id": "sd3_5_dance_grpo",
+      "checkpoints": [
+        {
+          "repo_id": "stabilityai/stable-diffusion-3.5-medium",
+          "required_files": [
+            "model_index.json"
+          ]
+        }
+      ],
+      "effective_reward_scope": "substituted-reward",
+      "family": "sd3_5",
+      "minimum_cuda_memory_gib": 24.0,
+      "overrides": [
+        "/recipe/online=flow_matching_dance_grpo",
+        "model.torch_compile.enable=false",
+        "precision.training.dtype=bf16",
+        "precision.rollout.dtype=bf16",
+        "actor.gradient_accumulation_steps=0",
+        "algorithm.kl_coef=0.0",
+        "algorithm.kl_reward_coef=0.0",
+        "actor.drop_zero_advantage=false",
+        "rollout.n_samples_per_prompt=2",
+        "rollout.prompts_per_batch=1",
+        "rollout.samples_per_generation_batch=1",
+        "rollout.noise_level=0.7",
+        "rollout.sde.window_size=0",
+        "rollout.sde.window_range=[0,1]",
+        "sampling.num_steps=1",
+        "sampling.guidance_scale=1.0",
+        "sampling.height=128",
+        "sampling.width=128",
+        "sampling.max_sequence_length=64"
+      ],
+      "preset": "experiment/sd3_5/online_grpo_ocr",
+      "reward_model_factory": null,
+      "synthetic_replay_rollout": false,
+      "use_config_reward": false
+    },
+    {
+      "case_id": "sd3_5_flow_dppo",
+      "checkpoints": [
+        {
+          "repo_id": "stabilityai/stable-diffusion-3.5-medium",
+          "required_files": [
+            "model_index.json"
+          ]
+        }
+      ],
+      "effective_reward_scope": "substituted-reward",
+      "family": "sd3_5",
+      "minimum_cuda_memory_gib": 24.0,
+      "overrides": [
+        "/recipe/online=flow_matching_dppo",
+        "model.torch_compile.enable=false",
+        "precision.training.dtype=bf16",
+        "precision.rollout.dtype=bf16",
+        "actor.gradient_accumulation_steps=0",
+        "algorithm.kl_reward_coef=0.0",
+        "actor.drop_zero_advantage=false",
+        "rollout.n_samples_per_prompt=2",
+        "rollout.prompts_per_batch=1",
+        "rollout.samples_per_generation_batch=1",
+        "rollout.noise_level=0.7",
+        "rollout.sde.window_size=0",
+        "rollout.sde.window_range=[0,1]",
+        "sampling.num_steps=1",
+        "sampling.guidance_scale=1.0",
+        "sampling.height=128",
+        "sampling.width=128",
+        "sampling.max_sequence_length=64"
+      ],
+      "preset": "experiment/sd3_5/online_grpo_ocr",
+      "reward_model_factory": null,
+      "synthetic_replay_rollout": false,
+      "use_config_reward": false
+    },
+    {
+      "case_id": "sd3_5_grpo_guard",
+      "checkpoints": [
+        {
+          "repo_id": "stabilityai/stable-diffusion-3.5-medium",
+          "required_files": [
+            "model_index.json"
+          ]
+        }
+      ],
+      "effective_reward_scope": "substituted-reward",
+      "family": "sd3_5",
+      "minimum_cuda_memory_gib": 24.0,
+      "overrides": [
+        "/recipe/online=flow_matching_grpo_guard",
+        "model.torch_compile.enable=false",
+        "precision.training.dtype=bf16",
+        "precision.rollout.dtype=bf16",
+        "actor.gradient_accumulation_steps=0",
+        "algorithm.kl_reward_coef=0.0",
+        "actor.drop_zero_advantage=false",
+        "rollout.n_samples_per_prompt=2",
+        "rollout.prompts_per_batch=1",
+        "rollout.samples_per_generation_batch=1",
+        "rollout.noise_level=0.7",
+        "rollout.sde.window_size=0",
+        "rollout.sde.window_range=[0,1]",
+        "sampling.num_steps=1",
+        "sampling.guidance_scale=1.0",
+        "sampling.height=128",
+        "sampling.width=128",
+        "sampling.max_sequence_length=64"
+      ],
+      "preset": "experiment/sd3_5/online_grpo_ocr",
+      "reward_model_factory": null,
+      "synthetic_replay_rollout": false,
+      "use_config_reward": false
+    },
+    {
+      "case_id": "janus_pro",
+      "checkpoints": [
+        {
+          "repo_id": "deepseek-ai/Janus-Pro-1B",
+          "required_files": [
+            "config.json",
+            "preprocessor_config.json",
+            "processor_config.json",
+            "tokenizer.json"
+          ]
+        }
+      ],
+      "effective_reward_scope": "substituted-reward",
+      "family": "janus_pro",
+      "minimum_cuda_memory_gib": 16.0,
+      "overrides": [
+        "algorithm.kl_coef=0.0",
+        "algorithm.kl_reward_coef=0.0",
+        "actor.drop_zero_advantage=false",
+        "rollout.n_samples_per_prompt=2",
+        "rollout.prompts_per_batch=1",
+        "sampling.max_text_length=64",
+        "sampling.image_token_num=4",
+        "sampling.image_size=64",
+        "sampling.guidance_scale=1.0",
+        "sampling.temperature=1.0",
+        "sampling.attention_backend=torch_native"
+      ],
+      "preset": "experiment/janus_pro/online_grpo_ocr",
+      "reward_model_factory": null,
+      "synthetic_replay_rollout": false,
+      "use_config_reward": false
+    },
+    {
+      "case_id": "cosmos_predict2",
+      "checkpoints": [
+        {
+          "repo_id": "nvidia/Cosmos-Predict2-2B-Video2World",
+          "required_files": [
+            "model_index.json",
+            "transformer/config.json",
+            "transformer/diffusion_pytorch_model.safetensors",
+            "text_encoder/config.json",
+            "text_encoder/model.safetensors.index.json",
+            "vae/config.json",
+            "vae/diffusion_pytorch_model.safetensors",
+            "scheduler/scheduler_config.json",
+            "tokenizer/tokenizer.json"
+          ]
+        }
+      ],
+      "effective_reward_scope": "substituted-reward",
+      "family": "cosmos-predict2",
+      "minimum_cuda_memory_gib": 24.0,
+      "overrides": [
+        "model.torch_compile.enable=false",
+        "model.use_lora=true",
+        "model.lora.rank=8",
+        "model.lora.alpha=8",
+        "model.lora.target_modules=[to_q,to_k,to_v,to_out.0]",
+        "algorithm.kl_coef=0.0",
+        "algorithm.kl_reward_coef=0.0",
+        "actor.drop_zero_advantage=false",
+        "rollout.n_samples_per_prompt=2",
+        "rollout.prompts_per_batch=1",
+        "rollout.samples_per_generation_batch=1",
+        "rollout.noise_level=0.7",
+        "rollout.sde.type=cps",
+        "rollout.sde.window_size=0",
+        "rollout.sde.window_range=[0,1]",
+        "sampling.num_steps=2",
+        "sampling.guidance_scale=1.0",
+        "sampling.height=128",
+        "sampling.width=128",
+        "sampling.num_frames=5",
+        "sampling.fps=16"
+      ],
+      "preset": "experiment/cosmos_predict2/online_grpo_kling_video_reward",
+      "reward_model_factory": "tests.e2e.test_real_checkpoint_rl:build_tensor_mean_model",
+      "synthetic_replay_rollout": false,
+      "use_config_reward": true
+    },
+    {
+      "case_id": "cosmos_predict2_kling_real_reward",
+      "checkpoints": [
+        {
+          "repo_id": "nvidia/Cosmos-Predict2-2B-Video2World",
+          "required_files": [
+            "model_index.json",
+            "transformer/config.json",
+            "transformer/diffusion_pytorch_model.safetensors",
+            "text_encoder/config.json",
+            "text_encoder/model.safetensors.index.json",
+            "vae/config.json",
+            "vae/diffusion_pytorch_model.safetensors",
+            "scheduler/scheduler_config.json",
+            "tokenizer/tokenizer.json"
+          ]
+        },
+        {
+          "repo_id": "KlingTeam/VideoReward",
+          "required_files": [
+            "model_config.json"
+          ]
+        },
+        {
+          "repo_id": "Qwen/Qwen2-VL-2B-Instruct",
+          "required_files": [
+            "config.json"
+          ]
+        }
+      ],
+      "effective_reward_scope": "configured-reward",
+      "family": "cosmos-predict2",
+      "minimum_cuda_memory_gib": 24.0,
+      "overrides": [
+        "model.torch_compile.enable=false",
+        "model.use_lora=true",
+        "model.lora.rank=8",
+        "model.lora.alpha=8",
+        "model.lora.target_modules=[to_q,to_k,to_v,to_out.0]",
+        "algorithm.kl_coef=0.0",
+        "algorithm.kl_reward_coef=0.0",
+        "actor.drop_zero_advantage=false",
+        "rollout.n_samples_per_prompt=2",
+        "rollout.prompts_per_batch=1",
+        "rollout.samples_per_generation_batch=1",
+        "rollout.noise_level=0.7",
+        "rollout.sde.type=cps",
+        "rollout.sde.window_size=0",
+        "rollout.sde.window_range=[0,1]",
+        "sampling.num_steps=2",
+        "sampling.guidance_scale=1.0",
+        "sampling.height=128",
+        "sampling.width=128",
+        "sampling.num_frames=5",
+        "sampling.fps=16"
+      ],
+      "preset": "experiment/cosmos_predict2/online_grpo_kling_video_reward",
+      "reward_model_factory": null,
+      "synthetic_replay_rollout": false,
+      "use_config_reward": true
+    },
+    {
+      "case_id": "cosmos_predict2_5",
+      "checkpoints": [
+        {
+          "repo_id": "nvidia/Cosmos-Predict2.5-2B",
+          "required_files": [
+            "model_index.json",
+            "transformer/config.json",
+            "transformer/diffusion_pytorch_model.safetensors",
+            "vae/config.json",
+            "vae/diffusion_pytorch_model.safetensors",
+            "scheduler/scheduler_config.json"
+          ]
+        }
+      ],
+      "effective_reward_scope": "substituted-reward",
+      "family": "cosmos-predict2.5",
+      "minimum_cuda_memory_gib": 28.0,
+      "overrides": [
+        "model.torch_compile.enable=false",
+        "model.skip_text_encoder=true",
+        "algorithm.kl_reward_coef=0.0",
+        "actor.drop_zero_advantage=false",
+        "rollout.n_samples_per_prompt=2",
+        "rollout.prompts_per_batch=1",
+        "rollout.samples_per_generation_batch=1",
+        "rollout.noise_level=0.7",
+        "rollout.sde.type=cps",
+        "rollout.sde.window_size=0",
+        "rollout.sde.window_range=[0,1]",
+        "sampling.num_steps=2",
+        "sampling.guidance_scale=1.0",
+        "sampling.height=128",
+        "sampling.width=128",
+        "sampling.num_frames=1",
+        "sampling.fps=16",
+        "sampling.max_sequence_length=64"
+      ],
+      "preset": "experiment/cosmos_predict2_5/online_nft_kling_video_reward",
+      "reward_model_factory": "tests.e2e.test_real_checkpoint_rl:build_tensor_mean_model",
+      "synthetic_replay_rollout": false,
+      "use_config_reward": true
+    },
+    {
+      "case_id": "cosmos_anima",
+      "checkpoints": [
+        {
+          "repo_id": "circlestone-labs/Anima",
+          "required_files": [
+            "split_files/diffusion_models/anima-preview3-base.safetensors"
+          ]
+        }
+      ],
+      "effective_reward_scope": "substituted-reward",
+      "family": "cosmos-predict2-anima",
+      "minimum_cuda_memory_gib": 28.0,
+      "overrides": [
+        "+reward=aesthetic",
+        "+dataset=drawbench_train_192",
+        "actor.optim.lr=1.0e-5",
+        "model.torch_compile.enable=false",
+        "actor.gradient_accumulation_steps=0",
+        "algorithm.kl_coef=0.0",
+        "algorithm.kl_reward_coef=0.0",
+        "actor.drop_zero_advantage=false",
+        "rollout.n_samples_per_prompt=2",
+        "rollout.prompts_per_batch=1",
+        "rollout.samples_per_generation_batch=1",
+        "rollout.noise_level=0.7",
+        "rollout.sde.window_size=0",
+        "rollout.sde.window_range=[0,1]",
+        "sampling.num_steps=1",
+        "sampling.guidance_scale=1.0",
+        "sampling.height=128",
+        "sampling.width=128",
+        "sampling.max_sequence_length=64"
+      ],
+      "preset": "experiment/anima_preview3/online_grpo",
+      "reward_model_factory": null,
+      "synthetic_replay_rollout": true,
+      "use_config_reward": false
+    },
+    {
+      "case_id": "cosmos_anima_safe",
+      "checkpoints": [
+        {
+          "repo_id": "circlestone-labs/Anima",
+          "required_files": [
+            "split_files/diffusion_models/anima-preview3-base.safetensors"
+          ]
+        }
+      ],
+      "effective_reward_scope": "substituted-reward",
+      "family": "cosmos-predict2-anima",
+      "minimum_cuda_memory_gib": 28.0,
+      "overrides": [
+        "+reward=aesthetic",
+        "+reward=nsfw_safety",
+        "+dataset=anime_safety_stress",
+        "reward.components.nsfw_safety=0.5",
+        "actor.optim.lr=1.0e-5",
+        "model.torch_compile.enable=false",
+        "actor.gradient_accumulation_steps=0",
+        "algorithm.kl_coef=0.0",
+        "algorithm.kl_reward_coef=0.0",
+        "actor.drop_zero_advantage=false",
+        "rollout.n_samples_per_prompt=2",
+        "rollout.prompts_per_batch=1",
+        "rollout.samples_per_generation_batch=1",
+        "rollout.noise_level=0.7",
+        "rollout.sde.window_size=0",
+        "rollout.sde.window_range=[0,1]",
+        "sampling.num_steps=1",
+        "sampling.guidance_scale=1.0",
+        "sampling.height=128",
+        "sampling.width=128",
+        "sampling.max_sequence_length=64"
+      ],
+      "preset": "experiment/anima_preview3/online_grpo",
+      "reward_model_factory": null,
+      "synthetic_replay_rollout": true,
+      "use_config_reward": false
+    },
+    {
+      "case_id": "nextstep_1",
+      "checkpoints": [
+        {
+          "repo_id": "stepfun-ai/NextStep-1.1",
+          "required_files": [
+            "config.json"
+          ]
+        },
+        {
+          "repo_id": "stepfun-ai/NextStep-1-f8ch16-Tokenizer",
+          "required_files": [
+            "config.json"
+          ]
+        }
+      ],
+      "effective_reward_scope": "substituted-reward",
+      "family": "nextstep_1",
+      "minimum_cuda_memory_gib": 64.0,
+      "overrides": [
+        "algorithm.kl_coef=0.0",
+        "algorithm.kl_reward_coef=0.0",
+        "actor.drop_zero_advantage=false",
+        "rollout.n_samples_per_prompt=2",
+        "rollout.prompts_per_batch=1",
+        "sampling.max_text_length=64",
+        "rollout.noise_level=1.0",
+        "sampling.image_token_num=4",
+        "sampling.image_size=64",
+        "sampling.num_steps=1",
+        "rollout.noise_level=1.0",
+        "sampling.guidance_scale=1.0",
+        "sampling.attention_backend=torch_native"
+      ],
+      "preset": "experiment/nextstep_1/online_grpo_ocr",
+      "reward_model_factory": null,
+      "synthetic_replay_rollout": false,
+      "use_config_reward": false
+    }
+  ],
+  "real_checkpoint_memory_scope": "minimum_cuda_memory_gib guards total device memory, not current free memory",
+  "real_cover_labels": [
+    {
+      "file": "tests/data/test_danbooru.py",
+      "lineno": 177,
+      "owner": "test_download_danbooru_images_downloads_only_positive_selection",
+      "problem": null,
+      "target": null,
+      "target_lane": null,
+      "tracked_in": "docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
+      "unknown_kwargs": [],
+      "why": "the injected fetch stands in for an HTTP GET against danbooru.donmai.us; a test that reaches the live site is neither reproducible nor free, and what is asserted here is the selection (which post ids get a request), not the transfer"
+    },
+    {
+      "file": "tests/data/test_jrdb_import.py",
+      "lineno": 101,
+      "owner": "test_jrdb_targets_command_writes_manifests_report_and_validates",
+      "problem": null,
+      "target": null,
+      "target_lane": null,
+      "tracked_in": "docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
+      "unknown_kwargs": [],
+      "why": "imageio + imageio-ffmpeg are declared dependencies, so real mp4 encoding would work here; it is skipped because this test asserts the manifests, the report and the artifact validation, and never decodes the written video \u2014 real encoding would add seconds per clip and zero coverage"
+    },
+    {
+      "file": "tests/data/test_setup.py",
+      "lineno": 239,
+      "owner": "test_video_world_targets_rows_include_real_source_target_clip",
+      "problem": null,
+      "target": null,
+      "target_lane": null,
+      "tracked_in": "docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
+      "unknown_kwargs": [],
+      "why": "imageio + imageio-ffmpeg are declared dependencies, so real mp4 encoding would work here; it is skipped because this test asserts clip splitting, row paths and the per-episode fps override, and never decodes the written video \u2014 real encoding would add seconds and zero coverage"
+    },
+    {
+      "file": "tests/data/test_setup.py",
+      "lineno": 306,
+      "owner": "test_anime_positives_prepares_both_manifests_end_to_end",
+      "problem": null,
+      "target": null,
+      "target_lane": null,
+      "tracked_in": "docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
+      "unknown_kwargs": [],
+      "why": "the patched _http_download stands in for an HTTP GET against danbooru.donmai.us; a test that reaches the live site is neither reproducible nor free, and what is asserted here is the setup.main CLI wiring above it"
+    },
+    {
+      "file": "tests/generation/bindings/full_sequence_denoise/test_forward_plan_pipelined_equiv.py",
+      "lineno": 57,
+      "owner": "test_forward_plan_pipelined_matches_serial_forward_plan",
+      "problem": null,
+      "target": "tests/generation/execution/test_sample_batches_pipelined_cuda.py",
+      "target_lane": "gpu",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "the device falls back to CPU when CUDA is absent, and on CPU the pipelining mechanism this test wraps \u2014 the cross-stream Event and the async D2H copy on the side stream \u2014 does not execute at all; the gpu-lane file drives both for real"
+    },
+    {
+      "file": "tests/generation/bindings/token_autoregressive/test_janus_paged_attention_one_step.py",
+      "lineno": 44,
+      "owner": "<module>",
+      "problem": null,
+      "target": "tests/generation/bindings/token_autoregressive/test_janus_vllm_paged_attention_backend.py::test_janus_vllm_paged_attention_matches_hf_llama_one_step",
+      "target_lane": "gpu",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "the recording backend returns fixed hidden states so the runner's prefill/step sequencing is assertable on CPU; a real backend needs CUDA plus vLLM's worker internals, and the gpu-lane test checks its output against HF Llama instead"
+    },
+    {
+      "file": "tests/generation/execution/test_batch_memory_shadow.py",
+      "lineno": 45,
+      "owner": "<via _EXACT_BYTES_NEED_A_FIXED_CARD>",
+      "problem": null,
+      "target": null,
+      "target_lane": null,
+      "tracked_in": "docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
+      "unknown_kwargs": [],
+      "why": "the probe's budget arithmetic is asserted to the byte (a 10GB + 2GB*n peak model, non_torch = (32-24) - 8 = 0), and torch.cuda.mem_get_info varies with the machine and its current load; a real GPU would turn a deterministic arithmetic assertion into an unreproducible approximation"
+    },
+    {
+      "file": "tests/generation/execution/test_batch_memory_shadow.py",
+      "lineno": 347,
+      "owner": "test_runtime_resolves_auto_once_and_rewrites_requests",
+      "problem": null,
+      "target": "tests/generation/ray/test_runtime_config.py::test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet",
+      "target_lane": "slow_test",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "the executor's local-callable branch cannot exercise remote fleet fan-out, shared actor admission, the generation-stall ObjectRef deadline, or GenerationRequest serialization; the slow_test twin drives all four on a live cluster"
+    },
+    {
+      "file": "tests/generation/execution/test_worker_sleep.py",
+      "lineno": 148,
+      "owner": "<via _MEMORY_EFFECT_NEEDS_A_REAL_ALLOCATOR>",
+      "problem": null,
+      "target": "tests/generation/execution/test_worker_sleep.py::test_real_cumem_one_shot_scope_sleep_wake_in_subprocess",
+      "target_lane": "gpu",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "vLLM's CuMemAllocator needs a CUDA context to page virtual memory, so the CPU lane can only see that sleep/wake were called, never that the bytes came back; the twin in the gpu lane below measures the residual against a pre-pool baseline"
+    },
+    {
+      "file": "tests/generation/ray/test_health_monitor.py",
+      "lineno": 29,
+      "owner": "<via _SCRIPTED_RAY_WIRE>",
+      "problem": null,
+      "target": "tests/generation/ray/test_health_monitor.py::test_real_wedged_worker_times_out_and_the_fleet_really_dies",
+      "target_lane": "slow_test",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "an in-process fake cannot block a real actor process, let a real ray.get(timeout=) expire, or make a healthy actor's pending call raise RayActorError once the fleet is killed; those three are what the slow_test twin runs for real"
+    },
+    {
+      "file": "tests/generation/ray/test_oom_split.py",
+      "lineno": 38,
+      "owner": "<via _OOM_WIRE_FORMAT>",
+      "problem": null,
+      "target": "tests/generation/ray/test_oom_split.py::test_oom_matcher_accepts_the_real_torch_allocator_message",
+      "target_lane": "gpu",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "a Ray worker that OOMs on exactly the batch sizes these tests need cannot be produced in-process, so the worker itself stays a fake; what it hand-copies from torch is the allocator message format, and the gpu-lane twin pins that"
+    },
+    {
+      "file": "tests/generation/ray/test_weight_sync.py",
+      "lineno": 33,
+      "owner": "<via _OBJECT_STORE_LEDGER>",
+      "problem": null,
+      "target": "tests/generation/ray/test_weight_sync.py::test_real_ray_weight_sync_derefs_one_shared_put",
+      "target_lane": "slow_test",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "a real ray.put returns an ObjectRef and records nothing, so 'one put shared by every worker' has no real-side observable; the fake's tuple return in turn can never exercise auto-deref across a process boundary, which is what the slow_test twin does"
+    },
+    {
+      "file": "tests/models/families/nextstep_1/test_model_loading.py",
+      "lineno": 77,
+      "owner": "test_nextstep_decode_enforces_requested_geometry",
+      "problem": null,
+      "target": "tests/e2e/test_real_checkpoint_rl.py::test_real_checkpoint_online_rl_updates_trainable_weights",
+      "target_lane": "e2e",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "unpatchify and the pipeline assembly live in the upstream nextstep packages, which are not repository dependencies, so they stay stand-ins here; the e2e nextstep_1 case decodes through the real ones"
+    },
+    {
+      "file": "tests/models/families/nextstep_1/test_runner.py",
+      "lineno": 28,
+      "owner": "<via _RECORDING_BACKEND_STANDS_IN>",
+      "problem": null,
+      "target": "tests/generation/bindings/token_autoregressive/test_nextstep_vllm_paged_attention_backend.py::test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step",
+      "target_lane": "gpu",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "the recording backend returns hidden + 0.125 so advance counts and rollout/replay logprob parity are assertable on CPU; a real backend needs CUDA plus vLLM's worker internals, and the gpu-lane test checks its output against HF Qwen instead"
+    },
+    {
+      "file": "tests/models/interfaces/test_minimal_replay_runtime_wiring.py",
+      "lineno": 432,
+      "owner": "test_replay_builders_standardize_the_loaded_scheduler_onto_the_rollout_ladder",
+      "problem": null,
+      "target": "tests/models/steps/denoise/test_scheduler_logprob_parity.py::test_family_scheduler_sample_replay_parity",
+      "target_lane": "-",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "the transformer is a double and the rebuilt ladder is pinned by class and length only (literal timestep values move with the diffusers version); element-wise parity between this replay ladder and the rollout's runs on real schedulers in the counterpart"
+    },
+    {
+      "file": "tests/nn/layers/test_paged_attention_contract.py",
+      "lineno": 18,
+      "owner": "<module>",
+      "problem": null,
+      "target": "tests/nn/kernels/test_vllm_paged_attention_real_ops.py::test_vllm_paged_attention_writes_real_cuda_kv_cache",
+      "target_lane": "gpu",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "these are shape and identity contracts only \u2014 no test in this file allocates a KV cache, builds a block table or calls a paged-attention kernel, all of which need CUDA plus vLLM's worker internals; the gpu-lane test drives the real ops"
+    },
+    {
+      "file": "tests/ray/test_batch_dispatch.py",
+      "lineno": 46,
+      "owner": "<via _CONTROLLED_CLOCK>",
+      "problem": null,
+      "target": "tests/ray/test_ray_actor_pool.py::test_actor_dispatcher_awaits_real_object_refs",
+      "target_lane": "slow_test",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "the fake refs control event-loop completion ORDER, which a real Ray cluster cannot make deterministic; the protocol assumption they encode \u2014 a real ObjectRef awaits directly and resolves to the task result \u2014 is pinned against a live cluster there"
+    },
+    {
+      "file": "tests/ray/test_batch_dispatch.py",
+      "lineno": 737,
+      "owner": "<via _CONTROLLED_CLOCK_OVER_A_REAL_WIRE>",
+      "problem": null,
+      "target": "tests/ray/test_real_batch_execution.py",
+      "target_lane": "slow_test",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "a real cluster cannot make batch completion order deterministic, which is the whole point of the fake refs; the envelope -> pickle -> actor -> GenerationBatchResult crossing they therefore skip is pinned against a live cluster by both twins in the named file"
+    },
+    {
+      "file": "tests/ray/test_batch_dispatch.py",
+      "lineno": 814,
+      "owner": "test_batch_size_probe_shares_actor_admission_with_explicit_generation",
+      "problem": null,
+      "target": "tests/generation/ray/test_runtime_config.py::test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet",
+      "target_lane": "slow_test",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "the gated ref makes probe/batch submission order deterministic; the named test sends the real request and keyword arguments through live Ray actors"
+    },
+    {
+      "file": "tests/ray/test_cleanup_contract.py",
+      "lineno": 17,
+      "owner": "<via _REAL_RAY_CLEANUP>",
+      "problem": null,
+      "target": "tests/ray/test_global_placement.py::test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus",
+      "target_lane": "slow_test",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "a live Ray cluster cannot be told to fail ray.kill / remove_placement_group on demand, and these tests assert the WARNING text emitted on that failure; the cleanup path against a real cluster is exercised by the slow_test twin's shutdown"
+    },
+    {
+      "file": "tests/ray/test_cross_node_preflight.py",
+      "lineno": 20,
+      "owner": "<via _MULTI_NODE_TOPOLOGY>",
+      "problem": null,
+      "target": null,
+      "target_lane": null,
+      "tracked_in": "docs/sprints/done/SPRINT_one-real-ray-cluster.md",
+      "unknown_kwargs": [],
+      "why": "a live 2-node Ray cluster cannot be created inside a unit test, and inspect_cluster only reaches the cluster through the injected ray module, so there is nowhere for a real counterpart to live; tests/e2e/test_real_checkpoint_rl.py is single-node only"
+    },
+    {
+      "file": "tests/ray/test_dependencies.py",
+      "lineno": 10,
+      "owner": "<module>",
+      "problem": null,
+      "target": null,
+      "target_lane": null,
+      "tracked_in": "docs/sprints/done/SPRINT_one-real-ray-cluster.md",
+      "unknown_kwargs": [],
+      "why": "a live 3-node / 2-GPU Ray cluster cannot be created inside a unit test, and inspect_cluster only reaches the cluster through the injected ray module, so there is nowhere for a real counterpart to live; tests/e2e/test_real_checkpoint_rl.py is single-node only"
+    },
+    {
+      "file": "tests/ray/test_global_placement.py",
+      "lineno": 25,
+      "owner": "<via _REAL_RAY_PLACEMENT>",
+      "problem": null,
+      "target": "tests/ray/test_global_placement.py::test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus",
+      "target_lane": "slow_test",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "a live Ray cluster cannot be told to fail remove_placement_group or pg.ready() on demand, and what these tests assert is that the handle survives that failure for a later retry; the same create/probe/shutdown path against a real cluster is the slow_test twin below"
+    },
+    {
+      "file": "tests/ray/test_global_placement.py",
+      "lineno": 35,
+      "owner": "<via _REAL_RAY_PROBE_TIMEOUT>",
+      "problem": null,
+      "target": "tests/ray/test_global_placement.py::test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus",
+      "target_lane": "slow_test",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "a live cluster cannot deterministically stall only the metadata probe; the real twin drives the same probe actors and placement-group boundary, while this test injects timeout and records cancellation/cleanup"
+    },
+    {
+      "file": "tests/ray/test_global_placement.py",
+      "lineno": 516,
+      "owner": "test_probe_partial_actor_construction_cleans_created_handles",
+      "problem": null,
+      "target": "tests/ray/test_global_placement.py::test_probe_actor_kill_failure_is_a_create_failure",
+      "target_lane": "slow_test",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "a live cluster cannot be told to fail the SECOND probe actor's construction while the first succeeds, and the partially-built fleet is exactly what this asserts gets killed; the real probe-create-then-kill path against a real placement group is the slow_test twin named here"
+    },
+    {
+      "file": "tests/rewards/functions/test_multi.py",
+      "lineno": 476,
+      "owner": "test_preflight_reaches_every_remote_runtime_and_skips_local_ones",
+      "problem": null,
+      "target": "tests/rewards/service/test_service.py::test_client_scores_through_async_server_and_validates_identity",
+      "target_lane": "-",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "preflight must not score, so this runtime raises if reached; real scoring over a live aiohttp server is that counterpart, which runs on every PR rather than behind an opt-in flag"
+    },
+    {
+      "file": "tests/rewards/kling_video_reward/test_model_loading.py",
+      "lineno": 89,
+      "owner": "test_kling_video_reward_builds_repo_owned_model",
+      "problem": null,
+      "target": "tests/rewards/kling_video_reward/test_model_loading.py::test_create_model_and_processor_runs_offline_on_a_tiny_repo",
+      "target_lane": "-",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "this pins the constructor's wiring (dtype, attention flag, offline flag, checkpoint dir) with recorders; the counterpart drives the same _create_model_and_processor and checkpoint loader on a real tiny model"
+    },
+    {
+      "file": "tests/rewards/kling_video_reward/test_model_loading.py",
+      "lineno": 237,
+      "owner": "test_kling_video_reward_base_loader_honors_local_files_only",
+      "problem": null,
+      "target": "tests/rewards/kling_video_reward/test_model_loading.py::test_create_model_and_processor_runs_offline_on_a_tiny_repo",
+      "target_lane": "-",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "hf_hub falls back to the cache on a connection error, so whether local_files_only reached the loaders is unobservable in-process; only the recorded kwarg proves it, while the counterpart runs the real loaders offline"
+    },
+    {
+      "file": "tests/rewards/test_clip_reward_models.py",
+      "lineno": 98,
+      "owner": "test_aesthetic_model_passes_optional_revision_to_clip_loaders",
+      "problem": null,
+      "target": "tests/rewards/inference/test_in_process_runtime.py::test_real_aesthetic_score_parks_stably_across_two_cycles",
+      "target_lane": "gpu",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "a local directory has no revision: CLIPModel.from_pretrained(<dir>, revision=...) silently ignores the argument, so which revision reached the hub loaders can only be observed by recording the call; the counterpart loads the real hub checkpoint"
+    },
+    {
+      "file": "tests/rewards/test_clip_reward_models.py",
+      "lineno": 239,
+      "owner": "test_pickscore_passes_optional_revisions_to_matching_loaders",
+      "problem": null,
+      "target": null,
+      "target_lane": null,
+      "tracked_in": "docs/sprints/done/SPRINT_reward-tiny-real-and-optional-lanes.md",
+      "unknown_kwargs": [],
+      "why": "a local directory has no revision: CLIPModel.from_pretrained(<dir>, revision=...) silently ignores the argument, so which revision reached the hub loaders can only be observed by recording the call; the real PickScore_v1 hub load has no opt-in counterpart yet"
+    },
+    {
+      "file": "tests/scripts/eval/test_sana_aesthetic_checkpoint_eval.py",
+      "lineno": 35,
+      "owner": "<via _SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS>",
+      "problem": null,
+      "target": null,
+      "target_lane": null,
+      "tracked_in": "docs/sprints/done/SPRINT_zero-cost-real-object-swaps.md",
+      "unknown_kwargs": [],
+      "why": "materializing the four pinned Hub snapshots needs network access and multi-GB weights, and generating the image grid from them needs a CUDA device; there is no SANA case in tests/e2e, so this repo has no lane where either runs for real"
+    },
+    {
+      "file": "tests/scripts/test_cosmos_predict25_kling_eval.py",
+      "lineno": 24,
+      "owner": "<via _GENERATION_AND_MP4_NEED_REAL_WEIGHTS>",
+      "problem": null,
+      "target": "tests/e2e/test_real_checkpoint_rl.py::test_real_checkpoint_online_rl_updates_trainable_weights",
+      "target_lane": "e2e",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "a video frame can only come out of a real diffusion pipeline on a CUDA device, and an mp4 can only come out of a real ffmpeg/libx264 encoder; the e2e case generates with real weights and materializes real mp4 artifacts through vrl/rewards/artifacts.py"
+    },
+    {
+      "file": "tests/trainers/test_fsdp.py",
+      "lineno": 340,
+      "owner": "test_fsdp_checkpoint_gather_asks_dcp_to_skip_frozen_base_when_possible",
+      "problem": null,
+      "target": "tests/trainers/test_fsdp_gather_distributed.py::test_checkpoint_state_is_selective_and_round_trips_on_every_rank",
+      "target_lane": "-",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "one rank cannot observe a frozen base staying out of an all-gather; that counterpart spawns a real gloo process group and runs on every PR"
+    },
+    {
+      "file": "tests/trainers/test_strategy.py",
+      "lineno": 107,
+      "owner": "test_training_state_parking_is_idempotent_and_deduplicates_model_identity",
+      "problem": null,
+      "target": "tests/trainers/test_strategy.py::test_cuda_training_state_parking_round_trip_preserves_all_live_state",
+      "target_lane": "gpu",
+      "tracked_in": null,
+      "unknown_kwargs": [],
+      "why": "parking's destination IS cpu on this lane, so _move_tensor_tree_in_place is a no-op and no CPU assertion can distinguish a branch that ran from one that was skipped; only the gpu twin can watch the model, grads, optimizer, EMA and GradScaler tensors actually land on cpu and come back"
+    },
+    {
+      "file": "tests/utils/test_profiling.py",
+      "lineno": 31,
+      "owner": "<via _NVTX_DEPTH_IS_UNOBSERVABLE>",
+      "problem": null,
+      "target": null,
+      "target_lane": null,
+      "tracked_in": "docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
+      "unknown_kwargs": [],
+      "why": "nvtx range depth is unobservable from inside the process: with no profiler attached torch.cuda.nvtx.range_push/range_pop both return -2 even when CUDA is available, so counting the calls is the only way to assert push/pop stay paired. The real CUDA emission is driven by vrl/scripts/perf/profile_smoke.py under nsys on a GPU box, which is a script, not a test"
+    }
+  ],
+  "schema": "vrl.recipe-evidence-inventory/v1",
+  "scope": "Configured experiment output directories and checked-in real-checkpoint case definitions; no training was executed. File presence is not validated learning evidence.",
+  "sd3_5_reference_preflight": {
+    "cache_observation": {
+      "broken_symlinks": 0,
+      "content_verified": false,
+      "files": 45,
+      "logical_bytes": 48861581303
+    },
+    "candidate_preset": "experiment/sd3_5/online_grpo_ocr",
+    "cuda_observation": "One RTX 5090; other live processes own GPU memory. No training launched.",
+    "manifests": {
+      "datasets/ocr/test.txt": {
+        "lines": 1018,
+        "sha256": "4dd8caf3ab6ade73bd376c7d14c6ca49b6eacfb1bd321e22c40714ae4a98d4dc"
+      },
+      "datasets/ocr/train.txt": {
+        "lines": 19653,
+        "sha256": "2eb32ce1c5fd1ffec94070be84252419ec848329d9adde9c2708867882fbce5f"
+      }
+    },
+    "model_cache_revision": "b940f670f0eda2d07fbb75229e779da1ad11eb80",
+    "ocr_modules_importable": {
+      "paddle": false,
+      "paddleocr": false
+    }
+  }
+}
