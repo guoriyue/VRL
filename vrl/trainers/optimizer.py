@@ -36,6 +36,20 @@ def build_optimizer(parameters: Any, config: TrainerConfig) -> torch.optim.Optim
 
     optim = config.optim
     parameters = list(parameters)
+    if optim.disk_state_directory is not None:
+        from vrl.trainers.disk_optimizer import DiskStreamingAdamW
+
+        if optim.optim_8bit:
+            raise ValueError("disk optimizer state is incompatible with optim_8bit")
+        return DiskStreamingAdamW(
+            parameters,
+            directory=optim.disk_state_directory,
+            bucket_bytes=optim.disk_state_bucket_bytes,
+            lr=optim.lr,
+            betas=(optim.adam_beta1, optim.adam_beta2),
+            weight_decay=optim.weight_decay,
+            eps=optim.eps,
+        )
     # fused=True collapses the per-parameter optimizer step into a handful of
     # kernels (the loop variant launched ~1.7k/step on LoRA models). It is
     # only valid for CUDA float params; anything else falls back to default.

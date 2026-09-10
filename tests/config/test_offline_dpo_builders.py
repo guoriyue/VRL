@@ -91,3 +91,8 @@ def test_offline_dpo_adafactor_keeps_shared_optimizer_knobs() -> None:
     assert resolved.use_adafactor is True
     assert resolved.lr == pytest.approx(2e-7)
     assert resolved.adam_weight_decay == pytest.approx(0.03)
+
+
+def test_offline_dpo_rejects_disk_optimizer_instead_of_ignoring_it() -> None:
+    with pytest.raises(ValueError, match="disk optimizer state is not supported"):
+        _resolved_trainer_config(["actor.optim.disk_state_directory=/tmp/vrl-optimizer"])

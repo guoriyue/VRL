@@ -84,6 +84,8 @@ class OfflineDPOTrainerConfig:
         train_batch_size = int(required("train_batch_size"))
         gradient_accumulation_steps = int(required("gradient_accumulation_steps"))
         optim: OptimConfig = required("optim")
+        if optim.disk_state_directory is not None:
+            raise ValueError("disk optimizer state is not supported by OfflineDPOTrainer")
         if optim.optim_8bit:
             raise ValueError(
                 "actor.optim.optim_8bit=true is not supported by OfflineDPOTrainer; "
