@@ -255,3 +255,36 @@ matmul/cuDNN modes instead of reading legacy TF32 booleans. No numerical policy 
 fallback implementation is changed. An actual fresh-process regression applies the
 production precision setup before capturing runtime identity; this reproduces the
 failing ordering without contaminating other tests' global backend settings.
+
+## 2026-09-09: Real rollout dependency and parking failures
+
+After the precision-recording fix (`08efb112c`), attempt
+`outputs/repro/sd3_5_ocr_strict_b` published launch evidence but failed rollout
+startup because vLLM/CuMemAllocator was absent. Installed vLLM 0.21.0 without its
+Torch dependency closure and the seven entrypoint dependencies documented in
+`pyproject.toml`; existing packages were not replaced. The real CUDA one-shot
+CuMem build/sleep/wake test passed, including exact tensor restoration.
+
+Attempt `outputs/repro/sd3_5_ocr_strict_c` used the same two-epoch, seed-17 protocol.
+Its launch `1fb3248fa648483da9f9fafd2cfed6b0` records a clean checkout at
+`08efb112cb5d4ae67065d78acb0a664018252b52`, strict trainer flags, effective TF32
+backend modes, installed package versions and both OCR manifest hashes. The
+real rollout pipeline loaded and generated 16-sample batches; the first logged
+batch took 5.339 seconds. Real OCR scoring ran with the cached PP-OCRv4 models.
+
+The second physical parking validation then failed. CuMem reported releasing
+15.74 GiB each time. The baseline was 1,289,748,480 bytes; first parked usage was
+1,505,755,136 bytes (within the 268,435,456-byte allowance), while the second was
+1,790,967,808 bytes (501,219,328 bytes above baseline). The supervisor observed
+exit 1 and stopped. There are no completed epoch rows or final artifact receipt;
+this is not a training curve or a repeatability result. Full local log:
+`/tmp/vrl-sd3-ocr-strict-c.log`.
+
+Source inspection found that `vrl/utils/cuda_memory.py::gpu_used_bytes` uses
+`torch.cuda.mem_get_info`, which measures the whole device. On this shared card,
+that cannot attribute a change to the parking worker alone. The failure therefore
+does not yet distinguish retained worker allocations, process-lifetime CUDA state,
+or other processes' memory changes. The 256 MiB allowance has not been relaxed.
+Next diagnosis must compare per-process physical memory and Torch allocations
+against the device-wide observation, then validate the ownership boundary with
+concurrent allocations. This is an open investigation, not a proven worker leak.
