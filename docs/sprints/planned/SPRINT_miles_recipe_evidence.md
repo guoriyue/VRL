@@ -65,7 +65,7 @@ CASE 常量是测试 fixture，保留；不创建模型支持名单或验证状�
 manifest/report 内容 hash、Git/dirty-diff、软件版本、GPU/driver 和数值运行开关。
 不添加 family verified 名单，不给仅启动过的 recipe 打成功或确定性标签。
 
-配置/证据输出和原 CSV preflight 共用 `run_primary_io`：它是实际跨 rank 的失败传播边界，
+配置/证据输出和原 CSV preflight 共用 `run_on_primary_rank`：它是实际跨 rank 的失败传播边界，
 避免 primary 写盘失败时其他 rank 继续进入训练 collective。协议名、文件目录与环境 key
 是边界常量，保留；没有新增 per-algorithm vocabulary 或第二套 model identity。
 

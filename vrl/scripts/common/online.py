@@ -60,7 +60,7 @@ from vrl.trainers.data import (
     load_prompt_examples_from_config,
     resolve_prompt_example_references,
 )
-from vrl.trainers.distributed import DistributedTrainingContext, run_primary_io
+from vrl.trainers.distributed import DistributedTrainingContext, run_on_primary_rank
 from vrl.trainers.metrics_io import (
     OnlineMetricRow,
     format_online_metric_row,
@@ -668,7 +668,7 @@ class OnlineRecipeRun:
         keeps every rank on the same side of the first training collective.
         """
 
-        run_primary_io(
+        run_on_primary_rank(
             training_context,
             self.prepare_metrics_csv,
             description="metrics CSV preflight",
@@ -985,7 +985,7 @@ async def run_online_recipe(
             )
             logger.info("Training launch evidence: %s", run_trace.launch_path)
 
-        run_primary_io(
+        run_on_primary_rank(
             training_context, prepare_launch_files, description="training launch evidence"
         )
 
@@ -1097,7 +1097,7 @@ async def run_online_recipe(
             seal_path = run_trace.seal_artifacts()
             logger.info("Training artifact evidence: %s", seal_path)
 
-        run_primary_io(
+        run_on_primary_rank(
             training_context, seal_completed_loop, description="training artifact evidence"
         )
         if is_primary:

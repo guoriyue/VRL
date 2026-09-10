@@ -233,13 +233,18 @@ def shutdown_training_process_group() -> None:
         dist.destroy_process_group()
 
 
-def run_primary_io(
+def run_on_primary_rank(
     context: DistributedTrainingContext,
     operation: Callable[[], None],
     *,
     description: str,
 ) -> None:
-    """Keep all ranks on the same side of a primary-only output operation."""
+    """Run ``operation`` on rank 0 only; if it fails, every rank raises.
+
+    Rank 0 owns the output directory, so file writes happen there. The other
+    ranks wait on a broadcast of the outcome, so a failed write cannot leave
+    rank 0 dead while its peers enter the next collective and hang.
+    """
 
     if not context.distributed:
         operation()
@@ -250,7 +255,7 @@ def run_primary_io(
             operation()
         except BaseException as error:
             failure = error
-    verdict = [None if failure is None else f"{type(failure).__name__}: {failure}"]
-    torch.distributed.broadcast_object_list(verdict, src=0, device=context.device)
-    if verdict[0] is not None:
-        raise RuntimeError(f"{description} failed on rank 0: {verdict[0]}") from failure
+    failure_message = [None if failure is None else f"{type(failure).__name__}: {failure}"]
+    torch.distributed.broadcast_object_list(failure_message, src=0, device=context.device)
+    if failure_message[0] is not None:
+        raise RuntimeError(f"{description} failed on rank 0: {failure_message[0]}") from failure
