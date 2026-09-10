@@ -299,16 +299,33 @@ class EvaluationArchive:
         report = self.directory / "report"
         if not report.exists():
             return
-        self.check_tree()
+        self.verify_report()
+        raise FileExistsError("refusing to overwrite a completed evaluation report")
+
+    def verify_report(self) -> dict[str, Any]:
+        """Verify completed scores and their original generated image grid."""
+
+        self.load_generation()
+        report = self.directory / "report"
         marker = json.loads((report / "evaluation_complete.json").read_text(encoding="utf-8"))
         hashes = {
             path.relative_to(report).as_posix(): sha256_file(path)
             for path in report.rglob("*")
-            if path.is_file() and path.name != "evaluation_complete.json"
+            if path.is_file() and path != report / "evaluation_complete.json"
         }
+        required = {
+            "scores.jsonl",
+            "scores.csv",
+            "summary.json",
+            "curve.csv",
+            "curve.png",
+            "provenance.json",
+        }
+        if not required <= hashes.keys():
+            raise ValueError("completed report is missing required artifacts")
         if marker != {"protocol": self.plan.record(), "artifacts": hashes}:
             raise ValueError("completed report failed integrity check")
-        raise FileExistsError("refusing to overwrite a completed evaluation report")
+        return marker
 
     def publish_report(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         from vrl.scripts.eval.score_report import write_curve_report, write_scores
@@ -738,7 +755,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tie-epsilon", type=float, default=0.0)
     parser.add_argument("--bootstrap-resamples", type=int, default=2000)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--dry-run", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true")
+    mode.add_argument(
+        "--verify-training-evidence",
+        type=Path,
+        metavar="ARTIFACT_RECEIPT",
+        help="Verify an existing report against a supervised training receipt; do not generate or score.",
+    )
     return parser
 
 
@@ -753,6 +777,15 @@ def main(argv: list[str] | None = None) -> None:
         (args.output_dir or args.run_dir / "checkpoint_evaluation").expanduser().absolute()
     )
     archive = EvaluationArchive(output_dir, plan)
+    if args.verify_training_evidence is not None:
+        from vrl.trainers.evidence import verify_training_evaluation
+
+        receipt = args.verify_training_evidence
+        association = verify_training_evaluation(
+            receipt, receipt.parent.parent / "run_verdict.json", archive
+        )
+        print(json.dumps(association, indent=2, sort_keys=True))
+        return
     if output_dir.exists():
         rows = archive.load_generation()
         archive.reject_completed()

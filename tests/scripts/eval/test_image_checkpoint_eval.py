@@ -373,3 +373,131 @@ def test_completed_report_is_immutable_and_integrity_checked(generation):
     (report / "summary.json").write_text("{}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="integrity"):
         archive.reject_completed()
+
+
+@pytest.fixture
+def completed_training_evaluation(generation, tmp_path, monkeypatch):
+    import shutil
+
+    from vrl.scripts.train import write_run_verdict
+    from vrl.trainers import evidence
+
+    archive, rows = generation
+    archive.publish_report(
+        [
+            {
+                **row,
+                "image_path": str(archive.directory / row["image_path"]),
+                "r_fake": row["epoch"] / 10,
+            }
+            for row in rows
+        ]
+    )
+    training = tmp_path / "training"
+    training.mkdir()
+    shutil.copytree(tmp_path / "checkpoint-8", training / "checkpoint-final")
+    (training / "metrics.csv").write_text("epoch,reward\n0,0.1\n")
+    monkeypatch.setenv("VRL_RUN_ATTEMPT_ID", "evaluation-fixture")
+    monkeypatch.setattr(
+        evidence, "_runtime_identity", lambda: {"environment": {"WORLD_SIZE": "1"}}
+    )
+    monkeypatch.setattr(evidence, "_code_identity", lambda _path: {"available": False})
+    launch = evidence.write_run_evidence(
+        OmegaConf.create({"seed": 17}),
+        training,
+        model_identity=archive.plan.resolved_model.identity,
+        resumed=False,
+    )
+    seal = evidence.seal_run_artifacts(launch)
+    write_run_verdict(str(training), environ={"VRL_RUN_ATTEMPT_ID": "evaluation-fixture"})
+    verdict_path = training / "run_verdict.json"
+    verdict = json.loads(verdict_path.read_text())
+    # This is fixture data for association validation, not a real trainer run.
+    verdict["supervisor_exit_code"] = 0
+    verdict_path.write_text(json.dumps(verdict))
+    return seal, verdict_path, archive
+
+
+def test_training_evaluation_association_uses_content_not_target_path(
+    completed_training_evaluation,
+):
+    from vrl.trainers.evidence import verify_training_evaluation
+
+    seal, verdict, archive = completed_training_evaluation
+    result = verify_training_evaluation(seal, verdict, archive)
+    assert "checkpoint-8" in result["checkpoint_labels"]
+    assert result["attempt_id"] == "evaluation-fixture"
+    assert result["evaluation_content"]["files"] > len(list(archive.plan.cells()))
+    assert len(result["evaluation_protocol_sha256"]) == 64
+
+
+@pytest.mark.parametrize(
+    "change", ["model", "checkpoint", "scores", "image", "protocol", "verdict"]
+)
+def test_training_evaluation_rejects_mismatched_evidence(completed_training_evaluation, change):
+    from vrl.trainers import evidence
+
+    seal, verdict, archive = completed_training_evaluation
+    if change in {"model", "checkpoint"}:
+        # Publish an internally valid training receipt for a different run/state.
+        # Association must fail even though each side independently verifies.
+        launch_path = seal.with_name(seal.name.removesuffix(".artifacts.json") + ".json")
+        if change == "model":
+            launch = json.loads(launch_path.read_text())
+            launch["model_identity"] = {"family": "different"}
+            launch_path.write_text(json.dumps(launch))
+        else:
+            (seal.parent.parent / "checkpoint-final/checkpoint.pt").write_bytes(
+                b"different weights"
+            )
+        seal.unlink()
+        evidence.seal_run_artifacts(launch_path)
+    elif change == "scores":
+        (archive.directory / "report/scores.jsonl").write_text("{}\n")
+    elif change == "image":
+        image = archive.directory / next(archive.plan.cells())["image_path"]
+        Image.new("RGB", (8, 8), "red").save(image)
+    elif change == "protocol":
+        archive = checkpoint_eval.EvaluationArchive(
+            archive.directory, replace(archive.plan, seed=999)
+        )
+    else:
+        record = json.loads(verdict.read_text())
+        record["attempt_id"] = "previous"
+        verdict.write_text(json.dumps(record))
+    with pytest.raises(ValueError):
+        evidence.verify_training_evaluation(seal, verdict, archive)
+
+
+def test_cli_verifies_existing_training_evaluation_without_generation_or_scoring(
+    completed_training_evaluation, monkeypatch, capsys
+):
+    seal, _verdict, archive = completed_training_evaluation
+    monkeypatch.setattr(checkpoint_eval, "resolve_plan", lambda _args: archive.plan)
+    monkeypatch.setattr(
+        checkpoint_eval.EvaluationPlan, "generate", lambda *_: pytest.fail("generation")
+    )
+    monkeypatch.setattr(checkpoint_eval, "score_images", lambda *_: pytest.fail("scoring"))
+    checkpoint_eval.main(
+        [
+            "--run-dir",
+            str(seal.parent.parent),
+            "--output-dir",
+            str(archive.directory),
+            "--verify-training-evidence",
+            str(seal),
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["attempt_id"] == "evaluation-fixture"
+
+
+def test_nested_completion_marker_is_not_exempt_from_report_integrity(
+    completed_training_evaluation,
+):
+    _seal, _verdict, archive = completed_training_evaluation
+    extra = archive.directory / "report/nested/evaluation_complete.json"
+    extra.parent.mkdir()
+    extra.write_text("{}")
+    with pytest.raises(ValueError, match="integrity"):
+        archive.verify_report()

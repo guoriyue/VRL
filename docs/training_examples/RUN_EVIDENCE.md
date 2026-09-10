@@ -103,3 +103,36 @@ cannot pass this completion check. This check reads the final verdict separately
 it does not add its bytes to the earlier artifact receipt. Archive both together
 and retain an external trusted digest when authenticity is required. Held-out
 evaluation association and numerical reproducibility checks remain separate work.
+
+Completed native image checkpoint evaluations can now be associated with training:
+
+```bash
+python -m vrl.scripts.eval.image_checkpoint_eval \
+  --run-dir outputs/my-run \
+  --output-dir outputs/my-run/checkpoint_evaluation \
+  --verify-training-evidence outputs/my-run/run_evidence/LAUNCH_ID.artifacts.json
+```
+
+Add the same evaluation policy, manifest, sampling, seed and device options used
+to produce the evaluation. This mode resolves the expected plan and
+verifies the existing archive; it does not generate images or call rewards.
+It rejects changed protocols, missing or altered scores, changed original PNGs,
+model identity mismatches, and reports that do not evaluate the final checkpoint's
+actual `checkpoint.pt` bytes. Renamed/copied checkpoints can match by content.
+The native image evaluator restores this payload, including for LoRA training;
+its exported adapter directory is not the evaluation source of truth.
+
+The JSON result identifies the launch/attempt, matching checkpoint labels, a
+canonical evaluation-protocol hash, and the complete evaluation tree identity.
+Retain this association with the archived run if needed. It does not modify the
+prior training receipt or award a verification grade. Resolving a different
+runtime identity from the one recorded during generation fails protocol matching;
+recording today's environment cannot repair missing historical evidence.
+
+Programmatic callers can pass their independently specified `EvaluationArchive`
+to `verify_training_evaluation(receipt, verdict, archive)`. Do not derive the
+expected protocol from an untrusted report merely to make it match. This path
+currently covers the native full-sequence denoise image evaluator. Video/token
+benchmarks need their own existing protocol adapters. A matching evaluation does
+not itself establish held-out data independence, human quality, a repeated
+learning curve, or numerical determinism.

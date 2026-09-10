@@ -18,12 +18,15 @@ import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from omegaconf import OmegaConf
 
 from vrl.models.checkpoint_identity import local_checkpoint_content
+
+if TYPE_CHECKING:
+    from vrl.scripts.eval.image_checkpoint_eval import EvaluationArchive
 
 # These are file/protocol and environment boundaries, not algorithm vocabulary.
 RUN_EVIDENCE_SCHEMA = "vrl.run-evidence/v1"
@@ -352,3 +355,47 @@ def verify_run_completion(seal_path: str | Path, verdict_path: str | Path) -> di
     elif "rank" in verdict or "rank_verdicts" in verdict or verdict.get("world_size", 1) != 1:
         raise ValueError("single-process launch has a distributed verdict")
     return verdict
+
+
+def verify_training_evaluation(
+    seal_path: str | Path,
+    verdict_path: str | Path,
+    archive: EvaluationArchive,
+) -> dict[str, Any]:
+    """Associate a completed image evaluation with the exact final trained state.
+
+    The caller supplies the expected EvaluationPlan through its archive. Never
+    reconstruct the intended protocol from the report being checked. Checkpoint
+    labels and paths are presentation: content and model identity establish the
+    association. This does not certify held-out data independence or learning.
+    """
+
+    from vrl.trainers.checkpointing import TRAINING_CHECKPOINT_NAME
+    from vrl.utils.artifacts import sha256_file
+
+    verdict = verify_run_completion(seal_path, verdict_path)
+    seal_path = Path(seal_path)
+    launch_path = seal_path.with_name(seal_path.name.removesuffix(".artifacts.json") + ".json")
+    launch = _read_launch(launch_path)
+    report = archive.verify_report()
+    protocol = report["protocol"]
+    if protocol["model_identity"] != launch["model_identity"]:
+        raise ValueError("evaluation model identity differs from the training launch")
+    final_checkpoint = seal_path.parent.parent / "checkpoint-final" / TRAINING_CHECKPOINT_NAME
+    digest = sha256_file(final_checkpoint)
+    labels = [
+        target["label"]
+        for target in protocol["targets"]
+        if target["path"] and target["checkpoint_sha256"] == digest
+    ]
+    if not labels:
+        raise ValueError("evaluation does not contain the final training checkpoint content")
+    canonical = json.dumps(protocol, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return {
+        "launch_id": launch["launch_id"],
+        "attempt_id": verdict["attempt_id"],
+        "checkpoint_sha256": digest,
+        "checkpoint_labels": labels,
+        "evaluation_protocol_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
+        "evaluation_content": asdict(local_checkpoint_content(archive.directory)),
+    }

@@ -128,3 +128,27 @@ cases. Added checks cover independent attempt IDs, unchanged parent environment,
 stale rank rejection, and post-success nonzero exit. CPU evidence fixtures cover
 all-rank outcome association and rejection of legacy unassociated successes;
 these tests do not establish GPU learning curves or numerical determinism.
+
+## 2026-09-09: Existing image evaluation association
+
+The native image checkpoint evaluator now exposes a verification-only CLI mode
+that checks its independently resolved plan against the saved report and original
+PNG grid, then associates it with a completed supervised training attempt by model
+identity and actual final checkpoint payload digest. The result records protocol
+and full evaluation-tree identities. It never generates or scores in verification
+mode. `EvaluationArchive.verify_report` is the shared archive integrity boundary;
+`verify_training_evaluation` remains a cross-type guard rather than another class.
+Required report filenames are schema boundaries. Existing evaluation schemas,
+paired statistics, reward ownership and immutable report publication are retained.
+
+This covers native full-sequence denoise image reports only. It does not claim
+held-out independence, extend support to video/token evaluators, or turn fixture
+scores into a real training curve. Real repeated runs, recipe inventory and GPU CI
+remain outstanding. Current hardware inspection found one RTX 5090 with 19,604 MiB
+occupied; no GPU learning/reproducibility result was produced by this change.
+
+Validation: 75 evidence, native image evaluation and architecture tests passed.
+Failure injection covers independently valid but mismatched model/checkpoint
+artifacts, edited scores/images, changed expected protocol, stale verdicts and
+nested completion-marker injection. The verification-only CLI test forbids
+regeneration and rescoring. These are CPU fixtures, not real learning evidence.
