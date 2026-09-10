@@ -1290,9 +1290,12 @@ def test_split_rejects_collectors_without_verified_overlap_capability() -> None:
 
 
 @pytest.mark.asyncio
-async def test_consumer_waits_for_named_head_even_when_lookahead_is_ready() -> None:
+@pytest.mark.parametrize("preview_version", [1, 2])
+async def test_consumer_waits_for_named_head_even_when_lookahead_is_ready(
+    preview_version: int,
+) -> None:
     queue = ContinuousRolloutQueue(max_items=4)
-    next_items = [_item(group_slot=i, version=2, batch_id=1) for i in range(2)]
+    next_items = [_item(group_slot=i, version=preview_version, batch_id=1) for i in range(2)]
     for item in next_items:
         queue.put(item)
     consumer = _consumer(queue, max_stale=1)

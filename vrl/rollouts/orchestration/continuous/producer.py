@@ -30,7 +30,7 @@ from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import move_training_batch_to_device
 from vrl.rollouts.collector.core import RewardCollectionMode
-from vrl.rollouts.orchestration.continuous.generated_queue import GeneratedRolloutQueue
+from vrl.rollouts.orchestration.continuous.generated_capacity import GeneratedRolloutCapacity
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
@@ -112,8 +112,8 @@ class ContinuousRolloutProducer:
                 "split generation/reward requires nonblocking reward scoring and "
                 "verified accelerator isolation",
             )
-        self._generated = GeneratedRolloutQueue(
-            max_items=settings.max_unscored_groups,
+        self._generated_capacity = GeneratedRolloutCapacity(
+            max_groups=settings.max_unscored_groups,
             max_bytes=settings.max_unscored_bytes_mb * 1024 * 1024,
         )
         self._group_byte_ceiling = settings.max_generated_group_bytes_mb * 1024 * 1024
@@ -167,7 +167,7 @@ class ContinuousRolloutProducer:
         return {
             "active_batches": float(len(self._batches)),
             "generation_inflight": float(len(self._generating)),
-            **self._generated.stats(),
+            **self._generated_capacity.stats(),
         }
 
     # -- lifecycle ------------------------------------------------------
@@ -302,7 +302,7 @@ class ContinuousRolloutProducer:
         self._loop_task = None
         self._inflight.clear()
         self._generating.clear()
-        self._generated.close()
+        self._generated_capacity.close()
 
     # -- weight-sync barrier -------------------------------------------
 
@@ -470,7 +470,7 @@ class ContinuousRolloutProducer:
                 if active >= self.max_inflight_groups:
                     return "inflight_full"
                 slot = prompt_batch.pending_slots[0]
-                if self._split_reward and not self._generated.reserve(
+                if self._split_reward and not self._generated_capacity.reserve(
                     (prompt_batch.batch_id, slot),
                     max_group_bytes=self._group_byte_ceiling,
                 ):
@@ -543,15 +543,15 @@ class ContinuousRolloutProducer:
                     self.lifecycle.current_policy_version(),
                 ):
                     raise RuntimeError("continuous generated group became stale before reward")
-                self._generated.put(key, receipt, nbytes=trajectory_tensor_bytes(receipt.unscored))
+                self._generated_capacity.record_generated(
+                    key, nbytes=trajectory_tensor_bytes(receipt.unscored)
+                )
                 # Only GPU generation occupies a generation slot. Capacity for
                 # the artifact remains reserved until scoring settles below.
                 self._generating.discard(key)
                 queued_at = time.perf_counter()
                 async with self._reward_lock:
-                    borrowed = self._generated.take()
-                    if borrowed is None or borrowed[0] != key:
-                        raise RuntimeError("continuous reward handoff lost FIFO group identity")
+                    self._generated_capacity.start_scoring(key)
                     stats.observe_gauge(
                         "continuous.reward_queue_wait_s", time.perf_counter() - queued_at
                     )
@@ -603,7 +603,7 @@ class ContinuousRolloutProducer:
             raise
         finally:
             self._generating.discard(key)
-            self._generated.release(key)
+            self._generated_capacity.release(key)
 
     def _fail_batch(self, batch: _ActivePromptBatch, error: BaseException) -> None:
         """Defer a preview-local failure until it becomes the demanded head.
@@ -650,7 +650,7 @@ class ContinuousRolloutProducer:
                     # A task cancelled before its first execution never entered
                     # _collect_split_group's finally block.
                     self._generating.discard(key)
-                    self._generated.release(key)
+                    self._generated_capacity.release(key)
                 continue
             try:
                 batches, stats = task.result()

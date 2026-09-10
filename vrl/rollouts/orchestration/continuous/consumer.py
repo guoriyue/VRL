@@ -55,6 +55,10 @@ class ContinuousRolloutConsumer:
     ) -> RolloutIteration:
         """Block until a homogeneous-version iteration is ready, then build it.
 
+        ``expected_batch_id`` selects the requested prompt batch while a later
+        prefetched batch may already be ready, even at the same policy version.
+        The owner always supplies it; None requires an unambiguous single batch.
+
         ``producer_state`` lets the wait surface the background producer's
         health: a persistent generation/reward failure ends the wait early with
         the producer's root cause instead of an opaque timeout, and the timeout
