@@ -60,7 +60,8 @@ from vrl.trainers.data import (
     load_prompt_examples_from_config,
     resolve_prompt_example_references,
 )
-from vrl.trainers.distributed import DistributedTrainingContext
+from vrl.trainers.distributed import DistributedTrainingContext, run_primary_io
+from vrl.trainers.evidence import write_run_evidence
 from vrl.trainers.metrics_io import (
     OnlineMetricRow,
     format_online_metric_row,
@@ -666,25 +667,11 @@ class OnlineRecipeRun:
         keeps every rank on the same side of the first training collective.
         """
 
-        if not training_context.distributed:
-            self.prepare_metrics_csv()
-            return
-
-        failure: str | None = None
-        if training_context.is_primary:
-            try:
-                self.prepare_metrics_csv()
-            except Exception as exc:
-                failure = f"{type(exc).__name__}: {exc}"
-
-        payload = [failure]
-        torch.distributed.broadcast_object_list(
-            payload,
-            src=0,
-            device=training_context.device,
+        run_primary_io(
+            training_context,
+            self.prepare_metrics_csv,
+            description="metrics CSV preflight",
         )
-        if payload[0] is not None:
-            raise RuntimeError(f"metrics CSV preflight failed on rank 0: {payload[0]}")
 
     def write_metric_row(self, epoch: int, metrics: Any) -> None:
         row = OnlineMetricRow.from_step_metrics(epoch, metrics, self.component_names)
@@ -976,8 +963,21 @@ async def run_online_recipe(
         is_primary = training_context.is_primary
         output_dir = Path(trainer_config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        if is_primary:
+
+        def prepare_launch_files() -> None:
             save_resolved_config(cfg, output_dir, resumed=resumed)
+            evidence_path = write_run_evidence(
+                cfg,
+                output_dir,
+                model_identity=model_identity,
+                resumed=resumed,
+                provided_examples=provided_examples is not None,
+            )
+            logger.info("Training launch evidence: %s", evidence_path)
+
+        run_primary_io(
+            training_context, prepare_launch_files, description="training launch evidence"
+        )
 
         component_names = tuple(reward_config.weights)
 

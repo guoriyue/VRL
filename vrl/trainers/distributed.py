@@ -21,7 +21,7 @@ coordination.
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -231,3 +231,26 @@ def shutdown_training_process_group() -> None:
     _CPU_COORDINATION_GROUP = None
     if dist.is_initialized():
         dist.destroy_process_group()
+
+
+def run_primary_io(
+    context: DistributedTrainingContext,
+    operation: Callable[[], None],
+    *,
+    description: str,
+) -> None:
+    """Keep all ranks on the same side of a primary-only output operation."""
+
+    if not context.distributed:
+        operation()
+        return
+    failure: BaseException | None = None
+    if context.is_primary:
+        try:
+            operation()
+        except BaseException as error:
+            failure = error
+    verdict = [None if failure is None else f"{type(failure).__name__}: {failure}"]
+    torch.distributed.broadcast_object_list(verdict, src=0, device=context.device)
+    if verdict[0] is not None:
+        raise RuntimeError(f"{description} failed on rank 0: {verdict[0]}") from failure

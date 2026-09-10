@@ -1,6 +1,6 @@
 # SPRINT：Recipe evidence：把冒烟、完整曲线和确定性回归分开
 
-状态：**planned；先执行证据盘点，不等待新增模型或集群。**
+状态：**implementing；启动身份记录已接入 online，曲线与确定性验收仍待执行。**
 
 ## 阅读基线与执行边界
 
@@ -56,3 +56,23 @@ recipe/config hash、代码和模型 revision、硬件/驱动/torch/kernel、
 改变证据记录及检查；保留现有训练入口、e2e helper、真实接口和 real-cover 标签。
 CASE 常量是测试 fixture，保留；不创建模型支持名单或验证状态解释器。
 不因论文使用 nightly 就虚构可用 GPU runner，不重写 CI 调度平台。
+
+
+## 2026-09-09：启动证据记录已实施
+
+`vrl/trainers/evidence.py` 与 online runner 已接线：每次启动/resume 原子发布独立
+`run_evidence/<launch_id>.json`，记录 resolved config/hash、model identity、configured
+manifest/report 内容 hash、Git/dirty-diff、软件版本、GPU/driver 和数值运行开关。
+不添加 family verified 名单，不给仅启动过的 recipe 打成功或确定性标签。
+
+配置/证据输出和原 CSV preflight 共用 `run_primary_io`：它是实际跨 rank 的失败传播边界，
+避免 primary 写盘失败时其他 rank 继续进入训练 collective。协议名、文件目录与环境 key
+是边界常量，保留；没有新增 per-algorithm vocabulary 或第二套 model identity。
+
+验证：64 项 evidence、online lifecycle/metrics 和 architecture 测试通过，其中包含真实
+双进程 Gloo 的 primary IO 成功/失败传播、启动证据失败后的清理，以及配置解析/hash、
+manifest 内容变化、resume 不覆盖和发布冲突测试。一个警告来自 PyTorch TF32 旧接口提示。
+
+使用及证据范围见 [说明](../../training_examples/RUN_EVIDENCE.md)。
+尚待：运行结束后的 metrics/checkpoint/eval 证据封存与校验、历史 recipe 盘点、真实重复短曲线、
+确定性/统计性比较和 GPU CI 接线。当前快照不是完整训练复现报告。

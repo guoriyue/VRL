@@ -514,6 +514,9 @@ def _install_common_fakes(
     )
     monkeypatch.setattr(online, "save_resolved_config", lambda *args, **kwargs: None)
     monkeypatch.setattr(
+        online, "write_run_evidence", lambda *args, **kwargs: tmp_path / "evidence.json"
+    )
+    monkeypatch.setattr(
         online.OnlineRecipeRun,
         "prepare_metrics_csv",
         lambda *args, **kwargs: None,
@@ -1168,3 +1171,25 @@ async def test_failed_role_cleanup_abandons_parked_restore_but_cleans_strategy()
     await lifecycle.shutdown(run_error=RuntimeError("training failed"))
 
     assert restore_permissions == [False]
+
+
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_launch_evidence_failure_stops_before_training_and_cleans_up(
+    preinitialized_ray,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+
+    def fail_evidence(*args, **kwargs):
+        raise OSError("evidence storage full")
+
+    monkeypatch.setattr(online, "write_run_evidence", fail_evidence)
+    with pytest.raises(OSError, match="evidence storage full"):
+        await online.run_online_recipe(_cfg())
+    assert state["trainer_steps"] == 0
+    assert state["collector_shutdowns"] == 1
+    assert state["reward_shutdowns"] == 1
+    assert state["owner_shutdowns"] == 1
