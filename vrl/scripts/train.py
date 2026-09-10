@@ -301,9 +301,9 @@ def write_run_verdict(
     from vrl.utils.json_files import write_json
 
     if error is not None:
-        from vrl.runtime_errors import failure_identity_cause
+        from vrl.runtime_errors import root_failure_cause
 
-        root_error = failure_identity_cause(error)
+        root_error = root_failure_cause(error)
         verdict = {
             "verdict": "failed",
             # Cleanup wrappers keep the complete outer message, while restart

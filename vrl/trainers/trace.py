@@ -100,8 +100,8 @@ class TrainingRunTrace:
             "model_identity": model_identity,
             "provided_examples": bool(provided_examples),
             "configured_data_files": cls._configured_data_files(config),
-            "code": cls._code_identity(Path(__file__).resolve().parents[2]),
-            "runtime": cls._runtime_identity(),
+            "code": cls._git_snapshot(Path(__file__).resolve().parents[2]),
+            "runtime": cls._runtime_snapshot(),
         }
         directory = Path(output_dir) / "run_evidence"
         directory.mkdir(parents=True, exist_ok=True)
@@ -286,7 +286,7 @@ class TrainingRunTrace:
         }
 
     @staticmethod
-    def _code_identity(repository: Path) -> dict[str, Any]:
+    def _git_snapshot(repository: Path) -> dict[str, Any]:
         def git(*args: str) -> bytes:
             return subprocess.check_output(
                 ["git", "-C", str(repository), *args],
@@ -310,7 +310,7 @@ class TrainingRunTrace:
         }
 
     @staticmethod
-    def _runtime_identity() -> dict[str, Any]:
+    def _runtime_snapshot() -> dict[str, Any]:
         packages = {
             distribution.metadata["Name"]: distribution.version
             for distribution in importlib.metadata.distributions()

@@ -16,8 +16,8 @@ from vrl.generation.ray.health_monitor import (
 from vrl.ray.actor_group import RayActorHandle
 from vrl.runtime_errors import (
     TerminalRuntimeError,
-    failure_identity_cause,
     find_error_cause,
+    root_failure_cause,
 )
 from vrl.utils.lifecycle import RuntimeLifecycle, RuntimePhase
 
@@ -225,7 +225,7 @@ def test_unresponsive_worker_fails_the_runtime_and_kills_the_fleet(
     assert failure.timeout_s == 0.5
     assert failure.__cause__ is probe_timeout
     assert find_error_cause(failure, TimeoutError) is probe_timeout
-    assert failure_identity_cause(failure) is failure
+    assert root_failure_cause(failure) is failure
     # Production's kill_actors did this, in fleet order, with no_restart=True --
     # a restarting actor would answer the next probe and hide the failure.
     assert ray.killed == [(healthy, True), (wedged, True)]

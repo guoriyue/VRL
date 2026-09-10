@@ -524,7 +524,7 @@ class RolloutCollector:
             finally:
                 reward_intervals.append((started, time.perf_counter()))
 
-        def take_single(batches: list[RolloutBatch]) -> None:
+        def accept_single_batch(batches: list[RolloutBatch]) -> None:
             if len(batches) != 1:
                 raise RuntimeError(
                     "per-group reward scoring must return one batch for one unscored group, "
@@ -540,7 +540,7 @@ class RolloutCollector:
             # Clear ownership before awaiting so a task failure is not mistaken for
             # a second cleanup failure by the outer exception handler.
             score_task = None
-            take_single(await task)
+            accept_single_batch(await task)
 
         async def record_unscored(
             unscored: UnscoredRollout,
@@ -554,7 +554,7 @@ class RolloutCollector:
                 # Control arm: same per-group call granularity as streaming, but the
                 # score completes before the next generation starts. The measured
                 # difference against streaming is overlap alone.
-                take_single(await score_unscored([unscored]))
+                accept_single_batch(await score_unscored([unscored]))
                 return
             # Generation of this group ran while the previous scoring task was in
             # flight. Drain it before starting this group's task: at most one reward

@@ -19,12 +19,13 @@ def find_error_cause[ErrorT: BaseException](
     return None
 
 
-def failure_identity_cause(error: BaseException) -> BaseException:
-    """Choose the stable failure identity behind cleanup wrappers.
+def root_failure_cause(error: BaseException) -> BaseException:
+    """Return the error a restart policy should key on.
 
-    Cleanup wrappers are transparent, but a terminal runtime error is the
-    domain-owned identity and therefore stops traversal before dependency
-    implementation details stored in ``__cause__``.
+    Walks the cause chain through transparent cleanup wrappers. The first
+    ``TerminalRuntimeError`` wins: it is the domain-owned failure, so the
+    dependency detail stored in its ``__cause__`` is not the answer. Without
+    one, the deepest cause is.
     """
 
     chain = _error_chain(error)
@@ -51,6 +52,6 @@ def _error_chain(error: BaseException) -> tuple[BaseException, ...]:
 
 __all__ = [
     "TerminalRuntimeError",
-    "failure_identity_cause",
     "find_error_cause",
+    "root_failure_cause",
 ]

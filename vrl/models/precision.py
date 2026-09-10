@@ -114,14 +114,14 @@ class ModulePrecisionTrace:
             "kind": "snapshot",
             "phase": phase,
             "modules": {
-                name: self._state(module, recurse=True) for name, module in self.modules.items()
+                name: self._module_state(module, recurse=True) for name, module in self.modules.items()
             },
         }
         self.events.append(event)
         return event
 
     @staticmethod
-    def _tensors(value: Any, path: str = "") -> list[dict[str, Any]]:
+    def _tensor_records(value: Any, path: str = "") -> list[dict[str, Any]]:
         import torch
 
         if isinstance(value, torch.Tensor):
@@ -138,24 +138,24 @@ class ModulePrecisionTrace:
             return [
                 record
                 for key, item in value.items()
-                for record in ModulePrecisionTrace._tensors(item, f"{path}.{key}")
+                for record in ModulePrecisionTrace._tensor_records(item, f"{path}.{key}")
             ]
         if isinstance(value, (tuple, list)):
             return [
                 record
                 for index, item in enumerate(value)
-                for record in ModulePrecisionTrace._tensors(item, f"{path}[{index}]")
+                for record in ModulePrecisionTrace._tensor_records(item, f"{path}[{index}]")
             ]
         return []
 
     @classmethod
-    def _state(cls, module: Any, *, recurse: bool) -> dict[str, Any]:
+    def _module_state(cls, module: Any, *, recurse: bool) -> dict[str, Any]:
         return {
-            "parameters": cls._tensors(dict(module.named_parameters(recurse=recurse))),
-            "buffers": cls._tensors(dict(module.named_buffers(recurse=recurse))),
+            "parameters": cls._tensor_records(dict(module.named_parameters(recurse=recurse))),
+            "buffers": cls._tensor_records(dict(module.named_buffers(recurse=recurse))),
         }
 
-    def _before(self, name: str, module: Any, args: Any, kwargs: Any) -> None:
+    def _record_forward_enter(self, name: str, module: Any, args: Any, kwargs: Any) -> None:
         import torch
 
         self.events.append(
@@ -164,8 +164,8 @@ class ModulePrecisionTrace:
                 "module": name,
                 "phase": self.phase,
                 "grad_enabled": torch.is_grad_enabled(),
-                "inputs": self._tensors({"args": args, "kwargs": kwargs}),
-                "state": self._state(module, recurse=False),
+                "inputs": self._tensor_records({"args": args, "kwargs": kwargs}),
+                "state": self._module_state(module, recurse=False),
                 "autocast": {
                     device: {
                         "enabled": torch.is_autocast_enabled(device),
@@ -176,13 +176,13 @@ class ModulePrecisionTrace:
             }
         )
 
-    def _after(self, name: str, _module: Any, _args: Any, _kwargs: Any, output: Any) -> None:
+    def _record_forward_exit(self, name: str, _module: Any, _args: Any, _kwargs: Any, output: Any) -> None:
         self.events.append(
             {
                 "kind": "forward_exit",
                 "module": name,
                 "phase": self.phase,
-                "outputs": self._tensors(output),
+                "outputs": self._tensor_records(output),
             }
         )
 
@@ -194,10 +194,10 @@ class ModulePrecisionTrace:
         try:
             for name, module in self.modules.items():
                 self._handles.append(
-                    module.register_forward_pre_hook(partial(self._before, name), with_kwargs=True)
+                    module.register_forward_pre_hook(partial(self._record_forward_enter, name), with_kwargs=True)
                 )
                 self._handles.append(
-                    module.register_forward_hook(partial(self._after, name), with_kwargs=True)
+                    module.register_forward_hook(partial(self._record_forward_exit, name), with_kwargs=True)
                 )
         except BaseException:
             self.__exit__(None, None, None)

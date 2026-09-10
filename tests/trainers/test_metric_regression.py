@@ -32,7 +32,7 @@ def make_run(tmp_path, monkeypatch):
         code = {"available": True, "commit": "fixture", "dirty": False}
         code.update(code_change or {})
         monkeypatch.setattr(
-            trace.TrainingRunTrace, "_code_identity", lambda _: copy.deepcopy(code)
+            trace.TrainingRunTrace, "_git_snapshot", lambda _: copy.deepcopy(code)
         )
         runtime = {
             "python": "fixture",
@@ -49,7 +49,7 @@ def make_run(tmp_path, monkeypatch):
         if runtime_change:
             runtime.update(runtime_change)
         monkeypatch.setattr(
-            trace.TrainingRunTrace, "_runtime_identity", lambda: copy.deepcopy(runtime)
+            trace.TrainingRunTrace, "_runtime_snapshot", lambda: copy.deepcopy(runtime)
         )
         config = {
             "trainer": {"seed": 17, "total_epochs": 2, "output_dir": str(directory)},

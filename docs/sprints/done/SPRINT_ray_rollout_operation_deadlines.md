@@ -191,7 +191,7 @@ replace the timeout root.
 domains. `RayOperationTimeout` and `PipelinedProgressError` derive from it.
 
 Cleanup wrappers may preserve the original exception in `root_cause` or `__cause__`.
-`find_error_cause` and `failure_identity_cause` walk that chain cycle-safely:
+`find_error_cause` and `root_failure_cause` walk that chain cycle-safely:
 
 - continuous producer detects a nested terminal error and does not retry the prompt slot;
 - continuous consumer propagates the cleanup wrapper without adding an opaque retry error;

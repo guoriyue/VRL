@@ -17,12 +17,12 @@ from vrl.trainers import trace
 def stable_environment(monkeypatch):
     monkeypatch.setattr(
         trace.TrainingRunTrace,
-        "_runtime_identity",
+        "_runtime_snapshot",
         lambda: {"devices": [], "python": "test"},
     )
     monkeypatch.setattr(
         trace.TrainingRunTrace,
-        "_code_identity",
+        "_git_snapshot",
         lambda _path: {"available": True, "commit": "abc", "dirty": False},
     )
 
@@ -86,7 +86,7 @@ def test_runtime_snapshot_records_cpu_scope_without_dumping_environment(monkeypa
     monkeypatch.setenv("WORLD_SIZE", "1")
     monkeypatch.setenv("TORCHINDUCTOR_EMULATE_PRECISION_CASTS", "1")
     monkeypatch.setenv("PRIVATE_API_TOKEN", "must-not-be-recorded")
-    record = trace.TrainingRunTrace._runtime_identity()
+    record = trace.TrainingRunTrace._runtime_snapshot()
     assert record["device_scope"] == "trainer-process-visible-devices"
     assert record["devices"] == []
     assert record["environment"]["WORLD_SIZE"] == "1"
@@ -97,7 +97,7 @@ def test_runtime_snapshot_records_cpu_scope_without_dumping_environment(monkeypa
 
 
 def test_git_identity_distinguishes_clean_dirty_and_unavailable(tmp_path):
-    assert trace.TrainingRunTrace._code_identity(tmp_path)["available"] is False
+    assert trace.TrainingRunTrace._git_snapshot(tmp_path)["available"] is False
 
     def git(*args):
         return subprocess.check_output(
@@ -117,11 +117,11 @@ def test_git_identity_distinguishes_clean_dirty_and_unavailable(tmp_path):
         "-m",
         "fixture",
     )
-    clean = trace.TrainingRunTrace._code_identity(tmp_path)
+    clean = trace.TrainingRunTrace._git_snapshot(tmp_path)
     assert clean["available"] is True and clean["dirty"] is False
     source.write_text("value = 2\n")
     (tmp_path / "untracked.py").write_text("extra = True\n")
-    dirty = trace.TrainingRunTrace._code_identity(tmp_path)
+    dirty = trace.TrainingRunTrace._git_snapshot(tmp_path)
     assert dirty["commit"] == clean["commit"]
     assert dirty["dirty"] is True
     assert dirty["tracked_diff_sha256"] != clean["tracked_diff_sha256"]
@@ -333,12 +333,12 @@ from vrl.models.precision import apply_float32_precision
 from vrl.trainers.trace import TrainingRunTrace
 apply_float32_precision("ieee")
 torch.cuda.is_available = lambda: False
-record = TrainingRunTrace._runtime_identity()
+record = TrainingRunTrace._runtime_snapshot()
 assert record["float32_precision"] == {"matmul": "ieee", "cudnn": "ieee"}
 for enabled in (True, False):
     torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = enabled
     torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = not enabled
-    record = TrainingRunTrace._runtime_identity()
+    record = TrainingRunTrace._runtime_snapshot()
     assert record["matmul_reduced_precision_reduction"] == {
         "fp16": not enabled, "bf16": enabled,
     }

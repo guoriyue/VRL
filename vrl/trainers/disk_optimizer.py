@@ -104,7 +104,7 @@ class DiskStreamingAdamW(torch.optim.Optimizer):
                 weight_decay=group["weight_decay"],
             )
 
-    def _healthy(self):
+    def _require_intact(self):
         if len(self.param_groups) != len(self._group_parameters) or any(
             len(group["params"]) != len(expected)
             or any(p is not q for p, q in zip(group["params"], expected, strict=True))
@@ -116,7 +116,7 @@ class DiskStreamingAdamW(torch.optim.Optimizer):
                 "disk AdamW failed during update; restore a checkpoint into a new optimizer"
             )
 
-    def _layout(self):
+    def _parameter_layout(self):
         return {
             "schema": 1,
             "parameters": [
@@ -143,7 +143,7 @@ class DiskStreamingAdamW(torch.optim.Optimizer):
             os.fsync(handle.fileno())
         return path.name, sha256_file(path)
 
-    def _publish(self, staging, hashes):
+    def _commit_generation(self, staging, hashes):
         destination = Path(self._workspace.name) / f"generation-{self._generation + 1}"
         staging.rename(destination)
         previous = self._current
@@ -153,7 +153,7 @@ class DiskStreamingAdamW(torch.optim.Optimizer):
             shutil.rmtree(previous)
 
     def step(self, closure=None):
-        self._healthy()
+        self._require_intact()
         self._validate_groups(self.param_groups)
         if closure is not None:
             raise NotImplementedError("disk AdamW does not support closures")
@@ -197,7 +197,7 @@ class DiskStreamingAdamW(torch.optim.Optimizer):
                 initialized.update(exported)
                 self.state.clear()
                 del exported
-            self._publish(staging, hashes)
+            self._commit_generation(staging, hashes)
             self._initialized_parameters = initialized
         except BaseException:
             self._failed = True
@@ -209,7 +209,7 @@ class DiskStreamingAdamW(torch.optim.Optimizer):
                 shutil.rmtree(staging)
 
     def state_dict(self):
-        self._healthy()
+        self._require_intact()
         result = super().state_dict()
         # File-backed views avoid allocating all moments merely to export a
         # checkpoint. Serialization may still fault all pages through host RAM.
@@ -217,15 +217,15 @@ class DiskStreamingAdamW(torch.optim.Optimizer):
         for index in range(len(self._buckets)):
             result["state"].update(self._read_bucket(index, mmap=True))
         result["disk_streaming"] = {
-            "layout": self._layout(),
+            "layout": self._parameter_layout(),
             "initialized_parameters": sorted(self._initialized_parameters),
         }
         return result
 
     def load_state_dict(self, state_dict):
-        self._healthy()
+        self._require_intact()
         metadata = state_dict.get("disk_streaming", {})
-        if metadata.get("layout") != self._layout():
+        if metadata.get("layout") != self._parameter_layout():
             raise ValueError("disk AdamW checkpoint parameter/bucket layout differs")
         groups = state_dict["param_groups"]
         if len(groups) != len(self.param_groups):
@@ -267,7 +267,7 @@ class DiskStreamingAdamW(torch.optim.Optimizer):
                 }
                 name, digest = self._write_bucket(staging, bucket_index, bucket)
                 hashes[name] = digest
-            self._publish(staging, hashes)
+            self._commit_generation(staging, hashes)
             self._initialized_parameters = set(state)
             for target, saved in zip(self.param_groups, groups, strict=True):
                 target.update({key: value for key, value in saved.items() if key != "params"})

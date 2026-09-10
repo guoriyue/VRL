@@ -18,7 +18,7 @@ from vrl.generation.ray.session import RayGenerationSession
 from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
-from vrl.runtime_errors import failure_identity_cause
+from vrl.runtime_errors import root_failure_cause
 from vrl.utils.lifecycle import (
     RuntimeLifecycle,
     RuntimeLifecycleError,
@@ -497,7 +497,7 @@ async def test_active_health_failure_escapes_as_the_first_failure_identity() -> 
     assert runtime.lifecycle.failure is health_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     # write_run_verdict uses this exact selector for its error_class.
-    assert failure_identity_cause(caught.value) is health_failure
+    assert root_failure_cause(caught.value) is health_failure
 
 
 @pytest.mark.asyncio
@@ -521,7 +521,7 @@ async def test_active_health_failure_wins_over_a_later_ordinary_error() -> None:
         await runtime.generate(_request())
 
     assert caught.value is health_failure
-    assert failure_identity_cause(caught.value) is health_failure
+    assert root_failure_cause(caught.value) is health_failure
     assert runtime.lifecycle.failure is health_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
@@ -549,7 +549,7 @@ async def test_active_health_failure_keeps_cancelled_surface_with_first_cause() 
 
     assert caught.value is cancellation
     assert caught.value.__cause__ is health_failure
-    assert failure_identity_cause(caught.value) is health_failure
+    assert root_failure_cause(caught.value) is health_failure
     assert runtime.lifecycle.failure is health_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
@@ -631,7 +631,7 @@ async def test_health_failure_after_weight_ack_blocks_version_publication() -> N
     assert runtime.current_policy_version == 6
     assert runtime.lifecycle.failure is health_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert failure_identity_cause(caught.value) is health_failure
+    assert root_failure_cause(caught.value) is health_failure
 
 
 @pytest.mark.asyncio

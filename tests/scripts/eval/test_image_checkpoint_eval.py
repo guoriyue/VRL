@@ -399,11 +399,11 @@ def completed_training_evaluation(generation, tmp_path, monkeypatch):
     (training / "metrics.csv").write_text("epoch,reward\n0,0.1\n")
     monkeypatch.setattr(
         trace.TrainingRunTrace,
-        "_runtime_identity",
+        "_runtime_snapshot",
         lambda: {"environment": {"WORLD_SIZE": "1"}},
     )
     monkeypatch.setattr(
-        trace.TrainingRunTrace, "_code_identity", lambda _path: {"available": False}
+        trace.TrainingRunTrace, "_git_snapshot", lambda _path: {"available": False}
     )
     launch = trace.TrainingRunTrace.capture(
         OmegaConf.create({"seed": 17}),

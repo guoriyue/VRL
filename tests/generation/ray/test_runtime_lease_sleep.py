@@ -20,7 +20,7 @@ from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationRequest
 from vrl.ray.actor_pool import RayActorCallError, RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
-from vrl.runtime_errors import failure_identity_cause
+from vrl.runtime_errors import root_failure_cause
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 from vrl.utils.lifecycle import RuntimeLifecycleError, RuntimePhase
 
@@ -838,7 +838,7 @@ async def test_active_health_race_propagates_session_first_failure() -> None:
         await runtime.generate(request)
 
     assert caught.value is health_failure
-    assert failure_identity_cause(caught.value) is health_failure
+    assert root_failure_cause(caught.value) is health_failure
     assert runtime.lifecycle.failure is health_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert runtime._session is None
@@ -1202,7 +1202,7 @@ async def test_terminal_failure_cancels_offload_with_stable_root() -> None:
     assert await asyncio.wait_for(terminalize, timeout=1) is timeout
 
     assert caught.value.__cause__ is timeout
-    assert failure_identity_cause(caught.value) is timeout
+    assert root_failure_cause(caught.value) is timeout
     assert inner.calls == ["shutdown"]
     assert runtime.lifecycle.failure is timeout
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
@@ -1398,7 +1398,7 @@ async def test_waiter_cancellation_during_cleanup_retry_preserves_root_cause() -
         await waiter
 
     assert caught.value.__cause__ is offload_error
-    assert failure_identity_cause(caught.value) is offload_error
+    assert root_failure_cause(caught.value) is offload_error
     assert runtime.lifecycle.failure is offload_error
     assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
     assert runtime._session is inner
@@ -1457,7 +1457,7 @@ async def test_waiter_cancellation_uses_root_published_during_graceful_shutdown(
 
     assert cleanup.value is cleanup_error
     assert caught.value.__cause__ is offload_error
-    assert failure_identity_cause(caught.value) is offload_error
+    assert root_failure_cause(caught.value) is offload_error
     assert runtime.lifecycle.failure is offload_error
     assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
     assert runtime._session is inner
