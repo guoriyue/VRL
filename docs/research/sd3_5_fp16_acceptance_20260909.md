@@ -62,3 +62,44 @@ model forward autocast boundary and GradScaler already express this experiment;
 no new conditioning class, wrapper, precision flag or family table is necessary.
 The original BF16 failure and rejected interventions remain recorded in the
 [preceding investigation](sd3_5_execution_precision_20260909.md).
+
+## Real OCR attempt A: shared-device capacity failure
+
+The actual two-epoch attempt ran from clean `5bfbebe7b` with:
+
+```bash
+CUBLAS_WORKSPACE_CONFIG=:4096:8 PYTHONHASHSEED=17 \
+  .venv/bin/python -m vrl.scripts.supervise \
+  --config experiment/sd3_5/online_grpo_ocr --max-attempts 1 \
+  trainer.total_epochs=2 trainer.seed=17 trainer.deterministic=true sampling.seed=17 \
+  precision.training.dtype=fp16 precision.rollout.prompt_encoders.dtype=bf16 \
+  trainer.output_dir=outputs/repro/sd3_5_ocr_fp16_a
+```
+
+Launch `f8208c33bcc5442bb97ccbdb6852e34f` records the explicit precision settings
+and a clean checkout. The first generation batch exhausted memory while another
+Anima training process occupied 12.13 GiB on the shared 32 GiB RTX 5090. Existing
+OOM recovery split 16 samples into two batches of 8, completed those generations,
+and subsequently generated the next group at batch 16. Real OCR scoring loaded
+the configured cached Paddle models. CuMem parking passed with a 660 MiB worker
+residual against the 498 MiB baseline.
+
+A later generation failed even after existing recovery reached a single sample.
+The error reports 17.15 GiB in the SD3 worker, 12.34 GiB in the other trainer,
+626 MiB in its generation worker and 854 MiB in the SD3 trainer. Only 189.94 MiB
+was free when another 256 MiB allocation was requested. This is actual shared-card
+capacity exhaustion; no numerical parity conclusion follows from it.
+
+The supervisor exited 1 after its single allowed attempt at 22:06:48 Pacific.
+The [failed verdict](sd3_5_fp16_attempt_a_20260909_verdict.json) is preserved.
+Both metrics files contain only headers; no successful final artifact receipt or
+completed epoch is present. Local log: `/tmp/vrl-sd3-ocr-fp16-a.log`. After exit,
+NVML listed only the pre-existing Anima processes, confirming the SD3 processes
+released their GPU allocations. No other workload was stopped or modified.
+
+The source batch configuration, reward and 0.01 threshold were not changed.
+Runtime OOM splitting is nevertheless a real execution change, so this attempt
+would not establish a fixed-batch deterministic baseline even if it had finished.
+The next full training attempt needs a stable capacity window; repeatedly
+relaunching alongside the same independently waking model would not supply that
+evidence. FP16 remains a promising diagnostic result, not an accepted recipe.

@@ -1,0 +1,8 @@
+{
+  "attempt_id": "0c65fcebe0414a36a1f0bce90dc3a446",
+  "error_class": "RuntimeError",
+  "error_message": "distributed rollout batch failed (rank=rollout-0, batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1)): CUDA out of memory. Tried to allocate 256.00 MiB. GPU 0 has a total capacity of 31.33 GiB of which 189.94 MiB is free. Process 1370224 has 12.34 GiB memory in use. Process 1371124 has 626.00 MiB memory in use. Process 1376751 has 854.00 MiB memory in use. Including non-PyTorch memory, this process has 17.15 GiB memory in use. Of the allocated memory 16.21 GiB is allocated by PyTorch, with 304.38 MiB allocated in private pools (e.g., CUDA Graphs), and 334.29 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)",
+  "schema_version": 1,
+  "supervisor_exit_code": 1,
+  "verdict": "failed"
+}
