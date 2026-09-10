@@ -103,3 +103,44 @@ would not establish a fixed-batch deterministic baseline even if it had finished
 The next full training attempt needs a stable capacity window; repeatedly
 relaunching alongside the same independently waking model would not supply that
 evidence. FP16 remains a promising diagnostic result, not an accepted recipe.
+
+## Real OCR attempt B completes two epochs
+
+The same command was run with output directory
+`outputs/repro/sd3_5_ocr_fp16_b` from clean `51b4e2cfe`, after the GPU became
+available. It completed two epochs and exited zero at 22:34:42 Pacific.
+`verify_run_completion` verified the actual launch, full-precision metrics,
+checkpoint artifact hashes and matching supervised success verdict. Launch ID:
+`6e83c2d569554c46a778ef50cae10a53`.
+
+| Epoch | Loss | OCR reward mean | Gradient norm | Maximum logprob difference |
+|---|---:|---:|---:|---:|
+| 0 | 0.000020266533182520005 | 0.26027169823646545 | 0.002486748620867729 | 0.001454971730709076 |
+| 1 | 0.000048537592455330956 | 0.35471808165311813 | 0.0021115136332809925 | 0.0019754618406295776 |
+
+The persisted first-update gate passes with the unchanged 0.01 threshold.
+The final checkpoint records completed epoch 2, trainer step 2 and global step 2.
+Loading it through `load_training_checkpoint` finds 486 optimizer state entries,
+all with Adam step 2, plus GradScaler scale 65536 and growth tracker 2. Thus the
+checkpoint demonstrates two actual optimizer updates, not just two loop counters
+or two scaler-skipped attempts. EMA had not reached its configured update
+interval, so the export correctly uses raw checkpoint-owned weights.
+
+The [full-precision metric rows](sd3_5_fp16_run_b_20260909.csv) and
+[receipt/verdict/checkpoint observations](sd3_5_fp16_run_b_20260909.json) are
+archived. The copied receipt's relative artifact paths refer to the original
+output directory; this compact documentation copy is not a standalone replacement
+for the checkpoint and launch files. Local log: `/tmp/vrl-sd3-ocr-fp16-b.log`.
+
+The run is real short-training acceptance, not deterministic or learning-quality
+acceptance. A transient external process later occupied 12.79 GiB and triggered
+one 16-to-8-plus-8 OOM split at 22:26:57. The rest of training completed, but this
+dynamic generation shape disqualifies the run as a fixed-batch reference. The
+initial status update saying all first four groups used batch 16 was incorrect;
+the complete log establishes this split. A two-point reward increase is not a
+learning curve or held-out improvement claim.
+
+This supports adopting the already-existing FP16 role policy for the single-GPU
+OCR recipe while retaining BF16 prompt encoders. It does not justify changing
+unverified FSDP or continuous descendants implicitly. Fixed-batch repeated runs,
+held-out evaluation and longer curves remain outstanding.

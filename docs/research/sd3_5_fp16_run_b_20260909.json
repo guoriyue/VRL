@@ -1,0 +1,109 @@
+{
+  "scope": "completed two-epoch real OCR run; one runtime OOM split; not fixed-batch deterministic acceptance",
+  "output_directory": "outputs/repro/sd3_5_ocr_fp16_b",
+  "launch_id": "6e83c2d569554c46a778ef50cae10a53",
+  "verified_completion": {
+    "attempt_id": "3cae9df5df124e9c92e3203787b9dac1",
+    "schema_version": 1,
+    "supervisor_exit_code": 0,
+    "verdict": "success"
+  },
+  "artifact_receipt": {
+    "artifacts": {
+      "final_checkpoint": {
+        "content": {
+          "bytes": 478656913,
+          "files": 5,
+          "kind": "tree",
+          "sha256": "2d53e246d65a32467ebe95ca0ce3b5f2b4064084d5f3b0f7bad9b7eec41068c6"
+        },
+        "path": "checkpoint-final"
+      },
+      "full_precision_metrics": {
+        "content": {
+          "bytes": 2290,
+          "files": 1,
+          "kind": "file",
+          "sha256": "c49185081db8ec8c29692f1196dea82ea90045a9fcdd3aa42847d1b535cef110"
+        },
+        "path": "metrics.full_precision.csv"
+      },
+      "launch": {
+        "content": {
+          "bytes": 12457,
+          "files": 1,
+          "kind": "file",
+          "sha256": "1ce04f3f87646bc35e8775157502c3fd9f97fecfa95b4050cee8ba0b408fcfc6"
+        },
+        "path": "run_evidence/6e83c2d569554c46a778ef50cae10a53.json"
+      },
+      "metrics": {
+        "content": {
+          "bytes": 1842,
+          "files": 1,
+          "kind": "file",
+          "sha256": "f5502fc4bcbec357554a081d18e5239fec3897f3c2ad23e28cffdfa67e76c7ab"
+        },
+        "path": "metrics.csv"
+      }
+    },
+    "captured_at": "2026-09-10T05:34:35.657311+00:00",
+    "launch_id": "6e83c2d569554c46a778ef50cae10a53",
+    "phase": "after-training-loop-before-cleanup",
+    "schema": "vrl.run-artifacts/v1"
+  },
+  "checkpoint_metadata": {
+    "checkpoint_file": "checkpoint.pt",
+    "checkpoint_file_bytes": 383031851,
+    "completed_epoch": 2,
+    "family": "sd3_5",
+    "global_step": 2,
+    "model_identity": {
+      "build": {
+        "lora": {
+          "alpha": 64,
+          "dropout": 0.0,
+          "rank": 32,
+          "target_modules": [
+            "add_k_proj",
+            "add_q_proj",
+            "add_v_proj",
+            "to_add_out",
+            "to_k",
+            "to_out.0",
+            "to_q",
+            "to_v"
+          ]
+        },
+        "nft_previous_adapter": false,
+        "use_lora": true
+      },
+      "schema": "vrl.model-identity/v1",
+      "sources": {
+        "main": {
+          "kind": "huggingface",
+          "repo_id": "stabilityai/stable-diffusion-3.5-medium",
+          "revision": "b940f670f0eda2d07fbb75229e779da1ad11eb80"
+        }
+      }
+    },
+    "next_epoch": 2,
+    "schema_version": 2,
+    "trainer_step": 2,
+    "uses_lora": true
+  },
+  "optimizer_observation": {
+    "state_entries": 486,
+    "observed_steps": [
+      2.0
+    ],
+    "grad_scaler": {
+      "scale": 65536.0,
+      "growth_factor": 2.0,
+      "backoff_factor": 0.5,
+      "growth_interval": 2000,
+      "_growth_tracker": 2
+    }
+  },
+  "oom_split_count": 1
+}
