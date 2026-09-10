@@ -1,0 +1,205 @@
+{
+  "scope": "eager real SD3 initialized model, step 8, sample 0 of batch 16 versus sample 0 alone",
+  "arms": [
+    {
+      "batch16_logprob_max": 0.018531210720539093,
+      "original_rollout_logprob_max": 0.018531210720539093,
+      "mode": "baseline",
+      "module_output_max": {
+        "pos_embed": [
+          0.0
+        ],
+        "time_text_embed": [
+          0.25
+        ],
+        "time_text_embed.timestep_embedder.linear_1": [
+          0.0625
+        ],
+        "time_text_embed.timestep_embedder.linear_2": [
+          0.0625
+        ],
+        "time_text_embed.text_embedder.linear_1": [
+          0.25
+        ],
+        "time_text_embed.text_embedder.linear_2": [
+          0.125
+        ],
+        "context_embedder": [
+          4.0
+        ],
+        "transformer_blocks.0": [
+          4.0,
+          0.5
+        ],
+        "transformer_blocks.1": [
+          16.0,
+          0.5
+        ],
+        "transformer_blocks.11": [
+          811.0,
+          3.0
+        ],
+        "transformer_blocks.23": [
+          16.5
+        ],
+        "norm_out": [
+          0.26335030794143677
+        ],
+        "proj_out": [
+          0.2890625
+        ]
+      },
+      "sample0_logprob_difference": 0.010672658681869507
+    },
+    {
+      "batch16_logprob_max": 0.002146463841199875,
+      "original_rollout_logprob_max": 0.015066094696521759,
+      "mode": "no_bf16_reduced_reduction",
+      "module_output_max": {
+        "pos_embed": [
+          0.0
+        ],
+        "time_text_embed": [
+          0.1875
+        ],
+        "time_text_embed.timestep_embedder.linear_1": [
+          0.0625
+        ],
+        "time_text_embed.timestep_embedder.linear_2": [
+          0.0625
+        ],
+        "time_text_embed.text_embedder.linear_1": [
+          0.25
+        ],
+        "time_text_embed.text_embedder.linear_2": [
+          0.125
+        ],
+        "context_embedder": [
+          0.0
+        ],
+        "transformer_blocks.0": [
+          1.0,
+          0.75
+        ],
+        "transformer_blocks.1": [
+          2.0,
+          0.5
+        ],
+        "transformer_blocks.11": [
+          834.0,
+          2.0
+        ],
+        "transformer_blocks.23": [
+          9.0
+        ],
+        "norm_out": [
+          0.1881542205810547
+        ],
+        "proj_out": [
+          0.146484375
+        ]
+      },
+      "sample0_logprob_difference": 0.002146463841199875
+    },
+    {
+      "batch16_logprob_max": 0.005175154656171799,
+      "original_rollout_logprob_max": 0.017813026905059814,
+      "mode": "time_text_fp32",
+      "module_output_max": {
+        "pos_embed": [
+          0.0
+        ],
+        "time_text_embed": [
+          0.0
+        ],
+        "time_text_embed.timestep_embedder.linear_1": [
+          7.62939453125e-06
+        ],
+        "time_text_embed.timestep_embedder.linear_2": [
+          9.5367431640625e-07
+        ],
+        "time_text_embed.text_embedder.linear_1": [
+          0.0
+        ],
+        "time_text_embed.text_embedder.linear_2": [
+          0.0
+        ],
+        "context_embedder": [
+          4.0
+        ],
+        "transformer_blocks.0": [
+          4.0,
+          0.5
+        ],
+        "transformer_blocks.1": [
+          16.0,
+          1.0
+        ],
+        "transformer_blocks.11": [
+          898.0,
+          3.0
+        ],
+        "transformer_blocks.23": [
+          12.25
+        ],
+        "norm_out": [
+          0.17403697967529297
+        ],
+        "proj_out": [
+          0.125
+        ]
+      },
+      "sample0_logprob_difference": 0.001936342567205429
+    },
+    {
+      "batch16_logprob_max": 0.0,
+      "original_rollout_logprob_max": 0.013645537197589874,
+      "mode": "time_text_fp32_no_reduced_reduction",
+      "module_output_max": {
+        "pos_embed": [
+          0.0
+        ],
+        "time_text_embed": [
+          0.0
+        ],
+        "time_text_embed.timestep_embedder.linear_1": [
+          7.62939453125e-06
+        ],
+        "time_text_embed.timestep_embedder.linear_2": [
+          9.5367431640625e-07
+        ],
+        "time_text_embed.text_embedder.linear_1": [
+          0.0
+        ],
+        "time_text_embed.text_embedder.linear_2": [
+          0.0
+        ],
+        "context_embedder": [
+          0.0
+        ],
+        "transformer_blocks.0": [
+          0.0,
+          0.0
+        ],
+        "transformer_blocks.1": [
+          0.0,
+          0.0
+        ],
+        "transformer_blocks.11": [
+          0.0,
+          0.0
+        ],
+        "transformer_blocks.23": [
+          0.0
+        ],
+        "norm_out": [
+          0.0
+        ],
+        "proj_out": [
+          0.0
+        ]
+      },
+      "sample0_logprob_difference": 0.0
+    }
+  ]
+}

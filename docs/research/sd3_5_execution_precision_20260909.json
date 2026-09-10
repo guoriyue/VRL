@@ -1,0 +1,57 @@
+{
+  "scope": "real initialized model, same saved step-8 transition; original adapter dtypes; no optimizer update",
+  "prompt_index": 1971,
+  "parameter_dtypes": {
+    "torch.bfloat16": 908,
+    "torch.float32": 486
+  },
+  "trainable_dtypes": {
+    "torch.float32": 486
+  },
+  "arms": [
+    {
+      "compiled": false,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 0.018531210720539093,
+      "original_eager_rollout_logprob_max": 0.018531210720539093,
+      "cfg32_batch_logprob_max": 0.018472250550985336,
+      "noise_max": 1.654296875,
+      "cond_max": 0.3125,
+      "uncond_max": 0.3212890625,
+      "finite_gradients": null
+    },
+    {
+      "compiled": false,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 0.018531210720539093,
+      "original_eager_rollout_logprob_max": 0.018531210720539093,
+      "cfg32_batch_logprob_max": 0.018472250550985336,
+      "noise_max": 1.654296875,
+      "cond_max": 0.3125,
+      "uncond_max": 0.3212890625,
+      "finite_gradients": true
+    },
+    {
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 0.0043965913355350494,
+      "original_eager_rollout_logprob_max": 0.0186842679977417,
+      "cfg32_batch_logprob_max": 0.004400096833705902,
+      "noise_max": 2.37890625,
+      "cond_max": 0.42578125,
+      "uncond_max": 0.3671875,
+      "finite_gradients": null
+    },
+    {
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 0.0037156082689762115,
+      "original_eager_rollout_logprob_max": 0.01800328493118286,
+      "cfg32_batch_logprob_max": 0.0036974921822547913,
+      "noise_max": 1.90625,
+      "cond_max": 0.390625,
+      "uncond_max": 0.375,
+      "finite_gradients": true
+    }
+  ]
+}

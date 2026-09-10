@@ -1,0 +1,83 @@
+import dataclasses,gc,json
+import torch
+from vrl.config.loading import load_config
+from vrl.run import resolve_online_run,resolve_model
+from vrl.trainers.data import PromptBatchSampler,load_prompt_examples_from_config
+from vrl.generation.types import DenoiseRequest
+from vrl.models.precision import apply_float32_precision
+from vrl.math.denoise.flow_matching import sde_step_with_logprob
+c=load_config('experiment/sd3_5/online_grpo_ocr',overrides=['trainer.seed=17','trainer.deterministic=true','sampling.seed=17','model.torch_compile.enable=false'])
+r=resolve_online_run(c);r.run.initialize_process_rng()
+examples=load_prompt_examples_from_config(r.built.root.data)
+sampler=PromptBatchSampler(generator=torch.Generator().manual_seed(17),num_examples=len(examples),prompts_per_rank=8,num_replicas=1,rank=0,strategy=str(r.built.root.data.sampler.type))
+index=sampler.sample(epoch=0)[0];prompt=examples[index].prompt
+bundle=resolve_model(r.family,r.built.root,torch.device('cuda'),precision=r.built.precision,for_rollout=True).materialize(context='batch precision isolation')
+m=bundle.model
+with torch.no_grad():
+    encoded=m.encode_prompt([prompt],[''],guidance_scale=4.5,max_sequence_length=128)
+    for name in ('text_encoder','text_encoder_2','text_encoder_3','vae'):
+        component=getattr(m.pipeline,name,None)
+        if component is not None: component.to('cpu')
+    gc.collect();torch.cuda.empty_cache()
+    encoded={k:v.repeat_interleave(16,dim=0) if isinstance(v,torch.Tensor) else v for k,v in encoded.items()}
+    state=m.prepare_sampling(DenoiseRequest(width=512,height=512,frame_count=1,num_steps=10,guidance_scale=4.5,seed=17),encoded)
+    context=m.export_batch_context(state)
+    records=[];generator=torch.Generator(device='cuda').manual_seed(17)
+    for step in range(9):
+        tensors=dict(m.export_replay_tensors(state));tensors['timesteps']=state.timesteps[step].expand(16).clone()
+        latents=state.latents.clone()
+        output=m.forward_step(state,step)['noise_pred']
+        result=sde_step_with_logprob(state.scheduler,output,state.timesteps[step].unsqueeze(0),latents,generator=generator,noise_level=0.7,sde_type='flow_grpo',step_index=step)
+        records.append((step,latents,{k:v.clone() if isinstance(v,torch.Tensor) else v for k,v in tensors.items()},result.prev_sample.clone(),result.log_prob.clone()))
+        state.latents=result.prev_sample
+
+from pathlib import Path
+step, latents, tensors, actions, old_logprob = records[-1]
+del records
+report = {'scope': 'eager real SD3 initialized model, step 8, sample 0 of batch 16 versus sample 0 alone', 'arms': []}
+
+def forward(count):
+    with torch.no_grad():
+        return m.forward_step(m.restore_eval_state({k:v[:count] if isinstance(v,torch.Tensor) else v for k,v in tensors.items()}, context, latents[:count], step), 0)['noise_pred']
+
+names = ['pos_embed', 'time_text_embed', 'time_text_embed.timestep_embedder.linear_1', 'time_text_embed.timestep_embedder.linear_2', 'time_text_embed.text_embedder.linear_1', 'time_text_embed.text_embedder.linear_2', 'context_embedder', 'transformer_blocks.0', 'transformer_blocks.1', 'transformer_blocks.11', 'transformer_blocks.23', 'norm_out', 'proj_out']
+
+for mode in ('baseline', 'no_bf16_reduced_reduction', 'time_text_fp32', 'time_text_fp32_no_reduced_reduction'):
+    if mode == 'no_bf16_reduced_reduction':
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
+    if mode == 'time_text_fp32':
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = True
+        module = m.transformer.time_text_embed
+        original = module.forward
+        module.to(torch.float32)
+        def precise_forward(*args, **kwargs):
+            with torch.autocast('cuda', enabled=False):
+                args = tuple(v.float() if isinstance(v,torch.Tensor) and v.is_floating_point() else v for v in args)
+                kwargs = {k:v.float() if isinstance(v,torch.Tensor) and v.is_floating_point() else v for k,v in kwargs.items()}
+                return original(*args, **kwargs).to(torch.bfloat16)
+        module.forward = precise_forward
+    if mode == 'time_text_fp32_no_reduced_reduction':
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
+    capture={}; handles=[]
+    def hook(name):
+        def receive(module, args, out):
+            values=out if isinstance(out,tuple) else (out,)
+            capture[name]=[v.detach()[[0, v.shape[0]//2]].float().cpu() for v in values if isinstance(v,torch.Tensor)]
+        return receive
+    for name in names:
+        handles.append(m.transformer.get_submodule(name).register_forward_hook(hook(name)))
+    full=forward(16); full_capture=capture.copy(); capture.clear()
+    single=forward(1)
+    diffs={name:[float((a-b).abs().max()) for a,b in zip(full_capture[name],capture[name],strict=True)] for name in names}
+    for handle in handles: handle.remove()
+    lp=[]
+    for noise in (full[:1],single):
+        lp.append(sde_step_with_logprob(state.scheduler,noise.float(),tensors['timesteps'][:1],latents[:1],prev_sample=actions[:1],noise_level=0.7,sde_type='flow_grpo',step_index=step).log_prob)
+    with torch.no_grad():
+        small = torch.cat([m.forward_step(m.restore_eval_state({k:v[i:i+1] if isinstance(v,torch.Tensor) else v for k,v in tensors.items()}, context, latents[i:i+1], step), 0)['noise_pred'] for i in range(16)])
+        all_lp = [sde_step_with_logprob(state.scheduler, noise.float(), tensors['timesteps'], latents, prev_sample=actions, noise_level=0.7, sde_type='flow_grpo', step_index=step).log_prob for noise in (full, small)]
+    entry={'batch16_logprob_max':float((all_lp[0]-all_lp[1]).abs().max()), 'original_rollout_logprob_max':float((old_logprob-all_lp[1]).abs().max()), 'mode':mode,'module_output_max':diffs,'sample0_logprob_difference':float((lp[0]-lp[1]).abs().max())}
+    report['arms'].append(entry)
+    print(entry,flush=True)
+    Path('/tmp/vrl_sd3_sensitive_modules_group_probe.partial.json').write_text(json.dumps(report,indent=2))
+Path('/tmp/vrl_sd3_sensitive_modules_group_probe.json').write_text(json.dumps(report,indent=2))

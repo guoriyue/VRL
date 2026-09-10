@@ -113,3 +113,17 @@ Existing family loading hooks, FP32 reductions, master-weight optimizer and
 correction/guard logic stay unchanged. The context manager is necessary to own
 hook state and cleanup; its helpers share tensor-metadata formatting. No new
 ALL_CAPS business vocabulary or family support table was introduced.
+
+## 2026-09-09: Real SD3.5 selective-precision candidate
+
+[Execution and module-level experiments](../../research/sd3_5_execution_precision_20260909.md)
+preserve FP32 adapters and execute eager/compiled forward and backward on a real
+fixed transition. Eager batch error persists with original adapter dtypes and
+backward; FP32 CFG recombination alone does not remove it. Differences appear in
+timestep/text conditioning and context projection before the first block.
+Combining an FP32 timestep/text embedding boundary with disabled BF16 reduced
+precision reduction makes all 16 final logprobs match across batches in this one
+eager transition. The original BF16 trajectory still mismatches, so this is a
+candidate for consistent rollout/replay treatment, not completed recipe acceptance.
+Fresh compiled trajectories, backward and post-update checks, memory/performance,
+and full curves remain required. Production code and gates are unchanged.
