@@ -1,0 +1,35 @@
+{
+  "scope": "real initialized model, fresh candidate compiled trajectory step 8; original adapter dtypes; no optimizer update",
+  "prompt_index": 1971,
+  "parameter_dtypes": {
+    "torch.bfloat16": 900,
+    "torch.float32": 494
+  },
+  "trainable_dtypes": {
+    "torch.float32": 486
+  },
+  "arms": [
+    {
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 0.0058716461062431335,
+      "original_candidate_compiled_rollout_logprob_max": 0.0058716461062431335,
+      "cfg32_batch_logprob_max": 0.0058761537075042725,
+      "noise_max": 1.796875,
+      "cond_max": 0.4375,
+      "uncond_max": 0.3857421875,
+      "finite_gradients": null
+    },
+    {
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 0.005637764930725098,
+      "original_candidate_compiled_rollout_logprob_max": 0.005637764930725098,
+      "cfg32_batch_logprob_max": 0.005652755498886108,
+      "noise_max": 1.34375,
+      "cond_max": 0.359375,
+      "uncond_max": 0.3779296875,
+      "finite_gradients": true
+    }
+  ]
+}

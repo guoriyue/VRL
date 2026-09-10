@@ -133,3 +133,51 @@ The installed PyTorch source (`torch/_inductor/config.py`,
 `emulate_precision_casts`) explicitly describes removal of intermediate
 downcast/upcast pairs during fusion and provides an opt-in way to retain them.
 That source observation motivates an experiment; it does not prove causality.
+
+## Retained intermediate rounding: one complete trainable trajectory
+
+A fresh-process repeat added only
+`TORCHINDUCTOR_EMULATE_PRECISION_CASTS=1` to the previous candidate. The source
+asserts the resolved Inductor option is enabled. The resulting step-8 mismatch
+is 0.0058716461062431335 without gradients and 0.005637764930725098 with backward;
+existing gradients are finite. See the [single-step report](sd3_5_candidate_rounding_20260909.json)
+and [source](sd3_5_candidate_rounding_20260909_probe.txt). This experiment started
+from clean `6c3ea9eb6`'s parent production state: the only intervening repository
+change was the documentation of the preceding failure.
+
+The follow-up [all-step report](sd3_5_candidate_allsteps_20260909.json) and
+[source](sd3_5_candidate_allsteps_20260909_probe.txt) cover the nine trainable
+transitions (indices 0 through 8) of the configured ten-step schedule. A fresh
+compiled trajectory supplies original rollout logprobs; each transition is then
+replayed as sixteen individual rows in both no-grad and backward modes.
+
+| Step | Max original rollout versus no-grad replay | Max original rollout versus replay with backward |
+|---|---:|---:|
+| 0 | 0.000039935112 | 0.000046491623 |
+| 1 | 0.000045180321 | 0.000032067299 |
+| 2 | 0.000170767307 | 0.000154495239 |
+| 3 | 0.000147223473 | 0.000116825104 |
+| 4 | 0.000136673450 | 0.000132381916 |
+| 5 | 0.000337243080 | 0.000396072865 |
+| 6 | 0.000594943762 | 0.000605404377 |
+| 7 | 0.001421332359 | 0.001198247075 |
+| 8 | 0.005871646106 | 0.005637764931 |
+
+All 18 comparisons are below the unchanged 0.01 limit and all nine backward arms
+observe finite gradients. The comparison with original generated logprobs is the
+relevant result. The raw report also includes a fresh batch-16 replay versus
+batch-1 comparison, whose values can differ after compiler specialization/cache
+state changes; that smaller difference must not replace the original trajectory
+comparison. No optimizer update, OCR scoring, separate replay model or production
+trainer gate was executed.
+
+This supports the three-part candidate for one prompt group, not completed
+training acceptance. The remaining seven prompts in the configured seed-17 first
+batch are being checked separately before choosing a production implementation.
+A prompt-sweep failure rejects the candidate rather than changing the limit.
+The all-step process ran from clean `6c3ea9eb6`, using the same virtualenv and
+startup variables as above plus `CUBLAS_WORKSPACE_CONFIG=:4096:8`,
+`PYTHONHASHSEED=17`, and `PYTHONPATH=.`. Local logs are
+`/tmp/vrl_sd3_candidate_rounding_probe.log` and
+`/tmp/vrl_sd3_candidate_rounding_allsteps_probe.log`. These archived diagnostics
+are not environment-bound training completion receipts.

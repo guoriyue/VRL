@@ -1,0 +1,229 @@
+{
+  "scope": "real initialized model, fresh candidate compiled trajectory steps 0 through 8; original adapter dtypes; no optimizer update",
+  "prompt_index": 1971,
+  "parameter_dtypes": {
+    "torch.bfloat16": 900,
+    "torch.float32": 494
+  },
+  "trainable_dtypes": {
+    "torch.float32": 486
+  },
+  "arms": [
+    {
+      "step": 0,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 3.993511199951172e-05,
+      "original_candidate_compiled_rollout_logprob_max": 3.993511199951172e-05,
+      "cfg32_batch_logprob_max": 4.017353057861328e-05,
+      "noise_max": 0.640625,
+      "cond_max": 0.13671875,
+      "uncond_max": 0.1171875,
+      "finite_gradients": null
+    },
+    {
+      "step": 0,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 4.649162292480469e-05,
+      "original_candidate_compiled_rollout_logprob_max": 4.649162292480469e-05,
+      "cfg32_batch_logprob_max": 4.553794860839844e-05,
+      "noise_max": 0.640625,
+      "cond_max": 0.13671875,
+      "uncond_max": 0.125,
+      "finite_gradients": true
+    },
+    {
+      "step": 1,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 0.0,
+      "original_candidate_compiled_rollout_logprob_max": 4.5180320739746094e-05,
+      "cfg32_batch_logprob_max": 0.0,
+      "noise_max": 0.0,
+      "cond_max": 0.0,
+      "uncond_max": 0.0,
+      "finite_gradients": null
+    },
+    {
+      "step": 1,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 1.3113021850585938e-05,
+      "original_candidate_compiled_rollout_logprob_max": 3.2067298889160156e-05,
+      "cfg32_batch_logprob_max": 1.2636184692382812e-05,
+      "noise_max": 0.34375,
+      "cond_max": 0.0390625,
+      "uncond_max": 0.08984375,
+      "finite_gradients": true
+    },
+    {
+      "step": 2,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 0.00010508298873901367,
+      "original_candidate_compiled_rollout_logprob_max": 0.00017076730728149414,
+      "cfg32_batch_logprob_max": 0.00010120868682861328,
+      "noise_max": 1.1640625,
+      "cond_max": 0.09375,
+      "uncond_max": 0.3203125,
+      "finite_gradients": null
+    },
+    {
+      "step": 2,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 0.00011551380157470703,
+      "original_candidate_compiled_rollout_logprob_max": 0.0001544952392578125,
+      "cfg32_batch_logprob_max": 0.0001112222671508789,
+      "noise_max": 1.2734375,
+      "cond_max": 0.12890625,
+      "uncond_max": 0.3515625,
+      "finite_gradients": true
+    },
+    {
+      "step": 3,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 0.0,
+      "original_candidate_compiled_rollout_logprob_max": 0.00014722347259521484,
+      "cfg32_batch_logprob_max": 0.0,
+      "noise_max": 0.0,
+      "cond_max": 0.0,
+      "uncond_max": 0.0,
+      "finite_gradients": null
+    },
+    {
+      "step": 3,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 3.057718276977539e-05,
+      "original_candidate_compiled_rollout_logprob_max": 0.00011682510375976562,
+      "cfg32_batch_logprob_max": 3.212690353393555e-05,
+      "noise_max": 0.28125,
+      "cond_max": 0.044921875,
+      "uncond_max": 0.080078125,
+      "finite_gradients": true
+    },
+    {
+      "step": 4,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 0.0,
+      "original_candidate_compiled_rollout_logprob_max": 0.0001366734504699707,
+      "cfg32_batch_logprob_max": 0.0,
+      "noise_max": 0.0,
+      "cond_max": 0.0,
+      "uncond_max": 0.0,
+      "finite_gradients": null
+    },
+    {
+      "step": 4,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 7.584691047668457e-05,
+      "original_candidate_compiled_rollout_logprob_max": 0.00013238191604614258,
+      "cfg32_batch_logprob_max": 7.924437522888184e-05,
+      "noise_max": 0.296875,
+      "cond_max": 0.0625,
+      "uncond_max": 0.046875,
+      "finite_gradients": true
+    },
+    {
+      "step": 5,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 7.700920104980469e-05,
+      "original_candidate_compiled_rollout_logprob_max": 0.00033724308013916016,
+      "cfg32_batch_logprob_max": 6.961822509765625e-05,
+      "noise_max": 0.9140625,
+      "cond_max": 0.203125,
+      "uncond_max": 0.0,
+      "finite_gradients": null
+    },
+    {
+      "step": 5,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 0.00014001131057739258,
+      "original_candidate_compiled_rollout_logprob_max": 0.0003960728645324707,
+      "cfg32_batch_logprob_max": 0.00012934207916259766,
+      "noise_max": 0.84375,
+      "cond_max": 0.1953125,
+      "uncond_max": 0.060546875,
+      "finite_gradients": true
+    },
+    {
+      "step": 6,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 0.0,
+      "original_candidate_compiled_rollout_logprob_max": 0.0005949437618255615,
+      "cfg32_batch_logprob_max": 0.0,
+      "noise_max": 0.0,
+      "cond_max": 0.0,
+      "uncond_max": 0.0,
+      "finite_gradients": null
+    },
+    {
+      "step": 6,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 0.00015270709991455078,
+      "original_candidate_compiled_rollout_logprob_max": 0.0006054043769836426,
+      "cfg32_batch_logprob_max": 0.00015556812286376953,
+      "noise_max": 0.3984375,
+      "cond_max": 0.0703125,
+      "uncond_max": 0.09375,
+      "finite_gradients": true
+    },
+    {
+      "step": 7,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 0.0003304481506347656,
+      "original_candidate_compiled_rollout_logprob_max": 0.0014213323593139648,
+      "cfg32_batch_logprob_max": 0.0003341585397720337,
+      "noise_max": 1.03125,
+      "cond_max": 0.234375,
+      "uncond_max": 0.2109375,
+      "finite_gradients": null
+    },
+    {
+      "step": 7,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 0.0004601776599884033,
+      "original_candidate_compiled_rollout_logprob_max": 0.0011982470750808716,
+      "cfg32_batch_logprob_max": 0.0004321783781051636,
+      "noise_max": 1.03125,
+      "cond_max": 0.234375,
+      "uncond_max": 0.234375,
+      "finite_gradients": true
+    },
+    {
+      "step": 8,
+      "compiled": true,
+      "replay_grad_and_backward": false,
+      "batch_logprob_max": 0.0005661472678184509,
+      "original_candidate_compiled_rollout_logprob_max": 0.0058716461062431335,
+      "cfg32_batch_logprob_max": 0.0005624666810035706,
+      "noise_max": 0.68359375,
+      "cond_max": 0.0,
+      "uncond_max": 0.1953125,
+      "finite_gradients": null
+    },
+    {
+      "step": 8,
+      "compiled": true,
+      "replay_grad_and_backward": true,
+      "batch_logprob_max": 0.0003523528575897217,
+      "original_candidate_compiled_rollout_logprob_max": 0.005637764930725098,
+      "cfg32_batch_logprob_max": 0.0003577321767807007,
+      "noise_max": 0.8515625,
+      "cond_max": 0.125,
+      "uncond_max": 0.20361328125,
+      "finite_gradients": true
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+from pathlib import Path
+import dataclasses,gc,json
+import torch
+import torch._inductor.config
+assert torch._inductor.config.emulate_precision_casts is True
+from vrl.config.loading import load_config
+from vrl.run import resolve_online_run,resolve_model
+from vrl.trainers.data import PromptBatchSampler,load_prompt_examples_from_config
+from vrl.generation.types import DenoiseRequest
+from vrl.models.precision import apply_float32_precision
+from vrl.math.denoise.flow_matching import sde_step_with_logprob
+c=load_config('experiment/sd3_5/online_grpo_ocr',overrides=['trainer.seed=17','trainer.deterministic=true','sampling.seed=17','model.torch_compile.enable=false'])
+r=resolve_online_run(c);r.run.initialize_process_rng()
+examples=load_prompt_examples_from_config(r.built.root.data)
+sampler=PromptBatchSampler(generator=torch.Generator().manual_seed(17),num_examples=len(examples),prompts_per_rank=8,num_replicas=1,rank=0,strategy=str(r.built.root.data.sampler.type))
+index=sampler.sample(epoch=0)[0];prompt=examples[index].prompt
+bundle=resolve_model(r.family,r.built.root,torch.device('cuda'),precision=r.built.precision,for_rollout=True).materialize(context='batch precision isolation')
+m=bundle.model
+# Isolated candidate only: preserve all adapter parameters and change one boundary.
+torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
+conditioning = m.transformer.time_text_embed
+conditioning_forward = conditioning.forward
+conditioning.to(torch.float32)
+def conditioning_fp32(*args, **kwargs):
+    with torch.autocast('cuda', enabled=False):
+        args = tuple(v.float() if isinstance(v, torch.Tensor) and v.is_floating_point() else v for v in args)
+        kwargs = {k: v.float() if isinstance(v, torch.Tensor) and v.is_floating_point() else v for k, v in kwargs.items()}
+        return conditioning_forward(*args, **kwargs).to(torch.bfloat16)
+conditioning.forward = conditioning_fp32
+m.torch_compile_transformer('default')
+with torch.no_grad():
+    encoded=m.encode_prompt([prompt],[''],guidance_scale=4.5,max_sequence_length=128)
+    for name in ('text_encoder','text_encoder_2','text_encoder_3','vae'):
+        component=getattr(m.pipeline,name,None)
+        if component is not None: component.to('cpu')
+    gc.collect();torch.cuda.empty_cache()
+    encoded={k:v.repeat_interleave(16,dim=0) if isinstance(v,torch.Tensor) else v for k,v in encoded.items()}
+    state=m.prepare_sampling(DenoiseRequest(width=512,height=512,frame_count=1,num_steps=10,guidance_scale=4.5,seed=17),encoded)
+    context=m.export_batch_context(state)
+    records=[];generator=torch.Generator(device='cuda').manual_seed(17)
+    for step in range(9):
+        tensors=dict(m.export_replay_tensors(state));tensors['timesteps']=state.timesteps[step].expand(16).clone()
+        latents=state.latents.clone()
+        output=m.forward_step(state,step)['noise_pred']
+        result=sde_step_with_logprob(state.scheduler,output,state.timesteps[step].unsqueeze(0),latents,generator=generator,noise_level=0.7,sde_type='flow_grpo',step_index=step)
+        records.append((step,latents,{k:v.clone() if isinstance(v,torch.Tensor) else v for k,v in tensors.items()},result.prev_sample.clone(),result.log_prob.clone()))
+        state.latents=result.prev_sample
+
+from collections import Counter
+report = {
+    "scope": "real initialized model, fresh candidate compiled trajectory step 8; original adapter dtypes; no optimizer update",
+    "prompt_index": int(index),
+    "parameter_dtypes": dict(Counter(str(p.dtype) for p in m.transformer.parameters())),
+    "trainable_dtypes": dict(Counter(str(p.dtype) for p in m.transformer.parameters() if p.requires_grad)),
+    "arms": [],
+}
+step, latents, tensors, actions, old_logprob = records[-1]
+del records
+
+def run_forward(start, end, grad):
+    sliced_tensors = {k: v[start:end] if isinstance(v, torch.Tensor) else v for k, v in tensors.items()}
+    with torch.set_grad_enabled(grad):
+        out = m.forward_step(m.restore_eval_state(sliced_tensors, context, latents[start:end], step), 0)
+        detached = {k: v.detach().clone() for k, v in out.items() if isinstance(v, torch.Tensor)}
+        if grad:
+            lp = sde_step_with_logprob(state.scheduler, out['noise_pred'].float(), tensors['timesteps'][start:end], latents[start:end], prev_sample=actions[start:end], noise_level=0.7, sde_type='flow_grpo', step_index=step).log_prob
+            lp.sum().backward()
+            detached['finite_gradients'] = all(bool(torch.isfinite(p.grad).all()) for p in m.transformer.parameters() if p.grad is not None)
+            m.transformer.zero_grad(set_to_none=True)
+    return detached
+
+def logprob(noise):
+    return sde_step_with_logprob(state.scheduler, noise.float(), tensors['timesteps'], latents, prev_sample=actions, noise_level=0.7, sde_type='flow_grpo', step_index=step).log_prob
+
+for compiled in (True,):
+    full = run_forward(0, 16, False)
+    for grad in (False, True):
+        rows = [run_forward(i, i + 1, grad) for i in range(16)]
+        small = {k: torch.cat([row[k] for row in rows]) for k in full}
+        full_cfg32 = full['noise_pred_uncond'].float() + 4.5 * (full['noise_pred_cond'].float() - full['noise_pred_uncond'].float())
+        small_cfg32 = small['noise_pred_uncond'].float() + 4.5 * (small['noise_pred_cond'].float() - small['noise_pred_uncond'].float())
+        entry = {
+            'compiled': compiled, 'replay_grad_and_backward': grad,
+            'batch_logprob_max': float((logprob(full['noise_pred']) - logprob(small['noise_pred'])).abs().max()),
+            'original_candidate_compiled_rollout_logprob_max': float((old_logprob - logprob(small['noise_pred'])).abs().max()),
+            'cfg32_batch_logprob_max': float((logprob(full_cfg32) - logprob(small_cfg32)).abs().max()),
+            'noise_max': float((full['noise_pred'].float() - small['noise_pred'].float()).abs().max()),
+            'cond_max': float((full['noise_pred_cond'].float() - small['noise_pred_cond'].float()).abs().max()),
+            'uncond_max': float((full['noise_pred_uncond'].float() - small['noise_pred_uncond'].float()).abs().max()),
+            'finite_gradients': all(row.get('finite_gradients', True) for row in rows) if grad else None,
+        }
+        report['arms'].append(entry)
+        print(entry, flush=True)
+        Path('/tmp/vrl_sd3_candidate_rounding_probe.partial.json').write_text(json.dumps(report, indent=2))
+        del rows, small
+    del full
+Path('/tmp/vrl_sd3_candidate_rounding_probe.json').write_text(json.dumps(report, indent=2))
