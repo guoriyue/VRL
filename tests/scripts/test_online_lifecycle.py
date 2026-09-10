@@ -512,10 +512,14 @@ def _install_common_fakes(
         "if_supported",
         classmethod(lambda cls, *args, **kwargs: object()),
     )
-    monkeypatch.setattr(online, "seal_run_artifacts", lambda path: path)
+    monkeypatch.setattr(
+        online.TrainingRunEvidence, "seal_artifacts", lambda self: self.artifacts_path
+    )
     monkeypatch.setattr(online, "save_resolved_config", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        online, "write_run_evidence", lambda *args, **kwargs: tmp_path / "evidence.json"
+        online.TrainingRunEvidence,
+        "capture",
+        lambda *args, **kwargs: online.TrainingRunEvidence(tmp_path / "evidence.json"),
     )
     monkeypatch.setattr(
         online.OnlineRecipeRun,
@@ -1187,7 +1191,7 @@ async def test_launch_evidence_failure_stops_before_training_and_cleans_up(
     def fail_evidence(*args, **kwargs):
         raise OSError("evidence storage full")
 
-    monkeypatch.setattr(online, "write_run_evidence", fail_evidence)
+    monkeypatch.setattr(online.TrainingRunEvidence, "capture", fail_evidence)
     with pytest.raises(OSError, match="evidence storage full"):
         await online.run_online_recipe(_cfg())
     assert state["trainer_steps"] == 0
@@ -1202,13 +1206,13 @@ async def test_artifact_sealing_runs_after_final_checkpoint_before_cleanup(monke
     _install_common_fakes(monkeypatch, tmp_path, state)
     sealed = []
 
-    def seal(path):
+    def seal(run_evidence):
         assert state["checkpoint_paths"][-1] == "checkpoint-final"
         assert state["collector_shutdowns"] == 0
-        sealed.append(path)
-        return path
+        sealed.append(run_evidence.launch_path)
+        return run_evidence.artifacts_path
 
-    monkeypatch.setattr(online, "seal_run_artifacts", seal)
+    monkeypatch.setattr(online.TrainingRunEvidence, "seal_artifacts", seal)
     await online.run_online_recipe(_cfg())
     assert sealed == [tmp_path / "evidence.json"]
     assert state["collector_shutdowns"] == 1
@@ -1222,7 +1226,7 @@ async def test_artifact_sealing_failure_still_cleans_up(monkeypatch, tmp_path):
     def fail_seal(path):
         raise OSError("artifact disk read failed")
 
-    monkeypatch.setattr(online, "seal_run_artifacts", fail_seal)
+    monkeypatch.setattr(online.TrainingRunEvidence, "seal_artifacts", fail_seal)
     with pytest.raises(OSError, match="artifact disk read failed"):
         await online.run_online_recipe(_cfg())
     assert state["collector_shutdowns"] == 1

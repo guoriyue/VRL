@@ -32,7 +32,9 @@ def make_run(tmp_path, monkeypatch):
             manifest.write_text(data_text)
         code = {"available": True, "commit": "fixture", "dirty": False}
         code.update(code_change or {})
-        monkeypatch.setattr(evidence, "_code_identity", lambda _: copy.deepcopy(code))
+        monkeypatch.setattr(
+            evidence.TrainingRunEvidence, "_code_identity", lambda _: copy.deepcopy(code)
+        )
         runtime = {
             "python": "fixture",
             "platform": "fixture",
@@ -47,7 +49,9 @@ def make_run(tmp_path, monkeypatch):
         }
         if runtime_change:
             runtime.update(runtime_change)
-        monkeypatch.setattr(evidence, "_runtime_identity", lambda: copy.deepcopy(runtime))
+        monkeypatch.setattr(
+            evidence.TrainingRunEvidence, "_runtime_identity", lambda: copy.deepcopy(runtime)
+        )
         config = {
             "trainer": {"seed": 17, "total_epochs": 2, "output_dir": str(directory)},
             "data": {"manifest": str(manifest)},
@@ -55,9 +59,9 @@ def make_run(tmp_path, monkeypatch):
         if config_change:
             config_change(config)
         monkeypatch.setenv("VRL_RUN_ATTEMPT_ID", attempt or name)
-        launch = evidence.write_run_evidence(
+        launch = evidence.TrainingRunEvidence.capture(
             OmegaConf.create(config), directory, model_identity={"model": model}, resumed=False
-        )
+        ).launch_path
         (directory / "metrics.csv").write_text("epoch,loss\n0,0.123457\n1,0.234568\n")
         if full_precision:
             (directory / "metrics.full_precision.csv").write_text(
@@ -67,7 +71,7 @@ def make_run(tmp_path, monkeypatch):
         checkpoint = directory / "checkpoint-final"
         checkpoint.mkdir()
         (checkpoint / "checkpoint.pt").write_bytes(b"opaque fixture, not model training")
-        seal = evidence.seal_run_artifacts(launch)
+        seal = evidence.TrainingRunEvidence.load(launch).seal_artifacts()
         verdict = directory / "run_verdict.json"
         verdict.write_text(
             json.dumps(

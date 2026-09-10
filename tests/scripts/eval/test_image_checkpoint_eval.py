@@ -399,16 +399,20 @@ def completed_training_evaluation(generation, tmp_path, monkeypatch):
     (training / "metrics.csv").write_text("epoch,reward\n0,0.1\n")
     monkeypatch.setenv("VRL_RUN_ATTEMPT_ID", "evaluation-fixture")
     monkeypatch.setattr(
-        evidence, "_runtime_identity", lambda: {"environment": {"WORLD_SIZE": "1"}}
+        evidence.TrainingRunEvidence,
+        "_runtime_identity",
+        lambda: {"environment": {"WORLD_SIZE": "1"}},
     )
-    monkeypatch.setattr(evidence, "_code_identity", lambda _path: {"available": False})
-    launch = evidence.write_run_evidence(
+    monkeypatch.setattr(
+        evidence.TrainingRunEvidence, "_code_identity", lambda _path: {"available": False}
+    )
+    launch = evidence.TrainingRunEvidence.capture(
         OmegaConf.create({"seed": 17}),
         training,
         model_identity=archive.plan.resolved_model.identity,
         resumed=False,
-    )
-    seal = evidence.seal_run_artifacts(launch)
+    ).launch_path
+    seal = evidence.TrainingRunEvidence.load(launch).seal_artifacts()
     write_run_verdict(str(training), environ={"VRL_RUN_ATTEMPT_ID": "evaluation-fixture"})
     verdict_path = training / "run_verdict.json"
     verdict = json.loads(verdict_path.read_text())
@@ -421,10 +425,10 @@ def completed_training_evaluation(generation, tmp_path, monkeypatch):
 def test_training_evaluation_association_uses_content_not_target_path(
     completed_training_evaluation,
 ):
-    from vrl.trainers.evidence import verify_training_evaluation
+    from vrl.trainers.evidence import TrainingRunEvidence
 
     seal, verdict, archive = completed_training_evaluation
-    result = verify_training_evaluation(seal, verdict, archive)
+    result = TrainingRunEvidence.load(seal).verify_evaluation(verdict, archive)
     assert "checkpoint-8" in result["checkpoint_labels"]
     assert result["attempt_id"] == "evaluation-fixture"
     assert result["evaluation_content"]["files"] > len(list(archive.plan.cells()))
@@ -451,7 +455,7 @@ def test_training_evaluation_rejects_mismatched_evidence(completed_training_eval
                 b"different weights"
             )
         seal.unlink()
-        evidence.seal_run_artifacts(launch_path)
+        evidence.TrainingRunEvidence.load(launch_path).seal_artifacts()
     elif change == "scores":
         (archive.directory / "report/scores.jsonl").write_text("{}\n")
     elif change == "image":
@@ -466,7 +470,7 @@ def test_training_evaluation_rejects_mismatched_evidence(completed_training_eval
         record["attempt_id"] = "previous"
         verdict.write_text(json.dumps(record))
     with pytest.raises(ValueError):
-        evidence.verify_training_evaluation(seal, verdict, archive)
+        evidence.TrainingRunEvidence.load(seal).verify_evaluation(verdict, archive)
 
 
 def test_cli_verifies_existing_training_evaluation_without_generation_or_scoring(

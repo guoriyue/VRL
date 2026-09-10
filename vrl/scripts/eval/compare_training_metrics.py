@@ -4,7 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
-from vrl.trainers.evidence import compare_run_metrics, publish_evidence_record
+from vrl.trainers.evidence import compare_run_metrics
+from vrl.utils.artifacts import publish_evidence_record
 
 
 def main(argv=None):

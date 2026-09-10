@@ -180,7 +180,7 @@ def main(argv: list[str] | None = None) -> None:
     # Publication follows successful fleet cleanup. A failed rank leaves no
     # completion-looking report, and an existing result is never replaced.
     args.report.parent.mkdir(parents=True, exist_ok=True)
-    from vrl.trainers.evidence import publish_evidence_record
+    from vrl.utils.artifacts import publish_evidence_record
 
     publish_evidence_record(args.report, report)
 

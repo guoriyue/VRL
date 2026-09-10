@@ -61,7 +61,7 @@ from vrl.trainers.data import (
     resolve_prompt_example_references,
 )
 from vrl.trainers.distributed import DistributedTrainingContext, run_primary_io
-from vrl.trainers.evidence import seal_run_artifacts, write_run_evidence
+from vrl.trainers.evidence import TrainingRunEvidence
 from vrl.trainers.metrics_io import (
     OnlineMetricRow,
     format_online_metric_row,
@@ -971,19 +971,19 @@ async def run_online_recipe(
         output_dir = Path(trainer_config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        evidence_path: Path | None = None
+        run_evidence: TrainingRunEvidence | None = None
 
         def prepare_launch_files() -> None:
-            nonlocal evidence_path
+            nonlocal run_evidence
             save_resolved_config(cfg, output_dir, resumed=resumed)
-            evidence_path = write_run_evidence(
+            run_evidence = TrainingRunEvidence.capture(
                 cfg,
                 output_dir,
                 model_identity=model_identity,
                 resumed=resumed,
                 provided_examples=provided_examples is not None,
             )
-            logger.info("Training launch evidence: %s", evidence_path)
+            logger.info("Training launch evidence: %s", run_evidence.launch_path)
 
         run_primary_io(
             training_context, prepare_launch_files, description="training launch evidence"
@@ -1092,9 +1092,9 @@ async def run_online_recipe(
         )
 
         def seal_completed_loop() -> None:
-            if evidence_path is None:
+            if run_evidence is None:
                 raise RuntimeError("training launch evidence was not published")
-            seal_path = seal_run_artifacts(evidence_path)
+            seal_path = run_evidence.seal_artifacts()
             logger.info("Training artifact evidence: %s", seal_path)
 
         run_primary_io(

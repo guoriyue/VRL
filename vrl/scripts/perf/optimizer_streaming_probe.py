@@ -24,8 +24,7 @@ from pathlib import Path
 import torch
 
 from vrl.trainers.disk_optimizer import DiskStreamingAdamW
-from vrl.trainers.evidence import publish_evidence_record
-from vrl.utils.artifacts import sha256_file
+from vrl.utils.artifacts import publish_evidence_record, sha256_file
 
 
 def _io_counters():
