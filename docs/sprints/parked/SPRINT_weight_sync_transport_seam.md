@@ -1,51 +1,66 @@
-# SPRINT: 权重同步传输 seam —— object-store 之外加 NCCL 直传
+# SPRINT：权重同步传输——先测瓶颈，再选择传输
 
-Status: **PARKED**. Trigger: the first full-parameter large-model multi-GPU
-training workload whose weight transport is material; do not start for LoRA-only
-workloads.
+状态：**parked**。触发：真实 full-parameter 多 GPU 作业证明权重传输占显著
+step wall-clock，并达到执行前声明的优化阈值。LoRA-only 不触发。
+2026-09-09 按当前代码和 [Miles v0.1 研究](../../research/miles_v01_2609_08368.md)
+重写旧的“全参默认 NCCL”计划；新默认必须由真实测量决定。
 
-## 背景
+## 现状与唯一 owner
 
-现状只有一种传输:`vrl/generation/ray/weight_sync.py:57` 把整个 state dict
-`ray.put` 进 object store,所有 worker 共享一个 ObjectRef。对 LoRA(只传
-adapter,MB 级)这是正确且简单的选择;对全参同步大模型(GB 级)则是
-GPU→CPU 序列化→plasma→CPU 反序列化→GPU 三次多余拷贝。
+- `vrl/trainers/weight_sync.py::RayRuntimeWeightSyncer` 获取 immutable CPU snapshot、
+  分配单调版本并串行提交。成本分为 state_to_cpu 与 push。
+- `vrl/generation/ray/weight_sync.py::GenerationWeightSync` 是已有传输接口；
+  Ray 实现只做一次 ray.put，所有 worker 共享 ObjectRef，验证每 rank 安装版本。
+- `vrl/generation/execution/worker.py::update_weights` 安装实际状态。
+- `vrl/rollouts/orchestration/continuous/owner.py` 保留 pause/drain-or-slot、
+  ACK、publish/purge/resume 与失败关闭 admission。
+- `vrl/generation/ray/launcher.py` 构建唯一同步实例。
 
-slime 把传输做成菜单(NCCL 广播 / 磁盘 / object-store / delta 增量),按拓扑
-选;cosmos-rl 全参走动态 NCCL group。两家一致:**传输是策略,不是常量**。
-VRL 的 seam 已经存在——`GenerationWeightSync` 是 protocol
-(`weight_sync.py:15`),只需加第二个实现。
+GPU→CPU 的事实来自 snapshot producer；不是 ray.put 自身无条件执行 GPU 拷贝。
+如果增加 GPU transport，必须修改它上游的 snapshot 生命周期，不能只替换最末端。
 
-## 范围
+## 来源与范围
 
-- 新增 `NCCLGenerationWeightSync`:trainer rank 0 与所有 rollout worker actor
-  建 collective group(`ray.util.collective` 或手建 ProcessGroup,调研后择一,
-  倾向 prior art:vLLM/slime 的做法),state dict 按 key 顺序逐张量 broadcast,
-  GPU 直传不落 CPU。
-- 选择逻辑:`build.use_lora`(或同步负载估计)决定默认传输;yaml 可显式覆盖
-  (`model.weight_sync.transport: object_store | nccl`),读取走 `cfg_path`
-  单一读取器,不加专用 reader。
-- worker 侧 `update_weights` 拆出接收路径:object-store 路径保持原签名;NCCL
-  路径 worker 参与集合通信后本地 load。
-- 传输选择记录进启动日志(一行,含负载大小),便于事后核对。
+Miles 论文 §4 的借鉴是准备与传输分开，以及内容验证。
+[pinned bucket code](https://github.com/radixark/miles/blob/e5125a97e1fd383f005f4de258a5985026e09425/miles/backends/training_utils/weight_update/hf_weight_iterator/bucketing.py)
+和 [transport implementations](https://github.com/radixark/miles/tree/e5125a97e1fd383f005f4de258a5985026e09425/miles/backends/training_utils/weight_update/protocols)
+仅作参考；Megatron tensor/expert layout 不是 VRL 的 state schema。
 
-## 验收标准
+## 实施阶段
 
-- 单测:传输选择逻辑(LoRA→object-store、全参→nccl、yaml 覆盖优先)纯函数可测。
-- **真实验证(需 2+ GPU,或单卡双进程 gloo 降级)**:同一 state dict 经两种传输
-  到达 worker 后逐位一致;NCCL 路径不出现 host 内存峰值(全程 GPU)。
-- 既有 LoRA 训练路径行为零变化(默认不变)。
-- 微基准:全参 state dict(≥2GB)两种传输的同步耗时对比,数字进 sprint 记录。
+1. 量测 adapter/full-param bytes、CPU snapshot、序列化、transport、安装/重量化、
+   pause 和总 step 时间；同一真实拓扑做至少 warm-up 后多个稳态更新。
+2. 当瓶颈成立，复用现有接口添加一个最小可用传输，比较 object-store 与
+   NCCL（或经过原型验证的 RDT/IPC）。明确谁持有 GPU snapshot、何时可释放，
+   不允许 optimizer 更新仍在发送的底层存储。
+3. 准备路径按确定 key/schema 顺序生成有界 bucket；转换一次再发送。
+   参数族需要一起 requantize 时，不可任意按字节切开。记录实际 bucket 峰值，
+   不照搬 Miles 512MB/benchmark 1GB。
+4. 每 worker 所有 bucket 就绪才安装/发布版本；部分失败不得让新版本进入 admission。
+   与 [真实内容验证](../planned/SPRINT_miles_weight_delivery_verification.md) 共用验收。
+5. 仅在双端都跨多节点、有可达 RDMA 且 broadcast 被证实为瓶颈后评估 P2P。
+   Miles 报告单节点 P2P 可慢约 70%，不设置“节点越少也越快”的默认。
+6. 若没有直连 fabric、已有共享存储且 delta 的压缩/补丁耗时值得，再单独实现
+   disk-delta 阶段：base hash、names/shapes/dtypes/layout、版本 index-last 原子发布、
+   结果 tensor digest；XOR 必须精确一次应用，重试无法证明时选 overwrite/full snapshot。
+   该事件未出现前，不实现文件格式、后台同步或额外配置。
 
-## 非目标
+## 验收
 
-- delta/增量同步(slime 有;等全参同步真成瓶颈再评估)。
-- 磁盘传输(checkpoint reload 已覆盖该场景)。
-- 改变 LoRA 路径的默认行为。
-- colocated CUDA-IPC 传输(sleep/wake 手递手已覆盖单卡共享场景)。
+- 同一 state 经基线与新传输，在全部 rank 上产生相同正确结果。
+  非量化逐位相等；量化路径验证同一转换结果和误差预算。
+- 单卡双进程 Gloo 只能验证一部分控制逻辑，不算 NCCL/GPU direct 验收。
+- OOM、取消、部分 ACK、错误版本、漏 bucket、重复 delta、错 base、
+  源 snapshot 提前释放：均不能发布坏策略。
+- trace/NVML/host metrics 证明确实消除目标拷贝；CUDA tensor 名义传输不等于零拷贝。
+- 测总 step 改善及新增资源成本；达不到预先声明的阈值则不改默认，记录负结果。
+- 新传输不可用时可在启动时显式拒绝；禁止训练中静默切换破坏版本事务。
 
-## 参考
+## 应改／应留／非目标
 
-- 现有 seam:`vrl/generation/ray/weight_sync.py`(protocol + object-store 实现)
-- slime 权重同步四传输:https://deepwiki.com/THUDM/slime
-- Ray collective:https://docs.ray.io/en/latest/ray-more-libs/ray-collective.html
+改变已测瓶颈所在的 snapshot/transport 生命周期。保留 GenerationWeightSync、
+薄 Ray actor adapter、trainable-state owner 和现有版本事务，因为它们是真实边界。
+协议名/schema key/file name 常量有用；不添加按算法名的传输名单。
+
+不先添加 YAML 菜单再找消费者，不按 use_lora 布尔值自动断言最优传输。
+不迁移 Ray，不导入 Megatron，不为 LoRA 复制全参优化栈。

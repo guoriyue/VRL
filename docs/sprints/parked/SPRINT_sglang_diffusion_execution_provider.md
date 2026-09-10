@@ -266,3 +266,27 @@ Wan replay 消费、parallel gather parity 与 strict transaction 全绿后才�
 - `docs/sprints/parked/SPRINT_multi_engine_rollout_conformance.md`
 - https://github.com/sgl-project/sglang/pull/21204
 - https://github.com/sgl-project/sglang/pull/22604
+
+## 2026-09-09：论文 §6 与新 upstream，更新来源但保留启动事件
+
+[研究及 pin](../../research/miles_v01_2609_08368.md)。
+本文件 §1 的 base64/早期模型覆盖是旧 SGLang commit 的历史事实。
+Miles-diffusion `87d2aafc` 已有 msgpack raw-bytes response/parser actor 路径，
+并已有 H3 源码；这不是声明 VRL provider 或其固定 SGLang pin 已支持这些能力。
+
+启动时必须重新 pin SGLang 服务 API 与 Miles-diffusion parser 的匹配版本。
+correctness pilot 不再预设 JSON/base64；优先使用已核实的二进制 endpoint，
+明确 content-type、tensor shape/dtype/layout、轨迹长度、样本 identity 和最大响应 bytes。
+不把 tensor 放入 JSON 再编码一遍。旧 API 兼容若无实际消费者，不新增双格式常驻路径。
+
+如果真实视频解码阻塞 owner event loop，再选一个有界 parser process pool；
+同一 microgroup 一次解析，控制 in-flight body bytes 和 parser 数，解析完成才交 reward。
+native VRL 已是 tensor path，不能把 parser actor pool强加给 native executor。
+
+验收补充：乱序 microgroup、截断 msgpack、错误 tensor layout、缺 T+1 latent、
+错误 policy version、解析取消/进程崩溃、超大响应，均保留 request 身份并正确回收资源。
+对同一固定 seed/transition 做 native replay logprob parity，记录 parse/event-loop latency、
+host peak bytes、rollout/step wall-clock，分别量测 binary 与并行解析的效果。
+
+继续等待原来的 FlashDreams/native provider gate；不因新论文解除 scope gate。
+子服务仍由既有 worker/core 生命周期管理，不旁建第二个 fleet，不进行全局 Rayless 迁移。

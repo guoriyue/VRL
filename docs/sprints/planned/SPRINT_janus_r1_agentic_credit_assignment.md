@@ -227,3 +227,23 @@ reward recipe 做 ablation。若 generator 更新提高 candidate reward 却破�
 
 - `SPRINT_agentic_visual_rl_program.md`
 - `../parked/SPRINT_agentic_image_episode_runtime.md`
+
+## 2026-09-09：Miles TITO 的可用部分是精确轨迹验收
+
+来源：[论文 §2.4、§5.2 的研究](../../research/miles_v01_2609_08368.md)。
+`vrl/trajectory/builders.py::build_ar_multisegment_trajectory` 已保存真实 token IDs、
+old logprobs 与分段 axes；不再建设平行的消息转 token 数据模型。
+
+在原有信用分配 pilot 中增加验收：
+1. 对 initial-image/selfcheck/final-image 的真实 producer→trajectory→evaluator
+   逐 token 核对 ID、位置、old-logprob、mask，以及图像/视觉 token 对应关系。
+2. 对话展示、tool JSON 重排或遗漏 reasoning 不得重写已采样动作；
+   generation 的记录是权威值。environment/tool/padding token 不参与策略梯度。
+3. 注入同 visible text、不同 tool arguments 的轨迹，必须保持可区分；
+   相同种子下比较原始和序列化恢复轨迹的 replay。
+4. 如果当前固定三段协议不需要 branching session，就不增加树、matcher registry
+   或 session server。未来 agent episode sprint 再接管这些行为。
+5. 除 CPU shape/append-only 测试，还要真实模型 parser/stop-token/视觉输入验收。
+
+Miles text session server 不支持 image/video 输入，不能直接用于 Janus。
+旧策略版本、numerical drift、token mismatch 分开报告；TITO 不替代 TIS/版本检查。

@@ -126,3 +126,19 @@ trajectory and reward-curve gates before promoting NVFP4 out of experimental.
   `vrl/scripts/perf/fp8_rollout_drift_probe.py`（均已改调生产模块，加支路即可）
 - 外部：FP4 Explore BF16 Train https://arxiv.org/abs/2604.06916 ；
   姊妹 sprint `SPRINT_fp4_off_policy_reward_vae.md`
+
+## 2026-09-09：Miles 量化配方的适用范围
+
+[论文审阅与源代码 pin](../research/miles_v01_2609_08368.md)，§3.1、§5.3、§6。
+Miles LLM recipe 不支持 BF16 trainer + NVFP4 rollout；这是其实现/验证边界，
+不能覆盖本 sprint 已声明的 corrected split-precision 目标，也不能证明该目标已稳定。
+
+P2 验收补充：分别记录 checkpoint conversion、rollout forward、trainer replay、
+weight-export/requantization 的实际数值路径。dtype 字符串一致不代表量化 scale、
+目标模块或输入 batch 依赖一致；FP32 optimizer master 也不能修复前向舍入。
+
+先完成本 sprint 真实 SDE-logprob 与曲线 gate。对称低精度前向只在
+autograd-capable backend 与目标硬件可用、且有实际用户时重启，不新增一套生产默认。
+若测四选六/four-over-six，必须两端同一变更；BF16 dequantized backward 是独立实验。
+本机 sm_120 与 Miles 数据中心 Blackwell recipe 不应互相推断支持范围。
+保留原 TIS/guard，分别报告质量、有效样本量、吞吐；不凭瞬时 GEMM 加速宣布收益。

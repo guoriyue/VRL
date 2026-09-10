@@ -252,3 +252,23 @@ GPU duty 是诊断指标，不是单独的通过条件。允许短暂 kernel lau
 - [Historical async rollout/train overlap](../parked/SPRINT_async_rollout_train_overlap.md)
 - [Historical batched reward inference](../parked/SPRINT_reward_batched_inference.md)
 - [Rollout finalize overlap GA](SPRINT_rollout_finalize_overlap_ga.md)
+
+## 2026-09-09：Miles 报告对 replenishment / buffer 的约束
+
+[完整研究](../../research/miles_v01_2609_08368.md)，论文 §2.2、§6。
+首个 stage sprint 的 T0/T1/T2 已实现，仍待 T3 硬件基线；本 program 的旧“尚未开始”
+指程序整体最初状态，不能据此重复做已经落地的 identity/telemetry。
+
+- 现有 pump split 与 lookahead sprint 已是实现入口，不新增 Miles buffer owner。
+- generation 完成即可释放生成容量，但 GRPO 的 reward/advantage 仍以完整 group 交付。
+  先做 group 级 generation/reward 解耦；sample 级补位只有 executor 真能单独回收
+  sample 容量时才实现，不能通过改计数器假装获得并发。
+- queue byte cap 约束 ready 与 unscored 两段及 in-flight reservation；大视频应在
+  launch 前预留或有明确的 admission 上界。当前队列溢出是 terminal，不能把它改为
+  await 后阻塞唯一的 commit/cleanup 控制循环。
+- 固定性质（缺 reward、无效轨迹）在 arrival 检查；staleness 在 consume 再查。
+  retry/drop 以完整 group 及有界 attempt 处理，不能让有限 prompt batch 永久等缺席项。
+- Miles 可按完成次序取跨版本 group；VRL `consumer.py` 仍要求 homogeneous version。
+  lookahead 保留这个约束。若未来改语义，必须独立证明算法、版本标签和回放路径可接受。
+- 现有分卡限制、owner-loop 权重提交、失败 quarantine、单卡 phase lease 均保持。
+  不新增 queue 插件协议、分布式数据面或 trainer 内 eval。

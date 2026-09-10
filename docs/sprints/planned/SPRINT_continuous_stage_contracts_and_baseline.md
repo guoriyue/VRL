@@ -294,3 +294,22 @@ max）。并发 slot 的 interval 求和不等于 wall-clock（§1），所以 w
 - `tests/rollouts/orchestration/continuous/test_contracts.py`
 - `tests/rollouts/orchestration/continuous/test_schedule.py`
 - `tests/rollouts/orchestration/continuous/test_owner.py`
+
+## 2026-09-09：Miles v0.1 证据补充，不重开已完成 T0/T1/T2
+
+来源：[论文研究总表](../../research/miles_v01_2609_08368.md)，§2.2、§6。
+T3 真实四卡 baseline 仍按原硬件门槛执行；本补充不把现有 telemetry 当成缺失功能。
+
+T3 报告同时保存 ready/unscored 的 item 与 byte 占用、generation/parse/reward
+各段 wall-clock、主 event-loop 延迟、slot 占用与真正 GPU active 的差别。
+先从 `ContinuousRolloutProducerState`、queue.stats 和现有 metrics_io 映射取得字段，
+只有真实缺失项才扩展，禁止引入同义 telemetry 列。
+
+需要回答：slot 等的是 generation、reward、ready capacity、weight commit 还是
+finite-batch drain？sample/group 数量不能替代视频 tensor bytes。
+记录 discarded/retried work 的生成秒数，避免“吞吐高”来自生产大量最终丢弃的数据。
+在当前有限批且同版本的路径中，buffer staleness 可能退化为同一值，直接注明；
+不要为了指标好看允许混版本。
+
+Miles 的 LTX 测量同时改变二进制传输和 parser 并行，不能拿其 1.28× 当 VRL 预期。
+将 native finalize/pipelined 成本与 future HTTP provider 的解析成本分开。
