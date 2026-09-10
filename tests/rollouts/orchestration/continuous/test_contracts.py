@@ -16,7 +16,7 @@ the strict-on-policy schedule.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pytest
@@ -112,6 +112,10 @@ def _settings(
     which production settings route to strict_on_policy instead)."""
 
     return ContinuousRolloutSettings(
+        split_generation_reward=False,
+        max_unscored_groups=4,
+        max_unscored_bytes_mb=8192,
+        max_generated_group_bytes_mb=2048,
         max_inflight_groups=max_inflight,
         max_ready_bytes_mb=0,
         max_stale_policy_versions=1,
@@ -139,10 +143,13 @@ def _producer(
         lifecycle=lifecycle or _Lifecycle(collector),
         queue=queue,
         staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
-        settings=_settings(
-            max_inflight=max_inflight,
-            poll_interval_s=poll_interval_s,
-            fail_fast_errors=fail_fast_errors,
+        settings=replace(
+            _settings(
+                max_inflight=max_inflight,
+                poll_interval_s=poll_interval_s,
+                fail_fast_errors=fail_fast_errors,
+            ),
+            split_generation_reward=collector.supports_reward_generation_overlap,
         ),
     )
     producer.set_prompt_batch(
@@ -949,6 +956,10 @@ def test_out_of_range_knobs_are_rejected_at_the_config_boundary() -> None:
     for kwargs, message in (
         ({"max_inflight_groups": 0}, "max_inflight_groups"),
         ({"max_ready_bytes_mb": -1}, "max_ready_bytes_mb"),
+        ({"max_unscored_groups": 0}, "max_unscored_groups"),
+        ({"max_unscored_bytes_mb": 0}, "max_unscored_bytes_mb"),
+        ({"max_generated_group_bytes_mb": 0}, "max_generated_group_bytes_mb"),
+        ({"max_generated_group_bytes_mb": 8193}, "max_generated_group_bytes_mb"),
         ({"wait_timeout_s": 0.0}, "wait_timeout_s"),
         ({"queue_poll_interval_s": 0.0}, "queue_poll_interval_s"),
         ({"fail_fast_errors": -1}, "fail_fast_errors"),
@@ -1144,3 +1155,132 @@ async def test_consumer_aggregates_item_phase_times() -> None:
     assert iteration.stats.as_phase_dict()["collect.engine_generate"] == 4.0
     assert iteration.stats.as_phase_dict()["collect.reward_score"] == 0.5
     assert "continuous.queue_wait_s" in iteration.stats.as_phase_dict()
+
+
+@pytest.mark.asyncio
+async def test_split_generation_continues_while_reward_waits_and_stays_bounded() -> None:
+    collector = _GatedCollector()
+    collector.supports_reward_generation_overlap = True
+    collector.allow_score.clear()
+    queue = ContinuousRolloutQueue(max_items=6)
+    producer = _producer(collector, queue, prompts=[f"p{i}" for i in range(6)])
+    await producer.start()
+    try:
+        await _wait_until(lambda: collector.events.count("generate_end") == 4)
+        await asyncio.sleep(0.01)
+        assert collector.events.count("generate_end") == 4
+        assert queue.size() == 0
+        assert producer.stage_stats()["generation_inflight"] == 0
+        assert producer.stage_stats()["scoring_groups"] == 1
+        assert producer.stage_stats()["unscored_items"] == 3
+        assert producer.stage_stats()["reserved_groups"] == 4
+        collector.allow_score.set()
+        await _wait_until(lambda: queue.size() == 6)
+        assert sorted(item.group_slot for item in queue.snapshot()) == list(range(6))
+        assert producer.stage_stats()["reserved_bytes"] == 0
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_split_reward_retry_reuses_generation_and_exhaustion_is_terminal() -> None:
+    class FailingReward(_GatedCollector):
+        supports_reward_generation_overlap = True
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.score_calls = 0
+            self.receipts: list[Any] = []
+
+        async def score_rollouts(self, pendings: list[Any]) -> list[RolloutBatch]:
+            self.score_calls += 1
+            self.receipts.append(pendings[0])
+            raise ValueError("reward is unavailable")
+
+    collector = FailingReward()
+    queue = ContinuousRolloutQueue(max_items=1)
+    producer = _producer(collector, queue, prompts=["p0"])
+    await producer.start()
+    try:
+        await _wait_until(lambda: producer.state.fatal_error is not None)
+        assert collector.score_calls == 3
+        assert collector.events.count("generate_end") == 1
+        assert all(item is collector.receipts[0] for item in collector.receipts)
+        assert queue.size() == 0
+        assert producer.stage_stats()["reserved_groups"] == 0
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_split_shutdown_releases_queued_and_scoring_receipts() -> None:
+    collector = _GatedCollector()
+    collector.supports_reward_generation_overlap = True
+    collector.allow_score.clear()
+    queue = ContinuousRolloutQueue(max_items=3)
+    producer = _producer(collector, queue, prompts=["p0", "p1", "p2"])
+    await producer.start()
+    await _wait_until(lambda: producer.stage_stats()["unscored_items"] == 2)
+    await producer.stop()
+    assert producer.stage_stats()["reserved_bytes"] == 0
+    assert producer.stage_stats()["reserved_groups"] == 0
+    assert producer.inflight_count == 0
+    assert queue.size() == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["bytes", "count"])
+async def test_split_invalid_generated_or_scored_receipt_never_regenerates(failure: str) -> None:
+    class WrongCount(_GatedCollector):
+        async def score_rollouts(self, pendings: list[Any]) -> list[RolloutBatch]:
+            return []
+
+    collector = WrongCount() if failure == "count" else _GatedCollector()
+    collector.supports_reward_generation_overlap = True
+    queue = ContinuousRolloutQueue(max_items=1)
+    producer = _producer(collector, queue, prompts=["p0"])
+    if failure == "bytes":
+        producer._group_byte_ceiling = 1
+    await producer.start()
+    try:
+        await _wait_until(lambda: producer.state.fatal_error is not None)
+        assert collector.events.count("generate_end") == 1
+        assert queue.size() == 0
+        assert producer.stage_stats()["reserved_bytes"] == 0
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_split_drain_keeps_weight_barrier_waiting_for_reward() -> None:
+    collector = _GatedCollector()
+    collector.supports_reward_generation_overlap = True
+    collector.allow_score.clear()
+    queue = ContinuousRolloutQueue(max_items=2)
+    producer = _producer(collector, queue, prompts=["p0", "p1"])
+    await producer.start()
+    drain = None
+    try:
+        await _wait_until(lambda: collector.events.count("generate_end") == 2)
+        producer.pause_admission()
+        drain = asyncio.create_task(producer.drain_prompt_batch(wait_timeout_s=1.0))
+        await asyncio.sleep(0.01)
+        assert not drain.done()
+        collector.allow_score.set()
+        await drain
+        assert queue.size() == 2
+    finally:
+        if drain is not None:
+            drain.cancel()
+            await asyncio.gather(drain, return_exceptions=True)
+        await producer.stop()
+
+
+def test_split_rejects_collectors_without_verified_overlap_capability() -> None:
+    with pytest.raises(ValueError, match="nonblocking reward scoring"):
+        ContinuousRolloutProducer(
+            lifecycle=_Lifecycle(_GatedCollector()),
+            queue=ContinuousRolloutQueue(max_items=1),
+            staleness=StalenessPolicy(max_stale_policy_versions=1),
+            settings=replace(_settings(), split_generation_reward=True),
+        )

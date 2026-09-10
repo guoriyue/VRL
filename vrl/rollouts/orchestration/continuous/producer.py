@@ -5,7 +5,9 @@ collect jobs in flight for one finite prompt batch, stamps each completed group
 with the batch's policy version, and pushes it onto the ready queue. The heavy
 generation work is dispatched by the collector (e.g. to remote Ray generation
 actors), so this loop only schedules and harvests — that is enough to overlap
-rollout with training on a cross-node setup.
+rollout with training on a cross-node setup. The opt-in split path releases
+its generation slot on receipt, keeps a bounded artifact reservation, and
+serializes reward independently. Unsupported collectors retain composite jobs.
 
 The producer never computes advantages, calls the evaluator/algorithm, or
 touches the optimizer; it owns rollout *production cadence* only.
@@ -26,6 +28,7 @@ import torch
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import move_training_batch_to_device
+from vrl.rollouts.orchestration.continuous.generated_queue import GeneratedRolloutQueue
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
@@ -34,11 +37,16 @@ from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutSettings,
     estimate_batch_bytes,
 )
-from vrl.rollouts.orchestration.prompt_collection import collect_prompt_groups
+from vrl.rollouts.orchestration.prompt_collection import (
+    collect_prompt_groups,
+    finish_scored_prompt_groups,
+    generate_prompt_groups,
+)
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import RewardCollectionMode
 from vrl.rollouts.stats import RolloutStats
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
+from vrl.trajectory import trajectory_tensor_bytes
 
 _CPU = torch.device("cpu")
 _OBSERVABILITY_LOG_INTERVAL_S = 30.0
@@ -97,6 +105,19 @@ class ContinuousRolloutProducer:
         self.poll_interval_s = settings.queue_poll_interval_s
         self.fail_fast_errors = settings.fail_fast_errors
 
+        self._split_reward = settings.split_generation_reward
+        if self._split_reward and not lifecycle.collector.supports_reward_generation_overlap:
+            raise ValueError(
+                "split generation/reward requires nonblocking reward scoring and "
+                "verified accelerator isolation",
+            )
+        self._generated = GeneratedRolloutQueue(
+            max_items=settings.max_unscored_groups,
+            max_bytes=settings.max_unscored_bytes_mb * 1024 * 1024,
+        )
+        self._group_byte_ceiling = settings.max_generated_group_bytes_mb * 1024 * 1024
+        self._generating: set[int] = set()
+        self._reward_lock = asyncio.Lock()
         self.state = ContinuousRolloutProducerState()
         self._next_batch_id = 0
         # Backpressure accrual: the reason observed at the previous tick and
@@ -118,6 +139,16 @@ class ContinuousRolloutProducer:
         """Display-only live task count derived from its owning container."""
 
         return len(self._inflight)
+
+    def stage_stats(self) -> dict[str, float]:
+        """Owner-loop snapshot of generation and reward capacity."""
+
+        if not self._split_reward:
+            return {}
+        return {
+            "generation_inflight": float(len(self._generating)),
+            **self._generated.stats(),
+        }
 
     # -- lifecycle ------------------------------------------------------
 
@@ -212,6 +243,8 @@ class ContinuousRolloutProducer:
             )
         self._loop_task = None
         self._inflight.clear()
+        self._generating.clear()
+        self._generated.close()
 
     # -- weight-sync barrier -------------------------------------------
 
@@ -370,9 +403,16 @@ class ContinuousRolloutProducer:
         if self.state.paused_for_weight_sync and not allow_paused:
             return "paused_for_weight_sync"
         while prompt_batch.pending_slots:
-            if len(self._inflight) >= self.max_inflight_groups:
+            active = len(self._generating) if self._split_reward else len(self._inflight)
+            if active >= self.max_inflight_groups:
                 return "inflight_full"
-            slot = prompt_batch.pending_slots.popleft()
+            slot = prompt_batch.pending_slots[0]
+            if self._split_reward and not self._generated.reserve(
+                (prompt_batch.batch_id, slot),
+                max_group_bytes=self._group_byte_ceiling,
+            ):
+                return "unscored_full"
+            prompt_batch.pending_slots.popleft()
             if slot in self._inflight.values():
                 raise RuntimeError(
                     f"continuous prompt batch attempted duplicate in-flight slot {slot}",
@@ -393,6 +433,8 @@ class ContinuousRolloutProducer:
             ),
         )
         self._inflight[task] = slot
+        if self._split_reward:
+            self._generating.add(slot)
         self.state.submitted_count += 1
 
     async def _collect_group(
@@ -404,6 +446,8 @@ class ContinuousRolloutProducer:
     ) -> tuple[list[RolloutBatch], RolloutStats]:
         stats = RolloutStats()
         stats.observe_gauge("continuous.generation_queue_wait_s", admission_wait_s)
+        if self._split_reward:
+            return await self._collect_split_group(prompt_batch, slot, stats)
         batches = await collect_prompt_groups(
             collector=self.lifecycle.collector,
             prompts=[prompt_batch.prompts[slot]],
@@ -414,6 +458,91 @@ class ContinuousRolloutProducer:
             reward_mode=RewardCollectionMode.BATCHED_SERIAL,
         )
         return batches, stats
+
+    async def _collect_split_group(
+        self,
+        prompt_batch: _ActivePromptBatch,
+        slot: int,
+        stats: RolloutStats,
+    ) -> tuple[list[RolloutBatch], RolloutStats]:
+        key = (prompt_batch.batch_id, slot)
+        started = time.perf_counter()
+        generated = False
+        try:
+            async for receipt in generate_prompt_groups(
+                collector=self.lifecycle.collector,
+                prompts=[prompt_batch.prompts[slot]],
+                group_size=prompt_batch.group_size,
+                runtime_debug=prompt_batch.runtime_debug,
+                policy_version=prompt_batch.policy_version,
+            ):
+                generated = True
+                if self.staleness.too_stale(
+                    prompt_batch.policy_version,
+                    self.lifecycle.current_policy_version(),
+                ):
+                    raise RuntimeError("continuous generated group became stale before reward")
+                self._generated.put(key, receipt, nbytes=trajectory_tensor_bytes(receipt.unscored))
+                # Only GPU generation occupies a generation slot. Capacity for
+                # the artifact remains reserved until scoring settles below.
+                self._generating.discard(slot)
+                queued_at = time.perf_counter()
+                async with self._reward_lock:
+                    borrowed = self._generated.take()
+                    if borrowed is None or borrowed[0] != key:
+                        raise RuntimeError("continuous reward handoff lost FIFO group identity")
+                    stats.observe_gauge(
+                        "continuous.reward_queue_wait_s", time.perf_counter() - queued_at
+                    )
+                    reward_started = time.perf_counter()
+                    failures = 0
+                    while True:
+                        try:
+                            batches = await self.lifecycle.collector.score_rollouts(
+                                [receipt.unscored]
+                            )
+                            break
+                        except Exception as error:
+                            if find_error_cause(error, TerminalRuntimeError) is not None:
+                                raise
+                            failures += 1
+                            stats.add_counter("continuous.reward_retries", 1)
+                            # Reward cannot regenerate the group on exhaustion.
+                            # Even when collect fail-fast is disabled, keep this
+                            # stage bounded by one attempt rather than retry forever.
+                            if failures >= max(1, self.fail_fast_errors):
+                                raise RuntimeError(
+                                    "continuous reward exhausted its retry budget"
+                                ) from error
+                            await asyncio.sleep(min(self.poll_interval_s, _RETRY_BACKOFF_MAX_S))
+                    reward_wall = time.perf_counter() - reward_started
+                batches = finish_scored_prompt_groups(
+                    [(receipt.unscored, receipt.prompt_indices)],
+                    batches,
+                    stats,
+                )
+                stats.add_phases(
+                    {
+                        "collect.wall": time.perf_counter() - started,
+                        "collect.generation_wall": receipt.completed_at - receipt.started_at,
+                        "collect.reward_wall": reward_wall,
+                    }
+                )
+                stats.add_counter("collect.group_count", len(batches))
+                stats.add_counter(
+                    "collect.sample_count", sum(int(batch.rewards.shape[0]) for batch in batches)
+                )
+                return batches, stats
+            raise RuntimeError("continuous generation returned no prompt group")
+        except Exception as error:
+            if generated and find_error_cause(error, TerminalRuntimeError) is None:
+                raise TerminalRuntimeError(
+                    f"continuous generated group failed before scored publication (group={key})",
+                ) from error
+            raise
+        finally:
+            self._generating.discard(slot)
+            self._generated.release(key)
 
     def _harvest_done(self) -> None:
         if not self._inflight:

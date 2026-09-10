@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from typing import Any, Literal, get_args
+
+from PIL.Image import Image
 
 from vrl.trajectory.device import map_tensor_tree
 from vrl.trajectory.types import TrajectoryBatch
@@ -125,10 +127,21 @@ def _tensor_bytes(value: object, *, seen: set[int]) -> int:
         for segment in value.segments.values():
             for tensor in segment.tensors.values():
                 total += _tensor_bytes(tensor.value, seen=seen)
+        total += _tensor_bytes(value.context, seen=seen)
+        for segment in value.segments.values():
+            total += _tensor_bytes(segment.metadata, seen=seen)
+        for view in value.reward_views.values():
+            total += _tensor_bytes(view.metadata, seen=seen)
         return total
 
     if _is_torch_tensor(value):
         return int(value.numel()) * int(value.element_size())
+    if is_dataclass(value) and not isinstance(value, type):
+        return sum(_tensor_bytes(getattr(value, item.name), seen=seen) for item in fields(value))
+    if isinstance(value, Image):
+        # Pillow commonly retains four-byte internal pixels even for RGB.
+        # Count decoded storage without allocating an image.tobytes() copy.
+        return value.width * value.height * max(4, len(value.getbands()))
     nbytes = getattr(value, "nbytes", None)
     if isinstance(nbytes, int):
         return nbytes

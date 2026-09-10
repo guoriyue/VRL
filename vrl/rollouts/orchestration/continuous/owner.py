@@ -385,6 +385,9 @@ class _ContinuousOwnerRuntime:
             return
         state = self.producer.state
         iteration.stats.observe_gauges(
+            {f"continuous.{name}": value for name, value in self.producer.stage_stats().items()}
+        )
+        iteration.stats.observe_gauges(
             {
                 "continuous.producer_inflight": float(self.producer.inflight_count),
                 "continuous.producer_tick_count": float(state.tick_count),

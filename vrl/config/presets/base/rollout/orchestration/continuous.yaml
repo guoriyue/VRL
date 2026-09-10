@@ -22,7 +22,14 @@
 # finite request. The ready queue always has enough item slots for that request;
 # max_ready_bytes_mb is a fail-fast memory guard rather than a throughput knob.
 # Admission and weight-sync ordering are owned by the continuous schedule state
-# machine; there is no independent queue-capacity or barrier knob.
+# machine. split_generation_reward=true enables the reserved unscored queue
+# only for collectors with nonblocking, accelerator-isolated reward scoring.
+# max_unscored_groups and max_unscored_bytes_mb bound generation plus pending/
+# active scoring. max_generated_group_bytes_mb reserves a per-group ceiling
+# before launch; a larger receipt is a terminal capacity error. Taking a group
+# for scoring does not release its capacity. These limits are separate from
+# max_ready_bytes_mb, which guards completed trainer batches. Defaults remain
+# on ContinuousRolloutConfig. The split is opt-in pending real GPU A/B evidence.
 # Queue/staleness tuning defaults (max_inflight_groups, max_ready_bytes_mb,
 # max_stale_policy_versions=1,
 # wait_timeout_s, queue_poll_interval_s) live on ContinuousRolloutConfig in

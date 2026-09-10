@@ -170,6 +170,10 @@ def _owner(
     return ContinuousRolloutOwner(
         lifecycle=lifecycle,
         settings=ContinuousRolloutSettings(
+            split_generation_reward=False,
+            max_unscored_groups=4,
+            max_unscored_bytes_mb=8192,
+            max_generated_group_bytes_mb=2048,
             max_inflight_groups=max_inflight_groups,
             max_ready_bytes_mb=8,
             max_stale_policy_versions=1,

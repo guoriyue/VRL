@@ -154,6 +154,10 @@ def _build_continuous_schedule(
     settings = ContinuousRolloutSettings(
         max_inflight_groups=int(cont.max_inflight_groups),
         max_ready_bytes_mb=int(cont.max_ready_bytes_mb),
+        split_generation_reward=bool(cont.split_generation_reward),
+        max_unscored_groups=int(cont.max_unscored_groups),
+        max_unscored_bytes_mb=int(cont.max_unscored_bytes_mb),
+        max_generated_group_bytes_mb=int(cont.max_generated_group_bytes_mb),
         max_stale_policy_versions=int(cont.max_stale_policy_versions),
         wait_timeout_s=float(cont.wait_timeout_s),
         queue_poll_interval_s=float(cont.queue_poll_interval_s),

@@ -266,6 +266,34 @@ async def collect_prompt_groups(
             ) from root_cause
         raise
 
+    all_batches = finish_scored_prompt_groups(unscored_groups, batches, stats)
+    collection_wall_s = time.perf_counter() - collection_started
+    generation_wall_s = sum(end - start for start, end in generation_intervals)
+    reward_wall_s = sum(end - start for start, end in reward_intervals)
+    overlap_s = _interval_overlap_seconds(generation_intervals, reward_intervals)
+    stats.add_phases(
+        {
+            "collect.wall": collection_wall_s,
+            "collect.generation_wall": generation_wall_s,
+            "collect.reward_wall": reward_wall_s,
+            "collect.generation_reward_overlap": overlap_s,
+        },
+    )
+    stats.add_counter("collect.group_count", len(all_batches))
+    stats.add_counter(
+        "collect.sample_count",
+        sum(int(batch.rewards.shape[0]) for batch in all_batches),
+    )
+    return all_batches
+
+
+def finish_scored_prompt_groups(
+    unscored_groups: list[tuple[Any, list[int] | int]],
+    batches: list[RolloutBatch],
+    stats: RolloutStats,
+) -> list[RolloutBatch]:
+    """Account collector timings and restore prompt identities after scoring."""
+
     # Per-call phases live on the unscored groups (collector writes the
     # call-level score/build timings and reward inference timings on the
     # first group only).
@@ -290,23 +318,6 @@ async def collect_prompt_groups(
         global_prompt_indices = remap if isinstance(remap, list) else [remap]
         remap_group_ids_(batch, global_prompt_indices)
         all_batches.extend(split_batch_by_group(batch))
-    collection_wall_s = time.perf_counter() - collection_started
-    generation_wall_s = sum(end - start for start, end in generation_intervals)
-    reward_wall_s = sum(end - start for start, end in reward_intervals)
-    overlap_s = _interval_overlap_seconds(generation_intervals, reward_intervals)
-    stats.add_phases(
-        {
-            "collect.wall": collection_wall_s,
-            "collect.generation_wall": generation_wall_s,
-            "collect.reward_wall": reward_wall_s,
-            "collect.generation_reward_overlap": overlap_s,
-        },
-    )
-    stats.add_counter("collect.group_count", len(all_batches))
-    stats.add_counter(
-        "collect.sample_count",
-        sum(int(batch.rewards.shape[0]) for batch in all_batches),
-    )
     return all_batches
 
 
@@ -336,5 +347,6 @@ __all__ = [
     "GeneratedPromptGroup",
     "PromptCollectionCleanupError",
     "collect_prompt_groups",
+    "finish_scored_prompt_groups",
     "generate_prompt_groups",
 ]

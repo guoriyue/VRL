@@ -114,6 +114,10 @@ def _continuous_config(**continuous: Any) -> SimpleNamespace:
     defaults = {
         "max_inflight_groups": 1,
         "max_ready_bytes_mb": 8192,
+        "split_generation_reward": False,
+        "max_unscored_groups": 4,
+        "max_unscored_bytes_mb": 8192,
+        "max_generated_group_bytes_mb": 2048,
         "max_stale_policy_versions": 1,
         "wait_timeout_s": 5.0,
         "queue_poll_interval_s": 0.001,

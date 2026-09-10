@@ -214,3 +214,27 @@ Stage baseline 的 identity/timing 已落地；四 L4 硬件验证仍未完成�
   不自动启动 reward 的阶段交付测试。
 - **尚未完成**：bounded unscored queue、独立 reward pump、admission/cleanup 接线、
   versioned lookahead 及真实 GPU 性能验收。此提交仅为共享生成阶段的前置改动。
+
+
+### 生成／打分拆分实现进展
+
+- 新增 reserved `GeneratedRolloutQueue`，在 generation launch 前同时预留 item 与
+  per-group byte ceiling；receipt 后按估算实占回收多余额度，scoring 期间不释放额度。
+  超出已声明单组上限则 terminal fail，不等到进程 OOM 才停止补充。
+- producer 在 generation receipt 后释放生成 slot。每组 coroutine 保留自身产物，
+  一个 FIFO reward lock 限制单个 scoring request；不额外创建 reward API 或线程。
+- reward 重试使用同一 receipt，耗尽后 terminal，不重跑 generation。ready publication
+  仍检查完整组与 staleness；weight drain 仍等待生成和打分全部结束。
+- 原 collector 能力边界保留。`split_generation_reward=true` 显式启动，缺少 nonblocking
+  scoring 或 accelerator isolation 直接拒绝；默认 false 用于真实 A/B 对照。
+- 三个容量字段都有实际 admission consumer：`max_unscored_groups`、
+  `max_unscored_bytes_mb`、`max_generated_group_bytes_mb`。byte counter 覆盖嵌套
+  dataclass、tensor、decoded Pillow 图像与轨迹 metadata，仍是 payload 估算，不是 RSS 上限。
+- 共享 `finish_scored_prompt_groups()` 负责原有 remap/phase accounting，避免两个 schedule
+  各复制一份。生成与打分边界、ready queue、薄 owner facade 保留，因为有独立资源或接口职责。
+- 控制测试证明慢 reward 下继续生成、item/byte 预留、失败不再生成、取消释放、
+  reward 未结束时权重 barrier 不越过。回归还修复了原 owner 在已完成 future 上注册
+  callback 的锁重入死锁（独立 commit `8f2dfdfd0`）。
+
+尚待：两 batch lookahead、ready-byte admission 的进一步协调、真实数值/分卡性能
+对照与完整 sprint 验收。当前 finite ready queue 超字节上限仍 fail closed；不称 GA。

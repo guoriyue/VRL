@@ -109,6 +109,12 @@ class ContinuousRolloutConfig:
 
     max_inflight_groups: int = field(default=1)
     max_ready_bytes_mb: int = field(default=8192)
+    # Opt-in until the disjoint-GPU acceptance comparison passes.
+    split_generation_reward: bool = field(default=False)
+    # Reserve capacity before generation; retain it through reward completion.
+    max_unscored_groups: int = field(default=4)
+    max_unscored_bytes_mb: int = field(default=8192)
+    max_generated_group_bytes_mb: int = field(default=2048)
     max_stale_policy_versions: int = field(default=1)
     wait_timeout_s: float = field(default=300.0)
     queue_poll_interval_s: float = field(default=0.05)
@@ -127,6 +133,13 @@ class ContinuousRolloutConfig:
             raise ValueError("continuous.max_inflight_groups must be >= 1")
         if int(self.max_ready_bytes_mb) < 0:
             raise ValueError("continuous.max_ready_bytes_mb must be >= 0")
+        if int(self.max_unscored_groups) < 1:
+            raise ValueError("continuous.max_unscored_groups must be >= 1")
+        if not 0 < int(self.max_generated_group_bytes_mb) <= int(self.max_unscored_bytes_mb):
+            raise ValueError(
+                "continuous.max_generated_group_bytes_mb must be positive and fit "
+                "continuous.max_unscored_bytes_mb",
+            )
         if int(self.max_stale_policy_versions) < 1:
             raise ValueError("continuous.max_stale_policy_versions must be >= 1")
         if float(self.wait_timeout_s) <= 0:

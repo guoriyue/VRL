@@ -15,7 +15,7 @@ from vrl.trajectory import trajectory_tensor_bytes
 class ContinuousRolloutSettings:
     """The continuous rollout tuning that threads from config down to the runtime.
 
-    One object carries the six settings through ``build_rollout_schedule`` ->
+    One object carries the resolved settings through ``build_rollout_schedule`` ->
     ``ContinuousRolloutSchedule`` -> ``ContinuousRolloutOwner`` ->
     ``_ContinuousOwnerRuntime`` so adding a knob touches one field here, not four
     repeated signatures. Deliberately has NO defaults: ``ContinuousRolloutConfig``
@@ -32,6 +32,10 @@ class ContinuousRolloutSettings:
     """
 
     max_inflight_groups: int
+    split_generation_reward: bool
+    max_unscored_groups: int
+    max_unscored_bytes_mb: int
+    max_generated_group_bytes_mb: int
     max_ready_bytes_mb: int
     max_stale_policy_versions: int
     wait_timeout_s: float
