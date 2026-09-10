@@ -1,0 +1,47 @@
+{
+  "checkpoint": null,
+  "model_identity": {
+    "build": {
+      "lora": {
+        "alpha": 64,
+        "dropout": 0.0,
+        "rank": 32,
+        "target_modules": [
+          "add_k_proj",
+          "add_q_proj",
+          "add_v_proj",
+          "to_add_out",
+          "to_k",
+          "to_out.0",
+          "to_q",
+          "to_v"
+        ]
+      },
+      "nft_previous_adapter": false,
+      "use_lora": true
+    },
+    "schema": "vrl.model-identity/v1",
+    "sources": {
+      "main": {
+        "kind": "huggingface",
+        "repo_id": "stabilityai/stable-diffusion-3.5-medium",
+        "revision": "b940f670f0eda2d07fbb75229e779da1ad11eb80"
+      }
+    }
+  },
+  "receivers": [
+    {
+      "bytes": 95551488,
+      "first_install_verify_s": 0.06640855292789638,
+      "poison_install_verify_s": 0.10155540506821126,
+      "policy_version": 2,
+      "repeat_install_verify_s": 0.06308616709429771,
+      "tensors": 486,
+      "worker_id": "acceptance-0"
+    }
+  ],
+  "schema": "vrl.weight-delivery-acceptance/v1",
+  "scope": "single-rank in-place trainable parameter bytes; no forward equivalence claim",
+  "snapshot_export_s": 0.024563119979575276,
+  "source_build_restore_s": 3.0653371120570228
+}

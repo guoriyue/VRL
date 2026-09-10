@@ -179,3 +179,13 @@ No full-model GPU acceptance run was performed in this commit.
 The CLI file owns a real executable workflow, the subclass isolates destructive
 acceptance behavior, and the shared publisher removes duplicate atomic IO. These
 are necessary boundaries; no additional model/algorithm registry was introduced.
+
+## 2026-09-09: Real SD3.5 single-worker acceptance
+
+The real checkpoint probe completed on RTX 5090 at clean revision `30b75ae84`.
+One private Ray receiver accepted all 486 trainable tensors (95,551,488 bytes)
+after a verified poisoned install and two verified source installs.
+See the [command, timings, raw report and limitations](../../research/weight_delivery_sd3_5_20260909.md).
+This closes the real single-worker in-place byte check only. Multi-GPU/rank,
+converted/sharded and numerical forward acceptance remain open; the separate
+training parity failure is not resolved by this result.
