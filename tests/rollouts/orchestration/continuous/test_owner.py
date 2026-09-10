@@ -696,3 +696,84 @@ async def test_split_owner_without_preview_accepts_a_later_independent_batch() -
         assert len(collector.collect_threads) == 2
     finally:
         await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_checkpointed_sampler_replays_preview_prompt_order_in_a_new_owner(
+    tmp_path, monkeypatch
+):
+    from vrl.trainers.checkpointing import capture_rng_state, restore_rng_state
+    from vrl.trainers.data.prompt_sampler import PromptBatchSampler
+
+    # This is a CPU scheduling/RNG persistence test, not a GPU trajectory golden.
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    class PromptCollector(_OwnerCollector):
+        supports_reward_generation_overlap = True
+
+        async def collect_unscored(self, prompts, **kwargs):
+            batch = await super().collect_unscored(prompts, **kwargs)
+            batch.rewards.fill_(int(prompts[0].prompt))
+            return batch
+
+    def sampler(generator):
+        return PromptBatchSampler(
+            generator=generator,
+            num_examples=12,
+            prompts_per_rank=3,
+            strategy="random_without_replacement",
+        )
+
+    rng = torch.Generator().manual_seed(23)
+    original_sampler = sampler(rng)
+    current = [str(index) for index in original_sampler.sample(epoch=0)]
+    preview = [str(index) for index in original_sampler.preview(epoch=1)]
+    lifecycle = _OwnerLifecycle(PromptCollector())
+    original = _owner(lifecycle, split_generation_reward=True)
+    restored = None
+    try:
+        await original.next_iteration(
+            current,
+            group_size=2,
+            runtime_debug=False,
+            initial_weights={"w": 0},
+            next_prompts=preview,
+        )
+        await original.commit_weights({"w": 1})
+        checkpoint = tmp_path / "sampler.pt"
+        torch.save(
+            {"rng": capture_rng_state(prompt_generator=rng), "version": lifecycle.version},
+            checkpoint,
+        )
+        next_current = [str(index) for index in original_sampler.sample(epoch=1)]
+        reference = await original.next_iteration(
+            next_current,
+            group_size=2,
+            runtime_debug=False,
+            initial_weights=None,
+        )
+        saved = torch.load(checkpoint, weights_only=False)
+        restored_rng = torch.Generator().manual_seed(999)
+        restore_rng_state(saved["rng"], prompt_generator=restored_rng)
+        resumed_prompts = [str(index) for index in sampler(restored_rng).sample(epoch=1)]
+        assert resumed_prompts == next_current == preview
+        resumed_lifecycle = _OwnerLifecycle(PromptCollector())
+        resumed_lifecycle.version = saved["version"]
+        restored = _owner(resumed_lifecycle, split_generation_reward=True)
+        resumed = await restored.next_iteration(
+            resumed_prompts,
+            group_size=2,
+            runtime_debug=False,
+            initial_weights=None,
+        )
+        for before, after in zip(reference.batches, resumed.batches, strict=True):
+            assert torch.equal(before.rewards, after.rewards)
+            assert torch.equal(before.group_ids, after.group_ids)
+        # A restart regenerates with restored weights; matching prompt RNG does
+        # not preserve the pre-crash old-policy trajectory or its numerical values.
+        assert reference.stats.gauges["continuous.rollout_policy_version"] == 1
+        assert resumed.stats.gauges["continuous.rollout_policy_version"] == 2
+    finally:
+        await original.shutdown()
+        if restored is not None:
+            await restored.shutdown()

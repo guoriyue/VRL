@@ -211,3 +211,13 @@ owner 线程 facade，以及现有 weight transaction。新 batch 查询与错�
 
 剩余验收：真实分卡 static-vs-split 数值/吞吐比较、带 sampler checkpoint 的完整恢复回放、
 容量 profile 与长跑。ready byte 超限仍 fail closed；没有用丢弃当前 batch 来维持生成。
+
+### Sampler checkpoint 边界验收
+
+新增实际 `PromptBatchSampler` + RNG capture + 磁盘 save/load + 新 owner 的恢复测试。
+25 项 owner/sampler 测试通过：preview 不推进采样 RNG，恢复后的下一批 prompts 和
+consumer 输出顺序一致，group IDs 一致。
+
+同时明确记录不能扩大解释的边界：不中断时可能消费 version 1 的预取轨迹；从 version 2
+checkpoint 重启后使用 version 2 重新生成。因此“prompt 顺序可恢复”不等于“异步训练轨迹
+逐位可恢复”。当前不保存大型预取媒体，也不伪造丢失的旧策略轨迹。完整数值复现仍待专门实验。
