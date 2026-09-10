@@ -154,3 +154,42 @@ that role remain valid integrity records, but are insufficient for full-precisio
 regression. Exact metric matching still needs an explicit metric/step protocol,
 compatible run identities, and successful independent attempts; neither CSV alone
 is a determinism certificate.
+
+For same-revision repeatability, compare two independent supervised attempts with
+an explicitly chosen metric set and complete epoch count:
+
+```bash
+python -m vrl.scripts.eval.compare_training_metrics \
+  --reference-receipt archive/reference/run_evidence/REFERENCE.artifacts.json \
+  --reference-verdict archive/reference/run_verdict.json \
+  --candidate-receipt archive/candidate/run_evidence/CANDIDATE.artifacts.json \
+  --candidate-verdict archive/candidate/run_verdict.json \
+  --columns loss reward_mean grad_norm r_ocr \
+  --expected-epochs 20 \
+  --report archive/comparison-new-attempt.json
+```
+
+Choose columns and epochs before inspecting results. The result pins that protocol
+and both receipt/verdict hashes. The only ignored config difference is
+`trainer.output_dir`; seed and total epochs must be explicit and the requested
+count must equal the configured count. Runs must be fresh, have different launch
+and attempt IDs, stable configured data hashes, the same clean code identity,
+model identity and trainer runtime, and strict deterministic algorithms enabled.
+Warn-only determinism and cuDNN benchmark mode are rejected. GPU records also
+require driver identity and deterministic cuDNN. These flags must be established
+by the training setup; this comparison command does not turn them on retroactively.
+
+The checker requires bound full-precision metrics, a matching column schema and
+exactly epochs `0..N-1`. It compares the canonical serialized finite aggregates
+without tolerance; NaN, infinity, missing/duplicate epochs and changed scalar text
+fail. Signed zero is preserved. Rounded historical CSVs cannot pass this lane.
+No report or baseline is silently replaced, and mismatch exits with the first
+metric/epoch difference. Archive a fresh report for each independently specified
+protocol; selecting fewer metrics changes what is proved.
+
+Passing means the declared logged aggregates matched across those two completed
+attempts. It does not compare complete trajectory/checkpoint tensors, establish
+rollout/reward-process environment identity, validate held-out quality, or certify
+an externally nondeterministic reward backend. Cross-revision baseline migration
+and statistical comparisons need separate explicit protocols. These limitations
+also apply when the values happen to match exactly.

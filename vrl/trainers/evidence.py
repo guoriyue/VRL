@@ -405,3 +405,159 @@ def verify_training_evaluation(
         "evaluation_protocol_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
         "evaluation_content": asdict(local_checkpoint_content(archive.directory)),
     }
+
+
+def compare_run_metrics(
+    reference_seal: str | Path,
+    reference_verdict: str | Path,
+    candidate_seal: str | Path,
+    candidate_verdict: str | Path,
+    *,
+    columns: tuple[str, ...],
+    expected_epochs: int,
+) -> dict[str, Any]:
+    """Compare a declared full-precision metric protocol across independent runs.
+
+    This checks finite logged aggregates under matching trainer-observed identities.
+    It does not establish per-sample, rollout-process, checkpoint tensor, or external
+    reward determinism. No tolerance or automatic reference replacement is allowed.
+    """
+    import csv
+    import math
+
+    from vrl.utils.artifacts import sha256_file
+
+    if type(expected_epochs) is not int or expected_epochs <= 0:
+        raise ValueError("expected_epochs must be a positive integer")
+    if not columns or isinstance(columns, str) or len(set(columns)) != len(columns):
+        raise ValueError("columns must be a nonempty sequence of unique metric names")
+    if any(not isinstance(name, str) or not name or name == "epoch" for name in columns):
+        raise ValueError("columns must name metrics; epoch is checked separately")
+    runs = []
+    for seal, verdict_path in (
+        (Path(reference_seal), Path(reference_verdict)),
+        (Path(candidate_seal), Path(candidate_verdict)),
+    ):
+        verdict = verify_run_completion(seal, verdict_path)
+        receipt = json.loads(seal.read_text())
+        if "full_precision_metrics" not in receipt["artifacts"]:
+            raise ValueError("full-precision metrics are not bound by this receipt")
+        launch = _read_launch(seal.with_name(f"{receipt['launch_id']}.json"))
+        if launch.get("resumed") is not False or launch.get("provided_examples") is not False:
+            raise ValueError("metric regression requires fresh runs with configured data")
+        code = launch.get("code", {})
+        if (
+            code.get("available") is not True
+            or code.get("dirty") is not False
+            or not code.get("commit")
+        ):
+            raise ValueError("metric regression requires an identified clean checkout")
+        runtime = launch.get("runtime", {})
+        if not all(runtime.get(key) for key in ("python", "platform", "packages", "torch_build")):
+            raise ValueError("metric regression requires complete runtime identity")
+        if (
+            runtime.get("deterministic_algorithms") is not True
+            or runtime.get("deterministic_warn_only") is not False
+        ):
+            raise ValueError("strict deterministic algorithms must be enabled")
+        if runtime.get("cudnn_benchmark") is not False:
+            raise ValueError("cuDNN benchmark must be disabled")
+        if "devices" not in runtime or "environment" not in runtime:
+            raise ValueError("runtime device/environment identity is missing")
+        if runtime["devices"] and (
+            runtime.get("driver", {}).get("available") is not True
+            or runtime.get("cudnn_deterministic") is not True
+        ):
+            raise ValueError("GPU comparison requires driver identity and deterministic cuDNN")
+        data = launch.get("configured_data_files", {})
+        if not data or any(
+            entry.get("available") is not True
+            or entry.get("changed_during_read") is not False
+            or not entry.get("sha256")
+            for entry in data.values()
+        ):
+            raise ValueError("configured data must have stable content identities")
+        config = json.loads(json.dumps(launch["config"]))
+        trainer = config.get("trainer", {})
+        if type(trainer.get("seed")) is not int:
+            raise ValueError("metric regression requires an explicit trainer.seed")
+        if (
+            type(trainer.get("total_epochs")) is not int
+            or trainer["total_epochs"] != expected_epochs
+        ):
+            raise ValueError("expected_epochs must cover the configured complete run")
+        # Only the artifact destination may differ; no numerical/config wildcard.
+        trainer.pop("output_dir", None)
+        path = seal.parent.parent / "metrics.full_precision.csv"
+        with path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.reader(handle)
+            header = next(reader, [])
+            if (
+                not header
+                or len(set(header)) != len(header)
+                or not set(("epoch", *columns)) <= set(header)
+            ):
+                raise ValueError("full-precision metrics have missing/duplicate columns")
+            indices = [header.index(name) for name in columns]
+            epoch_index = header.index("epoch")
+            rows = []
+            for epoch, row in enumerate(reader):
+                if len(row) != len(header) or row[epoch_index] != str(epoch):
+                    raise ValueError("metric rows must cover consecutive epochs starting at zero")
+                values = tuple(row[index] for index in indices)
+                if not all(math.isfinite(float(value)) for value in values):
+                    raise ValueError("selected regression metrics must be finite")
+                rows.append(values)
+        if len(rows) != expected_epochs:
+            raise ValueError("full-precision metrics do not cover all expected epochs")
+        runs.append(
+            {
+                "launch": launch,
+                "verdict": verdict,
+                "config": config,
+                "header": header,
+                "rows": rows,
+                "binding": {
+                    "launch_id": launch["launch_id"],
+                    "attempt_id": verdict["attempt_id"],
+                    "receipt_sha256": sha256_file(seal),
+                    "verdict_sha256": sha256_file(verdict_path),
+                },
+            }
+        )
+    reference, candidate = runs
+    if (
+        reference["launch"]["launch_id"] == candidate["launch"]["launch_id"]
+        or reference["verdict"]["attempt_id"] == candidate["verdict"]["attempt_id"]
+    ):
+        raise ValueError("regression requires two independent launch and attempt identities")
+    for key in ("code", "runtime", "model_identity", "configured_data_files"):
+        if reference["launch"][key] != candidate["launch"][key]:
+            raise ValueError(f"regression {key} differs between runs")
+    if reference["config"] != candidate["config"]:
+        raise ValueError("regression config differs beyond trainer.output_dir")
+    if reference["header"] != candidate["header"]:
+        raise ValueError("regression metric schema differs between runs")
+    for epoch, (expected, actual) in enumerate(
+        zip(reference["rows"], candidate["rows"], strict=True)
+    ):
+        for column, left, right in zip(columns, expected, actual, strict=True):
+            if left != right:
+                raise ValueError(
+                    f"metric mismatch at epoch={epoch}, {column}: {left!r} != {right!r}"
+                )
+    protocol = {
+        "schema": "vrl.metric-regression/v1",
+        "columns": list(columns),
+        "expected_epochs": expected_epochs,
+        "comparison": "exact-serialized-finite-scalars",
+    }
+    canonical = json.dumps(protocol, sort_keys=True, separators=(",", ":"))
+    return {
+        "protocol": protocol,
+        "protocol_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
+        "reference": reference["binding"],
+        "candidate": candidate["binding"],
+        "matched": True,
+        "scope": "declared logged aggregates; not full trajectory or rollout-process determinism",
+    }

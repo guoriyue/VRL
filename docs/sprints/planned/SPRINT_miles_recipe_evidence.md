@@ -192,3 +192,21 @@ passed. Added checks distinguish values collapsed by display rounding, verify
 scalar bit round-trips, exercise actual online writes/resume, and reject altered
 full-precision artifacts. The remaining comparison protocol and real runs are
 still required.
+
+## 2026-09-09: Explicit same-revision metric comparison
+
+`compare_run_metrics` verifies independent successful attempts, bound full-precision
+metrics, stable data and matching code/model/runtime/config identities, then checks
+a caller-declared metric set across the complete configured epoch range. Strict
+numerical-runtime flags are required. Only output directory may differ in config;
+there are no tolerances or automatic baseline rewrites. The CLI publishes the
+protocol and receipt/verdict bindings atomically without replacing prior reports.
+The cross-run guard stays with existing evidence verification; its CLI is the public
+entrypoint, not a new family contract or verification-status registry.
+
+CPU fixtures exercise drift hidden by display rounding, signed zero, nonfinite
+metrics, incomplete/duplicate epochs, identity/config changes, stale verdicts and
+self-comparison. They do not represent real training runs. Same-revision aggregate
+repeatability is narrower than full trajectory determinism; cross-revision baseline
+updates, statistical regression, actual repeated recipe curves and GPU CI integration
+remain open.
