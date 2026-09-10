@@ -276,9 +276,10 @@ async def test_control_loop_failure_reaches_consumer_without_timeout() -> None:
         consumer = _consumer(queue, max_stale=0)
 
         with pytest.raises(RuntimeError, match="producer control loop failed") as caught:
-            await consumer.drain_for_iteration(
-                min_groups=1,
-                current_version=1,
+            await consumer.collect_iteration(
+                prompt_batch_id=0,
+                expected_group_count=1,
+                current_policy_version=1,
                 wait_timeout_s=60.0,
                 poll_interval_s=0.001,
                 producer_state=producer.state,
@@ -312,9 +313,10 @@ async def test_terminal_generation_error_is_not_retried_or_wrapped() -> None:
         consumer = _consumer(queue, max_stale=0)
 
         with pytest.raises(RayOperationTimeout) as caught:
-            await consumer.drain_for_iteration(
-                min_groups=1,
-                current_version=1,
+            await consumer.collect_iteration(
+                prompt_batch_id=0,
+                expected_group_count=1,
+                current_policy_version=1,
                 wait_timeout_s=60.0,
                 poll_interval_s=0.001,
                 producer_state=producer.state,
@@ -366,9 +368,10 @@ async def test_idle_health_failure_makes_next_collect_fatal_without_slot_retry()
         consumer = _consumer(queue, max_stale=0)
 
         with pytest.raises(RuntimeError, match="generate rejected") as caught:
-            await consumer.drain_for_iteration(
-                min_groups=1,
-                current_version=1,
+            await consumer.collect_iteration(
+                prompt_batch_id=0,
+                expected_group_count=1,
+                current_policy_version=1,
                 wait_timeout_s=60.0,
                 poll_interval_s=0.001,
                 producer_state=producer.state,
@@ -410,9 +413,10 @@ async def test_cleanup_wrapper_around_terminal_error_is_not_retried() -> None:
         consumer = _consumer(queue, max_stale=0)
 
         with pytest.raises(PromptCollectionCleanupError) as caught:
-            await consumer.drain_for_iteration(
-                min_groups=1,
-                current_version=1,
+            await consumer.collect_iteration(
+                prompt_batch_id=0,
+                expected_group_count=1,
+                current_policy_version=1,
                 wait_timeout_s=60.0,
                 poll_interval_s=0.001,
                 producer_state=producer.state,
@@ -969,18 +973,18 @@ def test_out_of_range_knobs_are_rejected_at_the_config_boundary() -> None:
             ContinuousRolloutConfig(**kwargs)
 
 
-async def _drain(
+async def _collect_iteration(
     consumer: ContinuousRolloutConsumer,
     *,
-    min_groups: int,
-    current_version: int,
+    expected_group_count: int,
+    current_policy_version: int,
     timeout_s: float = 1.0,
-    expected_batch_id: int | None = None,
+    prompt_batch_id: int,
 ):
-    return await consumer.drain_for_iteration(
-        expected_batch_id=expected_batch_id,
-        min_groups=min_groups,
-        current_version=current_version,
+    return await consumer.collect_iteration(
+        prompt_batch_id=prompt_batch_id,
+        expected_group_count=expected_group_count,
+        current_policy_version=current_policy_version,
         wait_timeout_s=timeout_s,
         poll_interval_s=0.001,
     )
@@ -993,10 +997,11 @@ async def test_consumer_consumes_stale_items_within_bound() -> None:
     queue.put(_item(group_slot=0, version=1))
     queue.put(_item(group_slot=1, version=1))
 
-    iteration = await _drain(
+    iteration = await _collect_iteration(
         _consumer(queue, max_stale=1),
-        min_groups=2,
-        current_version=2,
+        prompt_batch_id=0,
+        expected_group_count=2,
+        current_policy_version=2,
     )
 
     phases = iteration.stats.as_phase_dict()
@@ -1013,23 +1018,32 @@ async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
     queue.put(_item(group_slot=1, version=1))
 
     with pytest.raises(RuntimeError, match="older than the policy window"):
-        await _drain(
+        await _collect_iteration(
             _consumer(queue, max_stale=0),
-            min_groups=2,
-            current_version=2,
+            prompt_batch_id=0,
+            expected_group_count=2,
+            current_policy_version=2,
         )
     assert queue.size() == 2
 
 
 @pytest.mark.asyncio
-async def test_consumer_rejects_mixed_batch_identities() -> None:
+async def test_consumer_waits_instead_of_combining_distinct_batches() -> None:
     """One iteration must come from exactly one finite prompt batch."""
     queue = ContinuousRolloutQueue(max_items=8)
     queue.put(_item(group_slot=0, version=1, batch_id=0))
     queue.put(_item(group_slot=1, version=1, batch_id=1))
 
-    with pytest.raises(RuntimeError, match="mixes batch identities"):
-        await _drain(_consumer(queue, max_stale=0), min_groups=2, current_version=1)
+    with pytest.raises(TimeoutError):
+        await _collect_iteration(
+            _consumer(queue, max_stale=0),
+            prompt_batch_id=0,
+            expected_group_count=2,
+            current_policy_version=1,
+            timeout_s=0.01,
+        )
+
+    assert queue.size() == 2
 
 
 @pytest.mark.asyncio
@@ -1039,7 +1053,12 @@ async def test_iteration_carries_batch_identity_gauges() -> None:
     queue.put(_item(group_slot=0, version=1, batch_id=3))
     queue.put(_item(group_slot=1, version=1, batch_id=3, attempt=2))
 
-    iteration = await _drain(_consumer(queue, max_stale=0), min_groups=2, current_version=1)
+    iteration = await _collect_iteration(
+        _consumer(queue, max_stale=0),
+        prompt_batch_id=3,
+        expected_group_count=2,
+        current_policy_version=1,
+    )
 
     phases = iteration.stats.as_phase_dict()
     assert phases["continuous.batch_id"] == pytest.approx(3.0)
@@ -1069,7 +1088,12 @@ async def test_consumer_rejects_duplicate_group_slots() -> None:
     queue.put(_item(group_slot=0, version=1))
 
     with pytest.raises(RuntimeError, match="duplicate group slots"):
-        await _drain(_consumer(queue, max_stale=0), min_groups=2, current_version=1)
+        await _collect_iteration(
+            _consumer(queue, max_stale=0),
+            prompt_batch_id=0,
+            expected_group_count=2,
+            current_policy_version=1,
+        )
 
 
 @pytest.mark.asyncio
@@ -1079,7 +1103,12 @@ async def test_consumer_rejects_mixed_policy_versions() -> None:
     queue.put(_item(group_slot=1, version=2))
 
     with pytest.raises(RuntimeError, match="mixes policy versions"):
-        await _drain(_consumer(queue, max_stale=1), min_groups=2, current_version=2)
+        await _collect_iteration(
+            _consumer(queue, max_stale=1),
+            prompt_batch_id=0,
+            expected_group_count=2,
+            current_policy_version=2,
+        )
 
 
 @pytest.mark.asyncio
@@ -1088,7 +1117,12 @@ async def test_consumer_rejects_future_policy_version() -> None:
     queue.put(_item(group_slot=0, version=2))
 
     with pytest.raises(RuntimeError, match="newer than the trainer policy"):
-        await _drain(_consumer(queue, max_stale=0), min_groups=1, current_version=1)
+        await _collect_iteration(
+            _consumer(queue, max_stale=0),
+            prompt_batch_id=0,
+            expected_group_count=1,
+            current_policy_version=1,
+        )
 
 
 @pytest.mark.asyncio
@@ -1105,7 +1139,7 @@ async def test_late_reward_batch_fails_under_non_draining_max_stale_0() -> None:
 
     This drives the exact machinery the non-draining owner branch uses:
     ``consumer.validate_ready_versions`` after weight sync, then the same
-    consumer's iteration selection during ``drain_for_iteration``.
+    consumer's iteration selection during ``collect_iteration``.
     """
     queue = ContinuousRolloutQueue(max_items=8)
     consumer = ContinuousRolloutConsumer(
@@ -1124,10 +1158,12 @@ async def test_late_reward_batch_fails_under_non_draining_max_stale_0() -> None:
     # fail immediately with the fixed-version cause instead of deleting one slot
     # and waiting for a batch that can no longer complete.
     with pytest.raises(RuntimeError, match="older than the policy window"):
-        consumer.validate_ready_versions(current_version=2)
+        consumer.validate_ready_versions(current_policy_version=2)
     assert queue.size() == 1
     with pytest.raises(RuntimeError, match="older than the policy window"):
-        await _drain(consumer, min_groups=1, current_version=2)
+        await _collect_iteration(
+            consumer, prompt_batch_id=0, expected_group_count=1, current_policy_version=2
+        )
 
 
 @pytest.mark.asyncio
@@ -1149,10 +1185,11 @@ async def test_consumer_aggregates_item_phase_times() -> None:
         ),
     )
 
-    iteration = await _drain(
+    iteration = await _collect_iteration(
         _consumer(queue, max_stale=0),
-        min_groups=2,
-        current_version=1,
+        prompt_batch_id=0,
+        expected_group_count=2,
+        current_policy_version=1,
     )
 
     assert iteration.stats.as_phase_dict()["collect.engine_generate"] == 4.0
@@ -1291,7 +1328,7 @@ def test_split_rejects_collectors_without_verified_overlap_capability() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("preview_version", [1, 2])
-async def test_consumer_waits_for_named_head_even_when_lookahead_is_ready(
+async def test_consumer_waits_for_named_head_even_when_prefetch_is_ready(
     preview_version: int,
 ) -> None:
     queue = ContinuousRolloutQueue(max_items=4)
@@ -1300,17 +1337,17 @@ async def test_consumer_waits_for_named_head_even_when_lookahead_is_ready(
         queue.put(item)
     consumer = _consumer(queue, max_stale=1)
     demand = asyncio.create_task(
-        _drain(
+        _collect_iteration(
             consumer,
-            min_groups=2,
-            current_version=2,
-            expected_batch_id=0,
+            expected_group_count=2,
+            current_policy_version=2,
+            prompt_batch_id=0,
         )
     )
     try:
         await asyncio.sleep(0.01)
         assert not demand.done()
-        # Current completes out of order and uses the same slots as lookahead.
+        # Current completes out of order and uses the same slots as prefetch.
         current = [_item(group_slot=i, version=1, batch_id=0) for i in range(2)]
         queue.put(current[1])
         await asyncio.sleep(0.01)
@@ -1322,11 +1359,11 @@ async def test_consumer_waits_for_named_head_even_when_lookahead_is_ready(
         assert result.stats.gauges["continuous.batch_id"] == 0
         assert result.stats.gauges["continuous.ready_groups_at_demand"] == 0
         assert [id(item) for item in queue.snapshot()] == [id(item) for item in next_items]
-        following = await _drain(
+        following = await _collect_iteration(
             consumer,
-            min_groups=2,
-            current_version=2,
-            expected_batch_id=1,
+            expected_group_count=2,
+            current_policy_version=2,
+            prompt_batch_id=1,
         )
         assert following.stats.gauges["continuous.batch_id"] == 1
         assert queue.size() == 0
@@ -1342,11 +1379,11 @@ async def test_consumer_rejects_wrong_slots_without_removing_receipts(slots) -> 
     for slot in slots:
         queue.put(_item(group_slot=slot, version=1, batch_id=0))
     with pytest.raises(RuntimeError, match="invalid group slots"):
-        await _drain(
+        await _collect_iteration(
             _consumer(queue, max_stale=1),
-            min_groups=2,
-            current_version=1,
-            expected_batch_id=0,
+            expected_group_count=2,
+            current_policy_version=1,
+            prompt_batch_id=0,
         )
     assert queue.size() == 2
 
@@ -1357,11 +1394,11 @@ async def test_consumer_rejects_leftover_prior_batch_at_named_demand() -> None:
     queue.put(_item(group_slot=0, version=1, batch_id=0))
     queue.put(_item(group_slot=0, version=1, batch_id=1))
     with pytest.raises(RuntimeError, match="already consumed batch"):
-        await _drain(
+        await _collect_iteration(
             _consumer(queue, max_stale=1),
-            min_groups=1,
-            current_version=1,
-            expected_batch_id=1,
+            expected_group_count=1,
+            current_policy_version=1,
+            prompt_batch_id=1,
         )
     assert queue.size() == 2
 

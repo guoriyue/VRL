@@ -3,7 +3,7 @@
 SPRINT_continuous_stage_contracts_and_baseline T0: batch identity has exactly
 one construction site (the producer). Trainer and reward code must never
 re-derive ``batch_id``/``group_slot`` — they only read the identity carried by
-the item and its stats. Until the versioned lookahead (Sprint 2) gives
+the item and its stats. Until the versioned prefetch (Sprint 2) gives
 ``batch_id`` a selection consumer, these tests are its validation consumer.
 """
 

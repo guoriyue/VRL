@@ -81,7 +81,7 @@ class _ContinuousOwnerRuntime:
         self.consumer: ContinuousRolloutConsumer | None = None
         self.producer: ContinuousRolloutProducer | None = None
         self._installed_prompt_batch: _InstalledPromptBatch | None = None
-        self._lookahead_prompt_batch: _InstalledPromptBatch | None = None
+        self._prefetched_prompt_batch: _InstalledPromptBatch | None = None
 
         self._command_lock = asyncio.Lock()
         self._active_commands: set[asyncio.Task[Any]] = set()
@@ -123,24 +123,24 @@ class _ContinuousOwnerRuntime:
                 )
             elif not self._installed_prompt_batch.matches_presented_prompts(prompts):
                 raise RuntimeError(
-                    "continuous lookahead prompt batch does not match the next prompts "
+                    "continuous prefetch prompt batch does not match the next prompts "
                     "presented by the trainer",
                 )
             elif self._installed_prompt_batch.group_size != int(group_size):
                 raise RuntimeError(
-                    "continuous lookahead group size does not match the batch "
+                    "continuous prefetch group size does not match the batch "
                     "presented by the trainer: "
                     f"expected={self._installed_prompt_batch.group_size}, "
                     f"requested={group_size}",
                 )
             assert self.consumer is not None
             assert self.producer is not None
-            current_version = self.lifecycle.current_policy_version()
+            current_policy_version = self.lifecycle.current_policy_version()
             batch_id = self.producer.current_batch_id
-            early_lookahead = self.settings.split_generation_reward
-            if early_lookahead and next_prompts is not None:
+            prefetch_next_batch_early = self.settings.split_generation_reward
+            if prefetch_next_batch_early and next_prompts is not None:
                 if not next_prompts:
-                    raise ValueError("continuous lookahead prompts must be non-empty")
+                    raise ValueError("continuous prefetch prompts must be non-empty")
                 self.producer.append_prompt_batch(
                     next_prompts,
                     group_size=group_size,
@@ -148,31 +148,31 @@ class _ContinuousOwnerRuntime:
                 )
                 assert self.queue is not None
                 self.queue.set_item_limit(len(prompts) + len(next_prompts))
-                self._lookahead_prompt_batch = _InstalledPromptBatch(
+                self._prefetched_prompt_batch = _InstalledPromptBatch(
                     tuple(next_prompts), int(group_size)
                 )
                 self.producer.admit_now()
 
-            iteration = await self.consumer.drain_for_iteration(
-                min_groups=len(prompts),
-                expected_batch_id=self.producer.current_batch_id,
-                current_version=current_version,
+            iteration = await self.consumer.collect_iteration(
+                expected_group_count=len(prompts),
+                prompt_batch_id=self.producer.current_batch_id,
+                current_policy_version=current_policy_version,
                 wait_timeout_s=self.settings.wait_timeout_s,
                 poll_interval_s=self.settings.queue_poll_interval_s,
                 producer_state=self.producer.state,
             )
             self._installed_prompt_batch = None
-            lookahead_requested = float(next_prompts is not None)
-            if early_lookahead:
+            prefetch_next_batch_requested = float(next_prompts is not None)
+            if prefetch_next_batch_early:
                 self.producer.consume_prompt_batch(batch_id)
-                self._installed_prompt_batch = self._lookahead_prompt_batch
-                self._lookahead_prompt_batch = None
+                self._installed_prompt_batch = self._prefetched_prompt_batch
+                self._prefetched_prompt_batch = None
                 assert self.queue is not None
                 self.queue.set_item_limit(max(1, len(next_prompts or [])))
             elif next_prompts is not None:
                 if not next_prompts:
-                    raise ValueError("continuous lookahead prompts must be non-empty")
-                # Debug metadata belongs to generation time. This lookahead runs
+                    raise ValueError("continuous prefetch prompts must be non-empty")
+                # Debug metadata belongs to generation time. This prefetch runs
                 # during the current training step, even when the trainer consumes
                 # it after state.step (and therefore runtime_debug) changes.
                 self._set_prompt_batch(
@@ -180,11 +180,12 @@ class _ContinuousOwnerRuntime:
                     group_size=group_size,
                     runtime_debug=runtime_debug,
                 )
-                lookahead_requested = 1.0
+                prefetch_next_batch_requested = 1.0
             iteration.stats.merge(startup_stats)
+            # Preserve the persisted metrics schema used by existing training logs.
             iteration.stats.observe_gauge(
                 "continuous.lookahead_requested",
-                lookahead_requested,
+                prefetch_next_batch_requested,
             )
             self._attach_producer_metrics(iteration)
             return iteration
@@ -237,7 +238,7 @@ class _ContinuousOwnerRuntime:
                 await self.lifecycle.push_prepared_weights(prepared_weights, stats)
                 assert self.consumer is not None
                 self.consumer.validate_ready_versions(
-                    current_version=self.lifecycle.current_policy_version(),
+                    current_policy_version=self.lifecycle.current_policy_version(),
                 )
                 producer.resume_admission()
             stats.observe_gauge(
@@ -399,7 +400,7 @@ class _ContinuousOwnerRuntime:
         self.queue = None
         self.consumer = None
         self._installed_prompt_batch = None
-        self._lookahead_prompt_batch = None
+        self._prefetched_prompt_batch = None
         if producer is not None:
             await producer.stop(wait_timeout_s=_OWNER_STOP_TIMEOUT_S)
         if queue is not None:

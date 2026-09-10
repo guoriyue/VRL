@@ -227,9 +227,9 @@ class ContinuousRolloutProducer:
         """Append the recipe's one preview without replacing unfinished work."""
 
         if not self._split_reward:
-            raise RuntimeError("early lookahead requires split generation/reward")
+            raise RuntimeError("early prefetch requires split generation/reward")
         if len(self._batches) != 1:
-            raise RuntimeError("continuous lookahead requires exactly one current batch")
+            raise RuntimeError("continuous prefetch requires exactly one current batch")
         self._install_prompt_batch(prompts, group_size=group_size, runtime_debug=runtime_debug)
 
     def consume_prompt_batch(self, batch_id: int) -> None:

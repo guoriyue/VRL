@@ -34,7 +34,7 @@ def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
     return RolloutBatch(
         rewards=torch.arange(batch_size, dtype=torch.float32),
         group_ids=group_ids,
-        # Test-fake provenance used only to verify finite lookahead ordering.
+        # Test-fake provenance used only to verify finite prefetch ordering.
         context={"fixture_prompts": tuple(prompts)},
     )
 
@@ -430,7 +430,7 @@ async def test_partial_commit_failure_closes_admission_and_runtime() -> None:
 
 @pytest.mark.asyncio
 async def test_draining_sync_finishes_the_active_prompt_batch_before_commit() -> None:
-    """A draining backend completes every finite lookahead slot at one version."""
+    """A draining backend completes every finite prefetch slot at one version."""
     runtime = _Runtime()
     collector = _Collector(runtime)
     syncer = _Syncer(runtime)
@@ -682,7 +682,7 @@ async def test_non_draining_sync_skips_inflight_wait() -> None:
 
 
 @pytest.mark.asyncio
-async def test_three_gas2_updates_consume_exact_finite_lookahead_sequence() -> None:
+async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence() -> None:
     """Three GAS2 updates consume each announced prompt batch once within stale bound."""
     runtime = _Runtime()
     runtime.supports_non_draining_weight_sync = True
@@ -803,8 +803,8 @@ async def test_stale_slot_discard_fails_the_fixed_version_prompt_batch() -> None
 
 
 @pytest.mark.asyncio
-async def test_lookahead_installs_the_next_prompt_batch() -> None:
-    """The producer advances to exactly the prompt batch announced as lookahead."""
+async def test_prefetch_installs_the_next_prompt_batch() -> None:
+    """The producer advances to exactly the prompt batch announced as prefetch."""
     runtime = _Runtime()
     schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
 
@@ -821,7 +821,7 @@ async def test_lookahead_installs_the_next_prompt_batch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lookahead_freezes_runtime_debug_at_generation_time() -> None:
+async def test_prefetch_freezes_runtime_debug_at_generation_time() -> None:
     runtime = _Runtime()
     collector = _Collector(runtime)
     schedule = _build(_continuous_config(), collector, _Syncer(runtime))
@@ -844,8 +844,8 @@ async def test_lookahead_freezes_runtime_debug_at_generation_time() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lookahead_mismatch_fails_instead_of_training_the_wrong_prompt_batch() -> None:
-    """The trainer must consume the exact prompt batch it announced as lookahead."""
+async def test_prefetch_mismatch_fails_instead_of_training_the_wrong_prompt_batch() -> None:
+    """The trainer must consume the exact prompt batch it announced as prefetch."""
     runtime = _Runtime()
     schedule = _build(
         _continuous_config(
@@ -863,14 +863,14 @@ async def test_lookahead_mismatch_fails_instead_of_training_the_wrong_prompt_bat
             group_size=1,
             next_prompts=["p2", "p3"],
         )
-        with pytest.raises(RuntimeError, match="lookahead prompt batch does not match"):
+        with pytest.raises(RuntimeError, match="prefetch prompt batch does not match"):
             await schedule.next_iteration(["p2", "different"], group_size=1)
     finally:
         await schedule.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_lookahead_group_size_mismatch_fails_before_consumption() -> None:
+async def test_prefetch_group_size_mismatch_fails_before_consumption() -> None:
     runtime = _Runtime()
     schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
 
@@ -880,14 +880,14 @@ async def test_lookahead_group_size_mismatch_fails_before_consumption() -> None:
             group_size=1,
             next_prompts=["p1"],
         )
-        with pytest.raises(RuntimeError, match="lookahead group size does not match"):
+        with pytest.raises(RuntimeError, match="prefetch group size does not match"):
             await schedule.next_iteration(["p1"], group_size=2)
     finally:
         await schedule.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_lookahead_accepts_identical_prompt_with_non_scalar_metadata() -> None:
+async def test_prefetch_accepts_identical_prompt_with_non_scalar_metadata() -> None:
     """The sampler may present the same object whose structural equality is invalid."""
     runtime = _Runtime()
     schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
@@ -908,7 +908,7 @@ async def test_lookahead_accepts_identical_prompt_with_non_scalar_metadata() -> 
 
 
 @pytest.mark.asyncio
-async def test_lookahead_fails_closed_when_prompt_equality_is_non_scalar() -> None:
+async def test_prefetch_fails_closed_when_prompt_equality_is_non_scalar() -> None:
     runtime = _Runtime()
     schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
     installed = PromptExample(
@@ -926,7 +926,7 @@ async def test_lookahead_fails_closed_when_prompt_equality_is_non_scalar() -> No
             group_size=1,
             next_prompts=[installed],
         )
-        with pytest.raises(RuntimeError, match="lookahead prompt batch does not match"):
+        with pytest.raises(RuntimeError, match="prefetch prompt batch does not match"):
             await schedule.next_iteration([presented], group_size=1)
     finally:
         await schedule.shutdown()

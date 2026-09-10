@@ -43,21 +43,21 @@ class ContinuousRolloutConsumer:
         # validated once at the config boundary; trusted here.
         self.fail_fast_errors = settings.fail_fast_errors
 
-    async def drain_for_iteration(
+    async def collect_iteration(
         self,
         *,
-        min_groups: int,
-        current_version: int | None,
+        prompt_batch_id: int,
+        expected_group_count: int,
+        current_policy_version: int | None,
         wait_timeout_s: float,
         poll_interval_s: float,
         producer_state: ContinuousRolloutProducerState | None = None,
-        expected_batch_id: int | None = None,
     ) -> RolloutIteration:
         """Block until a homogeneous-version iteration is ready, then build it.
 
-        ``expected_batch_id`` selects the requested prompt batch while a later
+        ``prompt_batch_id`` selects the requested prompt batch while a later
         prefetched batch may already be ready, even at the same policy version.
-        The owner always supplies it; None requires an unambiguous single batch.
+        The owner always supplies the batch identity explicitly.
 
         ``producer_state`` lets the wait surface the background producer's
         health: a persistent generation/reward failure ends the wait early with
@@ -71,7 +71,7 @@ class ContinuousRolloutConsumer:
             {
                 item.group_slot
                 for item in self.queue.snapshot()
-                if expected_batch_id is None or item.batch_id == expected_batch_id
+                if item.batch_id == prompt_batch_id
             },
         )
         start_completed = producer_state.completed_count if producer_state else 0
@@ -83,9 +83,9 @@ class ContinuousRolloutConsumer:
                 start_errors=start_errors,
             )
             selected = self._select_iteration(
-                expected_batch_id=expected_batch_id,
-                min_groups=min_groups,
-                current_version=current_version,
+                prompt_batch_id=prompt_batch_id,
+                expected_group_count=expected_group_count,
+                current_policy_version=current_policy_version,
             )
             if selected is not None:
                 version, items = selected
@@ -93,13 +93,13 @@ class ContinuousRolloutConsumer:
                 return self._build_iteration(
                     version=version,
                     items=items,
-                    current_version=current_version,
+                    current_policy_version=current_policy_version,
                     queue_wait_s=wait_s,
                     ready_groups_at_demand=ready_groups_at_demand,
                 )
             if time.monotonic() >= deadline:
                 raise TimeoutError(
-                    self._timeout_message(min_groups, wait_timeout_s, producer_state),
+                    self._timeout_message(expected_group_count, wait_timeout_s, producer_state),
                 )
             await asyncio.sleep(poll_interval_s)
 
@@ -149,14 +149,14 @@ class ContinuousRolloutConsumer:
 
     def _timeout_message(
         self,
-        min_groups: int,
+        expected_group_count: int,
         wait_timeout_s: float,
         producer_state: ContinuousRolloutProducerState | None,
     ) -> str:
         stats = self.queue.stats()
         message = (
             "continuous rollout consumer timed out waiting for "
-            f"{min_groups} same-policy groups after {wait_timeout_s}s "
+            f"{expected_group_count} same-policy groups after {wait_timeout_s}s "
             f"(queue={stats})"
         )
         if producer_state is not None:
@@ -168,69 +168,63 @@ class ContinuousRolloutConsumer:
             )
         return message
 
-    def validate_ready_versions(self, *, current_version: int | None) -> None:
+    def validate_ready_versions(self, *, current_policy_version: int | None) -> None:
         """Fail when a ready item falls outside the trainable version window."""
 
-        if current_version is None:
+        if current_policy_version is None:
             return
         for item in self.queue.snapshot():
             version = item.rollout_policy_version
-            if self.staleness.is_future(version, current_version):
+            if self.staleness.is_future(version, current_policy_version):
                 raise RuntimeError(
                     "continuous queue item is newer than the trainer policy "
-                    f"(item={version}, trainer={current_version}); weight-sync "
+                    f"(item={version}, trainer={current_policy_version}); weight-sync "
                     "barrier invariant violated",
                 )
-            if self.staleness.too_stale(version, current_version):
+            if self.staleness.too_stale(version, current_policy_version):
                 raise RuntimeError(
                     "continuous ready prompt batch is older than the policy window "
-                    f"(item={version}, trainer={current_version})",
+                    f"(item={version}, trainer={current_policy_version})",
                 )
 
     def _select_iteration(
         self,
         *,
-        min_groups: int,
-        current_version: int | None,
-        expected_batch_id: int | None = None,
+        prompt_batch_id: int,
+        expected_group_count: int,
+        current_policy_version: int | None,
     ) -> tuple[int | None, list[ContinuousRolloutItem]] | None:
         """Pop one complete, distinct-group, homogeneous-version batch."""
 
-        # min_groups == len(prompts); the owner already rejected empty prompt
+        # expected_group_count == len(prompts); the owner already rejected empty prompt
         # lists at the API boundary, so no re-check here.
-        self.validate_ready_versions(current_version=current_version)
+        self.validate_ready_versions(current_policy_version=current_policy_version)
 
         items = self.queue.snapshot()
-        if expected_batch_id is not None:
-            if any(item.batch_id < expected_batch_id for item in items):
-                raise RuntimeError("continuous ready queue retains an already consumed batch")
-            # The owner selects its installed head, never whichever future batch
-            # happens to finish first. The unselected receipts retain ownership.
-            items = [item for item in items if item.batch_id == expected_batch_id]
+        if any(item.batch_id < prompt_batch_id for item in items):
+            raise RuntimeError("continuous ready queue retains an already consumed batch")
+        # The owner selects its installed head, never whichever future batch
+        # happens to finish first. The unselected receipts retain ownership.
+        items = [item for item in items if item.batch_id == prompt_batch_id]
         versions = {item.rollout_policy_version for item in items}
         if len(versions) > 1:
             raise RuntimeError(
                 "continuous ready prompt batch mixes policy versions "
                 f"{sorted(versions, key=lambda version: -1 if version is None else version)}",
             )
-        batch_ids = {item.batch_id for item in items}
-        if len(batch_ids) > 1:
-            raise RuntimeError(
-                f"continuous ready prompt batch mixes batch identities {sorted(batch_ids)}",
-            )
         group_slots = [item.group_slot for item in items]
         if len(group_slots) != len(set(group_slots)):
             raise RuntimeError(
                 "continuous ready prompt batch contains duplicate group slots",
             )
-        if len(items) < min_groups:
+        if len(items) < expected_group_count:
             return None
-        if len(items) > min_groups:
+        if len(items) > expected_group_count:
             raise RuntimeError(
                 "continuous ready prompt batch exceeds its expected group count "
-                f"(ready={len(items)}, expected={min_groups})",
+                f"(ready={len(items)}, expected={expected_group_count})",
             )
-        if set(group_slots) != set(range(min_groups)):
+        if set(group_slots) != set(range(expected_group_count)):
             raise RuntimeError("continuous ready prompt batch has invalid group slots")
         items.sort(key=lambda item: item.group_slot)
         self.queue.remove(items)
@@ -241,7 +235,7 @@ class ContinuousRolloutConsumer:
         *,
         version: int | None,
         items: list[ContinuousRolloutItem],
-        current_version: int | None,
+        current_policy_version: int | None,
         queue_wait_s: float,
         ready_groups_at_demand: int,
     ) -> RolloutIteration:
@@ -253,7 +247,7 @@ class ContinuousRolloutConsumer:
             item.batch.group_ids = torch.full_like(item.batch.group_ids, int(index))
             batches.append(item.batch)
 
-        staleness = self.staleness.staleness(version, current_version)
+        staleness = self.staleness.staleness(version, current_policy_version)
         item_age_s = max((item.age_s for item in items), default=0.0)
         max_attempt = max(item.attempt for item in items)
         stats = RolloutStats()
@@ -267,7 +261,7 @@ class ContinuousRolloutConsumer:
         stats.observe_gauges(
             {
                 "continuous.consume_policy_version": float(
-                    0 if current_version is None else current_version
+                    0 if current_policy_version is None else current_policy_version
                 ),
                 "continuous.rollout_policy_version": float(0 if version is None else version),
                 "continuous.stale_policy_versions": float(0 if staleness is None else staleness),
