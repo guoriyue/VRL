@@ -10,18 +10,18 @@ from types import SimpleNamespace
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.trainers import evidence
+from vrl.trainers import trace
 
 
 @pytest.fixture
 def stable_environment(monkeypatch):
     monkeypatch.setattr(
-        evidence.TrainingRunEvidence,
+        trace.TrainingRunTrace,
         "_runtime_identity",
         lambda: {"devices": [], "python": "test"},
     )
     monkeypatch.setattr(
-        evidence.TrainingRunEvidence,
+        trace.TrainingRunTrace,
         "_code_identity",
         lambda _path: {"available": True, "commit": "abc", "dirty": False},
     )
@@ -30,17 +30,17 @@ def stable_environment(monkeypatch):
 def test_launch_and_resume_have_distinct_immutable_records(tmp_path, stable_environment):
     cfg = OmegaConf.create({"seed": 17, "sampling": {"seed": "${seed}"}})
     identity = {"schema": "test-identity", "checkpoint": "sha256:abc"}
-    first = evidence.TrainingRunEvidence.capture(
+    first = trace.TrainingRunTrace.capture(
         cfg, tmp_path, model_identity=identity, resumed=False
     ).launch_path
     original = first.read_bytes()
-    second = evidence.TrainingRunEvidence.capture(
+    second = trace.TrainingRunTrace.capture(
         cfg, tmp_path, model_identity=identity, resumed=True
     ).launch_path
     assert first != second
     assert first.read_bytes() == original
     record = json.loads(original)
-    assert record["schema"] == evidence.RUN_EVIDENCE_SCHEMA
+    assert record["schema"] == trace.RUN_EVIDENCE_SCHEMA
     assert record["config"]["sampling"]["seed"] == 17
     canonical = json.dumps(
         record["config"], sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -54,27 +54,25 @@ def test_launch_and_resume_have_distinct_immutable_records(tmp_path, stable_envi
 def test_launch_id_collision_never_replaces_prior_evidence(
     tmp_path, stable_environment, monkeypatch
 ):
-    monkeypatch.setattr(evidence.uuid, "uuid4", lambda: SimpleNamespace(hex="fixed"))
+    monkeypatch.setattr(trace.uuid, "uuid4", lambda: SimpleNamespace(hex="fixed"))
     cfg = OmegaConf.create({"seed": 1})
-    first = evidence.TrainingRunEvidence.capture(
+    first = trace.TrainingRunTrace.capture(
         cfg, tmp_path, model_identity={"model": "a"}, resumed=False
     ).launch_path
     original = first.read_bytes()
     with pytest.raises(FileExistsError):
-        evidence.TrainingRunEvidence.capture(
-            cfg, tmp_path, model_identity={"model": "b"}, resumed=True
-        )
+        trace.TrainingRunTrace.capture(cfg, tmp_path, model_identity={"model": "b"}, resumed=True)
     assert first.read_bytes() == original
     assert list(first.parent.iterdir()) == [first]
 
 
 def test_invalid_config_or_missing_model_identity_is_not_published(tmp_path, stable_environment):
     with pytest.raises(ValueError, match="resolved model identity"):
-        evidence.TrainingRunEvidence.capture(
+        trace.TrainingRunTrace.capture(
             OmegaConf.create({}), tmp_path, model_identity={}, resumed=False
         )
     with pytest.raises(ValueError):
-        evidence.TrainingRunEvidence.capture(
+        trace.TrainingRunTrace.capture(
             OmegaConf.create({"value": float("nan")}),
             tmp_path,
             model_identity={"model": "a"},
@@ -84,11 +82,11 @@ def test_invalid_config_or_missing_model_identity_is_not_published(tmp_path, sta
 
 
 def test_runtime_snapshot_records_cpu_scope_without_dumping_environment(monkeypatch):
-    monkeypatch.setattr(evidence.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(trace.torch.cuda, "is_available", lambda: False)
     monkeypatch.setenv("WORLD_SIZE", "1")
     monkeypatch.setenv("TORCHINDUCTOR_EMULATE_PRECISION_CASTS", "1")
     monkeypatch.setenv("PRIVATE_API_TOKEN", "must-not-be-recorded")
-    record = evidence.TrainingRunEvidence._runtime_identity()
+    record = trace.TrainingRunTrace._runtime_identity()
     assert record["device_scope"] == "trainer-process-visible-devices"
     assert record["devices"] == []
     assert record["environment"]["WORLD_SIZE"] == "1"
@@ -99,7 +97,7 @@ def test_runtime_snapshot_records_cpu_scope_without_dumping_environment(monkeypa
 
 
 def test_git_identity_distinguishes_clean_dirty_and_unavailable(tmp_path):
-    assert evidence.TrainingRunEvidence._code_identity(tmp_path)["available"] is False
+    assert trace.TrainingRunTrace._code_identity(tmp_path)["available"] is False
 
     def git(*args):
         return subprocess.check_output(
@@ -119,11 +117,11 @@ def test_git_identity_distinguishes_clean_dirty_and_unavailable(tmp_path):
         "-m",
         "fixture",
     )
-    clean = evidence.TrainingRunEvidence._code_identity(tmp_path)
+    clean = trace.TrainingRunTrace._code_identity(tmp_path)
     assert clean["available"] is True and clean["dirty"] is False
     source.write_text("value = 2\n")
     (tmp_path / "untracked.py").write_text("extra = True\n")
-    dirty = evidence.TrainingRunEvidence._code_identity(tmp_path)
+    dirty = trace.TrainingRunTrace._code_identity(tmp_path)
     assert dirty["commit"] == clean["commit"]
     assert dirty["dirty"] is True
     assert dirty["tracked_diff_sha256"] != clean["tracked_diff_sha256"]
@@ -136,11 +134,11 @@ def test_manifest_content_changes_are_recorded_even_when_config_is_identical(
     manifest = tmp_path / "prompts.jsonl"
     manifest.write_text('{"prompt": "first"}\n')
     cfg = OmegaConf.create({"data": {"manifest": {str(manifest): 2}}})
-    first = evidence.TrainingRunEvidence.capture(
+    first = trace.TrainingRunTrace.capture(
         cfg, tmp_path, model_identity={"model": "a"}, resumed=False
     ).launch_path
     manifest.write_text('{"prompt": "changed"}\n')
-    second = evidence.TrainingRunEvidence.capture(
+    second = trace.TrainingRunTrace.capture(
         cfg, tmp_path, model_identity={"model": "a"}, resumed=True
     ).launch_path
     before, after = [json.loads(path.read_text()) for path in (first, second)]
@@ -154,7 +152,7 @@ def test_manifest_content_changes_are_recorded_even_when_config_is_identical(
 
 @pytest.fixture
 def completed_loop(tmp_path, stable_environment):
-    launch = evidence.TrainingRunEvidence.capture(
+    launch = trace.TrainingRunTrace.capture(
         OmegaConf.create({"seed": 17}),
         tmp_path,
         model_identity={"model": "fixture"},
@@ -172,19 +170,19 @@ def completed_loop(tmp_path, stable_environment):
 def test_artifact_seal_binds_full_tree_and_is_relocatable(completed_loop, tmp_path):
     import shutil
 
-    seal = evidence.TrainingRunEvidence.load(completed_loop).seal_artifacts()
-    record = evidence.TrainingRunEvidence.load(seal).verify_artifacts()
+    seal = trace.TrainingRunTrace.load(completed_loop).seal_artifacts()
+    record = trace.TrainingRunTrace.load(seal).verify_artifacts()
     assert record["artifacts"]["final_checkpoint"]["content"]["files"] == 2
     assert record["phase"] == "after-training-loop-before-cleanup"
     assert "success" not in record and "verified" not in record
     original = seal.read_bytes()
     with pytest.raises(FileExistsError):
-        evidence.TrainingRunEvidence.load(completed_loop).seal_artifacts()
+        trace.TrainingRunTrace.load(completed_loop).seal_artifacts()
     assert seal.read_bytes() == original
     copied = tmp_path.parent / (tmp_path.name + "-archived")
     shutil.copytree(tmp_path, copied)
     assert (
-        evidence.TrainingRunEvidence.load(copied / "run_evidence" / seal.name).verify_artifacts()
+        trace.TrainingRunTrace.load(copied / "run_evidence" / seal.name).verify_artifacts()
         == record
     )
 
@@ -194,7 +192,7 @@ def test_artifact_seal_binds_full_tree_and_is_relocatable(completed_loop, tmp_pa
     ["metrics", "checkpoint", "extra-file", "missing-file", "model-identity", "config"],
 )
 def test_artifact_drift_is_rejected(completed_loop, tmp_path, change):
-    seal = evidence.TrainingRunEvidence.load(completed_loop).seal_artifacts()
+    seal = trace.TrainingRunTrace.load(completed_loop).seal_artifacts()
     if change == "metrics":
         (tmp_path / "metrics.csv").write_text("epoch,reward\n0,0.99\n")
     elif change == "checkpoint":
@@ -211,19 +209,19 @@ def test_artifact_drift_is_rejected(completed_loop, tmp_path, change):
             launch["config"]["seed"] = 99
         completed_loop.write_text(json.dumps(launch))
     with pytest.raises(ValueError, match="mismatch"):
-        evidence.TrainingRunEvidence.load(seal).verify_artifacts()
+        trace.TrainingRunTrace.load(seal).verify_artifacts()
 
 
 def test_missing_metrics_cannot_be_sealed(completed_loop, tmp_path):
     (tmp_path / "metrics.csv").unlink()
     with pytest.raises(RuntimeError, match="does not exist"):
-        evidence.TrainingRunEvidence.load(completed_loop).seal_artifacts()
+        trace.TrainingRunTrace.load(completed_loop).seal_artifacts()
     assert not completed_loop.with_suffix(".artifacts.json").exists()
 
 
 @pytest.mark.parametrize("change", ["missing-role", "external-path", "launch-id", "schema"])
 def test_incomplete_or_redirected_receipt_is_rejected(completed_loop, change):
-    seal = evidence.TrainingRunEvidence.load(completed_loop).seal_artifacts()
+    seal = trace.TrainingRunTrace.load(completed_loop).seal_artifacts()
     record = json.loads(seal.read_text())
     if change == "missing-role":
         del record["artifacts"]["final_checkpoint"]
@@ -235,7 +233,7 @@ def test_incomplete_or_redirected_receipt_is_rejected(completed_loop, change):
         record["schema"] = "unknown/v2"
     seal.write_text(json.dumps(record))
     with pytest.raises(ValueError):
-        evidence.TrainingRunEvidence.load(seal).verify_artifacts()
+        trace.TrainingRunTrace.load(seal).verify_artifacts()
 
 
 @pytest.mark.parametrize("world_size", [1, 2])
@@ -246,7 +244,7 @@ def test_completion_requires_every_successful_rank(completed_loop, tmp_path, wor
     launch = json.loads(completed_loop.read_text())
     launch["runtime"]["environment"] = {"WORLD_SIZE": str(world_size)}
     completed_loop.write_text(json.dumps(launch))
-    seal = evidence.TrainingRunEvidence.load(completed_loop).seal_artifacts()
+    seal = trace.TrainingRunTrace.load(completed_loop).seal_artifacts()
     supervisor = RunSupervisor(command=[], output_dir=tmp_path, expected_world_size=world_size)
     for rank in range(world_size):
         write_run_verdict(
@@ -258,12 +256,12 @@ def test_completion_requires_every_successful_rank(completed_loop, tmp_path, wor
         )
     supervisor._collect_attempt_verdict(exit_code=0)
     verdict_path = tmp_path / "run_verdict.json"
-    verdict = evidence.TrainingRunEvidence.load(seal).verify_completion(verdict_path)
+    verdict = trace.TrainingRunTrace.load(seal).verify_completion(verdict_path)
     assert verdict["verdict"] == "success"
     verdict["verdict"] = "failed"
     verdict_path.write_text(json.dumps(verdict))
     with pytest.raises(ValueError, match="did not complete"):
-        evidence.TrainingRunEvidence.load(seal).verify_completion(verdict_path)
+        trace.TrainingRunTrace.load(seal).verify_completion(verdict_path)
     if world_size > 1:
         verdict["verdict"] = "success"
         for mutate in (
@@ -275,11 +273,11 @@ def test_completion_requires_every_successful_rank(completed_loop, tmp_path, wor
             mutate(candidate["rank_verdicts"])
             verdict_path.write_text(json.dumps(candidate))
             with pytest.raises(ValueError, match="rank verdict"):
-                evidence.TrainingRunEvidence.load(seal).verify_completion(verdict_path)
+                trace.TrainingRunTrace.load(seal).verify_completion(verdict_path)
 
 
 def test_completion_checks_success_without_attempt_identity(completed_loop, tmp_path):
-    seal = evidence.TrainingRunEvidence.load(completed_loop).seal_artifacts()
+    seal = trace.TrainingRunTrace.load(completed_loop).seal_artifacts()
     verdict = tmp_path / "run_verdict.json"
     verdict.write_text(
         json.dumps(
@@ -290,9 +288,7 @@ def test_completion_checks_success_without_attempt_identity(completed_loop, tmp_
             }
         )
     )
-    assert (
-        evidence.TrainingRunEvidence.load(seal).verify_completion(verdict)["verdict"] == "success"
-    )
+    assert trace.TrainingRunTrace.load(seal).verify_completion(verdict)["verdict"] == "success"
     assert "attempt_id" not in json.loads(completed_loop.read_text())
 
 
@@ -300,7 +296,7 @@ def test_completion_checks_success_without_attempt_identity(completed_loop, tmp_
 def test_success_payload_requires_observed_zero_process_exit(completed_loop, tmp_path, exit_code):
     launch = json.loads(completed_loop.read_text())
     completed_loop.write_text(json.dumps(launch))
-    seal = evidence.TrainingRunEvidence.load(completed_loop).seal_artifacts()
+    seal = trace.TrainingRunTrace.load(completed_loop).seal_artifacts()
     verdict = tmp_path / "run_verdict.json"
     verdict.write_text(
         json.dumps(
@@ -312,18 +308,18 @@ def test_success_payload_requires_observed_zero_process_exit(completed_loop, tmp
         )
     )
     with pytest.raises(ValueError, match="successful process exit"):
-        evidence.TrainingRunEvidence.load(seal).verify_completion(verdict)
+        trace.TrainingRunTrace.load(seal).verify_completion(verdict)
 
 
 def test_full_precision_metrics_are_bound_when_present(completed_loop, tmp_path):
     path = tmp_path / "metrics.full_precision.csv"
     path.write_text("epoch,loss\n0,0.123456789\n")
-    seal = evidence.TrainingRunEvidence.load(completed_loop).seal_artifacts()
-    record = evidence.TrainingRunEvidence.load(seal).verify_artifacts()
+    seal = trace.TrainingRunTrace.load(completed_loop).seal_artifacts()
+    record = trace.TrainingRunTrace.load(seal).verify_artifacts()
     assert record["artifacts"]["full_precision_metrics"]["path"] == path.name
     path.write_text("epoch,loss\n0,0.123456788\n")
     with pytest.raises(ValueError, match="full_precision_metrics artifact content mismatch"):
-        evidence.TrainingRunEvidence.load(seal).verify_artifacts()
+        trace.TrainingRunTrace.load(seal).verify_artifacts()
 
 
 def test_runtime_identity_after_production_precision_setup():
@@ -334,15 +330,15 @@ def test_runtime_identity_after_production_precision_setup():
     code = """
 import torch
 from vrl.models.precision import apply_float32_precision
-from vrl.trainers.evidence import TrainingRunEvidence
+from vrl.trainers.trace import TrainingRunTrace
 apply_float32_precision("ieee")
 torch.cuda.is_available = lambda: False
-record = TrainingRunEvidence._runtime_identity()
+record = TrainingRunTrace._runtime_identity()
 assert record["float32_precision"] == {"matmul": "ieee", "cudnn": "ieee"}
 for enabled in (True, False):
     torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = enabled
     torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = not enabled
-    record = TrainingRunEvidence._runtime_identity()
+    record = TrainingRunTrace._runtime_identity()
     assert record["matmul_reduced_precision_reduction"] == {
         "fp16": not enabled, "bf16": enabled,
     }
@@ -355,12 +351,12 @@ for enabled in (True, False):
 
 
 def test_loaded_run_reuses_paths_but_rechecks_modified_artifacts(completed_loop):
-    run = evidence.TrainingRunEvidence.load(completed_loop)
+    run = trace.TrainingRunTrace.load(completed_loop)
     seal = run.seal_artifacts()
     assert run.launch_path == completed_loop
     assert run.output_dir == completed_loop.parent.parent
     assert run.artifacts_path == seal
-    restored = evidence.TrainingRunEvidence.load(seal)
+    restored = trace.TrainingRunTrace.load(seal)
     assert restored.launch_path == run.launch_path
     assert restored.verify_artifacts() == run.verify_artifacts()
     (run.output_dir / "metrics.csv").write_text("replaced metrics\n")

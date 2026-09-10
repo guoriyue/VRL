@@ -61,7 +61,6 @@ from vrl.trainers.data import (
     resolve_prompt_example_references,
 )
 from vrl.trainers.distributed import DistributedTrainingContext, run_primary_io
-from vrl.trainers.evidence import TrainingRunEvidence
 from vrl.trainers.metrics_io import (
     OnlineMetricRow,
     format_online_metric_row,
@@ -71,6 +70,7 @@ from vrl.trainers.metrics_io import (
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan
 from vrl.trainers.strategy import Strategy, build_strategy
+from vrl.trainers.trace import TrainingRunTrace
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 from vrl.utils.memory import capture_host_memory, format_host_memory, log_host_memory
 from vrl.utils.profiling import profile_range
@@ -971,19 +971,19 @@ async def run_online_recipe(
         output_dir = Path(trainer_config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        run_evidence: TrainingRunEvidence | None = None
+        run_trace: TrainingRunTrace | None = None
 
         def prepare_launch_files() -> None:
-            nonlocal run_evidence
+            nonlocal run_trace
             save_resolved_config(cfg, output_dir, resumed=resumed)
-            run_evidence = TrainingRunEvidence.capture(
+            run_trace = TrainingRunTrace.capture(
                 cfg,
                 output_dir,
                 model_identity=model_identity,
                 resumed=resumed,
                 provided_examples=provided_examples is not None,
             )
-            logger.info("Training launch evidence: %s", run_evidence.launch_path)
+            logger.info("Training launch evidence: %s", run_trace.launch_path)
 
         run_primary_io(
             training_context, prepare_launch_files, description="training launch evidence"
@@ -1092,9 +1092,9 @@ async def run_online_recipe(
         )
 
         def seal_completed_loop() -> None:
-            if run_evidence is None:
+            if run_trace is None:
                 raise RuntimeError("training launch evidence was not published")
-            seal_path = run_evidence.seal_artifacts()
+            seal_path = run_trace.seal_artifacts()
             logger.info("Training artifact evidence: %s", seal_path)
 
         run_primary_io(

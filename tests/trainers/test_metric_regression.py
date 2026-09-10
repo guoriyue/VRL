@@ -7,7 +7,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.scripts.eval.compare_training_metrics import main
-from vrl.trainers import evidence
+from vrl.trainers import trace
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def make_run(tmp_path, monkeypatch):
         code = {"available": True, "commit": "fixture", "dirty": False}
         code.update(code_change or {})
         monkeypatch.setattr(
-            evidence.TrainingRunEvidence, "_code_identity", lambda _: copy.deepcopy(code)
+            trace.TrainingRunTrace, "_code_identity", lambda _: copy.deepcopy(code)
         )
         runtime = {
             "python": "fixture",
@@ -49,7 +49,7 @@ def make_run(tmp_path, monkeypatch):
         if runtime_change:
             runtime.update(runtime_change)
         monkeypatch.setattr(
-            evidence.TrainingRunEvidence, "_runtime_identity", lambda: copy.deepcopy(runtime)
+            trace.TrainingRunTrace, "_runtime_identity", lambda: copy.deepcopy(runtime)
         )
         config = {
             "trainer": {"seed": 17, "total_epochs": 2, "output_dir": str(directory)},
@@ -57,7 +57,7 @@ def make_run(tmp_path, monkeypatch):
         }
         if config_change:
             config_change(config)
-        launch = evidence.TrainingRunEvidence.capture(
+        launch = trace.TrainingRunTrace.capture(
             OmegaConf.create(config), directory, model_identity={"model": model}, resumed=False
         ).launch_path
         (directory / "metrics.csv").write_text("epoch,loss\n0,0.123457\n1,0.234568\n")
@@ -69,7 +69,7 @@ def make_run(tmp_path, monkeypatch):
         checkpoint = directory / "checkpoint-final"
         checkpoint.mkdir()
         (checkpoint / "checkpoint.pt").write_bytes(b"opaque fixture, not model training")
-        seal = evidence.TrainingRunEvidence.load(launch).seal_artifacts()
+        seal = trace.TrainingRunTrace.load(launch).seal_artifacts()
         verdict = directory / "run_verdict.json"
         verdict.write_text(
             json.dumps(
@@ -86,7 +86,7 @@ def make_run(tmp_path, monkeypatch):
 
 
 def compare(reference, candidate, **kwargs):
-    return evidence.compare_run_metrics(
+    return trace.compare_run_metrics(
         *reference, *candidate, columns=("loss", "reward_mean"), expected_epochs=2, **kwargs
     )
 

@@ -45,7 +45,7 @@ _RUNTIME_ENVIRONMENT_KEYS = (
 )
 
 
-class TrainingRunEvidence:
+class TrainingRunTrace:
     """Own one launch's evidence paths and its artifact/verification lifecycle.
 
     Verification rereads records from disk so an existing object cannot hide
@@ -58,15 +58,15 @@ class TrainingRunEvidence:
         self.artifacts_path = launch_path.with_suffix(".artifacts.json")
 
     @classmethod
-    def load(cls, path: str | Path) -> TrainingRunEvidence:
+    def load(cls, path: str | Path) -> TrainingRunTrace:
         path = Path(path)
         if path.name.endswith(".artifacts.json"):
             path = path.with_name(path.name.removesuffix(".artifacts.json") + ".json")
         if path.parent.name != "run_evidence" or path.suffix != ".json":
             raise ValueError("launch evidence must be run_evidence/<launch_id>.json")
-        evidence = cls(path)
-        evidence._read_launch()
-        return evidence
+        trace = cls(path)
+        trace._read_launch()
+        return trace
 
     @classmethod
     def capture(
@@ -77,7 +77,7 @@ class TrainingRunEvidence:
         model_identity: dict[str, Any],
         resumed: bool,
         provided_examples: bool = False,
-    ) -> TrainingRunEvidence:
+    ) -> TrainingRunTrace:
         """Publish a distinct, immutable launch record, including on every resume.
 
         The caller has resolved/materialized the model and owns rank-local IO. The
@@ -424,12 +424,12 @@ def compare_run_metrics(
         (Path(reference_seal), Path(reference_verdict)),
         (Path(candidate_seal), Path(candidate_verdict)),
     ):
-        evidence = TrainingRunEvidence.load(seal)
-        evidence.verify_completion(verdict_path)
+        trace = TrainingRunTrace.load(seal)
+        trace.verify_completion(verdict_path)
         receipt = json.loads(seal.read_text())
         if "full_precision_metrics" not in receipt["artifacts"]:
             raise ValueError("full-precision metrics are not bound by this receipt")
-        launch = evidence._read_launch()
+        launch = trace._read_launch()
         if launch.get("resumed") is not False or launch.get("provided_examples") is not False:
             raise ValueError("metric regression requires fresh runs with configured data")
         code = launch.get("code", {})
@@ -475,7 +475,7 @@ def compare_run_metrics(
             raise ValueError("expected_epochs must cover the configured complete run")
         # Only the artifact destination may differ; no numerical/config wildcard.
         trainer.pop("output_dir", None)
-        path = evidence.output_dir / "metrics.full_precision.csv"
+        path = trace.output_dir / "metrics.full_precision.csv"
         with path.open(newline="", encoding="utf-8") as handle:
             reader = csv.reader(handle)
             header = next(reader, [])

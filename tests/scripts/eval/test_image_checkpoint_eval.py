@@ -380,7 +380,7 @@ def completed_training_evaluation(generation, tmp_path, monkeypatch):
     import shutil
 
     from vrl.scripts.train import write_run_verdict
-    from vrl.trainers import evidence
+    from vrl.trainers import trace
 
     archive, rows = generation
     archive.publish_report(
@@ -398,20 +398,20 @@ def completed_training_evaluation(generation, tmp_path, monkeypatch):
     shutil.copytree(tmp_path / "checkpoint-8", training / "checkpoint-final")
     (training / "metrics.csv").write_text("epoch,reward\n0,0.1\n")
     monkeypatch.setattr(
-        evidence.TrainingRunEvidence,
+        trace.TrainingRunTrace,
         "_runtime_identity",
         lambda: {"environment": {"WORLD_SIZE": "1"}},
     )
     monkeypatch.setattr(
-        evidence.TrainingRunEvidence, "_code_identity", lambda _path: {"available": False}
+        trace.TrainingRunTrace, "_code_identity", lambda _path: {"available": False}
     )
-    launch = evidence.TrainingRunEvidence.capture(
+    launch = trace.TrainingRunTrace.capture(
         OmegaConf.create({"seed": 17}),
         training,
         model_identity=archive.plan.resolved_model.identity,
         resumed=False,
     ).launch_path
-    seal = evidence.TrainingRunEvidence.load(launch).seal_artifacts()
+    seal = trace.TrainingRunTrace.load(launch).seal_artifacts()
     write_run_verdict(str(training), environ={})
     verdict_path = training / "run_verdict.json"
     verdict = json.loads(verdict_path.read_text())
@@ -424,10 +424,10 @@ def completed_training_evaluation(generation, tmp_path, monkeypatch):
 def test_training_evaluation_association_uses_content_not_target_path(
     completed_training_evaluation,
 ):
-    from vrl.trainers.evidence import TrainingRunEvidence
+    from vrl.trainers.trace import TrainingRunTrace
 
     seal, verdict, archive = completed_training_evaluation
-    result = TrainingRunEvidence.load(seal).verify_evaluation(verdict, archive)
+    result = TrainingRunTrace.load(seal).verify_evaluation(verdict, archive)
     assert "checkpoint-8" in result["checkpoint_labels"]
     assert "attempt_id" not in result
     assert result["evaluation_content"]["files"] > len(list(archive.plan.cells()))
@@ -438,7 +438,7 @@ def test_training_evaluation_association_uses_content_not_target_path(
     "change", ["model", "checkpoint", "scores", "image", "protocol", "verdict"]
 )
 def test_training_evaluation_rejects_mismatched_evidence(completed_training_evaluation, change):
-    from vrl.trainers import evidence
+    from vrl.trainers import trace
 
     seal, verdict, archive = completed_training_evaluation
     if change in {"model", "checkpoint"}:
@@ -454,7 +454,7 @@ def test_training_evaluation_rejects_mismatched_evidence(completed_training_eval
                 b"different weights"
             )
         seal.unlink()
-        evidence.TrainingRunEvidence.load(launch_path).seal_artifacts()
+        trace.TrainingRunTrace.load(launch_path).seal_artifacts()
     elif change == "scores":
         (archive.directory / "report/scores.jsonl").write_text("{}\n")
     elif change == "image":
@@ -469,7 +469,7 @@ def test_training_evaluation_rejects_mismatched_evidence(completed_training_eval
         record["verdict"] = "failed"
         verdict.write_text(json.dumps(record))
     with pytest.raises(ValueError):
-        evidence.TrainingRunEvidence.load(seal).verify_evaluation(verdict, archive)
+        trace.TrainingRunTrace.load(seal).verify_evaluation(verdict, archive)
 
 
 def test_cli_verifies_existing_training_evaluation_without_generation_or_scoring(

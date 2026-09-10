@@ -513,13 +513,13 @@ def _install_common_fakes(
         classmethod(lambda cls, *args, **kwargs: object()),
     )
     monkeypatch.setattr(
-        online.TrainingRunEvidence, "seal_artifacts", lambda self: self.artifacts_path
+        online.TrainingRunTrace, "seal_artifacts", lambda self: self.artifacts_path
     )
     monkeypatch.setattr(online, "save_resolved_config", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        online.TrainingRunEvidence,
+        online.TrainingRunTrace,
         "capture",
-        lambda *args, **kwargs: online.TrainingRunEvidence(tmp_path / "evidence.json"),
+        lambda *args, **kwargs: online.TrainingRunTrace(tmp_path / "evidence.json"),
     )
     monkeypatch.setattr(
         online.OnlineRecipeRun,
@@ -1191,7 +1191,7 @@ async def test_launch_evidence_failure_stops_before_training_and_cleans_up(
     def fail_evidence(*args, **kwargs):
         raise OSError("evidence storage full")
 
-    monkeypatch.setattr(online.TrainingRunEvidence, "capture", fail_evidence)
+    monkeypatch.setattr(online.TrainingRunTrace, "capture", fail_evidence)
     with pytest.raises(OSError, match="evidence storage full"):
         await online.run_online_recipe(_cfg())
     assert state["trainer_steps"] == 0
@@ -1212,7 +1212,7 @@ async def test_artifact_sealing_runs_after_final_checkpoint_before_cleanup(monke
         sealed.append(run_evidence.launch_path)
         return run_evidence.artifacts_path
 
-    monkeypatch.setattr(online.TrainingRunEvidence, "seal_artifacts", seal)
+    monkeypatch.setattr(online.TrainingRunTrace, "seal_artifacts", seal)
     await online.run_online_recipe(_cfg())
     assert sealed == [tmp_path / "evidence.json"]
     assert state["collector_shutdowns"] == 1
@@ -1226,7 +1226,7 @@ async def test_artifact_sealing_failure_still_cleans_up(monkeypatch, tmp_path):
     def fail_seal(path):
         raise OSError("artifact disk read failed")
 
-    monkeypatch.setattr(online.TrainingRunEvidence, "seal_artifacts", fail_seal)
+    monkeypatch.setattr(online.TrainingRunTrace, "seal_artifacts", fail_seal)
     with pytest.raises(OSError, match="artifact disk read failed"):
         await online.run_online_recipe(_cfg())
     assert state["collector_shutdowns"] == 1

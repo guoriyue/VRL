@@ -778,10 +778,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     archive = EvaluationArchive(output_dir, plan)
     if args.verify_training_evidence is not None:
-        from vrl.trainers.evidence import TrainingRunEvidence
+        from vrl.trainers.trace import TrainingRunTrace
 
         receipt = args.verify_training_evidence
-        association = TrainingRunEvidence.load(receipt).verify_evaluation(
+        association = TrainingRunTrace.load(receipt).verify_evaluation(
             receipt.parent.parent / "run_verdict.json", archive
         )
         print(json.dumps(association, indent=2, sort_keys=True))
