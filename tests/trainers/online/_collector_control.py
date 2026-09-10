@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from tests.rollouts.collector._helpers import PromptCollectionFake
+
 
 class _RuntimeControl:
     current_policy_version = None
     requires_driver_model_offload = False
 
 
-class CollectorControlFake:
+class CollectorControlFake(PromptCollectionFake):
     """Supply the lifecycle protocol while tests specialize collection only."""
 
     generation_runtime = _RuntimeControl()
