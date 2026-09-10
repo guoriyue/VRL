@@ -216,3 +216,52 @@ seed 18. Each invocation still poisons and verifies two actual Ray receivers.
 Failure-injection coverage retains missed installation and cleanup failure,
 source nonmutation and no report overwrite. Ruff passed for the two touched
 Python files. This is a tiny CPU source test, not a repeated real SD3 GPU run.
+
+## 2026-09-09: Exercise the configured production transport
+
+The CLI now sends both target installs through `RayGenerationWeightSync`, using
+`resolved.generation.worker.weight_sync_bucket_bytes` exactly as the production
+launcher does. Previously the actor installed the received snapshot twice inside
+one RPC, so selecting bucket transport did not actually exercise it in the CLI.
+Receiver poisoning remains an isolated local operation before these two installs.
+The sync owner requires content verification and the version ACK from every
+receiver before the CLI can publish success.
+
+Reports now use `vrl.weight-delivery-acceptance/v2`. `transport.kind` distinguishes
+`snapshot` from `staged_buckets`; `transport.bucket_bytes` records the resolved
+ceiling, and `transport.sync_verify_wall_s.first/repeat` include coordinator-side
+transport, receiver installation and verification. The old per-receiver target
+installation timing fields were removed rather than relabeled as transport timing.
+Per-receiver poisoning time, byte/tensor count and accepted version remain.
+Historical v1 evidence stays valid within its original direct-install scope.
+
+Example for bucket acceptance:
+
+```bash
+python -m vrl.scripts.perf.weight_delivery_probe \
+  --config experiment/sd3_5/online_grpo_ocr --workers 1 \
+  --report outputs/weight_acceptance/sd3_5_bucket.json \
+  distributed.rollout.weight_sync_bucket_bytes=67108864 trainer.seed=17
+```
+
+Poison preparation still sends the complete snapshot once, before the measured
+target transfers. This CLI therefore does not establish a hard whole-run
+object-store/RSS ceiling or bucket transport peak memory. The two timing samples
+are acceptance observations, not a warmed throughput or full-parameter benchmark.
+The CLI still rejects multi-rank engines and retained-slot configs; real-model
+GPU acceptance of this v2 path remains open.
+
+The existing engine, dispatcher and sync owner supply the real transport and
+failure boundaries. The local async function only bridges the synchronous CLI
+to those async production calls; the worker subclass only isolates poisoning.
+Default production transport, model loaders, all-rank verification, source RNG,
+checkpoint restoration and cleanup-before-publication remain unchanged. No new
+transport flag, registry, contract dataclass or algorithm vocabulary was added.
+
+Validation: ten CLI checks passed with real Ray processes and tiny CPU source
+parameters. Both transports cover two receivers, repeatable source initialization,
+a skipped target install, cleanup failure and refusal to overwrite reports.
+A bucket-only dropped-chunk injection proves that the CLI actually takes the
+staged path and rejects incomplete assembly without publishing a report. Ruff
+passed for the two touched Python files. No GPU workload was started for these
+checks.

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from vrl.ray.actor_pool import RayActorCallError
 from vrl.run import OnlineRunConfig
 from vrl.scripts.perf import weight_delivery_probe as probe
 
@@ -23,11 +24,35 @@ class MissedInstallProbeWorker(TinyProbeWorker):
             self.core.executor.model.skip_install = True
         return super().update_weights(state_ref, policy_version, verify_content=verify_content)
 
+    def commit_weight_transfer(self, transfer_id, *, verify_content=False):
+        if (
+            self.core._weight_transfer.policy_version == 1
+            and self.core.worker_id == "acceptance-1"
+        ):
+            self.core.executor.model.skip_install = True
+        return super().commit_weight_transfer(transfer_id, verify_content=verify_content)
+
+
+class MissingChunkProbeWorker(TinyProbeWorker):
+    def receive_weight_bucket(self, bucket, transfer_id):
+        transfer = self.core._weight_transfer
+        if (
+            self.core.worker_id == "acceptance-1"
+            and transfer.policy_version == 1
+            and bucket[0][1] > 0
+        ):
+            return transfer.policy_version
+        return super().receive_weight_bucket(bucket, transfer_id)
+
 
 @pytest.mark.slow_test
-@pytest.mark.parametrize("failure", [None, "cleanup", "install"])
+@pytest.mark.parametrize(
+    ("bucket_bytes", "failure"),
+    [(size, failure) for size in (None, 8) for failure in (None, "cleanup", "install")]
+    + [(8, "chunk")],
+)
 def test_probe_cli_exports_real_cpu_parameters_and_checks_two_receivers(
-    tmp_path, monkeypatch, local_ray, failure
+    tmp_path, monkeypatch, local_ray, failure, bucket_bytes
 ):
     import json
 
@@ -46,6 +71,7 @@ def test_probe_cli_exports_real_cpu_parameters_and_checks_two_receivers(
     )
     resolved = SimpleNamespace(
         run=OnlineRunConfig(total_epochs=1, seed=17),
+        generation=SimpleNamespace(worker=SimpleNamespace(weight_sync_bucket_bytes=bucket_bytes)),
         family=SimpleNamespace(family="test"),
         built=SimpleNamespace(root=None, precision=None),
         resources=SimpleNamespace(rollout_devices=(), rollout_gpus_per_engine=1),
@@ -58,7 +84,10 @@ def test_probe_cli_exports_real_cpu_parameters_and_checks_two_receivers(
     monkeypatch.setattr(
         probe,
         "WeightDeliveryProbeWorker",
-        MissedInstallProbeWorker if failure == "install" else TinyProbeWorker,
+        {
+            "install": MissedInstallProbeWorker,
+            "chunk": MissingChunkProbeWorker,
+        }.get(failure, TinyProbeWorker),
     )
     monkeypatch.setattr("vrl.config.loading.load_config", lambda *_, **__: None)
     calls = []
@@ -87,13 +116,21 @@ def test_probe_cli_exports_real_cpu_parameters_and_checks_two_receivers(
         with pytest.raises(RuntimeError, match="cleanup failure fixture"):
             probe.main(args)
         assert not report.exists()
-    elif failure == "install":
-        with pytest.raises(local_ray.exceptions.RayTaskError, match="installed weight content"):
+    elif failure in ("install", "chunk"):
+        with pytest.raises(RayActorCallError) as error:
             probe.main(args)
+        message = (
+            "installed weight content" if failure == "install" else "incomplete weight transfer"
+        )
+        assert message in str(error.value.__cause__)
         assert not report.exists()
     else:
         probe.main(args)
         record = json.loads(report.read_text())
+        assert record["schema"] == "vrl.weight-delivery-acceptance/v2"
+        assert record["transport"]["bucket_bytes"] == bucket_bytes
+        assert record["transport"]["kind"] == ("staged_buckets" if bucket_bytes else "snapshot")
+        assert set(record["transport"]["sync_verify_wall_s"]) == {"first", "repeat"}
         assert record["source_initialization"] == {"seed": 17, "deterministic": False}
         assert {r["worker_id"] for r in record["receivers"]} == {"acceptance-0", "acceptance-1"}
         assert all(r["bytes"] == 16 and r["policy_version"] == 2 for r in record["receivers"])

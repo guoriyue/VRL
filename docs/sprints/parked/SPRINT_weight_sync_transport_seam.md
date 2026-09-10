@@ -113,3 +113,13 @@ sizes, independent backing storage, noncontiguous/BF16/NaN/negative-zero payload
 empty tensors and explicit CPU staging under a different default device. The
 real-process models are tiny CPU fixtures; no full-model/multi-GPU performance
 result is claimed. Source/checkpoint dtype policies are not changed by transport.
+
+## 2026-09-09: Configured-transport acceptance CLI
+
+The existing weight-delivery CLI now routes target snapshots through the production
+sync owner and consumes the resolved bucket setting. Its v2 report labels the
+transport and complete sync/verification wall times. Two-receiver real-Ray CPU
+checks include missing-bucket rejection, not just direct actor installation.
+See the [acceptance details and limits](../planned/SPRINT_miles_weight_delivery_verification.md).
+This closes a CLI coverage gap; warm full-parameter measurements, GPU/fabric
+comparisons and end-to-end training improvements remain unproven.

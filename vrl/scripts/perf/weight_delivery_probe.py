@@ -1,7 +1,8 @@
 """Isolated native weight-delivery acceptance against a real replay export.
 
 Build the replay source on CPU, optionally restore a training checkpoint, then
-start a private Ray fleet. Each receiver is poisoned before two exact installs.
+start a private Ray fleet. Each receiver is poisoned before two exact installs
+through the configured production snapshot or bucket transport.
 This checks unsharded in-place parameter delivery, not generation quality or
 converted/quantized forward equivalence. It never attaches to a live fleet.
 """
@@ -9,6 +10,7 @@ converted/quantized forward equivalence. It never attaches to a live fleet.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import gc
 import math
 import time
@@ -17,8 +19,11 @@ from typing import Any
 
 import torch
 
+from vrl.generation.ray.engine import RayGenerationEngine
+from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import HEALTH_CONCURRENCY_GROUP, RayGenerationWorker
 from vrl.ray.actor_group import RayActorGroup
+from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.dependencies import require_ray
 from vrl.run import resolve_model, resolve_online_run
 from vrl.trainers.weight_sync import build_trainable_state_sync_getter, to_cpu_snapshot
@@ -27,27 +32,18 @@ from vrl.trainers.weight_sync import build_trainable_state_sync_getter, to_cpu_s
 class WeightDeliveryProbeWorker(RayGenerationWorker):
     """Poisoning exists only on isolated acceptance actors, never production actors."""
 
-    def probe_delivery(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+    def poison_parameters(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         started = time.perf_counter()
         poison = {
             name: torch.where(value == 0, torch.ones_like(value), torch.zeros_like(value))
             for name, value in snapshot.items()
         }
         self.update_weights(poison, 0, verify_content=True)
-        poisoned = time.perf_counter()
-        del poison
-        self.update_weights(snapshot, 1, verify_content=True)
-        first = time.perf_counter()
-        self.update_weights(snapshot, 2, verify_content=True)
-        repeated = time.perf_counter()
         return {
             "worker_id": self.core.worker_id,
-            "policy_version": 2,
             "tensors": len(snapshot),
             "bytes": sum(value.numel() * value.element_size() for value in snapshot.values()),
-            "poison_install_verify_s": poisoned - started,
-            "first_install_verify_s": first - poisoned,
-            "repeat_install_verify_s": repeated - first,
+            "poison_install_verify_s": time.perf_counter() - started,
         }
 
 
@@ -130,11 +126,35 @@ def main(argv: list[str] | None = None) -> None:
         )
         payload = ray.put(snapshot)
         receivers = ray.get(
-            [handle.actor.probe_delivery.remote(payload) for handle in group.handles],
+            [handle.actor.poison_parameters.remote(payload) for handle in group.handles],
             timeout=args.timeout_s,
         )
+        del payload
+        engines = [RayGenerationEngine(handle.worker_id, [handle]) for handle in group.handles]
+        bucket_bytes = resolved.generation.worker.weight_sync_bucket_bytes
+        sync = RayGenerationWeightSync(
+            engines,
+            actor_dispatcher=RayActorDispatcher(tuple(engine.engine_id for engine in engines)),
+            worker_rpc_timeout_s=args.timeout_s,
+            verify_content=True,
+            bucket_bytes=bucket_bytes,
+        )
+
+        async def install_snapshots() -> dict[str, float]:
+            timings = {}
+            for version, phase in ((1, "first"), (2, "repeat")):
+                started = time.perf_counter()
+                await sync.push_to_rollout_engines(snapshot, version)
+                timings[phase] = time.perf_counter() - started
+            return timings
+
+        sync_timings = asyncio.run(install_snapshots())
+        # Each successful sync required verified content and the version ACK
+        # from every receiver. A partial/failing fleet never reaches publication.
+        for receiver in receivers:
+            receiver["policy_version"] = 2
         report = {
-            "schema": "vrl.weight-delivery-acceptance/v1",
+            "schema": "vrl.weight-delivery-acceptance/v2",
             "scope": "single-rank in-place trainable parameter bytes; no forward equivalence claim",
             "model_identity": replay.identity,
             "checkpoint": str(args.checkpoint) if args.checkpoint else None,
@@ -144,6 +164,11 @@ def main(argv: list[str] | None = None) -> None:
             },
             "source_build_restore_s": source_ready - source_started,
             "snapshot_export_s": snapshot_ready - source_ready,
+            "transport": {
+                "kind": "staged_buckets" if bucket_bytes is not None else "snapshot",
+                "bucket_bytes": bucket_bytes,
+                "sync_verify_wall_s": sync_timings,
+            },
             "receivers": receivers,
         }
     finally:
