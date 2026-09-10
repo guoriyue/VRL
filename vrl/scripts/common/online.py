@@ -717,6 +717,8 @@ async def run_online_recipe(
     provided_examples = None if prompt_examples is None else list(prompt_examples)
 
     resolved = resolve_online_run(cfg)
+    # Identical initialization on every rank, before any randomized model build.
+    resolved.run.initialize_process_rng()
     _preflight_production_video_reward(resolved.built.root)
     built = resolved.built
     run_config = resolved.run
@@ -989,6 +991,10 @@ async def run_online_recipe(
 
         component_names = tuple(reward_config.weights)
 
+        # Isolate training randomness from model/reward construction, while
+        # giving data-parallel ranks distinct reproducible streams. Checkpoint
+        # restoration below overrides this for resumed runs.
+        run_config.initialize_process_rng(rank=training_context.rank)
         rng = torch.Generator().manual_seed(run_config.seed)
         start_epoch = resume_epoch if resume_epoch is not None else 0
         if start_epoch > run_config.total_epochs:

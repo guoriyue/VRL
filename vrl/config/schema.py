@@ -542,6 +542,7 @@ class TrainerSection(ConfigBase):
     total_epochs: StrictInt | None = None
     save_freq: StrictInt | None = None
     seed: StrictInt | None = None
+    deterministic: StrictBool | None = None
     resume_from: str | None = None
     resume_strict: StrictBool | None = None
     profile: StrictBool | None = None

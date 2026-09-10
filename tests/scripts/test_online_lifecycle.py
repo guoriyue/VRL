@@ -1228,3 +1228,32 @@ async def test_artifact_sealing_failure_still_cleans_up(monkeypatch, tmp_path):
     assert state["collector_shutdowns"] == 1
     assert state["reward_shutdowns"] == 1
     assert state["owner_shutdowns"] == 1
+
+
+@pytest.mark.asyncio
+async def test_process_seed_is_applied_before_actual_model_build(monkeypatch, tmp_path):
+    import torch
+
+    from vrl.trainers.checkpointing import capture_rng_state, restore_rng_state
+
+    previous = capture_rng_state()
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+    observed = []
+
+    class ReachedModelBuild(RuntimeError):
+        pass
+
+    def inspect_build(self, build):
+        observed.append(torch.nn.Linear(4, 3).weight.detach().clone())
+        raise ReachedModelBuild()
+
+    monkeypatch.setattr(_FakeFamilyEntry, "build_replay", inspect_build)
+    try:
+        for seed in (123, 456):
+            torch.manual_seed(seed)
+            with pytest.raises(ReachedModelBuild):
+                await online.run_online_recipe(_cfg())
+        assert torch.equal(observed[0], observed[1])
+    finally:
+        restore_rng_state(previous)

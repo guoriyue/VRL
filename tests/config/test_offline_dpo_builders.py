@@ -96,3 +96,8 @@ def test_offline_dpo_adafactor_keeps_shared_optimizer_knobs() -> None:
 def test_offline_dpo_rejects_disk_optimizer_instead_of_ignoring_it() -> None:
     with pytest.raises(ValueError, match="disk optimizer state is not supported"):
         _resolved_trainer_config(["actor.optim.disk_state_directory=/tmp/vrl-optimizer"])
+
+
+def test_offline_dpo_rejects_unsupported_deterministic_policy() -> None:
+    with pytest.raises(ValueError, match=r"does not consume config field\(s\): trainer\.deterministic"):
+        _resolved_trainer_config(["trainer.deterministic=true"])

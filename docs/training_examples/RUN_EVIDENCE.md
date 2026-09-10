@@ -193,3 +193,47 @@ rollout/reward-process environment identity, validate held-out quality, or certi
 an externally nondeterministic reward backend. Cross-revision baseline migration
 and statistical comparisons need separate explicit protocols. These limitations
 also apply when the values happen to match exactly.
+
+For the online trainer, `trainer.seed` now seeds Python, NumPy's legacy global RNG,
+and Torch before model construction. Every rank uses the same seed for model
+initialization. After model/reward/runtime construction, trainer process RNGs are
+reset to `(trainer.seed + rank) mod 2**64` (NumPy uses its low 32 bits), isolating
+training randomness from construction and separating rank streams. The prompt
+sampler keeps its existing explicitly seeded Generator. Resume restores saved
+Python/NumPy/Torch/CUDA and prompt Generator state after this initialization.
+This intentionally changes fresh-run behavior: previously the configured seed
+controlled prompt selection but not global model initialization. Old unseeded
+initializations cannot be reconstructed retroactively.
+
+Enable strict trainer numerical settings with `trainer.deterministic=true` and
+establish the cuBLAS workspace policy before process launch, for example:
+
+```bash
+CUBLAS_WORKSPACE_CONFIG=:4096:8 PYTHONHASHSEED=17 \
+  .venv/bin/python -m vrl.scripts.train --config experiment/sd3_5/online_grpo_ocr \
+  trainer.seed=17 trainer.deterministic=true
+```
+
+This example enables settings; it is not a claim that the recipe has passed them.
+The online run owner enables `torch.use_deterministic_algorithms(True, warn_only=False)`,
+sets deterministic cuDNN and disables cuDNN benchmarking. It does not change the
+precision policy or silently select another attention/compile backend when an
+operation fails. The workspace defaults to `:4096:8` only before CUDA initialization;
+a missing workspace policy after CUDA initialization or an incompatible configured
+value is rejected. The supported workspace values follow the
+[PyTorch deterministic-operation requirements](https://docs.pytorch.org/docs/2.9/generated/torch.use_deterministic_algorithms.html).
+`PYTHONHASHSEED` must be supplied at process startup; this option cannot reset it
+inside an already running interpreter.
+
+The default `trainer.deterministic=false` leaves existing global numerical switches
+unchanged and still applies the configured RNG seed. Resolution itself remains
+side-effect-free; the online entrypoint explicitly applies the run-owned policy.
+Offline DPO rejects the unsupported field through its existing consumption guard.
+No model family registry, algorithm list, or second RNG checkpoint format is added.
+
+This policy applies to the trainer process, including local code that uses its
+global RNGs. It does not configure remote Ray actors, external reward services,
+independently constructed NumPy Generator instances, or opaque backend RNGs.
+The existing multi-rank rollout entropy broadcast remains unchanged. Actual
+repeatability must therefore be tested across the complete selected recipe;
+strict trainer flags alone are insufficient.

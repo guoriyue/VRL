@@ -62,16 +62,21 @@ from vrl.utils.config import require_exact_int
 
 @dataclass(frozen=True, slots=True)
 class OnlineRunConfig:
-    """Controller-owned epoch, checkpoint cadence, and prompt RNG policy."""
+    """Controller-owned epoch, checkpoint cadence, and trainer RNG policy."""
 
     total_epochs: int
     save_freq: int = 50
     seed: int = 0
+    deterministic: bool = False
 
     def __post_init__(self) -> None:
         require_exact_int(self.total_epochs, path="trainer.total_epochs", minimum=0)
         require_exact_int(self.save_freq, path="trainer.save_freq", minimum=0)
         require_exact_int(self.seed, path="trainer.seed")
+        if not -(2**63) <= self.seed < 2**64:
+            raise ValueError("trainer.seed must fit torch's signed/unsigned 64-bit seed range")
+        if type(self.deterministic) is not bool:
+            raise ValueError("trainer.deterministic must be a boolean")
 
     @classmethod
     def from_root(cls, root: RootConfig) -> OnlineRunConfig:
@@ -84,7 +89,41 @@ class OnlineRunConfig:
             values["save_freq"] = trainer.save_freq
         if trainer.seed is not None:
             values["seed"] = trainer.seed
+        if trainer.deterministic is not None:
+            values["deterministic"] = trainer.deterministic
         return cls(**values)
+
+    def initialize_process_rng(self, *, rank: int = 0) -> None:
+        """Seed model construction identically, then rank-local training streams.
+
+        This config owns trainer RNG policy. It does not seed remote rollout or
+        external reward processes. Resume restores checkpoint RNG after this call.
+        """
+        import os
+        import random
+
+        import numpy as np
+
+        require_exact_int(rank, path="training rank", minimum=0)
+        if self.deterministic:
+            workspace = os.environ.get("CUBLAS_WORKSPACE_CONFIG")
+            if workspace is None:
+                if torch.cuda.is_initialized():
+                    raise RuntimeError(
+                        "set CUBLAS_WORKSPACE_CONFIG=:4096:8 before launching deterministic training"
+                    )
+                os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+            elif workspace not in {":4096:8", ":16:8"}:
+                raise ValueError(
+                    "deterministic training requires a supported cuBLAS workspace config"
+                )
+            torch.use_deterministic_algorithms(True, warn_only=False)
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+        seed = (self.seed + rank) % 2**64
+        random.seed(seed)
+        np.random.seed(seed % 2**32)
+        torch.manual_seed(seed)
 
 
 @dataclass(frozen=True, slots=True)

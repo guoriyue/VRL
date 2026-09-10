@@ -210,3 +210,26 @@ self-comparison. They do not represent real training runs. Same-revision aggrega
 repeatability is narrower than full trajectory determinism; cross-revision baseline
 updates, statistical regression, actual repeated recipe curves and GPU CI integration
 remain open.
+
+## 2026-09-09: Seed trainer initialization and expose strict numerical settings
+
+The online entrypoint now applies its existing run-owned seed policy before model
+construction, using the same initialization seed on every rank. It resets trainer
+RNGs to a rank-derived stream after construction and before checkpoint RNG restore.
+The prompt Generator and existing checkpoint RNG format remain unchanged. Fresh
+initialization is now governed by `trainer.seed`, rather than an ambient global RNG.
+
+`trainer.deterministic=true` explicitly requests strict Torch deterministic algorithms,
+deterministic cuDNN and disabled cuDNN benchmarking. Configuration resolution does
+not itself mutate process state. The cuBLAS environment name and accepted values are
+backend protocol boundaries, not algorithm vocabulary. Offline DPO's existing field
+consumption guard rejects the unsupported setting; no duplicate rule was needed.
+Default numerical switches and precision/compile/attention ownership are preserved.
+
+Validation: 357 config, online lifecycle and run-policy tests passed. Coverage
+includes reaching actual replay model construction under different ambient RNGs,
+repeatable Python/NumPy/Torch initialization, rank stream separation, checkpoint RNG
+restoration, late workspace rejection, and exact repeated small CUDA network updates.
+The CUDA check is synthetic and in-process; it is not independent supervised runs,
+a diffusion curve, or full-recipe determinism. Remote rollout/reward randomness and
+actual repeated recipe acceptance remain open.
