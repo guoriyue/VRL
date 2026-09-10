@@ -347,3 +347,30 @@ def test_prepare_metrics_csv_rejects_invalid_resume_positions(tmp_path, rows) ->
 
     with pytest.raises(ValueError, match=r"integer|strictly increasing"):
         prepare_metrics_csv(path, columns, resume_at=("epoch", 2))
+
+
+def test_full_precision_metrics_detect_changes_hidden_by_display_rounding() -> None:
+    import struct
+
+    first = OnlineMetricRow.from_step_metrics(
+        0,
+        TrainStepMetrics(loss=1.00000001, reward_mean=0.123456789, grad_norm=-0.0),
+    )
+    second = OnlineMetricRow.from_step_metrics(
+        0,
+        TrainStepMetrics(loss=1.00000002, reward_mean=0.123456789, grad_norm=-0.0),
+    )
+    assert format_online_metric_row(first) == format_online_metric_row(second)
+    assert format_online_metric_row(first, full_precision=True) != format_online_metric_row(
+        second,
+        full_precision=True,
+    )
+    values = dict(
+        zip(
+            online_metric_columns(),
+            format_online_metric_row(first, full_precision=True).strip().split(","),
+            strict=True,
+        )
+    )
+    for name in ("loss", "reward_mean", "grad_norm"):
+        assert struct.pack("!d", float(values[name])) == struct.pack("!d", getattr(first, name))

@@ -243,3 +243,40 @@ def test_metrics_csv_preflight_is_rank_consistent_with_real_gloo(tmp_path, fail)
     else:
         assert results == [(0, "ok"), (1, "ok")]
         assert marker.read_text(encoding="utf-8") == "prepared\n"
+
+
+def test_full_precision_metrics_follow_online_write_and_resume(tmp_path) -> None:
+    import csv
+
+    from vrl.algorithms.types import TrainStepMetrics
+
+    run = OnlineRecipeRun(
+        bundle=None,
+        trainer=None,
+        strategy=None,
+        family="unit",
+        component_names=("ocr",),
+        adapter_exports=None,
+        csv_path=tmp_path / "metrics.csv",
+        rng=None,
+        resume_epoch=None,
+        model_identity={"schema": "test"},
+    )
+    run.prepare_metrics_csv()
+    for epoch in range(3):
+        run.write_metric_row(
+            epoch,
+            TrainStepMetrics(loss=0.123456789 + epoch, reward_components={"ocr": 0.987654321}),
+        )
+    path = tmp_path / "metrics.full_precision.csv"
+    rows = list(csv.DictReader(path.open()))
+    assert float(rows[0]["loss"]) == 0.123456789
+    assert float(rows[0]["r_ocr"]) == 0.987654321
+    run.resume_epoch = 2
+    run.prepare_metrics_csv()
+    run.write_metric_row(
+        2, TrainStepMetrics(loss=0.111111111, reward_components={"ocr": 0.222222222})
+    )
+    rows = list(csv.DictReader(path.open()))
+    assert [row["epoch"] for row in rows] == ["0", "1", "2"]
+    assert float(rows[-1]["loss"]) == 0.111111111

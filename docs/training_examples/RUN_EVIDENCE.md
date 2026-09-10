@@ -136,3 +136,21 @@ currently covers the native full-sequence denoise image evaluator. Video/token
 benchmarks need their own existing protocol adapters. A matching evaluation does
 not itself establish held-out data independence, human quality, a repeated
 learning curve, or numerical determinism.
+
+Online runs also write `metrics.full_precision.csv` from the same `OnlineMetricRow`
+as the display CSV. Finite floating-point aggregates use Python float `repr`, which
+round-trips binary64 values and signed zero; integer columns retain integer syntax.
+The display CSV keeps its existing rounding and column order. Full-precision output
+preserves logged aggregates, not original per-sample tensor bits or NaN payloads.
+
+Both files use the existing schema and checkpoint-position alignment on resume.
+Resuming an older run with no full-precision file starts that file at the resumed
+position; it cannot reconstruct earlier precision from the rounded CSV. Missing
+reward components remain NaN and must not pass a finite numerical regression.
+
+Artifact receipts include `full_precision_metrics` when the new file is present,
+so subsequent edits or deletion fail verification. Historical receipts without
+that role remain valid integrity records, but are insufficient for full-precision
+regression. Exact metric matching still needs an explicit metric/step protocol,
+compatible run identities, and successful independent attempts; neither CSV alone
+is a determinism certificate.

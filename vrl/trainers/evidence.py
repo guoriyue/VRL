@@ -244,6 +244,9 @@ def seal_run_artifacts(launch_path: str | Path) -> Path:
         "metrics": output_dir / "metrics.csv",
         "final_checkpoint": output_dir / "checkpoint-final",
     }
+    full_precision = output_dir / "metrics.full_precision.csv"
+    if full_precision.exists():
+        paths["full_precision_metrics"] = full_precision
     artifacts = {
         role: {
             "path": path.relative_to(output_dir).as_posix(),
@@ -253,8 +256,9 @@ def seal_run_artifacts(launch_path: str | Path) -> Path:
     }
     # Reject malformed/empty artifacts; a directory standing in for metrics or
     # an empty checkpoint must not acquire a completion-looking receipt.
-    if artifacts["metrics"]["content"]["kind"] != "file":
-        raise ValueError("metrics artifact must be a file")
+    for role in ("metrics", "full_precision_metrics"):
+        if role in artifacts and artifacts[role]["content"]["kind"] != "file":
+            raise ValueError(f"{role} artifact must be a file")
     checkpoint = artifacts["final_checkpoint"]["content"]
     if checkpoint["kind"] != "tree" or checkpoint["files"] == 0:
         raise ValueError("final checkpoint artifact must be a nonempty directory")
@@ -293,6 +297,8 @@ def verify_run_artifacts(seal_path: str | Path) -> dict[str, Any]:
         "final_checkpoint": "checkpoint-final",
     }
     artifacts = record.get("artifacts")
+    if isinstance(artifacts, dict) and "full_precision_metrics" in artifacts:
+        expected["full_precision_metrics"] = "metrics.full_precision.csv"
     if not isinstance(artifacts, dict) or set(artifacts) != set(expected):
         raise ValueError("artifact receipt must bind launch, metrics, and final checkpoint")
     for role, relative in expected.items():

@@ -176,3 +176,19 @@ existing smoke memory guard checks total capacity, not free capacity. No real
 training was launched. Validation: all 12 case configurations parsed in the
 existing CPU preflight test; 15 unrelated tests were deselected. The JSON was also
 checked for unique preset paths and consistency with the observed artifact counts.
+
+## 2026-09-09: Preserve metrics before display rounding
+
+The online writer now emits `metrics.full_precision.csv` beside its display CSV,
+using the same field schema and resume alignment. Finite aggregates round-trip
+without loss, including signed zero. Artifact receipts bind the additional file
+when present; historical receipts are still readable but cannot supply missing
+precision. The display output and trainer calculations are unchanged. This closes
+a prerequisite for numerical regression: prior six/four-decimal formatting could
+hide differences. It does not establish repeated real-recipe determinism.
+
+Validation: 166 metrics, evidence, online lifecycle and precision-bridge tests
+passed. Added checks distinguish values collapsed by display rounding, verify
+scalar bit round-trips, exercise actual online writes/resume, and reject altered
+full-precision artifacts. The remaining comparison protocol and real runs are
+still required.

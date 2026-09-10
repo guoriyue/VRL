@@ -310,3 +310,14 @@ def test_success_payload_requires_observed_zero_process_exit(completed_loop, tmp
     )
     with pytest.raises(ValueError, match="successful process exit"):
         evidence.verify_run_completion(seal, verdict)
+
+
+def test_full_precision_metrics_are_bound_when_present(completed_loop, tmp_path):
+    path = tmp_path / "metrics.full_precision.csv"
+    path.write_text("epoch,loss\n0,0.123456789\n")
+    seal = evidence.seal_run_artifacts(completed_loop)
+    record = evidence.verify_run_artifacts(seal)
+    assert record["artifacts"]["full_precision_metrics"]["path"] == path.name
+    path.write_text("epoch,loss\n0,0.123456788\n")
+    with pytest.raises(ValueError, match="full_precision_metrics artifact content mismatch"):
+        evidence.verify_run_artifacts(seal)

@@ -239,9 +239,22 @@ def online_metric_columns(component_names: Sequence[str] = ()) -> tuple[str, ...
 
 def format_online_metric_row(
     row: OnlineMetricRow,
+    *,
+    full_precision: bool = False,
 ) -> str:
     """Serialize a row in the same field-derived order as its header."""
 
+    if full_precision:
+        # Python float repr round-trips every finite binary64 value, including
+        # signed zero. This preserves aggregated metrics, not source tensor bits.
+        values = [
+            str(int(getattr(row, item.name)))
+            if item.metadata.get("csv_format") == "d"
+            else repr(float(getattr(row, item.name)))
+            for item in _fixed_fields()
+        ]
+        values.extend(repr(float(value)) for value in row.component_values)
+        return ",".join(values) + "\n"
     fixed_values = [
         format(getattr(row, item.name), str(item.metadata.get("csv_format", ".6f")))
         for item in _fixed_fields()

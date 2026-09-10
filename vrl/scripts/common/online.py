@@ -650,11 +650,12 @@ class OnlineRecipeRun:
     model_identity: dict[str, Any]
 
     def prepare_metrics_csv(self) -> None:
-        prepare_metrics_csv(
-            self.csv_path,
-            online_metric_columns(self.component_names),
-            resume_at=("epoch", self.resume_epoch) if self.resume_epoch is not None else None,
-        )
+        for path in (self.csv_path, self.csv_path.with_suffix(".full_precision.csv")):
+            prepare_metrics_csv(
+                path,
+                online_metric_columns(self.component_names),
+                resume_at=("epoch", self.resume_epoch) if self.resume_epoch is not None else None,
+            )
 
     def prepare_metrics_csv_rank_consistent(
         self,
@@ -675,8 +676,12 @@ class OnlineRecipeRun:
 
     def write_metric_row(self, epoch: int, metrics: Any) -> None:
         row = OnlineMetricRow.from_step_metrics(epoch, metrics, self.component_names)
-        with self.csv_path.open("a", encoding="utf-8") as handle:
-            handle.write(format_online_metric_row(row))
+        for path, full_precision in (
+            (self.csv_path, False),
+            (self.csv_path.with_suffix(".full_precision.csv"), True),
+        ):
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(format_online_metric_row(row, full_precision=full_precision))
 
     def save_checkpoint(self, path: Path, *, epoch: int) -> None:
         # Called on EVERY rank: save_training_checkpoint runs the checkpoint-state
