@@ -503,41 +503,38 @@ class ContinuousRolloutOwner:
             await self._wait_until_stopped()
             return
         runtime, loop = self._ensure_thread()
-        register_callback = False
         with self._state_lock:
             future = self._shutdown_future
             if future is None:
-                future = asyncio.run_coroutine_threadsafe(runtime.shutdown(), loop)
+                future = concurrent.futures.Future()
+                loop.call_soon_threadsafe(
+                    loop.create_task, self._shutdown_runtime(runtime, loop, future)
+                )
                 self._shutdown_future = future
-                register_callback = True
-        # Future.add_done_callback runs inline when the future is already done.
-        # _finish_shutdown takes _state_lock, so registration must be outside it.
-        if register_callback:
-            future.add_done_callback(lambda done: self._finish_shutdown(done, loop))
-        try:
-            await _await_owner_future(future)
-        except BaseException:
-            with self._state_lock:
-                if self._shutdown_future is future and future.done():
-                    self._shutdown_future = None
-            raise
+        await _await_owner_future(future)
         await self._wait_until_stopped()
 
-    def _finish_shutdown(
+    async def _shutdown_runtime(
         self,
-        future: concurrent.futures.Future[None],
+        runtime: _ContinuousOwnerRuntime,
         loop: asyncio.AbstractEventLoop,
+        future: concurrent.futures.Future[None],
     ) -> None:
+        """Own cleanup and publish its result independently of shutdown waiters."""
+
         try:
-            future.result()
-        except BaseException:
+            await runtime.shutdown()
+        except BaseException as error:
             with self._state_lock:
-                if self._shutdown_future is future:
-                    self._shutdown_future = None
-            return
-        with self._state_lock:
-            self._closed = True
-        loop.call_soon_threadsafe(loop.stop)
+                self._shutdown_future = None
+            future.set_exception(error)
+        else:
+            with self._state_lock:
+                self._closed = True
+            # Publish before stopping the loop; no completion callback needs
+            # another loop turn. Future callbacks must run outside the lock.
+            future.set_result(None)
+            loop.stop()
 
     async def _wait_until_stopped(self) -> None:
         stopped = await asyncio.to_thread(

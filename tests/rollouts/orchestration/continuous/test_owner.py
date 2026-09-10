@@ -552,39 +552,50 @@ async def test_failed_shutdown_keeps_owner_alive_for_cleanup_retry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_completed_shutdown_future_registers_callback_outside_state_lock(
-    monkeypatch,
-) -> None:
+async def test_immediate_shutdown_publishes_result_before_owner_stops() -> None:
     collector = _OwnerCollector()
     owner = _owner(_OwnerLifecycle(collector))
-    _runtime, loop = owner._ensure_thread()
-    original_submit = asyncio.run_coroutine_threadsafe
-    submitted = []
 
-    def submit_completed(coroutine, target_loop):
-        future = original_submit(coroutine, target_loop)
-        future.result(timeout=2.0)
-        submitted.append(future)
-        original_add_callback = future.add_done_callback
+    await asyncio.wait_for(owner.shutdown(), timeout=2.0)
 
-        def add_callback(callback):
-            # Fail immediately on regression instead of deadlocking pytest.
-            assert not owner._state_lock.locked()
-            original_add_callback(callback)
+    assert collector.shutdown_calls == 1
+    assert owner._shutdown_future is not None
+    assert owner._shutdown_future.done()
+    assert owner._shutdown_future.result() is None
+    assert owner._stopped.is_set()
+    await owner.shutdown()
+    assert collector.shutdown_calls == 1
 
-        future.add_done_callback = add_callback
-        return future
 
-    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", submit_completed)
+@pytest.mark.asyncio
+async def test_cancelled_shutdown_waiter_does_not_abandon_cleanup() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class GatedCollector(_OwnerCollector):
+        async def shutdown(self) -> None:
+            started.set()
+            await asyncio.to_thread(release.wait)
+            await super().shutdown()
+
+    collector = GatedCollector()
+    owner = _owner(_OwnerLifecycle(collector))
+    waiter = asyncio.create_task(owner.shutdown())
     try:
+        assert await asyncio.to_thread(started.wait, 2.0)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        release.set()
+        # Cleanup must stop the owner without another shutdown caller.
+        await asyncio.wait_for(owner._wait_until_stopped(), timeout=2.0)
+        assert collector.shutdown_calls == 1
+        assert owner._shutdown_future.result() is None
         await owner.shutdown()
-        assert len(submitted) == 1
         assert collector.shutdown_calls == 1
     finally:
-        # Also settle the real owner if the lock assertion catches a regression.
-        if submitted and not owner._closed:
-            owner._finish_shutdown(submitted[0], loop)
-        await owner._wait_until_stopped()
+        release.set()
+        await owner.shutdown()
 
 
 @pytest.mark.asyncio
