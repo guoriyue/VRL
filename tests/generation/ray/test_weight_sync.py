@@ -814,10 +814,20 @@ async def test_real_ray_weight_sync_deadline_excludes_generation_admission_wait(
 class _ContentReadbackWorker(RayGenerationWorker):
     """Isolated CPU actor with real worker install/readback and a tiny parameter."""
 
-    def __init__(self, skip_install=False):
+    def __init__(self, skip_install=False, versioned=False):
         from tests.generation.execution.test_worker_versioned_slots import _core, _ReadbackModel
+        from tests.models.steps.denoise.common.test_model_base import _ModelBaseStub
 
-        self.core = _core(_ReadbackModel(skip_install=skip_install), versioned_weight_sync=False)
+        model = _ModelBaseStub() if versioned else _ReadbackModel(skip_install=skip_install)
+        self.core = _core(model, versioned_weight_sync=versioned)
+
+    def execute_version(self, version):
+        from tests.generation.execution.test_worker_versioned_slots import _envelope
+
+        result = self.core.execute_batch(_envelope(version))
+        if result.error:
+            raise RuntimeError(result.error)
+        return result.policy_version
 
     def installed_weight(self):
         return self.core.executor.model.module.weight.detach(), self.core._policy_version
@@ -868,6 +878,38 @@ async def test_real_ray_readback_checks_every_worker_and_engine_rank(
                 for weight, version in installed
             )
         assert torch.equal(state["transformer.weight"], torch.tensor([[1.0, 2.0], [3.0, 4.0]]))
+    finally:
+        for actor in actors:
+            local_ray.kill(actor, no_restart=True)
+
+
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_real_ray_active_slot_readback_follows_executed_request(local_ray):
+    from vrl.generation.ray.worker import HEALTH_CONCURRENCY_GROUP
+
+    actor_cls = local_ray.remote(num_cpus=0, concurrency_groups={HEALTH_CONCURRENCY_GROUP: 1})(
+        _ContentReadbackWorker
+    )
+    actors = [actor_cls.remote(versioned=True) for _ in range(2)]
+    first = {"transformer.weight": torch.ones(2, 2), "transformer.bias": torch.ones(2)}
+    second = {key: value + 2 for key, value in first.items()}
+    try:
+        for version, state in ((1, first), (2, second)):
+            assert (
+                local_ray.get([a.update_weights.remote(state, version) for a in actors])
+                == [version] * 2
+            )
+        # Both workers execute an older request after a newer slot was retained.
+        assert local_ray.get([a.execute_version.remote(1) for a in actors]) == [1, 1]
+        assert local_ray.get([a.verify_active_weights.remote(first, 1) for a in actors]) == [1, 1]
+        assert local_ray.get(actors[0].execute_version.remote(2)) == 2
+        assert local_ray.get(actors[0].verify_active_weights.remote(second, 2)) == 2
+        # The second receiver has not activated v2. The audit must not repair it.
+        with pytest.raises(
+            local_ray.exceptions.RayTaskError, match="active trainable slot mismatch"
+        ):
+            local_ray.get(actors[1].verify_active_weights.remote(second, 2))
     finally:
         for actor in actors:
             local_ray.kill(actor, no_restart=True)

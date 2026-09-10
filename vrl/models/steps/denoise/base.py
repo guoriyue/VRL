@@ -381,6 +381,22 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         self.load_trainable_state(self._versioned_state_slots().get(version))
         self._active_slot_version = int(version)
 
+    def verify_active_trainable_state(
+        self, version: int, expected_state: Mapping[str, Any]
+    ) -> None:
+        """Read back an already active slot against an independently supplied snapshot.
+
+        Do not activate here: acceptance must observe the state generation used,
+        not repair it by installing the desired version before comparing.
+        """
+
+        active = getattr(self, "_active_slot_version", None)
+        if active != int(version):
+            raise RuntimeError(
+                f"active trainable slot mismatch: expected={version}, actual={active}"
+            )
+        self.verify_trainable_state(expected_state)
+
     @classmethod
     def from_build(cls, build: ModelBuild) -> DiffusionModelBase:  # pragma: no cover (abstract)
         """Load the backend from a runtime build."""

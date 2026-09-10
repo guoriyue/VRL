@@ -234,6 +234,35 @@ class GenerationWorkerCore:
         self._policy_version = int(policy_version)
         return self._policy_version
 
+    def verify_active_weights(self, state_ref: Any, policy_version: int) -> int:
+        """Acceptance-only readback; never activate, load, or acknowledge a new version.
+
+        Version-slot acceptance runs after the isolated worker has executed the
+        selected request. The expected snapshot must come from the sender, not
+        from the receiver's retained slot that is itself under test.
+        """
+
+        self._memory_parking.require_active("verify_active_weights", executor=self.executor)
+        model = getattr(self.executor, "model", None)
+        if state_ref is None:
+            raise ValueError("active weight verification requires an explicit payload")
+        if self._uses_versioned_slots:
+            verifier = getattr(model, "verify_active_trainable_state", None)
+            args = (int(policy_version), state_ref)
+        else:
+            if self._policy_version != int(policy_version):
+                raise RuntimeError("active weight verification policy version mismatch")
+            verifier = getattr(model, "verify_trainable_state", None)
+            args = (state_ref,)
+        if not callable(verifier):
+            raise NotImplementedError("model does not support active weight content verification")
+        try:
+            verifier(*args)
+        except BaseException as error:
+            self._memory_parking.record_model_failure(model, error)
+            raise
+        return int(policy_version)
+
     def supports_versioned_trainable_state(self) -> bool:
         """Whether the loaded model can retain versioned trainable-state slots.
 

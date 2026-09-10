@@ -92,3 +92,39 @@ passed (one existing dependency warning). The CPU bitwise tests cover poisoned
 parameters, reordered values, bf16/float64, signed zero/NaN, omitted expert roots,
 and attempts to include frozen parameters. The Ray tests retain the sender
 snapshot and verify failed receivers keep their previous version.
+
+## 2026-09-09: Active version-slot acceptance readback
+
+`GenerationWorkerCore.verify_active_weights(sender_snapshot, policy_version)` and
+its Ray RPC adapter now audit already active parameters. The diffusion model owns
+`verify_active_trainable_state`: it requires the requested active slot ID and then
+compares actual tensors against the independently supplied sender snapshot. It
+never activates a slot, reloads weights, or reads its expected values from the
+receiver's retained payload. This catches a corrupted slot and an activation that
+claims the right version without copying the corresponding parameters.
+
+The separate audit is intentional: non-draining installation only retains a slot;
+its ACK cannot claim to have verified live parameters that a future request will
+activate. `update_weights(..., verify_content=True)` still rejects that path.
+An isolated acceptance runner must execute the desired request and then audit all
+ranks before accepting the experiment. The new RPC does not advance the latest
+submit version; it can successfully audit an older request after a newer slot was
+installed. Default execution does not acquire per-request readback overhead.
+
+Tests use actual model-base slot installation/activation and worker request
+execution. The Ray case executes a small CPU executor in two isolated processes:
+both serve v1 after retaining v2, then one activates v2 while the other stays on
+v1. The second rank's v2 audit fails without repairing the state. Its forward
+output is a test fixture; this proves request-version activation/readback wiring,
+not production model numerical output or multi-GPU equivalence.
+
+Keep the thin model-owner and RPC methods: they enforce the active-slot and
+process boundaries. No new slot payload format, global model taxonomy, automatic
+poisoning, or training flag was introduced. A complete acceptance CLI, full model
+identity checks, converted/quantized/sharded verification, timing reports and GPU
+forward/logprob validation remain outstanding.
+
+Validation: 96 model-base, worker-slot, Ray sync and architecture tests passed.
+Five dependency warnings and a SWIG deprecation notice were emitted. Fault tests
+verify that wrong-slot claims and corrupt retained payloads do not pass readback,
+and that failed audits leave parameter contents unrepaired.

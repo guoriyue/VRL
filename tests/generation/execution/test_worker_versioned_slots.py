@@ -253,3 +253,30 @@ def test_content_verification_does_not_claim_version_slots_are_live_parameters()
         core.update_weights({"transformer.weight": torch.ones(2, 2)}, 2, verify_content=True)
     assert model.slots == {}
     assert core._policy_version == 1
+
+
+def test_active_slot_audit_accepts_old_request_without_advancing_latest_version():
+    from tests.models.steps.denoise.common.test_model_base import _ModelBaseStub, _slot_state
+
+    model = _ModelBaseStub()
+    core = _core(model)
+    first, second = _slot_state(model, 1, 2), _slot_state(model, 3, 4)
+    core.update_weights(first, 1)
+    core.update_weights(second, 2)
+    assert core.execute_batch(_envelope(1)).error is None
+    assert core.verify_active_weights(first, 1) == 1
+    assert core._policy_version == 2
+    assert core.execute_batch(_envelope(2)).error is None
+    assert core.verify_active_weights(second, 2) == 2
+
+
+def test_active_audit_does_not_load_or_correct_failed_receiver():
+    import pytest
+
+    model = _ReadbackModel(skip_install=True)
+    core = _core(model, versioned_weight_sync=False)
+    state = {"transformer.weight": torch.ones(2, 2)}
+    core.update_weights(state, 2)
+    with pytest.raises(RuntimeError, match="installed weight content"):
+        core.verify_active_weights(state, 2)
+    assert torch.all(model.module.weight == -99).item()

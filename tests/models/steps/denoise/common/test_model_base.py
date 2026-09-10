@@ -633,3 +633,32 @@ def test_forward_step_runs_under_the_stamped_contract() -> None:
 
     assert states == [True, False]
     assert torch.is_autocast_enabled("cpu") is False
+
+
+def test_slot_readback_observes_active_parameters_without_repairing_them():
+    runtime = _ModelBaseStub()
+    first = _slot_state(runtime, 1.0, 2.0)
+    second = _slot_state(runtime, 3.0, 4.0)
+    runtime.install_trainable_state(1, first)
+    runtime.install_trainable_state(2, second)
+    runtime.activate_trainable_state(1)
+    runtime.verify_active_trainable_state(1, first)
+    with pytest.raises(RuntimeError, match="active trainable slot mismatch"):
+        runtime.verify_active_trainable_state(2, second)
+    assert torch.equal(runtime.transformer.weight, first["transformer.weight"])
+    # Pretend activation claimed version 2 without copying its parameters.
+    runtime._active_slot_version = 2
+    with pytest.raises(RuntimeError, match="installed weight content"):
+        runtime.verify_active_trainable_state(2, second)
+    assert torch.equal(runtime.transformer.weight, first["transformer.weight"])
+
+
+def test_slot_readback_uses_sender_snapshot_not_corrupted_retained_slot():
+    runtime = _ModelBaseStub()
+    expected = _slot_state(runtime, 1.0, 2.0)
+    corrupted = {key: tensor.clone() + 10 for key, tensor in expected.items()}
+    runtime.install_trainable_state(1, corrupted)
+    runtime.activate_trainable_state(1)
+    with pytest.raises(RuntimeError, match="installed weight content"):
+        runtime.verify_active_trainable_state(1, expected)
+    assert torch.equal(runtime.transformer.weight, corrupted["transformer.weight"])

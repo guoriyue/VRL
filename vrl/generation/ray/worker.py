@@ -79,6 +79,11 @@ class RayGenerationWorker:
     def wake(self) -> None:
         self.core.wake()
 
+    def verify_active_weights(self, state_ref: Any, policy_version: int) -> int:
+        """Read back the state already active on this rank for acceptance."""
+
+        return self.core.verify_active_weights(state_ref, policy_version)
+
     def update_weights(
         self, state_ref: Any, policy_version: int, *, verify_content: bool = False
     ) -> int:
