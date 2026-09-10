@@ -38,7 +38,7 @@ from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import (
     CumemPool,
-    gpu_used_bytes,
+    gpu_process_used_bytes,
     release_cuda_memory_for_parking,
     validate_parking_residual,
 )
@@ -481,7 +481,7 @@ class InProcessRewardScorer:
     # Instance-assignable test seams over the shared parking bookkeeping in
     # vrl.utils.cuda_memory; rewards measure their configured device only.
     def _gpu_used_bytes(self) -> int:
-        return gpu_used_bytes(self._launch.device)
+        return gpu_process_used_bytes(self._launch.device)
 
     def _release_cuda_memory_for_parking(self) -> None:
         release_cuda_memory_for_parking(self._launch.device)

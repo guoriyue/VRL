@@ -288,3 +288,14 @@ or other processes' memory changes. The 256 MiB allowance has not been relaxed.
 Next diagnosis must compare per-process physical memory and Torch allocations
 against the device-wide observation, then validate the ownership boundary with
 concurrent allocations. This is an open investigation, not a proven worker leak.
+
+## 2026-09-09: Correct the memory ownership measurement
+
+The [independent CUDA reproduction](../../research/parking_process_ownership_20260909.md)
+confirmed that another process's allocation can make the old device-wide parking
+check fail after the owner has fully released its CuMem physical pages. Generation
+and local reward parking now query process-attributed NVML memory on the CUDA GPU
+UUID. Missing/ambiguous accounting fails closed. The residual allowance and phase
+ownership contracts are unchanged. Validation: 131 tests passed, one skipped,
+including real CuMem sleep/wake with a concurrent foreign allocation. This fixes
+an attribution defect; full SD3.5/OCR acceptance remains pending a retry.

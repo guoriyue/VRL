@@ -227,6 +227,14 @@ it serves both full-sequence denoise and token-autoregressive families, not just
 > `.[cosmos]`, but a dedicated venv keeps this large, tightly pinned accelerator
 > stack isolated — the repo already ships one at `.venvs/vllm-omni`.
 
+> **Physical parking checks require process memory accounting.** The core
+> `nvidia-ml-py` dependency reads the current process on the CUDA-selected GPU by
+> UUID. Whole-device free memory can change because of unrelated processes and
+> is not a proof that this worker released its allocations. Missing/ambiguous
+> per-process accounting (including unsupported MPS or PID-namespace setups)
+> fails closed; there is no whole-device or Torch-allocation fallback. The `perf`
+> extra remains accepted for compatibility, with NVML now supplied by core.
+
 > **Shared-GPU topologies need the `vllm` package importable in the run env.**
 > Separate from the `ar-vllm` kernel extra: whenever rollout and reward or trainer
 > share a card (`sleep_offload`), physical memory parking is CuMem-only and fails

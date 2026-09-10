@@ -75,7 +75,7 @@ BatchCompletionCallback: TypeAlias = Callable[[BatchProduceFence], None]  # noqa
 
 @dataclass(frozen=True, slots=True)
 class WorkerMemoryParkingSnapshot:
-    """Physical-memory evidence returned by one worker after parking.
+    """Process-attributed physical-memory evidence returned after parking.
 
     The baseline is captured before policy load, so an unavoidable CUDA context
     or library footprint is not mistaken for leaked model state. The runtime
@@ -90,8 +90,11 @@ class WorkerMemoryParkingSnapshot:
     loaded_gpu_used_bytes: int
     residual_gpu_used_bytes: int
     residual_bytes_limit: int = 0
+    measurement_scope: Literal["process"] = "process"
 
     def validate(self) -> None:
+        if self.measurement_scope != "process":
+            raise ValueError("parking evidence must measure process-attributed memory")
         if not self.worker_id:
             raise ValueError("parking snapshot worker_id must be non-empty")
         if self.backend not in get_args(ParkingBackend):

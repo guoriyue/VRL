@@ -28,6 +28,7 @@ dependencies = [
     # only memory parking. Shared-GPU installs add vLLM with --no-deps, so this
     # small dependency must remain in the core environment explicitly.
     "pyzmq>=25.0.0",
+    "nvidia-ml-py>=12.0.0",  # process-attributed physical CUDA parking evidence
     "safetensors>=0.4.0",  # weight loading (cosmos/anima, janus, FSDP save)
 ]
 
@@ -137,9 +138,8 @@ optim8bit = [
 # GPU performance probes under vrl/scripts/perf. NVML GPM (gpm_sampler.py) reports
 # SM-level counters such as utilization, occupancy, and tensor/DRAM activity. These
 # counters explain execution but do not, by themselves, prove recoverable throughput.
-perf = [
-    "nvidia-ml-py>=12.0.0",
-]
+# Kept as an install-compatible alias; NVML is now required by core parking.
+perf = []
 
 [project.scripts]
 vrl-train = "vrl.scripts.train:main"

@@ -15,7 +15,7 @@ from vrl.models.interfaces.runtime import PipelineOffloadMode
 from vrl.utils.cuda_memory import (
     CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
     CumemPool,
-    gpu_used_bytes,
+    gpu_process_used_bytes,
     release_cuda_memory,
     release_cuda_memory_for_parking,
 )
@@ -145,7 +145,7 @@ class WorkerMemoryParking:
         if state.required:
             # Device-wide rather than process-local: the topology must keep other
             # owners stable until the corresponding residual sample is taken.
-            baseline_gpu_used_bytes = gpu_used_bytes()
+            baseline_gpu_used_bytes = gpu_process_used_bytes()
         self._phase = _ParkingPhase.ACTIVE
         self._failure_reason = None
 
@@ -253,7 +253,7 @@ class WorkerMemoryParking:
                 raise RuntimeError(
                     f"generation worker {self.worker_id!r} cannot park before policy load",
                 )
-            used_bytes = gpu_used_bytes()
+            used_bytes = gpu_process_used_bytes()
             snapshot = WorkerMemoryParkingSnapshot(
                 worker_id=self.worker_id,
                 backend="cpu_only",
@@ -267,7 +267,7 @@ class WorkerMemoryParking:
 
         self.validate_loaded(executor)
         session = self._loaded_session()
-        loaded_bytes = gpu_used_bytes()
+        loaded_bytes = gpu_process_used_bytes()
         model = executor.model
         backend = session.backend
 
@@ -304,7 +304,7 @@ class WorkerMemoryParking:
 
         try:
             release_cuda_memory_for_parking()
-            residual_bytes = gpu_used_bytes()
+            residual_bytes = gpu_process_used_bytes()
             baseline_bytes = session.baseline_gpu_used_bytes
             if baseline_bytes is None:
                 if session.required or residual_bytes:

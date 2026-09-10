@@ -281,6 +281,44 @@ def gpu_used_bytes(device: str | None = None) -> int:
     return int(total_bytes - free_bytes)
 
 
+def gpu_process_used_bytes(device: str | None = None) -> int:
+    """Physical CUDA memory attributed to this process, including CuMem pools.
+
+    Whole-device usage includes unrelated processes; Torch allocated bytes include
+    unmapped CuMem virtual tensors. Neither can prove this owner's physical release.
+    Missing process accounting (for example unsupported MPS/PID namespaces) must
+    fail closed, never silently report zero or fall back to whole-device usage.
+    """
+    if device is not None and not str(device).startswith("cuda"):
+        return 0
+    import torch
+
+    if not torch.cuda.is_available():
+        return 0
+    import pynvml
+
+    target = torch.device(device) if device is not None else torch.device("cuda")
+    torch.cuda.synchronize(target)
+    # CUDA ordinals may be reordered by CUDA_VISIBLE_DEVICES; NVML ordinals are
+    # physical. UUID addresses the actual device (or MIG instance) without guessing.
+    uuid = getattr(torch.cuda.get_device_properties(target), "uuid", None)
+    if not uuid:
+        raise RuntimeError("CUDA device UUID is required for process memory accounting")
+    pynvml.nvmlInit()
+    try:
+        handle = pynvml.nvmlDeviceGetHandleByUUID(str(uuid))
+        processes = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
+        matches = [entry for entry in processes if entry.pid == os.getpid()]
+        if len(matches) != 1:
+            raise RuntimeError("NVML cannot identify this CUDA process unambiguously")
+        used = matches[0].usedGpuMemory
+        if type(used) is not int or not 0 <= used < 2**64 - 1:
+            raise RuntimeError("NVML physical memory accounting is unavailable for this process")
+        return used
+    finally:
+        pynvml.nvmlShutdown()
+
+
 def release_cuda_memory_for_parking(device: str | None = None) -> None:
     """Strict CUDA cleanup before publishing a memory-parking proof.
 
@@ -340,6 +378,7 @@ __all__ = [
     "cuda_peak_allocated_bytes",
     "cuda_peak_allocated_mb",
     "empty_cuda_cache",
+    "gpu_process_used_bytes",
     "gpu_used_bytes",
     "is_cuda_out_of_memory",
     "release_cuda_memory",

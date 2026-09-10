@@ -34,7 +34,7 @@ def _isolate_cuda_parking_probes(monkeypatch: pytest.MonkeyPatch) -> None:
 
     import vrl.generation.execution.memory_parking as parking_module
 
-    monkeypatch.setattr(parking_module, "gpu_used_bytes", lambda: 0)
+    monkeypatch.setattr(parking_module, "gpu_process_used_bytes", lambda: 0)
     monkeypatch.setattr(parking_module, "release_cuda_memory_for_parking", lambda: None)
 
 
@@ -419,7 +419,7 @@ def test_pipeline_offload_residual_failure_does_not_commit_parked_state(
             baseline + CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT + 1,
         ),
     )
-    monkeypatch.setattr(parking_module, "gpu_used_bytes", lambda: next(readings))
+    monkeypatch.setattr(parking_module, "gpu_process_used_bytes", lambda: next(readings))
     core = _core(
         None,
         sleep_offload=True,
@@ -653,7 +653,7 @@ def test_cumem_sleep_bounds_lazy_cuda_runtime_residual(
     baseline = 1024
     residual = baseline + CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT + extra_residual_bytes
     readings = iter((baseline, 10 * 1024**3, residual))
-    monkeypatch.setattr(parking_module, "gpu_used_bytes", lambda: next(readings))
+    monkeypatch.setattr(parking_module, "gpu_process_used_bytes", lambda: next(readings))
     fake = _FakeCuMem()
     _install_cumem_pool(monkeypatch, fake)
     model = _SleepModel(device="cuda:0")
@@ -1050,7 +1050,7 @@ def test_cpu_offload_bounds_lazy_cuda_runtime_residual(
     baseline = 1024
     residual = baseline + CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT + extra_residual_bytes
     readings = iter((baseline, 10 * 1024**3, residual))
-    monkeypatch.setattr(parking_module, "gpu_used_bytes", lambda: next(readings))
+    monkeypatch.setattr(parking_module, "gpu_process_used_bytes", lambda: next(readings))
     model = _SleepModel()
     core = _core(None, sleep_offload=True, family="janus_pro")  # declares MODEL profile
     core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
@@ -1092,7 +1092,7 @@ def test_cuda_model_parking_returns_to_preload_process_baseline(monkeypatch) -> 
     # deterministic test covers strict device-wide residual rejection.
     monkeypatch.setattr(
         parking_module,
-        "gpu_used_bytes",
+        "gpu_process_used_bytes",
         lambda: int(torch.cuda.memory_reserved()),
     )
     monkeypatch.setattr(
