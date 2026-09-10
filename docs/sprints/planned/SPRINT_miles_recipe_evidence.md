@@ -101,3 +101,30 @@ Coverage includes real file/tree drift and archive relocation, no-overwrite
 publication, final-checkpoint-before-seal ordering, and cleanup on sealing failure.
 One warning is the existing PyTorch TF32 API deprecation. These are CPU/integration
 checks, not real GPU learning or reproducibility evidence.
+
+## 2026-09-09: Attempt-scoped completion verification
+
+Supervised child launches now receive a fresh shared attempt ID, inherited by all
+torchrun workers. Launch evidence, rank verdicts and the supervisor aggregate carry
+this ID. Live collection rejects stale or untagged verdicts; the supervisor also
+records the actual exit code after joining the child. `verify_run_completion`
+requires intact artifacts, a matching successful attempt, zero observed exit,
+and exactly one successful verdict from every distributed rank. A stale success,
+missing/duplicate rank, rank from another attempt, or success JSON followed by a
+nonzero process exit cannot certify completion.
+
+Existing signal cleanup, restart policy, per-rank verdict file ownership, and
+aggregate-after-join behavior stay in place. The new constant names an environment
+protocol boundary, not a business vocabulary. No extra lifecycle contract class
+or wrapper module was introduced. Custom supervised verdict writers must include
+the inherited attempt ID, preferably through the existing `write_run_verdict` API.
+Standalone/historical runs without shared identity and observed supervisor exit
+remain unproven by this completion verifier; no ID is inferred from old filenames.
+Final verdict bytes are still separate from the pre-cleanup artifact receipt.
+
+Validation: 119 evidence, supervisor, training-signal and architecture tests passed.
+The supervisor suite runs actual subprocess/process-group and torchrun retry
+cases. Added checks cover independent attempt IDs, unchanged parent environment,
+stale rank rejection, and post-success nonzero exit. CPU evidence fixtures cover
+all-rank outcome association and rejection of legacy unassociated successes;
+these tests do not establish GPU learning curves or numerical determinism.

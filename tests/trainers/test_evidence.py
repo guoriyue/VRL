@@ -15,6 +15,7 @@ from vrl.trainers import evidence
 
 @pytest.fixture
 def stable_environment(monkeypatch):
+    monkeypatch.delenv("VRL_RUN_ATTEMPT_ID", raising=False)
     monkeypatch.setattr(evidence, "_runtime_identity", lambda: {"devices": [], "python": "test"})
     monkeypatch.setattr(
         evidence,
@@ -221,3 +222,91 @@ def test_incomplete_or_redirected_receipt_is_rejected(completed_loop, change):
     seal.write_text(json.dumps(record))
     with pytest.raises(ValueError):
         evidence.verify_run_artifacts(seal)
+
+
+@pytest.mark.parametrize("world_size", [1, 2])
+def test_completion_requires_matching_attempt_and_every_successful_rank(
+    completed_loop, tmp_path, world_size
+):
+    from vrl.scripts.supervise import RunSupervisor
+    from vrl.scripts.train import write_run_verdict
+
+    launch = json.loads(completed_loop.read_text())
+    launch["attempt_id"] = "current"
+    launch["runtime"]["environment"] = {"WORLD_SIZE": str(world_size)}
+    completed_loop.write_text(json.dumps(launch))
+    seal = evidence.seal_run_artifacts(completed_loop)
+    supervisor = RunSupervisor(command=[], output_dir=tmp_path, expected_world_size=world_size)
+    supervisor._attempt_id = "current"
+    for rank in range(world_size):
+        write_run_verdict(
+            str(tmp_path),
+            environ={
+                "RANK": str(rank),
+                "WORLD_SIZE": str(world_size),
+                "VRL_RUN_ATTEMPT_ID": "current",
+            },
+        )
+    supervisor._collect_attempt_verdict(exit_code=0)
+    verdict_path = tmp_path / "run_verdict.json"
+    verdict = evidence.verify_run_completion(seal, verdict_path)
+    assert verdict["verdict"] == "success"
+    verdict["attempt_id"] = "previous"
+    verdict_path.write_text(json.dumps(verdict))
+    with pytest.raises(ValueError, match="different attempt"):
+        evidence.verify_run_completion(seal, verdict_path)
+    verdict["attempt_id"] = "current"
+    verdict["verdict"] = "failed"
+    verdict_path.write_text(json.dumps(verdict))
+    with pytest.raises(ValueError, match="did not complete"):
+        evidence.verify_run_completion(seal, verdict_path)
+    if world_size > 1:
+        verdict["verdict"] = "success"
+        for mutate in (
+            lambda ranks: ranks.pop(),
+            lambda ranks: ranks[1].update(attempt_id="previous"),
+            lambda ranks: ranks[1].update(verdict="failed"),
+            lambda ranks: ranks[1].update(rank=0),
+        ):
+            candidate = json.loads(json.dumps(verdict))
+            mutate(candidate["rank_verdicts"])
+            verdict_path.write_text(json.dumps(candidate))
+            with pytest.raises(ValueError, match="rank verdict"):
+                evidence.verify_run_completion(seal, verdict_path)
+
+
+def test_old_launch_without_attempt_identity_cannot_borrow_a_success(completed_loop, tmp_path):
+    seal = evidence.seal_run_artifacts(completed_loop)
+    verdict = tmp_path / "run_verdict.json"
+    verdict.write_text('{"schema_version": 1, "verdict": "success"}')
+    with pytest.raises(ValueError, match="no shared attempt identity"):
+        evidence.verify_run_completion(seal, verdict)
+
+
+def test_launch_captures_supervisor_attempt_identity(tmp_path, stable_environment, monkeypatch):
+    monkeypatch.setenv("VRL_RUN_ATTEMPT_ID", "supervised-attempt")
+    launch = evidence.write_run_evidence(
+        OmegaConf.create({}), tmp_path, model_identity={"model": "fixture"}, resumed=False
+    )
+    assert json.loads(launch.read_text())["attempt_id"] == "supervised-attempt"
+
+
+@pytest.mark.parametrize("exit_code", [None, 1, -9, False])
+def test_success_payload_requires_observed_zero_process_exit(completed_loop, tmp_path, exit_code):
+    launch = json.loads(completed_loop.read_text())
+    launch["attempt_id"] = "current"
+    completed_loop.write_text(json.dumps(launch))
+    seal = evidence.seal_run_artifacts(completed_loop)
+    verdict = tmp_path / "run_verdict.json"
+    verdict.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "verdict": "success",
+                "attempt_id": "current",
+                "supervisor_exit_code": exit_code,
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="successful process exit"):
+        evidence.verify_run_completion(seal, verdict)

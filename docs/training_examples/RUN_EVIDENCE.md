@@ -69,3 +69,37 @@ verdict nor includes held-out evaluations or intermediate checkpoints. Its hashe
 establish internal consistency, not authenticity: retain a trusted external digest
 or immutable archive if the receipt itself must be protected against replacement.
 No learning-curve or deterministic-regression grade is inferred from these files.
+
+For supervised runs, verify process completion separately:
+
+```python
+from vrl.trainers.evidence import verify_run_completion
+
+verdict = verify_run_completion(
+    "outputs/my-run/run_evidence/<launch_id>.artifacts.json",
+    "outputs/my-run/run_verdict.json",
+)
+```
+
+The supervisor generates a fresh `VRL_RUN_ATTEMPT_ID` for each child launch,
+including every retry. It passes the ID through the child environment, without
+changing its own environment. Torchrun workers inherit the same ID. The online
+launch record and each worker verdict record it as `attempt_id`; the supervisor
+rejects missing or mismatched attempt IDs when collecting a live attempt. Custom
+supervised commands should call `write_run_verdict`, or include the inherited ID
+in their existing verdict writer. Old untagged custom verdicts are no longer
+accepted as evidence for a live supervised attempt.
+
+After joining the child, the supervisor records `supervisor_exit_code` in the
+outcome. Completion verification requires zero, as well as a successful verdict
+from the matching attempt. In distributed runs it additionally requires every
+rank exactly once, with matching world size and attempt ID, and successful rank
+verdicts. A worker's success JSON alone cannot certify a torchrun process that
+later exited nonzero. Missing verdicts and cleanup failures do not become success.
+
+Standalone launches and historical artifacts without a shared attempt identity
+and observed supervisor exit remain eligible for content integrity checks, but
+cannot pass this completion check. This check reads the final verdict separately;
+it does not add its bytes to the earlier artifact receipt. Archive both together
+and retain an external trusted digest when authenticity is required. Held-out
+evaluation association and numerical reproducibility checks remain separate work.

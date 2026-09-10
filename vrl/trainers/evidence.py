@@ -166,6 +166,8 @@ def write_run_evidence(
     record = {
         "schema": RUN_EVIDENCE_SCHEMA,
         "launch_id": uuid.uuid4().hex,
+        # Set by the supervisor once per attempt and inherited by every rank.
+        "attempt_id": os.environ.get("VRL_RUN_ATTEMPT_ID"),
         "captured_at": datetime.now(UTC).isoformat(),
         "phase": "before-training-loop",
         "resumed": bool(resumed),
@@ -298,3 +300,55 @@ def verify_run_artifacts(seal_path: str | Path) -> dict[str, Any]:
         if observed != artifact.get("content"):
             raise ValueError(f"{role} artifact content mismatch")
     return record
+
+
+def verify_run_completion(seal_path: str | Path, verdict_path: str | Path) -> dict[str, Any]:
+    """Require matching artifacts and a successful outcome for the same attempt.
+
+    This establishes process completion, not numerical correctness. Unsupervised
+    historical runs without an explicit shared attempt ID cannot be associated by
+    filename, timestamps, or the mere presence of a success verdict.
+    """
+
+    artifacts = verify_run_artifacts(seal_path)
+    seal_path = Path(seal_path)
+    launch_path = seal_path.with_name(f"{artifacts['launch_id']}.json")
+    launch = _read_launch(launch_path)
+    attempt_id = launch.get("attempt_id")
+    if not isinstance(attempt_id, str) or not attempt_id:
+        raise ValueError("launch has no shared attempt identity for outcome verification")
+    verdict = json.loads(Path(verdict_path).read_text(encoding="utf-8"))
+    if not isinstance(verdict, dict) or verdict.get("schema_version") != 1:
+        raise ValueError("unsupported run verdict")
+    if verdict.get("attempt_id") != attempt_id:
+        raise ValueError("run verdict belongs to a different attempt")
+    if verdict.get("verdict") != "success":
+        raise ValueError("run attempt did not complete successfully")
+    if (
+        type(verdict.get("supervisor_exit_code")) is not int
+        or verdict["supervisor_exit_code"] != 0
+    ):
+        raise ValueError("supervisor did not observe a successful process exit")
+    world_size = int(launch["runtime"].get("environment", {}).get("WORLD_SIZE", "1"))
+    if world_size > 1:
+        ranks = verdict.get("rank_verdicts")
+        if verdict.get("world_size") != world_size or not isinstance(ranks, list):
+            raise ValueError("distributed completion requires an aggregate verdict")
+        if len(ranks) != world_size:
+            raise ValueError("distributed completion is missing rank verdicts")
+        seen = set()
+        for rank in ranks:
+            if (
+                not isinstance(rank, dict)
+                or type(rank.get("rank")) is not int
+                or rank["rank"] not in range(world_size)
+                or rank["rank"] in seen
+                or rank.get("world_size") != world_size
+                or rank.get("attempt_id") != attempt_id
+                or rank.get("verdict") != "success"
+            ):
+                raise ValueError("distributed completion contains an invalid rank verdict")
+            seen.add(rank["rank"])
+    elif "rank" in verdict or "rank_verdicts" in verdict or verdict.get("world_size", 1) != 1:
+        raise ValueError("single-process launch has a distributed verdict")
+    return verdict

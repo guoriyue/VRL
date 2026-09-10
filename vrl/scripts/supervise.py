@@ -37,6 +37,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -47,7 +48,7 @@ if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
     from vrl.trainers.core.types import ReplayParityConfig, RolloutOrchestrationConfig
 
-from vrl.scripts.train import RUN_VERDICT_NAME, rank_run_verdict_name
+from vrl.scripts.train import RUN_ATTEMPT_ID_ENV, RUN_VERDICT_NAME, rank_run_verdict_name
 
 logger = logging.getLogger(__name__)
 
@@ -481,6 +482,7 @@ class RunSupervisor:
     expected_world_size: int = 1
 
     _child: subprocess.Popen | None = field(default=None, init=False, repr=False)
+    _attempt_id: str | None = field(default=None, init=False, repr=False)
     _stop_requested: bool = field(default=False, init=False, repr=False)
     _health_gate: MetricsHealthGate | None = field(default=None, init=False, repr=False)
 
@@ -559,6 +561,7 @@ class RunSupervisor:
 
     def _run_attempt(self, extra_overrides: list[str]) -> AttemptOutcome:
         self._clear_attempt_verdicts()
+        self._attempt_id = uuid.uuid4().hex
         if self._health_gate is not None:
             self._health_gate.start_attempt()
         # start_new_session puts the child in its own process group so stop
@@ -566,6 +569,7 @@ class RunSupervisor:
         self._child = subprocess.Popen(
             [*self.command, *extra_overrides],
             start_new_session=True,
+            env={**os.environ, RUN_ATTEMPT_ID_ENV: self._attempt_id},
         )
         try:
             if self._health_gate is None:
@@ -574,17 +578,27 @@ class RunSupervisor:
                 exit_code = self._wait_with_health_checks(self._child, self._health_gate)
         finally:
             self._child = None
-        return AttemptOutcome(exit_code=exit_code, verdict=self._collect_attempt_verdict())
+        return AttemptOutcome(
+            exit_code=exit_code, verdict=self._collect_attempt_verdict(exit_code=exit_code)
+        )
 
     def _clear_attempt_verdicts(self) -> None:
         (self.output_dir / RUN_VERDICT_NAME).unlink(missing_ok=True)
         for path in self.output_dir.glob("run_verdict.rank-*.json"):
             path.unlink(missing_ok=True)
 
-    def _collect_attempt_verdict(self) -> dict[str, Any] | None:
+    def _collect_attempt_verdict(self, *, exit_code: int | None = None) -> dict[str, Any] | None:
         aggregate_path = self.output_dir / RUN_VERDICT_NAME
         if self.expected_world_size == 1:
-            return self._read_verdict(aggregate_path)
+            verdict = self._read_verdict(aggregate_path)
+            if self._attempt_id is not None and (
+                verdict is None or verdict.get("attempt_id") != self._attempt_id
+            ):
+                return None
+            if verdict is not None and exit_code is not None:
+                verdict["supervisor_exit_code"] = exit_code
+                self._write_aggregate_verdict(aggregate_path, verdict)
+            return verdict
 
         rank_verdicts: dict[int, dict[str, Any]] = {}
         missing_ranks: list[int] = []
@@ -596,12 +610,15 @@ class RunSupervisor:
                 verdict is None
                 or verdict.get("rank") != rank
                 or verdict.get("world_size") != self.expected_world_size
+                or (self._attempt_id is not None and verdict.get("attempt_id") != self._attempt_id)
             ):
                 missing_ranks.append(rank)
                 continue
             rank_verdicts[rank] = verdict
 
         aggregate = self._aggregate_rank_verdicts(rank_verdicts, missing_ranks)
+        if exit_code is not None:
+            aggregate["supervisor_exit_code"] = exit_code
         self._write_aggregate_verdict(aggregate_path, aggregate)
         return aggregate
 
@@ -618,6 +635,8 @@ class RunSupervisor:
             "world_size": self.expected_world_size,
             "rank_verdicts": observed,
         }
+        if self._attempt_id is not None:
+            common["attempt_id"] = self._attempt_id
         failures = [
             (rank, verdict)
             for rank, verdict in sorted(rank_verdicts.items())
