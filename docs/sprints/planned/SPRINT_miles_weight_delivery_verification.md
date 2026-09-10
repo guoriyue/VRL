@@ -1,6 +1,6 @@
 # SPRINT：Weight delivery：版本 ACK 之外验证真实参数内容
 
-状态：**planned；默认训练路径不增加全量 checksum 开销。**
+状态：**implementing；默认训练路径不增加全量 checksum 开销。**
 
 ## 阅读基线与执行边界
 
@@ -51,3 +51,44 @@ driver 步前/步后摘要不能替代接收端安装结果，两端模型布局
 增加真实 verifier 和验收入口；保留原 snapshot、同步锁、all-rank ACK 与失败边界。
 薄 Ray worker 方法是 RPC adapter，应保留；checkpoint/protocol 名称是边界常量。
 不在此 sprint 添加 NCCL/RDT/delta transport；不重写 state loader 或默认 LoRA 同步。
+
+
+## 2026-09-09: Opt-in live receiver readback
+
+`RayGenerationWeightSync(..., verify_content=True)` now propagates an acceptance
+request to every engine rank. The real Ray worker adapter forwards it to
+`GenerationWorkerCore.update_weights`, which checks actual installed parameters
+before committing its version ACK. A no-op install raises through the existing
+terminal Ray actor boundary; that worker does not advance its policy version.
+
+Native diffusion and token bases expose readback in their existing module/key
+namespace. Multi-root verification uses the family's trainable roots, so selected
+Wan experts retain their ownership. The comparison reuses strict name/shape/dtype
+validation and compares materialized bytes, preserving bf16/float64, NaN payloads
+and signed zero. No second digest format or universal numerical tolerance was
+introduced. Frozen parameters are excluded by the existing trainable-state
+contract, not by a new family-name table.
+
+This is currently a constructor/API-level acceptance option, not a YAML flag or a
+production-wide default. It performs synchronous full tensor readback only when
+explicitly requested. Retained version slots, DTensor/sharded values, quantized
+representations and meta tensors are rejected rather than credited with a live
+parameter comparison. Slot activation, merge/requantization forward checks,
+base-checkpoint mismatch acceptance, timing reports and a real-model/GPU CLI
+remain required before this sprint is complete. Do not enable live-fleet poison
+injection: the tests create isolated CPU parameter modules initialized to -99.
+
+The real-process acceptance test uses the production Ray adapter, worker core and
+loader/readback path with a small CPU model. It checks two independent engines and
+one two-rank engine, including a deliberately skipped second-rank install. These
+are actual Ray processes and tensor copies, not scripted version ACKs, but they
+are not a multi-GPU model-parallel numerical validation. Default synchronization,
+all-rank failure propagation and RPC adapters remain unchanged; the thin methods
+are necessary family/RPC boundaries. Shared helpers remove duplicate namespace
+validation without introducing contract dataclasses or algorithm constants.
+
+Validation: 67 model readback, worker-slot, Ray weight-sync and architecture tests
+passed (one existing dependency warning). The CPU bitwise tests cover poisoned
+parameters, reordered values, bf16/float64, signed zero/NaN, omitted expert roots,
+and attempts to include frozen parameters. The Ray tests retain the sender
+snapshot and verify failed receivers keep their previous version.

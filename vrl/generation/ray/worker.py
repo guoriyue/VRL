@@ -79,7 +79,11 @@ class RayGenerationWorker:
     def wake(self) -> None:
         self.core.wake()
 
-    def update_weights(self, state_ref: Any, policy_version: int) -> int:
+    def update_weights(
+        self, state_ref: Any, policy_version: int, *, verify_content: bool = False
+    ) -> int:
+        if verify_content:
+            return self.core.update_weights(state_ref, policy_version, verify_content=True)
         return self.core.update_weights(state_ref, policy_version)
 
     def supports_versioned_trainable_state(self) -> bool:

@@ -52,3 +52,57 @@ def test_none_payload_with_no_prior_slot_is_noop() -> None:
 def test_max_retained_must_be_positive() -> None:
     with pytest.raises(ValueError, match="max_retained"):
         TrainableStateSlots(max_retained=0)
+
+
+@pytest.mark.parametrize("dtype", ["float32", "float64", "bfloat16"])
+def test_installed_weight_readback_detects_noop_and_swapped_parameters(dtype):
+    import torch
+
+    from vrl.models.weight_utils import load_weights_into, verify_weights_in
+
+    module = torch.nn.Linear(2, 2, bias=False).to(getattr(torch, dtype))
+    payload = {"transformer.weight": torch.tensor([[1, 2], [3, 4]], dtype=module.weight.dtype)}
+    with torch.no_grad():
+        module.weight.fill_(-77)
+    with pytest.raises(RuntimeError, match="installed weight content"):
+        verify_weights_in(module, payload, prefix="transformer")
+    load_weights_into(module, payload, prefix="transformer")
+    verify_weights_in(module, payload, prefix="transformer")
+    with torch.no_grad():
+        module.weight.copy_(module.weight.flip(0))
+    with pytest.raises(RuntimeError, match="installed weight content"):
+        verify_weights_in(module, payload, prefix="transformer")
+    assert payload["transformer.weight"][0, 0].item() == 1
+
+
+def test_weight_readback_compares_bits_including_signed_zero_and_nan():
+    import torch
+
+    from vrl.models.weight_utils import load_weights_into, verify_weights_in
+
+    module = torch.nn.Linear(2, 1, bias=False)
+    payload = {"transformer.weight": torch.tensor([[float("nan"), -0.0]])}
+    load_weights_into(module, payload, prefix="transformer")
+    verify_weights_in(module, payload, prefix="transformer")
+    with torch.no_grad():
+        module.weight[0, 1] = 0.0
+    with pytest.raises(RuntimeError, match="installed weight content"):
+        verify_weights_in(module, payload, prefix="transformer")
+
+
+def test_multi_root_readback_cannot_ignore_missing_expert_or_frozen_parameter():
+    import torch
+
+    from vrl.models.weight_utils import verify_trainable_modules
+
+    modules = {name: torch.nn.Linear(1, 1) for name in ("low", "high")}
+    for module in modules.values():
+        module.bias.requires_grad_(False)
+    payload = {
+        f"{name}.weight": module.weight.detach().clone() for name, module in modules.items()
+    }
+    verify_trainable_modules(modules, payload)
+    with pytest.raises(ValueError, match="empty"):
+        verify_trainable_modules(modules, {"low.weight": payload["low.weight"]})
+    with pytest.raises(ValueError, match="exactly trainable keys"):
+        verify_trainable_modules(modules, {**payload, "low.bias": modules["low"].bias.detach()})

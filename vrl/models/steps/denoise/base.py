@@ -32,6 +32,7 @@ from vrl.models.weight_utils import (
     TrainableStateSlots,
     load_weights_into,
     require_weights_for,
+    verify_trainable_modules,
 )
 from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE
 
@@ -322,6 +323,11 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
 
         transformer = self._require_transformer()
         return load_weights_into(transformer, state_dict, prefix="transformer")
+
+    def verify_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
+        """Opt-in readback of the family's actual trainable module roots."""
+
+        verify_trainable_modules(self.trainable_modules, state_dict)
 
     def validate_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
         """Validate a sync payload without mutating the active policy."""

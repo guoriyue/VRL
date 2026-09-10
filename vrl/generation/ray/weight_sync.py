@@ -25,7 +25,9 @@ class RayGenerationWeightSync:
 
     The engine call fans out to all its ranks and requires their version
     echoes to agree (``uniform_rank_result``); this layer then validates the
-    agreed echo against the expected version per engine.
+    agreed echo against the expected version per engine. ``verify_content`` is
+    an opt-in acceptance probe: every rank must read back the installed parameters
+    before returning that echo. Normal sync does not pay for device readback.
     """
 
     def __init__(
@@ -34,7 +36,9 @@ class RayGenerationWeightSync:
         *,
         actor_dispatcher: RayActorDispatcher,
         worker_rpc_timeout_s: float,
+        verify_content: bool = False,
     ) -> None:
+        self.verify_content = bool(verify_content)
         self.engines = list(engines)
         expected_engine_ids = tuple(engine.engine_id for engine in self.engines)
         if actor_dispatcher.worker_ids != expected_engine_ids:
@@ -53,6 +57,7 @@ class RayGenerationWeightSync:
         state_ref: Any,
         policy_version: int,
     ) -> None:
+        verification = {"verify_content": True} if self.verify_content else {}
         remote_engines: list[tuple[RayGenerationEngine, Any]] = []
         for engine in self.engines:
             update_weights = engine.primary.actor.update_weights
@@ -68,7 +73,7 @@ class RayGenerationWeightSync:
                 )
             else:
                 # Local test double: call the single rank directly.
-                installed = update_weights(state_ref, policy_version)
+                installed = update_weights(state_ref, policy_version, **verification)
                 _require_installed_policy_version(engine, installed, policy_version)
 
         if not remote_engines:
@@ -88,7 +93,7 @@ class RayGenerationWeightSync:
                 worker_id=engine.engine_id,
                 remote_method=remote,
                 payload=shared_state,
-                keyword_args={"policy_version": policy_version},
+                keyword_args={"policy_version": policy_version, **verification},
             )
             for job_index, (engine, remote) in enumerate(remote_engines)
         ]

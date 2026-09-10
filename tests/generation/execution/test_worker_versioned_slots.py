@@ -204,3 +204,52 @@ def test_plain_model_keeps_global_version_mismatch() -> None:
     assert result.stale_slot is False
     assert "policy_version mismatch" in (result.error or "")
     assert result.policy_version == 1
+
+
+class _ReadbackModel(_PlainModel):
+    def __init__(self, *, skip_install=False):
+        super().__init__()
+        self.module = torch.nn.Linear(2, 2, bias=False)
+        with torch.no_grad():
+            self.module.weight.fill_(-99)
+        self.skip_install = skip_install
+
+    def load_trainable_state(self, state_dict):
+        from vrl.models.weight_utils import load_weights_into
+
+        if not self.skip_install:
+            load_weights_into(self.module, state_dict, prefix="transformer")
+
+    def verify_trainable_state(self, state_dict):
+        from vrl.models.weight_utils import verify_weights_in
+
+        verify_weights_in(self.module, state_dict, prefix="transformer")
+
+
+def test_content_failure_cannot_acknowledge_a_new_version():
+    import pytest
+
+    state = {"transformer.weight": torch.ones(2, 2)}
+    core = _core(_ReadbackModel(skip_install=True), versioned_weight_sync=False)
+    with pytest.raises(RuntimeError, match="installed weight content"):
+        core.update_weights(state, 2, verify_content=True)
+    assert core._policy_version == 1
+
+
+def test_content_verification_reads_successfully_installed_parameters():
+    core = _core(_ReadbackModel(), versioned_weight_sync=False)
+    assert (
+        core.update_weights({"transformer.weight": torch.ones(2, 2)}, 2, verify_content=True) == 2
+    )
+    assert torch.equal(core.executor.model.module.weight, torch.ones(2, 2))
+
+
+def test_content_verification_does_not_claim_version_slots_are_live_parameters():
+    import pytest
+
+    model = _SlotModel()
+    core = _core(model)
+    with pytest.raises(NotImplementedError, match="retained version slots"):
+        core.update_weights({"transformer.weight": torch.ones(2, 2)}, 2, verify_content=True)
+    assert model.slots == {}
+    assert core._policy_version == 1

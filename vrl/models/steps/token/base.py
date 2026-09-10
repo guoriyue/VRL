@@ -138,6 +138,13 @@ class ARModelBase(ReplayRequestContract, nn.Module):
         """
         return load_weights_into(self, state_dict, prefix="model")
 
+    def verify_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
+        """Opt-in readback in the same namespace as the token sync loader."""
+
+        from vrl.models.weight_utils import verify_weights_in
+
+        verify_weights_in(self, state_dict, prefix="model")
+
     @property
     def policy_cores(self) -> dict[str, Any]:
         """The one module root the rollout optimization passes walk.

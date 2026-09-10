@@ -170,14 +170,18 @@ class GenerationWorkerCore:
         assert self.executor is not None
         self._memory_parking.wake(self.executor)
 
-    def update_weights(self, state_ref: Any, policy_version: int) -> int:
+    def update_weights(
+        self, state_ref: Any, policy_version: int, *, verify_content: bool = False
+    ) -> int:
         """Install weights and return the policy version as the commit ACK.
 
         When the model supports versioned trainable-state slots, install the new
         version as a retained slot WITHOUT overwriting the slots older in-flight
         requests still depend on (the non-draining-sync path); ``execute_batch``
         then activates the right slot per request. Otherwise keep the single
-        in-place overwrite (the draining-barrier path).
+        in-place overwrite (the draining-barrier path). ``verify_content`` checks
+        the live installed state before ACK on that path; retained slots require
+        a separate activation-aware acceptance probe.
         """
 
         self._memory_parking.require_active(
@@ -186,10 +190,24 @@ class GenerationWorkerCore:
         )
         self.load_policy()
         policy_obj = getattr(self.executor, "model", None)
+        versioned = self.launch_contract.versioned_weight_sync and bool(
+            getattr(policy_obj, "supports_versioned_trainable_state", False)
+        )
+        verifier = None
+        if verify_content:
+            if versioned:
+                raise NotImplementedError(
+                    "live weight readback does not verify retained version slots"
+                )
+            if state_ref is None:
+                raise ValueError("content verification requires an explicit weight payload")
+            verifier = getattr(policy_obj, "verify_trainable_state", None)
+            if not callable(verifier):
+                raise NotImplementedError(
+                    "model does not support installed weight content verification"
+                )
         try:
-            if self.launch_contract.versioned_weight_sync and bool(
-                getattr(policy_obj, "supports_versioned_trainable_state", False),
-            ):
+            if versioned:
                 model = require_runtime_model(
                     policy_obj,
                     owner=f"{type(self.executor).__name__}.model",
@@ -202,6 +220,8 @@ class GenerationWorkerCore:
                     owner=f"{type(self.executor).__name__}.model",
                 )
                 model.load_trainable_state(state_ref)
+            if verifier is not None:
+                verifier(state_ref)
         except BaseException as error:
             self._memory_parking.record_model_failure(policy_obj, error)
             raise

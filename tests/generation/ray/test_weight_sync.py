@@ -809,3 +809,65 @@ async def test_real_ray_weight_sync_deadline_excludes_generation_admission_wait(
             await asyncio.gather(generation, return_exceptions=True)
         for handle in handles:
             local_ray.kill(handle.primary.actor, no_restart=True)
+
+
+class _ContentReadbackWorker(RayGenerationWorker):
+    """Isolated CPU actor with real worker install/readback and a tiny parameter."""
+
+    def __init__(self, skip_install=False):
+        from tests.generation.execution.test_worker_versioned_slots import _core, _ReadbackModel
+
+        self.core = _core(_ReadbackModel(skip_install=skip_install), versioned_weight_sync=False)
+
+    def installed_weight(self):
+        return self.core.executor.model.module.weight.detach(), self.core._policy_version
+
+
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("grouped", [False, True])
+@pytest.mark.parametrize("skip_second_install", [False, True])
+async def test_real_ray_readback_checks_every_worker_and_engine_rank(
+    local_ray, grouped, skip_second_install
+):
+    from vrl.generation.ray.worker import HEALTH_CONCURRENCY_GROUP
+    from vrl.ray.actor_group import RayActorHandle
+
+    actor_cls = local_ray.remote(num_cpus=0, concurrency_groups={HEALTH_CONCURRENCY_GROUP: 1})(
+        _ContentReadbackWorker
+    )
+    actors = [actor_cls.remote(False), actor_cls.remote(skip_second_install)]
+    ranks = [RayActorHandle(f"rank-{index}", actor) for index, actor in enumerate(actors)]
+    engines = (
+        [RayGenerationEngine("engine", ranks)]
+        if grouped
+        else [RayGenerationEngine(f"engine-{index}", [rank]) for index, rank in enumerate(ranks)]
+    )
+    state = {"transformer.weight": torch.tensor([[1.0, 2.0], [3.0, 4.0]])}
+    try:
+        before = local_ray.get([actor.installed_weight.remote() for actor in actors])
+        assert all(torch.all(weight == -99).item() for weight, _version in before)
+        sync = RayGenerationWeightSync(
+            engines,
+            actor_dispatcher=RayActorDispatcher(tuple(engine.engine_id for engine in engines)),
+            worker_rpc_timeout_s=30.0,
+            verify_content=True,
+        )
+        if skip_second_install:
+            with pytest.raises(actor_pool_module.RayActorCallError) as failure:
+                await sync.push_to_rollout_engines(state, policy_version=2)
+            assert "installed weight content" in str(failure.value.__cause__)
+            weight, version = local_ray.get(actors[1].installed_weight.remote())
+            assert version == 1
+            assert torch.all(weight == -99).item()
+        else:
+            await sync.push_to_rollout_engines(state, policy_version=2)
+            installed = local_ray.get([actor.installed_weight.remote() for actor in actors])
+            assert all(
+                version == 2 and torch.equal(weight, state["transformer.weight"])
+                for weight, version in installed
+            )
+        assert torch.equal(state["transformer.weight"], torch.tensor([[1.0, 2.0], [3.0, 4.0]]))
+    finally:
+        for actor in actors:
+            local_ray.kill(actor, no_restart=True)
