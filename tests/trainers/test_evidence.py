@@ -336,6 +336,15 @@ apply_float32_precision("ieee")
 torch.cuda.is_available = lambda: False
 record = _runtime_identity()
 assert record["float32_precision"] == {"matmul": "ieee", "cudnn": "ieee"}
+for enabled in (True, False):
+    torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = enabled
+    torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = not enabled
+    record = _runtime_identity()
+    assert record["matmul_reduced_precision_reduction"] == {
+        "fp16": not enabled, "bf16": enabled,
+    }
+    assert torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction is enabled
+    assert torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction is not enabled
 """
     subprocess.run(
         [sys.executable, "-c", code], check=True, capture_output=True, text=True, timeout=30

@@ -41,6 +41,7 @@ def make_run(tmp_path, monkeypatch):
             "deterministic_algorithms": True,
             "deterministic_warn_only": False,
             "cudnn_benchmark": False,
+            "matmul_reduced_precision_reduction": {"fp16": True, "bf16": True},
             "devices": [],
             "environment": {},
         }
@@ -131,6 +132,14 @@ def test_signed_zero_is_not_collapsed(make_run):
         ({"runtime_change": {"deterministic_warn_only": True}}, "strict deterministic"),
         ({"runtime_change": {"cudnn_benchmark": True}}, "benchmark must be disabled"),
         ({"runtime_change": {"packages": {"torch": "changed"}}}, "runtime differs"),
+        (
+            {
+                "runtime_change": {
+                    "matmul_reduced_precision_reduction": {"fp16": True, "bf16": False}
+                }
+            },
+            "runtime differs",
+        ),
         ({"model": "different"}, "model_identity differs"),
         ({"data_text": "changed prompts\n"}, "configured_data_files differs"),
         ({"code_change": {"dirty": True}}, "identified clean checkout"),

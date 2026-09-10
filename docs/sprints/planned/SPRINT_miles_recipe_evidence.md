@@ -309,3 +309,18 @@ was `0.02667667716741562`, above the unchanged `0.01` threshold. The debug event
 records finite values and zero trainer/global step. This is a numerical issue to
 investigate through actual backend precision and batch geometry, not an optimizer
 update failure or a completed learning curve. Neither threshold has been relaxed.
+
+## 2026-09-09: Matmul reduction modes in launch evidence
+
+Launch runtime identity now records FP16 and BF16 reduced-precision reduction
+switches alongside FP32 math modes. The real SD3.5 batch experiment showed that
+the BF16 switch changes numerical results despite identical dtype and TF32
+settings. The existing whole-runtime comparison rejects different recorded
+switches; capture does not mutate them. This describes the trainer process only,
+not unobserved remote worker state. Historical receipts are not backfilled.
+
+The fields live in the existing runtime snapshot; no new helper, configuration
+policy, module table or numerical default is introduced. Validation uses a fresh
+process after production IEEE setup, toggles both real PyTorch switches, checks
+recorded values and verifies that collection leaves backend state unchanged.
+A comparison fixture rejects otherwise matching runs with differing BF16 modes.

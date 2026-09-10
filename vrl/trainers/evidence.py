@@ -110,6 +110,10 @@ def _runtime_identity() -> dict[str, Any]:
         "cudnn_deterministic": torch.backends.cudnn.deterministic,
         "cudnn_benchmark": torch.backends.cudnn.benchmark,
         "float32_precision": float32_precision_state(),
+        "matmul_reduced_precision_reduction": {
+            "fp16": torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction,
+            "bf16": torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction,
+        },
         "environment": {
             name: os.environ[name] for name in _RUNTIME_ENVIRONMENT_KEYS if name in os.environ
         },
