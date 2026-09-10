@@ -321,3 +321,22 @@ def test_full_precision_metrics_are_bound_when_present(completed_loop, tmp_path)
     path.write_text("epoch,loss\n0,0.123456788\n")
     with pytest.raises(ValueError, match="full_precision_metrics artifact content mismatch"):
         evidence.verify_run_artifacts(seal)
+
+
+def test_runtime_identity_after_production_precision_setup():
+    import sys
+
+    # Use a fresh process: changing new/legacy TF32 APIs can poison other tests'
+    # backend state, and the real failure occurs after production setup.
+    code = """
+import torch
+from vrl.models.precision import apply_float32_precision
+from vrl.trainers.evidence import _runtime_identity
+apply_float32_precision("ieee")
+torch.cuda.is_available = lambda: False
+record = _runtime_identity()
+assert record["float32_precision"] == {"matmul": "ieee", "cudnn": "ieee"}
+"""
+    subprocess.run(
+        [sys.executable, "-c", code], check=True, capture_output=True, text=True, timeout=30
+    )

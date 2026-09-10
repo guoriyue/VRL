@@ -233,3 +233,25 @@ restoration, late workspace rejection, and exact repeated small CUDA network upd
 The CUDA check is synthetic and in-process; it is not independent supervised runs,
 a diffusion curve, or full-recipe determinism. Remote rollout/reward randomness and
 actual repeated recipe acceptance remain open.
+
+## 2026-09-09: First real SD3.5/OCR launch and precision-recording fix
+
+Installed the repository-pinned PaddleOCR 3.7.0/PaddlePaddle 3.2.1 extra into the
+active environment without replacing existing packages. Real OCR preflight scored
+one configured manifest row using cached PP-OCRv4 models and synthetic media.
+That validates dependency/data plumbing, not image quality or learning.
+
+A supervised two-epoch attempt retained the preset's 512 resolution, batch geometry,
+compile policy and OCR reward, with explicit trainer/sampling seeds of 17 and strict
+trainer determinism. The real replay model loaded, but launch evidence failed before
+the training loop: reading legacy `allow_tf32` conflicted with the production model's
+new `fp32_precision` API. The supervisor observed exit 1 and exhausted its one-attempt
+budget; no training curve was produced. Original local output:
+`outputs/repro/sd3_5_ocr_strict_a`; log: `/tmp/vrl-sd3-ocr-strict-a.log`.
+
+Evidence recording now reuses `vrl.models.precision.float32_precision_state`, the
+existing new/legacy compatibility boundary. It records effective string-valued
+matmul/cuDNN modes instead of reading legacy TF32 booleans. No numerical policy or
+fallback implementation is changed. An actual fresh-process regression applies the
+production precision setup before capturing runtime identity; this reproduces the
+failing ordering without contaminating other tests' global backend settings.

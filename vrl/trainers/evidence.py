@@ -24,6 +24,7 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.models.checkpoint_identity import local_checkpoint_content
+from vrl.models.precision import float32_precision_state
 
 if TYPE_CHECKING:
     from vrl.scripts.eval.image_checkpoint_eval import EvaluationArchive
@@ -108,8 +109,7 @@ def _runtime_identity() -> dict[str, Any]:
         "deterministic_warn_only": torch.is_deterministic_algorithms_warn_only_enabled(),
         "cudnn_deterministic": torch.backends.cudnn.deterministic,
         "cudnn_benchmark": torch.backends.cudnn.benchmark,
-        "matmul_allow_tf32": torch.backends.cuda.matmul.allow_tf32,
-        "cudnn_allow_tf32": torch.backends.cudnn.allow_tf32,
+        "float32_precision": float32_precision_state(),
         "environment": {
             name: os.environ[name] for name in _RUNTIME_ENVIRONMENT_KEYS if name in os.environ
         },
