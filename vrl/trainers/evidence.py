@@ -92,8 +92,6 @@ class TrainingRunEvidence:
         record = {
             "schema": RUN_EVIDENCE_SCHEMA,
             "launch_id": uuid.uuid4().hex,
-            # Set by the supervisor once per attempt and inherited by every rank.
-            "attempt_id": os.environ.get("VRL_RUN_ATTEMPT_ID"),
             "captured_at": datetime.now(UTC).isoformat(),
             "phase": "before-training-loop",
             "resumed": bool(resumed),
@@ -206,23 +204,17 @@ class TrainingRunEvidence:
         return record
 
     def verify_completion(self, verdict_path: str | Path) -> dict[str, Any]:
-        """Require matching artifacts and a successful outcome for the same attempt.
+        """Check artifact integrity and the supplied successful process outcome.
 
-        This establishes process completion, not numerical correctness. Unsupervised
-        historical runs without an explicit shared attempt ID cannot be associated by
-        filename, timestamps, or the mere presence of a success verdict.
+        There is no cross-process attempt identity: this does not establish that
+        the supplied verdict and artifacts came from the same execution.
         """
 
         self.verify_artifacts()
         launch = self._read_launch()
-        attempt_id = launch.get("attempt_id")
-        if not isinstance(attempt_id, str) or not attempt_id:
-            raise ValueError("launch has no shared attempt identity for outcome verification")
         verdict = json.loads(Path(verdict_path).read_text(encoding="utf-8"))
         if not isinstance(verdict, dict) or verdict.get("schema_version") != 1:
             raise ValueError("unsupported run verdict")
-        if verdict.get("attempt_id") != attempt_id:
-            raise ValueError("run verdict belongs to a different attempt")
         if verdict.get("verdict") != "success":
             raise ValueError("run attempt did not complete successfully")
         if (
@@ -245,7 +237,6 @@ class TrainingRunEvidence:
                     or rank["rank"] not in range(world_size)
                     or rank["rank"] in seen
                     or rank.get("world_size") != world_size
-                    or rank.get("attempt_id") != attempt_id
                     or rank.get("verdict") != "success"
                 ):
                     raise ValueError("distributed completion contains an invalid rank verdict")
@@ -270,7 +261,7 @@ class TrainingRunEvidence:
         from vrl.trainers.checkpointing import TRAINING_CHECKPOINT_NAME
         from vrl.utils.artifacts import sha256_file
 
-        verdict = self.verify_completion(verdict_path)
+        self.verify_completion(verdict_path)
         launch = self._read_launch()
         report = archive.verify_report()
         protocol = report["protocol"]
@@ -288,7 +279,6 @@ class TrainingRunEvidence:
         canonical = json.dumps(protocol, sort_keys=True, separators=(",", ":"), allow_nan=False)
         return {
             "launch_id": launch["launch_id"],
-            "attempt_id": verdict["attempt_id"],
             "checkpoint_sha256": digest,
             "checkpoint_labels": labels,
             "evaluation_protocol_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
@@ -435,7 +425,7 @@ def compare_run_metrics(
         (Path(candidate_seal), Path(candidate_verdict)),
     ):
         evidence = TrainingRunEvidence.load(seal)
-        verdict = evidence.verify_completion(verdict_path)
+        evidence.verify_completion(verdict_path)
         receipt = json.loads(seal.read_text())
         if "full_precision_metrics" not in receipt["artifacts"]:
             raise ValueError("full-precision metrics are not bound by this receipt")
@@ -510,24 +500,19 @@ def compare_run_metrics(
         runs.append(
             {
                 "launch": launch,
-                "verdict": verdict,
                 "config": config,
                 "header": header,
                 "rows": rows,
                 "binding": {
                     "launch_id": launch["launch_id"],
-                    "attempt_id": verdict["attempt_id"],
                     "receipt_sha256": sha256_file(seal),
                     "verdict_sha256": sha256_file(verdict_path),
                 },
             }
         )
     reference, candidate = runs
-    if (
-        reference["launch"]["launch_id"] == candidate["launch"]["launch_id"]
-        or reference["verdict"]["attempt_id"] == candidate["verdict"]["attempt_id"]
-    ):
-        raise ValueError("regression requires two independent launch and attempt identities")
+    if reference["launch"]["launch_id"] == candidate["launch"]["launch_id"]:
+        raise ValueError("regression requires two independent launch identities")
     for key in ("code", "runtime", "model_identity", "configured_data_files"):
         if reference["launch"][key] != candidate["launch"][key]:
             raise ValueError(f"regression {key} differs between runs")

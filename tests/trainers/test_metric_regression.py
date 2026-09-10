@@ -21,7 +21,6 @@ def make_run(tmp_path, monkeypatch):
         rows=None,
         config_change=None,
         runtime_change=None,
-        attempt=None,
         full_precision=True,
         model="fixture",
         data_text=None,
@@ -58,7 +57,6 @@ def make_run(tmp_path, monkeypatch):
         }
         if config_change:
             config_change(config)
-        monkeypatch.setenv("VRL_RUN_ATTEMPT_ID", attempt or name)
         launch = evidence.TrainingRunEvidence.capture(
             OmegaConf.create(config), directory, model_identity={"model": model}, resumed=False
         ).launch_path
@@ -77,7 +75,6 @@ def make_run(tmp_path, monkeypatch):
             json.dumps(
                 {
                     "schema_version": 1,
-                    "attempt_id": attempt or name,
                     "verdict": "success",
                     "supervisor_exit_code": 0,
                 }
@@ -98,7 +95,7 @@ def test_exact_independent_runs_match_with_different_output_directories(make_run
     reference, candidate = make_run("reference"), make_run("candidate")
     result = compare(reference, candidate)
     assert result["matched"] is True
-    assert result["reference"]["attempt_id"] != result["candidate"]["attempt_id"]
+    assert result["reference"]["launch_id"] != result["candidate"]["launch_id"]
     assert result["protocol"]["expected_epochs"] == 2
     assert result["protocol"]["columns"] == ["loss", "reward_mean"]
 
@@ -154,7 +151,6 @@ def test_signed_zero_is_not_collapsed(make_run):
         ({"code_change": {"commit": "other"}}, "code differs"),
         ({"runtime_change": {"packages": {}}}, "complete runtime identity"),
         ({"full_precision": False}, "not bound"),
-        ({"attempt": "reference"}, "independent"),
         ({"config_change": lambda c: c["trainer"].update(seed=18)}, "config differs"),
         (
             {"config_change": lambda c: c["trainer"].update(total_epochs=3)},

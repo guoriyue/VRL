@@ -121,7 +121,7 @@ def test_success_first_attempt(tmp_path) -> None:
     command = _child_script(
         tmp_path,
         _write_verdict_snippet(out)
-        + "(out / 'run_verdict.json').write_text(json.dumps({'attempt_id': os.environ['VRL_RUN_ATTEMPT_ID'], 'verdict': 'success'}))\n",
+        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
     )
     supervisor = RunSupervisor(command=command, output_dir=out, sleep=lambda _: None)
     assert supervisor.run() == 0
@@ -137,8 +137,7 @@ def test_same_cause_circuit_breaker_stops(tmp_path) -> None:
         + "n = int(attempts.read_text()) + 1 if attempts.exists() else 1\n"
         + "attempts.write_text(str(n))\n"
         + "(out / 'run_verdict.json').write_text(json.dumps("
-        "{'attempt_id': os.environ['VRL_RUN_ATTEMPT_ID'], 'verdict': 'failed', 'error_class': 'ValueError'}))\n"
-        + "raise SystemExit(1)\n",
+        "{'verdict': 'failed', 'error_class': 'ValueError'}))\n" + "raise SystemExit(1)\n",
     )
     supervisor = RunSupervisor(
         command=command,
@@ -160,9 +159,9 @@ def test_transient_failure_then_success_restarts(tmp_path) -> None:
         + "if not marker.exists():\n"
         + "    marker.write_text('1')\n"
         + "    (out / 'run_verdict.json').write_text(json.dumps("
-        "{'attempt_id': os.environ['VRL_RUN_ATTEMPT_ID'], 'verdict': 'terminated', 'signal': 15, 'signal_name': 'SIGTERM'}))\n"
+        "{'verdict': 'terminated', 'signal': 15, 'signal_name': 'SIGTERM'}))\n"
         + "    raise SystemExit(143)\n"
-        + "(out / 'run_verdict.json').write_text(json.dumps({'attempt_id': os.environ['VRL_RUN_ATTEMPT_ID'], 'verdict': 'success'}))\n",
+        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
     )
     supervisor = RunSupervisor(command=command, output_dir=out, sleep=lambda _: None)
     assert supervisor.run() == 0
@@ -219,10 +218,10 @@ def test_restart_resumes_from_latest_complete_checkpoint(tmp_path) -> None:
         + "attempts.write_text(str(n))\n"
         + "if n == 1:\n"
         + "    (out / 'run_verdict.json').write_text(json.dumps("
-        + "{'attempt_id': os.environ['VRL_RUN_ATTEMPT_ID'], 'verdict': 'failed', 'error_class': 'TransientRuntimeError'}))\n"
+        + "{'verdict': 'failed', 'error_class': 'TransientRuntimeError'}))\n"
         + "    raise SystemExit(1)\n"
         + f"pathlib.Path({str(argv_log)!r}).write_text('\\n'.join(sys.argv[1:]))\n"
-        + "(out / 'run_verdict.json').write_text(json.dumps({'attempt_id': os.environ['VRL_RUN_ATTEMPT_ID'], 'verdict': 'success'}))\n",
+        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
     )
     supervisor = RunSupervisor(command=command, output_dir=out, sleep=lambda _: None)
     assert supervisor.run() == 0
@@ -882,7 +881,7 @@ def test_metrics_health_gate_allows_missing_and_header_only_files(tmp_path) -> N
     command = _child_script(
         tmp_path,
         _write_verdict_snippet(out)
-        + "(out / 'run_verdict.json').write_text(json.dumps({'attempt_id': os.environ['VRL_RUN_ATTEMPT_ID'], 'verdict': 'success'}))\n",
+        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
     )
     supervisor = RunSupervisor(
         command=command,
@@ -1025,7 +1024,7 @@ def test_continuous_health_gate_baselines_existing_producer_errors(tmp_path) -> 
         _write_verdict_snippet(out)
         + "with (out / 'metrics.csv').open('a') as handle:\n"
         + f"    handle.write({_continuous_metric_csv_row(1, producer_errors='0')!r})\n"
-        + "(out / 'run_verdict.json').write_text(json.dumps({'attempt_id': os.environ['VRL_RUN_ATTEMPT_ID'], 'verdict': 'success'}))\n",
+        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
     )
     supervisor = RunSupervisor(
         command=command,
@@ -1051,7 +1050,7 @@ def test_metrics_health_gate_resets_failure_streak_after_healthy_row(tmp_path) -
         tmp_path,
         _write_verdict_snippet(out)
         + f"(out / 'metrics.csv').write_text({metrics!r})\n"
-        + "(out / 'run_verdict.json').write_text(json.dumps({'attempt_id': os.environ['VRL_RUN_ATTEMPT_ID'], 'verdict': 'success'}))\n",
+        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
     )
     supervisor = RunSupervisor(
         command=command,
@@ -1080,7 +1079,7 @@ def test_metrics_health_gate_ignores_old_rows_and_partial_append(tmp_path) -> No
         + "    import time; time.sleep(0.08)\n"
         + "    handle.write(',0.1,0.001\\n')\n"
         + "    handle.flush()\n"
-        + "(out / 'run_verdict.json').write_text(json.dumps({'attempt_id': os.environ['VRL_RUN_ATTEMPT_ID'], 'verdict': 'success'}))\n",
+        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
     )
     supervisor = RunSupervisor(
         command=command,
@@ -1191,49 +1190,27 @@ def test_metrics_health_gate_stops_child_group_and_writes_verdict(tmp_path) -> N
         raise AssertionError("grandchild survived metrics health-gate stop")
 
 
-def test_supervised_attempts_get_distinct_ids_without_changing_parent_environment(tmp_path):
+def test_supervisor_clears_previous_success_before_new_process(tmp_path):
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "run_verdict.json").write_text('{"verdict": "success"}')
+    (out / "run_verdict.rank-0.json").write_text('{"verdict": "success"}')
+    command = _child_script(tmp_path, "pass\n")
+    outcome = RunSupervisor(command=command, output_dir=out)._run_attempt([])
+    assert outcome.exit_code == 0
+    assert outcome.verdict is None
+    assert not list(out.glob("run_verdict*.json"))
+
+
+def test_supervised_verdict_does_not_include_attempt_identity(tmp_path):
     out = tmp_path / "run"
     command = _child_script(
         tmp_path,
         f"from vrl.scripts.train import write_run_verdict\nwrite_run_verdict({str(out)!r})\n",
     )
-    before = os.environ.get("VRL_RUN_ATTEMPT_ID")
-    supervisor = RunSupervisor(command=command, output_dir=out)
-    first = supervisor._run_attempt([])
-    second = supervisor._run_attempt([])
-    assert first.verdict["verdict"] == second.verdict["verdict"] == "success"
-    assert first.verdict["attempt_id"] != second.verdict["attempt_id"]
-    assert os.environ.get("VRL_RUN_ATTEMPT_ID") == before
-
-
-def test_supervisor_rejects_success_from_another_attempt(tmp_path):
-    out = tmp_path / "run"
-    command = _child_script(
-        tmp_path,
-        _write_verdict_snippet(out) + "(out / 'run_verdict.json').write_text(json.dumps("
-        "{'verdict': 'success', 'attempt_id': 'previous-attempt'}))\n",
-    )
-    supervisor = RunSupervisor(command=command, output_dir=out)
-    outcome = supervisor._run_attempt([])
-    assert outcome.exit_code == 0
-    assert outcome.verdict is None
-
-
-def test_stale_rank_success_cannot_complete_current_attempt(tmp_path):
-    from vrl.scripts import train
-
-    out = tmp_path / "run"
-    supervisor = RunSupervisor(command=[], output_dir=out, expected_world_size=2)
-    supervisor._attempt_id = "current"
-    for rank, attempt in ((0, "current"), (1, "previous")):
-        train.write_run_verdict(
-            str(out),
-            environ={"RANK": str(rank), "WORLD_SIZE": "2", "VRL_RUN_ATTEMPT_ID": attempt},
-        )
-    result = supervisor._collect_attempt_verdict()
-    assert result["verdict"] == "failed"
-    assert result["missing_ranks"] == [1]
-    assert result["attempt_id"] == "current"
+    outcome = RunSupervisor(command=command, output_dir=out)._run_attempt([])
+    assert outcome.verdict["verdict"] == "success"
+    assert "attempt_id" not in outcome.verdict
 
 
 def test_supervisor_records_nonzero_exit_even_after_child_wrote_success(tmp_path):

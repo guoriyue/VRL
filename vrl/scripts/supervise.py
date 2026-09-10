@@ -37,7 +37,6 @@ import signal
 import subprocess
 import sys
 import time
-import uuid
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -48,7 +47,7 @@ if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
     from vrl.trainers.core.types import ReplayParityConfig, RolloutOrchestrationConfig
 
-from vrl.scripts.train import RUN_ATTEMPT_ID_ENV, RUN_VERDICT_NAME, rank_run_verdict_name
+from vrl.scripts.train import RUN_VERDICT_NAME, rank_run_verdict_name
 
 logger = logging.getLogger(__name__)
 
@@ -482,7 +481,6 @@ class RunSupervisor:
     expected_world_size: int = 1
 
     _child: subprocess.Popen | None = field(default=None, init=False, repr=False)
-    _attempt_id: str | None = field(default=None, init=False, repr=False)
     _stop_requested: bool = field(default=False, init=False, repr=False)
     _health_gate: MetricsHealthGate | None = field(default=None, init=False, repr=False)
 
@@ -561,7 +559,6 @@ class RunSupervisor:
 
     def _run_attempt(self, extra_overrides: list[str]) -> AttemptOutcome:
         self._clear_attempt_verdicts()
-        self._attempt_id = uuid.uuid4().hex
         if self._health_gate is not None:
             self._health_gate.start_attempt()
         # start_new_session puts the child in its own process group so stop
@@ -569,7 +566,6 @@ class RunSupervisor:
         self._child = subprocess.Popen(
             [*self.command, *extra_overrides],
             start_new_session=True,
-            env={**os.environ, RUN_ATTEMPT_ID_ENV: self._attempt_id},
         )
         try:
             if self._health_gate is None:
@@ -591,10 +587,6 @@ class RunSupervisor:
         aggregate_path = self.output_dir / RUN_VERDICT_NAME
         if self.expected_world_size == 1:
             verdict = self._read_verdict(aggregate_path)
-            if self._attempt_id is not None and (
-                verdict is None or verdict.get("attempt_id") != self._attempt_id
-            ):
-                return None
             if verdict is not None and exit_code is not None:
                 verdict["supervisor_exit_code"] = exit_code
                 self._write_aggregate_verdict(aggregate_path, verdict)
@@ -610,7 +602,6 @@ class RunSupervisor:
                 verdict is None
                 or verdict.get("rank") != rank
                 or verdict.get("world_size") != self.expected_world_size
-                or (self._attempt_id is not None and verdict.get("attempt_id") != self._attempt_id)
             ):
                 missing_ranks.append(rank)
                 continue
@@ -635,8 +626,6 @@ class RunSupervisor:
             "world_size": self.expected_world_size,
             "rank_verdicts": observed,
         }
-        if self._attempt_id is not None:
-            common["attempt_id"] = self._attempt_id
         failures = [
             (rank, verdict)
             for rank, verdict in sorted(rank_verdicts.items())

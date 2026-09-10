@@ -246,7 +246,6 @@ def _verdict_dir(root: RootConfig) -> str | None:
 
 
 RUN_VERDICT_NAME = "run_verdict.json"
-RUN_ATTEMPT_ID_ENV = "VRL_RUN_ATTEMPT_ID"
 
 
 def rank_run_verdict_name(rank: int) -> str:
@@ -318,8 +317,6 @@ def write_run_verdict(
     environment = os.environ if environ is None else environ
     file_name, rank, world_size = _run_verdict_identity(environment)
     verdict["schema_version"] = 1
-    if attempt_id := environment.get(RUN_ATTEMPT_ID_ENV):
-        verdict["attempt_id"] = attempt_id
     if rank is not None and world_size is not None:
         verdict["rank"] = rank
         verdict["world_size"] = world_size

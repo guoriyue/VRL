@@ -397,7 +397,6 @@ def completed_training_evaluation(generation, tmp_path, monkeypatch):
     training.mkdir()
     shutil.copytree(tmp_path / "checkpoint-8", training / "checkpoint-final")
     (training / "metrics.csv").write_text("epoch,reward\n0,0.1\n")
-    monkeypatch.setenv("VRL_RUN_ATTEMPT_ID", "evaluation-fixture")
     monkeypatch.setattr(
         evidence.TrainingRunEvidence,
         "_runtime_identity",
@@ -413,7 +412,7 @@ def completed_training_evaluation(generation, tmp_path, monkeypatch):
         resumed=False,
     ).launch_path
     seal = evidence.TrainingRunEvidence.load(launch).seal_artifacts()
-    write_run_verdict(str(training), environ={"VRL_RUN_ATTEMPT_ID": "evaluation-fixture"})
+    write_run_verdict(str(training), environ={})
     verdict_path = training / "run_verdict.json"
     verdict = json.loads(verdict_path.read_text())
     # This is fixture data for association validation, not a real trainer run.
@@ -430,7 +429,7 @@ def test_training_evaluation_association_uses_content_not_target_path(
     seal, verdict, archive = completed_training_evaluation
     result = TrainingRunEvidence.load(seal).verify_evaluation(verdict, archive)
     assert "checkpoint-8" in result["checkpoint_labels"]
-    assert result["attempt_id"] == "evaluation-fixture"
+    assert "attempt_id" not in result
     assert result["evaluation_content"]["files"] > len(list(archive.plan.cells()))
     assert len(result["evaluation_protocol_sha256"]) == 64
 
@@ -467,7 +466,7 @@ def test_training_evaluation_rejects_mismatched_evidence(completed_training_eval
         )
     else:
         record = json.loads(verdict.read_text())
-        record["attempt_id"] = "previous"
+        record["verdict"] = "failed"
         verdict.write_text(json.dumps(record))
     with pytest.raises(ValueError):
         evidence.TrainingRunEvidence.load(seal).verify_evaluation(verdict, archive)
@@ -493,7 +492,7 @@ def test_cli_verifies_existing_training_evaluation_without_generation_or_scoring
         ]
     )
     result = json.loads(capsys.readouterr().out)
-    assert result["attempt_id"] == "evaluation-fixture"
+    assert "attempt_id" not in result
 
 
 def test_nested_completion_marker_is_not_exempt_from_report_integrity(
