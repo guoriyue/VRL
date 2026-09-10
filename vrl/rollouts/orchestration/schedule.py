@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
+from vrl.rollouts.collector.core import RewardCollectionMode
 from vrl.rollouts.orchestration.continuous import (
     ContinuousRolloutSchedule,
     ContinuousRolloutSettings,
@@ -13,7 +14,6 @@ from vrl.rollouts.orchestration.continuous import (
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
 from vrl.rollouts.orchestration.types import (
-    RewardCollectionMode,
     RolloutIteration,
     RolloutScheduleMode,
 )

@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 import torch
 
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.rollouts.orchestration.continuous._helpers import _wait_until, owner_snapshot
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.runtime import RayGenerationRuntime
@@ -39,7 +40,7 @@ def _runtime(weight_sync: Any) -> RayGenerationRuntime:
     )
 
 
-class _OwnerCollector:
+class _OwnerCollector(PromptCollectionFake):
     requires_generation_offload_before_reward = False
     requires_driver_model_offload_for_reward = False
     supports_reward_generation_overlap = False

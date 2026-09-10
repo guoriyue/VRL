@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rollouts.orchestration.prompt_collection import collect_prompt_groups
+from vrl.rollouts.collector.core import RewardCollectionMode
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import (
-    RewardCollectionMode,
     RolloutIteration,
 )
 from vrl.rollouts.stats import RolloutStats
@@ -54,8 +53,7 @@ class StrictOnPolicyRolloutSchedule:
         batches: list[Any] | None = None
         async with self.lifecycle.rollout_phase(stats):
             with stats.phase("rollout.collect_s"):
-                batches = await collect_prompt_groups(
-                    collector=self.lifecycle.collector,
+                batches = await self.lifecycle.collector.collect_prompt_groups(
                     prompts=list(prompts),
                     group_size=group_size,
                     runtime_debug=runtime_debug,

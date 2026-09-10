@@ -21,9 +21,8 @@ async def collect_scored(
 ) -> RolloutBatch:
     """Collect one group and score it in a single call.
 
-    Production always splits the two phases (prompt_collection.py overlaps
-    scoring with the next generation), so the collector exposes no combined
-    entry point; tests that only need one scored batch compose it here.
+    Tests needing a single unsplit batch compose the low-level phases here.
+    The public prompt-group API additionally restores prompt IDs and splits batches.
     """
 
     unscored = await collector.collect_unscored(
@@ -35,3 +34,11 @@ async def collect_scored(
         policy_version=policy_version,
     )
     return (await collector.score_rollouts([unscored]))[0]
+
+
+class PromptCollectionFake:
+    """Run production prompt collection over fake generation and reward operations."""
+
+    generate_prompt_groups = RolloutCollector.generate_prompt_groups
+    collect_prompt_groups = RolloutCollector.collect_prompt_groups
+    finish_scored_prompt_groups = RolloutCollector.finish_scored_prompt_groups

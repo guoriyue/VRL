@@ -519,7 +519,7 @@ def test_train_keeps_single_process_verdict_name(tmp_path) -> None:
 
 def test_train_verdict_uses_cleanup_wrapper_root_class(tmp_path) -> None:
     from vrl.ray.operation_deadline import RayOperationTimeout
-    from vrl.rollouts.orchestration.prompt_collection import (
+    from vrl.rollouts.collector.core import (
         PromptCollectionCleanupError,
     )
     from vrl.rollouts.orchestration.rollout_runtime import RolloutPhaseCleanupError

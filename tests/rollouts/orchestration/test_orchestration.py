@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+from tests.rollouts.collector._helpers import PromptCollectionFake
+
 
 def _schedule_config(mode: str) -> SimpleNamespace:
     return SimpleNamespace(
@@ -54,7 +56,7 @@ class _Syncer:
         return self.runtime.current_policy_version
 
 
-class _Collector:
+class _Collector(PromptCollectionFake):
     def __init__(self, runtime: _Runtime) -> None:
         self.generation_runtime = runtime
         self.requires_generation_offload_before_reward = False
@@ -390,8 +392,8 @@ async def test_strict_schedule_forwards_the_configured_reward_collection_arm() -
     import torch
     import torch.nn as nn
 
+    from vrl.rollouts.collector.core import RewardCollectionMode
     from vrl.rollouts.orchestration import build_rollout_schedule
-    from vrl.rollouts.orchestration.types import RewardCollectionMode
     from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
 
     runtime = _Runtime()

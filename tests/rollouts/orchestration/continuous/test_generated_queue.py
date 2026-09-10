@@ -2,8 +2,8 @@
 
 import pytest
 
+from vrl.rollouts.collector.core import GeneratedPromptGroup
 from vrl.rollouts.orchestration.continuous.generated_queue import GeneratedRolloutQueue
-from vrl.rollouts.orchestration.prompt_collection import GeneratedPromptGroup
 
 
 def _receipt() -> GeneratedPromptGroup:

@@ -22,10 +22,12 @@ from typing import Any
 import pytest
 import torch
 
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.rollouts.orchestration.continuous._helpers import _wait_until
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.collector.core import PromptCollectionCleanupError
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
@@ -34,7 +36,6 @@ from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutItem,
     ContinuousRolloutSettings,
 )
-from vrl.rollouts.orchestration.prompt_collection import PromptCollectionCleanupError
 from vrl.rollouts.stats import RolloutStats
 from vrl.utils.lifecycle import RuntimeLifecycle
 
@@ -52,7 +53,7 @@ class _Unscored:
     phases: dict[str, float]
 
 
-class _GatedCollector:
+class _GatedCollector(PromptCollectionFake):
     """Collector whose generation/reward phases block on explicit gates."""
 
     requires_generation_offload_before_reward = False
@@ -160,7 +161,7 @@ def _producer(
     return producer
 
 
-class _FiniteCollector:
+class _FiniteCollector(PromptCollectionFake):
     """Records prompt-batch inputs and optionally fails one attempt per prompt."""
 
     requires_generation_offload_before_reward = False

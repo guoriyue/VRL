@@ -13,6 +13,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.rollouts.orchestration.continuous._helpers import owner_snapshot
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
@@ -77,7 +78,7 @@ class _FailingPostTrainSyncer(_Syncer):
         await super().push(state_dict)
 
 
-class _Collector:
+class _Collector(PromptCollectionFake):
     def __init__(self, runtime: _Runtime) -> None:
         self.generation_runtime = runtime
         self.requires_generation_offload_before_reward = False

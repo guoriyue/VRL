@@ -9,26 +9,26 @@ from typing import Any
 import pytest
 import torch
 
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
-from vrl.rollouts.orchestration.prompt_collection import (
+from vrl.rollouts.collector.core import (
     PromptCollectionCleanupError,
+    RewardCollectionMode,
 )
-from vrl.rollouts.orchestration.prompt_collection import (
-    collect_prompt_groups as _collect_prompt_groups,
-)
-from vrl.rollouts.orchestration.types import RewardCollectionMode
+from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.data import PromptExample
 from vrl.trajectory import build_ar_discrete_trajectory
 
 
-def collect_prompt_groups(*, stats: RolloutStats | None = None, **kwargs):
+def collect_prompt_groups(*, collector, stats: RolloutStats | None = None, **kwargs):
     """Test shim: production requires the accumulator (both real callers pass
     one); tests that do not assert on stats hand in a throwaway."""
 
-    return _collect_prompt_groups(stats=stats if stats is not None else RolloutStats(), **kwargs)
+    return collector.collect_prompt_groups(
+        stats=stats if stats is not None else RolloutStats(), **kwargs
+    )
 
 
 def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
@@ -80,7 +80,7 @@ def _batch_with_trajectory(prompts: list[str], group_size: int) -> RolloutBatch:
     return batch
 
 
-class _DeferredCollector:
+class _DeferredCollector(PromptCollectionFake):
     """Two-phase collector fake recording event order."""
 
     def __init__(
@@ -213,7 +213,7 @@ class _Unscored:
     phases: dict[str, float]
 
 
-class _PhasedCollector:
+class _PhasedCollector(PromptCollectionFake):
     """Collector fake exposing per-call phase timings like RolloutCollector."""
 
     requires_generation_offload_before_reward = True
@@ -694,11 +694,9 @@ async def test_three_acceptance_arms_isolate_overlap_from_per_group_call_tax() -
 
 @pytest.mark.asyncio
 async def test_generation_handoff_is_demand_driven_and_never_scores() -> None:
-    from vrl.rollouts.orchestration.prompt_collection import generate_prompt_groups
 
     collector = _DeferredCollector()
-    groups = generate_prompt_groups(
-        collector=collector,
+    groups = collector.generate_prompt_groups(
         prompts=["plain", PromptExample(prompt="example"), "later"],
         group_size=2,
         runtime_debug=False,

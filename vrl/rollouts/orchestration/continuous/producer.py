@@ -29,6 +29,7 @@ import torch
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import move_training_batch_to_device
+from vrl.rollouts.collector.core import RewardCollectionMode
 from vrl.rollouts.orchestration.continuous.generated_queue import GeneratedRolloutQueue
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
@@ -38,13 +39,7 @@ from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutSettings,
     estimate_batch_bytes,
 )
-from vrl.rollouts.orchestration.prompt_collection import (
-    collect_prompt_groups,
-    finish_scored_prompt_groups,
-    generate_prompt_groups,
-)
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-from vrl.rollouts.orchestration.types import RewardCollectionMode
 from vrl.rollouts.stats import RolloutStats
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 from vrl.trajectory import trajectory_tensor_bytes
@@ -516,8 +511,7 @@ class ContinuousRolloutProducer:
         stats.observe_gauge("continuous.generation_queue_wait_s", admission_wait_s)
         if self._split_reward:
             return await self._collect_split_group(prompt_batch, slot, stats)
-        batches = await collect_prompt_groups(
-            collector=self.lifecycle.collector,
+        batches = await self.lifecycle.collector.collect_prompt_groups(
             prompts=[prompt_batch.prompts[slot]],
             group_size=prompt_batch.group_size,
             runtime_debug=prompt_batch.runtime_debug,
@@ -537,8 +531,7 @@ class ContinuousRolloutProducer:
         started = time.perf_counter()
         generated = False
         try:
-            async for receipt in generate_prompt_groups(
-                collector=self.lifecycle.collector,
+            async for receipt in self.lifecycle.collector.generate_prompt_groups(
                 prompts=[prompt_batch.prompts[slot]],
                 group_size=prompt_batch.group_size,
                 runtime_debug=prompt_batch.runtime_debug,
@@ -584,7 +577,7 @@ class ContinuousRolloutProducer:
                                 ) from error
                             await asyncio.sleep(min(self.poll_interval_s, _RETRY_BACKOFF_MAX_S))
                     reward_wall = time.perf_counter() - reward_started
-                batches = finish_scored_prompt_groups(
+                batches = self.lifecycle.collector.finish_scored_prompt_groups(
                     [(receipt.unscored, receipt.prompt_indices)],
                     batches,
                     stats,

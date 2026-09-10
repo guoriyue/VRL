@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from vrl.rollouts.orchestration.rollout_runtime import (
     RolloutPhaseCleanupError,
     RolloutRuntimeCoordinator,
@@ -43,7 +44,7 @@ class _Strategy:
             raise RuntimeError("trainer restore blew up")
 
 
-class _Collector:
+class _Collector(PromptCollectionFake):
     """RolloutCollectorControl fake whose generation raises mid-rollout."""
 
     requires_generation_offload_before_reward = False

@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from vrl.rollouts.orchestration.types import RewardCollectionMode
+from vrl.rollouts.collector.core import RewardCollectionMode
 
 # Arm id -> the reward_collection_mode value it forces. The A/B/C labels are the
 # benchmark protocol; values come from the production scheduling contract.
