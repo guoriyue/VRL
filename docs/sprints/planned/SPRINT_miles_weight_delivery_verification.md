@@ -128,3 +128,54 @@ Validation: 96 model-base, worker-slot, Ray sync and architecture tests passed.
 Five dependency warnings and a SWIG deprecation notice were emitted. Fault tests
 verify that wrong-slot claims and corrupt retained payloads do not pass readback,
 and that failed audits leave parameter contents unrepaired.
+
+## 2026-09-09: Isolated in-place acceptance CLI
+
+The executable entrypoint is now:
+
+```bash
+python -m vrl.scripts.perf.weight_delivery_probe \
+  --config experiment/sd3_5/online_grpo_ocr \
+  --workers 1 \
+  --report outputs/weight_acceptance/sd3_5.json
+```
+
+Optional `--checkpoint PATH` restores a training checkpoint through the existing
+strict model-restore protocol before exporting the source snapshot. With no
+checkpoint, the probe exports the freshly built replay model; it does not claim
+to have tested trained weights. Ordered config overrides follow the options.
+Use explicit checkpoint/model pins and the intended precision settings for an
+actual acceptance run. The source build requests CPU, so this needs enough host
+memory for the real replay model and its exported snapshot.
+
+The CLI projects the real replay/rollout builds through `resolve_online_run` and
+`ray_launch_inputs`, exports through the existing trainable-state getter and
+immutable CPU snapshot, and starts a private local Ray actor group. It refuses
+an already initialized process cluster. It neither attaches to existing workers
+nor adds a poison method to production worker actors. Each isolated receiver
+first installs and verifies an elementwise-different payload, then installs and
+verifies the real snapshot twice. All actors must return before a report is
+published. Actor cleanup and private-cluster shutdown precede atomic,
+non-overwriting publication using the shared evidence publisher.
+
+The report contains source model identity, optional checkpoint path, source/export
+cost, and each worker's tensor count, logical payload bytes, and combined
+install/readback timings. It does not measure network throughput or separate the
+install and verification costs. `--workers N` creates N single-rank replicas;
+GPU execution needs N visible GPUs. Source/target dtype or unsupported-loader
+mismatches fail instead of receiving an implicit cast or numerical tolerance.
+Versioned slots and multi-rank engine configs are explicitly rejected by this
+entrypoint; their separate active-state APIs are not advertised as this CLI's
+coverage. Forward/logprob equivalence and converted/sharded acceptance remain open.
+
+Validation: 60 CLI, evidence and architecture tests passed, with one dependency
+warning. The CLI test uses a clearly labelled tiny CPU source but actual export,
+Ray actor-group launch, tensor serialization, poisoned receiver installs and
+readback. A second receiver that passes poisoning but skips the target install
+prevents report publication, as does cleanup failure. The sender parameters remain
+unchanged; an existing report cannot be overwritten. `--help` was also executed.
+No full-model GPU acceptance run was performed in this commit.
+
+The CLI file owns a real executable workflow, the subclass isolates destructive
+acceptance behavior, and the shared publisher removes duplicate atomic IO. These
+are necessary boundaries; no additional model/algorithm registry was introduced.

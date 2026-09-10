@@ -185,11 +185,11 @@ def write_run_evidence(
     directory = Path(output_dir) / "run_evidence"
     directory.mkdir(parents=True, exist_ok=True)
     destination = directory / f"{record['launch_id']}.json"
-    _publish_record(destination, record)
+    publish_evidence_record(destination, record)
     return destination
 
 
-def _publish_record(destination: Path, record: dict[str, Any]) -> None:
+def publish_evidence_record(destination: Path, record: dict[str, Any]) -> None:
     """Share atomic, non-overwriting publication across evidence records."""
 
     directory = destination.parent
@@ -266,7 +266,7 @@ def seal_run_artifacts(launch_path: str | Path) -> Path:
         "artifacts": artifacts,
     }
     destination = launch_path.with_suffix(".artifacts.json")
-    _publish_record(destination, record)
+    publish_evidence_record(destination, record)
     return destination
 
 
