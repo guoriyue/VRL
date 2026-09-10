@@ -181,3 +181,49 @@ startup variables as above plus `CUBLAS_WORKSPACE_CONFIG=:4096:8`,
 `/tmp/vrl_sd3_candidate_rounding_probe.log` and
 `/tmp/vrl_sd3_candidate_rounding_allsteps_probe.log`. These archived diagnostics
 are not environment-bound training completion receipts.
+
+## Prompt sweep rejects the three-part BF16 candidate
+
+The remaining-prompt sweep stopped at configured prompt offset 4, index 9427.
+It completed all nine trainable transitions in both no-grad and backward modes
+for offsets 1 through 4, then exited nonzero because the original rollout versus
+replay logprob difference exceeded 0.01. No gate was widened and offsets 5 through
+7 were not executed. The successful first-prompt result is therefore insufficient
+for the original first training batch.
+
+| Prompt offset | Manifest index | Maximum original rollout/replay logprob difference |
+|---|---:|---:|
+| 0, preceding experiment | 1971 | 0.0058716461062431335 |
+| 1 | 14582 | 0.009810559451580048 |
+| 2 | 4887 | 0.007700994610786438 |
+| 3 | 1195 | 0.008655570447444916 |
+| 4 | 9427 | 0.012320473790168762 |
+
+Existing gradients were finite for all completed backward arms. See the
+[sweep summary](sd3_5_candidate_prompt_sweep_20260909.json),
+[complete failing-prompt measurements](sd3_5_candidate_failed_prompt_20260909.json),
+[exact per-prompt source](sd3_5_candidate_prompt_20260909_probe.txt), and
+[sequential fail-fast driver](sd3_5_candidate_prompt_sweep_20260909_driver.txt).
+Each prompt ran in a fresh process with seed 17, using its selected manifest row,
+16 generated samples and the same sampling seed. This isolates input sensitivity;
+it does not reproduce the production sampler's sample-offset RNG evolution.
+Local logs are `/tmp/vrl_sd3_candidate_prompt_sweep.log` and
+`/tmp/vrl_sd3_candidate_prompt_{1,2,3,4}.log`. The sweep started from clean
+`6c3ea9eb6`; only the `593d08c3f` evidence documentation was committed during it.
+
+The candidate is rejected for production. The next comparison uses VRL's existing
+FP16 role configuration, without selective conditioning casts, BF16 reduction
+changes or Inductor cast-emulation changes. This is an explicit precision
+comparison, not a retroactive claim that the BF16 recipe passed.
+
+The reason to test FP16 before adding more precision machinery is also grounded
+in the pinned Miles checkout: at revision
+`87d2aafc714959221ed6dee6f760296f94da4a0e`,
+`scripts/run_diffusion_grpo_sd3_ocr_sglang.py` explicitly sets both
+`--sglang-dit-precision fp16` and `--diffusion-forward-dtype fp16`.
+`docs/models/sd3/sd3.md` section 8 documents FP16 forwards and gradient scaling.
+VRL already creates a CUDA GradScaler for FP16 autocast in
+`vrl/trainers/online/trainer.py::_create_grad_scaler`. The first local FP16
+diagnostic keeps prompt encoders in BF16 and uses unscaled backward only for a
+forward-parity investigation; it cannot establish gradient-underflow safety or
+replace a production GradScaler/optimizer acceptance run. No recipe changed.

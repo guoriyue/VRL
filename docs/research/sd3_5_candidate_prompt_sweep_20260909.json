@@ -1,0 +1,26 @@
+[
+  {
+    "offset": 1,
+    "prompt_index": 14582,
+    "max_logprob_difference": 0.009810559451580048,
+    "finite_gradients": true
+  },
+  {
+    "offset": 2,
+    "prompt_index": 4887,
+    "max_logprob_difference": 0.007700994610786438,
+    "finite_gradients": true
+  },
+  {
+    "offset": 3,
+    "prompt_index": 1195,
+    "max_logprob_difference": 0.008655570447444916,
+    "finite_gradients": true
+  },
+  {
+    "offset": 4,
+    "prompt_index": 9427,
+    "max_logprob_difference": 0.012320473790168762,
+    "finite_gradients": true
+  }
+]

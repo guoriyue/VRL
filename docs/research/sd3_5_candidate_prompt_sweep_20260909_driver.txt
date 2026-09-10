@@ -1,0 +1,17 @@
+import os, subprocess, json
+from pathlib import Path
+results=[]
+for offset in range(1,8):
+    env=dict(os.environ,VRL_PROBE_PROMPT_OFFSET=str(offset))
+    with open(f'/tmp/vrl_sd3_candidate_prompt_{offset}.log','x') as log:
+        subprocess.run(['.venv/bin/python','/tmp/vrl_sd3_candidate_prompt_probe.py'],env=env,stdout=log,stderr=subprocess.STDOUT,check=True)
+    record=json.loads(Path(f'/tmp/vrl_sd3_candidate_prompt_{offset}.json').read_text())
+    maximum=max(arm['original_candidate_compiled_rollout_logprob_max'] for arm in record['arms'])
+    finite=all(arm['finite_gradients'] for arm in record['arms'] if arm['replay_grad_and_backward'])
+    result={'offset':offset,'prompt_index':record['prompt_index'],'max_logprob_difference':maximum,'finite_gradients':finite}
+    results.append(result)
+    print(result,flush=True)
+    Path('/tmp/vrl_sd3_candidate_prompt_sweep.partial.json').write_text(json.dumps(results,indent=2))
+    if maximum>0.01 or not finite:
+        raise RuntimeError('candidate rejected on configured prompt sweep')
+Path('/tmp/vrl_sd3_candidate_prompt_sweep.json').write_text(json.dumps(results,indent=2))
