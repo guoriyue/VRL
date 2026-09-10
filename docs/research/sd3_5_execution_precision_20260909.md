@@ -105,3 +105,31 @@ both generation and replay, retain actual trainable dtypes, run the original
 parity gate and measure memory/performance. No production policy is changed on the
 strength of this one-transition diagnostic. The observed reduction flag also needs
 to be recorded in environment-bound numerical evidence.
+
+## Fresh compiled trajectory rejects the two-part candidate
+
+The candidate was applied before generating a fresh compiled trajectory, with
+the same configured prompt, seed, shape and flow-GRPO schedule. All trainable
+adapters remain FP32; eight frozen conditioning parameter tensors are promoted
+from BF16 to FP32. BF16 reduced-precision reduction is disabled. Generation and
+replay both use the same candidate and the production default compile method.
+[Results](sd3_5_candidate_compiled_20260909.json) and
+[executed source](sd3_5_candidate_compiled_20260909_probe.txt) are preserved.
+The run started from clean production revision `135c4390a`; the subsequent
+`7f4c1a559` change only adds evidence capture and does not alter this probe's model
+or numerical execution. Local log: `/tmp/vrl_sd3_candidate_compiled_probe.log`.
+
+At step 8, the maximum original rollout versus batch-1 replay logprob difference
+is 0.004651270806789398 without gradients, but 0.012948013842105865 with backward.
+Observed gradients are finite. FP32 CFG recombination still gives a batch
+difference of 0.012934364378452301 in the backward arm. No optimizer update or
+production trainer acceptance is claimed. The backward mismatch exceeds the
+unchanged 0.01 limit, so the candidate is not ready for production.
+
+This supersedes any inference that the eager fixed-transition zero implies
+compiled training success. Before broader prompt/step acceptance, the next
+isolation checks Inductor's treatment of low-precision intermediate rounding.
+The installed PyTorch source (`torch/_inductor/config.py`,
+`emulate_precision_casts`) explicitly describes removal of intermediate
+downcast/upcast pairs during fusion and provides an opt-in way to retain them.
+That source observation motivates an experiment; it does not prove causality.
