@@ -81,11 +81,8 @@ class ContinuousRolloutItem:
     ``len(prompts)`` distinct groups per iteration.
     """
 
-    # Producer-assigned monotonic id of the finite prompt batch this group
-    # belongs to (unique per producer lifetime, not across owner resets). The
-    # consumer validates iteration homogeneity on it; batch selection consumes
-    # it once the versioned lookahead lands (Sprint 2). Until then the
-    # single-construction-site architecture test is its validation consumer.
+    # Producer-assigned monotonic identity, unique per owner lifetime. The
+    # consumer selects the demanded head by this key even if preview is ready.
     batch_id: int
     group_slot: int
     rollout_policy_version: int | None

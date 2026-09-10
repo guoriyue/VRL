@@ -1,7 +1,8 @@
 # SPRINT：Continuous versioned two-batch lookahead
 
-状态：**parked（2026-07-21）**。等待
-[Generation / reward pump split](SPRINT_continuous_generation_reward_pump.md) 完成。
+状态：**implementing（2026-09-09）**。原 2026-07-21 计划已进入实施；
+共享生成阶段、split pump 与 batch-aware consumer 已有独立提交。
+暂保留原路径，待真实验收后再移动。
 
 父 program：[Continuous three-stage pipeline](../planned/SPRINT_continuous_three_stage_pipeline_program.md)
 
@@ -180,3 +181,33 @@ continuous.blocked_by_staleness_window
 - `vrl/rollouts/orchestration/continuous/consumer.py`
 - `tests/rollouts/orchestration/continuous/test_owner.py`
 - `tests/rollouts/orchestration/continuous/test_scheduler.py`
+
+
+## 2026-09-09：当前实现与验证证据
+
+- `86219a397`：consumer 按 owner 指定的 head batch ID 选择，不按完成先后抢跑；
+  同批 group slot 必须是完整的 `0..N-1`，返回时恢复 prompt 顺序。
+- producer 使用保持插入顺序的 batch map，同时最多 current + 一个 preview。
+  task 和生成容量都使用 `(batch_id, group_slot)`，保留既有 batch record 的输入所有权。
+- split 路径在等待当前结果前安装真实 `next_prompts`；默认 composite 路径仍在消费后安装。
+  没有 preview 时自然退化为单批，随后也可接受新的独立 batch。
+- owner 校验下一次呈现的 prompts/group size，并在消费完整 head 后推进；
+  ready item cap 随实际两批 group 总数调整，byte cap 不扩大。
+- admission 优先遍历 head 的 pending slots；所有 batch 共享生成、unscored 和 reward 上限。
+  drain 覆盖两个 batch 的 pending/inflight；non-draining backend 继续保留每批原版本。
+- 普通 preview 失败保存在该 batch，耗尽重试后不再生成；当前 batch 可完成。
+  当失败批成为 head 时停止。真正的 TerminalRuntimeError 仍立即 quarantine 全部任务。
+- 失败的 traceback 保留代码位置，但异步清除已结束 frame 的媒体引用；日志记录错误文本，
+  避免 LogRecord 留住 exception/tensor。弱引用测试验证失败 payload 不滞留。
+
+验证：221 项 orchestration、collector、architecture 测试通过，包括真实 owner 线程的
+慢 reward 下提前 generation、draining/non-draining 版本保留、相同 slot 不跨批混合、
+preview mismatch、no-preview、窗口上限，以及局部与全局失败的不同处理。
+这些是控制与接口验证，**不代表真实模型曲线、checkpoint 恢复确定性或 GPU 加速已通过**。
+
+应保留：collector stage API、scored-only ready queue、consumer 完整组检查、
+owner 线程 facade，以及现有 weight transaction。新 batch 查询与错误边界有真实消费者，
+没有新增算法名字名单或通用 scheduler 框架。
+
+剩余验收：真实分卡 static-vs-split 数值/吞吐比较、带 sampler checkpoint 的完整恢复回放、
+容量 profile 与长跑。ready byte 超限仍 fail closed；没有用丢弃当前 batch 来维持生成。

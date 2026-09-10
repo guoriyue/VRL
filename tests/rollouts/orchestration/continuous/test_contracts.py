@@ -1360,3 +1360,107 @@ async def test_consumer_rejects_leftover_prior_batch_at_named_demand() -> None:
             expected_batch_id=1,
         )
     assert queue.size() == 2
+
+
+@pytest.mark.asyncio
+async def test_producer_limits_early_preview_to_two_batches_and_keeps_slot_identity() -> None:
+    collector = _GatedCollector()
+    collector.supports_reward_generation_overlap = True
+    queue = ContinuousRolloutQueue(max_items=4)
+    producer = _producer(collector, queue, prompts=["a", "b"])
+    producer.append_prompt_batch(["c", "d"], group_size=2, runtime_debug=False)
+    with pytest.raises(RuntimeError, match="exactly one current batch"):
+        producer.append_prompt_batch(["e"], group_size=2, runtime_debug=False)
+    await producer.start()
+    try:
+        await _wait_until(lambda: queue.size() == 4)
+        assert sorted((item.batch_id, item.group_slot) for item in queue.snapshot()) == [
+            (0, 0),
+            (0, 1),
+            (1, 0),
+            (1, 1),
+        ]
+        with pytest.raises(RuntimeError, match="skip the head"):
+            producer.consume_prompt_batch(1)
+        with pytest.raises(RuntimeError, match="left ready items"):
+            producer.consume_prompt_batch(0)
+        queue.remove([item for item in queue.snapshot() if item.batch_id == 0])
+        producer.consume_prompt_batch(0)
+        assert producer.current_batch_id == 1
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_failed_preview_preserves_current_until_head_advances() -> None:
+    import gc
+    import weakref
+
+    class FailedPreview(_GatedCollector):
+        supports_reward_generation_overlap = True
+
+        def __init__(self):
+            super().__init__()
+            self.failed_payloads = []
+
+        async def collect_unscored(self, prompts, **kwargs):
+            if prompts[0].prompt == "bad":
+                payload = torch.zeros(256)
+                self.failed_payloads.append(weakref.ref(payload))
+                raise ValueError("preview generation failed")
+            return await super().collect_unscored(prompts, **kwargs)
+
+    collector = FailedPreview()
+    collector.allow_score.clear()
+    queue = ContinuousRolloutQueue(max_items=2)
+    producer = _producer(collector, queue, prompts=["current"])
+    producer.append_prompt_batch(["bad"], group_size=2, runtime_debug=False)
+    await producer.start()
+    try:
+        await _wait_until(lambda: producer._batches[1].failure is not None)
+        await asyncio.sleep(0.01)
+        gc.collect()
+        assert all(reference() is None for reference in collector.failed_payloads)
+        assert producer.state.fatal_error is None
+        assert producer.state.error_count == 0
+        collector.allow_score.set()
+        await _wait_until(lambda: queue.size() == 1)
+        assert queue.snapshot()[0].batch_id == 0
+        queue.remove(queue.snapshot())
+        producer.consume_prompt_batch(0)
+        with pytest.raises(RuntimeError, match="failure budget"):
+            _ = producer.current_batch_id
+        await _wait_until(lambda: producer.state.fatal_error is not None)
+    finally:
+        collector.allow_score.set()
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_terminal_runtime_failure_in_preview_still_stops_current() -> None:
+    from vrl.runtime_errors import TerminalRuntimeError
+
+    root = TerminalRuntimeError("generation fleet unavailable")
+
+    class BrokenFleet(_GatedCollector):
+        supports_reward_generation_overlap = True
+
+        async def collect_unscored(self, prompts, **kwargs):
+            if prompts[0].prompt == "bad":
+                raise root
+            return await super().collect_unscored(prompts, **kwargs)
+
+    collector = BrokenFleet()
+    collector.allow_score.clear()
+    queue = ContinuousRolloutQueue(max_items=2)
+    producer = _producer(collector, queue, prompts=["current"])
+    producer.append_prompt_batch(["bad"], group_size=2, runtime_debug=False)
+    await producer.start()
+    try:
+        await _wait_until(lambda: producer.state.fatal_error is not None)
+        assert producer.state.fatal_error is root
+        assert queue.size() == 0
+        await _wait_until(lambda: producer.inflight_count == 0)
+    finally:
+        collector.allow_score.set()
+        await producer.stop()

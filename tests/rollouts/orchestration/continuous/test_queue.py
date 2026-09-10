@@ -42,15 +42,17 @@ def test_rejects_negative_byte_limit() -> None:
         ContinuousRolloutQueue(max_items=1, max_bytes=-1)
 
 
-def test_item_limit_changes_only_between_prompt_batches() -> None:
+def test_item_limit_can_grow_but_cannot_discard_resident_items() -> None:
     queue = ContinuousRolloutQueue(max_items=1)
     queue.set_item_limit(2)
     assert queue.max_items == 2
 
     queue.put(_item(group_slot=0, version=1))
-    with pytest.raises(RuntimeError, match="only between batches"):
-        queue.set_item_limit(3)
-    assert queue.max_items == 2
+    queue.set_item_limit(3)
+    queue.put(_item(group_slot=1, version=1))
+    with pytest.raises(RuntimeError, match="below resident items"):
+        queue.set_item_limit(1)
+    assert queue.max_items == 3
 
 
 def test_snapshot_and_remove_are_pure_container_ops() -> None:

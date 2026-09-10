@@ -24,6 +24,8 @@
 # Admission and weight-sync ordering are owned by the continuous schedule state
 # machine. split_generation_reward=true enables the reserved unscored queue
 # only for collectors with nonblocking, accelerator-isolated reward scoring.
+# It also installs the recipe's one next_prompts preview before waiting for
+# current reward; the consumer still demands the current batch in prompt order.
 # max_unscored_groups and max_unscored_bytes_mb bound generation plus pending/
 # active scoring. max_generated_group_bytes_mb reserves a per-group ceiling
 # before launch; a larger receipt is a terminal capacity error. Taking a group

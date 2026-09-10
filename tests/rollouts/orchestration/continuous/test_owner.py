@@ -166,11 +166,12 @@ def _owner(
     lifecycle: _OwnerLifecycle,
     *,
     max_inflight_groups: int = 1,
+    split_generation_reward: bool = False,
 ) -> ContinuousRolloutOwner:
     return ContinuousRolloutOwner(
         lifecycle=lifecycle,
         settings=ContinuousRolloutSettings(
-            split_generation_reward=False,
+            split_generation_reward=split_generation_reward,
             max_unscored_groups=4,
             max_unscored_bytes_mb=8192,
             max_generated_group_bytes_mb=2048,
@@ -583,3 +584,115 @@ async def test_completed_shutdown_future_registers_callback_outside_state_lock(
         if submitted and not owner._closed:
             owner._finish_shutdown(submitted[0], loop)
         await owner._wait_until_stopped()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("non_draining", [False, True])
+async def test_early_preview_generates_during_current_reward_and_preserves_versions(
+    non_draining,
+) -> None:
+    class RecordingCollector(_OwnerCollector):
+        supports_reward_generation_overlap = True
+
+        def __init__(self):
+            super().__init__()
+            self.generated: list[tuple[str, int]] = []
+            self.preview_generated = threading.Event()
+
+        async def collect_unscored(self, prompts, **kwargs):
+            prompt = prompts[0].prompt
+            self.generated.append((prompt, kwargs["policy_version"]))
+            result = await super().collect_unscored(prompts, **kwargs)
+            if prompt == "p1":
+                self.preview_generated.set()
+            return result
+
+    collector = RecordingCollector()
+    collector.block_future_scores()
+    lifecycle = _OwnerLifecycle(collector, non_draining=non_draining)
+    owner = _owner(lifecycle, split_generation_reward=True)
+    demand = asyncio.create_task(
+        owner.next_iteration(
+            ["p0"],
+            group_size=1,
+            runtime_debug=False,
+            initial_weights={"w": 0},
+            next_prompts=["p1"],
+        )
+    )
+    try:
+        assert await asyncio.to_thread(collector.preview_generated.wait, 2.0)
+        assert not demand.done()
+        assert collector.generated == [("p0", 1), ("p1", 1)]
+        collector.release_scores()
+        first = await demand
+        assert first.stats.gauges["continuous.batch_id"] == 0
+        await owner.commit_weights({"w": 1})
+        second = await owner.next_iteration(
+            ["p1"],
+            group_size=1,
+            runtime_debug=False,
+            initial_weights=None,
+            next_prompts=["p2"],
+        )
+        assert second.stats.gauges["continuous.batch_id"] == 1
+        assert second.stats.gauges["continuous.rollout_policy_version"] == 1
+        await owner.commit_weights({"w": 2})
+        third = await owner.next_iteration(
+            ["p2"],
+            group_size=1,
+            runtime_debug=False,
+            initial_weights=None,
+        )
+        assert third.stats.gauges["continuous.batch_id"] == 2
+        assert third.stats.gauges["continuous.rollout_policy_version"] == 2
+        assert collector.generated == [("p0", 1), ("p1", 1), ("p2", 2)]
+    finally:
+        collector.release_scores()
+        demand.cancel()
+        await asyncio.gather(demand, return_exceptions=True)
+        await owner.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mismatch", ["prompt", "group_size"])
+async def test_early_preview_rejects_mismatched_next_demand(mismatch: str) -> None:
+    collector = _OwnerCollector()
+    collector.supports_reward_generation_overlap = True
+    owner = _owner(_OwnerLifecycle(collector), split_generation_reward=True)
+    try:
+        await owner.next_iteration(
+            ["p0"],
+            group_size=1,
+            runtime_debug=False,
+            initial_weights={"w": 0},
+            next_prompts=["p1"],
+        )
+        with pytest.raises(RuntimeError, match="does not match"):
+            await owner.next_iteration(
+                ["wrong" if mismatch == "prompt" else "p1"],
+                group_size=2 if mismatch == "group_size" else 1,
+                runtime_debug=False,
+                initial_weights=None,
+            )
+    finally:
+        await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_split_owner_without_preview_accepts_a_later_independent_batch() -> None:
+    collector = _OwnerCollector()
+    collector.supports_reward_generation_overlap = True
+    owner = _owner(_OwnerLifecycle(collector), split_generation_reward=True)
+    try:
+        for step in range(2):
+            iteration = await owner.next_iteration(
+                [f"p{step}"],
+                group_size=1,
+                runtime_debug=False,
+                initial_weights={"w": 0} if step == 0 else None,
+            )
+            assert iteration.stats.gauges["continuous.batch_id"] == step
+        assert len(collector.collect_threads) == 2
+    finally:
+        await owner.shutdown()

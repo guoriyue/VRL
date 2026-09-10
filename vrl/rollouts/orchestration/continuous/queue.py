@@ -1,7 +1,7 @@
 """Bounded ready queue for completed continuous rollout items.
 
 A plain in-process FIFO container of completed prompt groups, bounded by the
-active prompt-batch size and an approximate byte budget. It is pure
+installed prompt-batch window and an approximate byte budget. It is pure
 *mechanism*: it holds the deque, tracks bytes, and rejects an item before
 mutation when either hard limit would be exceeded. It deliberately knows
 nothing about policy versions or staleness; the consumer owns those decisions.
@@ -38,11 +38,8 @@ class ContinuousRolloutQueue:
         return len(self._items)
 
     def stats(self) -> dict[str, float]:
-        # Distinct-slot/batch/version counts are structurally constant while
-        # only one finite batch may be resident (set_prompt_batch refuses a
-        # replacement before the queue drains), so only the three quantities
-        # that can vary are reported. The lookahead sprint reintroduces
-        # batch-aware counts when two batches can actually coexist.
+        # Occupancy spans the installed current/preview window. The consumer
+        # owns batch selection; this container reports physical occupancy.
         oldest_age = max((item.age_s for item in self._items), default=0.0)
         return {
             "ready_items": float(len(self._items)),
@@ -53,15 +50,15 @@ class ContinuousRolloutQueue:
     # -- mutation -------------------------------------------------------
 
     def set_item_limit(self, max_items: int) -> None:
-        """Resize the item limit between finite prompt batches."""
+        """Resize for the installed batch window without discarding receipts."""
 
         next_limit = int(max_items)
         if next_limit < 1:
             raise ValueError("ContinuousRolloutQueue.max_items must be >= 1")
-        if self._items:
+        if next_limit < len(self._items):
             raise RuntimeError(
-                "continuous ready queue item limit can change only between batches "
-                f"(ready={len(self._items)})",
+                "continuous ready queue item limit cannot shrink below resident items "
+                f"(ready={len(self._items)}, limit={next_limit})",
             )
         self.max_items = next_limit
 

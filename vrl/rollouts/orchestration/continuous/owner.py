@@ -81,6 +81,7 @@ class _ContinuousOwnerRuntime:
         self.consumer: ContinuousRolloutConsumer | None = None
         self.producer: ContinuousRolloutProducer | None = None
         self._installed_prompt_batch: _InstalledPromptBatch | None = None
+        self._lookahead_prompt_batch: _InstalledPromptBatch | None = None
 
         self._command_lock = asyncio.Lock()
         self._active_commands: set[asyncio.Task[Any]] = set()
@@ -135,6 +136,22 @@ class _ContinuousOwnerRuntime:
             assert self.consumer is not None
             assert self.producer is not None
             current_version = self.lifecycle.current_policy_version()
+            batch_id = self.producer.current_batch_id
+            early_lookahead = self.settings.split_generation_reward
+            if early_lookahead and next_prompts is not None:
+                if not next_prompts:
+                    raise ValueError("continuous lookahead prompts must be non-empty")
+                self.producer.append_prompt_batch(
+                    next_prompts,
+                    group_size=group_size,
+                    runtime_debug=runtime_debug,
+                )
+                assert self.queue is not None
+                self.queue.set_item_limit(len(prompts) + len(next_prompts))
+                self._lookahead_prompt_batch = _InstalledPromptBatch(
+                    tuple(next_prompts), int(group_size)
+                )
+                self.producer.admit_now()
 
             iteration = await self.consumer.drain_for_iteration(
                 min_groups=len(prompts),
@@ -145,8 +162,14 @@ class _ContinuousOwnerRuntime:
                 producer_state=self.producer.state,
             )
             self._installed_prompt_batch = None
-            lookahead_requested = 0.0
-            if next_prompts is not None:
+            lookahead_requested = float(next_prompts is not None)
+            if early_lookahead:
+                self.producer.consume_prompt_batch(batch_id)
+                self._installed_prompt_batch = self._lookahead_prompt_batch
+                self._lookahead_prompt_batch = None
+                assert self.queue is not None
+                self.queue.set_item_limit(max(1, len(next_prompts or [])))
+            elif next_prompts is not None:
                 if not next_prompts:
                     raise ValueError("continuous lookahead prompts must be non-empty")
                 # Debug metadata belongs to generation time. This lookahead runs
@@ -376,6 +399,7 @@ class _ContinuousOwnerRuntime:
         self.queue = None
         self.consumer = None
         self._installed_prompt_batch = None
+        self._lookahead_prompt_batch = None
         if producer is not None:
             await producer.stop(wait_timeout_s=_OWNER_STOP_TIMEOUT_S)
         if queue is not None:
