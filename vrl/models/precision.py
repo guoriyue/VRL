@@ -81,8 +81,130 @@ def float32_precision_state() -> dict[str, str]:
 
 
 __all__ = [
+    "ModulePrecisionTrace",
     "apply_float32_precision",
     "float32_precision_state",
     "model_autocast",
     "model_precision",
 ]
+
+
+class ModulePrecisionTrace:
+    """Opt-in metadata-only observation at explicitly selected module boundaries.
+
+    Hooks affect execution/compilation overhead, so this is an acceptance tool,
+    not a default training instrument. Callers label phases (including backward)
+    explicitly; grad mode alone cannot identify non-reentrant recomputation.
+    Tensor dtype at a module boundary is not proof of a kernel's compute dtype.
+    """
+
+    def __init__(self, modules: dict[str, Any]) -> None:
+        if not modules:
+            raise ValueError("precision trace requires explicitly selected modules")
+        self.modules = dict(modules)
+        self.events: list[dict[str, Any]] = []
+        self.phase = "unspecified"
+        self._handles: list[Any] = []
+
+    def snapshot(self, phase: str) -> dict[str, Any]:
+        """Record all selected parameters/buffers at a load/wrap boundary."""
+
+        self.phase = phase
+        event = {
+            "kind": "snapshot",
+            "phase": phase,
+            "modules": {
+                name: self._state(module, recurse=True) for name, module in self.modules.items()
+            },
+        }
+        self.events.append(event)
+        return event
+
+    @staticmethod
+    def _tensors(value: Any, path: str = "") -> list[dict[str, Any]]:
+        import torch
+
+        if isinstance(value, torch.Tensor):
+            return [
+                {
+                    "path": path,
+                    "dtype": str(value.dtype),
+                    "device": str(value.device),
+                    "shape": list(value.shape),
+                    "requires_grad": value.requires_grad,
+                }
+            ]
+        if isinstance(value, dict):
+            return [
+                record
+                for key, item in value.items()
+                for record in ModulePrecisionTrace._tensors(item, f"{path}.{key}")
+            ]
+        if isinstance(value, (tuple, list)):
+            return [
+                record
+                for index, item in enumerate(value)
+                for record in ModulePrecisionTrace._tensors(item, f"{path}[{index}]")
+            ]
+        return []
+
+    @classmethod
+    def _state(cls, module: Any, *, recurse: bool) -> dict[str, Any]:
+        return {
+            "parameters": cls._tensors(dict(module.named_parameters(recurse=recurse))),
+            "buffers": cls._tensors(dict(module.named_buffers(recurse=recurse))),
+        }
+
+    def _before(self, name: str, module: Any, args: Any, kwargs: Any) -> None:
+        import torch
+
+        self.events.append(
+            {
+                "kind": "forward_enter",
+                "module": name,
+                "phase": self.phase,
+                "grad_enabled": torch.is_grad_enabled(),
+                "inputs": self._tensors({"args": args, "kwargs": kwargs}),
+                "state": self._state(module, recurse=False),
+                "autocast": {
+                    device: {
+                        "enabled": torch.is_autocast_enabled(device),
+                        "dtype": str(torch.get_autocast_dtype(device)),
+                    }
+                    for device in ("cpu", "cuda")
+                },
+            }
+        )
+
+    def _after(self, name: str, _module: Any, _args: Any, _kwargs: Any, output: Any) -> None:
+        self.events.append(
+            {
+                "kind": "forward_exit",
+                "module": name,
+                "phase": self.phase,
+                "outputs": self._tensors(output),
+            }
+        )
+
+    def __enter__(self) -> ModulePrecisionTrace:
+        from functools import partial
+
+        if self._handles:
+            raise RuntimeError("precision trace is already attached")
+        try:
+            for name, module in self.modules.items():
+                self._handles.append(
+                    module.register_forward_pre_hook(partial(self._before, name), with_kwargs=True)
+                )
+                self._handles.append(
+                    module.register_forward_hook(partial(self._after, name), with_kwargs=True)
+                )
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+        return self
+
+    def __exit__(self, _kind: Any, _error: Any, _traceback: Any) -> None:
+        for handle in self._handles:
+            handle.remove()
+        self._handles.clear()

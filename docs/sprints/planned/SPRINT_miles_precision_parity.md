@@ -1,6 +1,6 @@
 # SPRINT：Precision parity：敏感参数前向精度与重放一致性
 
-状态：**planned；先做 dtype/数值审计，再决定是否改生产精度。**
+状态：**implementing；先做 dtype/数值审计，再决定是否改生产精度。**
 
 ## 阅读基线与执行边界
 
@@ -52,3 +52,64 @@ Miles-diffusion 的参数 dtype patch 只接受 torch 2.11.0；本机恰好 2.11
 PrecisionPolicy、family adapter 和现有 correction。模型维度/协议常量保持。
 不创建 FamilyTrainingContract，不追求把分支变成表；不宣称所有 family bit-exact。
 Miles 对 BF16-train/NVFP4-rollout 的限制是其 recipe 约束，不是对 VRL 的普遍禁令。
+
+
+## 2026-09-09: Explicit module precision tracing
+
+`vrl.models.precision.ModulePrecisionTrace` records metadata for explicitly selected
+modules. Snapshots identify all selected parameters/buffers at caller-labelled
+load/wrap boundaries. Forward hooks record direct parameter/buffer state, tensor
+inputs/outputs, grad mode and effective CPU/CUDA autocast configuration. Tensor
+payloads are never copied to CPU or retained in events. Hooks are removed both on
+normal exit and exceptions. This stateful context owns actual hook lifetimes;
+it is not a declarative family contract or a new global precision policy.
+
+Example for a caller that already owns a loaded model and representative inputs:
+
+```python
+from vrl.models.precision import ModulePrecisionTrace
+
+selected = {name: model.get_submodule(name) for name in exact_module_names}
+with ModulePrecisionTrace(selected) as trace:
+    trace.snapshot("loaded")
+    # A caller wrapping this same model can add snapshot("after-fsdp-wrap").
+    trace.phase = "forward"
+    output = model(**inputs)
+    trace.phase = "backward"
+    loss_from(output).backward()
+records = trace.events
+```
+
+Choose exact module names from the actual family model. Do not infer sensitivity
+from a universal norm/timestep glob. Non-reentrant checkpoint recomputation can
+run with grad enabled just like the original forward, so the caller explicitly
+labels the backward phase. Early-stop recomputation may produce enter events
+without exit events. Structured tensor observation covers dict/list/tuple inputs
+and outputs; opaque custom objects need their consuming module boundary selected.
+Autocast state and boundary tensor dtype are observations, not an assertion about
+internal operator/kernel compute dtype. Hooks can change compilation behavior and
+performance, so these traces are acceptance diagnostics, not a production default
+or an uninstrumented latency benchmark.
+
+Source observations: MiniMax-H3's `_lora_dtype` returns None to preserve the
+loader's mixed storage precision during LoRA attachment. FSDP actor normalization
+currently converts mismatched floating parameters to the target dtype, whereas
+its native policy rejects that conversion. No production casting policy changed
+in this commit. The local SD3.5 Medium transformer safetensors header at revision
+`b940f670f0eda2d07fbb75229e779da1ad11eb80` contains 909 BF16 tensors. This was read
+through `safetensors.safe_open(...).get_slice(key).get_dtype()` without loading
+those weights. Header dtype does not establish post-loader or forward precision,
+and does not establish whether FP32 would improve numerical accuracy.
+
+Validation: 89 precision, FSDP and architecture tests passed (16 dependency warnings
+plus a SWIG deprecation notice). New CPU tests observe real non-reentrant checkpoint
+recomputation, mixed FP32/BF16 module parameters and BF16 inputs, actual FSDP
+normalization changes, unchanged FP32 buffers, finite backward gradients and hook
+cleanup after forward failure. They are not a full SD3.5/H3 forward audit or a
+real two-rank FSDP precision-equivalence result. Those traces, fixed-transition
+prediction/logprob/gradient comparisons and repeated real short curves remain open.
+
+Existing family loading hooks, FP32 reductions, master-weight optimizer and
+correction/guard logic stay unchanged. The context manager is necessary to own
+hook state and cleanup; its helpers share tensor-metadata formatting. No new
+ALL_CAPS business vocabulary or family support table was introduced.
