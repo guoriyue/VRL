@@ -138,6 +138,7 @@ class _ContinuousOwnerRuntime:
 
             iteration = await self.consumer.drain_for_iteration(
                 min_groups=len(prompts),
+                expected_batch_id=self.producer.current_batch_id,
                 current_version=current_version,
                 wait_timeout_s=self.settings.wait_timeout_s,
                 poll_interval_s=self.settings.queue_poll_interval_s,

@@ -51,6 +51,7 @@ class ContinuousRolloutConsumer:
         wait_timeout_s: float,
         poll_interval_s: float,
         producer_state: ContinuousRolloutProducerState | None = None,
+        expected_batch_id: int | None = None,
     ) -> RolloutIteration:
         """Block until a homogeneous-version iteration is ready, then build it.
 
@@ -63,7 +64,11 @@ class ContinuousRolloutConsumer:
         deadline = time.monotonic() + float(wait_timeout_s)
         wait_start = time.perf_counter()
         ready_groups_at_demand = len(
-            {item.group_slot for item in self.queue.snapshot()},
+            {
+                item.group_slot
+                for item in self.queue.snapshot()
+                if expected_batch_id is None or item.batch_id == expected_batch_id
+            },
         )
         start_completed = producer_state.completed_count if producer_state else 0
         start_errors = producer_state.error_count if producer_state else 0
@@ -74,6 +79,7 @@ class ContinuousRolloutConsumer:
                 start_errors=start_errors,
             )
             selected = self._select_iteration(
+                expected_batch_id=expected_batch_id,
                 min_groups=min_groups,
                 current_version=current_version,
             )
@@ -182,6 +188,7 @@ class ContinuousRolloutConsumer:
         *,
         min_groups: int,
         current_version: int | None,
+        expected_batch_id: int | None = None,
     ) -> tuple[int | None, list[ContinuousRolloutItem]] | None:
         """Pop one complete, distinct-group, homogeneous-version batch."""
 
@@ -190,6 +197,12 @@ class ContinuousRolloutConsumer:
         self.validate_ready_versions(current_version=current_version)
 
         items = self.queue.snapshot()
+        if expected_batch_id is not None:
+            if any(item.batch_id < expected_batch_id for item in items):
+                raise RuntimeError("continuous ready queue retains an already consumed batch")
+            # The owner selects its installed head, never whichever future batch
+            # happens to finish first. The unselected receipts retain ownership.
+            items = [item for item in items if item.batch_id == expected_batch_id]
         versions = {item.rollout_policy_version for item in items}
         if len(versions) > 1:
             raise RuntimeError(
@@ -213,6 +226,9 @@ class ContinuousRolloutConsumer:
                 "continuous ready prompt batch exceeds its expected group count "
                 f"(ready={len(items)}, expected={min_groups})",
             )
+        if set(group_slots) != set(range(min_groups)):
+            raise RuntimeError("continuous ready prompt batch has invalid group slots")
+        items.sort(key=lambda item: item.group_slot)
         self.queue.remove(items)
         return items[0].rollout_policy_version, items
 
@@ -228,7 +244,7 @@ class ContinuousRolloutConsumer:
         batches: list[RolloutBatch] = []
         for index, item in enumerate(items):
             # Each queued item is one prompt group. Reassign contiguous ids after
-            # completion-order selection so advantage normalization cannot join
+            # prompt-order selection so advantage normalization cannot join
             # different prompts or retain sparse producer slot ids.
             item.batch.group_ids = torch.full_like(item.batch.group_ids, int(index))
             batches.append(item.batch)

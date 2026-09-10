@@ -140,6 +140,14 @@ class ContinuousRolloutProducer:
 
         return len(self._inflight)
 
+    @property
+    def current_batch_id(self) -> int:
+        """Identity the consumer must demand, independent of completion order."""
+
+        if self._active_batch is None:
+            raise RuntimeError("continuous producer has no installed prompt batch")
+        return self._active_batch.batch_id
+
     def stage_stats(self) -> dict[str, float]:
         """Owner-loop snapshot of generation and reward capacity."""
 

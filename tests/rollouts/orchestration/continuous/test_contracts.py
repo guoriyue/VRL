@@ -974,8 +974,10 @@ async def _drain(
     min_groups: int,
     current_version: int,
     timeout_s: float = 1.0,
+    expected_batch_id: int | None = None,
 ):
     return await consumer.drain_for_iteration(
+        expected_batch_id=expected_batch_id,
         min_groups=min_groups,
         current_version=current_version,
         wait_timeout_s=timeout_s,
@@ -1284,3 +1286,77 @@ def test_split_rejects_collectors_without_verified_overlap_capability() -> None:
             staleness=StalenessPolicy(max_stale_policy_versions=1),
             settings=replace(_settings(), split_generation_reward=True),
         )
+
+
+@pytest.mark.asyncio
+async def test_consumer_waits_for_named_head_even_when_lookahead_is_ready() -> None:
+    queue = ContinuousRolloutQueue(max_items=4)
+    next_items = [_item(group_slot=i, version=2, batch_id=1) for i in range(2)]
+    for item in next_items:
+        queue.put(item)
+    consumer = _consumer(queue, max_stale=1)
+    demand = asyncio.create_task(
+        _drain(
+            consumer,
+            min_groups=2,
+            current_version=2,
+            expected_batch_id=0,
+        )
+    )
+    try:
+        await asyncio.sleep(0.01)
+        assert not demand.done()
+        # Current completes out of order and uses the same slots as lookahead.
+        current = [_item(group_slot=i, version=1, batch_id=0) for i in range(2)]
+        queue.put(current[1])
+        await asyncio.sleep(0.01)
+        assert not demand.done()
+        queue.put(current[0])
+        result = await demand
+        assert result.batches[0] is current[0].batch
+        assert result.batches[1] is current[1].batch
+        assert result.stats.gauges["continuous.batch_id"] == 0
+        assert result.stats.gauges["continuous.ready_groups_at_demand"] == 0
+        assert [id(item) for item in queue.snapshot()] == [id(item) for item in next_items]
+        following = await _drain(
+            consumer,
+            min_groups=2,
+            current_version=2,
+            expected_batch_id=1,
+        )
+        assert following.stats.gauges["continuous.batch_id"] == 1
+        assert queue.size() == 0
+    finally:
+        demand.cancel()
+        await asyncio.gather(demand, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("slots", [[-1, 0], [0, 2]])
+async def test_consumer_rejects_wrong_slots_without_removing_receipts(slots) -> None:
+    queue = ContinuousRolloutQueue(max_items=2)
+    for slot in slots:
+        queue.put(_item(group_slot=slot, version=1, batch_id=0))
+    with pytest.raises(RuntimeError, match="invalid group slots"):
+        await _drain(
+            _consumer(queue, max_stale=1),
+            min_groups=2,
+            current_version=1,
+            expected_batch_id=0,
+        )
+    assert queue.size() == 2
+
+
+@pytest.mark.asyncio
+async def test_consumer_rejects_leftover_prior_batch_at_named_demand() -> None:
+    queue = ContinuousRolloutQueue(max_items=2)
+    queue.put(_item(group_slot=0, version=1, batch_id=0))
+    queue.put(_item(group_slot=0, version=1, batch_id=1))
+    with pytest.raises(RuntimeError, match="already consumed batch"):
+        await _drain(
+            _consumer(queue, max_stale=1),
+            min_groups=1,
+            current_version=1,
+            expected_batch_id=1,
+        )
+    assert queue.size() == 2
