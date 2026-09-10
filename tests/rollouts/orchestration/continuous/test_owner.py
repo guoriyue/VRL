@@ -543,3 +543,39 @@ async def test_failed_shutdown_keeps_owner_alive_for_cleanup_retry() -> None:
     assert collector.shutdown_calls == 2
     assert owner._stopped.is_set()
     assert thread is not None and not thread.is_alive()
+
+
+@pytest.mark.asyncio
+async def test_completed_shutdown_future_registers_callback_outside_state_lock(
+    monkeypatch,
+) -> None:
+    collector = _OwnerCollector()
+    owner = _owner(_OwnerLifecycle(collector))
+    _runtime, loop = owner._ensure_thread()
+    original_submit = asyncio.run_coroutine_threadsafe
+    submitted = []
+
+    def submit_completed(coroutine, target_loop):
+        future = original_submit(coroutine, target_loop)
+        future.result(timeout=2.0)
+        submitted.append(future)
+        original_add_callback = future.add_done_callback
+
+        def add_callback(callback):
+            # Fail immediately on regression instead of deadlocking pytest.
+            assert not owner._state_lock.locked()
+            original_add_callback(callback)
+
+        future.add_done_callback = add_callback
+        return future
+
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", submit_completed)
+    try:
+        await owner.shutdown()
+        assert len(submitted) == 1
+        assert collector.shutdown_calls == 1
+    finally:
+        # Also settle the real owner if the lock assertion catches a regression.
+        if submitted and not owner._closed:
+            owner._finish_shutdown(submitted[0], loop)
+        await owner._wait_until_stopped()

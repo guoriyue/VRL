@@ -475,14 +475,17 @@ class ContinuousRolloutOwner:
             await self._wait_until_stopped()
             return
         runtime, loop = self._ensure_thread()
+        register_callback = False
         with self._state_lock:
             future = self._shutdown_future
             if future is None:
                 future = asyncio.run_coroutine_threadsafe(runtime.shutdown(), loop)
                 self._shutdown_future = future
-                future.add_done_callback(
-                    lambda done: self._finish_shutdown(done, loop),
-                )
+                register_callback = True
+        # Future.add_done_callback runs inline when the future is already done.
+        # _finish_shutdown takes _state_lock, so registration must be outside it.
+        if register_callback:
+            future.add_done_callback(lambda done: self._finish_shutdown(done, loop))
         try:
             await _await_owner_future(future)
         except BaseException:
