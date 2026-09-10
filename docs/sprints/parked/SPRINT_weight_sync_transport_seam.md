@@ -123,3 +123,14 @@ checks include missing-bucket rejection, not just direct actor installation.
 See the [acceptance details and limits](../planned/SPRINT_miles_weight_delivery_verification.md).
 This closes a CLI coverage gap; warm full-parameter measurements, GPU/fabric
 comparisons and end-to-end training improvements remain unproven.
+
+## 2026-09-09: Real 4.49 GB full-parameter CPU acceptance
+
+The configured 64 MiB bucket path passed exact poisoned-state recovery and two
+installs on two real SD3.5 CPU rollout models, each receiving all 908 trainable
+parameters (4,486,343,040 bytes). The default snapshot comparison on the same
+CPU topology was terminated by Ray's host-memory monitor and published no report.
+[Commands, results and limits](../../research/weight_delivery_sd3_5_fullparam_cpu_20260909.md)
+record both outcomes. This closes real full-parameter bucket byte acceptance for
+two CPU replicas; it does not establish GPU/fabric performance or a controlled
+peak-memory improvement. The default remains unchanged.

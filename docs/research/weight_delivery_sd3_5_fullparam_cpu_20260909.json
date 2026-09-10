@@ -1,0 +1,49 @@
+{
+  "checkpoint": null,
+  "model_identity": {
+    "build": {
+      "nft_previous_adapter": false,
+      "use_lora": false
+    },
+    "schema": "vrl.model-identity/v1",
+    "sources": {
+      "main": {
+        "kind": "huggingface",
+        "repo_id": "stabilityai/stable-diffusion-3.5-medium",
+        "revision": "b940f670f0eda2d07fbb75229e779da1ad11eb80"
+      }
+    }
+  },
+  "receivers": [
+    {
+      "bytes": 4486343040,
+      "poison_install_verify_s": 5.096128894016147,
+      "policy_version": 2,
+      "tensors": 908,
+      "worker_id": "acceptance-0"
+    },
+    {
+      "bytes": 4486343040,
+      "poison_install_verify_s": 5.104772644001059,
+      "policy_version": 2,
+      "tensors": 908,
+      "worker_id": "acceptance-1"
+    }
+  ],
+  "schema": "vrl.weight-delivery-acceptance/v2",
+  "scope": "single-rank in-place trainable parameter bytes; no forward equivalence claim",
+  "snapshot_export_s": 12.851758479955606,
+  "source_build_restore_s": 4.244664723053575,
+  "source_initialization": {
+    "deterministic": false,
+    "seed": 17
+  },
+  "transport": {
+    "bucket_bytes": 67108864,
+    "kind": "staged_buckets",
+    "sync_verify_wall_s": {
+      "first": 5.490343297016807,
+      "repeat": 5.234065255033784
+    }
+  }
+}
