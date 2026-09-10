@@ -57,3 +57,21 @@ another process holds a 1 GiB allocation. CPU failure-injection checks cover for
 PID changes, missing/duplicate entries, unavailable counters, query failures and
 NVML cleanup. A full SD3.5/OCR retry is still needed to establish whether any genuine
 worker residual exceeds the unchanged allowance.
+
+## Real SD3.5/OCR retry after the fix
+
+The unchanged two-epoch seed-17 attempt at
+`outputs/repro/sd3_5_ocr_strict_d` ran from clean commit `a583d830c` and published
+launch `39f2f4b878e64172be01dc0beac770e1`. The first two measured process parking
+residuals were both 692,060,160 bytes (660 MiB), against a 522,190,848-byte baseline
+(498 MiB): a stable 162 MiB excess, below the unchanged 256 MiB allowance.
+The run passed the point where the old device-wide check had stopped attempt C.
+
+It subsequently stopped at the first optimizer-update parity gate:
+`max_abs_diff=0.02667667716741562`, with finite values and the unchanged `0.01`
+limit. The persisted gate event records `trainer_step=0`, `global_step=0` and
+`passed=false`. There are no completed epoch rows or successful final artifact
+receipt. The memory ownership repair therefore has real-model evidence; the
+separate rollout/replay numerical mismatch remains unresolved. No parking or
+numerical threshold was widened. Full local log:
+`/tmp/vrl-sd3-ocr-strict-d.log`.

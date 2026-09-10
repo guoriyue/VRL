@@ -299,3 +299,13 @@ UUID. Missing/ambiguous accounting fails closed. The residual allowance and phas
 ownership contracts are unchanged. Validation: 131 tests passed, one skipped,
 including real CuMem sleep/wake with a concurrent foreign allocation. This fixes
 an attribution defect; full SD3.5/OCR acceptance remains pending a retry.
+
+## 2026-09-09: Real run passes parking, reaches numerical parity gate
+
+Retry D at clean `a583d830c` passed repeated process-scoped CuMem parking with
+identical 660 MiB residual usage, 162 MiB above its 498 MiB baseline. It then failed
+before the first optimizer update because rollout/replay log-probability difference
+was `0.02667667716741562`, above the unchanged `0.01` threshold. The debug event
+records finite values and zero trainer/global step. This is a numerical issue to
+investigate through actual backend precision and batch geometry, not an optimizer
+update failure or a completed learning curve. Neither threshold has been relaxed.
