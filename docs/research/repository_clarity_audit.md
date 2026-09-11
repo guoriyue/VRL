@@ -3859,3 +3859,19 @@ this combined regression is compatibility evidence, not architectural completion
   tests passed; touched-file Ruff/diff checks passed and no removed helper
   callers remain. This refactor does not claim real-GPU KL validation. Full
   repository review remains incomplete.
+
+## Joint regression after generation, data and service cleanup
+
+- Reviewed online topology preflight helpers against their callers. Retain
+  _require_supported_distributed_rollout_topology (training context plus resource
+  ownership) and _validate_reward_placement (reservation plus execution ordinal).
+  Neither has one natural object owner. Retain the production Kling preflight
+  as a conditional import/error-context boundary. No wrapper classes or new
+  configuration vocabulary are warranted by this inspection.
+- Ran the combined generation, rollouts, trainers/data, config and rewards/service
+  suites on the current implementation after the preceding cross-layer changes:
+  1677 passed, two skipped, four dependency warnings in 57.30 seconds. The process
+  exited successfully. This checks interactions beyond the individual change
+  slices; it does not certify a real-GPU training run or review uninspected files.
+- No implementation changed in this slice. The audit remains in progress; joint
+  green tests are not proof that whole-repository clarity work is complete.
