@@ -5673,3 +5673,17 @@ cross-node GPU throughput or finish the wider repository clarity audit.
   warnings. Touched-file Ruff and git diff --check pass; source/tests have no old
   function references. Real-checkpoint test calls were migrated but those tests
   were not run. The full repository audit remains incomplete.
+
+## GRPO-family composition constructs the selected class once
+
+- Separate concrete algorithm class selection from the identical constructor
+  invocation in AlgorithmEvaluatorPair.from_configs. GRPO, FlashGRPO, FlowDPPO
+  and GRPOGuard now share one config/advantage-estimator call instead of four
+  repeated argument blocks. Constructor signatures and inheritance were checked.
+- Preserve the explicit selection branches, diffusion objective vocabulary and
+  evaluator/chunk-replay compatibility checks. Do not introduce a separate backend
+  table, registry or forwarding helper for the same choice. This is a local
+  construction simplification, not a claim that all algorithm facts are relocated.
+- Existing common factory suite: 25 passed, two dependency warnings. Touched-file
+  Ruff and git diff --check pass. No new tests merely mirror the refactor.
+  Repository-wide completion remains unproven.

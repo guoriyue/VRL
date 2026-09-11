@@ -82,25 +82,17 @@ class AlgorithmEvaluatorPair:
                 component_weights=reward.weights,
             )
             if kind == "flow_dppo":
-                algorithm: object = FlowDPPO(
-                    algorithm_config,
-                    advantage_estimator=advantage_estimator,
-                )
+                algorithm_type = FlowDPPO
             elif kind == "grpo_guard":
-                algorithm = GRPOGuard(
-                    algorithm_config,
-                    advantage_estimator=advantage_estimator,
-                )
+                algorithm_type = GRPOGuard
             elif kind == "flash_grpo":
-                algorithm = FlashGRPO(
-                    algorithm_config,
-                    advantage_estimator=advantage_estimator,
-                )
+                algorithm_type = FlashGRPO
             else:
-                algorithm = GRPO(
-                    algorithm_config,
-                    advantage_estimator=advantage_estimator,
-                )
+                algorithm_type = GRPO
+            algorithm = algorithm_type(
+                algorithm_config,
+                advantage_estimator=advantage_estimator,
+            )
             if is_chunk_autoregressive:
                 if precision.diffusion_math != "fp32":
                     raise ValueError(
