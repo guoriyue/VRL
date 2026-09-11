@@ -1203,3 +1203,39 @@ def test_supervisor_records_nonzero_exit_even_after_child_wrote_success(tmp_path
     assert outcome.exit_code == 3
     assert outcome.verdict["supervisor_exit_code"] == 3
     assert json.loads((out / "run_verdict.json").read_text())["supervisor_exit_code"] == 3
+
+
+def test_health_check_failure_stops_owned_training_process(tmp_path, monkeypatch):
+    supervisor = RunSupervisor(
+        command=_child_script(tmp_path, "import time\ntime.sleep(600)\n"),
+        output_dir=tmp_path / "run",
+        health=HealthGateConfig(poll_seconds=0.01),
+        term_grace_seconds=0.1,
+    )
+    failure = PermissionError("cannot read metrics")
+    children = []
+
+    def fail():
+        children.append(supervisor._child)
+        raise failure
+
+    monkeypatch.setattr(supervisor._health_gate, "judge_new_rows", fail)
+    try:
+        with pytest.raises(PermissionError, match="cannot read metrics") as caught:
+            supervisor.run()
+        assert caught.value is failure
+        assert children and children[0].poll() is not None
+        assert supervisor._child is None
+    finally:
+        for child in children:
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait()
+
+
+def test_health_gate_distinguishes_missing_metrics_from_unreadable_path(tmp_path):
+    gate = MetricsHealthGate(HealthGateConfig(), tmp_path)
+    assert gate.judge_new_rows() is False
+    (tmp_path / "metrics.csv").mkdir()
+    with pytest.raises(IsADirectoryError):
+        gate.judge_new_rows()

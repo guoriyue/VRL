@@ -2921,3 +2921,21 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: all 59 supervisor tests passed, covering direct launch, DDP/FSDP
   torchrun construction and multi-node rejection through the new entry point.
   Touched-file Ruff/diff checks passed. Full repository review remains active.
+
+## Supervisor retains child ownership through health-check failures
+
+- _run_attempt cleared its child reference in finally even when health polling
+  raised while training was still running. The supervisor could therefore exit
+  without stopping the process group it owned.
+- On attempt-monitoring exceptions, invoke existing request_stop and reap the
+  child before re-raising the original error. Annotate cleanup failures and retain
+  a still-running child handle instead of unconditionally dropping ownership.
+  Normal attempt completion continues to clear the finished handle.
+- With that cleanup boundary in place, metrics reads now suppress only absent
+  files. Other OSError failures propagate instead of pretending no metrics exist.
+- Keep process-group signaling/grace escalation in RunSupervisor and numerical
+  judgment in MetricsHealthGate. No new cleanup class/helper or policy vocabulary.
+- Validation: 61 supervisor tests passed. A real sleeping subprocess is stopped
+  and reaped when the health check raises PermissionError, preserving the same
+  exception; a missing metrics file remains normal while a directory at that path
+  raises. Touched-file Ruff/diff checks passed. Full review remains active.

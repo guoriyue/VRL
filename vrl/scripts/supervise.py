@@ -388,7 +388,7 @@ class MetricsHealthGate:
     ) -> tuple[list[dict[str, str | None]], list[tuple[tuple[str, str | None], ...]]]:
         try:
             text = (self.output_dir / "metrics.csv").read_text(encoding="utf-8")
-        except OSError:
+        except FileNotFoundError:
             return [], []
         if not text.endswith("\n"):
             text = text.rpartition("\n")[0]
@@ -621,8 +621,16 @@ class RunSupervisor:
                 exit_code = self._child.wait()
             else:
                 exit_code = self._wait_with_health_checks(self._child, self._health_gate)
+        except BaseException as error:
+            try:
+                self.request_stop()
+                self._child.wait()
+            except BaseException as cleanup_error:
+                error.add_note(f"supervisor child cleanup also failed: {cleanup_error!r}")
+            raise
         finally:
-            self._child = None
+            if self._child.poll() is not None:
+                self._child = None
         return AttemptOutcome(
             exit_code=exit_code, verdict=self._collect_attempt_verdict(exit_code=exit_code)
         )
