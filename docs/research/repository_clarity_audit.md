@@ -3426,3 +3426,21 @@ this combined regression is compatibility evidence, not architectural completion
   and producer state remains observable, then confirms the next shutdown stops
   the same producer before closing the collector exactly once. Touched-file
   Ruff/diff checks passed. Full repository review remains incomplete.
+
+## Consistent finite producer wait budgets
+
+- Producer stop silently clamped negative budgets to zero and accepted infinity;
+  prompt-batch drain also accepted non-finite budgets. Both undermined their
+  bounded-wait contract, whereas the adjacent consumer already uses
+  require_timeout. Reuse that shared validator before touching producer state
+  or admitting work, and remove the redundant conversion/clamp at the wait.
+- Zero is now rejected alongside negative and non-finite values. Inspected
+  production callers and existing tests use positive budgets. Keep cooperative
+  cancellation, timed abandonment, and weight-sync drain behavior unchanged for
+  valid budgets. Keep require_timeout as a shared consistency boundary; no new
+  helper, class, or constant is needed. Broader timeout API redesign is outside
+  this change.
+- Validation: 209 continuous orchestration tests passed, including eight cases
+  proving invalid stop/drain budgets leave active generation running and able
+  to finish scoring. Touched-file Ruff and diff checks passed. The full repository
+  clarity review remains incomplete.

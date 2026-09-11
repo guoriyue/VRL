@@ -698,6 +698,32 @@ async def test_active_prompt_batch_fails_when_collect_is_cancelled() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("timeout_s", [0.0, -1.0, float("nan"), float("inf")])
+@pytest.mark.parametrize("operation", ["stop", "drain_prompt_batch"])
+async def test_invalid_producer_timeout_preserves_running_work(
+    timeout_s: float,
+    operation: str,
+) -> None:
+    collector = _GatedCollector()
+    collector.allow_generate.clear()
+    producer = _producer(collector, ContinuousRolloutQueue(max_items=2))
+    await producer.start()
+    producer.admit_now()
+    await asyncio.wait_for(collector.generation_started.wait(), 5.0)
+    try:
+        with pytest.raises(ValueError, match="wait_timeout_s must be finite and > 0"):
+            await getattr(producer, operation)(wait_timeout_s=timeout_s)
+        await asyncio.sleep(0)
+        assert producer.state.running
+        assert producer.inflight_count == 1
+        collector.allow_generate.set()
+        await producer.drain_prompt_batch(wait_timeout_s=5.0)
+        assert "score_end" in collector.events
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
 async def test_producer_stop_does_not_wait_forever_for_cancel_suppression() -> None:
     class _CancellationResistantCollector(_FiniteCollector):
         def __init__(self) -> None:

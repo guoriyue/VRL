@@ -43,6 +43,7 @@ from vrl.rollouts.stats import RolloutStats
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 from vrl.trajectory import trajectory_tensor_bytes
 from vrl.utils.config import require_exact_int
+from vrl.utils.deadline import require_timeout
 
 _CPU = torch.device("cpu")
 _OBSERVABILITY_LOG_INTERVAL_S = 30.0
@@ -275,6 +276,7 @@ class ContinuousRolloutProducer:
         deadline instead of blocking release of its Ray actors forever.
         """
 
+        wait_timeout_s = require_timeout(wait_timeout_s, name="wait_timeout_s")
         self.state.running = False
         if self._loop_task is not None and not self._loop_task.done():
             self._loop_task.cancel()
@@ -287,7 +289,7 @@ class ContinuousRolloutProducer:
         if tasks:
             done, pending = await asyncio.wait(
                 tasks,
-                timeout=max(0.0, float(wait_timeout_s)),
+                timeout=wait_timeout_s,
             )
             for task in done:
                 with contextlib.suppress(BaseException):
@@ -320,10 +322,11 @@ class ContinuousRolloutProducer:
         cap, before the weight-sync barrier may proceed.
         """
 
+        wait_timeout_s = require_timeout(wait_timeout_s, name="wait_timeout_s")
         prompt_batch = self._active_batch
         if prompt_batch is None:
             return
-        deadline = time.monotonic() + float(wait_timeout_s)
+        deadline = time.monotonic() + wait_timeout_s
         while self._has_pending_work:
             errors_before_harvest = self.state.error_count
             self._harvest_done()
