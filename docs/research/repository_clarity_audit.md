@@ -4380,6 +4380,17 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Fused log-prob reports missing hidden feature dimensions
+
+- Reject scalar hidden tensors before indexing their final dimension. The
+  previous path raised an incidental tuple IndexError when token_ids was also
+  scalar; the boundary now reports the expected [..., D] feature dimension.
+- Keep the check in the existing public function, without a new validator or
+  kernel change. A single-token hidden vector with scalar output remains valid
+  and now has an eager-equivalence regression alongside existing empty batches.
+- The malformed-scalar regression failed before the fix. Fused log-prob suite:
+  26 passed. Touched-file Ruff checks pass. The wider clarity audit continues.
+
 ## Fused log-prob precision helper names its shared accumulation role
 
 - Rename _norm_dtype to _accumulation_dtype: both normalization and weight-gradient

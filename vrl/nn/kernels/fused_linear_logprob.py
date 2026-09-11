@@ -214,6 +214,8 @@ def fused_linear_logprob(
     if chunk_rows is not None:
         require_exact_int(chunk_rows, path="chunk_rows", minimum=1)
     temp = require_positive_temperature(temperature)
+    if hidden.ndim == 0:
+        raise ValueError("hidden must have a trailing feature dimension: expected [..., D]")
     if hidden.shape[:-1] != token_ids.shape:
         raise ValueError(
             "hidden leading shape must match token_ids shape; "

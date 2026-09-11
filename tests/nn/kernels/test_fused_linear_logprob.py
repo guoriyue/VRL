@@ -216,3 +216,18 @@ def test_empty_token_batches_match_eager_and_have_zero_gradients(batch, length):
         assert eager_input.grad is not None
         torch.testing.assert_close(fused_input.grad, eager_input.grad)
         assert torch.count_nonzero(fused_input.grad) == 0
+
+
+def test_fused_rejects_scalar_hidden_with_explicit_shape_error():
+    with pytest.raises(ValueError, match=r"hidden.*dimension"):
+        fused_linear_logprob(torch.tensor(1.0), torch.ones(4, 1), torch.tensor(0))
+
+
+def test_fused_accepts_single_token_hidden_vector():
+    hidden = torch.tensor([1.0, 2.0, 3.0])
+    weight = torch.arange(12, dtype=torch.float32).reshape(4, 3)
+    token_id = torch.tensor(2)
+    actual = fused_linear_logprob(hidden, weight, token_id)
+    expected = F.log_softmax(F.linear(hidden, weight), dim=-1)[token_id]
+    assert actual.shape == torch.Size([])
+    torch.testing.assert_close(actual, expected)
