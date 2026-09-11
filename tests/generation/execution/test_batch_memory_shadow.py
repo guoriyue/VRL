@@ -456,3 +456,41 @@ def test_cuda_occupancy_preserves_query_errors(monkeypatch, operation) -> None:
     with pytest.raises(RuntimeError, match="CUDA query failed") as caught:
         cuda_occupancy_snapshot()
     assert caught.value is failure
+
+
+@pytest.mark.parametrize("failure_stage", ["forward", "synchronize"])
+def test_probe_releases_failed_trial_tensors_before_cache_cleanup(
+    fake_cuda, monkeypatch, failure_stage
+):
+    import weakref
+
+    retained = []
+    sync_failure_pending = False
+
+    class FailingProbe(_ProbeExecutor):
+        def forward_probe_batch(self, request, batch, *, execute_steps):
+            nonlocal sync_failure_pending
+            result = super().forward_probe_batch(request, batch, execute_steps=execute_steps)
+            if batch.sample_count > 6:
+                temporary = torch.ones(2)
+                retained.append(weakref.ref(temporary))
+                if failure_stage == "forward":
+                    raise RuntimeError("CUDA out of memory")
+                result.temporary = temporary
+                sync_failure_pending = True
+            return result
+
+    def synchronize():
+        nonlocal sync_failure_pending
+        if sync_failure_pending:
+            sync_failure_pending = False
+            raise RuntimeError("CUDA out of memory")
+
+    def empty_cache():
+        assert all(ref() is None for ref in retained)
+
+    monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
+    monkeypatch.setattr(torch.cuda, "empty_cache", empty_cache)
+    result = _probe_core(FailingProbe()).probe_batch_size(_request(), max_samples=10)
+    assert retained
+    assert result.samples_per_generation_batch == 6

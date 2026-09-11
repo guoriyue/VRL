@@ -448,6 +448,7 @@ class GenerationWorkerCore:
                 sample_count=n,
             )
             started = time.perf_counter()
+            batch_result = None
             try:
                 batch_result = executor.forward_probe_batch(
                     probe_request,
@@ -463,6 +464,10 @@ class GenerationWorkerCore:
                 if not is_cuda_out_of_memory(exc):
                     raise
                 torch.cuda.synchronize()
+                # Synchronization may fail after forward returned its payload.
+                # Release both that result and failed forward locals before cache cleanup.
+                batch_result = None
+                traceback.clear_frames(exc.__traceback__)
                 torch.cuda.empty_cache()
                 return BatchSizeProbeTrial(n=n, oom=True, label=timed_label)
             wall_s = time.perf_counter() - started

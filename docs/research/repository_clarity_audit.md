@@ -2830,3 +2830,18 @@ this combined regression is compatibility evidence, not architectural completion
   diagnostic frame locals. This verifies lifetime/order on CPU, not GPU capacity
   improvement measurements. Touched-file Ruff and diff checks passed; a deliberate
   traceback-only test local is annotated for Ruff. Full review remains active.
+
+## Startup probe clears failed trial ownership before allocator cleanup
+
+- Probe run_trial kept failed forward frame locals while emptying the CUDA cache.
+  An OOM raised during the post-forward synchronize could additionally leave its
+  completed batch_result referenced by the still-running trial frame.
+- Initialize the result explicitly and, after recognized OOM recovery/sync,
+  discard it and clear completed traceback frames before empty_cache. Keep probe
+  fitting, confirmation/bisection, pipeline-hook recovery and non-OOM propagation
+  unchanged. No new helper/class or repeated policy table.
+- Validation: 201 generation execution and Ray OOM tests passed. Two weak-reference
+  cases verify cleanup ordering for forward and synchronize failures while the
+  probe still converges to the correct simulated capacity. CUDA operations are
+  mocked; these tests prove object lifetime, not physical-GPU throughput. Touched
+  Ruff and diff checks passed. Full repository review remains active.
