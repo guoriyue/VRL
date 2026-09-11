@@ -127,41 +127,41 @@ class RunMetrics:
             for gen, reward in zip(self.generation_wall, self.reward_wall, strict=True)
         )
 
+    @classmethod
+    def from_run_dir(cls, run_dir: Path, *, warmup_iterations: int) -> RunMetrics:
+        """Load one run's per-step collection phases, dropping warmup steps."""
 
-def read_run_metrics(run_dir: Path, *, warmup_iterations: int) -> RunMetrics:
-    """Load one run's per-step collection phases, dropping warmup steps."""
+        verdict_path = run_dir / "run_verdict.json"
+        if verdict_path.exists():
+            verdict = json.loads(verdict_path.read_text())
+            if verdict.get("verdict") != "success":
+                raise RuntimeError(f"{run_dir} did not succeed: {verdict}")
+        stats_path = run_dir / "rollout_stats.jsonl"
+        if not stats_path.exists():
+            raise FileNotFoundError(f"missing {stats_path}; the run wrote no phase stats")
 
-    verdict_path = run_dir / "run_verdict.json"
-    if verdict_path.exists():
-        verdict = json.loads(verdict_path.read_text())
-        if verdict.get("verdict") != "success":
-            raise RuntimeError(f"{run_dir} did not succeed: {verdict}")
-    stats_path = run_dir / "rollout_stats.jsonl"
-    if not stats_path.exists():
-        raise FileNotFoundError(f"missing {stats_path}; the run wrote no phase stats")
+        rows = [json.loads(line) for line in stats_path.read_text().splitlines() if line.strip()]
+        rows.sort(key=lambda row: int(row.get("step", 0)))
+        steady = rows[warmup_iterations:]
+        if not steady:
+            raise RuntimeError(
+                f"{run_dir}: {len(rows)} recorded steps but warmup drops {warmup_iterations}",
+            )
 
-    rows = [json.loads(line) for line in stats_path.read_text().splitlines() if line.strip()]
-    rows.sort(key=lambda row: int(row.get("step", 0)))
-    steady = rows[warmup_iterations:]
-    if not steady:
-        raise RuntimeError(
-            f"{run_dir}: {len(rows)} recorded steps but warmup drops {warmup_iterations}",
-        )
-
-    metrics = RunMetrics()
-    for row in steady:
-        # A row missing collect.* means the step did no collection (e.g. a
-        # gradient-accumulation microbatch); skip rather than score it as zero.
-        if "collect.wall" not in row:
-            continue
-        metrics.collect_wall.append(float(row["collect.wall"]))
-        metrics.generation_wall.append(float(row.get("collect.generation_wall", 0.0)))
-        metrics.reward_wall.append(float(row.get("collect.reward_wall", 0.0)))
-        metrics.overlap.append(float(row.get("collect.generation_reward_overlap", 0.0)))
-        metrics.reward_queue_wait.append(float(row.get("reward.queue_wait_s", 0.0)))
-    if not metrics.collect_wall:
-        raise RuntimeError(f"{run_dir}: no steady-state step recorded a collect.wall")
-    return metrics
+        metrics = cls()
+        for row in steady:
+            # A row missing collect.* means the step did no collection (e.g. a
+            # gradient-accumulation microbatch); skip rather than score it as zero.
+            if "collect.wall" not in row:
+                continue
+            metrics.collect_wall.append(float(row["collect.wall"]))
+            metrics.generation_wall.append(float(row.get("collect.generation_wall", 0.0)))
+            metrics.reward_wall.append(float(row.get("collect.reward_wall", 0.0)))
+            metrics.overlap.append(float(row.get("collect.generation_reward_overlap", 0.0)))
+            metrics.reward_queue_wait.append(float(row.get("reward.queue_wait_s", 0.0)))
+        if not metrics.collect_wall:
+            raise RuntimeError(f"{run_dir}: no steady-state step recorded a collect.wall")
+        return metrics
 
 
 def run_arm(
@@ -318,7 +318,9 @@ def analyze(out_dir: Path, *, warmup_iterations: int) -> dict[str, Any]:
     arms: dict[str, dict[str, Any]] = {}
     for arm in ARMS:
         run_dirs = sorted(out_dir.glob(f"arm{arm}_run*"))
-        runs = [read_run_metrics(path, warmup_iterations=warmup_iterations) for path in run_dirs]
+        runs = [
+            RunMetrics.from_run_dir(path, warmup_iterations=warmup_iterations) for path in run_dirs
+        ]
         if runs:
             arms[arm] = summarize_arm(runs)
     missing = {"A", "C"} - set(arms)

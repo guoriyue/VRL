@@ -5627,3 +5627,18 @@ cross-node GPU throughput or finish the wider repository clarity audit.
 - Existing runtime config, rollout launcher and worker checkpoint identity suites:
   63 passed, three dependency warnings. Touched-file Ruff and git diff --check
   pass. This local simplification does not complete the full repository audit.
+
+## Overlap benchmark run metrics own loading
+
+- Move read_run_metrics into the existing RunMetrics as from_run_dir, constructing
+  through cls. Update analysis and test callers and remove the free constructor
+  without an alias. File checks, warmup filtering, missing-phase behavior and
+  per-run measurements remain unchanged.
+- Keep summarize_arm and acceptance calculations free: they combine multiple
+  runs or arms, not one RunMetrics instance. Keep ARMS, acceptance thresholds and
+  the Student-t critical-value table as the isolated benchmark protocol. No new
+  report/loader class is introduced just to group functions.
+- Existing overlap benchmark suite: 12 passed, exercising warmup exclusion,
+  skipped collection rows and acceptance analysis. Touched-file Ruff and
+  git diff --check pass; source/tests have no old constructor references. No
+  training benchmark was launched. The wider repository audit remains open.

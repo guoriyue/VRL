@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 
 from vrl.scripts.perf.reward_overlap_benchmark import (
+    RunMetrics,
     analyze,
     evaluate_gates,
-    read_run_metrics,
     summarize_arm,
 )
 
@@ -290,7 +290,7 @@ def test_warmup_steps_are_dropped_before_averaging(tmp_path: Path) -> None:
         "\n".join(json.dumps(row) for row in rows) + "\n",
     )
 
-    metrics = read_run_metrics(run_dir, warmup_iterations=2)
+    metrics = RunMetrics.from_run_dir(run_dir, warmup_iterations=2)
 
     assert metrics.steps == 2
     assert metrics.mean_collect_wall() == pytest.approx(100.0)
@@ -321,7 +321,7 @@ def test_steps_without_collection_are_skipped_not_scored_as_zero(tmp_path: Path)
         "\n".join(json.dumps(row) for row in rows) + "\n",
     )
 
-    metrics = read_run_metrics(run_dir, warmup_iterations=0)
+    metrics = RunMetrics.from_run_dir(run_dir, warmup_iterations=0)
 
     assert metrics.steps == 2
     assert metrics.mean_collect_wall() == pytest.approx(100.0)
@@ -357,7 +357,7 @@ def test_theoretical_saving_uses_min_of_generation_and_reward(tmp_path: Path) ->
         overlap=30.0,
     )
 
-    metrics = read_run_metrics(run_dir, warmup_iterations=0)
+    metrics = RunMetrics.from_run_dir(run_dir, warmup_iterations=0)
 
     assert metrics.theoretical_saving_s() == pytest.approx(40.0)
 
@@ -369,7 +369,7 @@ def test_zero_variance_arms_still_yield_a_positive_bound(tmp_path: Path) -> None
     arms = {
         arm: summarize_arm(
             [
-                read_run_metrics(path, warmup_iterations=2)
+                RunMetrics.from_run_dir(path, warmup_iterations=2)
                 for path in sorted(tmp_path.glob(f"arm{arm}_run*"))
             ],
         )
