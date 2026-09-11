@@ -5214,3 +5214,17 @@ this combined regression is compatibility evidence, not architectural completion
 - Aesthetic checkpoint evaluation and curve verdict suites: 45 passed.
   Touched-file Ruff and git diff --check pass. This cleanup does not run real
   generation or complete the repository-wide audit.
+
+## SANA autocast checks preserve the selected device and query failure
+
+- Remove the sole-use _is_autocast_enabled wrapper and call the device-qualified
+  torch API directly, consistent with vrl/models/precision.py. The wrapper
+  previously swallowed TypeError and retried without a device, obscuring the
+  original failure and potentially querying a different autocast domain.
+- Keep scheduler configuration access as an adapter for mapping/attribute
+  representations. No compatibility class or replacement fallback is added;
+  scheduler identity, sampling protocol and active-autocast rejection remain.
+- Added a regression that failed before the change, proving query-error identity
+  and exactly one device-qualified call. SANA comparison, aesthetic evaluation
+  and curve verdict suites: 71 passed. Touched-file Ruff and git diff --check
+  pass. No real model generation was run; the repository audit remains open.

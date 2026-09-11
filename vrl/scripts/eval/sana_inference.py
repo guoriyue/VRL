@@ -95,7 +95,7 @@ def generate_prompt_images(
 
     if num_images < 1:
         raise ValueError(f"num_images must be >= 1; got {num_images}")
-    if _is_autocast_enabled(device):
+    if torch.is_autocast_enabled(device.type):
         raise RuntimeError("SANA native inference must run without an outer autocast context")
     require_scheduler(scheduler)
     protocol = dict(OFFICIAL_SAMPLING_PROTOCOL if sampling is None else sampling)
@@ -134,13 +134,6 @@ def _config_value(config: Any, key: str) -> Any:
     if hasattr(config, "get"):
         return config.get(key)
     return getattr(config, key, None)
-
-
-def _is_autocast_enabled(device: torch.device) -> bool:
-    try:
-        return bool(torch.is_autocast_enabled(device.type))
-    except TypeError:
-        return bool(torch.is_autocast_enabled())
 
 
 __all__ = [

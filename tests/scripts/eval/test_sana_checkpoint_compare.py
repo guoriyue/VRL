@@ -514,6 +514,30 @@ def test_model_precision_snapshot_records_effective_backend(
     }
 
 
+def test_generation_preserves_device_autocast_query_failure(monkeypatch) -> None:
+    failure = TypeError("device autocast query failed")
+    calls = []
+
+    def query(*args):
+        calls.append(args)
+        if args:
+            raise failure
+        return False
+
+    monkeypatch.setattr(torch, "is_autocast_enabled", query)
+    with pytest.raises(TypeError) as caught:
+        sana_inference.generate_prompt_images(
+            None,
+            scheduler=None,
+            prompt="draw",
+            seed=0,
+            num_images=1,
+            device=torch.device("cpu"),
+        )
+    assert caught.value is failure
+    assert calls == [("cpu",)]
+
+
 def test_generation_rejects_an_active_outer_autocast() -> None:
     model = _FakeModel([])
 
