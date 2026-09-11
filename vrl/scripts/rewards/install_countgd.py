@@ -59,6 +59,9 @@ from vrl.utils.artifacts import default_data_root, sha256_file
 from vrl.utils.json_files import write_json
 
 _SOURCE_REPOSITORY = "https://github.com/niki-amini-naieni/CountGD"
+_SOURCE_ARCHIVE_URL = (
+    f"https://codeload.github.com/niki-amini-naieni/CountGD/tar.gz/{COUNTGD_SOURCE_REVISION}"
+)
 _SOURCE_ARCHIVE_SHA256 = "dcab136e4c1ce9a567a3f67bef084ec3efbcbe15c6f6155755fea4ac48457378"
 _SPACE_REPOSITORY = "nikigoli/countgd"
 _SPACE_REPOSITORY_URL = "https://huggingface.co/spaces/nikigoli/countgd"
@@ -413,7 +416,7 @@ def _build_staged_install(
     archive_path = staging / "countgd-source.tar.gz"
     if source_archive is None:
         _download_url(
-            _source_archive_url(),
+            _SOURCE_ARCHIVE_URL,
             archive_path,
             expected_sha256=_SOURCE_ARCHIVE_SHA256,
         )
@@ -458,12 +461,6 @@ def _build_staged_install(
     )
     write_json(staging / "install_manifest.json", manifest)
     _verify_install(source_dir)
-
-
-def _source_archive_url() -> str:
-    return (
-        f"https://codeload.github.com/niki-amini-naieni/CountGD/tar.gz/{COUNTGD_SOURCE_REVISION}"
-    )
 
 
 def _download_url(
@@ -973,7 +970,7 @@ def _build_manifest(
         "schema": COUNTGD_INSTALL_SCHEMA,
         "source_repository": _SOURCE_REPOSITORY,
         "source_revision": COUNTGD_SOURCE_REVISION,
-        "source_archive_url": _source_archive_url(),
+        "source_archive_url": _SOURCE_ARCHIVE_URL,
         "source_archive_sha256": _SOURCE_ARCHIVE_SHA256,
         "checkpoint_repository": _SPACE_REPOSITORY_URL,
         "space_revision": COUNTGD_SPACE_REVISION,

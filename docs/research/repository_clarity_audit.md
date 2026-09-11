@@ -5172,3 +5172,17 @@ this combined regression is compatibility evidence, not architectural completion
   helper name is absent from production/tests. These tests use isolated fixtures;
   no dependency installation, download or real model smoke was run. The broader
   script and repository audits remain incomplete.
+
+## CountGD archive URL is a fixed install input
+
+- Replace the argument-free _source_archive_url function with
+  _SOURCE_ARCHIVE_URL beside the source repository and digest. Download and
+  manifest construction share the same revision-derived constant; URL text is
+  unchanged. This constant represents a pinned artifact boundary, not a workflow
+  business vocabulary or a dynamic runtime decision.
+- Keep the isolated environment lock and its payload/digest helpers: lock
+  identity includes target platform, bootstrap and all distributions rather than
+  belonging to an individual LockedDistribution. No new owner class is needed.
+- Existing installer suite: 8 passed. Touched-file Ruff and git diff --check
+  pass; no old function references remain in production/tests. No downloads or
+  environment changes were performed. The wider audit remains incomplete.
