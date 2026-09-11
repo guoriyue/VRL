@@ -7017,3 +7017,21 @@ The broader repository audit remains incomplete.
   including debug-enabled execution and real multi-rank error propagation.
   Touched-file Ruff and diff checks pass. No new test of the comprehension's
   implementation; the broader repository audit remains incomplete.
+
+## Memory-parking short methods retain state-machine ownership
+
+- Traced WorkerMemoryParking callers in GenerationWorkerCore: execution and
+  weight operations require an active owner; wake checks quarantine before a
+  possible cold rebuild; release_scope brackets dropping the executor before
+  allocator cleanup. Keep these boundaries instead of moving their rules into
+  worker call sites.
+- Keep _is_parked as the shared predicate used by sleep, wake and require_active.
+  Keep distinct plan/session and model/CuMem backend states: restore targets and
+  pool handles have different lifecycle requirements, especially after failures.
+  No additional wrapper, state class or vocabulary table is introduced.
+- Reviewed failure rollback, quarantine, irreversible CuMem failure handling,
+  pipeline-hook recovery and release/reload tests. Worker sleep, pipelined
+  execution and Ray engine suites: 77 passed, including the real CuMem
+  subprocess test. This is lifecycle evidence, not a full training benchmark.
+- No production changes are justified by this review; the broader repository
+  clarity audit remains incomplete.
