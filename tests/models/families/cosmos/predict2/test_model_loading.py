@@ -125,7 +125,11 @@ def test_cosmos_predict2_from_build_swaps_safety_checker_and_re_enables_grad(
         assert calls == [
             {
                 "model_name_or_path": "nvidia/Cosmos-Predict2-2B-Video2World",
-                "torch_dtype": torch.bfloat16,
+                "torch_dtype": {
+                    "default": torch.bfloat16,
+                    "vae": torch.float32,
+                    "text_encoder": torch.bfloat16,
+                },
             },
         ]
 
@@ -153,3 +157,47 @@ def test_cosmos_predict2_from_build_swaps_safety_checker_and_re_enables_grad(
         assert pipeline.text_encoder.to_calls == [("cuda:0", torch.bfloat16)]
     finally:
         torch.set_grad_enabled(True)
+
+
+def test_custom_cosmos_loaders_apply_component_dtypes(monkeypatch) -> None:
+    import diffusers
+
+    from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
+    from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25Model
+    from vrl.models.interfaces.runtime import RolloutBuildOptions
+
+    for model_class, pipeline_name, has_encoder in (
+        (CosmosPredict25Model, "Cosmos2_5_PredictBasePipeline", True),
+        (Cosmos3Model, "Cosmos3OmniPipeline", False),
+    ):
+        pipeline = _FakePipeline()
+        calls = []
+
+        def load(path, *, recorded=calls, loaded=pipeline, **kwargs):
+            recorded.append(kwargs)
+            return loaded
+
+        monkeypatch.setattr(
+            diffusers,
+            pipeline_name,
+            types.SimpleNamespace(from_pretrained=load),
+            raising=False,
+        )
+        build = ModelBuild(
+            model_name_or_path="local-model",
+            revision="snapshot",
+            device="cpu",
+            parameter_dtype=torch.bfloat16,
+            family="test",
+            precision=RolePrecision("bf16", "tf32"),
+            model_config={"local_files_only": True},
+            rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.float32),
+        )
+        model_class.from_build(build)
+        expected = {"default": torch.bfloat16, "vae": torch.float32}
+        if has_encoder:
+            expected["text_encoder"] = torch.float32
+            assert pipeline.text_encoder.to_calls == [("cpu", torch.float32)]
+        assert calls[0]["torch_dtype"] == expected
+        assert calls[0]["revision"] == "snapshot"
+        assert calls[0]["local_files_only"] is True

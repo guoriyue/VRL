@@ -2494,3 +2494,19 @@ this combined regression is compatibility evidence, not architectural completion
   assertions and a T2V constructor regression inspect the actual load mapping;
   the shared local FP32 preservation regression also passes. Touched-file Ruff
   and diff checks passed. Full repository review remains active.
+
+## Cosmos custom loaders share component precision projection
+
+- Predict2, Predict2.5 and Cosmos3 custom from_build methods now use the shared
+  component dtype projection instead of scalar whole-pipeline loading. VAE
+  loads in FP32; Predict2/2.5 encoder movement uses the same resolved encoder
+  dtype as loading. Cosmos3 passes an empty encoder declaration because its
+  joint transformer consumes token IDs directly.
+- Cosmos3 also inherits pretrained_kwargs (including local_files_only) rather
+  than separately projecting revision only. Keep family pipeline construction,
+  safety-checker handling and Predict2.5's component-only skip-encoder branch;
+  its VAE loader already explicitly uses FP32. No new helper or component table.
+- Validation: 39 Cosmos/loader tests passed, including direct custom-constructor
+  load-argument checks for FP32 VAE, encoder override and offline/revision kwargs.
+  Shared real local pipeline precision preservation still passes. Touched-file
+  Ruff/diff checks passed; full repository review remains active.

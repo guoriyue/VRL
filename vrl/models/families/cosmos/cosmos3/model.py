@@ -45,6 +45,7 @@ from vrl.models.steps.denoise import (
     GuidedDiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
+from vrl.models.steps.denoise.base import diffusers_pipeline_dtypes
 from vrl.models.steps.denoise.common import align_replay_tensor
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 from vrl.utils.logging import init_logger, kv
@@ -88,10 +89,11 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
         # Lazy: the optional cosmos extra must not be imported at module load.
         from diffusers import Cosmos3OmniPipeline
 
-        kwargs: dict[str, Any] = {
-            "torch_dtype": build.parameter_dtype,
-            **build.revision_kwargs,
-        }
+        _, kwargs = diffusers_pipeline_dtypes(
+            build,
+            build.parameter_dtype,
+            encoder_names=(),
+        )
         # enable_safety_checker=False avoids the cosmos_guardrail import/dep in dev.
         pipeline = Cosmos3OmniPipeline.from_pretrained(
             build.model_name_or_path,

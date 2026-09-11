@@ -22,6 +22,7 @@ from vrl.models.steps.denoise import (
     DiffusersReplayModelBase,
     GuidedDiffusionSamplingStateBase,
 )
+from vrl.models.steps.denoise.base import diffusers_pipeline_dtypes
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
@@ -177,10 +178,11 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         import diffusers.pipelines.cosmos.pipeline_cosmos2_5_predict as _predict_mod
         from diffusers import Cosmos2_5_PredictBasePipeline
 
-        kwargs: dict[str, Any] = {
-            "torch_dtype": build.parameter_dtype,
-            **build.pretrained_kwargs,
-        }
+        prompt_dtype, kwargs = diffusers_pipeline_dtypes(
+            build,
+            build.parameter_dtype,
+            encoder_names=cls._frozen_encoder_names,
+        )
         revision = kwargs.get("revision")
         skip_text_encoder = bool((build.model_config or {}).get("skip_text_encoder", False))
         if skip_text_encoder:
@@ -202,7 +204,7 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             pipeline.vae.to(build.device, dtype=torch.float32)
         if getattr(pipeline, "text_encoder", None) is not None:
             pipeline.text_encoder.requires_grad_(False)
-            pipeline.text_encoder.to(build.device, dtype=build.parameter_dtype)
+            pipeline.text_encoder.to(build.device, dtype=prompt_dtype)
         return cls(
             pipeline=pipeline,
             device=build.device,
