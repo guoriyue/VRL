@@ -620,13 +620,9 @@ class RayActorDispatcher:
                     return
                 if self._can_acquire(candidates, waiter=waiter):
                     return
+                # Admission state belongs to this event loop. No task can
+                # change it between the check above and entering Event.wait().
                 self._changed.clear()
-                self._require_open()
-                candidates = waiter.candidates
-                if not candidates:
-                    return
-                if self._can_acquire(candidates, waiter=waiter):
-                    continue
                 await self._changed.wait()
         except BaseException:
             self._remove_admission_waiter(waiter)

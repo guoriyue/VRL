@@ -6100,3 +6100,18 @@ The broader repository audit remains incomplete.
 - Batch dispatch and real actor-pool tests: 37 passed with one Ray warning;
   deadline/cancellation tests: seven passed. Touched-file Ruff and diff checks
   pass. No throughput claim; broader repository audit remains incomplete.
+
+## Actor admission waits check state once before yielding
+
+- Remove the duplicate open/candidate/availability checks after Event.clear in
+  RayActorDispatcher._wait_for_available. The dispatcher mutates its admission
+  state on one event loop; no await separates the initial checks, clearing the
+  event and entering Event.wait. The repeated check cannot observe new state.
+- Keep the loop's checks after every wakeup and its cancellation cleanup. Keep
+  _can_acquire separate from _try_acquire: readiness does not reserve a slot.
+  Queue helpers preserve per-worker FIFO identity and shared run/run_one
+  behavior; reducing their count is not a goal. No new classes or constants.
+- Batch dispatch and real actor-pool suites: 37 passed, one Ray dependency
+  warning, including shared admission and middle-waiter cancellation. Ruff and
+  diff checks pass. This simplifies control flow without a throughput claim;
+  the broader repository audit remains incomplete.
