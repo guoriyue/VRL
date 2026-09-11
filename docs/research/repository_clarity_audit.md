@@ -2261,3 +2261,23 @@ this combined regression is compatibility evidence, not architectural completion
   tests passed. New cases verify invalid install/read operations preserve stored
   state and invalid activation cannot bypass validation through the current-slot
   fast path. Touched-file Ruff and diff checks passed. Full review remains open.
+
+## Versioned transfer boundary retained after caller review
+
+- Followed exact policy versions through GenerationWorkerCore.update_weights,
+  verify_active_weights, RayWeightSync and staged-transfer construction. These
+  boundaries already validate nonnegative exact integers before their state
+  changes; no upstream conversion bypass of the slot fix was found here.
+- Keep weight_manifest and iter_weight_chunks/iter_weight_buckets as stateless
+  sender protocol operations. Cloned chunks bound serialized backing storage;
+  bucket packing and manifest validation are distinct operations. Keep
+  StagedWeightTransfer as the receiver buffer/order/completion owner. Combining
+  these into a namespace class would not remove actual shared complexity.
+- Keep worker begin/receive/commit/abort methods as the transport-facing facade;
+  they enforce transfer lifecycle and coordinate installation. No runtime edit,
+  new class, helper or constant is justified by this review. The wire-byte
+  ceiling does not bound full sender/receiver state RAM.
+- Validation: 58 transfer, Ray weight-sync and versioned-worker tests passed in
+  17.16 seconds, including local real-Ray ACK/deadline/partial-transfer tests.
+  This does not establish multi-node or full-model training performance. Full
+  repository review remains open.
