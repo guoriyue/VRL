@@ -670,3 +670,22 @@ Torch-free import checks. Touched-file Ruff and diff whitespace checks pass.
   New regressions cover malformed explicit captions despite available metadata
   and preserve the explicit field when metadata disagrees. Touched-file Ruff and
   whitespace checks pass. Full reward numerical/model execution is not claimed.
+
+## Prompt sampler epoch semantics
+
+- Sequential-window sampling no longer clamps negative epochs to zero or
+  truncates fractional/string values. It uses the existing exact-integer
+  boundary validator before calculating the requested window, shared by sample
+  and preview through `_sample_with`.
+- Retained PromptBatchSampler as the real RNG/configuration owner. Preview clones
+  generator state, every rank consumes the same global draw, and rank slicing
+  happens afterward. No extra sampler class, helper or strategy table added.
+  Random-without-replacement continues to consume RNG rather than use epoch.
+- Reviewed prompt loading/projection seams: keep config-based loader dispatch
+  separate from dataset indexing, and keep PromptExample's generation_input /
+  reward_metadata projections as the engine-versus-reward boundary. Full prompt
+  manifest parser validation remains a separate review slice.
+- Validation: 35 prompt sampler, continuous owner and Torch-free parsing tests
+  passed. Added invalid sequential epoch coverage for both sample and preview,
+  asserting the rejection leaves RNG state unchanged. Ruff and whitespace checks
+  pass on touched files.

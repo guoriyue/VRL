@@ -134,3 +134,19 @@ def test_prompt_batch_sampler_rejects_invalid_rank_geometry(
             rank=rank,
             strategy="sequential_window",
         )
+
+
+@pytest.mark.parametrize("epoch", [-1, 1.5, True, "2"])
+@pytest.mark.parametrize("operation", ["sample", "preview"])
+def test_sequential_sampler_rejects_invalid_epoch_without_changing_rng(epoch, operation):
+    generator = torch.Generator().manual_seed(123)
+    sampler = PromptBatchSampler(
+        generator=generator,
+        num_examples=8,
+        prompts_per_rank=2,
+        strategy="sequential_window",
+    )
+    state = generator.get_state().clone()
+    with pytest.raises(ValueError, match="prompt sampling epoch"):
+        getattr(sampler, operation)(epoch=epoch)
+    assert torch.equal(generator.get_state(), state)
