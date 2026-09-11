@@ -233,14 +233,22 @@ def test_fused_accepts_single_token_hidden_vector():
     torch.testing.assert_close(actual, expected)
 
 
-def test_bias_gradient_accumulates_before_half_precision_overflow():
-    hidden = torch.zeros((4096, 1), dtype=torch.float16)
-    weight = torch.zeros((2, 1), dtype=torch.float16)
-    bias = torch.zeros(2, dtype=torch.float16, requires_grad=True)
-    ids = torch.zeros(4096, dtype=torch.long)
+@pytest.mark.parametrize(
+    "device", ["cpu", pytest.param("cuda", marks=[pytest.mark.gpu, requires_cuda])]
+)
+def test_bias_gradient_accumulates_before_half_precision_overflow(device):
+    from vrl.nn.kernels.fused_linear_logprob import _use_triton
+
+    hidden = torch.zeros((4096, 1), dtype=torch.float16, device=device)
+    weight = torch.zeros((2, 1), dtype=torch.float16, device=device)
+    bias = torch.zeros(2, dtype=torch.float16, device=device, requires_grad=True)
+    ids = torch.zeros(4096, dtype=torch.long, device=device)
+    assert _use_triton(hidden) is (device == "cuda")
     log_probs = fused_linear_logprob(hidden, weight, ids, bias=bias, chunk_rows=2048)
     # Each chunk has a bias-gradient magnitude of 102400, beyond fp16 range,
     # but the complete batch cancels exactly and has a representable gradient.
-    upstream = torch.cat((torch.full((2048,), 100.0), torch.full((2048,), -100.0)))
+    upstream = torch.cat(
+        (torch.full((2048,), 100.0, device=device), torch.full((2048,), -100.0, device=device))
+    )
     log_probs.backward(upstream)
     torch.testing.assert_close(bias.grad, torch.zeros_like(bias))

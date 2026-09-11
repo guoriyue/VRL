@@ -7242,3 +7242,15 @@ The broader repository audit remains incomplete.
 - Reuse the existing accumulation-dtype owner and preserve the final gradient
   cast, chunk sizes and backend selection. No new helper or numerical policy
   table; no full training-quality claim. Broader audit remains incomplete.
+
+## Bias-reduction overflow regression also exercises Triton
+
+- Extended the fp16 cancellation regression to CPU and CUDA. The CUDA case
+  asserts Triton dispatch eligibility so an unavailable kernel cannot quietly
+  turn this into another fallback test. Reuse the existing CUDA skip marker.
+- Both paths return the expected zero bias gradient; complete fused log-prob
+  suite: 28 passed with CUDA available and kernel definitions present.
+  Touched-test Ruff and diff checks pass.
+- No further production changes or benchmark claim. This verifies the shared
+  bias-reduction fix with real GPU forward/backward execution; the broader
+  repository clarity audit remains incomplete.
