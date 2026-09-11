@@ -336,3 +336,32 @@ def test_replay_gather_rejects_scalar_tensor_without_sample_axis():
 def test_replay_gather_requires_integer_counts_for_every_payload(sample_count, replay):
     with pytest.raises(ValueError, match=r"sample_counts\[0\]"):
         gather_replay_tensors([replay], sample_counts=[sample_count])
+
+
+@pytest.mark.parametrize("dtype", [torch.int64, torch.bfloat16, torch.float32])
+def test_replay_gather_preserves_tensor_dtype_and_values(dtype) -> None:
+    first = torch.tensor([[16777217]], dtype=dtype)
+    second = torch.zeros(1, 1, dtype=dtype)
+    merged = gather_replay_tensors([{"value": first}, {"value": second}], sample_counts=[1, 1])
+    assert merged["value"].dtype == dtype
+    assert torch.equal(merged["value"][:1], first)
+    assert torch.equal(merged["value"][1:], second)
+
+
+def test_replay_gather_rejects_dtype_promotion_that_changes_integer_values() -> None:
+    with pytest.raises(ValueError, match=r"replay_tensors.ids.*index 1.*dtypes must match"):
+        gather_replay_tensors(
+            [{"ids": torch.tensor([[16777217]])}, {"ids": torch.zeros(1, 1)}],
+            sample_counts=[1, 1],
+        )
+
+
+@pytest.mark.parametrize(
+    "field", ["observations", "actions", "log_probs", "timesteps", "kl", "video"]
+)
+def test_diffusion_gather_rejects_mixed_field_dtypes(field) -> None:
+    request = _request(cfg=False)
+    batches = _diffusion_batches({"model_family": "sd3_5"})
+    setattr(batches[1], field, getattr(batches[1], field).double())
+    with pytest.raises(ValueError, match=rf"{field!r}.*index 1.*dtypes must match"):
+        DiffusionBatchGatherer().gather_batches(request, request.sample_rows(), batches)

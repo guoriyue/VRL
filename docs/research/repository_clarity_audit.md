@@ -2552,3 +2552,22 @@ this combined regression is compatibility evidence, not architectural completion
   trainer granularity tests passed. A collision regression selects a chunk while
   preserving the full prompt embedding; missing and inconsistent declarations
   fail explicitly. Touched-file Ruff and diff checks passed. Review remains active.
+
+## Batch gathering preserves producer tensor dtypes
+
+- Reproduced implicit dtype promotion in gather_replay_tensors: merging an
+  int64 ID of 16777217 with a float32 batch returned float32 value 16777216.
+  Transport reassembly was silently changing producer data via torch.cat.
+- The existing concatenate_sample_values now rejects differing tensor dtypes
+  with the field name and ordered batch index before concatenation. Route the
+  full-sequence gatherer's six direct cat calls through this same function;
+  chunk fields and both replay gatherers already use it.
+- Keep the shared helper as a real cross-family boundary, its lazy Torch import,
+  and separate gatherer classes as driver-side protocol implementations. Keep
+  list/tuple concatenation and Torch's shape/device checks. No new helper,
+  class, constant, or implicit cast policy; producers own intended conversion.
+- Validation: 391 generation execution/binding, CausVid and trajectory tests
+  passed, two optional backend tests skipped. Regressions cover unchanged values
+  and dtype for homogeneous inputs, the integer-loss example, and each of the
+  six full-sequence fields. Touched-file Ruff and diff checks passed after
+  removing an extra import-block blank line. Full review remains active.

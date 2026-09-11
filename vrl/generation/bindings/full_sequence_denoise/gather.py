@@ -12,10 +12,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
-import torch
-
 from vrl.generation.bindings.full_sequence_denoise.layout import DiffusionRequestLayout
 from vrl.generation.execution.sample_batches import (
+    concatenate_sample_values,
     gather_replay_tensors,
     require_matching_batch_context,
 )
@@ -46,12 +45,20 @@ class DiffusionBatchGatherer:
             cast("Sequence[DiffusionBatchResult]", batches),
         )
 
-        observations = torch.cat([batch.observations for batch in ordered_batches], dim=0)
-        actions = torch.cat([batch.actions for batch in ordered_batches], dim=0)
-        log_probs = torch.cat([batch.log_probs for batch in ordered_batches], dim=0)
-        timesteps_tensor = torch.cat([batch.timesteps for batch in ordered_batches], dim=0)
-        kl_tensor = torch.cat([batch.kl for batch in ordered_batches], dim=0)
-        video = torch.cat([batch.video for batch in ordered_batches], dim=0)
+        observations = concatenate_sample_values(
+            [batch.observations for batch in ordered_batches], name="observations"
+        )
+        actions = concatenate_sample_values(
+            [batch.actions for batch in ordered_batches], name="actions"
+        )
+        log_probs = concatenate_sample_values(
+            [batch.log_probs for batch in ordered_batches], name="log_probs"
+        )
+        timesteps_tensor = concatenate_sample_values(
+            [batch.timesteps for batch in ordered_batches], name="timesteps"
+        )
+        kl_tensor = concatenate_sample_values([batch.kl for batch in ordered_batches], name="kl")
+        video = concatenate_sample_values([batch.video for batch in ordered_batches], name="video")
         replay_tensors = gather_replay_tensors(
             [batch.replay_tensors for batch in ordered_batches],
             sample_counts=[batch.batch.sample_count for batch in ordered_batches],

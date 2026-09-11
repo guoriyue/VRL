@@ -56,13 +56,20 @@ def _require_rows(name: str, value: Any, count: int) -> None:
 
 
 def concatenate_sample_values(values: Sequence[Any], *, name: str) -> Any:
-    """Concatenate one sample-aligned value from each ordered batch."""
+    """Concatenate sample-aligned values without implicit tensor dtype conversion."""
 
     import torch
 
     if not values:
         raise ValueError(f"cannot concatenate empty field {name!r}")
     if all(isinstance(value, torch.Tensor) for value in values):
+        expected_dtype = values[0].dtype
+        for index, value in enumerate(values[1:], start=1):
+            if value.dtype != expected_dtype:
+                raise ValueError(
+                    f"batch field {name!r} at ordered index {index} has dtype "
+                    f"{value.dtype}, expected {expected_dtype}; batch dtypes must match"
+                )
         return torch.cat(list(values), dim=0)
     if all(isinstance(value, list) for value in values):
         return [item for value in values for item in value]
