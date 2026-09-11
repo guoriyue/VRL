@@ -9,7 +9,7 @@ def test_unknown_backend_error_lists_available_names() -> None:
     """Checks unknown backend errors point to the supported backend names."""
 
     try:
-        backends.resolve_attention_backend("janus_pro", "flashinfer", "model")
+        backends.build_attention_backend("janus_pro", "flashinfer", "model")
     except ValueError as exc:
         assert "unknown attention backend" in str(exc)
         assert "vllm_paged" in str(exc)

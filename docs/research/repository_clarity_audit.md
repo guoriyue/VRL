@@ -4380,6 +4380,19 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## AR backend factory name states that it constructs an object
+
+- Rename resolve_attention_backend to build_attention_backend, updating the
+  token executor, module exports and tests. It constructs a backend, not merely
+  a resolved name. Remove the unrelated SGLang label from the name-reader doc.
+- Keep both concrete builder functions and the shared _lm_trunk adapter check
+  for consistent cross-family construction. Keep _ATTENTION_BACKENDS as the
+  explicit protocol-name set. No additional factory class or legacy alias is
+  introduced; backend selection and constructor arguments remain unchanged.
+- Backend-selection and token-AR binding suites: 14 passed, 2 skipped, two
+  dependency warnings. Touched-file Ruff checks pass. This rename updates repo
+  callers; external imports must use the new name. The full audit continues.
+
 ## AR prefill validates the token budget before block reservation
 
 - Use require_exact_int for ARAttentionPrefillInput.max_new_tokens, minimum one.

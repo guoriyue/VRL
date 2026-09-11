@@ -104,7 +104,7 @@ class ARBatchExecutorBase(BatchExecutorBase):
 
         from vrl.nn.modules.ar_attention_backends import (
             attention_backend_name,
-            resolve_attention_backend,
+            build_attention_backend,
         )
 
         if self._runner_attention_family is None:
@@ -113,7 +113,7 @@ class ARBatchExecutorBase(BatchExecutorBase):
             )
         return self._runner_cls(
             self.model,
-            attention_backend=resolve_attention_backend(
+            attention_backend=build_attention_backend(
                 self._runner_attention_family,
                 attention_backend_name(sampling),
                 self.model,

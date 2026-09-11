@@ -21,12 +21,12 @@ _ATTENTION_BACKENDS = ("torch_native", "vllm_paged")
 
 
 def attention_backend_name(sampling: Mapping[str, Any]) -> str:
-    """Resolve the configured SGLang-style attention backend name."""
+    """Read the configured AR attention backend name, defaulting to vllm_paged."""
 
     return str(sampling.get("attention_backend", "vllm_paged"))
 
 
-def resolve_attention_backend(
+def build_attention_backend(
     family: str,
     name: str,
     model: Any,
@@ -92,7 +92,7 @@ def _lm_trunk(model: Any) -> Any:
 
 __all__ = [
     "attention_backend_name",
+    "build_attention_backend",
     "build_torch_native_backend",
     "build_vllm_attention_backend",
-    "resolve_attention_backend",
 ]
