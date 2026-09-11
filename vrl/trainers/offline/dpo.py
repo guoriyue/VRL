@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -45,25 +45,23 @@ class OfflineDPOTrainerConfig:
     """Configuration for the offline DPO training loop."""
 
     # --- DPO ---
-    beta: float = field(default=5000.0)
-    sft_weight: float = field(default=0.0)
+    beta: float = 5000.0
+    sft_weight: float = 0.0
 
     # --- optimizer ---
     # The caller resolves lr scaling (e.g. by effective batch size) before
     # constructing this config; the trainer applies ``lr`` as-is.
-    lr: float = field(default=1e-8)
-    adam_beta1: float = field(default=0.9)
-    adam_beta2: float = field(default=0.999)
-    adam_weight_decay: float = field(default=1e-2)
-    adam_epsilon: float = field(default=1e-8)
-    use_adafactor: bool = field(default=False)
-    max_grad_norm: float = field(default=1.0)
-    gradient_accumulation_steps: int = field(default=1)
+    lr: float = 1e-8
+    adam_beta1: float = 0.9
+    adam_beta2: float = 0.999
+    adam_weight_decay: float = 1e-2
+    adam_epsilon: float = 1e-8
+    use_adafactor: bool = False
+    max_grad_norm: float = 1.0
+    gradient_accumulation_steps: int = 1
 
     # --- noise / schedule ---
-    prediction_type: str = field(
-        default="flow_matching"
-    )  # "epsilon" | "v_prediction" | "flow_matching"
+    prediction_type: str = "flow_matching"  # "epsilon" | "v_prediction" | "flow_matching"
 
     def __post_init__(self) -> None:
         require_exact_int(

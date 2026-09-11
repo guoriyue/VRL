@@ -6850,3 +6850,15 @@ The broader repository audit remains incomplete.
   warnings. Touched-file Ruff and diff checks pass. Valid configured counts
   preserve behavior; config objects remain mutable as before. Overall audit
   remains incomplete.
+
+## Offline config declares ordinary defaults directly
+
+- Replace all eleven field(default=...) declarations in OfflineDPOTrainerConfig
+  with plain assignments and remove the unused field import. None carried
+  metadata, factories, comparison flags or other dataclass options.
+- Keep the dataclass, projection constructor and accumulation validation; this
+  changes no default or constructor behavior. Metadata-bearing fields such as
+  metrics CSV declarations remain useful and are not part of this reduction.
+- Offline config-builder suite: nine passed. Touched-file Ruff and diff checks
+  pass. No additional behavioral tests for equivalent declarations; broader
+  repository audit remains incomplete.
