@@ -6325,3 +6325,16 @@ The broader repository audit remains incomplete.
 - Paged-contract and token-binding suites: 26 passed with 16 dependency warnings,
   including five invalid block-width cases. Touched-file Ruff and diff checks
   pass. Broader repository audit remains incomplete.
+
+## Paged decoder reads cache dtype from its config
+
+- Remove the backend's duplicate mutable cache_dtype attribute; attention
+  implementation and KV-cache shape construction now read config.cache_dtype.
+  The frozen config already owns that fact, and no consumer or independent
+  writer of the duplicate attribute exists in vrl/tests.
+- Keep KV buffers, attention implementations and block/sequence counters as
+  evolving runtime state. Keep kernel/model adapters and allocation policy;
+  neither another property nor another configuration class is introduced.
+- Decoder contract, Janus/NextStep paged backend and real paged CUDA kernel
+  suites: nine passed with 16 dependency warnings. Touched-file Ruff and diff
+  checks pass. Broader repository audit remains incomplete.

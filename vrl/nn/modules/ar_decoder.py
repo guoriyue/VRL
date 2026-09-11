@@ -55,7 +55,6 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         super().__init__(config)
         self.trunk = trunk
         self.kernels = kernels or VllmPagedAttentionKernels(config)
-        self.cache_dtype = config.cache_dtype
         self.backend_label = f"{config.family}_vllm_paged_attention"
         self._next_sequence_id = 0
         self._next_block_id = 0
@@ -441,7 +440,7 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
                     ),
                     num_kv_heads=self._num_key_value_heads(layer.self_attn),
                     sliding_window=self._sliding_window_for_layer(layer),
-                    kv_cache_dtype=self.cache_dtype,
+                    kv_cache_dtype=self.config.cache_dtype,
                 )
                 for layer in layers
             ]
@@ -463,7 +462,7 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
             num_blocks=target_blocks,
             num_kv_heads=num_kv_heads,
             head_size=head_dim,
-            cache_dtype=self.cache_dtype,
+            cache_dtype=self.config.cache_dtype,
         )
         next_caches: list[torch.Tensor] = []
         for layer_idx in range(num_layers):
