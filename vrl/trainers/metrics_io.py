@@ -154,15 +154,15 @@ class OnlineMetricRow:
     ) -> OnlineMetricRow:
         """Flatten one nested trainer metric result exactly once at the IO boundary."""
 
-        phases = getattr(metrics, "phase_times", None) or {}
+        phases = metrics.phase_times
         phase_kwargs = {
             item.name: float(phases.get(item.metadata["phase_key"], 0.0))
             for item in fields(cls)
             if "phase_key" in item.metadata
         }
+        cls._component_columns(component_names)
         names = tuple(component_names)
-        cls._component_columns(names)
-        current = getattr(metrics, "reward_components", None) or {}
+        current = metrics.reward_components
         component_values = tuple(
             float(current[name]) if name in current else float("nan") for name in names
         )

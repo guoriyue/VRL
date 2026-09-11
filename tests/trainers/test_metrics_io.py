@@ -369,3 +369,19 @@ def test_full_precision_metrics_detect_changes_hidden_by_display_rounding() -> N
     )
     for name in ("loss", "reward_mean", "grad_norm"):
         assert struct.pack("!d", float(values[name])) == struct.pack("!d", getattr(first, name))
+
+
+@pytest.mark.parametrize("names", ["ocr", b"ocr"])
+def test_metric_row_rejects_component_string_before_tuple_conversion(names):
+    with pytest.raises(ValueError, match="component names must be a sequence of names"):
+        OnlineMetricRow.from_step_metrics(0, TrainStepMetrics(), names)
+
+
+@pytest.mark.parametrize("names", [["ocr"], ("ocr",)])
+def test_metric_row_keeps_one_declared_reward_component(names):
+    row = OnlineMetricRow.from_step_metrics(
+        0, TrainStepMetrics(reward_components={"ocr": 0.75}), names
+    )
+    assert row.component_names == ("ocr",)
+    assert row.component_values == (0.75,)
+    assert OnlineMetricRow.csv_columns(row.component_names)[-1] == "r_ocr"

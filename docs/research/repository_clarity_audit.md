@@ -2862,3 +2862,18 @@ this combined regression is compatibility evidence, not architectural completion
   unindexed CUDA detect a mocked GPU-1 conflict; explicit GPU-0 validation proves
   no current-device query is made. Touched-file Ruff/diff checks passed. Full
   repository review remains active.
+
+## Metric row construction validates component names before normalization
+
+- from_step_metrics converted component_names to tuple before its existing
+  validator, allowing a raw string such as ocr to become three components o/c/r.
+  Validate the original Sequence first, then retain its immutable tuple form.
+- Read TrainStepMetrics.phase_times and reward_components directly: both are
+  declared dictionaries with defaults in the owning metric type. Remove the
+  missing/None attribute fallback from this typed projection boundary.
+- Keep _csv_field: its metadata binds serialization format and phase lookup to
+  one column declaration, removing a real duplicate mapping. Keep the metric
+  record, CSV owner and shared header/row checks; no new wrapper or name table.
+- Validation: 163 metrics-IO and online trainer tests passed. Raw strings/bytes
+  fail, while list/tuple containing ocr preserve one component and its value.
+  Touched-file Ruff/diff checks passed. Full repository review remains active.
