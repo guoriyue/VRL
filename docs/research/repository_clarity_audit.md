@@ -844,3 +844,19 @@ contained guesses. Removed both:
 - Validation: 148 token composition/binding, five model-family and torch-free
   config-import tests passed; 2 tests skipped. Touched-file Ruff and whitespace
   checks pass.
+
+## TeaCache default ownership
+
+- Moved threshold and warmup defaults onto TeaCacheConfig fields and removed the
+  two private module constants. They were constructor defaults, not independent
+  protocol/schema identifiers; the dataclass now declares them directly.
+- from_sampling is a classmethod: true constructs cls(), and mappings pass only
+  explicit overrides. Missing fields use the same constructor defaults. Existing
+  off forms, conversion rules and runtime decisions remain unchanged.
+- Retained rel_l1 as the shared runtime/offline-probe numerical formula, and
+  TeaCacheState as the owner of cached predictions and accumulated step changes.
+  No helper namespace or new configuration class is introduced; this is not a
+  change to cache approximation policy or its drift requirements.
+- Validation: 72 denoise, request-layout and experiment-config tests passed.
+  Direct checks confirmed true/empty/partial mappings match constructor defaults
+  and overrides. Touched-file Ruff and diff whitespace checks pass.

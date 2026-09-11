@@ -32,14 +32,6 @@ from typing import Any
 
 import torch
 
-# Moderate default skip budget. The original TeaCache sweeps ~0.1 (conservative,
-# few skips) .. ~0.25 (aggressive). 0.15 is a safe starting point; a run tunes it
-# against the measured rollout-vs-replay drift.
-_DEFAULT_THRESHOLD = 0.15
-# First steps always run: they prime the cache and carry the largest step-to-step
-# change (early denoise), where skipping costs the most accuracy.
-_DEFAULT_WARMUP_STEPS = 2
-
 
 def rel_l1(cur: torch.Tensor, prev: torch.Tensor) -> float:
     """Relative-L1 change between consecutive denoise signals.
@@ -63,8 +55,10 @@ def rel_l1(cur: torch.Tensor, prev: torch.Tensor) -> float:
 class TeaCacheConfig:
     """Parsed ``sampling.teacache`` block for the diffusion rollout."""
 
-    threshold: float
-    warmup_steps: int
+    # Tune the skip budget against measured rollout/replay drift.
+    threshold: float = 0.15
+    # Prime the cache with real forwards before permitting skips.
+    warmup_steps: int = 2
 
     def __post_init__(self) -> None:
         if self.threshold <= 0:
@@ -72,8 +66,8 @@ class TeaCacheConfig:
         if self.warmup_steps < 0:
             raise ValueError(f"teacache.warmup_steps must be >= 0; got {self.warmup_steps}")
 
-    @staticmethod
-    def from_sampling(value: Any) -> TeaCacheConfig | None:
+    @classmethod
+    def from_sampling(cls, value: Any) -> TeaCacheConfig | None:
         """Build a config from a ``sampling.teacache`` value, or ``None`` when off.
 
         Accepts ``teacache: true`` (defaults), ``teacache: {threshold: .., ...}``,
@@ -84,20 +78,19 @@ class TeaCacheConfig:
         if value is None or value is False:
             return None
         if value is True:
-            return TeaCacheConfig(
-                threshold=_DEFAULT_THRESHOLD,
-                warmup_steps=_DEFAULT_WARMUP_STEPS,
-            )
+            return cls()
         if not isinstance(value, Mapping):
             raise TypeError(
                 f"sampling.teacache must be a bool or mapping; got {type(value).__name__}",
             )
         if not bool(value.get("enabled", True)):
             return None
-        return TeaCacheConfig(
-            threshold=float(value.get("threshold", _DEFAULT_THRESHOLD)),
-            warmup_steps=int(value.get("warmup_steps", _DEFAULT_WARMUP_STEPS)),
-        )
+        overrides: dict[str, Any] = {}
+        if "threshold" in value:
+            overrides["threshold"] = float(value["threshold"])
+        if "warmup_steps" in value:
+            overrides["warmup_steps"] = int(value["warmup_steps"])
+        return cls(**overrides)
 
 
 class TeaCacheState:
