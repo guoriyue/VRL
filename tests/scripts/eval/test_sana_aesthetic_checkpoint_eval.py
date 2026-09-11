@@ -814,7 +814,7 @@ def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None
         seed=sana_report.group_seed(0),
         num_images=sana_report.EVAL_SAMPLES_PER_PROMPT,
         device=torch.device("cpu"),
-        sampling=sana_report.resolve_sampling(),
+        sampling=dict(sana_inference.OFFICIAL_SAMPLING_PROTOCOL),
     )
 
     assert len(decoded) == sana_report.EVAL_SAMPLES_PER_PROMPT
@@ -867,7 +867,7 @@ def test_official_scheduler_uses_build_revision_projection(
 
 
 def test_official_generation_rejects_sampling_drift() -> None:
-    changed = sana_report.resolve_sampling()
+    changed = dict(sana_inference.OFFICIAL_SAMPLING_PROTOCOL)
     changed["height"] = 512
 
     with pytest.raises(ValueError, match="changed from the official protocol"):

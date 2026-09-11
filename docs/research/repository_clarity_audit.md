@@ -5200,3 +5200,17 @@ this combined regression is compatibility evidence, not architectural completion
   Touched-file Ruff and git diff --check pass; old projection references are
   absent from production and tests. No real checkpoint generation/scoring was
   run, and the wider repository audit remains incomplete.
+
+## SANA sampling reads its declared protocol directly
+
+- Remove resolve_sampling, which accepted no input and only copied the already
+  declared OFFICIAL_SAMPLING_PROTOCOL. Generation explicitly copies that mapping;
+  report validation compares it directly. Tests access the inference-owned
+  protocol instead of the report module's incidental import.
+- Preserve mutation isolation for generation and drift-test inputs. Keep seed
+  grid and evaluation curve record helpers as shared persisted-schema builders,
+  and keep the isolated sampling protocol constant as the authoritative identity.
+  No sampling resolution class, compatibility alias or protocol change is added.
+- Aesthetic checkpoint evaluation and curve verdict suites: 45 passed.
+  Touched-file Ruff and git diff --check pass. This cleanup does not run real
+  generation or complete the repository-wide audit.

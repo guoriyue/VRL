@@ -216,12 +216,6 @@ def require_training_log_provenance(run_dir: Path, root: RootConfig) -> dict[str
     }
 
 
-def resolve_sampling() -> dict[str, Any]:
-    """Return the quality protocol, intentionally independent of training SDE."""
-
-    return dict(OFFICIAL_SAMPLING_PROTOCOL)
-
-
 def build_reward_model_definitions(
     root: RootConfig,
     *,
@@ -798,7 +792,7 @@ def _validate_report_provenance(
         if int(record.get("prompt_count", -1)) != expected_count:
             raise ValueError(f"SANA {label} prompt count changed")
 
-    if provenance["sampling"] != resolve_sampling():
+    if provenance["sampling"] != OFFICIAL_SAMPLING_PROTOCOL:
         raise ValueError("SANA evaluation sampling provenance changed")
     if provenance["scheduler_protocol"] != SCHEDULER_PROTOCOL:
         raise ValueError("SANA evaluation scheduler protocol changed")

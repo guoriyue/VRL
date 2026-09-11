@@ -30,6 +30,7 @@ from vrl.models import checkpoint_identity
 from vrl.scripts.eval import sana_aesthetic_report as sana_report
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval.sana_inference import (
+    OFFICIAL_SAMPLING_PROTOCOL,
     SCHEDULER_PROTOCOL,
     generate_prompt_images,
     load_official_scheduler,
@@ -116,7 +117,7 @@ def main(argv: list[str] | None = None) -> None:
 
     targets = _discover_checkpoint_targets(run_dir, root)
     device = resolve_eval_device(args.device)
-    sampling = sana_report.resolve_sampling()
+    sampling = dict(OFFICIAL_SAMPLING_PROTOCOL)
     if root.model is None:
         raise ValueError("SANA checkpoint evaluation requires model configuration")
     identity_precision = PrecisionPolicy.from_section(root.precision)
