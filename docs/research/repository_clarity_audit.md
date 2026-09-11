@@ -4930,3 +4930,19 @@ this combined regression is compatibility evidence, not architectural completion
   that full capacity is retained. The truncated case failed before the fix.
   Denoise-step, full-sequence binding and batch-memory shadow suites: 219 passed.
   Touched-file Ruff and git diff --check pass. The repository audit remains open.
+
+## Sample planning expresses batch boundaries directly
+
+- Replace synchronized remaining/start mutation in GenerationSampleBatch.plan
+  with range over sample starts. The final width is the smaller of configured
+  width and samples still available at that start. Construct through cls, as
+  the existing classmethod signature declares, rather than naming the base type.
+- Keep strict positive-integer input checks, prompt-major ordering and short
+  final batches. Preserve shared gather helpers and the OOM retry function:
+  they enforce cross-family consistency and execution cleanup rather than
+  belonging to the batch identity record. Moving them into a class is not a
+  goal, and split behavior is unchanged.
+- Existing generation execution and binding suites: 369 passed, 16 dependency
+  deprecation warnings, process exit zero. Coverage includes prompt-major
+  planning, invalid widths, OOM splitting and family gather paths. Touched-file
+  Ruff and git diff --check pass. The repository-wide audit remains open.

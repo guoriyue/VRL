@@ -305,19 +305,14 @@ class GenerationSampleBatch:
 
         batches: list[GenerationSampleBatch] = []
         for prompt_index in range(prompt_count):
-            sample_start = 0
-            remaining = samples_per_prompt
-            while remaining > 0:
-                sample_count = min(max_samples_per_batch, remaining)
+            for sample_start in range(0, samples_per_prompt, max_samples_per_batch):
                 batches.append(
-                    GenerationSampleBatch(
+                    cls(
                         prompt_index=prompt_index,
                         sample_start=sample_start,
-                        sample_count=sample_count,
+                        sample_count=min(max_samples_per_batch, samples_per_prompt - sample_start),
                     )
                 )
-                sample_start += sample_count
-                remaining -= sample_count
 
         return tuple(batches)
 
