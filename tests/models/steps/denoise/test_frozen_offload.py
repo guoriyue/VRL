@@ -130,3 +130,19 @@ def test_absent_pipeline_requires_no_component_movement() -> None:
     object.__setattr__(model, "_pipeline", None)
     model.move_frozen_components("meta")
     assert next(model.transformer.parameters()).device.type == "cpu"
+
+
+def test_frozen_offload_excludes_every_registered_pipeline_component() -> None:
+    first, second, vae = (nn.Linear(2, 2) for _ in range(3))
+    pipeline = SimpleNamespace(
+        transformer=first,
+        components={"transformer": first, "second_expert": second, "vae": vae},
+    )
+    model = _TinyDiffusionModel(pipeline)
+    model.second_expert = second
+
+    model.move_frozen_components("meta")
+
+    assert next(first.parameters()).device.type == "cpu"
+    assert next(second.parameters()).device.type == "cpu"
+    assert next(vae.parameters()).device.type == "meta"

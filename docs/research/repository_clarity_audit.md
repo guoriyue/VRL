@@ -2426,3 +2426,18 @@ this combined regression is compatibility evidence, not architectural completion
   passed, two optional tests skipped. New malformed-inventory cases fail before
   movement; absent pipeline remains a no-op. Touched-file Ruff and diff checks
   passed. Full repository review remains active.
+
+## Frozen-component movement follows module registration
+
+- move_frozen_components excludes every pipeline component registered within
+  the model, using nn.Module.modules identities. Previously only self.transformer
+  was excluded, so a second registered transformer could be moved again by the
+  frozen-component hook. nn.Module.to owns registered modules; the hook owns
+  the unregistered pipeline remainder.
+- Keep pipeline component inventory, frozen-component identity deduplication
+  and the shared movement interface. Registration expresses ownership directly;
+  no per-family transformer name table or extra helper/class is introduced.
+- Validation: 304 frozen-offload, Wan, orchestration and strategy tests passed,
+  two optional tests skipped. A two-expert regression leaves both registered
+  modules untouched by this hook while moving the unregistered VAE. Touched-file
+  Ruff/diff checks passed. Full repository review remains active.

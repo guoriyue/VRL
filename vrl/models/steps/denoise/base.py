@@ -549,7 +549,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         their frozen dtype).
 
         The set is derived from the diffusers pipeline — every nn.Module
-        component except the trainable transformer — so it tracks whatever
+        component not already registered on this model — so it tracks whatever
         ``from_build`` froze instead of a hand-kept name list. Families that attach
         no diffusers pipeline (single-file checkpoints, replay models) move
         nothing.
@@ -561,10 +561,10 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         components = getattr(pipeline, "components", None)
         if not isinstance(components, Mapping):
             raise TypeError("diffusion pipeline.components must be a mapping for frozen offload")
-        transformer = getattr(self, "transformer", None)
+        registered = {id(module) for module in self.modules()}
         moved: set[int] = set()
         for module in components.values():
-            if not isinstance(module, nn.Module) or module is transformer:
+            if not isinstance(module, nn.Module) or id(module) in registered:
                 continue
             if id(module) not in moved:
                 moved.add(id(module))
