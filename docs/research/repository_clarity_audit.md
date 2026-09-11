@@ -1427,3 +1427,16 @@ recorded keeps remain intentional protocol/framework/shared-algorithm boundaries
 not a mandate to eliminate every free function. Remaining model-family and script
 ownership coverage still needs source-level review; passing tests alone cannot
 close that architectural scope.
+
+## Wan DPO encoder boundary readability
+
+- Added explicit device/dtype and callable return annotations to _build_encoders,
+  and documented the 2B image / B caption contract at the adapter construction
+  site. This complements OfflineDPOTrainer's explicit block duplication.
+- Kept the two closures because they share a loaded pipeline and precomputed VAE
+  statistics. Kept wan_forward as the family-specific ForwardFn adapter and
+  _required as the recipe's repeated config guard. No encoder container class,
+  function relocation, sampling defaults or numerical changes.
+- Validation: 13 encoder, genuine tiny-Wan forward, config and checkpoint-entry
+  tests passed. An isolated Python import confirmed the recipe still leaves
+  torch absent from sys.modules. Touched-file Ruff and diff checks pass.

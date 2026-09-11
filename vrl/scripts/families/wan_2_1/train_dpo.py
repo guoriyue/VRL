@@ -12,6 +12,7 @@ ABC, just a pure functional loss. We therefore drive the synchronous
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -25,8 +26,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _build_encoders(pipeline, num_frames: int, device, dtype):
-    """Returns ``(encode_pixels, encode_text)`` closures bound to a WanPipeline.
+def _build_encoders(
+    pipeline: Any,
+    num_frames: int,
+    device: torch.device | str,
+    dtype: torch.dtype,
+) -> tuple[
+    Callable[[torch.Tensor], torch.Tensor],
+    Callable[[list[str]], torch.Tensor],
+]:
+    """Return pixel and text encoders bound to the already-loaded Wan pipeline.
+
+    Pixel encoding preserves the winner-then-loser 2B rows. Text encoding returns
+    one embedding for each of the B captions; OfflineDPOTrainer duplicates that
+    block to align it with the image pairs.
 
     ``encode_pixels`` replicates each image to ``num_frames`` along the
     temporal dim before VAE encoding — this lets image-only datasets
