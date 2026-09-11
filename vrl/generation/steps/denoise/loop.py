@@ -301,7 +301,7 @@ def run_denoise_loop(
         peak_memory_mb=peak_memory_mb,
         memory=memory,
         engine_counters={
-            "diffusion_num_denoise_steps": int(buffers.timesteps.shape[1]),
+            "diffusion_num_denoise_steps": num_steps_to_run,
             "diffusion_samples_per_generation_batch": int(batch_rows),
             "diffusion_observation_bytes": trajectory_tensor_bytes(buffers.observations),
             "diffusion_action_bytes": trajectory_tensor_bytes(buffers.actions),

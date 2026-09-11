@@ -120,6 +120,19 @@ def test_run_denoise_steps_writes_preallocated_buffers(return_kl: bool) -> None:
     )
 
 
+@pytest.mark.parametrize("execute_steps, expected_steps", [(1, 1), (5, 3), (None, 3)])
+def test_denoise_step_counter_reports_execution_with_full_buffer_capacity(
+    execute_steps, expected_steps
+) -> None:
+    config = replace(_config(), execute_steps=execute_steps)
+    result = _Executor().run_denoise_steps(state=_state(batch=2, steps=3), config=config)
+    assert result.engine_counters["diffusion_num_denoise_steps"] == expected_steps
+    assert result.observations.shape[1] == 3
+    assert result.engine_counters["diffusion_observation_bytes"] == (
+        result.observations.numel() * result.observations.element_size()
+    )
+
+
 def test_decode_denoise_result_does_not_serialize_model_precision() -> None:
     """Execution policy stays on the model instead of entering trajectories."""
     executor = _Executor()

@@ -4915,3 +4915,18 @@ this combined regression is compatibility evidence, not architectural completion
   outputs. All six cases ran. Denoise-step and full-sequence binding suites:
   189 passed. Touched-file Ruff and git diff --check pass. No training throughput
   improvement is claimed without a benchmark; the wider audit remains open.
+
+## Denoise step telemetry reports execution rather than allocation
+
+- Set diffusion_num_denoise_steps from num_steps_to_run. A probe limited to one
+  of three scheduled steps previously reported three because the counter read
+  the full replay-buffer width. Normal full executions retain their count.
+- Keep full replay-buffer allocation and byte counters: memory probing needs
+  that capacity even during shortened execution. Keep the common denoise loop
+  and probe adapter; separating them would duplicate execution semantics. No
+  new telemetry class or constant is needed. Probe output handling, scheduling
+  mathematics and capacity calculations are outside this change.
+- Added tests for truncated, oversized and omitted execution limits, checking
+  that full capacity is retained. The truncated case failed before the fix.
+  Denoise-step, full-sequence binding and batch-memory shadow suites: 219 passed.
+  Touched-file Ruff and git diff --check pass. The repository audit remains open.
