@@ -130,7 +130,9 @@ class TeaCacheState:
             run = True
         else:
             self._accumulated_change += relative_l1_change(signal, self._prev_signal)
-            run = self._accumulated_change >= cfg.threshold
+            # Reuse requires a measured change below the threshold. NaN is
+            # not evidence of stability and must force a fresh forward too.
+            run = not (self._accumulated_change < cfg.threshold)
             if run:
                 self._accumulated_change = 0.0
         self._prev_signal = signal.detach()

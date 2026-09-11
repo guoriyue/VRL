@@ -6179,3 +6179,17 @@ The broader repository audit remains incomplete.
 - Two unknown-field cases failed before the fix. Trajectory and binding storage
   tests: 88 passed; SANA curve-verdict tests: 13 passed. Touched-file Ruff and
   diff checks pass. Broader repository audit remains incomplete.
+
+## TeaCache reuse requires a below-threshold measurement
+
+- Express TeaCacheState's decision as not(change < threshold) for a fresh
+  forward. Previously change >= threshold classified NaN as permission to skip,
+  and a NaN accumulator could keep skipping until a forced step. A forward now
+  resets that accumulator; two subsequent finite signals can resume normal reuse.
+- Keep relative_l1_change as the shared runtime/offline metric, including its
+  raw nonfinite measurement, and keep decision/counter ownership in TeaCacheState.
+  No additional validator, class or vocabulary table is introduced. This does
+  not repair nonfinite model state; it prevents the cache from hiding it.
+- NaN and infinity signal regressions both failed before the change. Denoise
+  suite: 82 passed. Touched-file Ruff and diff checks pass. No training-quality
+  or throughput claim; broader repository audit remains incomplete.

@@ -70,6 +70,22 @@ def test_low_change_skips_high_change_runs():
     assert state.should_run(base * 2.0, 3) is True
 
 
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf")])
+def test_nonfinite_signal_never_grants_cache_reuse(invalid_value):
+    state = TeaCacheState(TeaCacheConfig(threshold=0.5, warmup_steps=1), num_steps=6)
+    finite = torch.ones(1, 4)
+    assert state.should_run(finite, 0)
+    state.cache_noise_pred(torch.zeros_like(finite))
+
+    assert state.should_run(torch.full_like(finite, invalid_value), 1)
+    # The previous signal is still invalid, so this comparison cannot authorize
+    # reuse either. Once two finite signals are compared, normal skipping resumes.
+    assert state.should_run(finite, 2)
+    assert not state.should_run(finite, 3)
+    assert state.runs == 3
+    assert state.skips == 1
+
+
 def test_no_cache_yet_forces_run():
     cfg = TeaCacheConfig(threshold=0.0001, warmup_steps=0)
     state = TeaCacheState(cfg, num_steps=4)
