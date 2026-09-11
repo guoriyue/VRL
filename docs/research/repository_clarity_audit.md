@@ -6518,3 +6518,15 @@ The broader repository audit remains incomplete.
 - Checkpoint-compare and aesthetic-evaluation suites: 66 passed, including
   scheduler identity mismatch and accepted identity cases. Touched-file Ruff
   and diff checks pass. Broader repository audit remains incomplete.
+
+## SANA comparison calls shared inference functions without test-only aliases
+
+- Remove _generate_prompt_group and _load_official_scheduler aliases from the
+  comparison CLI. Production calls now use generate_prompt_images and
+  load_official_scheduler directly; the test patches the imported loader by its
+  real name. The aliases performed no adaptation or lazy loading.
+- Keep the shared inference module, scheduler validation and persisted report
+  schema constants as cross-entrypoint/protocol boundaries. No signature,
+  execution ordering, model loading or report-format change; no new façade.
+- Checkpoint-comparison suite: 31 passed. Touched-file Ruff and diff checks pass.
+  Broader repository audit remains incomplete.

@@ -215,7 +215,7 @@ def test_run_generates_base_before_strict_restore_and_current(
         lambda actual_build: SANA_IDENTITY,
     )
     monkeypatch.setattr(model_families, "get_model_family_entry", lambda family: entry)
-    monkeypatch.setattr(checkpoint_compare, "_load_official_scheduler", fake_load_scheduler)
+    monkeypatch.setattr(checkpoint_compare, "load_official_scheduler", fake_load_scheduler)
     result = checkpoint_compare.run_comparison(
         checkpoint_compare.build_parser().parse_args(
             [

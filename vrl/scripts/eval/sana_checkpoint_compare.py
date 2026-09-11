@@ -47,10 +47,6 @@ from vrl.utils.media import to_pil_image, write_png
 
 logger = logging.getLogger(__name__)
 
-# Compatibility facade for the public comparison tool's focused protocol tests.
-_generate_prompt_group = generate_prompt_images
-_load_official_scheduler = load_official_scheduler
-
 # Persisted report identity is a protocol boundary.
 REPORT_SCHEMA = "vrl.sana_checkpoint_compare/v1"
 REPORT_SCHEMA_VERSION = 1
@@ -167,7 +163,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     side_by_side_path = output_dir / "side_by_side.png"
 
     logger.info("Generating SANA base image before reading %s", checkpoint_input)
-    base_scheduler = _load_official_scheduler(build)
+    base_scheduler = load_official_scheduler(build)
     base_image = _generate_one(
         model,
         scheduler=base_scheduler,
@@ -198,7 +194,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     checkpoint_record = _checkpoint_record(checkpoint_path, checkpoint_meta)
 
     logger.info("Generating SANA current image after strict checkpoint restore")
-    current_scheduler = _load_official_scheduler(build)
+    current_scheduler = load_official_scheduler(build)
     if current_scheduler is base_scheduler:
         raise RuntimeError("official scheduler loader reused an instance across comparison images")
     current_image = _generate_one(
@@ -342,7 +338,7 @@ def _generate_one(
     guidance_scale: float,
     device: torch.device,
 ) -> Any:
-    images = _generate_prompt_group(
+    images = generate_prompt_images(
         model,
         scheduler=scheduler,
         prompt=prompt,
