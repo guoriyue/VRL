@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from vrl.utils.config import require_exact_int
 from vrl.utils.cuda_memory import empty_cuda_cache, is_cuda_out_of_memory
 
 if TYPE_CHECKING:
@@ -81,8 +82,10 @@ def gather_replay_tensors(
 
     if not replay_mappings:
         raise ValueError("replay_mappings must be non-empty")
-    if len(sample_counts) != len(replay_mappings) or any(count < 1 for count in sample_counts):
+    if len(sample_counts) != len(replay_mappings):
         raise ValueError("sample_counts must provide one positive count per replay mapping")
+    for index, count in enumerate(sample_counts):
+        require_exact_int(count, path=f"sample_counts[{index}]", minimum=1)
     keys = tuple(replay_mappings[0])
     expected_keys = set(keys)
     if any(set(mapping) != expected_keys for mapping in replay_mappings[1:]):

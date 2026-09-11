@@ -329,3 +329,10 @@ def test_replay_gather_rejects_per_batch_misalignment_even_when_total_matches():
 def test_replay_gather_rejects_scalar_tensor_without_sample_axis():
     with pytest.raises(ValueError, match="leading batch dimension"):
         gather_replay_tensors([{"scale": torch.tensor(1.0)}], sample_counts=[1])
+
+
+@pytest.mark.parametrize("sample_count", [True, 1.0, 1.5, "1", 0, -1])
+@pytest.mark.parametrize("replay", [{}, {"schedule": [1, 2]}, {"tokens": torch.ones(1, 2)}])
+def test_replay_gather_requires_integer_counts_for_every_payload(sample_count, replay):
+    with pytest.raises(ValueError, match=r"sample_counts\[0\]"):
+        gather_replay_tensors([replay], sample_counts=[sample_count])

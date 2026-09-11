@@ -1661,3 +1661,19 @@ is not a repository-wide completion claim or a mandate to inline short functions
   than build a real model; this suite is compatibility evidence, not a claim of
   full dynamic-family construction coverage. The moved check is otherwise
   behavior-preserving and does not justify a new model-loading integration test.
+
+## Replay gathering count contract
+
+- Reviewed full-sequence and chunk-autoregressive gather callers. Their shared
+  gather_replay_tensors function is a legitimate cross-family boundary; keep its
+  explicit sample-aligned wrapper and static context comparison rather than
+  inferring sample axes from sequence lengths.
+- Replaced positive-only count checking with the existing exact-integer guard,
+  before payload traversal. Bool/floating/string counts cannot masquerade as
+  row cardinalities, including for empty/static payloads where tensor row checks
+  would never run. No extra helper or class introduced; production callers
+  continue passing validated GenerationSampleBatch.sample_count values.
+- Validation: 285 execution/binding tests passed, two skipped. Eighteen new
+  malformed-count cases cover empty, static and tensor replay payloads. Touched
+  Ruff lint/format and diff checks passed. This strengthens the direct shared
+  API contract; it does not imply validated production batches were malformed.
