@@ -7062,3 +7062,18 @@ The broader repository audit remains incomplete.
 - Existing profiler suite: 26 passed, one PyTorch profiler warning. Touched-file
   Ruff and diff checks pass. No new tests that mirror declaration syntax;
   broader repository audit remains incomplete.
+
+## Combined generation, math and utility verification
+
+- After the DDIM/flow normalization changes, token padding delegation removal,
+  diagnostic rank-index localization and profiler cleanup, ran the complete
+  tests/generation, tests/math and tests/utils suites together: 930 passed,
+  18 dependency/profiler warnings in 69.49 seconds; process exited successfully.
+- Rechecked utility owners and consumers. Preserve JSON writers' shared atomic
+  publication/cleanup implementation, common artifact hashing across reward,
+  checkpoint and data paths, and distinct unit-range versus general image
+  conversion APIs. Combining these converters would introduce range inference
+  into callers that already provide normalized tensors.
+- No production edits in this verification slice. Passing these suites supports
+  the recent shared-path changes, not whole-repository clarity completion or a
+  pretrained training/performance claim. Broader audit remains open.
