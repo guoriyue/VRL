@@ -588,3 +588,27 @@ Torch-free import checks. Touched-file Ruff and diff whitespace checks pass.
   passed, including tensor and MP4 output. Touched-file Ruff and whitespace
   checks pass. Reward service lifecycle and base scoring execution remain
   separate review slices.
+
+## Reward service acknowledgement and error decoding
+
+- Client cancellation now requires the server's explicit `cancelled` status.
+  Previously any string status was treated as a successful cancellation, so
+  `running` could incorrectly settle an ambiguous request and allow its shared
+  artifacts to be released. Unknown statuses become transport errors and the
+  existing ambiguous-request path continues to retain ownership conservatively.
+  Explicit REQUEST_COMPLETED/CANCELLED error acknowledgements still count as
+  terminal, as before.
+- Error decoding defaults `details` only when absent. Explicit false, zero, empty
+  string/list or null now fails the JSON-object requirement instead of becoming
+  `{}` through a truthiness fallback.
+- Kept the shared wire functions and versioned envelope helpers: both endpoints
+  consume them, and inference dataclasses define the field vocabulary. Kept
+  WIRE_VERSION/error codes and derived artifact-field names as real protocol
+  boundaries. No wire utility class or extra cancellation state class added.
+- Reviewed cancellation endpoint semantics: it waits for the request task before
+  returning `cancelled`; already completed and unknown requests have distinct
+  errors. Client uncertainty cannot be resolved merely from a successful HTTP
+  code. This review does not close all service-owner/server execution paths.
+- Validation: all 39 reward service tests passed, including client/server scoring
+  and lifecycle tests plus new unknown-cancellation-status and malformed-details
+  regressions. Touched-file Ruff and diff whitespace checks pass.

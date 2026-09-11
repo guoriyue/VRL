@@ -217,7 +217,14 @@ class HttpRewardScorer:
         body, status = await self._request_json("DELETE", path)
         if status >= 400:
             raise error_from_wire(body, status_code=status)
-        return self._parse_status(body, status_code=status)
+        cancellation_status = self._parse_status(body, status_code=status)
+        if cancellation_status != "cancelled":
+            raise RemoteRewardServiceError(
+                RewardServiceErrorCode.TRANSPORT_ERROR.value,
+                f"invalid reward cancellation status: {cancellation_status!r}",
+                status_code=status,
+            )
+        return cancellation_status
 
     async def shutdown(self) -> None:
         """Close the client connection pool; the operator owns the service."""

@@ -263,7 +263,7 @@ def error_from_wire(payload: Any, *, status_code: int) -> RemoteRewardServiceErr
         request_id = body.get("request_id")
         if request_id is not None and not isinstance(request_id, str):
             raise ValueError("reward error request_id must be a string")
-        details = body.get("details") or {}
+        details = body.get("details", {})
         if not isinstance(details, Mapping):
             raise ValueError("reward error details must be an object")
         return RemoteRewardServiceError(

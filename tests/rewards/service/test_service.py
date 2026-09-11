@@ -994,3 +994,33 @@ def test_module_cli_handles_sigterm_without_eager_import_warning(tmp_path) -> No
 
     assert process.returncode == 0, (stdout, stderr)
     assert "found in sys.modules" not in stderr
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["running", "ready", "", "cancelled"])
+async def test_cancel_requires_terminal_acknowledgement(monkeypatch, status):
+    from vrl.rewards.service.wire import status_to_wire
+
+    client = HttpRewardScorer("http://127.0.0.1:8300")
+
+    async def request_json(method, path, **kwargs):
+        assert method == "DELETE"
+        return status_to_wire(status), 200
+
+    monkeypatch.setattr(client, "_request_json", request_json)
+    assert await client._settle_ambiguous_request("request") is (status == "cancelled")
+
+
+@pytest.mark.parametrize("details", [False, 0, "", [], None])
+def test_wire_rejects_nonobject_error_details(details):
+    from vrl.rewards.service.wire import error_from_wire
+
+    error = error_from_wire(
+        {
+            "version": WIRE_VERSION,
+            "error": {"code": "scoring_failed", "message": "failed", "details": details},
+        },
+        status_code=500,
+    )
+    assert error.code == "transport_error"
+    assert "details must be an object" in str(error)
