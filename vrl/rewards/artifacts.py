@@ -21,14 +21,11 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, get_args, runtime_checkable
+from typing import Any, Literal, Protocol, get_args, runtime_checkable
 
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.types import RewardSample
 from vrl.utils.artifacts import sha256_file
-
-if TYPE_CHECKING:
-    import torch
 
 # Valid artifact media kinds. The Literal is the single source of truth; the
 # store constructor derives its validation set from it.
@@ -158,10 +155,21 @@ class DiskRewardArtifactStore:
         output = sample.output
         if not isinstance(output, torch.Tensor):
             raise TypeError(
-                "video reward artifact materialization requires tensor sample output",
+                f"{self.media_type} reward artifact materialization requires tensor sample output",
             )
         tensor = output.detach().cpu()
-        _validate_media_shape(tensor, self.media_type)
+        if tensor.numel() == 0:
+            raise ValueError(f"{self.media_type} reward artifact tensor must be non-empty")
+        if self.media_type == "image" and tensor.ndim not in {3, 4}:
+            raise ValueError(
+                "image reward artifact expects [C,H,W] or [B,C,H,W] tensor, "
+                f"got shape={tuple(tensor.shape)}",
+            )
+        if self.media_type == "video" and tensor.ndim not in {4, 5}:
+            raise ValueError(
+                "video reward artifact expects [C,T,H,W] or [B,C,T,H,W] tensor, "
+                f"got shape={tuple(tensor.shape)}",
+            )
 
         metadata = dict(sample.metadata or {})
         materialization_id = uuid.uuid4().hex
@@ -175,7 +183,8 @@ class DiskRewardArtifactStore:
 
                 # fps is an mp4 encoding parameter only; reading it up front
                 # would let junk fps metadata break tensor materialization.
-                write_mp4(tensor, path, fps=_fps(metadata))
+                fps = metadata.get("video_fps", metadata.get("fps", 8.0))
+                write_mp4(tensor, path, fps=float(fps) if fps is not None else 8.0)
             else:
                 torch.save(tensor, path)
             size_bytes = path.stat().st_size
@@ -195,26 +204,6 @@ class DiskRewardArtifactStore:
             self._owned_paths.discard(path)
             raise
         return artifact
-
-
-def _validate_media_shape(tensor: torch.Tensor, media_type: str) -> None:
-    if tensor.numel() == 0:
-        raise ValueError("video reward artifact tensor must be non-empty")
-    if media_type == "image" and tensor.ndim not in {3, 4}:
-        raise ValueError(
-            "image reward artifact expects [C,H,W] or [B,C,H,W] tensor, "
-            f"got shape={tuple(tensor.shape)}",
-        )
-    if media_type == "video" and tensor.ndim not in {4, 5}:
-        raise ValueError(
-            "video reward artifact expects [C,T,H,W] or [B,C,T,H,W] tensor, "
-            f"got shape={tuple(tensor.shape)}",
-        )
-
-
-def _fps(metadata: dict[str, Any]) -> float:
-    value = metadata.get("video_fps", metadata.get("fps", 8.0))
-    return float(value) if value is not None else 8.0
 
 
 def _artifact_provenance(metadata: dict[str, Any]) -> dict[str, Any]:

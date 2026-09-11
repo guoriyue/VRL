@@ -569,3 +569,22 @@ review; schema and model runtime precision execution remain separate slices.
 Validation: 336 config tests passed, including null/blank policy dtype rejection,
 optional rollout inheritance, all bundled experiment parsing, quantization and
 Torch-free import checks. Touched-file Ruff and diff whitespace checks pass.
+
+## Reward disk-write helper ownership
+
+- Folded `_validate_media_shape` and `_fps` into their sole caller,
+  `DiskRewardArtifactStore._write_one`. Shape checks read the store's media type
+  directly, and FPS is interpreted only inside the MP4 branch. Tensor writes
+  still ignore irrelevant FPS metadata. Image type/empty-payload errors now name
+  image rather than incorrectly describing every payload as video.
+- Retained `_artifact_provenance`: it is the explicit scalar-metadata wire
+  boundary, distinct from file creation. Retained artifact store materialize,
+  release and retain methods, including in-memory no-op implementations, because
+  these preserve uniform ownership semantics across transport implementations.
+- MediaType/ArtifactFormat remain schema Literals; no backend vocabulary or
+  utility class introduced. The dtype/device transfer, hashing, file publication
+  and cleanup implementation are unchanged.
+- Validation: 14 artifact-store, disk-reward/default and Torch-free config tests
+  passed, including tensor and MP4 output. Touched-file Ruff and whitespace
+  checks pass. Reward service lifecycle and base scoring execution remain
+  separate review slices.
