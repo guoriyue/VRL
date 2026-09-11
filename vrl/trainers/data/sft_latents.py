@@ -1,7 +1,9 @@
 """Clean-latents shard I/O for the GRPO diffusion-loss regularizer.
 
-One on-disk contract: ``{target artifact -> [C, T, H, W] VAE latents}`` plus the
+One on-disk contract: ``{target artifact -> unbatched VAE latents}`` plus the
 family/model provenance needed to reject a shard encoded with a different model.
+Video latents typically use ``[C, T, H, W]``; the trainer checks each target
+against the rollout geometry before device transfer.
 The producer is ``vrl/scripts/denoise/encode_targets.py``; the consumer is
 ``run_online_recipe`` (via ``data.sft_latents``) when ``algorithm.sft_weight > 0``.
 
@@ -75,7 +77,7 @@ def save_sft_latents(
 ) -> None:
     """Write the clean-latents shard the GRPO diffusion-loss regularizer reads.
 
-    One file, one contract: ``{target artifact -> [C, T, H, W] VAE latents}``
+    One file, one contract: ``{target artifact -> unbatched VAE latents}``
     plus the provenance needed to reject a shard encoded with a different
     family or model. The producer is
     ``vrl/scripts/denoise/encode_targets.py``.

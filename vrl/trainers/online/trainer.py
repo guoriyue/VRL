@@ -2073,25 +2073,23 @@ class OnlineTrainer:
         resolver = TrajectoryResolver.from_batch(group_batch)
         primary_segment = resolver.primary_trainable_segment_name()
         observations = resolver.role_value(primary_segment, "observation")
-        x0 = (
-            self._sft_latents[target_key]
-            .unsqueeze(0)
-            .expand(
-                int(observations.shape[0]),
-                *self._sft_latents[target_key].shape,
-            )
-            .to(
-                device=self.device,
-                dtype=observations.dtype if hasattr(observations, "dtype") else None,
-            )
-        )
+        clean_latents = self._sft_latents[target_key]
+        batch_shape = (int(observations.shape[0]), *clean_latents.shape)
         expected_shape = tuple(observations.shape[0:1]) + tuple(observations.shape[2:])
-        if tuple(x0.shape) != expected_shape:
+        if batch_shape != expected_shape:
             raise ValueError(
-                f"sft latents shape {tuple(x0.shape)} does not match the "
+                f"sft latents shape {batch_shape} does not match the "
                 f"rollout latent shape {expected_shape}; encode the targets "
                 "at the training sampling geometry",
             )
+        x0 = (
+            clean_latents.unsqueeze(0)
+            .expand(batch_shape)
+            .to(
+                device=self.device,
+                dtype=observations.dtype,
+            )
+        )
 
         timesteps = resolver.tensor_value(
             primary_segment,

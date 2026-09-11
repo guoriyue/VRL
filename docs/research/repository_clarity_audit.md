@@ -5711,3 +5711,22 @@ into a single additional object.
 Existing shard, recipe-loader and regularizer suites: 32 passed. No production
 model encode was run and no implementation change was made in this review.
 The broader repository audit remains incomplete.
+
+## SFT geometry is checked where rollout shape is known, before staging
+
+- Resolve the prior SFT shape audit question: encode_targets removes the source
+  batch dimension, while the trainer compares the expanded target shape against
+  rollout observations with the transition dimension removed. The I/O contract
+  should describe unbatched model latents, not impose a universal rank of four.
+  Update shard documentation accordingly, retaining video [C,T,H,W] as an example.
+- Read the target once into clean_latents, calculate the required expanded shape
+  and reject a mismatch before expansion/device conversion. Use the observation
+  tensor's dtype directly. The trainer owns this cross-input geometry check;
+  persistence helpers cannot know the run's rollout geometry.
+- Keep the existing save/load functions, schema version and CleanTargetRef owner.
+  No shape-policy class or generic conversion helper is added. Model noising,
+  replay execution and valid-target loss behavior remain unchanged.
+- The strengthened mismatch regression failed before the fix by reaching
+  Tensor.to. SFT regularizer, shard and recipe-loader suites: 32 passed. Touched-
+  file Ruff and git diff --check pass. No real model encoding or GPU performance
+  campaign was run. Wider repository completion remains unproven.

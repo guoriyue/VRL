@@ -146,11 +146,17 @@ def test_sft_term_accepts_image_target_identity(tmp_path) -> None:
     assert torch.isfinite(trainer._sft_regularizer_loss(batch))
 
 
-def test_sft_term_rejects_geometry_mismatch(tmp_path) -> None:
+def test_sft_term_rejects_geometry_mismatch_before_device_copy(tmp_path, monkeypatch) -> None:
     latents = {_TARGET_VIDEO: torch.randn(3, 4, 4)}
     trainer = _trainer(tmp_path, sft_weight=0.5, sft_latents=latents)
+    batch = _batch(trainer.evaluator.scheduler)
+
+    def unexpected_copy(*args, **kwargs):
+        pytest.fail("invalid SFT geometry must fail before Tensor.to")
+
+    monkeypatch.setattr(torch.Tensor, "to", unexpected_copy)
     with pytest.raises(ValueError, match="does not match the"):
-        trainer._sft_regularizer_loss(_batch(trainer.evaluator.scheduler))
+        trainer._sft_regularizer_loss(batch)
 
 
 def test_ctor_rejects_weight_without_latents(tmp_path) -> None:
