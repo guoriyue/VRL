@@ -610,6 +610,7 @@ class GenerationWorkerCore:
             executor=self.executor,
         )
         self.load_policy()
+        self._synchronize_rank_rng()
         expected_version = request.policy_version
         model = getattr(self.executor, "model", None)
         if self._uses_versioned_slots and expected_version is not None:

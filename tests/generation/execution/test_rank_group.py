@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import multiprocessing
 import socket
+from types import SimpleNamespace
 
 import pytest
 
@@ -47,6 +48,36 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
             recv = [torch.empty(2) for _ in range(world)]
             dist.all_gather(recv, send)
             received = [int(chunk[0].item()) for chunk in recv]
+
+            # Exercise the real worker entrypoint with a tiny CPU producer.
+            # Rank-local RNGs deliberately differ before every request.
+            import random
+
+            from vrl.generation.execution.worker import GenerationWorkerCore
+
+            core = object.__new__(GenerationWorkerCore)
+            core.rank_group = spec
+            core._memory_parking = SimpleNamespace(require_active=lambda *args, **kwargs: None)
+            core.load_policy = lambda: None
+            core._uses_versioned_slots = False
+            core._policy_version = None
+            core.executor = SimpleNamespace(
+                forward_plan_pipelined=lambda *args, **kwargs: torch.cat(
+                    [torch.rand(4), torch.tensor([random.random()])]
+                ),
+            )
+            for iteration in range(2):
+                torch.manual_seed(rank + iteration * 100)
+                random.seed(rank + iteration * 100)
+                output = core.execute_request_pipelined(
+                    SimpleNamespace(policy_version=None),
+                    None,
+                    [],
+                    completion_callback=None,
+                )
+                peer_outputs = [torch.empty_like(output) for _ in range(world)]
+                dist.all_gather(peer_outputs, output)
+                assert all(torch.equal(output, peer) for peer in peer_outputs)
         finally:
             destroy_rank_process_group()
         queue.put((rank, received))

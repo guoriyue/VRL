@@ -3210,3 +3210,20 @@ this combined regression is compatibility evidence, not architectural completion
   verifies init/build/cleanup occur without entering the RNG collective.
   Touched-file Ruff/diff checks passed; no multi-GPU training claim is made.
   Repository-wide review remains incomplete.
+
+## Synchronize RNG for multi-rank pipelined execution too
+
+- Pipelining is restricted to one engine, not one rank. RayGenerationExecutor
+  dispatches the whole request through engine.remote to its ranks, but the
+  worker's pipelined entry omitted the shared RNG synchronization used by
+  execute_batch. Add that same operation after load_policy.
+- Keep the existing RNG method as a common multi-rank boundary; single-rank
+  requests remain no-ops there. No new helper or pipeline-specific seed state.
+- Extend the real two-process gloo test with the worker pipelined entry and a
+  tiny CPU producer: deliberately different rank-local Python/Torch seeds
+  yield identical gathered output on two successive calls. Existing isolated
+  pipeline fakes now explicitly declare rank_group=None, matching constructor
+  state rather than requiring a production fallback for incomplete fixtures.
+- Validation: 220 execution/launcher tests passed; touched-file Ruff/diff
+  checks passed. This verifies gloo RNG coherence, not NCCL GPU pipelining
+  performance or a full model run. Repository review remains incomplete.
