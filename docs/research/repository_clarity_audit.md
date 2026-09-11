@@ -6506,3 +6506,15 @@ The broader repository audit remains incomplete.
 - SANA checkpoint/report suites: 48 passed, including three simultaneous-spelling
   cases verifying the conflicting section is not overwritten. Touched-file Ruff
   and diff checks pass. Broader repository audit remains incomplete.
+
+## SANA scheduler validation reads the declared protocol fields
+
+- Derive actual scheduler config fields from SCHEDULER_PROTOCOL instead of
+  listing the same keys a second time. Class identity still comes from the
+  concrete scheduler type, while config values come from the existing adapter.
+- Keep the protocol dictionary as persisted evaluation identity and
+  _config_value as a mapping/attribute configuration adapter. Keep scheduler
+  loading and generation entrypoints separate; no new inference wrapper class.
+- Checkpoint-compare and aesthetic-evaluation suites: 66 passed, including
+  scheduler identity mismatch and accepted identity cases. Touched-file Ruff
+  and diff checks pass. Broader repository audit remains incomplete.

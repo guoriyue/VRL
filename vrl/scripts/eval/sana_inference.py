@@ -66,12 +66,11 @@ def require_scheduler(scheduler: Any) -> dict[str, Any]:
         raise TypeError("official SANA scheduler has no config")
     actual = {
         "class_name": type(scheduler).__name__,
-        "algorithm_type": _config_value(config, "algorithm_type"),
-        "solver_order": _config_value(config, "solver_order"),
-        "solver_type": _config_value(config, "solver_type"),
-        "use_flow_sigmas": _config_value(config, "use_flow_sigmas"),
-        "flow_shift": _config_value(config, "flow_shift"),
-        "prediction_type": _config_value(config, "prediction_type"),
+        **{
+            key: _config_value(config, key)
+            for key in SCHEDULER_PROTOCOL
+            if key != "class_name"
+        },
     }
     if actual != SCHEDULER_PROTOCOL:
         raise ValueError(
