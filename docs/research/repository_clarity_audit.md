@@ -6560,3 +6560,23 @@ The broader repository audit remains incomplete.
 - Runtime configuration and worker checkpoint identity suites: 60 passed,
   three dependency warnings. Touched-file Ruff and diff checks pass. The broader
   repository audit remains incomplete.
+
+## Schedule and placement boundary review
+
+- Inspected EnginePlan.from_request, DistributedExecutionPlanner, their Ray
+  executor consumers, the schedule factory/protocol, strict schedule and
+  continuous facade/settings. Keep neutral sample partitioning separate from
+  fleet placement: direct execution needs the former without engine identity.
+- Keep DeviceAssignment.batch as an envelope projection rather than another
+  stored batch identity. estimated_cost is consumed by dispatcher priority and
+  schedule diagnostics; it is not an unused planning field. This review does
+  not establish that its heuristic predicts measured execution duration.
+- Keep build_rollout_schedule as the implementation-selection factory and
+  validate_rollout_schedule_topology as a guard spanning config and resources.
+  Strict reset/shutdown and continuous forwarding methods implement the common
+  trainer protocol and thread ownership boundary. Reducing their line count
+  would sacrifice uniform lifecycle access; no new wrapper class is warranted.
+- No production change justified in this slice. Placement/memory, OOM split
+  and continuous schedule tests: 118 passed, one Ray warning. Strict/general
+  orchestration and topology tests: 37 passed. These tests do not establish
+  end-to-end training performance or completion of the repository-wide audit.
