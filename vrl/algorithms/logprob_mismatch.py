@@ -333,7 +333,6 @@ def combine_keep_masks(*masks: torch.Tensor | None) -> torch.Tensor | None:
 
 __all__ = [
     "LogprobMismatchStats",
-    "LogprobMismatchStats",
     "PrecisionCorrectionConfig",
     "apply_rejection_sample_mask",
     "apply_truncated_importance_weight",

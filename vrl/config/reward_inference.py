@@ -104,6 +104,5 @@ _INFERENCE_FIELDS = frozenset(field.name for field in fields(RewardInferenceConf
 
 __all__ = [
     "RewardInferenceConfig",
-    "RewardInferenceConfig",
     "require_http_origin",
 ]
