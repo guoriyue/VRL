@@ -70,7 +70,7 @@ def pil_frames_from_media(media: Any) -> list[list[Image.Image]]:
     with ``T`` frames; ``[B,C,T,H,W]`` -> ``B`` samples. Tensor videos are always channel-first;
     callers with ``[T,C,H,W]`` frames must permute to ``[C,T,H,W]`` explicitly.
     ``numpy`` ``HWC`` / ``THWC`` arrays, a PIL image, and a list of PIL images are
-    one sample each. Anything else raises ``TypeError``.
+    one sample each. Empty media raises ``ValueError``; unsupported types raise ``TypeError``.
     """
 
     import numpy as np
@@ -80,10 +80,16 @@ def pil_frames_from_media(media: Any) -> list[list[Image.Image]]:
     from vrl.utils.media import to_pil_image, video_tensor_to_uint8_frames
 
     if isinstance(media, Image.Image):
+        if media.width == 0 or media.height == 0:
+            raise ValueError("reward received an empty media image")
         return [[media.convert("RGB")]]
     if isinstance(media, (list, tuple)) and all(isinstance(item, Image.Image) for item in media):
+        if not media or any(item.width == 0 or item.height == 0 for item in media):
+            raise ValueError("reward received an empty media frame list")
         return [[item.convert("RGB") for item in media]]
     if isinstance(media, np.ndarray):
+        if media.size == 0:
+            raise ValueError("reward received an empty media array")
         if media.ndim == 3:
             return [[to_pil_image(media)]]
         if media.ndim == 4:
@@ -91,10 +97,10 @@ def pil_frames_from_media(media: Any) -> list[list[Image.Image]]:
         raise TypeError(f"reward media array must be HWC or THWC, got {media.shape}")
     if not isinstance(media, torch.Tensor):
         raise TypeError(f"reward media must be a tensor, array, or PIL image, got {type(media)}")
-    if media.ndim == 3:
-        return [[to_pil_image(media)]]
     if media.numel() == 0:
         raise ValueError("reward received an empty media tensor")
+    if media.ndim == 3:
+        return [[to_pil_image(media)]]
     videos = [media] if media.ndim == 4 else list(media) if media.ndim == 5 else None
     if videos is None:
         raise TypeError(f"reward media tensor must be 3-5 dimensional, got {tuple(media.shape)}")

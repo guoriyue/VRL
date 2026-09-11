@@ -1453,3 +1453,16 @@ close that architectural scope.
   skipped. Existing tiny real-CLIP tests still compare valid scores with an
   independent oracle; the invalid-media assertion now requires the parser error.
   Touched-file Ruff and git diff --check pass.
+
+## Empty reward media is rejected before model-specific consumption
+
+- pil_frames_from_media now rejects zero-size PIL images/frame lists, empty
+  NumPy media and empty Torch media, including the image branch that previously
+  preceded the tensor emptiness check. Its successful result supplies real frames
+  for every sample, avoiding PickScore indexing failures or empty Aesthetic input.
+- Removed AnimeReward's now-redundant empty-frame check. Kept the shared converter
+  and existing type/layout dispatch; no validation class, new config or numerical
+  scoring changes. Unsupported types still fail rather than become empty results.
+- Validation: 33 media-layout/CLIP/AnimeReward tests passed. Nine new empty-input
+  cases cover PIL, sequences, arrays and image/video/batched tensors; valid score
+  oracle tests remain green. Touched-file Ruff and git diff --check pass.

@@ -179,8 +179,6 @@ class AnimeRewardQualityModel(TorchRewardModel):
         import torch
 
         frames = self._as_frames(media)
-        if not frames:
-            raise ValueError("AnimeRewardQualityModel received an empty media payload")
         # A still (or a clip shorter than the head's window) is held for the
         # whole window rather than zero-padded, keeping every frame in-distribution.
         if len(frames) < self.num_frames:
