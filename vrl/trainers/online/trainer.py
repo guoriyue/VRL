@@ -389,7 +389,9 @@ def _rollout_reward_components(
 
 
 @dataclass(frozen=True, slots=True)
-class _TrainingGenerationSampleBatch:
+class _ReplaySampleBatch:
+    """One replay slice with its advantages and full-group loss contribution."""
+
     batch: RolloutBatch
     advantages: torch.Tensor
     loss_weight: float
@@ -401,7 +403,7 @@ class _TrainingGenerationSampleBatch:
         batch: RolloutBatch,
         advantages: torch.Tensor,
         samples_per_replay_batch: int,
-    ) -> list[_TrainingGenerationSampleBatch]:
+    ) -> list[_ReplaySampleBatch]:
         """Split one prompt group for replay without changing full-group loss math."""
 
         batch_size = int(batch.rewards.shape[0])
@@ -416,7 +418,7 @@ class _TrainingGenerationSampleBatch:
         if slice_size <= 0 or slice_size >= batch_size:
             return [cls(batch=batch, advantages=advantages, loss_weight=1.0)]
 
-        batches: list[_TrainingGenerationSampleBatch] = []
+        batches: list[_ReplaySampleBatch] = []
         for start in range(0, batch_size, slice_size):
             stop = min(start + slice_size, batch_size)
             selector = torch.arange(start, stop, device=batch.rewards.device)
@@ -559,7 +561,7 @@ def _balanced_training_sample_batches(
     advantages: list[torch.Tensor],
     samples_per_replay_batch: int,
     device: torch.device,
-) -> list[_TrainingGenerationSampleBatch]:
+) -> list[_ReplaySampleBatch]:
     """Plan replay execution slots with equal slot counts across ranks.
 
     Local zero-advantage filtering can leave different ranks with different
@@ -568,10 +570,10 @@ def _balanced_training_sample_batches(
     when only some slots carry training signal.
     """
 
-    sample_batches: list[_TrainingGenerationSampleBatch] = []
+    sample_batches: list[_ReplaySampleBatch] = []
     for batch, adv in zip(batches, advantages, strict=True):
         sample_batches.extend(
-            _TrainingGenerationSampleBatch.from_prompt_group(batch, adv, samples_per_replay_batch)
+            _ReplaySampleBatch.from_prompt_group(batch, adv, samples_per_replay_batch)
         )
 
     target_count = _distributed_max_int(len(sample_batches), device)
@@ -588,7 +590,7 @@ def _balanced_training_sample_batches(
     # the extra zero-loss forward/backward work needed for collective balance.
     template = min(sample_batches, key=lambda batch: int(batch.batch.rewards.shape[0]))
     sample_batches.extend(
-        _TrainingGenerationSampleBatch(
+        _ReplaySampleBatch(
             batch=template.batch,
             advantages=torch.zeros_like(template.advantages),
             loss_weight=0.0,
@@ -1400,7 +1402,7 @@ class OnlineTrainer:
             cfg.timestep_selection,
         )
         samples_per_replay_batch = cfg.batch_plan.samples_per_replay_batch
-        first_batch = _TrainingGenerationSampleBatch.from_prompt_group(
+        first_batch = _ReplaySampleBatch.from_prompt_group(
             batch.batches[0],
             batch.advantages[0],
             samples_per_replay_batch,
@@ -1581,7 +1583,7 @@ class OnlineTrainer:
         # (using first filtered batch so memory footprint is bounded).
         first_step_debug_record: dict[str, Any] | None = None
         precision_metadata = self._precision_metadata()
-        first_debug_batch = _TrainingGenerationSampleBatch.from_prompt_group(
+        first_debug_batch = _ReplaySampleBatch.from_prompt_group(
             filtered_batches[0],
             filtered_advs[0],
             samples_per_replay_batch,

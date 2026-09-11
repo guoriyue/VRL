@@ -4296,3 +4296,14 @@ this combined regression is compatibility evidence, not architectural completion
   collective coordination and dummy-slot planning across multiple prompt groups.
 - Advantage/metrics, distributed skip-backward agreement and diagnostics tests:
   30 passed. Touched-file Ruff checks pass. The repository-wide audit continues.
+
+## Replay slice naming distinguishes it from generation work
+
+- Rename the private `_TrainingGenerationSampleBatch` to `_ReplaySampleBatch`
+  throughout trainer construction, balanced planning, debug paths and tests.
+  Document its actual payload: replay slice, advantages and full-group loss
+  contribution. It does not describe a generation dispatch task.
+- Preserve the real `GenerationSampleBatch` identity and all slicing, loss and
+  dummy-slot behavior. No alias, new type hierarchy or scheduling change.
+- The 30 advantage/metrics, distributed skip-backward and diagnostic tests passed;
+  touched-file Ruff checks pass. Repository-wide completion remains unproven.
