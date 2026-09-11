@@ -5058,3 +5058,17 @@ this combined regression is compatibility evidence, not architectural completion
   correction; no constants or new abstractions are introduced.
 - Existing config-helper and JSON-file tests: 13 passed. Touched-file Ruff and
   git diff --check pass. Wider repository audit remains incomplete.
+
+## Frame sampling validates explicit counts before the no-op branch
+
+- Reuse require_exact_int for positive num_frames in sample_frames. Zero
+  previously produced an empty selection, oversized fractions silently returned
+  the input, and other malformed values failed through backend-specific errors.
+  None still means no limit; valid short inputs retain object identity.
+- Keep shared media functions as cross-reward/evaluation conversion boundaries.
+  No sampler class or additional validator is introduced. Frame-index selection,
+  image/video decoding and layout/range conversion remain unchanged.
+- Six malformed-count regressions failed before the fix; added an ordered
+  sampling and no-op check. Media and reward suites: 424 passed, 5 skipped,
+  7 warnings. Touched-file Ruff and git diff --check pass. Skipped tests are not
+  evidence of coverage, and the broader repository audit remains incomplete.

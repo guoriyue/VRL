@@ -4,7 +4,20 @@ import numpy as np
 import pytest
 import torch
 
-from vrl.utils.media import image_to_uint8_hwc, video_tensor_to_uint8_frames
+from vrl.utils.media import image_to_uint8_hwc, sample_frames, video_tensor_to_uint8_frames
+
+
+@pytest.mark.parametrize("count", [0, -1, True, 1.5, 10.5, "2"])
+def test_frame_sampling_rejects_invalid_count_before_noop(count) -> None:
+    with pytest.raises(ValueError, match="num_frames"):
+        sample_frames(torch.arange(4).reshape(4, 1), count)
+
+
+def test_frame_sampling_preserves_order_and_noop_identity() -> None:
+    frames = torch.arange(5).reshape(5, 1)
+    assert torch.equal(sample_frames(frames, 3), frames[[0, 2, 4]])
+    for count in (None, 5, 8):
+        assert sample_frames(frames, count) is frames
 
 
 def test_image_to_uint8_hwc_preserves_uint8_tensor_values() -> None:

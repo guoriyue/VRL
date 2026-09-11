@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 
+from vrl.utils.config import require_exact_int
+
 if TYPE_CHECKING:
     from PIL import Image as PILImage
 
@@ -163,7 +165,10 @@ def frames_thwc_to_float(frames: torch.Tensor) -> torch.Tensor:
 def sample_frames(frames: torch.Tensor, num_frames: int | None) -> torch.Tensor:
     """Evenly subsample a ``[T,...]`` stack to ``num_frames`` (no-op when fewer/None)."""
 
-    if num_frames is None or frames.shape[0] <= num_frames:
+    if num_frames is None:
+        return frames
+    require_exact_int(num_frames, path="num_frames", minimum=1)
+    if frames.shape[0] <= num_frames:
         return frames
     indices = torch.linspace(0, frames.shape[0] - 1, steps=num_frames).round().long()
     return frames.index_select(0, indices)
