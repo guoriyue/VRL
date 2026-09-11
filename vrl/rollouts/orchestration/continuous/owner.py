@@ -104,6 +104,8 @@ class _ContinuousOwnerRuntime:
             require_exact_int(group_size, path="continuous prompt batch.group_size", minimum=1)
             if not prompts:
                 raise ValueError("continuous rollout requires at least one prompt")
+            if next_prompts is not None and not next_prompts:
+                raise ValueError("continuous prefetch prompts must be non-empty")
             # Load-bearing local: pipeline startup pushes the initial weights
             # before the consumer drains an iteration, so the object that will
             # own these timings does not exist yet. Merged in below.
@@ -141,8 +143,6 @@ class _ContinuousOwnerRuntime:
             batch_id = self.producer.current_batch_id
             prefetch_next_batch_early = self.settings.split_generation_reward
             if prefetch_next_batch_early and next_prompts is not None:
-                if not next_prompts:
-                    raise ValueError("continuous prefetch prompts must be non-empty")
                 self.producer.append_prompt_batch(
                     next_prompts,
                     group_size=group_size,
@@ -172,8 +172,6 @@ class _ContinuousOwnerRuntime:
                 assert self.queue is not None
                 self.queue.set_item_limit(max(1, len(next_prompts or [])))
             elif next_prompts is not None:
-                if not next_prompts:
-                    raise ValueError("continuous prefetch prompts must be non-empty")
                 # Debug metadata belongs to generation time. This prefetch runs
                 # during the current training step, even when the trainer consumes
                 # it after state.step (and therefore runtime_debug) changes.
@@ -182,7 +180,6 @@ class _ContinuousOwnerRuntime:
                     group_size=group_size,
                     runtime_debug=runtime_debug,
                 )
-                prefetch_next_batch_requested = 1.0
             iteration.stats.merge(startup_stats)
             # Preserve the persisted metrics schema used by existing training logs.
             iteration.stats.observe_gauge(

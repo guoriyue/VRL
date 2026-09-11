@@ -187,6 +187,28 @@ def _owner(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("split_generation_reward", [False, True])
+async def test_empty_prefetch_fails_before_initial_weight_sync(split_generation_reward) -> None:
+    collector = _OwnerCollector()
+    collector.supports_reward_generation_overlap = split_generation_reward
+    lifecycle = _OwnerLifecycle(collector)
+    owner = _owner(lifecycle, split_generation_reward=split_generation_reward)
+    try:
+        with pytest.raises(ValueError, match="prefetch prompts must be non-empty"):
+            await owner.next_iteration(
+                ["p0"],
+                group_size=1,
+                runtime_debug=False,
+                initial_weights={"w": 0},
+                next_prompts=[],
+            )
+        assert lifecycle.push_calls == []
+        assert collector.collect_threads == []
+    finally:
+        await owner.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_owner_cadence_survives_blocked_trainer_event_loop() -> None:
     main_thread = threading.get_ident()
     collector = _OwnerCollector()

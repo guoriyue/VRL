@@ -5775,3 +5775,19 @@ The broader repository audit remains incomplete.
   Janus rollout wiring: 25 passed. Touched-file Ruff and diff checks pass; no old
   code/test references remain. This is a naming change, with no scheduling,
   memory-admission or merge-semantics change. Repository-wide audit remains open.
+
+## Validate prefetch input before starting the continuous pipeline
+
+- Move the duplicated empty-next-prompts check to next_iteration's input
+  validation, before pipeline startup, weight synchronization or batch consumption.
+  Previously both split and combined collection could push initial weights before
+  rejecting an empty prefetch; combined collection could also finish the current
+  iteration first. Remove the redundant prefetch metric assignment: its value
+  already derives from whether next_prompts was supplied.
+- Keep valid-request prefetch ordering, prompt identity matching, capacity owners
+  and terminal cleanup. Keep the schedule facade for trainer-thread weight export
+  and the cross-type topology guard; neither is an ownerless helper. This change
+  does not consolidate concurrency boundaries merely to reduce file count.
+- Both regression arms failed before the fix because initial weights were pushed.
+  All 216 continuous orchestration tests pass. Touched-file Ruff and diff checks
+  pass. No production throughput measurement; broader audit remains incomplete.
