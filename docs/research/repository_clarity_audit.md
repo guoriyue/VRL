@@ -2363,3 +2363,18 @@ this combined regression is compatibility evidence, not architectural completion
   normalization; new opposite-first-dtype cases reject ambiguity without casts.
   Invalid string dtype is rejected. Touched-file Ruff and diff checks passed.
   Full repository review remains active.
+
+## Strategy removes two single-use forwarding helpers
+
+- SingleProcessStrategy.__init__ constructs its default DistributedTrainingContext
+  directly; removed _single_process_context, which had no other caller.
+  Training-memory parking updates its existing identity set from _module_tensors
+  directly; removed _module_tensor_ids and its unnecessary intermediate set.
+- Keep the shared module/tensor movement and CPU coordination helpers, and the
+  FSDP compile guard. These serve cross-strategy execution or a distinct config
+  boundary. No namespace class or constant table added. Default rank/device,
+  tensor deduplication and parking/restore order remain unchanged.
+- Validation: 84 strategy/FSDP/DDP tests passed, two optional tests skipped.
+  Removed symbols have no remaining source/test references. No new tests for
+  this behavior-preserving relocation. Touched-file Ruff and diff checks passed.
+  Full repository review remains active.

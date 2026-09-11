@@ -245,7 +245,7 @@ class _TrainingStateParking:
                 parked.modules.append(
                     _ModuleRestore(module=module, device=_module_device(module, state.device)),
                 )
-                seen_tensors.update(_module_tensor_ids(module))
+                seen_tensors.update(id(tensor) for tensor in _module_tensors(module))
                 _move_module(module, torch.device("cpu"))
 
             if state.optimizer is not None:
@@ -428,7 +428,12 @@ class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy):
     """
 
     def __init__(self, context: DistributedTrainingContext | None = None) -> None:
-        self.context = context or _single_process_context()
+        self.context = context or DistributedTrainingContext(
+            strategy="single_process",
+            rank=0,
+            world_size=1,
+            device=torch.device("cpu"),
+        )
 
     def prepare_model(self, model: Any) -> Any:
         # Single process trains the model as-is; the seam exists so FSDP2 can wrap
@@ -486,10 +491,6 @@ def _module_tensors(module: Any) -> Iterable[torch.Tensor]:
     buffers = getattr(module, "buffers", None)
     if callable(buffers):
         yield from (buffer for buffer in buffers() if isinstance(buffer, torch.Tensor))
-
-
-def _module_tensor_ids(module: Any) -> set[int]:
-    return {id(tensor) for tensor in _module_tensors(module)}
 
 
 def _move_module(module: Any, device: torch.device) -> None:
@@ -1098,15 +1099,6 @@ def _assert_fsdp_config_supported(config: RootConfig) -> None:
             "model.torch_compile.enable=false, or model.torch_compile.scope=rollout "
             "to keep the FSDP2 replay policy eager while the rollout policy compiles.",
         )
-
-
-def _single_process_context() -> DistributedTrainingContext:
-    return DistributedTrainingContext(
-        strategy="single_process",
-        rank=0,
-        world_size=1,
-        device=torch.device("cpu"),
-    )
 
 
 def _cpu_coordination_barrier() -> None:
