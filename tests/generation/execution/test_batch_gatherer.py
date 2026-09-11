@@ -316,3 +316,16 @@ def _diffusion_chunk(
         context=context,
         peak_memory_mb=peak_memory_mb,
     )
+
+
+def test_replay_gather_rejects_per_batch_misalignment_even_when_total_matches():
+    with pytest.raises(ValueError, match=r"replay_tensors\.prompt_embeds has 1 rows, expected 2"):
+        gather_replay_tensors(
+            [{"prompt_embeds": torch.ones(1, 4)}, {"prompt_embeds": torch.ones(3, 4)}],
+            sample_counts=[2, 2],
+        )
+
+
+def test_replay_gather_rejects_scalar_tensor_without_sample_axis():
+    with pytest.raises(ValueError, match="leading batch dimension"):
+        gather_replay_tensors([{"scale": torch.tensor(1.0)}], sample_counts=[1])

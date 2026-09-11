@@ -96,6 +96,8 @@ def gather_replay_tensors(
         elif any(value is None for value in values):
             raise ValueError(f"replay tensor {key!r} must be present on all results")
         elif all(isinstance(value, torch.Tensor) for value in values):
+            for value, sample_count in zip(values, sample_counts, strict=True):
+                _require_rows(f"replay_tensors.{key}", value, sample_count)
             gathered[key] = concatenate_sample_values(
                 values,
                 name=f"replay_tensors.{key}",
@@ -281,12 +283,13 @@ class GenerationSampleBatch:
     ) -> tuple[GenerationSampleBatch, ...]:
         """Plan prompt-major sample batches without changing RL group semantics."""
 
-        if prompt_count < 1:
-            raise ValueError("prompt_count must be >= 1")
-        if samples_per_prompt < 1:
-            raise ValueError("samples_per_prompt must be >= 1")
-        if max_samples_per_batch < 1:
-            raise ValueError("max_samples_per_batch must be >= 1")
+        for name, value in (
+            ("prompt_count", prompt_count),
+            ("samples_per_prompt", samples_per_prompt),
+            ("max_samples_per_batch", max_samples_per_batch),
+        ):
+            if type(value) is not int or value < 1:
+                raise ValueError(f"{name} must be a positive integer, got {value!r}")
 
         batches: list[GenerationSampleBatch] = []
         for prompt_index in range(prompt_count):

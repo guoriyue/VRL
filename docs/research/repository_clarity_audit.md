@@ -395,3 +395,25 @@ above, not completion of the outstanding repository-wide audit.
   collector attachment/activation test passed separately. Provider-error tests
   verify propagation through both version lookup and driver offload decisions.
   Ruff and diff whitespace checks pass for the touched files.
+
+## Batch planning and replay alignment
+
+- Removed planner `max(1, int(...))` coercion of explicit batch widths. The
+  existing `GenerationSampleBatch.plan` entry now requires positive Python
+  integers for prompt count, group size and batch width. Invalid overrides fail
+  explicitly instead of being truncated or clamped into a different plan.
+- Replay tensor concatenation now checks each tensor's leading dimension against
+  that source batch's sample count, using the existing `_require_rows` helper.
+  Ragged sample wrappers already enforced this invariant; tensors previously
+  bypassed it. A short batch and an oversized batch can have the correct total
+  row count while assigning replay values to the wrong samples.
+- Kept shared coverage/order checks, static context comparison and replay merge
+  functions. They enforce cross-binding consistency and have no natural single
+  object owner; a new utility class would not simplify the contract.
+- Kept per-family gather/layout boundaries: full-sequence and chunked denoise
+  gatherers share replay rules while retaining their distinct payload schemas.
+  No ALL_CAPS workflow vocabularies were introduced or relocated in this slice.
+- Validation: 189 execution, binding, OOM-split and Torch-free config tests
+  passed; two binding tests skipped. Regression cases reject mismatched per-batch
+  tensor rows even when their total matches, scalar replay tensors, and invalid
+  explicit widths. Touched-file Ruff and diff whitespace checks pass.

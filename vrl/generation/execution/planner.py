@@ -33,7 +33,7 @@ class EnginePlan:
         from vrl.utils.profiling import profile_range
 
         if max_samples_per_batch is not None:
-            batch_size = max(1, int(max_samples_per_batch))
+            batch_size = max_samples_per_batch
         else:
             raw = request.samples_per_generation_batch
             if raw is None:
@@ -47,7 +47,7 @@ class EnginePlan:
                     "generation runtime (startup batch-size probe); set an "
                     "explicit int here",
                 )
-            batch_size = max(1, int(raw))
+            batch_size = raw
         with profile_range("engine.plan"):
             return cls(
                 sample_batches=GenerationSampleBatch.plan(

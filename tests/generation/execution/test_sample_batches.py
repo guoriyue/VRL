@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 
 def test_sample_batch_plan_prompt_major() -> None:
     """Checks build prompt batches prompt major."""
@@ -54,3 +56,19 @@ def test_run_sample_batches_with_oom_retry_splits_until_success() -> None:
 
     assert results == [2, 1, 2]
     assert seen == [(0, 5), (0, 2), (2, 3), (2, 1), (3, 2)]
+
+
+@pytest.mark.parametrize("width", [0, -1, 1.5, True, "2"])
+def test_engine_plan_rejects_invalid_explicit_width(width):
+    from vrl.generation.execution.planner import EnginePlan
+    from vrl.generation.types import GenerationRequest
+
+    request = GenerationRequest(
+        request_id="width-check",
+        family="test",
+        task="t2i",
+        inputs=["p"],
+        samples_per_prompt=2,
+    )
+    with pytest.raises(ValueError, match="max_samples_per_batch must be a positive integer"):
+        EnginePlan.from_request(request, max_samples_per_batch=width)
