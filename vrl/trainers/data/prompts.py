@@ -285,19 +285,26 @@ class ImageCaptionPromptDataset(Dataset):
                 obj = json.loads(line)
                 if not isinstance(obj, dict):
                     raise ValueError(f"{manifest_path}: row {row_index} must be an object")
-                image = _required_string_field(
-                    obj,
-                    image_field,
-                    manifest_path=manifest_path,
-                    row_index=row_index,
-                )
-                caption = _required_string_field(
-                    obj,
-                    caption_field,
-                    manifest_path=manifest_path,
-                    row_index=row_index,
-                )
-                metadata = dict(obj.get("metadata") or {})
+                for field_name in (image_field, caption_field):
+                    value = obj.get(field_name)
+                    if value is None or (isinstance(value, str) and not value.strip()):
+                        raise ValueError(
+                            f"{manifest_path}: row {row_index} missing required field {field_name!r}",
+                        )
+                    if not isinstance(value, str):
+                        raise ValueError(
+                            f"{manifest_path}: row {row_index} {field_name!r} must be a string",
+                        )
+                image, caption = obj[image_field], obj[caption_field]
+                for field_name in ("metadata", "request_overrides"):
+                    value = obj.get(field_name)
+                    if value is None:
+                        obj[field_name] = {}
+                    elif not isinstance(value, dict):
+                        raise ValueError(
+                            f"{manifest_path}: row {row_index} {field_name!r} must be an object",
+                        )
+                metadata = dict(obj["metadata"])
                 metadata.update(
                     {
                         key: value
@@ -313,7 +320,7 @@ class ImageCaptionPromptDataset(Dataset):
                     },
                 )
                 task_type = str(obj.get("task_type") or default_task_type)
-                request_overrides = dict(obj.get("request_overrides") or {})
+                request_overrides = dict(obj["request_overrides"])
                 self.examples.append(
                     PromptExample(
                         prompt=caption,
@@ -330,21 +337,6 @@ class ImageCaptionPromptDataset(Dataset):
     def __getitem__(self, idx: int) -> dict[str, Any]:
         ex = self.examples[idx]
         return {"prompt": ex.prompt, "metadata": ex.metadata, "example": ex}
-
-
-def _required_string_field(
-    obj: dict[str, Any],
-    field_name: str,
-    *,
-    manifest_path: Path,
-    row_index: int,
-) -> str:
-    value = obj.get(field_name)
-    if value is None or str(value).strip() == "":
-        raise ValueError(
-            f"{manifest_path}: row {row_index} missing required field {field_name!r}",
-        )
-    return str(value)
 
 
 __all__ = [

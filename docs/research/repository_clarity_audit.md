@@ -707,3 +707,21 @@ Torch-free import checks. Touched-file Ruff and diff whitespace checks pass.
 - Validation: 109 trainer-data, dataset/provenance and prompt-config tests passed,
   including malformed field diagnostics and preserved empty-prompt/null-mapping
   behavior. Touched-file Ruff and diff whitespace checks pass.
+
+## Image-caption manifest input semantics
+
+- Removed `_required_string_field`, whose name promised validation but whose
+  implementation stringified numbers, booleans and containers. Its only consumer,
+  ImageCaptionPromptDataset construction, now checks image/caption fields
+  directly without changing valid strings or the existing missing-field errors.
+- Optional metadata/request_overrides now accept objects or explicit null/absence,
+  rejecting other types before they can be converted or silently discarded.
+  This matches native manifest object semantics while retaining the distinct
+  image/caption field names and task-type default.
+- Retained dataset indexing adapters and loader selection; no new validator
+  class or configurable schema vocabulary introduced. The two format-specific
+  parsing loops remain distinct rather than introducing an inheritance framework
+  just to share a few validation lines.
+- Validation: 127 trainer-data, dataset and prompt-config tests passed, including
+  malformed string/object field regressions. Touched-file Ruff and diff
+  whitespace checks pass.

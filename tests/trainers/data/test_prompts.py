@@ -5,6 +5,7 @@ import json
 import pytest
 
 from vrl.trainers.data.prompts import (
+    ImageCaptionPromptDataset,
     JsonlPromptDataset,
     PromptExample,
     load_prompt_examples_from_jsonl_bytes,
@@ -70,3 +71,21 @@ def test_jsonl_loader_preserves_empty_prompt_and_optional_null_mappings():
         b'{"prompt":"", "metadata":null, "request_overrides":null, "extra":3}'
     )
     assert examples == [PromptExample(prompt="", metadata={"extra": 3}, request_overrides={})]
+
+
+@pytest.mark.parametrize("field", ["image", "caption"])
+@pytest.mark.parametrize("value", [123, True, [], {}])
+def test_image_caption_manifest_rejects_nonstring_fields(tmp_path, field, value):
+    path = tmp_path / "images.jsonl"
+    path.write_text(json.dumps({"image": "image.png", "caption": "p", field: value}))
+    with pytest.raises(ValueError, match=f"row 0 {field!r} must be a string"):
+        ImageCaptionPromptDataset(path)
+
+
+@pytest.mark.parametrize("field", ["metadata", "request_overrides"])
+@pytest.mark.parametrize("value", [False, 0, "", [], [["key", "value"]]])
+def test_image_caption_manifest_rejects_nonobject_fields(tmp_path, field, value):
+    path = tmp_path / "images.jsonl"
+    path.write_text(json.dumps({"image": "image.png", "caption": "p", field: value}))
+    with pytest.raises(ValueError, match=f"row 0 {field!r} must be an object"):
+        ImageCaptionPromptDataset(path)
