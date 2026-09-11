@@ -106,3 +106,18 @@ def test_old_weight_buffer_option_is_rejected():
 
     with pytest.raises(ValueError):
         RolloutRuntimeSection(weight_sync_bucket_bytes=1024)
+
+
+@pytest.mark.parametrize("version", [2.9, "2", True, -1])
+def test_invalid_transfer_version_cannot_modify_worker(version):
+    from tests.generation.execution.test_worker_versioned_slots import _core, _ReadbackModel
+
+    core = _core(_ReadbackModel(), versioned_weight_sync=False)
+    state = {"transformer.weight": torch.ones(2, 2)}
+    with pytest.raises(ValueError, match="policy_version"):
+        core.begin_weight_transfer(weight_manifest(state), "invalid", version)
+    assert core._weight_transfer is None
+    with pytest.raises(ValueError, match="policy_version"):
+        core.update_weights(state, version)
+    assert core._policy_version == 1
+    assert torch.all(core.executor.model.module.weight == -99)

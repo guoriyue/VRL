@@ -144,7 +144,8 @@ async def test_local_update_return_is_the_commit_ack() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_policy_version_does_not_terminalize_resident_runtime() -> None:
+@pytest.mark.parametrize("version", [object(), 3.9, "3", True, -1])
+async def test_invalid_policy_version_does_not_terminalize_resident_runtime(version) -> None:
     class _RecordingSync:
         def __init__(self) -> None:
             self.calls: list[tuple[Any, int]] = []
@@ -160,8 +161,8 @@ async def test_invalid_policy_version_does_not_terminalize_resident_runtime() ->
     runtime = _runtime(SimpleNamespace(), weight_sync=sync)
     runtime.current_policy_version = 3
 
-    with pytest.raises(TypeError):
-        await runtime.update_weights({"w": 2}, policy_version=object())
+    with pytest.raises(ValueError, match="policy_version"):
+        await runtime.update_weights({"w": 2}, policy_version=version)
 
     assert sync.calls == []
     assert runtime.current_policy_version == 3

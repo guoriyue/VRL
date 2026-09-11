@@ -32,7 +32,7 @@ from vrl.generation.protocols import (
 )
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import require_runtime_model
-from vrl.utils.config import import_from_path
+from vrl.utils.config import import_from_path, require_exact_int
 from vrl.utils.cuda_memory import is_cuda_out_of_memory, release_cuda_memory
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
@@ -186,6 +186,7 @@ class GenerationWorkerCore:
         a separate activation-aware acceptance probe.
         """
 
+        require_exact_int(policy_version, path="policy_version", minimum=0)
         self._memory_parking.require_active(
             "update_weights",
             executor=self.executor,
@@ -214,7 +215,7 @@ class GenerationWorkerCore:
                     policy_obj,
                     owner=f"{type(self.executor).__name__}.model",
                 )
-                model.install_trainable_state(int(policy_version), state_ref)
+                model.install_trainable_state(policy_version, state_ref)
                 self._uses_versioned_slots = True
             elif state_ref is not None:
                 model = require_runtime_model(
@@ -233,7 +234,7 @@ class GenerationWorkerCore:
         # RolloutLifecycle.current_policy_version() -> runtime.current_policy_version
         # (attribute), not by reading this worker directly. Per-batch results take
         # their version from request.policy_version, not this field.
-        self._policy_version = int(policy_version)
+        self._policy_version = policy_version
         return self._policy_version
 
     def begin_weight_transfer(self, manifest: Any, transfer_id: str, policy_version: int) -> int:
@@ -242,7 +243,7 @@ class GenerationWorkerCore:
         if self._weight_transfer is not None:
             raise RuntimeError("another weight transfer is already staged")
         self._weight_transfer = StagedWeightTransfer(transfer_id, policy_version, manifest)
-        return int(policy_version)
+        return policy_version
 
     def receive_weight_chunk(self, chunk: Any, transfer_id: str) -> int:
         if self._weight_transfer is None:
@@ -273,15 +274,16 @@ class GenerationWorkerCore:
         from the receiver's retained slot that is itself under test.
         """
 
+        require_exact_int(policy_version, path="policy_version", minimum=0)
         self._memory_parking.require_active("verify_active_weights", executor=self.executor)
         model = getattr(self.executor, "model", None)
         if state_ref is None:
             raise ValueError("active weight verification requires an explicit payload")
         if self._uses_versioned_slots:
             verifier = getattr(model, "verify_active_trainable_state", None)
-            args = (int(policy_version), state_ref)
+            args = (policy_version, state_ref)
         else:
-            if self._policy_version != int(policy_version):
+            if self._policy_version != policy_version:
                 raise RuntimeError("active weight verification policy version mismatch")
             verifier = getattr(model, "verify_trainable_state", None)
             args = (state_ref,)
@@ -292,7 +294,7 @@ class GenerationWorkerCore:
         except BaseException as error:
             self._memory_parking.record_model_failure(model, error)
             raise
-        return int(policy_version)
+        return policy_version
 
     def supports_versioned_trainable_state(self) -> bool:
         """Whether the loaded model can retain versioned trainable-state slots.

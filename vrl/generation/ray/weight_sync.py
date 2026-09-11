@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from vrl.generation.ray.engine import RayGenerationEngine, uniform_rank_result
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.dependencies import require_ray
+from vrl.utils.config import require_exact_int
 from vrl.utils.deadline import require_timeout
 
 
@@ -63,6 +64,7 @@ class RayGenerationWeightSync:
         state_ref: Any,
         policy_version: int,
     ) -> None:
+        require_exact_int(policy_version, path="policy_version", minimum=0)
         if self.bucket_bytes is not None and state_ref is not None:
             await self._push_bucketed(state_ref, policy_version)
             return

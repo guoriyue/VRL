@@ -913,3 +913,21 @@ contained guesses. Removed both:
 - Validation: 46 engine, weight-sync and chunk-transfer tests passed, including
   real Ray object-store dereferencing and malformed/mixed-type ACK regressions.
   Touched-file Ruff and diff whitespace checks pass.
+
+## Weight-install input identity follow-up
+
+- Removed policy_version coercion from runtime pending installs, worker installs,
+  staging and active-weight verification. Existing require_exact_int validates
+  non-negative versions at runtime/sync/worker receiver entrypoints; each layer
+  then forwards the original value without reinterpretation.
+- Validation occurs before model loading/installing, staged-transfer assignment
+  or version publication. Invalid runtime input stays outside terminal failure
+  handling, preserving the healthy runtime for a corrected request.
+- Retained independent runtime, sender and worker checks because these entrypoints
+  are callable independently and cross execution/process boundaries. Reused the
+  existing scalar validator rather than creating a policy-version wrapper type.
+  This closes the input-side follow-up recorded in the preceding ACK review.
+- Validation: 119 weight-transfer, version-slot, real Ray sync, runtime sleep/wake
+  and torch-free config tests passed. Regressions assert malformed versions leave
+  live worker weights/current version/staging and runtime health unchanged.
+  Touched-file Ruff and diff whitespace checks pass.
