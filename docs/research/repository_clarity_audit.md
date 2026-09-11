@@ -1693,3 +1693,19 @@ is not a repository-wide completion claim or a mandate to inline short functions
   ownership change preserving validation order and output/error behavior.
 - Validation: 42 shared batch-gatherer/chunk-binding tests passed. Touched-file
   Ruff and diff checks passed. Full repository review remains incomplete.
+
+## Chunk result axis cardinalities
+
+- Inspected the executor result boundary, MAGI generation-only construction and
+  CausVid runner trajectory mapping. Retain the common result class and executor
+  adapter: they connect two families to one typed gather protocol.
+- The result dataclass now requires exact integer temporal/transition counts
+  using the existing shared validator. Range-only comparisons accepted bools
+  and floats, even though these fields describe discrete tensor axes. Validation
+  stays in the existing owner; no new helper, class or constants were added.
+- Keep generation-only transition count None/zero/positive semantics and the
+  stronger positive requirement when trainable tensors are present. Do not
+  merge family-owned temporal scheduling into the transport executor.
+- Validation: 96 chunk-binding, shared gather, CausVid and MAGI tests passed.
+  Ten malformed-count and three valid optional-count regressions added.
+  Touched-file Ruff and diff checks passed. No real model generation claimed.

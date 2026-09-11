@@ -232,3 +232,27 @@ def test_gatherer_rejects_result_with_misaligned_trajectory_axes(field_name: str
         ChunkAutoregressiveDenoiseGatherer().gather_batches(
             request, request.sample_rows(), batches
         )
+
+
+@pytest.mark.parametrize("field_name", ["temporal_chunk_count", "denoise_transition_count"])
+@pytest.mark.parametrize("value", [True, 2.0, 2.5, "2", -1])
+def test_result_rejects_noninteger_or_negative_axis_counts(field_name, value):
+    kwargs = {"temporal_chunk_count": 2, field_name: value}
+    with pytest.raises(ValueError, match=field_name):
+        ChunkAutoregressiveDenoiseResult(
+            batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1),
+            output=torch.zeros(1, 1),
+            **kwargs,
+        )
+
+
+@pytest.mark.parametrize("transition_count", [None, 0, 3])
+def test_generation_only_result_preserves_optional_transition_count(transition_count):
+    result = ChunkAutoregressiveDenoiseResult(
+        batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1),
+        output=torch.zeros(1, 1),
+        temporal_chunk_count=2,
+        denoise_transition_count=transition_count,
+    )
+    assert result.denoise_transition_count == transition_count
+    assert not result.has_trainable_trajectory
