@@ -5142,3 +5142,18 @@ this combined regression is compatibility evidence, not architectural completion
   test preserves the empty-list control. Nsight report suite: 25 passed.
   Touched-file Ruff and git diff --check pass. This does not validate a real
   Nsight capture or complete the broader repository audit.
+
+## Nsight CLI validates milliseconds before integer conversion
+
+- Validate --min-gap-ms before int conversion: a tiny negative value previously
+  truncated to zero, while infinity and multiplication overflow escaped as
+  OverflowError. The CLI now reports an argparse usage error naming the option
+  when the value is negative or its nanosecond conversion is nonfinite.
+- Keep conversion in main as the CLI adapter and retain analyze's integer
+  boundary. No separate converter function or config object is introduced.
+  Nonnegative finite conversion keeps its existing truncation behavior; report
+  schema, selection rules and profiling collection are unchanged.
+- Five invalid-input regressions failed before the fix. Nsight report suite:
+  30 passed. A valid zero-threshold CLI call against the synthetic SQLite capture
+  completed with text and JSON output. Touched-file Ruff and git diff --check
+  pass. This is not real capture validation; the wider audit remains open.

@@ -249,6 +249,16 @@ def test_zero_report_limits_disable_gap_and_stage_rows(tmp_path):
     assert report.per_device
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "-0.000000001", "-1", "1e308"])
+def test_cli_rejects_invalid_gap_before_nanosecond_conversion(value, capsys):
+    from vrl.scripts.perf.nsys_gpu_busy import main
+
+    with pytest.raises(SystemExit) as caught:
+        main(["missing.sqlite", f"--min-gap-ms={value}"])
+    assert caught.value.code == 2
+    assert "--min-gap-ms" in capsys.readouterr().err
+
+
 def test_report_renders_and_serialises(tmp_path) -> None:
     path = _make_db(tmp_path / "cap.sqlite")
     rep = analyze(path, min_gap_ns=100)

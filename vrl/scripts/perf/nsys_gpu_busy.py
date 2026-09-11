@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -66,6 +67,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    gap_ns = args.min_gap_ms * 1e6
+    if args.min_gap_ms < 0 or not math.isfinite(gap_ns):
+        parser.error("--min-gap-ms must be nonnegative and finite when converted to nanoseconds")
+    min_gap_ns = int(gap_ns)
+
     window = None
     if args.window_ns is not None:
         try:
@@ -81,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
             window=window,
             device_id=args.device,
             top_gaps=args.top_gaps,
-            min_gap_ns=int(args.min_gap_ms * 1e6),
+            min_gap_ns=min_gap_ns,
             top_nvtx=args.top_nvtx,
         )
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
