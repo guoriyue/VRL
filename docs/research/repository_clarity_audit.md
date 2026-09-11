@@ -3134,3 +3134,25 @@ this combined regression is compatibility evidence, not architectural completion
   windows; existing seeded reparse and request-window tests also pass. Removed
   method has no remaining code/test references; touched-file Ruff/diff checks
   passed. Full repository review remains incomplete.
+
+## Open defect: unseeded SDE windows are not request-owned
+
+- Follow-up call-chain review contradicts earlier "once per request" claims:
+  DiffusionBatchExecutorBase._forward_chunk calls parse_sampling_params for
+  every batch, including retries. There is no request-level params cache.
+  Seeded parsing reproduces a window; unseeded parsing consumes fresh RNG.
+- Reproduced with the same GenerationRequest, window size 2/range (0, 10),
+  and controlled module draws 0 then 8: successive parses yield (0, 2) and
+  (8, 10). Adding seed 1234 yields (8, 10) on both parses.
+- Correct misleading layout/executor comments now. The prior construction
+  simplification preserved this pre-existing behavior; its tests proved one
+  draw per parse, not one draw per request across batches.
+- Required follow-up: establish request-owned stochastic-window state at a
+  boundary serialized to workers, then verify splits, retries and multi-rank
+  execution agree. A local executor cache alone cannot cover remote dispatch;
+  deriving randomness from a correlation ID would introduce new semantics.
+  Preserve the seeded sequence and avoid changing latent-noise seeding as an
+  accidental side effect. No runtime change or full completion is claimed here.
+- Validation: executed the controlled reproduction above and checked touched
+  comments with Ruff/diff. This finding supersedes earlier audit wording that
+  all sample batches already share the same unseeded request window.

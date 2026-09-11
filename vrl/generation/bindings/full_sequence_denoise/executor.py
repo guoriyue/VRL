@@ -186,10 +186,9 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
             sample_count=batch.sample_count,
             seed=params.model_request.seed,
             sde=params.sde,
-            # Resolved once per request at parse time (NOT drawn here): every
-            # sample batch of the request shares the window, so a chunked prompt
-            # group keeps its stochastic step on one timestep (iso-temporal
-            # grouping — see DiffusionRequestLayout.parse_sampling_params).
+            # Use the parsed window without drawing again inside the loop.
+            # _forward_chunk parses each batch; only seeded requests currently
+            # guarantee an identical window across those re-parses.
             sde_window=params.sde_window,
             denoise_mode=params.denoise_mode,
             teacache=params.teacache,

@@ -26,9 +26,8 @@ class DiffusionSamplingParams:
     sde_window_range: tuple[int, int]
     denoise_mode: str
     teacache: TeaCacheConfig | None = None
-    # The stochastic window is drawn once at parse time. Every sample batch
-    # of the request reads this field, so
-    # chunked groups share one window — Flash-GRPO's iso-temporal grouping.
+    # The stochastic window is resolved per parse. Seeded re-parses agree;
+    # unseeded re-parses currently consume fresh module RNG draws.
     sde_window: tuple[int, int] | None = None
 
     def text_encode_kwargs(self) -> dict[str, Any]:
@@ -111,10 +110,9 @@ class DiffusionRequestLayout:
                 minimum=1,
             )
 
-        # Resolve once per request, before constructing the final params. All
-        # sample batches share this window (Flash-GRPO iso-temporal grouping).
-        # Preserve the seed-derived stream across ranks and re-parses; unseeded
-        # requests use the module RNG synchronized by the worker.
+        # Resolve before constructing the final params. Seeded re-parses agree
+        # across batches/ranks. Without a seed each parse consumes a fresh draw;
+        # worker RNG synchronization alone does not align separate sample batches.
         sde_window = None
         window_size = options.sde_window_size
         if window_size > 0:
