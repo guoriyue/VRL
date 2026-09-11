@@ -114,8 +114,6 @@ class ChunkAutoregressiveDenoiseGatherer:
     @staticmethod
     def _cat_field(batches: Sequence[ChunkAutoregressiveDenoiseResult], field_name: str) -> Any:
         values = [getattr(batch, field_name) for batch in batches]
-        if any(value is None for value in values):
-            raise ValueError(f"trainable batch field {field_name!r} must be present")
         return concatenate_sample_values(values, name=field_name)
 
     @staticmethod

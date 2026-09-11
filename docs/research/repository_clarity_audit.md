@@ -6283,3 +6283,18 @@ The broader repository audit remains incomplete.
 - Rank-group, gatherer and sample-batch suites: 94 passed, including a two-process
   Gloo rendezvous/all-gather/teardown check and strict replay/dtype tests. These
   are component evidence, not proof of full training or repository completion.
+
+## Required chunk-trajectory fields are validated before concatenation
+
+- Remove the second None scan from ChunkAutoregressiveDenoiseGatherer._cat_field.
+  Its only callers follow _ordered_batches, which validates every trainable
+  result's required shape prefixes. Missing values already fail there before
+  any concatenation. Keep validation on each batch, not just the final total.
+- Keep _cat_field as the repeated named-field projection and shared strict-dtype
+  concatenation adapter. Keep _cat_optional_field's all-or-none presence rule:
+  per-result validation deliberately permits absent KL, so cross-result presence
+  still needs checking. Keep family-specific consistency checks and the neutral
+  shared coverage helper; no new classes/constants or public API changes.
+- Chunk binding and shared gatherer suites: 69 passed, including trajectory-axis,
+  replay-axis and dtype rejection cases. Touched-file Ruff and diff checks pass.
+  Broader repository audit remains incomplete.
