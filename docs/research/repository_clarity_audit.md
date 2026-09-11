@@ -6862,3 +6862,17 @@ The broader repository audit remains incomplete.
 - Offline config-builder suite: nine passed. Touched-file Ruff and diff checks
   pass. No additional behavioral tests for equivalent declarations; broader
   repository audit remains incomplete.
+
+## Full trainer-suite verification after offline schedule fixes
+
+- Ran tests/trainers as one suite after timestep-index separation, accumulation
+  validation and metrics CSV fixes: 633 passed, seven skipped, 15 warnings in
+  52.90 seconds; process exited successfully.
+- Inspected skip guards and current environment: bitsandbytes is unavailable
+  and only one CUDA device is present, leaving optional optimizer and multi-GPU
+  coverage unavailable. Do not treat those paths as passing or use this run as
+  a full-model training benchmark.
+- Source search found no old _sample_timesteps name, searchsorted lookup or
+  gradient-accumulation max/int fallback in vrl/trainers. This verifies those
+  removals, not clarity of every trainer method. No production edits in this
+  verification slice; broader repository audit remains incomplete.
