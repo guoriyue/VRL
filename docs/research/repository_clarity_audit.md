@@ -2738,3 +2738,23 @@ this combined regression is compatibility evidence, not architectural completion
   original RuntimeError/AttributeError identity, malformed CUDA text and module
   fallback without requiring GPU allocation. Touched-file Ruff/diff checks pass.
   This addresses the preceding reproduced finding; repository review stays active.
+
+## Ray placement queries preserve their actual failure
+
+- RayGenerationWorker.worker_metadata swallowed node/GPU query errors and
+  fabricated node_ip=unknown plus gpu_ids=[]; launcher rank validation likewise
+  swallowed a driver-node query error and supplied None. These values feed
+  placement checks, not optional presentation metadata.
+- Remove both catches so startup fails at the actual query. Keep the worker
+  metadata method as the actor RPC boundary and rank validation as the shared
+  startup guard; actor-group/launcher cleanup already owns startup exceptions.
+  No new adapter or constant. HEALTH_CONCURRENCY_GROUP remains a real Ray
+  protocol name and is unrelated to these fallbacks.
+- Validation: 264 generation-Ray, RPC deadline and cross-node preflight tests
+  passed, including original-error identity for both worker queries and the
+  driver query. Existing metadata-timeout coverage still confirms candidate
+  actors are killed. New query tests mock API failures rather than claiming
+  multi-node fault injection. Touched-file Ruff and diff checks passed.
+- Remaining separate concern: current_gpu_ids in dependencies.py still skips
+  malformed ID values during normalization. This slice only removes exception
+  swallowing at the worker/launcher call sites; full review remains active.

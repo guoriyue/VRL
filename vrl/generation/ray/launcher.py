@@ -311,10 +311,7 @@ def _validate_rank_gpu_ids(
 
     driver_node_ip: str | None = None
     if resources.cross_node:
-        try:
-            driver_node_ip = current_node_ip()
-        except Exception:
-            driver_node_ip = None
+        driver_node_ip = current_node_ip()
 
     # The placement owner supplies the role's expected GPUs (empty under
     # cross-node, where the node-aware check applies instead).

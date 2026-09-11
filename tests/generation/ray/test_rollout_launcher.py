@@ -276,3 +276,40 @@ def test_phase_handoff_keeps_actor_and_owner_placement(local_ray) -> None:
     finally:
         asyncio.run(runtime.shutdown())
         owner.shutdown()
+
+
+@pytest.mark.parametrize("query", ["current_node_ip", "current_gpu_ids"])
+def test_worker_metadata_preserves_placement_query_failure(monkeypatch, query) -> None:
+    from types import SimpleNamespace
+
+    from vrl.generation.ray import worker
+
+    failure = RuntimeError("placement query failed")
+
+    def fail():
+        raise failure
+
+    monkeypatch.setattr(worker, "current_node_ip", lambda: "10.0.0.2")
+    monkeypatch.setattr(worker, "current_gpu_ids", lambda: [0])
+    monkeypatch.setattr(worker, query, fail)
+    actor = SimpleNamespace(core=SimpleNamespace(worker_id="rollout-0"))
+    with pytest.raises(RuntimeError, match="placement query failed") as caught:
+        worker.RayGenerationWorker.worker_metadata(actor)
+    assert caught.value is failure
+
+
+def test_cross_node_validation_preserves_driver_node_query_failure(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from vrl.generation.ray import launcher
+
+    failure = RuntimeError("driver node query failed")
+
+    def fail():
+        raise failure
+
+    monkeypatch.setattr(launcher, "current_node_ip", fail)
+    config = SimpleNamespace(resources=SimpleNamespace(rollout_devices=(0,), cross_node=True))
+    with pytest.raises(RuntimeError, match="driver node query failed") as caught:
+        launcher._validate_rank_gpu_ids(config, [], expected_gpu_ids=())
+    assert caught.value is failure

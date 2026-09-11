@@ -116,12 +116,8 @@ class RayGenerationWorker:
     def worker_metadata(self) -> dict[str, Any]:
         """Return Ray placement metadata used during actor-group startup."""
 
-        try:
-            node_ip = current_node_ip()
-            gpu_ids = current_gpu_ids()
-        except Exception:
-            node_ip = "unknown"
-            gpu_ids = []
+        node_ip = current_node_ip()
+        gpu_ids = current_gpu_ids()
         return {
             "worker_id": self.core.worker_id,
             "node_ip": node_ip,
