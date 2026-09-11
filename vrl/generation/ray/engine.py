@@ -74,7 +74,7 @@ def uniform_rank_result(method_name: str) -> Callable[[list[Any]], Any]:
 
     def combine(results: list[Any]) -> Any:
         first = results[0]
-        if any(result != first for result in results[1:]):
+        if any(type(result) is not type(first) or result != first for result in results[1:]):
             raise RuntimeError(
                 f"engine ranks disagree on {method_name} result: {results!r}",
             )

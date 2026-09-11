@@ -199,3 +199,9 @@ def test_rank_actor_satisfies_the_rank_protocol() -> None:
         if not name.startswith("_") and not hasattr(RayGenerationWorker, name)
     ]
     assert missing == []
+
+
+@pytest.mark.parametrize("results", [[3, 3.0], [1, True], [3.0, 3]])
+def test_uniform_ack_requires_matching_types(results) -> None:
+    with pytest.raises(RuntimeError, match="ranks disagree"):
+        uniform_rank_result("update_weights")(results)

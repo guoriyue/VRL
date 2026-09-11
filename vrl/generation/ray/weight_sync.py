@@ -189,16 +189,14 @@ def _require_installed_policy_version(
 ) -> None:
     """Validate one untyped engine ACK at the Ray weight-sync boundary."""
 
-    try:
-        installed_version = int(installed)
-    except (TypeError, ValueError) as exc:
+    if isinstance(installed, bool) or not isinstance(installed, int) or installed < 0:
         raise RuntimeError(
             f"engine {engine.engine_id!r} returned invalid installed policy version {installed!r}",
-        ) from exc
-    if installed_version != int(expected):
+        )
+    if installed != expected:
         raise RuntimeError(
-            f"engine {engine.engine_id!r} installed policy version {installed_version}, "
-            f"expected {int(expected)}",
+            f"engine {engine.engine_id!r} installed policy version {installed}, "
+            f"expected {expected}",
         )
 
 

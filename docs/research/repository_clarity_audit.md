@@ -896,3 +896,20 @@ contained guesses. Removed both:
   change does not alter its memory sizing or claim unexecuted entries are replay.
 - Validation: 81 denoise, full-sequence binding, memory-probe and tiny real-component
   pipeline tests passed. Touched-file Ruff and diff whitespace checks pass.
+
+## Weight-sync acknowledgement identity
+
+- Removed int coercion from installed-policy ACK validation. Engine replies must
+  be non-negative integers before comparing with the requested version; strings,
+  fractional numbers and bools cannot acknowledge a different identity.
+- Rank aggregation now requires matching result types as well as values. This
+  prevents a secondary rank's float/bool echo being hidden by Python numeric
+  equality when the primary rank returns an integer.
+- Retained the shared ACK validator, rank combiner and weight manifest/chunk
+  functions: they enforce protocol boundaries and bounded transport object
+  lifetimes across independent senders/receivers. No namespace class introduced.
+  Sender-side version conversion and staged-transfer input validation remain a
+  separate review; this change makes the acknowledgement boundary explicit.
+- Validation: 46 engine, weight-sync and chunk-transfer tests passed, including
+  real Ray object-store dereferencing and malformed/mixed-type ACK regressions.
+  Touched-file Ruff and diff whitespace checks pass.

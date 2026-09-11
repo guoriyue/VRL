@@ -970,3 +970,15 @@ async def test_real_ray_bucket_transfer_commits_only_complete_state(local_ray, d
     finally:
         for actor in actors:
             local_ray.kill(actor, no_restart=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("installed", [3.9, "3", True, -1, None])
+async def test_weight_sync_rejects_coerced_ack(installed: Any) -> None:
+    sync = RayGenerationWeightSync(
+        [_engine("rollout-0", _LocalWorker(installed_version=installed))],
+        actor_dispatcher=RayActorDispatcher(("rollout-0",)),
+        worker_rpc_timeout_s=30.0,
+    )
+    with pytest.raises(RuntimeError, match="invalid installed policy version"):
+        await sync.push_to_rollout_engines({"w": 1}, policy_version=3)
