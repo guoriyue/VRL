@@ -6762,3 +6762,16 @@ The broader repository audit remains incomplete.
 - Metrics IO suite: 40 passed. Touched-file Ruff and diff checks pass. Tests ran
   in the current environment, not a separate non-UTF-8 locale; the explicit
   encoding removes that dependency by inspection. Broader audit remains open.
+
+## Metrics resume uses CSV-compatible physical line boundaries
+
+- Replace str.splitlines with StringIO.readlines when separating complete CSV
+  lines. splitlines treats Unicode U+2028 as a boundary even inside a column
+  name accepted by the writer, so a valid file was rejected on resume as an
+  unrelated schema. Stream line splitting agrees with the CSV reader instead.
+- Two new round-trip cases reproduced that false rejection for fresh and
+  missing-file-resume initialization. All 42 metrics tests now pass, retaining
+  partial trailing-row removal, schema checks and checkpoint-position trimming.
+- Keep the existing CSV owner and atomic replacement; no custom line parser or
+  additional column-name taxonomy. Touched-file Ruff and diff checks pass.
+  Repository-wide audit remains incomplete.

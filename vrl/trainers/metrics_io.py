@@ -325,7 +325,7 @@ class MetricsCSV:
 
         text = path.read_text(encoding="utf-8")
         complete_text = text if text.endswith("\n") else text.rpartition("\n")[0] + "\n"
-        lines = complete_text.splitlines(keepends=True)
+        lines = io.StringIO(complete_text).readlines()
         existing_header = lines[0] if lines else ""
         if existing_header.rstrip("\r\n") != normalized_header.rstrip("\n"):
             raise ValueError(

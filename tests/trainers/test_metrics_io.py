@@ -409,7 +409,10 @@ def test_metrics_resume_requires_declared_position_column_even_for_new_file(tmp_
     assert not path.exists()
 
 
-@pytest.mark.parametrize("column_name", ['"loss"', 'loss"detail', "r_文字识别"])
+@pytest.mark.parametrize(
+    "column_name",
+    ['"loss"', 'loss"detail', "r_文字识别", "r_line\u2028separator"],
+)
 @pytest.mark.parametrize("initial_resume", [None, ("epoch", 0)])
 def test_metrics_header_roundtrips_and_resumes(tmp_path, column_name, initial_resume):
     import csv
