@@ -240,12 +240,12 @@ class ContinuousRolloutConsumer:
             # Each queued item is one prompt group. Reassign contiguous ids after
             # prompt-order selection so advantage normalization cannot join
             # different prompts or retain sparse producer slot ids.
-            item.batch.group_ids = torch.full_like(item.batch.group_ids, int(index))
+            item.batch.group_ids = torch.full_like(item.batch.group_ids, index)
             batches.append(item.batch)
 
         version = items[0].rollout_policy_version
         staleness = self.staleness.staleness(version, current_policy_version)
-        item_age_s = max((item.age_s for item in items), default=0.0)
+        item_age_s = max(item.age_s for item in items)
         max_attempt = max(item.attempt for item in items)
         stats = RolloutStats()
         stats.add_phase("continuous.queue_wait_s", float(queue_wait_s))

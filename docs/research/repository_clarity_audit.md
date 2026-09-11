@@ -7162,3 +7162,15 @@ The broader repository audit remains incomplete.
   ownership. Other remaining splitlines uses for CLI help and command output
   are not JSONL/CSV readers and are not mechanically changed. No added wrapper
   or schema vocabulary; broader repository audit remains incomplete.
+
+## Continuous iteration construction trusts its established batch invariant
+
+- Remove the empty-input default from max item age: iteration construction
+  already reads items[0], and its sole caller only supplies a complete nonempty
+  prompt batch. Also pass enumerate's integer index directly to group-id fill.
+- Preserve same-policy selection, duplicate/slot/count validation and contiguous
+  group-id assignment. Keep the consumer's substantive selection and iteration
+  methods; no new helper, configuration default or type wrapper.
+- Continuous orchestration selection: 220 passed, 59 deselected. Touched-file
+  Ruff and diff checks pass. No new implementation-mirroring tests for these
+  redundant fallback/conversion removals. Broader audit remains incomplete.
