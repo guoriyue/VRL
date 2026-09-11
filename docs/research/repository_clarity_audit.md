@@ -352,3 +352,25 @@ above, not completion of the outstanding repository-wide audit.
 - Validation: 139 execution, OOM-split and Torch-free parsing tests passed.
   The removed dictionary-construction test is replaced by executor-path log
   coverage with and without a memory reading. Ruff passes on all touched files.
+
+## Policy-version ownership review
+
+- Removed the coordinator's `_last_policy_version` cache and push-count fallback.
+  `current_policy_version` now reads published provider state directly, returning
+  `None` when neither provider reports a version. An unversioned syncer no longer
+  acquires invented versions 1, 2, ... merely because pushes completed.
+- The syncer remains the version allocator. Its one-caller
+  `_resolve_next_policy_version` helper is folded into its constructor, retaining
+  the explicit initial-version override and first-version semantics.
+- Ray runtime publication means accepted target version: active sessions install
+  before publication, while inactive sessions stage the target for activation.
+  This cleanup does not conflate accepted state with installed worker state.
+- Retained provider precedence (collector runtime, then syncer during attachment),
+  lock-protected allocation, runtime publication, and continuous staleness logic.
+  The collector's exception-based pre-attachment access remains a separate
+  lifecycle interface issue; no broad RuntimeError handling changes are bundled.
+- Validation: 230 orchestration, trainer sync, Ray weight-sync and runtime-config
+  tests passed, including real Ray shared-object transfer. New coordinator tests
+  cover unversioned pushes, clearing a reported version, and pre-attachment
+  syncer reads. The subsequent constructor-only consolidation passed the trainer
+  weight-sync suite separately. Touched-file Ruff checks pass.

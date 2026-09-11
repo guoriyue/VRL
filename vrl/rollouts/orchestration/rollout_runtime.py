@@ -85,7 +85,6 @@ class RolloutRuntimeCoordinator:
         self.sync_state_getter = sync_state_getter
         self._weights_initialized = weights_initialized
         self._set_weights_initialized = set_weights_initialized
-        self._last_policy_version = self._runtime_policy_version(default=None)
 
     async def ensure_initial_weights(self, stats: RolloutStats) -> None:
         prepared = self.prepare_initial_weight_sync_state()
@@ -137,15 +136,16 @@ class RolloutRuntimeCoordinator:
         with stats.phase("rollout.weight_sync_s"):
             await self.weight_syncer.push(prepared)
         self._set_weights_initialized(True)
-        fallback_version = (
-            1 if self._last_policy_version is None else int(self._last_policy_version) + 1
-        )
-        self._last_policy_version = self._runtime_policy_version(
-            default=fallback_version,
-        )
 
     def current_policy_version(self) -> int | None:
-        return self._runtime_policy_version(default=self._last_policy_version)
+        """Read a provider's published version; never infer one from push count."""
+        for provider in (self._collector_generation_runtime(), self.weight_syncer):
+            if provider is None:
+                continue
+            value = provider.current_policy_version
+            if value is not None:
+                return int(value)
+        return None
 
     def requires_driver_model_offload(self) -> bool:
         runtime = self._collector_generation_runtime()
@@ -271,17 +271,6 @@ class RolloutRuntimeCoordinator:
             return self.collector.generation_runtime
         except RuntimeError:
             return None
-
-    def _runtime_policy_version(self, *, default: int | None) -> int | None:
-        # Ask the collector generation runtime, then the weight syncer, through
-        # the version property each concrete boundary declares.
-        for provider in (self._collector_generation_runtime(), self.weight_syncer):
-            if provider is None:
-                continue
-            value = provider.current_policy_version
-            if value is not None:
-                return int(value)
-        return default
 
 
 def _validate_prepared_weight_snapshot(value: Any) -> None:

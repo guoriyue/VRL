@@ -459,3 +459,59 @@ async def test_strict_schedule_defaults_to_capability_derived_arm() -> None:
     )
 
     assert schedule.reward_mode is None
+
+
+@pytest.mark.asyncio
+async def test_coordinator_does_not_invent_versions_for_unversioned_pushes():
+    from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
+    from vrl.rollouts.stats import RolloutStats
+    from vrl.trainers.weight_sync import WeightSyncer
+
+    class UnversionedSyncer(WeightSyncer):
+        async def push(self, state_dict):
+            pass
+
+    runtime = _Runtime()
+    runtime.current_policy_version = None
+    lifecycle = RolloutRuntimeCoordinator(
+        collector=_Collector(runtime),
+        strategy=None,
+        training_state_getter=lambda: None,
+        weight_syncer=UnversionedSyncer(),
+        sync_state_getter=lambda: {},
+        weights_initialized=lambda: False,
+        set_weights_initialized=lambda value: None,
+    )
+    assert lifecycle.current_policy_version() is None
+    await lifecycle.push_prepared_weights({}, RolloutStats())
+    await lifecycle.push_prepared_weights({}, RolloutStats())
+    assert lifecycle.current_policy_version() is None
+    runtime.current_policy_version = 17
+    assert lifecycle.current_policy_version() == 17
+    runtime.current_policy_version = None
+    assert lifecycle.current_policy_version() is None
+
+
+def test_coordinator_reads_syncer_version_until_collector_runtime_is_attached():
+    from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
+
+    class UnattachedCollector:
+        @property
+        def generation_runtime(self):
+            raise RuntimeError("generation runtime is not initialized")
+
+    runtime = _Runtime()
+    runtime.current_policy_version = 23
+    lifecycle = RolloutRuntimeCoordinator(
+        collector=UnattachedCollector(),
+        strategy=None,
+        training_state_getter=lambda: None,
+        weight_syncer=_Syncer(runtime),
+        sync_state_getter=None,
+        weights_initialized=lambda: True,
+        set_weights_initialized=lambda value: None,
+    )
+    assert lifecycle.current_policy_version() == 23
+    lifecycle.collector = _Collector(runtime)
+    runtime.current_policy_version = 29
+    assert lifecycle.current_policy_version() == 29

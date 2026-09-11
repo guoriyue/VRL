@@ -65,10 +65,12 @@ class RayRuntimeWeightSyncer(WeightSyncer):
         if not callable(update_weights):
             raise TypeError("runtime must expose async update_weights(state, version)")
         self.runtime = runtime
-        self._next_policy_version = _resolve_next_policy_version(
-            runtime,
-            initial_policy_version,
-        )
+        # This adapter allocates versions; the coordinator only reads the
+        # version published by the runtime after accepting the push.
+        current = initial_policy_version
+        if current is None:
+            current = getattr(runtime, "current_policy_version", None)
+        self._next_policy_version = 1 if current is None else int(current) + 1
         self._push_lock = asyncio.Lock()
 
     async def push(self, state_dict: dict[str, Any]) -> None:
@@ -170,18 +172,6 @@ def select_trainable_state(module: Any, name: str, module_state: Any) -> dict[st
         for key, value in module_state.items()
         if str(key) in trainable_names
     }
-
-
-def _resolve_next_policy_version(
-    runtime: Any,
-    initial_policy_version: int | None,
-) -> int:
-    if initial_policy_version is not None:
-        return int(initial_policy_version) + 1
-    current = getattr(runtime, "current_policy_version", None)
-    if current is None:
-        return 1
-    return int(current) + 1
 
 
 def _trainable_parameter_names(module: Any, module_name: str) -> set[str]:
