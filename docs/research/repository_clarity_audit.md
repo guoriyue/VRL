@@ -4184,3 +4184,15 @@ this combined regression is compatibility evidence, not architectural completion
 - All 110 checkpointing tests passed, including overlapping output paths failing
   before IO and identical effective PEFT output paths. Touched-file Ruff checks
   pass. This does not complete the repository-wide audit.
+
+## Resolved adapter export owns namespace projection
+
+- Move `_adapter_relative_state` onto the existing `_ResolvedAdapterExport` as
+  `select_state`. The method reads its own state prefix, so publication no longer
+  extracts that field merely to pass it into a separate free function. Keep the
+  artifact name argument for contextual errors; no new carrier is introduced.
+- Preserve empty-state rejection, prefix removal and checkpoint publication
+  ordering. Retain rank agreement and EMA parameter-order helpers as distinct
+  cross-rank/model-boundary checks, outside any individual adapter export.
+- All 110 checkpointing tests passed with dependency warnings; touched-file Ruff
+  checks passed. This slice does not complete the repository-wide audit.

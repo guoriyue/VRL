@@ -313,6 +313,29 @@ class _ResolvedAdapterExport:
     root_name: str
     state_prefix: str
 
+    def select_state(
+        self,
+        root_state: Mapping[str, Any],
+        *,
+        artifact_name: str,
+    ) -> dict[str, Any]:
+        """Project one gathered checkpoint root into an adapter module namespace."""
+
+        if not self.state_prefix:
+            state = dict(root_state)
+        else:
+            state_prefix = f"{self.state_prefix}."
+            state = {
+                name.removeprefix(state_prefix): value
+                for name, value in root_state.items()
+                if name.startswith(state_prefix)
+            }
+        if not state:
+            raise ValueError(
+                f"adapter export {artifact_name!r} has no checkpoint-owned state",
+            )
+        return state
+
 
 def _safe_relative_output_path(
     value: Any,
@@ -454,30 +477,6 @@ def _checkpoint_trainable_parameters(bundle: Any) -> list[Any]:
             "bundle.model trainable parameters disagree with bundle checkpoint roots",
         )
     return ordered
-
-
-def _adapter_relative_state(
-    root_state: Mapping[str, Any],
-    *,
-    prefix: str,
-    artifact_name: str,
-) -> dict[str, Any]:
-    """Project one gathered checkpoint root into an adapter module namespace."""
-
-    if not prefix:
-        state = dict(root_state)
-    else:
-        state_prefix = f"{prefix}."
-        state = {
-            name.removeprefix(state_prefix): value
-            for name, value in root_state.items()
-            if name.startswith(state_prefix)
-        }
-    if not state:
-        raise ValueError(
-            f"adapter export {artifact_name!r} has no checkpoint-owned state",
-        )
-    return state
 
 
 def save_training_checkpoint(
@@ -762,9 +761,8 @@ def _write_checkpoint_artifacts_and_publish(
                 f"adapter export {name!r} checkpoint root "
                 f"{resolved.root_name!r} has no gathered state",
             )
-        adapter_state = _adapter_relative_state(
+        adapter_state = resolved.select_state(
             root_state,
-            prefix=resolved.state_prefix,
             artifact_name=name,
         )
         resolved.export.module.save_pretrained(
