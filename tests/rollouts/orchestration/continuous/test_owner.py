@@ -809,3 +809,35 @@ async def test_owner_rejects_invalid_group_size_before_weight_push(group_size) -
         assert collector.collect_threads == []
     finally:
         await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_retries_producer_stop_before_closing_collector(monkeypatch):
+    from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
+
+    original_stop = ContinuousRolloutProducer.stop
+    attempts = []
+
+    async def stop(self, *, wait_timeout_s=30.0):
+        attempts.append(self)
+        if len(attempts) == 1:
+            raise RuntimeError("producer stop failed")
+        await original_stop(self, wait_timeout_s=wait_timeout_s)
+
+    monkeypatch.setattr(ContinuousRolloutProducer, "stop", stop)
+    collector = _OwnerCollector()
+    owner = _owner(_OwnerLifecycle(collector))
+    try:
+        await owner.next_iteration(
+            ["p0"], group_size=1, runtime_debug=False, initial_weights={"w": 0}
+        )
+        with pytest.raises(RuntimeError, match="producer stop failed"):
+            await owner.shutdown()
+        assert collector.shutdown_calls == 0
+        assert (await owner_snapshot(owner)).producer_state is not None
+        await owner.shutdown()
+        assert len(attempts) == 2
+        assert attempts[0] is attempts[1]
+        assert collector.shutdown_calls == 1
+    finally:
+        await owner.shutdown()

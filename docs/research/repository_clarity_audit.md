@@ -3412,3 +3412,17 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 200 continuous orchestration tests passed; touched-file Ruff/diff
   checks passed and no rollout queue.close callers remain. Full review remains
   incomplete.
+
+## Retain pipeline owners until stop succeeds
+
+- _ContinuousOwnerRuntime._stop_pipeline cleared producer/queue/consumer
+  references before awaiting producer.stop. A stop exception caused subsequent
+  shutdown attempts to skip the producer and close the collector prematurely.
+- Clear those references and installed-batch markers only after producer stop
+  and queue clear succeed. Keep the existing shutdown retry owner and bounded
+  producer-stop semantics; no new state flag, wrapper or helper.
+- Validation: 201 continuous orchestration tests passed. A real owner-thread
+  regression injects one stop failure, verifies collector shutdown has not run
+  and producer state remains observable, then confirms the next shutdown stops
+  the same producer before closing the collector exactly once. Touched-file
+  Ruff/diff checks passed. Full repository review remains incomplete.
