@@ -6803,3 +6803,21 @@ The broader repository audit remains incomplete.
   not resolved by this change.
 - Token-flow and NextStep suites: 72 passed, two dependency warnings. Touched-
   file Ruff and diff checks pass. Broader repository audit remains open.
+
+## Offline DPO separates sampled indices from scheduler timestep values
+
+- _sample_timesteps returned table indices, but step passed those directly to
+  scheduler noise injection and model forwards. Rename it _sample_timestep_indices
+  and project the sampled indices through scheduler.timesteps before forwarding.
+  Pair members retain their shared index and noise.
+- Pass the retained indices into _inject_noise. Flow schedulers without
+  scale_noise now index the corresponding sigma directly, removing the reversed
+  nearest-timestep search and clamp that guessed a relationship already known.
+  Keep scheduler-specific prediction-target branches: offline config explicitly
+  selects their convention, unlike the scheduler-derived online regularizer.
+- Two full-step regressions first reproduced index-as-timestep errors. Expanded
+  coverage verifies timestep 450 for index 1 and sigma 0.45 on epsilon,
+  v-prediction and flow paths with/without scale_noise. Offline timestep/config
+  suites: 37 passed, two dependency warnings. Touched-file Ruff and diff checks
+  pass. This intentionally changes training on nonidentity tables and may alter
+  seeded trajectories; no full model training benchmark was run. Audit remains open.

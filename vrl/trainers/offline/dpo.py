@@ -242,7 +242,7 @@ class OfflineDPOTrainer:
     # Noise injection — branch on prediction_type
     # ------------------------------------------------------------------
 
-    def _sample_timesteps(self, bsz: int) -> torch.Tensor:
+    def _sample_timestep_indices(self, bsz: int) -> torch.Tensor:
         # Resolve the timestep range explicitly. Silently using
         # ``num_train_timesteps`` when ``scheduler.timesteps`` is empty
         # would mask the common bug of forgetting to call
@@ -263,6 +263,8 @@ class OfflineDPOTrainer:
         latents: torch.Tensor,
         noise: torch.Tensor,
         timesteps: torch.Tensor,
+        *,
+        timestep_indices: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Returns (noisy_latents, target).
 
@@ -283,16 +285,10 @@ class OfflineDPOTrainer:
             if hasattr(self.noise_scheduler, "scale_noise"):
                 noisy = self.noise_scheduler.scale_noise(latents, timesteps, noise)
             else:
-                # Fallback: derive from sigmas tensor directly.
+                # The sampled table index also identifies its sigma exactly.
                 sigmas = self.noise_scheduler.sigmas.to(latents.device)
-                # timesteps here index into scheduler.timesteps; map to sigma.
-                # Use nearest timestep match.
-                ts_idx = torch.searchsorted(
-                    self.noise_scheduler.timesteps.to(self.device).flip(0),
-                    timesteps.to(self.device),
-                ).clamp(0, len(sigmas) - 1)
                 view = (-1,) + (1,) * (latents.ndim - 1)
-                sigma = sigmas[ts_idx].view(*view)
+                sigma = sigmas[timestep_indices].view(*view)
                 noisy = (1.0 - sigma) * latents + sigma * noise
             target = noise - latents
             return noisy, target
@@ -334,10 +330,16 @@ class OfflineDPOTrainer:
             device=latents.device,
             dtype=latents.dtype,
         ).repeat(2, *([1] * (latents.ndim - 1)))
-        ts_pair = self._sample_timesteps(bsz_pair)
-        timesteps = ts_pair.repeat(2)
+        timestep_indices = self._sample_timestep_indices(bsz_pair).repeat(2)
+        timestep_table = self.noise_scheduler.timesteps.to(self.device)
+        timesteps = timestep_table[timestep_indices]
 
-        noisy_latents, target = self._inject_noise(latents, noise, timesteps)
+        noisy_latents, target = self._inject_noise(
+            latents,
+            noise,
+            timesteps,
+            timestep_indices=timestep_indices,
+        )
 
         # 5. Forward — policy + frozen reference
         with model_autocast(self.model, self.device):

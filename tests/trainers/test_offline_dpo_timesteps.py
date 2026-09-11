@@ -1,4 +1,4 @@
-"""Red-line tests for vrl.trainers.offline._sample_timesteps.
+"""Red-line tests for vrl.trainers.offline._sample_timestep_indices.
 
 Catches the silent fallback where an empty ``scheduler.timesteps`` would
 quietly substitute ``num_train_timesteps`` and shift the RL sampling
@@ -86,7 +86,7 @@ class TestSampleTimesteps:
         indices into it (0 <= t < len(table)).
         """
         trainer = _make_trainer(torch.arange(20))
-        ts = trainer._sample_timesteps(8)
+        ts = trainer._sample_timestep_indices(8)
         assert ts.shape == (8,)
         assert (ts >= 0).all() and (ts < 20).all()
 
@@ -94,7 +94,7 @@ class TestSampleTimesteps:
         """Red-line: do not silently fall back to num_train_timesteps."""
         trainer = _make_trainer(torch.empty(0, dtype=torch.long))
         with pytest.raises(RuntimeError, match="set_timesteps"):
-            trainer._sample_timesteps(4)
+            trainer._sample_timestep_indices(4)
 
 
 def test_offline_dpo_state_dict_restores_optimizer_and_global_step() -> None:
@@ -346,3 +346,62 @@ def test_step_preserves_caption_pairing(invalid) -> None:
         trainer.step(batch)
         assert seen == [([1.0, 2.0, 3.0, 4.0], [10.0, 20.0, 10.0, 20.0])] * 2
         assert trainer.global_step == 1
+
+
+@pytest.mark.parametrize(
+    ("prediction_type", "scale_noise"),
+    [
+        ("epsilon", False),
+        ("v_prediction", False),
+        ("flow_matching", False),
+        ("flow_matching", True),
+    ],
+)
+def test_step_uses_schedule_values_and_exact_sigma_indices(
+    monkeypatch, prediction_type, scale_noise
+):
+    model = torch.nn.Linear(1, 1)
+    model.precision = PRECISION
+    observed = []
+    scheduler = SimpleNamespace(
+        timesteps=torch.tensor([900.0, 450.0]),
+        sigmas=torch.tensor([0.9, 0.45, 0.0]),
+    )
+
+    def add_noise(latents, noise, timesteps):
+        torch.testing.assert_close(timesteps, torch.tensor([450.0, 450.0]))
+        return latents + 0.45 * noise
+
+    scheduler.add_noise = add_noise
+    scheduler.get_velocity = lambda latents, noise, timesteps: noise
+    if scale_noise:
+        scheduler.scale_noise = lambda latents, timesteps, noise: add_noise(
+            latents, noise, timesteps
+        )
+
+    def forward(module, noisy, timesteps, encoder):
+        observed.append((noisy.detach().clone(), timesteps.clone()))
+        return module(noisy.flatten(1)).reshape_as(noisy)
+
+    trainer = OfflineDPOTrainer(
+        model=model,
+        ref_model=torch.nn.Linear(1, 1),
+        forward_fn=forward,
+        noise_scheduler=scheduler,
+        encode_pixels=lambda pixels: pixels[:, :1],
+        encode_text=lambda captions: torch.zeros(len(captions), 1),
+        config=OfflineDPOTrainerConfig(
+            prediction_type=prediction_type,
+            lr=0.0,
+        ),
+        device="cpu",
+    )
+    monkeypatch.setattr(
+        torch, "randint", lambda lo, hi, size, **kw: torch.ones(size, dtype=torch.long)
+    )
+    monkeypatch.setattr(torch, "randn", lambda size, **kw: torch.ones(size, **kw))
+    trainer.step(PreferenceBatch(pixel_values=torch.zeros(1, 6, 1, 1), captions=["prompt"]))
+    assert len(observed) == 2
+    for noisy, timesteps in observed:
+        torch.testing.assert_close(timesteps, torch.tensor([450.0, 450.0]))
+        torch.testing.assert_close(noisy, torch.full_like(noisy, 0.45))
