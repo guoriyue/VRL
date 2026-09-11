@@ -33,18 +33,17 @@ class LinearTargetProfile(StrEnum):
     MLP_ONLY = "mlp_only"
     ATTENTION_MLP = "attention_mlp"
 
+    def matches(self, path: str) -> bool:
+        """Whether ``path`` belongs to a validated quantization target profile."""
 
-def matches_linear_target(path: str, profile: LinearTargetProfile) -> bool:
-    """Whether ``path`` belongs to a validated quantization target profile."""
-
-    if profile is LinearTargetProfile.ATTENTION_MLP:
-        return True
-    return any(
-        segment in MLP_PATH_SEGMENTS
-        or segment.startswith(("ff_", "mlp_"))
-        or segment.endswith("_mlp")
-        for segment in path.split(".")
-    )
+        if self is LinearTargetProfile.ATTENTION_MLP:
+            return True
+        return any(
+            segment in MLP_PATH_SEGMENTS
+            or segment.startswith(("ff_", "mlp_"))
+            or segment.endswith("_mlp")
+            for segment in path.split(".")
+        )
 
 
 __all__ = [
@@ -52,5 +51,4 @@ __all__ = [
     "LM_EXCLUDE",
     "MLP_PATH_SEGMENTS",
     "LinearTargetProfile",
-    "matches_linear_target",
 ]

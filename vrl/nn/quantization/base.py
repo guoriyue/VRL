@@ -16,7 +16,6 @@ from torch import nn
 from vrl.nn.quantization.targeting import (
     DEFAULT_EXCLUDE,
     LinearTargetProfile,
-    matches_linear_target,
 )
 
 
@@ -93,7 +92,7 @@ class QuantizedLinear(nn.Module):
                 path = f"{parent_path}.{child_name}" if parent_path else child_name
                 if any(token in path for token in exclude):
                     continue
-                if not matches_linear_target(path, profile):
+                if not profile.matches(path):
                     continue
                 if child.in_features < min_features or child.out_features < min_features:
                     continue

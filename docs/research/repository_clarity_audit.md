@@ -4380,6 +4380,19 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Linear target profiles own their path predicate
+
+- Replace matches_linear_target(path, profile) with LinearTargetProfile.matches
+  and update quantization traversal and targeting tests. The existing enum owns
+  both the selected policy and its matching behavior; no new policy class is
+  needed. Remove the old exported helper without a compatibility alias.
+- Preserve matching rules and target scope. Keep exclusion/MLP constants in the
+  isolated model-path taxonomy and drop_quantized_masters as a scheme-independent
+  module-tree operation; neither belongs to an individual quantized scheme.
+- Real tiny-model targeting and quantization suites: 63 passed, 16 dependency
+  warnings. Touched-file Ruff checks pass and formatting is applied. External
+  imports of the retired helper must migrate; the broader audit continues.
+
 ## Fused log-prob reports missing hidden feature dimensions
 
 - Reject scalar hidden tensors before indexing their final dimension. The
