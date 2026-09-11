@@ -3588,3 +3588,21 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 319 binding, sample-batch, AR-family and Janus-R1 wiring tests
   passed with two skips. Touched-file Ruff/diff checks passed; no removed
   protocol or layout forwarding callers remain. Full review is incomplete.
+
+## Janus-R1 owns refinement selection and segment assembly
+
+- Move _resolve_refine_mode into JanusProR1BatchExecutor and the segment
+  concatenation helper into JanusProR1GenerationBatchGatherer. Each has one
+  production consumer in its owner. Rename _cat_segment_extra to
+  _concatenate_segments and the corresponding local to segments: these are the
+  full trajectory segments, not incidental extras.
+- Preserve refinement-policy mapping, concatenation order, optional log-prob
+  handling, metadata behavior, and unknown-segment warning. This relocation
+  does not establish stronger cross-batch metadata validation.
+- Keep JANUS_R1_SEGMENTS as the model/runtime shared trajectory schema. Keep
+  janus_config_from_build as the existing family build adapter; preserve the
+  cross-family shape rather than adding a configuration wrapper class. No
+  new constants, owner objects, or compatibility forwarding helpers.
+- Validation: 26 Janus family and R1 rollout wiring tests passed; touched-file
+  Ruff/diff checks passed and old free-helper calls are gone. Full review
+  remains incomplete.

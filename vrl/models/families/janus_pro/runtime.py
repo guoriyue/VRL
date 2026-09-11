@@ -233,6 +233,18 @@ class JanusProR1BatchExecutor(JanusProBatchExecutor):
     family: str = "janus_pro_r1"
     task: str = "ar_t2i_r1"
 
+    @staticmethod
+    def _resolve_refine_mode(sampling: dict[str, Any]) -> str:
+        policy = sampling.get("final_image_policy")
+        if policy == "always_generate":
+            return "always"
+        if policy == "use_selfcheck":
+            return "selfcheck"
+        raise ValueError(
+            "janus_pro_r1 requires rollout.final_image_policy to be "
+            f"'always_generate' or 'use_selfcheck', got {policy!r}",
+        )
+
     def forward_batch(
         self,
         request: GenerationRequest,
@@ -277,7 +289,7 @@ class JanusProR1BatchExecutor(JanusProBatchExecutor):
                 uncond_input_ids=uncond_ids,
                 uncond_attention_mask=uncond_mask,
                 image_size=params.image_size,
-                refine_mode=_resolve_refine_mode(sampling),
+                refine_mode=self._resolve_refine_mode(sampling),
                 image_sampler=self._r1_image_sampler(
                     request=request,
                     scheduler_batch_size=scheduler_batch_size,
@@ -347,6 +359,51 @@ class JanusProR1GenerationBatchGatherer:
 
     layout = ARRequestLayout()
 
+    @staticmethod
+    def _concatenate_segments(
+        batches: Sequence[JanusProR1BatchPayload],
+    ) -> dict[str, dict[str, Any]]:
+        names = tuple(batches[0].segments)
+        if set(names) != set(JANUS_R1_SEGMENTS):
+            logger.warning("Unexpected Janus-Pro-R1 segment names: %s", names)
+
+        out: dict[str, dict[str, Any]] = {}
+        for name in names:
+            first = batches[0].segments[name]
+            token_log_probs = None
+            if first["token_log_probs"] is not None:
+                token_log_probs = torch.cat(
+                    [batch.segments[name]["token_log_probs"] for batch in batches],
+                    dim=0,
+                )
+            out[name] = {
+                "name": name,
+                "token_ids": torch.cat(
+                    [batch.segments[name]["token_ids"] for batch in batches],
+                    dim=0,
+                ),
+                "token_log_probs": token_log_probs,
+                "token_mask": torch.cat(
+                    [batch.segments[name]["token_mask"] for batch in batches],
+                    dim=0,
+                ),
+                "prompt_embeds": torch.cat(
+                    [batch.segments[name]["prompt_embeds"] for batch in batches],
+                    dim=0,
+                ),
+                "attention_mask": torch.cat(
+                    [batch.segments[name]["attention_mask"] for batch in batches],
+                    dim=0,
+                ),
+                "prompt_attention_mask": torch.cat(
+                    [batch.segments[name]["prompt_attention_mask"] for batch in batches],
+                    dim=0,
+                ),
+                "visual": first["visual"],
+                "cfg": first["cfg"],
+            }
+        return out
+
     def gather_batches(
         self,
         request: GenerationRequest,
@@ -361,11 +418,11 @@ class JanusProR1GenerationBatchGatherer:
             row_fields=fields,
         )
         cat = self.layout.cat_batch_fields(ordered, fields)
-        segment_extra = _cat_segment_extra(ordered)
+        segments = self._concatenate_segments(ordered)
         trajectory = build_ar_multisegment_trajectory(
             request=request,
             sample_rows=list(sample_rows),
-            segments=segment_extra,
+            segments=segments,
             primary_segment="final_image",
             context=require_matching_batch_context([batch.context for batch in ordered]),
         )
@@ -373,63 +430,6 @@ class JanusProR1GenerationBatchGatherer:
             output=cat["final_image"],
             trajectory=trajectory,
         )
-
-
-def _resolve_refine_mode(sampling: dict[str, Any]) -> str:
-    policy = sampling.get("final_image_policy")
-    if policy == "always_generate":
-        return "always"
-    if policy == "use_selfcheck":
-        return "selfcheck"
-    raise ValueError(
-        "janus_pro_r1 requires rollout.final_image_policy to be "
-        f"'always_generate' or 'use_selfcheck', got {policy!r}",
-    )
-
-
-def _cat_segment_extra(
-    batches: Sequence[JanusProR1BatchPayload],
-) -> dict[str, dict[str, Any]]:
-    names = tuple(batches[0].segments)
-    if set(names) != set(JANUS_R1_SEGMENTS):
-        logger.warning("Unexpected Janus-Pro-R1 segment names: %s", names)
-
-    out: dict[str, dict[str, Any]] = {}
-    for name in names:
-        first = batches[0].segments[name]
-        token_log_probs = None
-        if first["token_log_probs"] is not None:
-            token_log_probs = torch.cat(
-                [batch.segments[name]["token_log_probs"] for batch in batches],
-                dim=0,
-            )
-        out[name] = {
-            "name": name,
-            "token_ids": torch.cat(
-                [batch.segments[name]["token_ids"] for batch in batches],
-                dim=0,
-            ),
-            "token_log_probs": token_log_probs,
-            "token_mask": torch.cat(
-                [batch.segments[name]["token_mask"] for batch in batches],
-                dim=0,
-            ),
-            "prompt_embeds": torch.cat(
-                [batch.segments[name]["prompt_embeds"] for batch in batches],
-                dim=0,
-            ),
-            "attention_mask": torch.cat(
-                [batch.segments[name]["attention_mask"] for batch in batches],
-                dim=0,
-            ),
-            "prompt_attention_mask": torch.cat(
-                [batch.segments[name]["prompt_attention_mask"] for batch in batches],
-                dim=0,
-            ),
-            "visual": first["visual"],
-            "cfg": first["cfg"],
-        }
-    return out
 
 
 __all__ = [
