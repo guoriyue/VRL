@@ -4132,3 +4132,16 @@ this combined regression is compatibility evidence, not architectural completion
 - Weight sync, strategy and FSDP tests: 83 passed, two skipped, dependency/profiler
   warnings. Touched-file Ruff checks pass. No multi-GPU training claim is made;
   the repository-wide clarity audit remains in progress.
+
+## Precision guard validates replay indices instead of coercing them
+
+- Replace `int(t)` in timestep selection with the existing exact-integer check,
+  minimum zero and an indexed error path. Fractional/string/bool indices no longer
+  become a different step, and negative indices cannot select from the end of
+  a trajectory. Preserve deduplication order and evenly spaced selection.
+- Retain the shared drift-record key: local timestep selection and distributed
+  rank selection both compare whole records, preserving provenance. No guard
+  class, threshold policy or mode-resolution changes are introduced.
+- Four invalid-index regressions failed before the fix. All 22 precision guard
+  tests now pass; touched-file Ruff checks pass. This does not establish real-GPU
+  drift behavior or complete the repository-wide audit.

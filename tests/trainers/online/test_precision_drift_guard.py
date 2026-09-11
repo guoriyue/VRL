@@ -280,6 +280,12 @@ def test_select_guard_timesteps_returns_all_when_fewer_than_max() -> None:
     assert select_guard_timesteps([0, 1], 3) == [0, 1]
 
 
+@pytest.mark.parametrize("index", [1.9, "2", True, -1])
+def test_select_guard_timesteps_rejects_invalid_indices(index) -> None:
+    with pytest.raises(ValueError, match=r"timestep_indices\[1\]"):
+        select_guard_timesteps([0, index], 3)
+
+
 def test_select_guard_timesteps_single() -> None:
     assert select_guard_timesteps([0, 3, 7], 1) == [0]
 
