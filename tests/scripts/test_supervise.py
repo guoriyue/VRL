@@ -25,8 +25,8 @@ from vrl.scripts.supervise import (
     HealthGateConfig,
     MetricsHealthGate,
     RunSupervisor,
+    TrainLaunch,
     build_parser,
-    build_train_launch,
 )
 from vrl.trainers.core.types import (
     ContinuousRolloutConfig,
@@ -380,7 +380,7 @@ def test_build_train_launch_keeps_single_process_direct() -> None:
         {"distributed": {"training": {"strategy": "single_process"}}},
     )
 
-    launch = build_train_launch(
+    launch = TrainLaunch.from_root(
         parse_config(cfg),
         config="experiment/unit",
         overrides=["trainer.seed=7"],
@@ -412,7 +412,7 @@ def test_build_train_launch_uses_one_host_torchrun(strategy: str) -> None:
         },
     )
 
-    launch = build_train_launch(
+    launch = TrainLaunch.from_root(
         parse_config(cfg),
         config="experiment/cosmos",
         overrides=["trainer.total_epochs=2"],
@@ -450,7 +450,7 @@ def test_build_train_launch_rejects_unowned_multi_node_rendezvous() -> None:
     )
 
     with pytest.raises(ValueError, match="rendezvous"):
-        build_train_launch(
+        TrainLaunch.from_root(
             parse_config(cfg),
             config="experiment/cosmos",
             overrides=[],

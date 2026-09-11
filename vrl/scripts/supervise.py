@@ -103,6 +103,57 @@ class TrainLaunch:
     command: tuple[str, ...]
     expected_world_size: int
 
+    @classmethod
+    def from_root(
+        cls,
+        root: RootConfig,
+        *,
+        config: str,
+        overrides: list[str],
+        python_executable: str | None = None,
+    ) -> TrainLaunch:
+        """Build the one-host trainer launcher implied by the resolved strategy."""
+
+        executable = python_executable or sys.executable
+        train_args = ("--config", config, *overrides)
+        distributed = root.distributed
+        training = None if distributed is None else distributed.training
+        strategy = "single_process" if training is None else str(training.strategy)
+        if strategy not in {"ddp", "fsdp"}:
+            return cls(
+                command=(executable, "-m", "vrl.scripts.train", *train_args),
+                expected_world_size=1,
+            )
+
+        assert training is not None  # strategy came from it
+        num_nodes = int(training.num_nodes)
+        gpus_per_node = int(training.gpus_per_node)
+        if num_nodes < 1 or gpus_per_node < 1:
+            raise ValueError(
+                "distributed.training.num_nodes and gpus_per_node must be >= 1",
+            )
+        if num_nodes != 1:
+            raise ValueError(
+                "supervise cannot auto-launch multi-node DDP/FSDP without an explicit "
+                "rendezvous and one cross-node supervisor owner; launch torchrun externally",
+            )
+
+        return cls(
+            command=(
+                executable,
+                "-m",
+                "torch.distributed.run",
+                "--standalone",
+                "--nnodes=1",
+                f"--nproc-per-node={gpus_per_node}",
+                "--max-restarts=0",
+                "--module",
+                "vrl.scripts.train",
+                *train_args,
+            ),
+            expected_world_size=gpus_per_node,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ContinuousHealthPolicy:
@@ -769,56 +820,6 @@ def _bounded_number(cast: type, minimum: float, *, exclusive: bool = False) -> A
     return parse
 
 
-def build_train_launch(
-    root: RootConfig,
-    *,
-    config: str,
-    overrides: list[str],
-    python_executable: str | None = None,
-) -> TrainLaunch:
-    """Build the one-host trainer launcher implied by the resolved strategy."""
-
-    executable = python_executable or sys.executable
-    train_args = ("--config", config, *overrides)
-    distributed = root.distributed
-    training = None if distributed is None else distributed.training
-    strategy = "single_process" if training is None else str(training.strategy)
-    if strategy not in {"ddp", "fsdp"}:
-        return TrainLaunch(
-            command=(executable, "-m", "vrl.scripts.train", *train_args),
-            expected_world_size=1,
-        )
-
-    assert training is not None  # strategy came from it
-    num_nodes = int(training.num_nodes)
-    gpus_per_node = int(training.gpus_per_node)
-    if num_nodes < 1 or gpus_per_node < 1:
-        raise ValueError(
-            "distributed.training.num_nodes and gpus_per_node must be >= 1",
-        )
-    if num_nodes != 1:
-        raise ValueError(
-            "supervise cannot auto-launch multi-node DDP/FSDP without an explicit "
-            "rendezvous and one cross-node supervisor owner; launch torchrun externally",
-        )
-
-    return TrainLaunch(
-        command=(
-            executable,
-            "-m",
-            "torch.distributed.run",
-            "--standalone",
-            "--nnodes=1",
-            f"--nproc-per-node={gpus_per_node}",
-            "--max-restarts=0",
-            "--module",
-            "vrl.scripts.train",
-            *train_args,
-        ),
-        expected_world_size=gpus_per_node,
-    )
-
-
 def _require_single_supervisor_owner(environ: Any = None) -> None:
     """Reject nesting this one-owner restart loop inside a multi-rank launcher."""
 
@@ -950,7 +951,7 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit("supervise requires trainer.output_dir in the resolved config")
     try:
         _require_single_supervisor_owner()
-        launch = build_train_launch(
+        launch = TrainLaunch.from_root(
             root,
             config=args.config,
             overrides=args.overrides,

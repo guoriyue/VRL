@@ -2907,3 +2907,17 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 178 metrics-IO and online trainer tests passed. Standard CSV reads
   preserve both leading and embedded quotes after initialization, append and
   resume alignment. Touched-file Ruff/diff checks passed. Full review is active.
+
+## Supervised launch construction belongs to TrainLaunch
+
+- Move build_train_launch into the existing TrainLaunch.from_root classmethod.
+  It builds exactly this record's command and expected_world_size, so its owner
+  is unambiguous. Update CLI and tests; remove the old free-function entry point
+  rather than adding a forwarding compatibility layer with no repository caller.
+- Keep command construction, strategy routing, one-host torchrun arguments and
+  multi-node rejection unchanged. Keep build_parser/_bounded_number as argparse
+  adapters and the separate supervisor-owner guard as launch-environment policy.
+  No new class, protocol vocabulary or configuration table.
+- Validation: all 59 supervisor tests passed, covering direct launch, DDP/FSDP
+  torchrun construction and multi-node rejection through the new entry point.
+  Touched-file Ruff/diff checks passed. Full repository review remains active.
