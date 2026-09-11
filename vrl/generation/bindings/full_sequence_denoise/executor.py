@@ -95,7 +95,7 @@ class ReferenceConditionedBatches:
     ) -> dict[str, Any]:
         """Encode text plus the active reference-image conditioning for one batch."""
 
-        reference_image = self._reference_image_for_chunk(generation_request, batch)
+        reference_image = self._reference_image_for_batch(generation_request, batch)
         return self.model.encode_prompt(
             generation_request.inputs[batch.prompt_index].prompt,
             video_request.negative_prompt or None,
@@ -116,13 +116,13 @@ class ReferenceConditionedBatches:
 
         del encoded, video_request, params
         return {
-            "reference_image": self._reference_image_for_chunk(
+            "reference_image": self._reference_image_for_batch(
                 generation_request,
                 batch,
             ),
         }
 
-    def _reference_image_for_chunk(
+    def _reference_image_for_batch(
         self,
         request: GenerationRequest,
         batch: GenerationSampleBatch,
@@ -187,7 +187,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
             seed=params.model_request.seed,
             sde=params.sde,
             # Use the parsed window without drawing again inside the loop.
-            # _forward_chunk parses each batch; request-owned randomness keeps
+            # _forward_batch parses each batch; request-owned randomness keeps
             # the selected window identical across those re-parses.
             sde_window=params.sde_window,
             denoise_mode=params.denoise_mode,
@@ -233,7 +233,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
     ) -> DiffusionBatchResult:
         """Run the canonical diffusion batch flow and prepare its wire payload."""
 
-        return self._forward_chunk(
+        return self._forward_batch(
             request,
             batch,
             execute_steps=None,
@@ -250,14 +250,14 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         """Run a truncated canonical batch for startup memory sizing."""
 
         require_exact_int(execute_steps, path="execute_steps", minimum=1)
-        return self._forward_chunk(
+        return self._forward_batch(
             request,
             batch,
             execute_steps=execute_steps,
             apply_wire_storage=False,
         )
 
-    def _forward_chunk(
+    def _forward_batch(
         self,
         request: GenerationRequest,
         batch: GenerationSampleBatch,

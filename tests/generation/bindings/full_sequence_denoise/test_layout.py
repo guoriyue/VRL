@@ -271,7 +271,7 @@ def test_cosmos_encoded_batch_reuses_text_expansion(negative):
 
     executor = object.__new__(CosmosBatchExecutor)
     reference = object()
-    executor._reference_image_for_chunk = lambda request, batch: reference
+    executor._reference_image_for_batch = lambda request, batch: reference
     result = executor.build_batch_encoded(
         encoded={"prompt_embeds": torch.ones(1, 2), "negative_prompt_embeds": negative},
         generation_request=_request(),

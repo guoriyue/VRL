@@ -6147,3 +6147,20 @@ The broader repository audit remains incomplete.
   CUDA tests for bit-exact results, ordering, CPU payloads and completion fences.
   Touched-file Ruff and diff checks pass. No throughput measurement claimed;
   broader repository audit remains incomplete.
+
+## Sample-batch methods no longer use ambiguous chunk names
+
+- Rename full-sequence _forward_chunk to _forward_batch, the reference-image
+  hook to _reference_image_for_batch, and the worker profiling wrapper to
+  _profile_forward_batch. Update Cosmos's shared conditioning call and binding
+  tests. All consume GenerationSampleBatch; they do not represent temporal
+  autoregressive chunks or weight-transfer chunks. No compatibility aliases.
+- Keep forward_batch/forward_probe_batch as distinct plugin entry points sharing
+  the same implementation, and keep reference loading and profiler scope methods
+  as reused conditioning and instrumentation boundaries. Do not rename actual
+  weight chunks or chunk-autoregressive bindings. Keep the engine.forward_chunk
+  profiler label used by historical performance records; trace format changes
+  are outside this naming cleanup. No constants or classes added.
+- Full-sequence binding and worker debug/versioned-slot suites: 126 passed.
+  Touched-file Ruff and diff checks pass; no old private method references remain
+  in vrl or tests. Broader repository audit remains incomplete.

@@ -362,7 +362,7 @@ class GenerationWorkerCore:
             assert self.executor is not None
             if self._uses_versioned_slots and expected_version is not None:
                 model.activate_trainable_state(expected_version)
-            output = self._profile_forward_chunk(envelope)
+            output = self._profile_forward_batch(envelope)
             memory = self._batch_memory_reading(output)
             return GenerationBatchResult(
                 request_id=request.request_id,
@@ -661,7 +661,7 @@ class GenerationWorkerCore:
             self._memory_parking.recover_after_execution_error(model, error)
             raise
 
-    def _profile_forward_chunk(
+    def _profile_forward_batch(
         self,
         envelope: GenerationBatchEnvelope,
     ) -> Any:

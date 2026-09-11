@@ -10,7 +10,7 @@ from vrl.generation.bindings.full_sequence_denoise.executor import ReferenceCond
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 
 
-def _chunk(prompt_index: int) -> GenerationSampleBatch:
+def _batch(prompt_index: int) -> GenerationSampleBatch:
     return GenerationSampleBatch(
         prompt_index=prompt_index,
         sample_start=0,
@@ -19,7 +19,7 @@ def _chunk(prompt_index: int) -> GenerationSampleBatch:
 
 
 @pytest.mark.parametrize("path_object", [False, True])
-def test_reference_conditioning_selects_the_chunk_prompt_input(tmp_path, path_object) -> None:
+def test_reference_conditioning_selects_the_batch_prompt_input(tmp_path, path_object) -> None:
     first = tmp_path / "first.png"
     second = tmp_path / "second.png"
     Image.new("RGB", (2, 2), (255, 0, 0)).save(first)
@@ -38,7 +38,7 @@ def test_reference_conditioning_selects_the_chunk_prompt_input(tmp_path, path_ob
     )
     executor = ReferenceConditionedBatches()
 
-    image = executor._reference_image_for_chunk(request, _chunk(1))
+    image = executor._reference_image_for_batch(request, _batch(1))
     assert image.mode == "RGB"
     assert image.getpixel((0, 0)) == (0, 255, 0)
 
@@ -53,7 +53,7 @@ def test_reference_conditioning_rejects_missing_prompt_reference() -> None:
     )
 
     with pytest.raises(ValueError, match="requires reference_image for prompt index 0"):
-        ReferenceConditionedBatches()._reference_image_for_chunk(
+        ReferenceConditionedBatches()._reference_image_for_batch(
             request,
-            _chunk(0),
+            _batch(0),
         )
