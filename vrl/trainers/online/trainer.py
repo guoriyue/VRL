@@ -423,12 +423,6 @@ def _rollout_reward_components(
     return components
 
 
-def _mean_reward_components(
-    components: Mapping[str, list[float]],
-) -> dict[str, float]:
-    return {name: sum(values) / len(values) for name, values in components.items() if values}
-
-
 @dataclass(frozen=True, slots=True)
 class _TrainingGenerationSampleBatch:
     batch: RolloutBatch
@@ -1560,7 +1554,11 @@ class OnlineTrainer:
         pre_filter_reward_mean = batch.pre_filter_reward_mean
         pre_filter_reward_std = batch.pre_filter_reward_std
         pre_filter_adv_mean = batch.pre_filter_adv_mean
-        reward_components = _mean_reward_components(batch.reward_components)
+        reward_components = {
+            name: sum(values) / len(values)
+            for name, values in batch.reward_components.items()
+            if values
+        }
 
         # 3. Train loop — gradient accumulation across per-prompt batches.
         self.model.train()

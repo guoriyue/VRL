@@ -1547,3 +1547,24 @@ No runtime change or new container class justified in this pass. Tests for Ray
 OOM splitting, Cosmos/Anima CLI adaptation and MAGI integration: 67 passed.
 The remaining AST candidates still require source/caller review; this subsection
 is not a repository-wide completion claim or a mandate to inline short functions.
+
+## Trainer metric assembly and continuous-owner boundary review
+
+- Inlined the single-use `_mean_reward_components` into OnlineTrainer's metric
+  assembly. The comprehension retains averaging and empty-component omission;
+  a standalone function added a navigation step without owning a boundary.
+- Kept `_rollout_reward_components`: it validates sample alignment and converts
+  rollout component payloads before filtering, rather than merely calculating
+  a metric. This is a distinct representation boundary.
+- Inspected continuous owner submission/shutdown and capacity accounting. Kept
+  `_await_owner_future`, shared by three production operations, because it
+  centralizes cancellation shielding for owner transitions and cleanup. Kept
+  GeneratedRolloutCapacity's reservation/scoring/release accounting together;
+  it retains invariants across those transitions, not generated payloads.
+- Non-goal: merging reward-service and continuous-owner cancellation semantics
+  into a generic owner solely for fewer lines. Their cancellation contracts
+  differ. No scheduling behavior changed in this slice.
+- Validation: all 142 online trainer tests passed, including the existing
+  component mean assertion in test_advantage_and_metrics. Touched-file Ruff
+  lint/format checks passed. Continuous-owner findings are source review, not
+  a new runtime validation claim. Repository-wide review remains incomplete.
