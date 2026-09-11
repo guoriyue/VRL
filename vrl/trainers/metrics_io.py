@@ -261,6 +261,38 @@ class OnlineMetricRow:
         return ",".join(values) + "\n"
 
 
+class OnlineMetricsCSV:
+    """Initialize one run's CSV files and append metrics with a fixed schema."""
+
+    def __init__(
+        self,
+        output_dir: str | Path,
+        *,
+        component_names: Sequence[str] = (),
+        resume_epoch: int | None = None,
+    ) -> None:
+        columns = OnlineMetricRow.csv_columns(component_names)
+        self.component_names = tuple(component_names)
+        self.csv_path = Path(output_dir) / "metrics.csv"
+        self.full_precision_path = self.csv_path.with_suffix(".full_precision.csv")
+        self.csv_path.parent.mkdir(parents=True, exist_ok=True)
+        for path in (self.csv_path, self.full_precision_path):
+            prepare_metrics_csv(
+                path,
+                columns,
+                resume_at=("epoch", resume_epoch) if resume_epoch is not None else None,
+            )
+
+    def append(self, epoch: int, metrics: TrainStepMetrics) -> None:
+        row = OnlineMetricRow.from_step_metrics(epoch, metrics, self.component_names)
+        for path, full_precision in (
+            (self.csv_path, False),
+            (self.full_precision_path, True),
+        ):
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(row.to_csv(full_precision=full_precision))
+
+
 def prepare_metrics_csv(
     csv_path: str | Path,
     columns: Sequence[str],
@@ -369,5 +401,6 @@ def prepare_metrics_csv(
 
 __all__ = [
     "OnlineMetricRow",
+    "OnlineMetricsCSV",
     "prepare_metrics_csv",
 ]

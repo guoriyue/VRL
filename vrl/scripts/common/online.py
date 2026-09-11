@@ -61,10 +61,7 @@ from vrl.trainers.data import (
     resolve_prompt_example_references,
 )
 from vrl.trainers.distributed import DistributedTrainingContext, run_on_primary_rank
-from vrl.trainers.metrics_io import (
-    OnlineMetricRow,
-    prepare_metrics_csv,
-)
+from vrl.trainers.metrics_io import OnlineMetricsCSV
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan
 from vrl.trainers.strategy import Strategy, build_strategy
@@ -640,46 +637,34 @@ class OnlineRecipeRun:
     trainer: Any
     strategy: Any
     family: str
-    component_names: tuple[str, ...]
     adapter_exports: dict[str, AdapterExport] | None
-    csv_path: Path
     rng: Any
-    resume_epoch: int | None
     model_identity: dict[str, Any]
 
-    def prepare_metrics_csv(self) -> None:
-        for path in (self.csv_path, self.csv_path.with_suffix(".full_precision.csv")):
-            prepare_metrics_csv(
-                path,
-                OnlineMetricRow.csv_columns(self.component_names),
-                resume_at=("epoch", self.resume_epoch) if self.resume_epoch is not None else None,
-            )
+    metrics_csv: OnlineMetricsCSV | None = None
 
-    def prepare_metrics_csv_rank_consistent(
+    def initialize_metrics(
         self,
         training_context: DistributedTrainingContext,
+        output_dir: Path,
+        *,
+        component_names: Sequence[str],
+        resume_epoch: int | None,
     ) -> None:
-        """Run the rank-0 CSV preflight and propagate its verdict to every rank.
+        """Initialize on rank 0 and propagate errors before training collectives."""
 
-        Only rank 0 owns the output path in multi-node runs, so peers cannot safely
-        inspect the header themselves. Broadcasting the small error description
-        keeps every rank on the same side of the first training collective.
-        """
+        def initialize() -> None:
+            self.metrics_csv = OnlineMetricsCSV(
+                output_dir,
+                component_names=component_names,
+                resume_epoch=resume_epoch,
+            )
 
         run_on_primary_rank(
             training_context,
-            self.prepare_metrics_csv,
+            initialize,
             description="metrics CSV preflight",
         )
-
-    def write_metric_row(self, epoch: int, metrics: Any) -> None:
-        row = OnlineMetricRow.from_step_metrics(epoch, metrics, self.component_names)
-        for path, full_precision in (
-            (self.csv_path, False),
-            (self.csv_path.with_suffix(".full_precision.csv"), True),
-        ):
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(row.to_csv(full_precision=full_precision))
 
     def save_checkpoint(self, path: Path, *, epoch: int) -> None:
         # Called on EVERY rank: save_training_checkpoint runs the checkpoint-state
@@ -1021,14 +1006,16 @@ async def run_online_recipe(
             trainer=trainer,
             strategy=strategy,
             family=family_entry.family,
-            component_names=component_names,
             adapter_exports=adapter_exports,
-            csv_path=output_dir / "metrics.csv",
             rng=rng,
-            resume_epoch=resume_epoch,
             model_identity=model_identity,
         )
-        run.prepare_metrics_csv_rank_consistent(training_context)
+        run.initialize_metrics(
+            training_context,
+            output_dir,
+            component_names=component_names,
+            resume_epoch=resume_epoch,
+        )
 
         logger.info(
             "Starting %s online recipe: epochs=%d examples=%d n=%d",
@@ -1074,7 +1061,8 @@ async def run_online_recipe(
                         next_prompts=next_example_batch,
                     )
             if is_primary:
-                run.write_metric_row(epoch, metrics)
+                assert run.metrics_csv is not None
+                run.metrics_csv.append(epoch, metrics)
 
             # Checkpoint on EVERY rank (NOT gated by is_primary): the trainable-state
             # export inside is a collective under FSDP2 (all ranks all-gather), and

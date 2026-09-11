@@ -13,6 +13,7 @@ import torch.multiprocessing as mp
 from tests.trainers._strategy_policies import free_port
 from vrl.scripts.common.online import OnlineRecipeRun
 from vrl.trainers.distributed import DistributedTrainingContext
+from vrl.trainers.metrics_io import OnlineMetricsCSV
 
 
 def _context(*, distributed: bool, primary: bool) -> DistributedTrainingContext:
@@ -37,11 +38,8 @@ def test_online_checkpoint_threads_required_model_identity(
             context=SimpleNamespace(is_primary=True),
         ),
         family="unit",
-        component_names=(),
         adapter_exports=None,
-        csv_path=tmp_path / "metrics.csv",
         rng=object(),
-        resume_epoch=None,
         model_identity=identity,
     )
     monkeypatch.setattr(
@@ -77,18 +75,27 @@ def _run_metrics_preflight_rank(
     dist.init_process_group("gloo", rank=rank, world_size=world_size)
     try:
 
-        def _prepare() -> None:
+        def _prepare(*args, **kwargs):
             if rank != 0:
                 raise AssertionError("only rank 0 may prepare the metrics CSV")
             if fail:
                 raise ValueError("different metrics schema")
             Path(marker_path).write_text("prepared\n", encoding="utf-8")
+            return object()
 
         try:
-            OnlineRecipeRun.prepare_metrics_csv_rank_consistent(
-                SimpleNamespace(prepare_metrics_csv=_prepare),
-                _context(distributed=True, primary=rank == 0),
-            )
+            from unittest.mock import patch
+
+            run = SimpleNamespace(metrics_csv=None)
+            with patch("vrl.scripts.common.online.OnlineMetricsCSV", _prepare):
+                OnlineRecipeRun.initialize_metrics(
+                    run,
+                    _context(distributed=True, primary=rank == 0),
+                    Path(marker_path).parent,
+                    component_names=(),
+                    resume_epoch=None,
+                )
+            assert (run.metrics_csv is not None) == (rank == 0)
         except RuntimeError as exc:
             queue.put((rank, str(exc)))
         else:
@@ -97,66 +104,42 @@ def _run_metrics_preflight_rank(
         dist.destroy_process_group()
 
 
-def test_metrics_csv_preflight_preserves_single_process_error() -> None:
-    def _raise_schema_error() -> None:
+def test_metrics_csv_preflight_preserves_single_process_error(monkeypatch, tmp_path) -> None:
+    def fail(*args, **kwargs):
         raise ValueError("different metrics schema")
 
-    run = SimpleNamespace(prepare_metrics_csv=_raise_schema_error)
-
+    monkeypatch.setattr("vrl.scripts.common.online.OnlineMetricsCSV", fail)
     with pytest.raises(ValueError, match="different metrics schema"):
-        OnlineRecipeRun.prepare_metrics_csv_rank_consistent(
-            run,
+        OnlineRecipeRun.initialize_metrics(
+            SimpleNamespace(metrics_csv=None),
             _context(distributed=False, primary=True),
+            tmp_path,
+            component_names=(),
+            resume_epoch=None,
         )
 
 
 def test_online_resume_rejects_changed_reward_component_schema(tmp_path) -> None:
-    path = tmp_path / "metrics.csv"
-    OnlineRecipeRun(
-        bundle=None,
-        trainer=None,
-        strategy=None,
-        family="unit",
-        component_names=("aesthetic",),
-        adapter_exports=None,
-        csv_path=path,
-        rng=None,
-        resume_epoch=None,
-        model_identity={"schema": "test"},
-    ).prepare_metrics_csv()
-
-    resumed = OnlineRecipeRun(
-        bundle=None,
-        trainer=None,
-        strategy=None,
-        family="unit",
-        component_names=("aesthetic", "pickscore"),
-        adapter_exports=None,
-        csv_path=path,
-        rng=None,
-        resume_epoch=0,
-        model_identity={"schema": "test"},
-    )
-
+    OnlineMetricsCSV(tmp_path, component_names=("aesthetic",))
     with pytest.raises(ValueError, match="different metrics schema"):
-        resumed.prepare_metrics_csv()
+        OnlineMetricsCSV(tmp_path, component_names=("aesthetic", "pickscore"), resume_epoch=0)
+
+
+def test_metrics_csv_initializes_both_headers_before_any_rows(tmp_path) -> None:
+    output_dir = tmp_path / "new_run"
+    OnlineMetricsCSV(output_dir, component_names=("ocr",))
+    for name in ("metrics.csv", "metrics.full_precision.csv"):
+        with (output_dir / name).open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+        assert len(rows) == 1
+        assert rows[0][0] == "epoch"
+        assert rows[0][-1] == "r_ocr"
+        assert "loss" in rows[0]
 
 
 def test_metrics_csv_writes_continuous_request_diagnostics(tmp_path) -> None:
     path = tmp_path / "metrics.csv"
-    run = OnlineRecipeRun(
-        bundle=None,
-        trainer=None,
-        strategy=None,
-        family="unit",
-        component_names=(),
-        adapter_exports=None,
-        csv_path=path,
-        rng=None,
-        resume_epoch=None,
-        model_identity={"schema": "test"},
-    )
-    run.prepare_metrics_csv()
+    run = OnlineMetricsCSV(tmp_path)
     update = SimpleNamespace(
         clip_fraction=0.0,
         active_clip_fraction=0.0,
@@ -203,7 +186,7 @@ def test_metrics_csv_writes_continuous_request_diagnostics(tmp_path) -> None:
         },
     )
 
-    run.write_metric_row(0, metrics)
+    run.append(0, metrics)
 
     with path.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
@@ -250,21 +233,9 @@ def test_full_precision_metrics_follow_online_write_and_resume(tmp_path) -> None
 
     from vrl.algorithms.types import TrainStepMetrics
 
-    run = OnlineRecipeRun(
-        bundle=None,
-        trainer=None,
-        strategy=None,
-        family="unit",
-        component_names=("ocr",),
-        adapter_exports=None,
-        csv_path=tmp_path / "metrics.csv",
-        rng=None,
-        resume_epoch=None,
-        model_identity={"schema": "test"},
-    )
-    run.prepare_metrics_csv()
+    run = OnlineMetricsCSV(tmp_path, component_names=("ocr",))
     for epoch in range(3):
-        run.write_metric_row(
+        run.append(
             epoch,
             TrainStepMetrics(loss=0.123456789 + epoch, reward_components={"ocr": 0.987654321}),
         )
@@ -272,11 +243,8 @@ def test_full_precision_metrics_follow_online_write_and_resume(tmp_path) -> None
     rows = list(csv.DictReader(path.open()))
     assert float(rows[0]["loss"]) == 0.123456789
     assert float(rows[0]["r_ocr"]) == 0.987654321
-    run.resume_epoch = 2
-    run.prepare_metrics_csv()
-    run.write_metric_row(
-        2, TrainStepMetrics(loss=0.111111111, reward_components={"ocr": 0.222222222})
-    )
+    run = OnlineMetricsCSV(tmp_path, component_names=("ocr",), resume_epoch=2)
+    run.append(2, TrainStepMetrics(loss=0.111111111, reward_components={"ocr": 0.222222222}))
     rows = list(csv.DictReader(path.open()))
     assert [row["epoch"] for row in rows] == ["0", "1", "2"]
     assert float(rows[-1]["loss"]) == 0.111111111

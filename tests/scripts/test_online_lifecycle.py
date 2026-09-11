@@ -522,11 +522,10 @@ def _install_common_fakes(
         lambda *args, **kwargs: online.TrainingRunTrace(tmp_path / "evidence.json"),
     )
     monkeypatch.setattr(
-        online.OnlineRecipeRun,
-        "prepare_metrics_csv",
-        lambda *args, **kwargs: None,
+        online,
+        "OnlineMetricsCSV",
+        lambda *args, **kwargs: SimpleNamespace(append=lambda *args, **kwargs: None),
     )
-    monkeypatch.setattr(online.OnlineRecipeRun, "write_metric_row", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         online.OnlineRecipeRun,
         "save_checkpoint",

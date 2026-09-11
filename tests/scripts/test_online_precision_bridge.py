@@ -240,29 +240,13 @@ def test_replay_parity_config_is_bridged_from_yaml() -> None:
 
 def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     """Mismatch + continuous-async diagnostics are written as regular CSV columns."""
-    from types import SimpleNamespace
-
     from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
     from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
-    from vrl.scripts.common.online import OnlineRecipeRun
+    from vrl.trainers.metrics_io import OnlineMetricsCSV
 
     csv_path = tmp_path / "metrics.csv"
-    # The metrics-CSV side effects live on the run controller. Unused training
-    # owners can be inert objects for this row-formatting test.
-    run = OnlineRecipeRun(
-        bundle=SimpleNamespace(),
-        trainer=SimpleNamespace(),
-        strategy=SimpleNamespace(),
-        family="sd3_5",
-        component_names=(),
-        adapter_exports=None,
-        csv_path=csv_path,
-        rng=None,
-        resume_epoch=None,
-        model_identity={"schema": "test"},
-    )
-    run.prepare_metrics_csv()
-    run.write_metric_row(
+    run = OnlineMetricsCSV(tmp_path)
+    run.append(
         0,
         TrainStepMetrics(
             loss=1.0,
