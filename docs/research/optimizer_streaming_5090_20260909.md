@@ -1,5 +1,11 @@
 # Disk AdamW: measured memory savings and I/O cost
 
+> Retired on 2026-09-10: the custom disk-streaming optimizer, its configuration
+> fields, and its probe were removed in favor of standard `torch.optim.AdamW`.
+> The implementation and measurements below describe the historical revision;
+> their commands do not apply to the current checkout.
+
+
 Measured September 9, 2026 Pacific (September 10 UTC), on the shared RTX 5090.
 Driver: NVIDIA 580.173.02; PyTorch 2.11.0+cu130.
 This is an optimizer-only capacity probe, not a real-model training result.

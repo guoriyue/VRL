@@ -381,12 +381,12 @@ def _adam_exp_avg_values(optimizer) -> list[float]:
     return values
 
 
-def test_online_trainer_disk_optimizer_roundtrip(tmp_path) -> None:
+def test_online_trainer_standard_adamw_roundtrip(tmp_path) -> None:
     import torch
 
     source = _make_resume_trainer()
-    source.config.optim.disk_state_directory = str(tmp_path / "source")
     optimizer = source._ensure_optimizer()
+    assert type(optimizer) is torch.optim.AdamW
     source.model(torch.ones(1, 1)).sum().backward()
     optimizer.step()
     optimizer.zero_grad()
@@ -395,7 +395,6 @@ def test_online_trainer_disk_optimizer_roundtrip(tmp_path) -> None:
     torch.save({"trainer": source.state_dict(), "model": source.model.state_dict()}, checkpoint)
     saved = torch.load(checkpoint, weights_only=True)
     restored = _make_resume_trainer()
-    restored.config.optim.disk_state_directory = str(tmp_path / "restored")
     restored.model.load_state_dict(saved["model"])
     restored.load_state_dict(saved["trainer"], strict=True)
     assert restored.state.global_step == 1

@@ -1,5 +1,11 @@
 # SPRINT：Optimizer streaming：容量不足时才把全参 Adam 状态流式送入 GPU
 
+> Retired on 2026-09-10: the custom disk-streaming optimizer, its configuration
+> fields, and its probe were removed in favor of standard `torch.optim.AdamW`.
+> The implementation and measurements below describe the historical revision;
+> their commands do not apply to the current checkout.
+
+
 Status: **implementation started under the explicit six-item user request.**
 The opt-in online AdamW path below is implemented; real-model capacity and performance
 acceptance remain open. The historical plan follows; its original capacity trigger

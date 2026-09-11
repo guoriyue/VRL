@@ -93,11 +93,20 @@ def test_offline_dpo_adafactor_keeps_shared_optimizer_knobs() -> None:
     assert resolved.adam_weight_decay == pytest.approx(0.03)
 
 
-def test_offline_dpo_rejects_disk_optimizer_instead_of_ignoring_it() -> None:
-    with pytest.raises(ValueError, match="disk optimizer state is not supported"):
-        _resolved_trainer_config(["actor.optim.disk_state_directory=/tmp/vrl-optimizer"])
-
-
 def test_offline_dpo_rejects_unsupported_deterministic_policy() -> None:
-    with pytest.raises(ValueError, match=r"does not consume config field\(s\): trainer\.deterministic"):
+    with pytest.raises(
+        ValueError, match=r"does not consume config field\(s\): trainer\.deterministic"
+    ):
         _resolved_trainer_config(["trainer.deterministic=true"])
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "actor.optim.disk_state_directory=/tmp/retired-optimizer",
+        "actor.optim.disk_state_bucket_bytes=1024",
+    ],
+)
+def test_removed_disk_optimizer_options_are_rejected(override: str) -> None:
+    with pytest.raises((ValueError, TypeError)):
+        _resolved_trainer_config([override])

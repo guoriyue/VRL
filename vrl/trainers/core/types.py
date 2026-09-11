@@ -33,17 +33,6 @@ class OptimConfig:
     # quantizes the OPTIMIZER STATE, not the forward, so it does NOT change rollout/replay
     # logprobs — safe on the RL policy path (unlike fp8 forward). Default off (fp32 AdamW).
     optim_8bit: bool = field(default=False)
-    disk_state_directory: str | None = field(default=None)
-    disk_state_bucket_bytes: int = field(default=256 * 1024 * 1024)
-
-    def __post_init__(self) -> None:
-        if type(self.disk_state_bucket_bytes) is not int or self.disk_state_bucket_bytes < 1:
-            raise ValueError("disk_state_bucket_bytes must be a positive integer")
-        if self.disk_state_directory is not None:
-            if not self.disk_state_directory.strip():
-                raise ValueError("disk_state_directory must not be empty")
-            if self.optim_8bit:
-                raise ValueError("disk optimizer state is incompatible with optim_8bit")
 
 
 @dataclass(slots=True)
