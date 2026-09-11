@@ -134,11 +134,11 @@ def build_algorithm_and_evaluator(
         )
 
     if kind in diffusion_logprob_kinds:
-        # All four are flow-matching GRPO-family algorithms on the same SDE
+        # These are flow-matching GRPO-family algorithms on the same SDE
         # evaluator. dance_grpo reuses FlowGRPO unchanged (its delta is the
         # trainer's random timestep selection + multi-reward); flow_dppo /
         # grpo_guard are trust-region variants whose loss reads the rollout
-        # proposal mean (sampling.return_prev_sample_mean).
+        # proposal mean (rollout.return_prev_sample_mean).
         from vrl.algorithms.grpo.continuous import GRPO, FlashGRPO, FlowDPPO, GRPOGuard
 
         is_chunk_autoregressive = (

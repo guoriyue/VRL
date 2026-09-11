@@ -1048,3 +1048,21 @@ contained guesses. Removed both:
 - Validation: 16 online entrypoint and torch-free config tests passed, including
   malformed-mask/no-mutation regressions and existing rank-to-device mappings.
   Touched-file Ruff and diff whitespace checks pass.
+
+## Common recipe factory structural review
+
+- Retained build_algorithm_and_evaluator as a composition boundary: it combines
+  independently owned algorithm, family replay semantics, scheduler and precision
+  settings. Moving it onto the result pair would only namespace the same cross-type
+  work, while moving it onto one algorithm would invert family/evaluator ownership.
+- Retained reward function/runtime constructors shared by online training and
+  reward preflight, including the lazy implementation imports. Retained the
+  cross-type memory-parking guard that validates without loading reward models.
+- The local diffusion-objective branch set selects actual constructors/evaluators;
+  it is dispatch implementation, not a new config fact table. No generic factory
+  registry or extra contract class introduced solely to eliminate branches.
+- Corrected stale comments claiming four algorithms and referring to the old
+  sampling.return_prev_sample_mean location; the field is rollout-owned.
+- Validation: 52 common-factory and online lifecycle tests passed, covering grouped
+  replay exclusions, algorithm/evaluator construction and recipe cleanup. Touched-
+  file Ruff and diff whitespace checks pass. No runtime behavior changed.
