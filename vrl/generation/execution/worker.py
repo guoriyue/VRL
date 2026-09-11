@@ -838,7 +838,14 @@ class GenerationWorkerCore:
                 task=self.family_entry.task,
             )
         built = executor_cls(model, **executor_kwargs)
-        return _require_chunked_executor(built)
+        if not callable(getattr(built, "forward_batch", None)) or not callable(
+            getattr(built, "gather_batches", None)
+        ):
+            raise TypeError(
+                f"{type(built).__name__} does not implement "
+                "forward_batch(...) and gather_batches(...)",
+            )
+        return built
 
     @staticmethod
     def _executor_device(executor: Any) -> Any:
@@ -895,17 +902,6 @@ class GenerationWorkerCore:
 
             torch.cuda.synchronize()
         return copied
-
-
-def _require_chunked_executor(executor: Any) -> GenerationBatchExecutor:
-    forward_batch = getattr(executor, "forward_batch", None)
-    gather_batches = getattr(executor, "gather_batches", None)
-    if not callable(forward_batch) or not callable(gather_batches):
-        raise TypeError(
-            f"{type(executor).__name__} does not implement "
-            "forward_batch(...) and gather_batches(...)",
-        )
-    return executor
 
 
 def _debug_metric_value(value: Any) -> Any:

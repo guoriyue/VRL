@@ -1645,3 +1645,19 @@ is not a repository-wide completion claim or a mandate to inline short functions
   cases exercise both direct construction and mapping parsing. After tightening
   test regex escaping for Ruff, all 34 TeaCache tests passed again. Touched-file
   Ruff lint/format and diff checks passed. No performance/quality claim inferred.
+
+## Worker executor construction owns its protocol check
+
+- Inlined the sole-use _require_chunked_executor into _build_executor immediately
+  after dynamic construction. Retained callable checks and their error text for
+  forward_batch/gather_batches. This is still a necessary protocol check; its
+  separate private function had no caller outside the construction owner.
+- Kept recursive _debug_metric_value as the diagnostic representation boundary.
+  Kept sample_batches helpers: planner and family gatherers share row alignment,
+  ordering and replay merging without importing one another. No generic helper
+  container class or protocol/taxonomy constants changed.
+- Validation: 142 generation execution tests passed, touched-file Ruff lint/format
+  and diff checks passed. Many worker lifecycle tests inject the executor rather
+  than build a real model; this suite is compatibility evidence, not a claim of
+  full dynamic-family construction coverage. The moved check is otherwise
+  behavior-preserving and does not justify a new model-loading integration test.
