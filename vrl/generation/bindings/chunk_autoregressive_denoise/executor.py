@@ -11,6 +11,7 @@ from vrl.generation.execution.sample_batches import (
 )
 from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.types import GenerationRequest
+from vrl.trajectory.validation import validate_shape_prefix
 
 
 @dataclass(slots=True)
@@ -70,6 +71,29 @@ class ChunkAutoregressiveDenoiseResult:
         """Whether this result carries exact stochastic replay facts."""
 
         return self.old_log_prob is not None
+
+    def validate_trainable_trajectory(self) -> None:
+        """Validate this result's replay tensor axes at the gather boundary."""
+
+        transition_count = self.denoise_transition_count
+        if transition_count is None:
+            raise ValueError("trainable result is missing denoise_transition_count")
+        transition_prefix = (
+            self.batch.sample_count,
+            self.temporal_chunk_count,
+            transition_count,
+        )
+        for field_name in ("observations", "actions", "old_log_prob", "mask", "timesteps"):
+            validate_shape_prefix(
+                f"batch {field_name}", getattr(self, field_name), transition_prefix
+            )
+        if self.kl is not None:
+            validate_shape_prefix("batch kl", self.kl, transition_prefix)
+        validate_shape_prefix(
+            "batch finalized_chunk_latents",
+            self.finalized_chunk_latents,
+            (self.batch.sample_count, self.temporal_chunk_count),
+        )
 
 
 class ChunkAutoregressiveDenoiseExecutorBase(BatchExecutorBase):

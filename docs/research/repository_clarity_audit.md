@@ -785,3 +785,23 @@ contained guesses. Removed both:
   passed, including malformed window rejection through the schedule factory and
   malformed version rejection through freshness predicates. Touched-file Ruff and
   diff whitespace checks pass.
+
+## Chunk-denoise result validation ownership
+
+- Moved result-local trajectory shape validation from the gather module's
+  _validate_trainable_chunk function to
+  ChunkAutoregressiveDenoiseResult.validate_trainable_trajectory. Tensor fields,
+  temporal chunk counts and transition counts now have one visible owner.
+- The gatherer still invokes validation at the same point after cross-result
+  consistency checks. Construction timing, error text and generation-only handling
+  remain unchanged; no eager validation or new wrapper class was added.
+- Retained ordered-batch and concatenation helpers: they operate across multiple
+  results, including all-or-none optional fields, and belong to gathering rather
+  than any individual result. Retained the separate gather module as the driver
+  protocol boundary, with executor types imported only for type checking. This
+  closes the result-local ownership question noted in the earlier binding review;
+  moving every gather helper to a static method remains a non-goal.
+- Validation: binding/replay/config-import selection passed (45 tests, 2 skipped).
+  The chunk binding suite then passed all 8 tests with added malformed actions,
+  optional KL and finalized-latent axis regressions. Touched-file Ruff and diff
+  whitespace checks pass.

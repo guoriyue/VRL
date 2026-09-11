@@ -220,3 +220,15 @@ def _generation_only_result(
         denoise_transition_count=3,
         context={"model_family": "causvid"},
     )
+
+
+@pytest.mark.parametrize("field_name", ["actions", "kl", "finalized_chunk_latents"])
+def test_gatherer_rejects_result_with_misaligned_trajectory_axes(field_name: str) -> None:
+    request = _request()
+    batches = [_trainable_result(10.0, sample_start=0), _trainable_result(20.0, sample_start=1)]
+    setattr(batches[1], field_name, torch.zeros(1, 4, 3))
+
+    with pytest.raises(ValueError, match=f"batch {field_name} has leading dimensions"):
+        ChunkAutoregressiveDenoiseGatherer().gather_batches(
+            request, request.sample_rows(), batches
+        )

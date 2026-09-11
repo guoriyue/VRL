@@ -21,7 +21,6 @@ from vrl.trajectory import (
     build_chunk_autoregressive_denoise_trajectory,
     build_chunk_autoregressive_generation_trajectory,
 )
-from vrl.trajectory.validation import validate_shape_prefix
 
 if TYPE_CHECKING:
     from vrl.generation.bindings.chunk_autoregressive_denoise.executor import (
@@ -104,28 +103,8 @@ def _ordered_batches(
                 raise ValueError(
                     "all trainable results must have the same denoise_transition_count",
                 )
-            _validate_trainable_chunk(batch)
+            batch.validate_trainable_trajectory()
     return ordered
-
-
-def _validate_trainable_chunk(batch: ChunkAutoregressiveDenoiseResult) -> None:
-    transition_count = batch.denoise_transition_count
-    if transition_count is None:
-        raise ValueError("trainable result is missing denoise_transition_count")
-    transition_prefix = (
-        batch.batch.sample_count,
-        batch.temporal_chunk_count,
-        transition_count,
-    )
-    for field_name in ("observations", "actions", "old_log_prob", "mask", "timesteps"):
-        validate_shape_prefix(f"batch {field_name}", getattr(batch, field_name), transition_prefix)
-    if batch.kl is not None:
-        validate_shape_prefix("batch kl", batch.kl, transition_prefix)
-    validate_shape_prefix(
-        "batch finalized_chunk_latents",
-        batch.finalized_chunk_latents,
-        (batch.batch.sample_count, batch.temporal_chunk_count),
-    )
 
 
 def _cat_field(batches: Sequence[Any], field_name: str) -> Any:
