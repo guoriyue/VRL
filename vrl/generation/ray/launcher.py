@@ -44,6 +44,74 @@ class RayGenerationLauncher:
             {"address": "local"} if ray_init_kwargs is None else dict(ray_init_kwargs)
         )
 
+    @staticmethod
+    def _find_rendezvous_port() -> int:
+        """Find a currently free driver-local port; closing the socket does not reserve it."""
+
+        import socket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
+
+    @staticmethod
+    def _validate_rank_gpu_ids(
+        config: RayGenerationConfig,
+        metadata: Sequence[RayActorHandle],
+        *,
+        expected_gpu_ids: tuple[int, ...],
+    ) -> None:
+        """Validate launched rank actors against the resolved rollout placement."""
+
+        resources = config.resources
+        if not resources.rollout_devices:
+            return
+
+        driver_node_ip: str | None = None
+        if resources.cross_node:
+            driver_node_ip = current_node_ip()
+
+        # The placement owner supplies the role's expected GPUs (empty under
+        # cross-node, where the node-aware check applies instead).
+        require_actor_gpu_ids(
+            metadata,
+            expected_gpu_ids=expected_gpu_ids,
+            role="generation",
+            cross_node=resources.cross_node,
+            driver_node_ip=driver_node_ip,
+        )
+
+    @staticmethod
+    def _all_ranks_support_versioned_slots(
+        ray: Any,
+        ranks: Sequence[RayActorHandle],
+        *,
+        weight_sync: Any | None,
+        worker_rpc_timeout_s: float,
+    ) -> bool:
+        """Return whether every rank supports versioned trainable-state slots.
+
+        Non-draining weight sync needs slots on all ranks because a batch stamped
+        with an older policy version can be placed on any engine. A missing weight
+        syncer or an empty fleet keeps the safe draining barrier. A query
+        failure means the candidate fleet is broken, not merely unsupported, and
+        therefore propagates to launcher-owned actor cleanup.
+        """
+
+        if weight_sync is None:
+            return False
+        actors = [rank.actor for rank in ranks]
+        if not actors:
+            return False
+        results = get_ray_refs(
+            ray,
+            [actor.supports_versioned_trainable_state.remote() for actor in actors],
+            operation="rollout.startup.versioned_slots",
+            timeout_s=worker_rpc_timeout_s,
+            context=f"ranks={len(actors)}",
+        )
+        return bool(results) and all(bool(result) for result in results)
+
     def _launch_session(
         self,
         config: RayGenerationConfig,
@@ -108,9 +176,10 @@ class RayGenerationLauncher:
                         backend="nccl" if config.resources.rollout_devices else "gloo",
                     ),
                 )
-                for engine_port in [_free_port() for _ in engine_ids]
+                for engine_port in [self._find_rendezvous_port() for _ in engine_ids]
                 for rank_idx in range(gpus_per_engine)
             ]
+        actor_group: RayActorGroup | None = None
         try:
             actor_group = RayActorGroup.launch(
                 worker_cls=RayGenerationWorker,
@@ -128,7 +197,7 @@ class RayGenerationLauncher:
                 # generation; the default group keeps its serialization.
                 concurrency_groups={HEALTH_CONCURRENCY_GROUP: 1},
             )
-            _validate_rank_gpu_ids(
+            self._validate_rank_gpu_ids(
                 config,
                 actor_group.handles,
                 expected_gpu_ids=expected_gpu_ids,
@@ -166,7 +235,7 @@ class RayGenerationLauncher:
                 if worker.sync_trainable_state
                 else None
             )
-            supports_non_draining_weight_sync = _all_ranks_support_versioned_slots(
+            supports_non_draining_weight_sync = self._all_ranks_support_versioned_slots(
                 ray,
                 rank_handles(engines),
                 weight_sync=weight_sync,
@@ -179,7 +248,7 @@ class RayGenerationLauncher:
                 supports_non_draining_weight_sync=supports_non_draining_weight_sync,
             )
         except BaseException as error:
-            if "actor_group" in locals():
+            if actor_group is not None:
                 try:
                     actor_group.shutdown()
                 except BaseException as cleanup_error:
@@ -285,74 +354,6 @@ class RayGenerationLauncher:
                         f"resident rollout startup cleanup also failed: {cleanup_error!r}",
                     )
             raise
-
-
-def _free_port() -> int:
-    """Reserve an ephemeral rendezvous port on the engine group's node."""
-
-    import socket
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
-def _validate_rank_gpu_ids(
-    config: RayGenerationConfig,
-    metadata: Sequence[RayActorHandle],
-    *,
-    expected_gpu_ids: tuple[int, ...],
-) -> None:
-    """Validate launched rank actors against the resolved rollout placement."""
-
-    resources = config.resources
-    if not resources.rollout_devices:
-        return
-
-    driver_node_ip: str | None = None
-    if resources.cross_node:
-        driver_node_ip = current_node_ip()
-
-    # The placement owner supplies the role's expected GPUs (empty under
-    # cross-node, where the node-aware check applies instead).
-    require_actor_gpu_ids(
-        metadata,
-        expected_gpu_ids=expected_gpu_ids,
-        role="generation",
-        cross_node=resources.cross_node,
-        driver_node_ip=driver_node_ip,
-    )
-
-
-def _all_ranks_support_versioned_slots(
-    ray: Any,
-    ranks: Sequence[RayActorHandle],
-    *,
-    weight_sync: Any | None,
-    worker_rpc_timeout_s: float,
-) -> bool:
-    """Return whether every rank supports versioned trainable-state slots.
-
-    Non-draining weight sync needs slots on all ranks because a batch stamped
-    with an older policy version can be placed on any engine. A missing weight
-    syncer or an empty fleet keeps the safe draining barrier. A query
-    failure means the candidate fleet is broken, not merely unsupported, and
-    therefore propagates to launcher-owned actor cleanup.
-    """
-
-    if weight_sync is None:
-        return False
-    actors = [rank.actor for rank in ranks]
-    if not actors:
-        return False
-    results = get_ray_refs(
-        ray,
-        [actor.supports_versioned_trainable_state.remote() for actor in actors],
-        operation="rollout.startup.versioned_slots",
-        timeout_s=worker_rpc_timeout_s,
-        context=f"ranks={len(actors)}",
-    )
-    return bool(results) and all(bool(result) for result in results)
 
 
 __all__ = [

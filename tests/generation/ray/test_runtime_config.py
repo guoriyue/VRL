@@ -25,7 +25,6 @@ from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
-    _all_ranks_support_versioned_slots,
 )
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
@@ -334,7 +333,7 @@ def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
 
     with _slot_handles(local_ray, True, True) as handles:
         assert (
-            _all_ranks_support_versioned_slots(
+            RayGenerationLauncher._all_ranks_support_versioned_slots(
                 local_ray,
                 handles,
                 weight_sync=weight_sync,
@@ -344,7 +343,7 @@ def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
         )
     with _slot_handles(local_ray, True, False) as handles:
         assert (
-            _all_ranks_support_versioned_slots(
+            RayGenerationLauncher._all_ranks_support_versioned_slots(
                 local_ray,
                 handles,
                 weight_sync=weight_sync,
@@ -360,7 +359,7 @@ def test_runtime_capability_false_without_weight_sync_or_workers(local_ray) -> N
     barrier (False), never a silent True."""
     with _slot_handles(local_ray, True, True) as handles:
         assert (
-            _all_ranks_support_versioned_slots(
+            RayGenerationLauncher._all_ranks_support_versioned_slots(
                 local_ray,
                 handles,
                 weight_sync=None,
@@ -369,7 +368,7 @@ def test_runtime_capability_false_without_weight_sync_or_workers(local_ray) -> N
             is False
         )
     assert (
-        _all_ranks_support_versioned_slots(
+        RayGenerationLauncher._all_ranks_support_versioned_slots(
             local_ray,
             [],
             weight_sync=object(),
@@ -386,7 +385,7 @@ def test_runtime_capability_worker_query_failure_propagates(local_ray) -> None:
         _slot_handles(local_ray, True, None) as handles,
         pytest.raises(local_ray.exceptions.RayTaskError, match="actor dead"),
     ):
-        _all_ranks_support_versioned_slots(
+        RayGenerationLauncher._all_ranks_support_versioned_slots(
             local_ray,
             handles,
             weight_sync=object(),
@@ -542,7 +541,7 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
         staticmethod(capture_actor_launch),
     )
     monkeypatch.setattr(
-        launcher_module,
+        RayGenerationLauncher,
         "_all_ranks_support_versioned_slots",
         lambda *_args, **_kwargs: False,
     )

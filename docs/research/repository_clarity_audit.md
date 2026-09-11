@@ -3480,3 +3480,24 @@ this combined regression is compatibility evidence, not architectural completion
   absent-device case in the parameterization, all three focused cases passed
   again. Touched-file Ruff/diff checks passed. Full repository review remains
   incomplete.
+
+## Launcher-owned startup helpers and explicit partial ownership
+
+- Move rank GPU validation, fleet slot-capability probing, and rendezvous-port
+  selection into RayGenerationLauncher. Each serves only its launch path; tests
+  now address the owning class. Preserve shared require_actor_gpu_ids and
+  get_ray_refs boundaries rather than duplicating placement/deadline logic.
+- Replace the locals()-membership cleanup check with an explicit optional
+  actor_group initialized before launch. Cleanup still runs only after launch
+  returns an owned group; failures inside RayActorGroup.launch remain its own
+  responsibility. No additional owner class or capability state is introduced.
+- Rename _free_port to _find_rendezvous_port and correct its claim: it samples
+  a driver-local ephemeral port, then closes the socket. It does not reserve
+  that port or prove availability on a remote engine node. Rendezvous allocation
+  behavior is unchanged; remote allocation and reservation are not solved here.
+- Keep worker health protocol constants and generic placement/timeout helpers.
+  Preserve capability reduction, RPC failure propagation, actor cleanup, and
+  placement-group ownership instead of shortening away those boundaries.
+- Validation: 66 runtime-config, rollout-launcher, and operation-deadline tests
+  passed, including capability failures and cleanup. Touched-file Ruff/diff
+  checks passed. Full repository review remains incomplete.

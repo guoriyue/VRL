@@ -311,5 +311,5 @@ def test_cross_node_validation_preserves_driver_node_query_failure(monkeypatch) 
     monkeypatch.setattr(launcher, "current_node_ip", fail)
     config = SimpleNamespace(resources=SimpleNamespace(rollout_devices=(0,), cross_node=True))
     with pytest.raises(RuntimeError, match="driver node query failed") as caught:
-        launcher._validate_rank_gpu_ids(config, [], expected_gpu_ids=())
+        launcher.RayGenerationLauncher._validate_rank_gpu_ids(config, [], expected_gpu_ids=())
     assert caught.value is failure
