@@ -5354,3 +5354,19 @@ this combined regression is compatibility evidence, not architectural completion
   performance clock, five total calls and median reporting from controlled
   ticks. Shared runtime and bottleneck suites: 11 passed. GPU operations are
   mocked. Touched-file Ruff and git diff --check pass. Wider audit remains open.
+
+## Diffusion probe sampling preparation owns its inference gradient boundary
+
+- `prepare_sampling_state` now disables autograd for prompt encoding and sampling
+  preparation. Previously only subsequent denoising was guarded, so a model with
+  trainable parameters could retain preparation graphs in the measured state.
+- Keep this shared function: single-step, end-to-end and TeaCache probes consume
+  the same preparation contract. Keep the registry builder's lazy import boundary
+  and the isolated benchmark prompt constant. No profiler-specific class is added
+  to the production model interface; reducing function count alone is not a goal.
+- A CPU tensor regression with gradients enabled failed before the fix; it now
+  verifies both preparation stages, graph-free output and restoration of the
+  caller's gradient setting. The disabled-gradient control also passes. Shared
+  diffusion runtime and bottleneck suites: 13 passed. Touched-file Ruff and
+  git diff --check pass. Actual model/GPU memory savings were not measured.
+  The repository-wide clarity audit remains incomplete.

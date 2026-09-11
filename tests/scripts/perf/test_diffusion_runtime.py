@@ -131,6 +131,37 @@ def test_prepare_sampling_state_uses_only_real_sequence_length_sources(
         assert model.encode_kwargs["max_sequence_length"] == expected
 
 
+@pytest.mark.parametrize("grad_enabled", [True, False])
+def test_sampling_preparation_does_not_retain_autograd_graphs(grad_enabled):
+    root = parse_config(
+        OmegaConf.create(
+            {
+                "model": {"family": "sd3_5"},
+                "sampling": {"num_steps": 4, "guidance_scale": 1.0, "width": 256, "height": 256},
+            }
+        ),
+    )
+    weight = torch.tensor(2.0, requires_grad=True)
+    stages = []
+
+    class Model:
+        def encode_prompt(self, *args, **kwargs):
+            stages.append(torch.is_grad_enabled())
+            return weight * 3
+
+        def prepare_sampling(self, request, encoded):
+            stages.append(torch.is_grad_enabled())
+            return encoded * weight
+
+    with torch.set_grad_enabled(grad_enabled):
+        state = prepare_sampling_state(Model(), root)
+        assert torch.is_grad_enabled() is grad_enabled
+    assert stages == [False, False]
+    assert state.item() == 12
+    assert not state.requires_grad
+    assert state.grad_fn is None
+
+
 def test_e2e_duration_uses_monotonic_performance_clock(monkeypatch, capsys):
     from vrl.scripts.perf.common import diffusion_runtime
 

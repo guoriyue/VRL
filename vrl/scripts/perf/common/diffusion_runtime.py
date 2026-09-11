@@ -36,8 +36,9 @@ def build_runtime(
     return entry.build_rollout(build)
 
 
+@torch.no_grad()
 def prepare_sampling_state(model, root):
-    """Encode the shared prompt and prepare the model's sampling state."""
+    """Prepare inference-only probe state without retaining an autograd graph."""
 
     sampling = root.sampling
     max_sequence_length = getattr(sampling, "max_sequence_length", None)
