@@ -132,7 +132,7 @@ def _continuous_config(**continuous: Any) -> SimpleNamespace:
 
 
 def _iteration_stat(iteration: Any, name: str) -> float:
-    return iteration.stats.as_phase_dict()[name]
+    return iteration.stats.as_metrics_dict()[name]
 
 
 def _build(
@@ -353,7 +353,7 @@ async def test_continuous_drains_full_homogeneous_iteration() -> None:
         iteration = await schedule.next_iteration(["p0", "p1"], group_size=2)
 
         # Full set, one fresh policy version, distinct group ids 0..1.
-        phases = iteration.stats.as_phase_dict()
+        phases = iteration.stats.as_metrics_dict()
         assert phases["continuous.rollout_policy_version"] == 1.0
         assert phases["continuous.consume_policy_version"] == 1.0
         assert phases["continuous.stale_policy_versions"] == 0.0
@@ -637,7 +637,7 @@ async def test_draining_barrier_reports_mode_zero() -> None:
     try:
         await schedule.next_iteration(["p0", "p1"], group_size=2)
         phases = await schedule.after_train_step()
-        assert phases.as_phase_dict()["continuous.weight_sync_barrier_mode"] == 0.0
+        assert phases.as_metrics_dict()["continuous.weight_sync_barrier_mode"] == 0.0
     finally:
         await schedule.shutdown()
 
@@ -671,7 +671,7 @@ async def test_non_draining_sync_skips_inflight_wait() -> None:
         # canary test, where this would block until allow_score.set()).
         phases = await asyncio.wait_for(schedule.after_train_step(), 5.0)
 
-        assert phases.as_phase_dict()["continuous.weight_sync_barrier_mode"] == 1.0
+        assert phases.as_metrics_dict()["continuous.weight_sync_barrier_mode"] == 1.0
         assert len(syncer.calls) == sync_calls_before + 1
         snapshot = await owner_snapshot(schedule._owner)
         assert snapshot.producer_state is not None
@@ -743,7 +743,7 @@ async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence() -> No
             0,
         ]
         assert [
-            iteration.stats.as_phase_dict()["continuous.lookahead_requested"]
+            iteration.stats.as_metrics_dict()["continuous.lookahead_requested"]
             for iteration in iterations
         ] == [1.0, 1.0, 1.0, 1.0, 1.0, 0.0]
         assert [
@@ -758,7 +758,7 @@ async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence() -> No
             )
         ]
         assert [
-            stats.as_phase_dict()["continuous.weight_sync_barrier_mode"] for stats in sync_stats
+            stats.as_metrics_dict()["continuous.weight_sync_barrier_mode"] for stats in sync_stats
         ] == [1.0, 1.0, 1.0]
         assert runtime.current_policy_version == 4
 

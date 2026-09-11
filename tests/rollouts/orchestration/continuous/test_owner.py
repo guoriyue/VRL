@@ -229,7 +229,7 @@ async def test_owner_cadence_survives_blocked_trainer_event_loop() -> None:
         time.sleep(0.05)
         after = await owner_snapshot(owner)
 
-        assert iteration.stats.as_phase_dict()["continuous.rollout_policy_version"] == 1.0
+        assert iteration.stats.as_metrics_dict()["continuous.rollout_policy_version"] == 1.0
         assert before.producer_state is not None
         assert after.producer_state is not None
         assert after.producer_state.tick_count > before.producer_state.tick_count
@@ -255,7 +255,7 @@ async def test_owner_skips_initial_commit_for_initialized_runtime() -> None:
             initial_weights=None,
         )
 
-        assert iteration.stats.as_phase_dict()["continuous.rollout_policy_version"] == 7.0
+        assert iteration.stats.as_metrics_dict()["continuous.rollout_policy_version"] == 7.0
         assert lifecycle.push_calls == []
     finally:
         await owner.shutdown()
@@ -292,7 +292,7 @@ async def test_draining_commit_waits_for_reward_then_resumes() -> None:
         phases = await asyncio.wait_for(commit, 5.0)
         resumed = await owner_snapshot(owner)
 
-        assert phases.as_phase_dict()["continuous.weight_sync_barrier_mode"] == 0.0
+        assert phases.as_metrics_dict()["continuous.weight_sync_barrier_mode"] == 0.0
         assert lifecycle.version == 2
         assert resumed.producer_state is not None
         assert resumed.producer_state.paused_for_weight_sync is False
@@ -321,7 +321,7 @@ async def test_version_slots_skip_drain_but_still_gate_new_admission() -> None:
         phases = await asyncio.wait_for(owner.commit_weights({"w": 1}), 5.0)
         snapshot = await owner_snapshot(owner)
 
-        assert phases.as_phase_dict()["continuous.weight_sync_barrier_mode"] == 1.0
+        assert phases.as_metrics_dict()["continuous.weight_sync_barrier_mode"] == 1.0
         assert lifecycle.version == 2
         assert collector.blocked_calls > 0
         assert snapshot.producer_state is not None

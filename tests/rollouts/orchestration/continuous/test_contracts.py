@@ -232,8 +232,8 @@ async def test_ready_queue_gets_items_only_after_reward_scoring() -> None:
         assert item.batch.rewards is not None
         assert item.batch.rewards.numel() == 2
         # Collect phase timings rode along on the item, not on shared state.
-        assert item.stats.as_phase_dict()["collect.engine_generate"] == 1.0
-        assert item.stats.as_phase_dict()["collect.reward_score"] == 0.5
+        assert item.stats.as_metrics_dict()["collect.engine_generate"] == 1.0
+        assert item.stats.as_metrics_dict()["collect.reward_score"] == 0.5
     finally:
         await producer.stop()
 
@@ -1056,7 +1056,7 @@ async def test_consumer_consumes_stale_items_within_bound() -> None:
         current_policy_version=2,
     )
 
-    phases = iteration.stats.as_phase_dict()
+    phases = iteration.stats.as_metrics_dict()
     assert phases["continuous.rollout_policy_version"] == 1.0
     assert phases["continuous.stale_policy_versions"] == 1.0
     assert phases["continuous.consume_policy_version"] == 2.0
@@ -1112,7 +1112,7 @@ async def test_iteration_carries_batch_identity_gauges() -> None:
         current_policy_version=1,
     )
 
-    phases = iteration.stats.as_phase_dict()
+    phases = iteration.stats.as_metrics_dict()
     assert phases["continuous.batch_id"] == pytest.approx(3.0)
     assert phases["continuous.max_attempt"] == pytest.approx(2.0)
 
@@ -1220,7 +1220,7 @@ async def test_late_reward_batch_fails_under_non_draining_max_stale_0() -> None:
 
 @pytest.mark.asyncio
 async def test_consumer_aggregates_item_phase_times() -> None:
-    """Per-item collect timings sum into iteration.stats.as_phase_dict()."""
+    """Per-item collect timings sum into iteration.stats.as_metrics_dict()."""
     queue = ContinuousRolloutQueue(max_items=8)
     queue.put(
         _item(
@@ -1244,9 +1244,9 @@ async def test_consumer_aggregates_item_phase_times() -> None:
         current_policy_version=1,
     )
 
-    assert iteration.stats.as_phase_dict()["collect.engine_generate"] == 4.0
-    assert iteration.stats.as_phase_dict()["collect.reward_score"] == 0.5
-    assert "continuous.queue_wait_s" in iteration.stats.as_phase_dict()
+    assert iteration.stats.as_metrics_dict()["collect.engine_generate"] == 4.0
+    assert iteration.stats.as_metrics_dict()["collect.reward_score"] == 0.5
+    assert "continuous.queue_wait_s" in iteration.stats.as_metrics_dict()
 
 
 @pytest.mark.asyncio

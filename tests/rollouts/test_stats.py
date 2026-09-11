@@ -22,7 +22,7 @@ def test_counter_sums_without_entering_phase_percentage_base() -> None:
     s.add_counter("collect.sample_count", 2)
 
     assert s.counters == {"collect.sample_count": 5.0}
-    assert s.as_phase_dict()["collect.sample_count"] == 5.0
+    assert s.as_metrics_dict()["collect.sample_count"] == 5.0
 
 
 def test_gauge_merge_retains_peak_without_summing_snapshots() -> None:
@@ -39,7 +39,7 @@ def test_gauge_merge_retains_peak_without_summing_snapshots() -> None:
         "continuous.stale_policy_versions": 1.0,
         "continuous.producer_inflight": 4.0,
     }
-    assert first.as_phase_dict()["continuous.stale_policy_versions"] == 1.0
+    assert first.as_metrics_dict()["continuous.stale_policy_versions"] == 1.0
 
 
 def test_merge_sums_phases_and_all_reward_calls() -> None:
@@ -61,7 +61,7 @@ def test_fold_reward_timing_records_typed_fields() -> None:
     assert s.reward_queue_wait_ms == 1.0
     assert s.reward_inference_ms == 4.0
     assert s.counters["reward.call_count"] == 1
-    assert s.as_phase_dict()["reward.latency_s"] == 0.005
+    assert s.as_metrics_dict()["reward.latency_s"] == 0.005
 
 
 def test_reward_timing_aggregates_calls_percentiles_and_extra_phases() -> None:
@@ -72,7 +72,7 @@ def test_reward_timing_aggregates_calls_percentiles_and_extra_phases() -> None:
             extra_ms={"artifact_validation_ms": 2.0},
         )
 
-    metrics = s.as_phase_dict()
+    metrics = s.as_metrics_dict()
     assert metrics["reward.latency_s"] == 0.06
     assert metrics["reward.call_count"] == 3.0
     assert metrics["reward.latency_p50_s"] == 0.02
@@ -90,11 +90,11 @@ def test_reward_extra_timing_rejects_non_timing_names() -> None:
         raise AssertionError("invalid reward timing name was accepted")
 
 
-def test_as_phase_dict_surfaces_reward_as_seconds() -> None:
+def test_as_metrics_dict_surfaces_reward_as_seconds() -> None:
     s = RolloutStats()
     s.add_phase("denoise", 1.0)
     s.fold_reward_timing(inference_ms=2000.0)
-    d = s.as_phase_dict()
+    d = s.as_metrics_dict()
     assert d["denoise"] == 1.0
     assert d["reward.inference_s"] == 2.0
 
@@ -196,4 +196,4 @@ def test_extra_reward_timings_cannot_overwrite_standard_metrics():
         with pytest.raises(ValueError, match="collides with a standard timing"):
             stats.fold_reward_timing(latency_ms=30.0, extra_ms={name: 999.0})
         assert stats == before
-        assert stats.as_phase_dict()["reward.latency_p95_s"] == 0.01
+        assert stats.as_metrics_dict()["reward.latency_p95_s"] == 0.01

@@ -227,11 +227,11 @@ class RolloutStats:
         for name, value in normalized_extra.items():
             self.reward_extra_ms[name] = self.reward_extra_ms.get(name, 0.0) + value
 
-    def as_phase_dict(self) -> dict[str, float]:
-        """Flat phase->seconds view, including reward timings as seconds.
+    def as_metrics_dict(self) -> dict[str, float]:
+        """Flat metric view combining durations, counters and peak gauges.
 
         Reward millisecond fields surface as ``reward.<name>_s`` so existing
-        phase-line consumers see them alongside the wall-clock phases without
+        metric consumers see them alongside the wall-clock phases without
         a second mechanism.
         """
 
@@ -278,8 +278,8 @@ class LoggingStatsSink:
         self._logger = logger or logging.getLogger("vrl.stats")
 
     def record(self, step: int, stats: RolloutStats) -> None:
-        phases = stats.as_phase_dict()
-        if not phases:
+        metrics = stats.as_metrics_dict()
+        if not metrics:
             return
         percentage_phases = {
             name: seconds
@@ -296,7 +296,7 @@ class LoggingStatsSink:
                 if name in percentage_phases
                 else f"{name}={value:.3f}"
             )
-            for name, value in phases.items()
+            for name, value in metrics.items()
         )
         self._logger.info("phase_times[step=%d] total=%.3fs | %s", step, total, parts)
 
@@ -314,12 +314,12 @@ class JsonlStatsSink:
         self._path = Path(path)
 
     def record(self, step: int, stats: RolloutStats) -> None:
-        phases = stats.as_phase_dict()
-        if not phases:
+        metrics = stats.as_metrics_dict()
+        if not metrics:
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps({"step": int(step), **phases}, sort_keys=True) + "\n")
+            handle.write(json.dumps({"step": int(step), **metrics}, sort_keys=True) + "\n")
 
 
 class MultiStatsSink:

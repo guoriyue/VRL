@@ -1483,7 +1483,7 @@ class OnlineTrainer:
             for timer in (*self._update_phase_timers, optimizer_timer):
                 self._write_phase_events(timer, step=metric_step)
             self._update_phase_timers.clear()
-        phase_times = stats.as_phase_dict()
+        phase_times = stats.as_metrics_dict()
         metrics = agg.build(
             reward_mean=reward_mean,
             reward_std=reward_std,
@@ -1561,7 +1561,7 @@ class OnlineTrainer:
                 adv_zero_rate=adv_zero_rate,
                 group_size=group_size,
                 trained_prompt_num=trained_prompt_num,
-                phase_times=self._step_stats(iteration, timer).as_phase_dict(),
+                phase_times=self._step_stats(iteration, timer).as_metrics_dict(),
             )
 
         defer_replay_tensor_move = uses_evaluator and bool(
@@ -1787,7 +1787,7 @@ class OnlineTrainer:
 
         if policy_updated:
             step_stats.merge(await self.rollout_schedule.after_train_step())
-        phase_times = step_stats.as_phase_dict()
+        phase_times = step_stats.as_metrics_dict()
         if cfg.profile and phase_times:
             self._stats_sink.record(metric_step, step_stats)
             self._write_phase_events(timer, step=metric_step)

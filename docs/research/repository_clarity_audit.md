@@ -6193,3 +6193,17 @@ The broader repository audit remains incomplete.
 - NaN and infinity signal regressions both failed before the change. Denoise
   suite: 82 passed. Touched-file Ruff and diff checks pass. No training-quality
   or throughput claim; broader repository audit remains incomplete.
+
+## Rollout stats expose a metric mapping, not only phase times
+
+- Rename RolloutStats.as_phase_dict to as_metrics_dict and update all Python
+  callers/tests. The output includes summed phases, counters, peak gauges and
+  reward latency percentiles; the old name incorrectly implied every value was
+  a duration. Sink locals now call that full mapping metrics too.
+- Keep separate accumulation methods and sink classes because reduction and
+  output ownership differ. Preserve all output keys, units, phase percentage
+  calculations and historical log/JSON formats. No alias or new abstraction;
+  downstream metric-schema field renaming is outside this interface cleanup.
+- Stats, collector, continuous orchestration and trainer reward-update tests:
+  281 passed. Touched-file Ruff and diff checks pass; no old method references
+  remain in vrl/tests Python sources. Broader repository audit incomplete.

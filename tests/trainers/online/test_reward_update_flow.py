@@ -485,7 +485,7 @@ class TestRewardUpdateFlow:
                 return stats
 
             async def finish_optimizer_update(self, **kwargs):
-                return kwargs["stats"].as_phase_dict()
+                return kwargs["stats"].as_metrics_dict()
 
         phases = asyncio.run(
             _run_streaming_optimizer_update(
