@@ -4222,3 +4222,17 @@ this combined regression is compatibility evidence, not architectural completion
   negative values. Five failed before the fix (the negative case already passed).
   All 116 checkpointing tests now pass; touched-file Ruff checks pass. The overall
   repository clarity audit remains incomplete.
+
+## Checkpoint consumer regression after completeness tightening
+
+- Verified supervisor recovery delegates to `find_latest_complete_checkpoint`,
+  while evaluation uses the shared completeness predicate and `CheckpointTarget`.
+  Retain these public persistence boundaries and checkpoint/file-name constants;
+  no duplicate progress inference or new wrapper is needed at these call sites.
+- Retain supervisor `_bounded_number` as an argparse type adapter and its
+  single-owner environment guard as a process-launch boundary. Their small size
+  alone does not justify relocation into unrelated model/checkpoint classes.
+- Ran supervisor, image checkpoint evaluation and SANA checkpoint evaluation
+  suites on the current implementation: 116 passed in 7.30s, exit zero. No
+  implementation changed in this slice. This validates consumer integration
+  beyond the checkpoint unit suite; full repository clarity remains unproven.
