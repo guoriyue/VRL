@@ -7217,3 +7217,15 @@ The broader repository audit remains incomplete.
 - Strict failure, driver frozen-offload, topology and general orchestration
   suites: 39 passed. No production edit justified in this slice; no new class or
   generic helper. Broader repository clarity audit remains incomplete.
+
+## Fused token log-prob removes an unused launch-time import
+
+- Remove the unused local import triton and matching del in _fwd_triton. Kernel
+  definitions already load Triton; backend selection checks their availability.
+  Keep the backward import because its launch grid uses triton.cdiv.
+- Keep shared accumulation-dtype/backend selection helpers and kernel chunk/block
+  constants as numerical and launch boundaries. Keep vLLM adapter methods that
+  isolate external internal APIs rather than exposing them to every family.
+- Fused linear log-prob suite: 26 passed. Touched-file Ruff and diff checks pass.
+  No added implementation-mirroring test or numerical change; no throughput
+  improvement claim. Broader repository clarity audit remains incomplete.

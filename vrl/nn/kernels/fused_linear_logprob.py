@@ -64,8 +64,6 @@ def _fwd_torch(z: torch.Tensor, targets: torch.Tensor, inv_temp: float):
 
 
 def _fwd_triton(z: torch.Tensor, targets: torch.Tensor, inv_temp: float):
-    import triton
-
     rows = z.shape[0]
     out = torch.empty(rows, dtype=torch.float32, device=z.device)
     lse = torch.empty(rows, dtype=torch.float32, device=z.device)
@@ -80,7 +78,6 @@ def _fwd_triton(z: torch.Tensor, targets: torch.Tensor, inv_temp: float):
         BLOCK_V=_BLOCK_V,
         num_warps=8,
     )
-    del triton
     return out, lse
 
 
