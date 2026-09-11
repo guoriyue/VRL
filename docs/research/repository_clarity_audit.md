@@ -6220,3 +6220,19 @@ The broader repository audit remains incomplete.
 - Twenty boundary cases cover singular and bulk entry points; nine failed before
   the fix. Stats, collector, continuous and trainer reward-update suites: 301
   passed. Touched-file Ruff and diff checks pass. Broader audit incomplete.
+
+## Collector reads the timing fields its receipt actually owns
+
+- Read UnscoredRollout.phases and reward_timing_ms directly when finishing scored
+  groups. Both dictionaries are declared with empty defaults on the production
+  dataclass; missing attributes should expose a contract violation rather than
+  silently erase measurements.
+- Keep simplified scheduling payload compatibility in PromptCollectionFake's
+  finish adapter. It supplies timing-only views for those fakes before invoking
+  production accounting/remapping, without mutating their pending payloads.
+  This test boundary adds lines deliberately; production should not guess fields
+  solely because a test omits full request/output construction.
+- Keep generation receipts, scoring and identity-remapping boundaries. No new
+  production class, constant or alternate statistics calculation is introduced.
+- Collector, orchestration and trainer reward-update suites: 329 passed.
+  Touched-file Ruff and diff checks pass. Broader repository audit incomplete.

@@ -657,8 +657,8 @@ class RolloutCollector:
         # first group only).
         for group in generated_groups:
             unscored = group.unscored
-            stats.add_phases(getattr(unscored, "phases", {}))
-            reward_timing_ms = getattr(unscored, "reward_timing_ms", {}) or {}
+            stats.add_phases(unscored.phases)
+            reward_timing_ms = unscored.reward_timing_ms
             if reward_timing_ms:
                 standard_keys = {"latency_ms", "queue_wait_ms", "inference_ms"}
                 stats.fold_reward_timing(

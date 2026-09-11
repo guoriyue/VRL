@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.collector.core import RolloutCollector
+from vrl.rollouts.collector.core import GeneratedPromptGroup, RolloutCollector
+from vrl.rollouts.stats import RolloutStats
 
 
 async def collect_scored(
@@ -41,4 +44,23 @@ class PromptCollectionFake:
 
     generate_prompt_groups = RolloutCollector.generate_prompt_groups
     collect_prompt_groups = RolloutCollector.collect_prompt_groups
-    finish_scored_prompt_groups = RolloutCollector.finish_scored_prompt_groups
+    def finish_scored_prompt_groups(
+        self,
+        generated_groups: list[GeneratedPromptGroup],
+        batches: list[RolloutBatch],
+        stats: RolloutStats,
+    ) -> list[RolloutBatch]:
+        # Scheduling fakes may return a batch directly, without building a
+        # generation request/output. Supply its omitted timing fields here;
+        # production UnscoredRollout always owns both dictionaries.
+        groups = [
+            replace(
+                group,
+                unscored=SimpleNamespace(
+                    phases=getattr(group.unscored, "phases", {}),
+                    reward_timing_ms=getattr(group.unscored, "reward_timing_ms", {}),
+                ),
+            )
+            for group in generated_groups
+        ]
+        return RolloutCollector.finish_scored_prompt_groups(self, groups, batches, stats)
