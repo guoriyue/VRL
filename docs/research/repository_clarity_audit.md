@@ -2396,3 +2396,19 @@ this combined regression is compatibility evidence, not architectural completion
   does not label that limitation fixed or claim generic mixed-device support.
 - Documentation-only change; touched-file Ruff and diff checks passed. No new
   runtime test run claimed. Full repository review remains active.
+
+## Replay declares absence of generation components
+
+- Removed RuntimeError-as-absence handling from generation_memory_targets and
+  move_frozen_components. Pipeline failures now propagate. ReplayRolloutStubs
+  explicitly returns no generation targets and performs no frozen-component
+  moves; this common owner covers Diffusers replay plus Wan and Anima's custom
+  replay inheritance. Pipeline-free generation still supports its own VAE.
+- Keep the model memory interfaces and component traversal. The two small replay
+  implementations are intentional protocol behavior, not forwarding wrappers;
+  no new class or frozen-component name list added.
+- Validation: final denoise/interface/Wan/Anima run passed 346 tests; an earlier
+  denoise/interface/Echo run passed 307 before moving the no-op methods to the
+  shared replay mixin. New tests exercise replay absence explicitly and preserve
+  pipeline RuntimeError identity. Touched-file Ruff/diff checks passed. Full
+  repository review remains active.

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 import torch.nn as nn
 
 from tests.models.steps.denoise.fixtures import (
@@ -22,7 +23,7 @@ from tests.models.steps.denoise.fixtures import (
     build_tiny_pipeline_shell,
     build_tiny_sd3_transformer,
 )
-from vrl.models.steps.denoise.base import DiffusionModelBase
+from vrl.models.steps.denoise.base import DiffusersReplayModelBase, DiffusionModelBase
 
 
 class _TinyDiffusionModel(DiffusionModelBase):
@@ -86,15 +87,29 @@ def test_move_frozen_components_moves_only_frozen() -> None:
     assert next(model.transformer.parameters()).device.type == "cpu"
 
 
-def test_no_pipeline_is_a_safe_no_op() -> None:
-    """Replay models / single-file checkpoints expose no pipeline -> empty set."""
+def test_replay_declares_no_frozen_components() -> None:
+    class ReplayModel(DiffusersReplayModelBase, _TinyDiffusionModel):
+        pass
 
-    class _NoPipeline(_TinyDiffusionModel):
+    replay = ReplayModel(transformer=nn.Linear(2, 2), scheduler=None)
+    replay.move_frozen_components("meta")
+    assert replay.generation_memory_targets() == {}
+    assert next(replay.transformer.parameters()).device.type == "cpu"
+
+
+@pytest.mark.parametrize("operation", ["move", "targets"])
+def test_pipeline_failure_is_not_treated_as_absence(operation) -> None:
+    failure = RuntimeError("pipeline failed")
+
+    class BrokenPipeline(_TinyDiffusionModel):
         @property
-        def pipeline(self) -> Any:
-            raise RuntimeError("replay model has no pipeline")
+        def pipeline(self):
+            raise failure
 
-    model = _model()
-    no_pipe = _NoPipeline(model._pipeline)
-    object.__setattr__(no_pipe, "_pipeline", None)
-    no_pipe.move_frozen_components("cpu")  # must not raise (moves nothing)
+    model = BrokenPipeline(_model().pipeline)
+    with pytest.raises(RuntimeError, match="pipeline failed") as caught:
+        if operation == "move":
+            model.move_frozen_components("cpu")
+        else:
+            model.generation_memory_targets()
+    assert caught.value is failure

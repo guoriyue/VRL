@@ -530,10 +530,10 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         config still asks for one.
         """
 
-        try:
-            vae = self.pipeline.vae
-        except (AttributeError, RuntimeError):
-            vae = getattr(self, "vae", None)
+        pipeline = getattr(self, "pipeline", None)
+        vae = (
+            getattr(pipeline, "vae", None) if pipeline is not None else getattr(self, "vae", None)
+        )
         return {} if vae is None else {"vae_decode": vae}
 
     def move_frozen_components(self, device: Any) -> None:
@@ -555,10 +555,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         nothing.
         """
 
-        try:
-            pipeline = self.pipeline
-        except (AttributeError, RuntimeError):
-            return
+        pipeline = getattr(self, "pipeline", None)
         components = getattr(pipeline, "components", None)
         if not isinstance(components, Mapping):
             return
@@ -735,6 +732,14 @@ class ReplayRolloutStubs:
     rollout-side ABC methods are unreachable by construction. They raise with
     the concrete class name here instead of each family re-writing the stub.
     """
+
+    def generation_memory_targets(self) -> dict[str, Any]:
+        """Replay owns no VAE or generation-only memory targets."""
+        return {}
+
+    def move_frozen_components(self, device: Any) -> None:
+        """Replay owns no frozen pipeline components to move."""
+        del device
 
     def encode_prompt(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         raise RuntimeError(f"{type(self).__name__} cannot encode prompts")
