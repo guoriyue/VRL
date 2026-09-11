@@ -273,17 +273,23 @@ def _cuda_device_index(device: Any) -> int | None:
         if str(device_type).lower() != "cuda":
             return None
         index = getattr(device, "index", None)
-        return (
-            0 if index is None else require_exact_int(index, path="CUDA device index", minimum=0)
-        )
+        if index is not None:
+            return require_exact_int(index, path="CUDA device index", minimum=0)
+    else:
+        text = str(device).lower()
+        if not text.startswith("cuda"):
+            return None
+        match = re.fullmatch(r"cuda(?::([0-9]+))?", text)
+        if match is None:
+            raise ValueError(f"invalid CUDA device {device!r}; expected 'cuda' or 'cuda:<index>'")
+        if match.group(1) is not None:
+            return int(match.group(1))
 
-    text = str(device).lower()
-    if not text.startswith("cuda"):
-        return None
-    match = re.fullmatch(r"cuda(?::([0-9]+))?", text)
-    if match is None:
-        raise ValueError(f"invalid CUDA device {device!r}; expected 'cuda' or 'cuda:<index>'")
-    return 0 if match.group(1) is None else int(match.group(1))
+    # Unindexed CUDA means the current device, not ordinal zero. This function
+    # runs at driver validation; parsing config still does not import Torch.
+    import torch
+
+    return torch.cuda.current_device()
 
 
 __all__ = [

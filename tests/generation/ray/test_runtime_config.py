@@ -1376,3 +1376,22 @@ def test_driver_ownership_discovers_modules_when_policy_device_is_absent() -> No
                 model=object(), trainable_modules={"transformer": SimpleNamespace(device="cuda:0")}
             )
         )
+
+
+@pytest.mark.parametrize("device", ["cuda", torch.device("cuda")])
+def test_driver_ownership_resolves_unindexed_cuda_to_current_device(monkeypatch, device):
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 1)
+    config = _ray_config(_resource_cfg(trainer_devices=[0], rollout_devices=[1]))
+    with pytest.raises(ValueError, match="Trainer device cuda:1 overlaps"):
+        config.validate_driver_state(
+            driver_bundle=_Bundle(model=SimpleNamespace(device=device), trainable_modules={})
+        )
+
+
+def test_explicit_driver_device_does_not_query_current_cuda_device(monkeypatch):
+    def unexpected_query():
+        pytest.fail("explicit device must not query current CUDA device")
+
+    monkeypatch.setattr(torch.cuda, "current_device", unexpected_query)
+    config = _ray_config(_resource_cfg(trainer_devices=[0], rollout_devices=[1]))
+    config.validate_driver_state(driver_bundle=_Bundle(model=_CudaPolicy(), trainable_modules={}))

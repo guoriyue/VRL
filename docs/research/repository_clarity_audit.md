@@ -2845,3 +2845,20 @@ this combined regression is compatibility evidence, not architectural completion
   probe still converges to the correct simulated capacity. CUDA operations are
   mocked; these tests prove object lifetime, not physical-GPU throughput. Touched
   Ruff and diff checks passed. Full repository review remains active.
+
+## Unindexed CUDA resolves the current device at driver validation
+
+- Follow up the explicit limitation from the earlier device-discovery slice:
+  bare cuda and torch.device('cuda') were assigned ordinal zero, which could
+  miss a conflict when the driver selected a different current device.
+- The existing parser now returns explicit indices directly and queries
+  torch.cuda.current_device only for unindexed CUDA. Local Torch source confirms
+  that API reports the selected device. Its import remains inside the runtime
+  query branch; config parsing and explicit/non-CUDA handling need no CUDA query.
+- Keep one parser and the existing topology guard, including cross-node rules.
+  No new device wrapper, mapping table or fallback. This supersedes the earlier
+  documented bare-cuda default rather than claiming it was already resolved.
+- Validation: 385 Ray runtime-config and config tests passed. String and typed
+  unindexed CUDA detect a mocked GPU-1 conflict; explicit GPU-0 validation proves
+  no current-device query is made. Touched-file Ruff/diff checks passed. Full
+  repository review remains active.
