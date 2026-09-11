@@ -5460,3 +5460,24 @@ this combined regression is compatibility evidence, not architectural completion
   Cache/token scheduling/runner suites: 84 passed. Direct attention backend
   suites: 6 passed. Touched-file Ruff and git diff --check pass. These checks do
   not establish production model performance or complete the repository audit.
+
+## Prompt scoring retains its existing generation receipts through finalization
+
+- Pass GeneratedPromptGroup directly through strict collection and continuous
+  reward finalization instead of reconstructing (unscored, prompt_indices)
+  tuples. Remove the unused scalar-remap alternative; both real callers already
+  receive list-valued prompt indices from generation.
+- Derive generation intervals from those receipts when reporting collection
+  timing, removing the parallel mutable interval list. Scoring tasks, bounded
+  overlap, cancellation cleanup, reward retries and prompt remapping retain
+  their existing behavior.
+- Keep generation/scoring/finalization as collector methods because both
+  schedules consume these stages independently. Keep local scoring task helpers
+  for call-owned timing and cleanup. No extra class or compatibility wrapper is
+  added. The request builder's reflected denoise-field constant remains a schema
+  boundary rather than a hardcoded business vocabulary.
+- Rollout suite after receipt migration: 486 passed (three dependency warnings).
+  After removing the redundant timing list, collector/orchestration suites:
+  311 passed. Touched-file Ruff and git diff --check pass. No new tests merely
+  mirror the representation change; existing tests exercise prompt identities,
+  timing, overlap and cleanup. The full repository audit remains incomplete.

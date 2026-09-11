@@ -583,7 +583,7 @@ class ContinuousRolloutProducer:
                             await asyncio.sleep(min(self.poll_interval_s, _RETRY_BACKOFF_MAX_S))
                     reward_wall = time.perf_counter() - reward_started
                 batches = self.lifecycle.collector.finish_scored_prompt_groups(
-                    [(receipt.unscored, receipt.prompt_indices)],
+                    [receipt],
                     batches,
                     stats,
                 )

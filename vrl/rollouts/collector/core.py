@@ -513,12 +513,9 @@ class RolloutCollector:
             return []
 
         collection_started = time.perf_counter()
-        generation_intervals: list[tuple[float, float]] = []
         reward_intervals: list[tuple[float, float]] = []
 
-        # (unscored group, group-id remap: per-sample indices for plain-string
-        # batches, a single prompt index for PromptExample groups)
-        unscored_groups: list[tuple[UnscoredRollout, list[int] | int]] = []
+        generated_groups: list[GeneratedPromptGroup] = []
         scored_batches: list[RolloutBatch] = []
         # The collector combines topology and reward-runtime execution semantics.
         # Only its capability may enable per-group collection: the acceptance
@@ -567,12 +564,10 @@ class RolloutCollector:
             score_task = None
             accept_single_batch(await task)
 
-        async def record_unscored(
-            unscored: UnscoredRollout,
-            remap: list[int] | int,
-        ) -> None:
+        async def record_generated(group: GeneratedPromptGroup) -> None:
             nonlocal score_task
-            unscored_groups.append((unscored, remap))
+            generated_groups.append(group)
+            unscored = group.unscored
             if not per_group_scoring:
                 return
             if mode is RewardCollectionMode.PER_GROUP_SERIAL:
@@ -597,9 +592,8 @@ class RolloutCollector:
                 runtime_debug=runtime_debug,
                 policy_version=policy_version,
             ):
-                generation_intervals.append((generated.started_at, generated.completed_at))
-                await record_unscored(generated.unscored, generated.prompt_indices)
-            if not unscored_groups:
+                await record_generated(generated)
+            if not generated_groups:
                 return []
 
             if per_group_scoring:
@@ -609,7 +603,7 @@ class RolloutCollector:
                 batches = scored_batches
             else:
                 batches = await score_unscored(
-                    [unscored for unscored, _ in unscored_groups],
+                    [group.unscored for group in generated_groups],
                 )
         except BaseException as root_cause:
             cleanup_errors: list[BaseException] = []
@@ -635,10 +629,12 @@ class RolloutCollector:
                 ) from root_cause
             raise
 
-        all_batches = self.finish_scored_prompt_groups(unscored_groups, batches, stats)
+        all_batches = self.finish_scored_prompt_groups(generated_groups, batches, stats)
         stats.add_collection_timing(
             wall_s=time.perf_counter() - collection_started,
-            generation_intervals=generation_intervals,
+            generation_intervals=[
+                (group.started_at, group.completed_at) for group in generated_groups
+            ],
             reward_intervals=reward_intervals,
         )
         stats.add_counter("collect.group_count", len(all_batches))
@@ -650,7 +646,7 @@ class RolloutCollector:
 
     def finish_scored_prompt_groups(
         self,
-        unscored_groups: list[tuple[UnscoredRollout, list[int] | int]],
+        generated_groups: list[GeneratedPromptGroup],
         batches: list[RolloutBatch],
         stats: RolloutStats,
     ) -> list[RolloutBatch]:
@@ -659,7 +655,8 @@ class RolloutCollector:
         # Per-call phases live on the unscored groups (collector writes the
         # call-level score/build timings and reward inference timings on the
         # first group only).
-        for unscored, _ in unscored_groups:
+        for group in generated_groups:
+            unscored = group.unscored
             stats.add_phases(getattr(unscored, "phases", {}))
             reward_timing_ms = getattr(unscored, "reward_timing_ms", {}) or {}
             if reward_timing_ms:
@@ -676,9 +673,8 @@ class RolloutCollector:
                 )
 
         all_batches: list[RolloutBatch] = []
-        for batch, (_, remap) in zip(batches, unscored_groups, strict=True):
-            global_prompt_indices = remap if isinstance(remap, list) else [remap]
-            remap_group_ids_(batch, global_prompt_indices)
+        for batch, group in zip(batches, generated_groups, strict=True):
+            remap_group_ids_(batch, group.prompt_indices)
             all_batches.extend(split_batch_by_group(batch))
         return all_batches
 
