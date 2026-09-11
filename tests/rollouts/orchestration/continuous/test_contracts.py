@@ -1505,3 +1505,36 @@ async def test_terminal_runtime_failure_in_preview_still_stops_current() -> None
     finally:
         collector.allow_score.set()
         await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_consumer_polling_respects_remaining_wait_budget():
+    consumer = _consumer(ContinuousRolloutQueue(max_items=8), max_stale=1)
+    # The outer guard prevents a regression from sleeping for the ten-second
+    # polling interval. Only the consumer's own timeout has this message.
+    with pytest.raises(TimeoutError, match="continuous rollout consumer timed out"):
+        await asyncio.wait_for(
+            consumer.collect_iteration(
+                prompt_batch_id=0,
+                expected_group_count=1,
+                current_policy_version=1,
+                wait_timeout_s=0.01,
+                poll_interval_s=10.0,
+            ),
+            timeout=1.0,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["wait_timeout_s", "poll_interval_s"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), 0.0, -1.0])
+async def test_consumer_rejects_invalid_wait_settings(field, value):
+    consumer = _consumer(ContinuousRolloutQueue(max_items=8), max_stale=1)
+    settings = {"wait_timeout_s": 1.0, "poll_interval_s": 0.001, field: value}
+    with pytest.raises(ValueError, match=field):
+        await consumer.collect_iteration(
+            prompt_batch_id=0,
+            expected_group_count=1,
+            current_policy_version=1,
+            **settings,
+        )

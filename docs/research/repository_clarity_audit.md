@@ -462,3 +462,23 @@ above, not completion of the outstanding repository-wide audit.
 - Validation: 70 data and Torch-free config tests passed; touched-file Ruff and
   whitespace checks pass. Schema order/content and atomic-write implementation
   are unchanged. This review does not establish full model-family audit coverage.
+
+## Continuous consumer wait budget
+
+- Consumer polling now sleeps for the smaller of the poll interval and remaining
+  wait budget. A ten-second poll interval no longer delays a ten-millisecond
+  consumer timeout until the full interval elapses.
+- Reused `require_timeout` at the public collect boundary to reject non-finite or
+  non-positive wait/poll inputs. Kept the existing TimeoutError and diagnostic
+  message, including producer health counters; no new deadline wrapper added.
+- Reviewed generated capacity transitions: reservation persists through reward,
+  size reports replace the ceiling once, scoring does not free admission, and
+  terminal cleanup releases the reservation. Retained this state owner and the
+  distinct ready queue; combining them would conflate independent lifetimes.
+- Retained staleness policy as the shared version-window comparison used by
+  producer/consumer, and kept consumer selection separate from iteration
+  materialization. The deadline fix changes neither policy selection nor the
+  prompt-batch identity/coverage checks. No new ALL_CAPS data introduced.
+- Validation: all 124 continuous orchestration tests passed, including real
+  event-loop timeout coverage with a poll interval much longer than its budget
+  and invalid-setting rejection. Touched-file Ruff and whitespace checks pass.

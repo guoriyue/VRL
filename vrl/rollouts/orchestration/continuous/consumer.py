@@ -24,6 +24,7 @@ from vrl.rollouts.orchestration.continuous.types import (
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.rollouts.stats import RolloutStats
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
+from vrl.utils.deadline import require_timeout
 
 
 class ContinuousRolloutConsumer:
@@ -65,7 +66,9 @@ class ContinuousRolloutConsumer:
         message (when reached) includes the producer's last error and counters.
         """
 
-        deadline = time.monotonic() + float(wait_timeout_s)
+        wait_timeout_s = require_timeout(wait_timeout_s, name="wait_timeout_s")
+        poll_interval_s = require_timeout(poll_interval_s, name="poll_interval_s")
+        deadline = time.monotonic() + wait_timeout_s
         wait_start = time.perf_counter()
         ready_groups_at_demand = len(
             {
@@ -97,11 +100,12 @@ class ContinuousRolloutConsumer:
                     queue_wait_s=wait_s,
                     ready_groups_at_demand=ready_groups_at_demand,
                 )
-            if time.monotonic() >= deadline:
+            remaining_s = deadline - time.monotonic()
+            if remaining_s <= 0:
                 raise TimeoutError(
                     self._timeout_message(expected_group_count, wait_timeout_s, producer_state),
                 )
-            await asyncio.sleep(poll_interval_s)
+            await asyncio.sleep(min(poll_interval_s, remaining_s))
 
     def _fail_fast_if_producer_stalled(
         self,
