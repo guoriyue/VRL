@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         "--device",
         type=int,
         default=None,
-        help="device id for idle-gap + NVTX attribution; default = busiest device",
+        help="device id for idle-gap + NVTX attribution; default = most kernels in the window",
     )
     parser.add_argument("--top-gaps", type=int, default=10, help="number of idle gaps to show")
     parser.add_argument(

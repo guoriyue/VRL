@@ -5127,3 +5127,18 @@ this combined regression is compatibility evidence, not architectural completion
   text and sorted JSON match saved pre-change outputs exactly. Touched-file
   Ruff and git diff --check pass; obsolete names are absent from Nsight code and
   tests. No real capture or GPU throughput benchmark was run. Wider audit remains open.
+
+## Nsight analysis validates report limits before opening captures
+
+- Require nonnegative integer top_gaps, top_nvtx and min_gap_ns at analyze's
+  public boundary. Negative top values otherwise act as Python negative slice
+  endpoints; booleans/fractions have inconsistent downstream behavior. Reuse
+  require_exact_int rather than adding another validator abstraction.
+- Preserve zero top limits, which omit corresponding rows, and zero minimum
+  gap. Keep interval mathematics and device selection unchanged. Correct CLI
+  help and analysis documentation to say the default device has the most
+  kernels in the window, without claiming it has the highest busy fraction.
+- Nine early-validation regressions failed before this change; a zero-limit
+  test preserves the empty-list control. Nsight report suite: 25 passed.
+  Touched-file Ruff and git diff --check pass. This does not validate a real
+  Nsight capture or complete the broader repository audit.

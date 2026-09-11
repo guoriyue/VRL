@@ -42,6 +42,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from vrl.utils.config import require_exact_int
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -656,9 +657,16 @@ def analyze(
 
     ``window`` (explicit ns) > ``window_nvtx`` (span of a named range) > default
     (the full kernel span). ``device_id`` selects the device for idle-gap and NVTX
-    attribution; default is the device with the most kernels (the compute GPU).
+    attribution; default is the device with the most kernels in the window.
     Per-device busy fractions are always reported for every device.
     """
+
+    for name, value in (
+        ("top_gaps", top_gaps),
+        ("top_nvtx", top_nvtx),
+        ("min_gap_ns", min_gap_ns),
+    ):
+        require_exact_int(value, path=name, minimum=0)
 
     conn, sqlite_path = open_report(path)
     try:
