@@ -68,7 +68,7 @@ Further owner consolidation:
   the schema instead of maintaining a second column definition.
 - `_DENOISE_OPTION_FIELDS` in collector config: schema-derived projection keys,
   not a manually duplicated algorithm vocabulary. Projection helpers remain
-  candidates for a separate ownership review.
+  reviewed below.
 - `HEALTH_CONCURRENCY_GROUP`: Ray concurrency-group protocol name, not business
   routing data.
 
@@ -108,6 +108,27 @@ Binding inspection notes:
 - Checkpoint schema/version/file constants are persistence protocol boundaries;
   retain them. `DEFAULT_CHECKPOINT_STRICT` is the explicit restore protocol
   default. No business vocabulary relocation is indicated for these constants.
+
+Config and utility review:
+
+- Removed `_denoise_options` from collector config; the construction now lives
+  on `DenoiseRequestOptions.from_sections`. Public config types are imported only
+  for type checking. Collector projection, denoise, and config tests: 148 passed,
+  including the torch-free config parsing check. Generic section flattening and
+  duplicate-key checks remain shared schema-adapter logic.
+- `HostMemorySnapshot.capture` and `__str__` replace the external capture and
+  formatting helpers. `log_host_memory` remains the convenient capture-and-log
+  facade; `_read_proc_field_mb` remains the operating-system table adapter.
+  Memory guard, trainer flow, and online lifecycle tests: 44 passed.
+- Corrected the host-memory guard documentation: the threshold measures system
+  available/total memory; process RSS is diagnostic context. Behavior unchanged.
+- `utils/artifacts`: hashing/path helpers serve multiple domains. Environment
+  and metadata field constants are public contracts; image suffixes are a small
+  deliberately isolated file taxonomy. No class wrapper is justified.
+- `utils/deadline`: `require_timeout` is a shared public/direct-constructor
+  validation boundary; `OperationDeadline` already owns expiry and waiting.
+- Online config reflection helpers operate on varying dataclass/section types;
+  preserve framework-adapter ownership rather than make them instance methods.
 
 ## Remaining review
 
