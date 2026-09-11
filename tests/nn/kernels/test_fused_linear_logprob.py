@@ -191,3 +191,10 @@ def test_fused_supports_int32_token_ids():
     hidden, weight, bias, ids = _rand_case(1, 2, 4, 3)
     actual = fused_linear_logprob(hidden, weight, ids.to(torch.int32), bias=bias)
     torch.testing.assert_close(actual, _eager(hidden, weight, bias, ids))
+
+
+@pytest.mark.parametrize("chunk_rows", [-1, 0, True, 1.5, "2"])
+def test_fused_rejects_invalid_chunk_rows(chunk_rows):
+    hidden, weight, bias, ids = _rand_case(1, 2, 4, 3)
+    with pytest.raises(ValueError, match="chunk_rows"):
+        fused_linear_logprob(hidden, weight, ids, bias=bias, chunk_rows=chunk_rows)

@@ -87,3 +87,9 @@ def test_categorical_log_probs_accept_int32_token_ids():
     logits = torch.tensor([[0.0, 1.0, 2.0]])
     result = gather_categorical_log_probs(logits, torch.tensor([1], dtype=torch.int32))
     torch.testing.assert_close(result, torch.log_softmax(logits, dim=-1)[:, 1])
+
+
+@pytest.mark.parametrize("chunk_size", [-1, 0, True, 1.5, "2"])
+def test_categorical_log_probs_reject_invalid_chunk_size(chunk_size):
+    with pytest.raises(ValueError, match="chunk_size"):
+        gather_categorical_log_probs(torch.ones(1, 3), torch.tensor([1]), chunk_size=chunk_size)

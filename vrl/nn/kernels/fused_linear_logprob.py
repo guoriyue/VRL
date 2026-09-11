@@ -39,14 +39,11 @@ import torch
 import torch.nn.functional as F
 
 from vrl.math.token.logprob import require_positive_temperature
+from vrl.utils.config import require_exact_int
 
 # Keep chunk buffers ~16 MB fp32 regardless of vocab size.
 _CHUNK_ELEMENTS = 4 * 1024 * 1024
 _BLOCK_V = 1024
-
-
-def _chunk_rows_for(vocab_size: int) -> int:
-    return max(1, _CHUNK_ELEMENTS // max(vocab_size, 1))
 
 
 def _use_triton(tensor: torch.Tensor) -> bool:
@@ -214,6 +211,8 @@ def fused_linear_logprob(
     (up to fp32 reduction order) to materializing the logits and calling
     ``gather_categorical_log_probs``.
     """
+    if chunk_rows is not None:
+        require_exact_int(chunk_rows, path="chunk_rows", minimum=1)
     temp = require_positive_temperature(temperature)
     if hidden.shape[:-1] != token_ids.shape:
         raise ValueError(
@@ -229,7 +228,11 @@ def fused_linear_logprob(
         raise ValueError("token_ids must use an integer tensor dtype")
     flat_hidden = hidden.reshape(-1, hidden.shape[-1])
     flat_ids = token_ids.to(device=hidden.device, dtype=torch.long).reshape(-1)
-    rows = chunk_rows if chunk_rows is not None else _chunk_rows_for(weight.shape[0])
+    rows = (
+        chunk_rows
+        if chunk_rows is not None
+        else max(1, _CHUNK_ELEMENTS // max(weight.shape[0], 1))
+    )
     out = _FusedLinearLogprob.apply(flat_hidden, weight, bias, flat_ids, 1.0 / temp, rows)
     return out.reshape(token_ids.shape)
 

@@ -1907,3 +1907,17 @@ tracing algorithm construction and evaluator selection together.
 - Validation: 28 fused/eager log-prob tests passed. Five invalid-dtype tests assert
   failure before F.linear, plus int32/eager parity. Touched-file Ruff and diff
   checks passed. No speed or end-to-end training-quality claim was made.
+
+## Log-prob chunk cardinality and default ownership
+
+- Fused chunk_rows lacked validation: a negative range step with nonempty rows
+  skipped every projection and returned an uninitialized output. Require positive
+  exact integer overrides before custom autograd execution. Eager chunk_size uses
+  the same existing integer validator instead of accepting bools/range errors.
+- Inlined sole-use _chunk_rows_for into the default selection site. Keep the
+  isolated kernel buffer-budget and tile-size constants and paired Torch/Triton
+  forward/backward adapters; those are real implementation boundaries. Default
+  chunk selection and positive-integer execution behavior remain unchanged.
+- Validation: 38 fused/eager log-prob tests passed, including ten invalid chunk
+  arguments. Touched-file Ruff/diff checks passed and removed helper has no
+  remaining references. No throughput claim follows from this correctness fix.
