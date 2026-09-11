@@ -85,7 +85,6 @@ class DiffusionRequestLayout:
 
         sampling = request.sampling
         options = request.denoise if request.denoise is not None else DenoiseRequestOptions()
-        num_steps = require_exact_int(sampling["num_steps"], path="sampling.num_steps", minimum=1)
         fps_value = sampling.get("fps", self.default_fps)
         max_sequence_length = sampling.get(
             "max_sequence_length",
@@ -93,27 +92,24 @@ class DiffusionRequestLayout:
         )
         seed = sampling.get("seed")
         model_request_kwargs: dict[str, Any] = {
-            "num_steps": num_steps,
+            "num_steps": sampling["num_steps"],
             "guidance_scale": float(sampling["guidance_scale"]),
-            "height": require_exact_int(sampling["height"], path="sampling.height", minimum=1),
-            "width": require_exact_int(sampling["width"], path="sampling.width", minimum=1),
-            "frame_count": require_exact_int(
-                sampling.get("num_frames", sampling.get("frame_count", self.default_num_frames)),
-                path="sampling.num_frames",
-                minimum=1,
+            "height": sampling["height"],
+            "width": sampling["width"],
+            "frame_count": sampling.get(
+                "num_frames", sampling.get("frame_count", self.default_num_frames)
             ),
         }
         if fps_value is not None:
-            model_request_kwargs["fps"] = require_exact_int(
-                fps_value, path="sampling.fps", minimum=1
-            )
+            model_request_kwargs["fps"] = fps_value
         if sampling.get("negative_prompt") is not None:
             model_request_kwargs["negative_prompt"] = sampling["negative_prompt"]
         if seed is not None:
-            model_request_kwargs["seed"] = require_exact_int(seed, path="sampling.seed")
+            model_request_kwargs["seed"] = seed
         # The typed options carry the rollout-owned knobs; only the two values
         # that depend on the executor or the schedule resolve here.
-        sde_window_range = options.resolve_sde_window_range(num_steps)
+        model_request = DenoiseRequest(**model_request_kwargs)
+        sde_window_range = options.resolve_sde_window_range(model_request.num_steps)
         sde = DenoiseSDEParams(
             noise_level=options.noise_level,
             sde_type=options.sde_type or self.sde_type,
@@ -122,7 +118,7 @@ class DiffusionRequestLayout:
             cache_ref_noise_pred=options.cache_ref_noise_pred,
         )
         params = DiffusionSamplingParams(
-            model_request=DenoiseRequest(**model_request_kwargs),
+            model_request=model_request,
             max_sequence_length=(
                 None
                 if max_sequence_length is None

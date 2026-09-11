@@ -1480,3 +1480,21 @@ close that architectural scope.
 - Validation: 120 full-sequence binding/composition/step tests passed, including
   33 new invalid-input cases and existing request-window tests. Touched-file Ruff
   and git diff --check pass.
+
+## Denoise request owns geometry validation
+
+- Moved geometry/step/fps/seed integer validation from DiffusionRequestLayout to
+  the existing DenoiseRequest.__post_init__. Eval and probe scripts construct that
+  request directly, so the parser alone was not the owner of the contract.
+  The parser now constructs it before resolving the SDE window and retains only
+  text-length validation, which is not a DenoiseRequest field.
+- Defaults and field mapping stay with the executor/parser; no new contract class
+  or duplicated geometry guard. Direct construction gets the same rules without
+  changing valid numerical execution. Payload-module import remains Torch-free.
+- Validation: the expanded generation binding/composition/steps, model-family and
+  script run reached 875 passed/3 skipped before stopping on a pre-existing stale
+  online checkpoint assertion. Inspected save/resume code and confirmed next_step
+  is explicitly required; updated the assertion in a separate test-only commit.
+  The entire script suite then passed (559 tests). Counts overlap and are not an
+  additive total. All generation/model-family tests preceding scripts had passed.
+  Added 25 direct-constructor geometry cases; touched-file Ruff/diff checks pass.

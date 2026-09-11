@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from vrl.utils.config import require_exact_int
+
 if TYPE_CHECKING:
     from vrl.generation.steps.denoise.config import DenoiseRequestOptions
     from vrl.trajectory import TrajectoryBatch, TrajectoryStoragePolicy
@@ -59,6 +61,14 @@ class DenoiseRequest:
     negative_prompt: str = ""
     seed: int | None = None
     fps: int | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("width", "height", "frame_count", "num_steps"):
+            require_exact_int(getattr(self, name), path=f"DenoiseRequest.{name}", minimum=1)
+        if self.fps is not None:
+            require_exact_int(self.fps, path="DenoiseRequest.fps", minimum=1)
+        if self.seed is not None:
+            require_exact_int(self.seed, path="DenoiseRequest.seed")
 
 
 @dataclass(slots=True, init=False)

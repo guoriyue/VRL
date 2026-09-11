@@ -12,7 +12,7 @@ from vrl.generation.bindings.full_sequence_denoise import (
     GenericDiffusionBatchExecutor,
 )
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
-from vrl.generation.types import GenerationRequest
+from vrl.generation.types import DenoiseRequest, GenerationRequest
 
 
 def test_denoise_options_reject_oversized_sde_window() -> None:
@@ -201,11 +201,20 @@ def test_denoise_options_reject_noninteger_window_size(size: object) -> None:
 )
 @pytest.mark.parametrize("value", [True, 1.5, "2", 0, -1])
 def test_diffusion_layout_rejects_coerced_or_nonpositive_dimensions(field, value) -> None:
-    with pytest.raises(ValueError, match=field):
+    with pytest.raises(ValueError, match="frame_count" if field == "num_frames" else field):
         _layout().parse_sampling_params(_request({field: value}))
 
 
 @pytest.mark.parametrize("seed", [True, 1.5, "2"])
 def test_diffusion_layout_rejects_coerced_seed(seed) -> None:
-    with pytest.raises(ValueError, match=r"sampling.seed"):
+    with pytest.raises(ValueError, match=r"DenoiseRequest.seed"):
         _layout().parse_sampling_params(_request({"seed": seed}))
+
+
+@pytest.mark.parametrize("field", ["width", "height", "frame_count", "num_steps", "fps"])
+@pytest.mark.parametrize("value", [True, 1.5, "2", 0, -1])
+def test_direct_denoise_request_validates_geometry(field, value) -> None:
+    values = dict(width=8, height=8, frame_count=1, num_steps=2, guidance_scale=1.0)
+    values[field] = value
+    with pytest.raises(ValueError, match=field):
+        DenoiseRequest(**values)
