@@ -34,8 +34,6 @@ from vrl.trainers.core.types import (
 )
 from vrl.trainers.metrics_io import (
     OnlineMetricRow,
-    format_online_metric_row,
-    online_metric_columns,
 )
 
 _METRICS_HEADER = "epoch,loss,reward_mean,reward_std,grad_norm,pre_update_logprob_abs_diff_max\n"
@@ -756,7 +754,7 @@ def test_health_gate_reads_a_complete_online_metric_row(tmp_path) -> None:
         ),
     )
     (out / "metrics.csv").write_text(
-        ",".join(online_metric_columns()) + "\n" + format_online_metric_row(row),
+        ",".join(OnlineMetricRow.csv_columns()) + "\n" + row.to_csv(),
     )
 
     gate = MetricsHealthGate(HealthGateConfig(failure_limit=1), out)

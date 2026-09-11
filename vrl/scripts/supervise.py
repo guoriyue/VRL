@@ -41,7 +41,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from vrl.trainers.metrics_io import online_metric_columns
+from vrl.trainers.metrics_io import OnlineMetricRow
 from vrl.utils.json_files import write_json
 
 if TYPE_CHECKING:
@@ -156,7 +156,7 @@ class HealthGateConfig:
         required_columns = set(_REQUIRED_HEALTH_METRICS)
         if self.continuous is not None:
             required_columns.update(_CONTINUOUS_HEALTH_METRICS)
-        missing_columns = sorted(required_columns - set(online_metric_columns()))
+        missing_columns = sorted(required_columns - set(OnlineMetricRow.csv_columns()))
         if missing_columns:
             raise AssertionError(
                 "health metrics are absent from the online CSV protocol: "

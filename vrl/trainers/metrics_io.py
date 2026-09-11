@@ -139,7 +139,7 @@ class OnlineMetricRow:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"online metric {name} must be a non-negative integer")
-        _component_columns(self.component_names)
+        self._component_columns(self.component_names)
         if len(self.component_values) != len(self.component_names):
             raise ValueError(
                 "online metric component names/values length mismatch",
@@ -161,7 +161,7 @@ class OnlineMetricRow:
             if "phase_key" in item.metadata
         }
         names = tuple(component_names)
-        _component_columns(names)
+        cls._component_columns(names)
         current = getattr(metrics, "reward_components", None) or {}
         component_values = tuple(
             float(current[name]) if name in current else float("nan") for name in names
@@ -200,68 +200,65 @@ class OnlineMetricRow:
             **phase_kwargs,
         )
 
+    @classmethod
+    def _fixed_fields(cls) -> tuple[Any, ...]:
+        return tuple(item for item in fields(cls) if not item.metadata.get("csv_extension", False))
 
-def _fixed_fields() -> tuple[Any, ...]:
-    return tuple(
-        item for item in fields(OnlineMetricRow) if not item.metadata.get("csv_extension", False)
-    )
-
-
-def _fixed_columns() -> tuple[str, ...]:
-    return tuple(item.name for item in _fixed_fields())
-
-
-def _component_columns(component_names: Sequence[str]) -> tuple[str, ...]:
-    if isinstance(component_names, (str, bytes)):
-        raise ValueError("online metric component names must be a sequence of names")
-    columns: list[str] = []
-    for name in component_names:
-        if not isinstance(name, str) or not name or any(char in name for char in ",\r\n"):
+    @classmethod
+    def _component_columns(cls, component_names: Sequence[str]) -> tuple[str, ...]:
+        if isinstance(component_names, (str, bytes)):
+            raise ValueError("online metric component names must be a sequence of names")
+        columns: list[str] = []
+        for name in component_names:
+            if not isinstance(name, str) or not name or any(char in name for char in ",\r\n"):
+                raise ValueError(
+                    "online metric component names must be non-empty CSV-safe strings",
+                )
+            columns.append(f"r_{name}")
+        if len(columns) != len(set(columns)):
+            raise ValueError("online metric component names must be unique")
+        collision = sorted(set(columns) & {item.name for item in cls._fixed_fields()})
+        if collision:
             raise ValueError(
-                "online metric component names must be non-empty CSV-safe strings",
+                "online metric component columns collide with fixed columns: "
+                + ", ".join(collision),
             )
-        columns.append(f"r_{name}")
-    if len(columns) != len(set(columns)):
-        raise ValueError("online metric component names must be unique")
-    collision = sorted(set(columns) & set(_fixed_columns()))
-    if collision:
-        raise ValueError(
-            "online metric component columns collide with fixed columns: " + ", ".join(collision),
+        return tuple(columns)
+
+    @classmethod
+    def csv_columns(cls, component_names: Sequence[str] = ()) -> tuple[str, ...]:
+        """Return the frozen CSV column order for one run."""
+
+        return (
+            *(item.name for item in cls._fixed_fields()),
+            *cls._component_columns(component_names),
         )
-    return tuple(columns)
 
+    def to_csv(
+        self,
+        *,
+        full_precision: bool = False,
+    ) -> str:
+        """Serialize a row in the same field-derived order as its header."""
 
-def online_metric_columns(component_names: Sequence[str] = ()) -> tuple[str, ...]:
-    """Return the frozen CSV column order for one run."""
-
-    return (*_fixed_columns(), *_component_columns(component_names))
-
-
-def format_online_metric_row(
-    row: OnlineMetricRow,
-    *,
-    full_precision: bool = False,
-) -> str:
-    """Serialize a row in the same field-derived order as its header."""
-
-    if full_precision:
-        # Python float repr round-trips every finite binary64 value, including
-        # signed zero. This preserves aggregated metrics, not source tensor bits.
-        values = [
-            str(int(getattr(row, item.name)))
-            if item.metadata.get("csv_format") == "d"
-            else repr(float(getattr(row, item.name)))
-            for item in _fixed_fields()
+        if full_precision:
+            # Python float repr round-trips every finite binary64 value, including
+            # signed zero. This preserves aggregated metrics, not source tensor bits.
+            values = [
+                str(int(getattr(self, item.name)))
+                if item.metadata.get("csv_format") == "d"
+                else repr(float(getattr(self, item.name)))
+                for item in self._fixed_fields()
+            ]
+            values.extend(repr(float(value)) for value in self.component_values)
+            return ",".join(values) + "\n"
+        fixed_values = [
+            format(getattr(self, item.name), str(item.metadata.get("csv_format", ".6f")))
+            for item in self._fixed_fields()
         ]
-        values.extend(repr(float(value)) for value in row.component_values)
+        component_values = [format(value, ".4f") for value in self.component_values]
+        values = [*fixed_values, *component_values]
         return ",".join(values) + "\n"
-    fixed_values = [
-        format(getattr(row, item.name), str(item.metadata.get("csv_format", ".6f")))
-        for item in _fixed_fields()
-    ]
-    component_values = [format(value, ".4f") for value in row.component_values]
-    values = [*fixed_values, *component_values]
-    return ",".join(values) + "\n"
 
 
 def prepare_metrics_csv(
@@ -372,7 +369,5 @@ def prepare_metrics_csv(
 
 __all__ = [
     "OnlineMetricRow",
-    "format_online_metric_row",
-    "online_metric_columns",
     "prepare_metrics_csv",
 ]

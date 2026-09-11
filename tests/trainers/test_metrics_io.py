@@ -14,8 +14,6 @@ from vrl.algorithms.types import (
 )
 from vrl.trainers.metrics_io import (
     OnlineMetricRow,
-    format_online_metric_row,
-    online_metric_columns,
     prepare_metrics_csv,
 )
 
@@ -74,7 +72,7 @@ _EXPECTED_FIXED_COLUMNS = (
 
 
 def test_online_metric_columns_preserve_the_existing_csv_contract() -> None:
-    columns = online_metric_columns(("aesthetic", "pickscore"))
+    columns = OnlineMetricRow.csv_columns(("aesthetic", "pickscore"))
 
     assert columns == (*_EXPECTED_FIXED_COLUMNS, "r_aesthetic", "r_pickscore")
 
@@ -145,7 +143,7 @@ def test_online_metric_row_uses_the_same_order_and_formats_as_header() -> None:
         metrics,
         ("aesthetic", "pickscore"),
     )
-    values = format_online_metric_row(row).strip().split(",")
+    values = row.to_csv().strip().split(",")
 
     assert values[:-1] == [
         "0",
@@ -230,8 +228,8 @@ def test_strict_online_metric_row_defaults_all_continuous_columns_to_zero() -> N
     row = OnlineMetricRow.from_step_metrics(0, TrainStepMetrics())
     values = dict(
         zip(
-            online_metric_columns(),
-            format_online_metric_row(row).strip().split(","),
+            OnlineMetricRow.csv_columns(),
+            row.to_csv().strip().split(","),
             strict=True,
         ),
     )
@@ -250,8 +248,8 @@ def test_online_metric_row_preserves_non_finite_values_for_health_consumers() ->
     )
     values = dict(
         zip(
-            online_metric_columns(),
-            format_online_metric_row(row).strip().split(","),
+            OnlineMetricRow.csv_columns(),
+            row.to_csv().strip().split(","),
             strict=True,
         ),
     )
@@ -268,7 +266,7 @@ def test_online_metric_columns_reject_invalid_dynamic_components(
     component_names: object,
 ) -> None:
     with pytest.raises(ValueError, match="component"):
-        online_metric_columns(component_names)  # type: ignore[arg-type]
+        OnlineMetricRow.csv_columns(component_names)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -360,15 +358,12 @@ def test_full_precision_metrics_detect_changes_hidden_by_display_rounding() -> N
         0,
         TrainStepMetrics(loss=1.00000002, reward_mean=0.123456789, grad_norm=-0.0),
     )
-    assert format_online_metric_row(first) == format_online_metric_row(second)
-    assert format_online_metric_row(first, full_precision=True) != format_online_metric_row(
-        second,
-        full_precision=True,
-    )
+    assert first.to_csv() == second.to_csv()
+    assert first.to_csv(full_precision=True) != second.to_csv(full_precision=True)
     values = dict(
         zip(
-            online_metric_columns(),
-            format_online_metric_row(first, full_precision=True).strip().split(","),
+            OnlineMetricRow.csv_columns(),
+            first.to_csv(full_precision=True).strip().split(","),
             strict=True,
         )
     )

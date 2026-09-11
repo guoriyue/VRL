@@ -63,8 +63,6 @@ from vrl.trainers.data import (
 from vrl.trainers.distributed import DistributedTrainingContext, run_on_primary_rank
 from vrl.trainers.metrics_io import (
     OnlineMetricRow,
-    format_online_metric_row,
-    online_metric_columns,
     prepare_metrics_csv,
 )
 from vrl.trainers.online import OnlineTrainer
@@ -653,7 +651,7 @@ class OnlineRecipeRun:
         for path in (self.csv_path, self.csv_path.with_suffix(".full_precision.csv")):
             prepare_metrics_csv(
                 path,
-                online_metric_columns(self.component_names),
+                OnlineMetricRow.csv_columns(self.component_names),
                 resume_at=("epoch", self.resume_epoch) if self.resume_epoch is not None else None,
             )
 
@@ -681,7 +679,7 @@ class OnlineRecipeRun:
             (self.csv_path.with_suffix(".full_precision.csv"), True),
         ):
             with path.open("a", encoding="utf-8") as handle:
-                handle.write(format_online_metric_row(row, full_precision=full_precision))
+                handle.write(row.to_csv(full_precision=full_precision))
 
     def save_checkpoint(self, path: Path, *, epoch: int) -> None:
         # Called on EVERY rank: save_training_checkpoint runs the checkpoint-state
