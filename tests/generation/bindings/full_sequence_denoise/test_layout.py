@@ -46,25 +46,30 @@ def test_diffusion_layout_selects_request_owned_sde_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks request window policy resolves before entering the denoise loop."""
+    import pickle
+    from dataclasses import replace
+
     draws = []
 
-    def draw(lo, hi):
-        draws.append((lo, hi))
-        return hi
+    def draw(bits):
+        draws.append(bits)
+        return 1234
 
-    monkeypatch.setattr(
-        "vrl.generation.bindings.full_sequence_denoise.layout.random.randint",
-        draw,
-    )
-    layout = _layout()
-    params = layout.parse_sampling_params(
-        _request(denoise=DenoiseRequestOptions(sde_window_size=2, sde_window_range=(3, 8))),
-    )
-    assert params.sde_window == (6, 8)
-    assert draws == [(3, 6)]
-    no_window = layout.parse_sampling_params(_request())
-    assert no_window.sde_window is None
-    assert draws == [(3, 6)]
+    monkeypatch.setattr("vrl.generation.types.random.getrandbits", draw)
+    request = _request(denoise=DenoiseRequestOptions(sde_window_size=2, sde_window_range=(3, 8)))
+    assert draws == [64]
+    assert request.sampling.get("seed") is None
+    copies = [
+        request,
+        replace(request, samples_per_generation_batch=1),
+        pickle.loads(pickle.dumps(request)),
+    ]
+    windows = [_layout().parse_sampling_params(copy).sde_window for copy in copies]
+    assert windows[0] is not None
+    assert all(window == windows[0] for window in windows)
+    assert draws == [64]
+    assert _layout().parse_sampling_params(_request()).sde_window is None
+    assert draws == [64]
 
 
 @pytest.mark.parametrize(
@@ -305,3 +310,33 @@ def test_single_sample_families_preserve_encoded_values(family):
     assert result is not encoded
     assert result.keys() == encoded.keys()
     assert all(result[key] is value for key, value in encoded.items())
+
+
+def test_unseeded_window_survives_serialized_batch_split_retry(monkeypatch):
+    import cloudpickle
+
+    from vrl.generation.execution.sample_batches import (
+        GenerationSampleBatch,
+        run_sample_batches_with_oom_retry,
+    )
+    from vrl.generation.execution.types import GenerationBatchEnvelope
+
+    monkeypatch.setattr("vrl.generation.execution.sample_batches.empty_cuda_cache", lambda: None)
+    request = _request(denoise=DenoiseRequestOptions(sde_window_size=2, sde_window_range=(0, 10)))
+    windows = []
+
+    def execute(batch):
+        # Each dispatch reconstructs its own copy, as remote workers do.
+        envelope = cloudpickle.loads(cloudpickle.dumps(GenerationBatchEnvelope(request, batch)))
+        params = _layout().parse_sampling_params(envelope.request)
+        windows.append(params.sde_window)
+        if batch.sample_count > 1:
+            raise RuntimeError("CUDA out of memory")
+        return params.sde_window
+
+    result = run_sample_batches_with_oom_retry([GenerationSampleBatch(0, 0, 2)], execute)
+    assert len(windows) == 3
+    assert windows[0] is not None
+    assert windows == [windows[0]] * 3
+    assert result == [windows[0]] * 2
+    assert request.sampling.get("seed") is None

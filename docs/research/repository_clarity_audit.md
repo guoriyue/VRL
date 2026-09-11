@@ -3156,3 +3156,26 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: executed the controlled reproduction above and checked touched
   comments with Ruff/diff. This finding supersedes earlier audit wording that
   all sample batches already share the same unseeded request window.
+
+## Resolve unseeded window ownership on GenerationRequest
+
+- Close the unseeded reparse defect above: GenerationRequest now creates a
+  sde_window_seed once when a window is enabled and sampling.seed is absent.
+  This field crosses the existing request/envelope boundary and survives
+  dataclasses.replace, pickle and cloudpickle. The parser derives its window
+  from this value instead of worker-local global RNG.
+- Preserve explicit sampling.seed and its existing XOR/random stream exactly.
+  The fallback seed is not inserted into sampling, so latent-noise seeding
+  remains unchanged. No new YAML knob, cache owner, helper or request-ID-based
+  random convention is introduced. Disabled windows create no random seed.
+- Keep window bounds resolution in the parser, where num_steps is validated.
+  Missing fallback state after mutating an already-built request fails explicitly
+  instead of reverting to per-worker random draws. Requests must establish
+  their denoise options at construction or via dataclasses.replace.
+- Validation: 1152 generation/rollout tests passed, two skipped. After adding
+  the serialized-envelope OOM split regression, all 96 layout tests passed.
+  Tests exercise independent serialized request copies, preserved seeds across
+  width replacement, three identical windows across failed batch and split
+  retries, and unchanged absent sampling.seed. These are CPU serialization/
+  orchestration checks, not a multi-GPU training run. Touched-file Ruff/diff
+  checks passed; full repository review remains incomplete.

@@ -15,6 +15,7 @@ The reward-side dual is vrl/rewards/types.py (``RewardSample`` /
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -96,6 +97,9 @@ class GenerationRequest:
     # Rollout-owned denoise knobs (rollout.* / rollout.sde.*), projected once by
     # the collector. ``None`` on hand-built requests means the option defaults.
     denoise: DenoiseRequestOptions | None = None
+    # Request-owned fallback randomness for SDE windows only. Copies sent to
+    # separate workers retain it without imposing a latent-noise sampling seed.
+    sde_window_seed: int | None = None
     runtime_debug: bool = False
     policy_version: int | None = None
 
@@ -113,6 +117,7 @@ class GenerationRequest:
         denoise: DenoiseRequestOptions | None = None,
         runtime_debug: bool = False,
         policy_version: int | None = None,
+        sde_window_seed: int | None = None,
     ) -> None:
         normalized_inputs: list[GenerationInput] = []
         for value in inputs:
@@ -134,6 +139,7 @@ class GenerationRequest:
         self.train_segments = None if train_segments is None else dict(train_segments)
         self.trajectory_storage = trajectory_storage
         self.denoise = denoise
+        self.sde_window_seed = sde_window_seed
         self.runtime_debug = runtime_debug
         self.policy_version = policy_version
         self.__post_init__()
@@ -164,6 +170,17 @@ class GenerationRequest:
             raise TypeError("GenerationRequest.runtime_debug must be a bool")
         if self.policy_version is not None and self.policy_version < 0:
             raise ValueError("GenerationRequest.policy_version must be >= 0")
+
+        if self.sde_window_seed is not None:
+            require_exact_int(
+                self.sde_window_seed, path="GenerationRequest.sde_window_seed", minimum=0
+            )
+        elif (
+            self.denoise is not None
+            and self.denoise.sde_window_size > 0
+            and self.sampling.get("seed") is None
+        ):
+            self.sde_window_seed = random.getrandbits(64)
 
     def sample_rows(self) -> list[GenerationSampleRow]:
         """Mint the deterministic per-sample identity rows for this request.

@@ -26,8 +26,8 @@ class DiffusionSamplingParams:
     sde_window_range: tuple[int, int]
     denoise_mode: str
     teacache: TeaCacheConfig | None = None
-    # The stochastic window is resolved per parse. Seeded re-parses agree;
-    # unseeded re-parses currently consume fresh module RNG draws.
+    # Re-parses use request-owned randomness so split batches and retries
+    # select the same window, including requests without a sampling seed.
     sde_window: tuple[int, int] | None = None
 
     def text_encode_kwargs(self) -> dict[str, Any]:
@@ -110,15 +110,18 @@ class DiffusionRequestLayout:
                 minimum=1,
             )
 
-        # Resolve before constructing the final params. Seeded re-parses agree
-        # across batches/ranks. Without a seed each parse consumes a fresh draw;
-        # worker RNG synchronization alone does not align separate sample batches.
+        # Preserve the existing seeded stream; unseeded requests carry their
+        # fallback seed across worker serialization and batch retries.
         sde_window = None
         window_size = options.sde_window_size
         if window_size > 0:
             lo, hi = sde_window_range
             seed = model_request.seed
-            rng = random.Random(int(seed) ^ 0x5DE317D0) if seed is not None else random
+            if seed is None:
+                seed = request.sde_window_seed
+                if seed is None:
+                    raise ValueError("SDE window requires request-owned sde_window_seed")
+            rng = random.Random(seed ^ 0x5DE317D0)
             start = rng.randint(lo, hi - window_size)
             sde_window = (start, start + window_size)
 

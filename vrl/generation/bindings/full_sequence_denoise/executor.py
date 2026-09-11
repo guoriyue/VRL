@@ -187,8 +187,8 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
             seed=params.model_request.seed,
             sde=params.sde,
             # Use the parsed window without drawing again inside the loop.
-            # _forward_chunk parses each batch; only seeded requests currently
-            # guarantee an identical window across those re-parses.
+            # _forward_chunk parses each batch; request-owned randomness keeps
+            # the selected window identical across those re-parses.
             sde_window=params.sde_window,
             denoise_mode=params.denoise_mode,
             teacache=params.teacache,
