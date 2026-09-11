@@ -486,8 +486,8 @@ def _install_common_fakes(
         lambda *args, **kwargs: SimpleNamespace(algorithm=object(), evaluator=None),
     )
     monkeypatch.setattr(
-        online,
-        "build_rollout_collector",
+        online.RolloutCollector,
+        "from_family",
         lambda *args, **kwargs: collector,
     )
     launch_inputs = RayGenerationLaunchInputs(
@@ -1014,8 +1014,8 @@ async def test_run_online_recipe_shutdowns_owner_after_component_build_failure(
         message = "reward build boom"
     else:
         monkeypatch.setattr(
-            online,
-            "build_rollout_collector",
+            online.RolloutCollector,
+            "from_family",
             lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("collector build boom")),
         )
         message = "collector build boom"

@@ -137,6 +137,27 @@ class RolloutCollector:
         self._reward_phase_started = False
         self._reward_shutdown_complete = False
 
+    @classmethod
+    def from_family(
+        cls,
+        entry: ModelFamilyEntry,
+        *,
+        reward_runtime: RewardRuntime,
+        config: RolloutCollectorConfig,
+        generation_runtime: GenerationRuntime | None = None,
+        lifecycle: RayLifecyclePlan | None = None,
+    ) -> RolloutCollector:
+        """Build a rollout collector from an already resolved family entry."""
+
+        return cls(
+            config=config,
+            request_builder=GenerationRequestBuilder(entry=entry, config=config),
+            reward_runtime=reward_runtime,
+            generation_runtime=generation_runtime,
+            lifecycle=lifecycle,
+            trajectory_layout=entry.policy_semantics.trajectory_layout,
+        )
+
     def set_generation_runtime(self, runtime: GenerationRuntime) -> None:
         self._generation_runtime = runtime
 
@@ -665,26 +686,6 @@ class RolloutCollector:
         return all_batches
 
 
-def build_rollout_collector(
-    entry: ModelFamilyEntry,
-    *,
-    reward_runtime: RewardRuntime,
-    config: RolloutCollectorConfig,
-    generation_runtime: GenerationRuntime | None = None,
-    lifecycle: RayLifecyclePlan | None = None,
-) -> RolloutCollector:
-    """Build a rollout collector from an already resolved family entry."""
-
-    return RolloutCollector(
-        config=config,
-        request_builder=GenerationRequestBuilder(entry=entry, config=config),
-        reward_runtime=reward_runtime,
-        generation_runtime=generation_runtime,
-        lifecycle=lifecycle,
-        trajectory_layout=entry.policy_semantics.trajectory_layout,
-    )
-
-
 def _interval_overlap_seconds(
     left: list[tuple[float, float]],
     right: list[tuple[float, float]],
@@ -713,5 +714,4 @@ __all__ = [
     "RewardCollectionMode",
     "RolloutCollector",
     "UnscoredRollout",
-    "build_rollout_collector",
 ]

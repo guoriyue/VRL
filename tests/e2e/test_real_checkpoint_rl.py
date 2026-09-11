@@ -28,7 +28,7 @@ from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rewards.runtime import RewardFunctionRuntime
-from vrl.rollouts.collector import build_rollout_collector
+from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.run import resolve_reward_inputs
 from vrl.scripts.common.factory import (
@@ -727,7 +727,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 if case.use_config_reward
                 else _IndexReward()
             )
-            collector = build_rollout_collector(
+            collector = RolloutCollector.from_family(
                 entry,
                 reward_runtime=RewardFunctionRuntime(reward_fn),
                 config=collector_config,

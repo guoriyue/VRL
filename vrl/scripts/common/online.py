@@ -25,7 +25,7 @@ from vrl.ray.resources import (
     format_distributed_resource_plan,
 )
 from vrl.rewards import RewardRuntime
-from vrl.rollouts.collector import RolloutCollector, build_rollout_collector
+from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.orchestration import (
     RolloutSchedule,
     validate_rollout_schedule_topology,
@@ -873,7 +873,7 @@ async def run_online_recipe(
         # here, before the expensive rollout backend launch — not after the
         # first generation batch reaches scoring.
         await reward_runtime.preflight()
-        collector = lifecycle.collector = build_rollout_collector(
+        collector = lifecycle.collector = RolloutCollector.from_family(
             family_entry,
             reward_runtime=reward_runtime,
             config=collector_config,

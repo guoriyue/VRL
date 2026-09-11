@@ -7,7 +7,7 @@ from vrl.config.schema import parse_config
 from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.runtime import RewardFunctionRuntime
-from vrl.rollouts.collector import build_rollout_collector
+from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
@@ -83,7 +83,7 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
             "final_image": True,
         },
     )
-    collector = build_rollout_collector(
+    collector = RolloutCollector.from_family(
         get_model_family_entry("janus_pro_r1"),
         reward_runtime=RewardFunctionRuntime(None),
         config=rollout_config,
