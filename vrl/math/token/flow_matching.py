@@ -111,7 +111,8 @@ def flow_sample_with_logprob(
            flow ODE: ``x_{k+1} = x_k + dt * v(x_k, t_k, cond)``.
         3. At the final step, inject Gaussian noise of scale ``std``:
            ``token = x_{K-1} + dt * v(x_{K-1}, t_{K-1}, cond) + std * eps``.
-        4. ``log_prob = -0.5 * ||eps||^2 / std^2 - D_token * log(std)
+        4. With ``delta = token - mean``, score the sampled token:
+           ``log_prob = -0.5 * ||delta||^2 / std^2 - D_token * log(std)
                        - 0.5 * D_token * log(2 pi)``.
 
     Args:
@@ -120,9 +121,10 @@ def flow_sample_with_logprob(
             (see ``_flow_terminal_mean`` for the verified upstream contract).
         cond: ``[B, D_hidden]`` LLM hidden state at this AR position.
         num_steps: Number of Euler steps inside the flow ODE.
-        noise_level: Scales the final-step Gaussian std (analogue of the
-            ``a`` knob in flow_grpo's SDE-from-ODE conversion). 0 → fully
-            deterministic (zero log-prob mass), 1 → unit-variance noise.
+        noise_level: Positive scale for the final Gaussian standard deviation,
+            ``noise_level / sqrt(num_steps)``. A value of 1 gives variance
+            ``1 / num_steps`` per token coordinate. Zero does not define a
+            finite Gaussian log density and is not supported by this scorer.
         cfg_uncond: ``[B, D_hidden]`` unconditional hidden state for CFG.
             When provided, velocity is computed as
                 v_guided = v(x, uncond) + s * (v(x, cond) - v(x, uncond))
@@ -203,13 +205,11 @@ def flow_logprob_at(
     """Recompute log-prob of a previously-sampled continuous token.
 
     The replay reuses ``saved_noise`` — the exact prior ``x_0`` stashed at
-    collection time — so the deterministic flow ODE prefix walks the **same
-    seed-determined trajectory** as collection. The terminal mean ``mu`` is then
-    recomputed with the *current* policy's velocity field, and we return
-    log p(target_token | mu, std). This matches what ``sde_step_with_logprob``
-    does in the diffusion path — the "old" and "fresh" log-probs differ only
-    because the velocity field has been updated by SGD, which is exactly what
-    GRPO's ratio is supposed to capture.
+    collection time — so the deterministic flow ODE prefix starts from the same
+    state. It recomputes the trajectory and terminal mean ``mu`` with the current
+    policy's velocity field; a policy update can change both. With matching
+    parameters, conditioning and step settings, the same prior reproduces the
+    collection mean. The returned value is log p(target_token | mu, std).
 
     Returns:
         ``[B]`` log-probabilities with grad flowing through ``image_head``.

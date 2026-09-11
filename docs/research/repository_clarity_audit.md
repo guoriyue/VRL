@@ -4380,6 +4380,18 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Token-flow documentation states the actual conditional density
+
+- Correct the sampling formula to use delta=token-mean when dividing by std²,
+  rather than dividing standard-normal eps by std² again. State that noise_level=1
+  gives variance 1/num_steps and remove the false zero-log-prob-mass claim for a
+  deterministic action. The Gaussian scorer requires positive scale.
+- Clarify that replay preserves the initial prior, not the trajectory after a
+  policy update. The current velocity field recomputes the trajectory and mean.
+- Keep the shared math helpers, APIs and computation unchanged. This change is
+  docstrings only; no tests were added or rerun. Touched-file Ruff and diff checks
+  pass. Runtime scale validation is not changed here; the full audit continues.
+
 ## Token-flow CFG calls the velocity network without a forwarding wrapper
 
 - Remove the local _velocity function that only forwarded to image_head.net.
