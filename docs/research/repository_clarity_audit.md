@@ -3705,3 +3705,27 @@ this combined regression is compatibility evidence, not architectural completion
   gatherer, sample-batch, Janus and R1 wiring tests passed afterwards. No old
   helper references remain; touched-file Ruff/diff checks passed. Full review
   remains incomplete.
+
+## Configuration helper ownership review: retained shared boundaries
+
+- Inspected config/builders.py, data.py, algorithm.py, precision.py and the
+  package facade against their production consumers. No code change is justified
+  solely by these functions being module-level. This records reviewed boundaries
+  rather than adding wrapper classes to produce a smaller function inventory.
+- Keep build_precision_split_safety_configs: online TrainerConfig and the
+  quantized rollout drift probe consume the same correction/guard pair; neither
+  individual dataclass owns that cross-type policy. Keep build_configs as the
+  validated training assembly entrypoint and its package-level lazy facade,
+  which avoids loading trainer dependencies during config discovery.
+- Keep manifest_sources: DataConfig validation, trainer prompt loading and data
+  bootstrap consume the same accepted manifest spellings. Keep resolve_data_loader
+  as the shared loader/format conflict boundary. No ConfigLoader owner is needed.
+- Keep precision normalization helpers: schema field validators and runtime
+  RolePrecision/PrecisionPolicy consume them. The quantization format table is
+  isolated in the precision module; allowed device/dtype values derive from
+  type/schema declarations. Do not distribute duplicate normalization among
+  classes merely to remove free functions.
+- Keep algorithm_config_class as lazy typed-config dispatch. This review does
+  not prove exhaustive config validation or whole-repository completion. It
+  confirms these ownership boundaries through source/call-site inspection; no
+  executable behavior changed and no tests were rerun for this documentation.
