@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import random
 from collections.abc import Mapping
@@ -122,7 +123,7 @@ def load_prompt_examples_from_jsonl_bytes(
 
     examples: list[PromptExample] = []
     known_fields = set(PromptExample.__dataclass_fields__)
-    for line_number, line in enumerate(text.splitlines(), 1):
+    for line_number, line in enumerate(io.StringIO(text, newline=None), 1):
         line = line.strip()
         if not line:
             continue

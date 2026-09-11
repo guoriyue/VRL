@@ -7077,3 +7077,17 @@ The broader repository audit remains incomplete.
 - No production edits in this verification slice. Passing these suites supports
   the recent shared-path changes, not whole-repository clarity completion or a
   pretrained training/performance claim. Broader audit remains open.
+
+## Prompt JSONL parsing uses physical text-file lines
+
+- Replace str.splitlines() in the authenticated-bytes prompt loader with
+  StringIO universal-newline iteration. Unicode NEL/line/paragraph separators
+  inside valid JSON strings are prompt content, not new JSONL records. Existing
+  LF, CRLF and CR text-file line handling remains supported.
+- Six regressions failed before the fix and pass now: three Unicode separators
+  with LF/CRLF records, through both bytes and dataset entry points. Complete
+  tests/trainers/data suite: 67 passed. Touched-file Ruff and diff checks pass.
+- Keep the bytes parser as the immutable-snapshot boundary and the exported
+  image-caption list facade as a public API. No new loader object or helper;
+  field mapping, metadata precedence and decoding diagnostics stay unchanged.
+  Broader repository audit remains incomplete.
