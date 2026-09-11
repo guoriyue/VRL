@@ -631,3 +631,12 @@ def test_invalid_build_sampling_prevents_weight_download(
 
     with pytest.raises(ValueError, match=r"multiple.*24"):
         Magi1SubprocessConfig.from_build(build)
+
+
+@pytest.mark.parametrize("timeout", [float("nan"), float("inf"), float("-inf"), 0, -1])
+def test_subprocess_config_requires_finite_positive_timeout(tmp_path, timeout):
+    from dataclasses import replace
+
+    config, _ = _installation(tmp_path)
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        replace(config, timeout_seconds=timeout)

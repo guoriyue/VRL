@@ -1738,3 +1738,18 @@ is not a repository-wide completion claim or a mandate to inline short functions
   execution changes. Validation: all 21 MAGI tests passed; touched-file Ruff and
   diff checks passed. No Python references to the removed function remain.
   Real upstream subprocess inference was not run. Repository review continues.
+
+## MAGI process config reuse and finite timeout
+
+- Reused the shared require_timeout guard in Magi1SubprocessConfig. The previous
+  <= 0 comparison admitted NaN and infinity into subprocess waits. Normalized
+  finite positive timeouts retain existing defaults and execution limits.
+- from_build now uses dataclasses.replace on its preflight config to attach
+  resolved checkpoint/T5/VAE paths instead of repeating interpreter/source/
+  revision/config/timeout construction. Validation still runs on replacement;
+  preflight remains before weight resolution.
+- Keep subprocess execution, environment adapter and distinct preflight/generation
+  deadlines unchanged. No new timeout helper, configuration field or class.
+- Validation: 26 MAGI tests passed, including five invalid-timeout regressions.
+  Touched-file Ruff lint/format and diff checks passed. This validates adapter
+  behavior without claiming an upstream model or subprocess benchmark run.

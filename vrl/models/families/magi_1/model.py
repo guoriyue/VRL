@@ -25,7 +25,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +39,7 @@ from vrl.generation.types import GenerationInput, GenerationRequest
 from vrl.models.interfaces.replay import ReplayRequest, ReplayResult
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.source_integrity import runtime_source_tree_sha256
+from vrl.utils.deadline import require_timeout
 from vrl.utils.media import read_video_frames
 
 # This adapter is implemented against the official CLI/config contract at this
@@ -116,8 +117,11 @@ class Magi1SubprocessConfig:
         if os.sep in python_executable or (os.altsep and os.altsep in python_executable):
             python_executable = str(Path(python_executable).expanduser().resolve())
         object.__setattr__(self, "python_executable", python_executable)
-        if self.timeout_seconds <= 0:
-            raise ValueError("MAGI-1 timeout_seconds must be > 0")
+        object.__setattr__(
+            self,
+            "timeout_seconds",
+            require_timeout(self.timeout_seconds, name="MAGI-1 timeout_seconds"),
+        )
 
     @property
     def entry_path(self) -> Path:
@@ -204,12 +208,8 @@ class Magi1SubprocessConfig:
             sampling=build.sampling_config or {},
         )
         checkpoint_path, t5_path, vae_path = _resolve_weight_components(build)
-        return cls(
-            source_path=Path(str(source_path)),
-            source_revision=str(source_revision),
-            config_path=Path(str(config_path)),
-            python_executable=str(python_executable),
-            timeout_seconds=float(config.get("timeout_seconds", 7200.0)),
+        return replace(
+            preflight,
             checkpoint_path=checkpoint_path,
             t5_pretrained_path=t5_path,
             vae_pretrained_path=vae_path,
