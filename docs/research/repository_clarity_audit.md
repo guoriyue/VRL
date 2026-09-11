@@ -5109,3 +5109,21 @@ this combined regression is compatibility evidence, not architectural completion
   sampling and no-op check. Media and reward suites: 424 passed, 5 skipped,
   7 warnings. Touched-file Ruff and git diff --check pass. Skipped tests are not
   evidence of coverage, and the broader repository audit remains incomplete.
+
+## GPU busy reports own their text and dictionary views
+
+- Move format_report and report_to_dict onto the existing GpuBusyReport as
+  to_text and to_dict. Update CLI and test consumers and remove obsolete exports;
+  no compatibility forwarding layer or new report base class is introduced.
+- Keep interval algebra and SQLite analysis functions: they compute across raw
+  captures before a report exists. Keep nanosecond/percentage rendering helpers
+  for consistent units and zero-denominator handling, and the API-version regex
+  as an input-format normalization boundary.
+- This supersedes the rendering-placement rationale in the historical homeless
+  function sprint: current ownership is clearer on the report, and this module
+  now lives under scripts/perf. Historical decisions are not current completion
+  evidence. Query behavior, union math, text layout and JSON schema are non-goals.
+- Existing Nsight report tests: 15 passed. A synthetic SQLite report's complete
+  text and sorted JSON match saved pre-change outputs exactly. Touched-file
+  Ruff and git diff --check pass; obsolete names are absent from Nsight code and
+  tests. No real capture or GPU throughput benchmark was run. Wider audit remains open.

@@ -26,7 +26,7 @@ import json
 import sys
 from pathlib import Path
 
-from vrl.scripts.perf.nsys_report import analyze, format_report, report_to_dict
+from vrl.scripts.perf.nsys_report import analyze
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,9 +88,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
 
-    print(format_report(report))
+    print(report.to_text())
     if args.json:
-        Path(args.json).write_text(json.dumps(report_to_dict(report), indent=2), encoding="utf-8")
+        Path(args.json).write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
         print(f"\nJSON written to {args.json}")
     return 0
 

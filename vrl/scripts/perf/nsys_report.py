@@ -215,6 +215,111 @@ class GpuBusyReport:
     nvtx: tuple[NvtxBusy, ...] = field()
     provenance: ReportProvenance = field()
 
+    def to_text(self) -> str:
+        """Human-readable self. The header states the metric so a number copied out
+        of it carries its own caveat (kernel-union over wall, NOT nsys projection)."""
+
+        p = self.provenance
+        lines: list[str] = [
+            "GPU-busy report (kernel-interval UNION over wall, per device)",
+            "  metric = merged [start,end] of CUPTI kernels / window wall.",
+            "  This is NOT nsys nvtx_gpu_proj_sum 'Proj Time' (async launch makes",
+            "  projection exceed wall — do not read it as a busy fraction).",
+            "",
+            f"source        : {p.source_path}",
+            f"nsys version  : {p.nsys_version}",
+            f"window        : {self.window[0]}..{self.window[1]} ns "
+            f"({_ms(self.wall_ns):.1f} ms wall, {p.window_source})",
+            f"kernels        : {p.total_kernels}",
+            "",
+            "Per-device GPU-busy:",
+        ]
+        for d in self.per_device:
+            lines.append(
+                f"  dev{d.device_id} {d.name:<28} {d.kernel_count:>7} kern  "
+                f"busy {_ms(d.busy_ns):>10.1f} ms  = {d.busy_fraction * 100:5.1f}% busy "
+                f"({(1 - d.busy_fraction) * 100:4.1f}% idle)"
+            )
+
+        if self.idle_gaps:
+            lines += ["", f"Top idle gaps on dev{self.gap_device} (GPU ran no kernel):"]
+            for g in self.idle_gaps:
+                lines.append(
+                    f"  gap {_ms(g.duration_ns):>9.2f} ms @ +{_ms(g.start - self.window[0]):.1f} ms"
+                    f"  memcpy {_ms(g.memcpy_ns):.2f} ms / {g.memcpy_bytes / 1e6:.1f} MB"
+                )
+                for a in g.api_breakdown[:5]:
+                    lines.append(
+                        f"      {a.name:<28} {a.count:>6}x  {_ms(a.total_ns):>9.2f} ms "
+                        f"({_pct(a.total_ns, g.duration_ns):4.0f}% of gap)"
+                    )
+
+        if self.nvtx:
+            lines += [
+                "",
+                f"NVTX stage attribution on dev{self.gap_device} "
+                "(union-busy clipped to range; summed wall may NEST — not additive):",
+                f"  {'stage':<32}{'occ':>5}{'wall ms':>11}{'busy ms':>11}{'busy%':>7}",
+            ]
+            for n in self.nvtx:
+                lines.append(
+                    f"  {n.name[:32]:<32}{n.occurrences:>5}"
+                    f"{_ms(n.summed_wall_ns):>11.1f}{_ms(n.union_busy_ns):>11.1f}"
+                    f"{n.busy_fraction * 100:>6.0f}%"
+                )
+        return "\n".join(lines)
+
+    def to_dict(self) -> dict:
+        """JSON-serialisable view (for --json export / programmatic consumers)."""
+
+        return {
+            "window_ns": list(self.window),
+            "wall_ns": self.wall_ns,
+            "gap_device": self.gap_device,
+            "provenance": {
+                "source_path": self.provenance.source_path,
+                "sqlite_path": self.provenance.sqlite_path,
+                "nsys_version": self.provenance.nsys_version,
+                "total_kernels": self.provenance.total_kernels,
+                "devices": [list(d) for d in self.provenance.devices],
+                "window_source": self.provenance.window_source,
+            },
+            "per_device": [
+                {
+                    "device_id": d.device_id,
+                    "name": d.name,
+                    "kernel_count": d.kernel_count,
+                    "busy_ns": d.busy_ns,
+                    "busy_fraction": d.busy_fraction,
+                }
+                for d in self.per_device
+            ],
+            "idle_gaps": [
+                {
+                    "start": g.start,
+                    "end": g.end,
+                    "duration_ns": g.duration_ns,
+                    "memcpy_ns": g.memcpy_ns,
+                    "memcpy_bytes": g.memcpy_bytes,
+                    "api_breakdown": [
+                        {"name": a.name, "count": a.count, "total_ns": a.total_ns}
+                        for a in g.api_breakdown
+                    ],
+                }
+                for g in self.idle_gaps
+            ],
+            "nvtx": [
+                {
+                    "name": n.name,
+                    "occurrences": n.occurrences,
+                    "summed_wall_ns": n.summed_wall_ns,
+                    "union_busy_ns": n.union_busy_ns,
+                    "busy_fraction": n.busy_fraction,
+                }
+                for n in self.nvtx
+            ],
+        }
+
 
 # ---------------------------------------------------------------------------
 # sqlite access. All optional tables are probed for existence first so a capture
@@ -629,113 +734,6 @@ def _pct(part: int, whole: int) -> float:
     return 100.0 * part / whole if whole > 0 else 0.0
 
 
-def format_report(report: GpuBusyReport) -> str:
-    """Human-readable report. The header states the metric so a number copied out
-    of it carries its own caveat (kernel-union over wall, NOT nsys projection)."""
-
-    p = report.provenance
-    lines: list[str] = [
-        "GPU-busy report (kernel-interval UNION over wall, per device)",
-        "  metric = merged [start,end] of CUPTI kernels / window wall.",
-        "  This is NOT nsys nvtx_gpu_proj_sum 'Proj Time' (async launch makes",
-        "  projection exceed wall — do not read it as a busy fraction).",
-        "",
-        f"source        : {p.source_path}",
-        f"nsys version  : {p.nsys_version}",
-        f"window        : {report.window[0]}..{report.window[1]} ns "
-        f"({_ms(report.wall_ns):.1f} ms wall, {p.window_source})",
-        f"kernels        : {p.total_kernels}",
-        "",
-        "Per-device GPU-busy:",
-    ]
-    for d in report.per_device:
-        lines.append(
-            f"  dev{d.device_id} {d.name:<28} {d.kernel_count:>7} kern  "
-            f"busy {_ms(d.busy_ns):>10.1f} ms  = {d.busy_fraction * 100:5.1f}% busy "
-            f"({(1 - d.busy_fraction) * 100:4.1f}% idle)"
-        )
-
-    if report.idle_gaps:
-        lines += ["", f"Top idle gaps on dev{report.gap_device} (GPU ran no kernel):"]
-        for g in report.idle_gaps:
-            lines.append(
-                f"  gap {_ms(g.duration_ns):>9.2f} ms @ +{_ms(g.start - report.window[0]):.1f} ms"
-                f"  memcpy {_ms(g.memcpy_ns):.2f} ms / {g.memcpy_bytes / 1e6:.1f} MB"
-            )
-            for a in g.api_breakdown[:5]:
-                lines.append(
-                    f"      {a.name:<28} {a.count:>6}x  {_ms(a.total_ns):>9.2f} ms "
-                    f"({_pct(a.total_ns, g.duration_ns):4.0f}% of gap)"
-                )
-
-    if report.nvtx:
-        lines += [
-            "",
-            f"NVTX stage attribution on dev{report.gap_device} "
-            "(union-busy clipped to range; summed wall may NEST — not additive):",
-            f"  {'stage':<32}{'occ':>5}{'wall ms':>11}{'busy ms':>11}{'busy%':>7}",
-        ]
-        for n in report.nvtx:
-            lines.append(
-                f"  {n.name[:32]:<32}{n.occurrences:>5}"
-                f"{_ms(n.summed_wall_ns):>11.1f}{_ms(n.union_busy_ns):>11.1f}"
-                f"{n.busy_fraction * 100:>6.0f}%"
-            )
-    return "\n".join(lines)
-
-
-def report_to_dict(report: GpuBusyReport) -> dict:
-    """JSON-serialisable view (for --json export / programmatic consumers)."""
-
-    return {
-        "window_ns": list(report.window),
-        "wall_ns": report.wall_ns,
-        "gap_device": report.gap_device,
-        "provenance": {
-            "source_path": report.provenance.source_path,
-            "sqlite_path": report.provenance.sqlite_path,
-            "nsys_version": report.provenance.nsys_version,
-            "total_kernels": report.provenance.total_kernels,
-            "devices": [list(d) for d in report.provenance.devices],
-            "window_source": report.provenance.window_source,
-        },
-        "per_device": [
-            {
-                "device_id": d.device_id,
-                "name": d.name,
-                "kernel_count": d.kernel_count,
-                "busy_ns": d.busy_ns,
-                "busy_fraction": d.busy_fraction,
-            }
-            for d in report.per_device
-        ],
-        "idle_gaps": [
-            {
-                "start": g.start,
-                "end": g.end,
-                "duration_ns": g.duration_ns,
-                "memcpy_ns": g.memcpy_ns,
-                "memcpy_bytes": g.memcpy_bytes,
-                "api_breakdown": [
-                    {"name": a.name, "count": a.count, "total_ns": a.total_ns}
-                    for a in g.api_breakdown
-                ],
-            }
-            for g in report.idle_gaps
-        ],
-        "nvtx": [
-            {
-                "name": n.name,
-                "occurrences": n.occurrences,
-                "summed_wall_ns": n.summed_wall_ns,
-                "union_busy_ns": n.union_busy_ns,
-                "busy_fraction": n.busy_fraction,
-            }
-            for n in report.nvtx
-        ],
-    }
-
-
 __all__ = [
     "ApiSpan",
     "DeviceBusy",
@@ -746,11 +744,9 @@ __all__ = [
     "analyze",
     "capture_window",
     "clip_intervals",
-    "format_report",
     "merge_intervals",
     "nvtx_window",
     "open_report",
     "overlap_length",
-    "report_to_dict",
     "union_length",
 ]

@@ -16,10 +16,8 @@ import pytest
 from vrl.scripts.perf.nsys_report import (
     analyze,
     clip_intervals,
-    format_report,
     merge_intervals,
     overlap_length,
-    report_to_dict,
     union_length,
 )
 
@@ -240,10 +238,10 @@ def test_ray_local_device_ids_are_mapped_to_physical_gpus(tmp_path) -> None:
 def test_report_renders_and_serialises(tmp_path) -> None:
     path = _make_db(tmp_path / "cap.sqlite")
     rep = analyze(path, min_gap_ns=100)
-    text = format_report(rep)
+    text = rep.to_text()
     assert "kernel-interval UNION" in text
     assert "NOT nsys nvtx_gpu_proj_sum" in text
-    payload = report_to_dict(rep)
+    payload = rep.to_dict()
     assert payload["per_device"][0]["busy_ns"] == 500
     assert payload["nvtx"][0]["union_busy_ns"] == 500
 
