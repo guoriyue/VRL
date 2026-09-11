@@ -1945,3 +1945,15 @@ tracing algorithm construction and evaluator selection together.
   no new helper, wrapper or constants.
 - Validation: 142 interface/replay tests passed, including four bare-name cases.
   Touched-file Ruff and diff checks passed. Whole-repository review continues.
+
+## Recorded replay dimensions retain family units and exact values
+
+- Traced Emu3/GLM replay grid reconstruction through replay_context_image_size.
+  Require positive integer dimensions instead of int truncation. Preserve the
+  recorded context source order and family-specific expected-token calculation.
+- Corrected the shared docstring: Emu3 records latent grid dimensions, GLM records
+  pixels. Do not infer image aspect ratios from token count or apply a common
+  pixel conversion. Keep the shared cross-family helper and model grid adapters.
+- Validation: 54 Emu3/GLM replay and interface-contract tests passed. Eight new
+  cases enter the actual tiny Emu3 replay method with invalid recorded dimensions.
+  Touched-file Ruff/diff checks passed; no pretrained model run was performed.

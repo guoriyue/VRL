@@ -7,6 +7,8 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
+from vrl.utils.config import require_exact_int
+
 
 @dataclass(frozen=True, slots=True)
 class ReplayRequest:
@@ -219,8 +221,9 @@ def replay_context_image_size(
 ) -> tuple[int, int]:
     """Read and validate the rollout image size from the trajectory context.
 
-    The executor stores pixel ``image_height``/``image_width`` in the trajectory
-    context (NOT derivable from the token count alone for non-square ratios).
+    The executor records ``image_height``/``image_width`` in family-defined
+    units: Emu3 latent grid dimensions or GLM-Image pixel dimensions. These
+    cannot be derived from token count alone for non-square ratios.
     Returns ``(height, width)`` after confirming the recorded size reproduces
     ``token_count`` under the family ``expected_token_num``.
     """
@@ -236,7 +239,8 @@ def replay_context_image_size(
             f"{owner} replay requires image_height/image_width in the rollout "
             "context to rebuild the replay token schedule.",
         )
-    height, width = int(height), int(width)
+    height = require_exact_int(height, path=f"{owner} replay image_height", minimum=1)
+    width = require_exact_int(width, path=f"{owner} replay image_width", minimum=1)
     expected = expected_token_num(height, width)
     if expected != token_count:
         raise RuntimeError(

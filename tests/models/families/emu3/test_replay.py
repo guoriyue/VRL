@@ -158,3 +158,13 @@ def test_lora_wrap_keeps_replay_and_adapter_surfaces_working() -> None:
     with model.disable_adapter():
         ref_logits = model.replay_forward(batch).segments["image_tokens"].values["logits"]
     assert ref_logits.shape == logits.shape
+
+
+@pytest.mark.parametrize("dimension", ["image_height", "image_width"])
+@pytest.mark.parametrize("value", [True, 2.5, "2", 0])
+def test_replay_rejects_invalid_recorded_grid_dimensions(dimension, value):
+    model = build_tiny_emu3_model()
+    context = {"model_family": "emu3", "image_height": HEIGHT, "image_width": WIDTH}
+    context[dimension] = value
+    with pytest.raises(ValueError, match=dimension):
+        model.replay_forward(_discrete_batch(context=context))
