@@ -6115,3 +6115,18 @@ The broader repository audit remains incomplete.
   warning, including shared admission and middle-waiter cancellation. Ruff and
   diff checks pass. This simplifies control flow without a throughput claim;
   the broader repository audit remains incomplete.
+
+## Health monitoring uses the existing runtime fleet view directly
+
+- Remove RolloutWorkerHealthMonitor._owned_ranks and its type-only-purpose
+  actor-handle import. Both consumers now read runtime._owned_ranks directly.
+  Runtime already handles an absent session, and session.rank_handles builds a
+  fresh flattened list; the monitor wrapper added only another list copy.
+- Keep the runtime adapter, session view and shared rank_handles lifecycle
+  helper: they hide session/engine structure from consumers. Keep probe and
+  terminalization boundaries, pause/resume epoch checks and shutdown join grace.
+  The grace constant represents a bounded shutdown wait, not domain vocabulary.
+  No new classes, public API, or reduced cross-family consistency is intended.
+- Health-monitor suite: 12 passed with one Ray dependency warning, including
+  a real blocked actor whose timeout kills the fleet and unblocks an outstanding
+  driver call. Touched-file Ruff and diff checks pass. Broader audit incomplete.

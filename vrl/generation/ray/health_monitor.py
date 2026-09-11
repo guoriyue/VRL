@@ -20,7 +20,6 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
-from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.dependencies import kill_actors, require_ray
 from vrl.runtime_errors import TerminalRuntimeError
 
@@ -130,13 +129,8 @@ class RolloutWorkerHealthMonitor:
             self._run_probes(resume_epoch=resume_epoch)
             self._stop.wait(timeout=self._interval_s)
 
-    def _owned_ranks(self) -> list[RayActorHandle]:
-        """Read the active session fleet through the runtime adapter."""
-
-        return list(self._runtime._owned_ranks)
-
     def _run_probes(self, *, resume_epoch: int) -> None:
-        workers = self._owned_ranks()
+        workers = self._runtime._owned_ranks
         if not workers:
             return
         try:
@@ -201,7 +195,7 @@ class RolloutWorkerHealthMonitor:
         # Only synchronous work from this thread. lifecycle.fail atomically
         # closes admission; the async shutdown path belongs to whoever observes
         # the RayActorError that killing the actors raises in the driver.
-        actors = [worker.actor for worker in self._owned_ranks()]
+        actors = [worker.actor for worker in self._runtime._owned_ranks]
         if actors:
             kill_actors(ray, actors)
 
