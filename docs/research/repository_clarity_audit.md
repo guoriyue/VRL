@@ -4380,6 +4380,19 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Drift-source enablement stays inside its sole diagnostic consumer
+
+- Inline _sampling_enables into unguarded_drift_sources's traversal. The local
+  value/enablement check replaces a standalone predicate with no other caller.
+  Preserve truthiness behavior and mapping enabled defaults; this diagnostic
+  does not replace TeaCacheConfig's strict parsing of user inputs.
+- Keep unguarded_drift_sources as a shared cross-config check. Keep ROLLOUT_PASSES
+  as the ordered optimization registry and REQUEST_SCOPED_DRIFT_SOURCES as the
+  deliberately isolated diagnostic taxonomy. No class or extra schema is added
+  merely to reduce free-function count.
+- Optimization and config suites: 348 passed, 14 dependency warnings. Touched-file
+  Ruff checks pass. Repository-wide clarity completion remains unproven.
+
 ## TeaCache descriptions follow the implemented signal and measured limits
 
 - Replace promotional speed rankings and future-sprint prose with the actual

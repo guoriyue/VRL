@@ -344,25 +344,13 @@ def unguarded_drift_sources(sampling: Any, precision: Any) -> tuple[str, ...]:
         return ()  # guard + TIS already armed by the precision split
     if not isinstance(sampling, Mapping):
         return ()
-    return tuple(
-        f"{key} ({reason})"
-        for key, reason in REQUEST_SCOPED_DRIFT_SOURCES.items()
-        if _sampling_enables(sampling.get(key))
-    )
-
-
-def _sampling_enables(value: Any) -> bool:
-    """Whether a ``sampling.<key>`` value switches its optimization on.
-
-    Mirrors the accepted spellings of ``TeaCacheConfig.from_sampling``: absent /
-    False / ``{enabled: false}`` are off, True and any other mapping are on.
-    """
-
-    if value is None or value is False:
-        return False
-    if isinstance(value, Mapping):
-        return bool(value.get("enabled", True))
-    return bool(value)
+    sources: list[str] = []
+    for key, reason in REQUEST_SCOPED_DRIFT_SOURCES.items():
+        value = sampling.get(key)
+        enabled = value.get("enabled", True) if isinstance(value, Mapping) else value
+        if enabled:
+            sources.append(f"{key} ({reason})")
+    return tuple(sources)
 
 
 __all__ = [
