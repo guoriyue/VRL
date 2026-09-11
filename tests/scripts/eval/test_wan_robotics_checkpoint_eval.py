@@ -302,8 +302,8 @@ def test_base_generation_never_reads_a_training_checkpoint(
         lambda actual_build: {"schema": "test"},
     )
     monkeypatch.setattr(
-        checkpoint_eval,
-        "load_training_checkpoint",
+        checkpoint_eval.TrainingCheckpoint,
+        "load",
         lambda path: pytest.fail("base generation must not read a checkpoint"),
     )
     monkeypatch.setattr(

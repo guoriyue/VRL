@@ -370,8 +370,8 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
         return checkpoint
 
     monkeypatch.setattr(
-        eval_script,
-        "load_training_checkpoint",
+        eval_script.TrainingCheckpoint,
+        "load",
         fake_load_checkpoint,
     )
     restored = []
@@ -467,7 +467,7 @@ def test_generate_all_rejects_model_source_drift_before_checkpoint_load(
         checkpoint_loaded = True
         raise AssertionError("checkpoint load must not run after model source drift")
 
-    monkeypatch.setattr(eval_script, "load_training_checkpoint", fail_if_checkpoint_loaded)
+    monkeypatch.setattr(eval_script.TrainingCheckpoint, "load", fail_if_checkpoint_loaded)
 
     with pytest.raises(
         RuntimeError,

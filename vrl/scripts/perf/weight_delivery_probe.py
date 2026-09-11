@@ -60,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     from vrl.config.loading import load_config
-    from vrl.trainers.checkpointing import load_training_checkpoint, restore_model_checkpoint
+    from vrl.trainers.checkpointing import TrainingCheckpoint, restore_model_checkpoint
 
     args = build_parser().parse_args(argv)
     if args.workers < 1 or not math.isfinite(args.timeout_s) or args.timeout_s <= 0:
@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> None:
     source_started = time.perf_counter()
     bundle = replay.materialize(context="weight delivery acceptance source")
     if args.checkpoint is not None:
-        checkpoint = load_training_checkpoint(args.checkpoint)
+        checkpoint = TrainingCheckpoint.load(args.checkpoint)
         restore_model_checkpoint(
             checkpoint,
             bundle=bundle,

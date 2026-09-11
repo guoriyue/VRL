@@ -917,8 +917,8 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
         lambda _family: entry,
     )
     monkeypatch.setattr(
-        checkpoint_eval,
-        "load_training_checkpoint",
+        checkpoint_eval.TrainingCheckpoint,
+        "load",
         lambda path: (
             events.append(f"read:{Path(path).name.split('-')[-1]}")
             or SimpleNamespace(

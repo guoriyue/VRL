@@ -168,7 +168,7 @@ class EvaluationPlan:
 
         from vrl.trainers.checkpointing import (
             TRAINING_CHECKPOINT_NAME,
-            load_training_checkpoint,
+            TrainingCheckpoint,
             restore_model_checkpoint,
         )
         from vrl.utils.cuda_memory import release_cuda_memory
@@ -193,7 +193,7 @@ class EvaluationPlan:
                         != target.checkpoint_sha256
                     ):
                         raise ValueError(f"checkpoint changed after preflight: {target.path}")
-                    checkpoint = load_training_checkpoint(target.path)
+                    checkpoint = TrainingCheckpoint.load(target.path)
                     if checkpoint.next_epoch != target.epoch:
                         raise ValueError(
                             f"checkpoint state epoch differs from metadata: {target.path}"

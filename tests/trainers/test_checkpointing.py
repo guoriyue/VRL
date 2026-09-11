@@ -25,7 +25,6 @@ from vrl.trainers.checkpointing import (
     build_adapter_exports,
     export_checkpoint_state,
     load_checkpoint_state,
-    load_training_checkpoint,
     prepare_model_config_for_training_resume,
     restore_model_checkpoint,
     restore_training_checkpoint,
@@ -109,7 +108,7 @@ def test_training_checkpoint_round_trips_trainer_and_owned_state(tmp_path) -> No
         rng_state={},
     )
 
-    checkpoint = load_training_checkpoint(tmp_path / "checkpoint-2")
+    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-2")
     restored = _Bundle()
     with torch.no_grad():
         restored.module.weight.fill_(0.0)
@@ -147,7 +146,7 @@ def test_restore_model_checkpoint_restores_without_trainer_state(tmp_path) -> No
         restored.module.weight.zero_()
 
     restore_model_checkpoint(
-        load_training_checkpoint(path),
+        TrainingCheckpoint.load(path),
         bundle=restored,
         family="unit",
         expected_model_identity=UNIT_IDENTITY,
@@ -174,7 +173,7 @@ def test_restore_model_checkpoint_rejects_identity_before_loading(tmp_path) -> N
 
     with pytest.raises(ValueError, match="model identity mismatch"):
         restore_model_checkpoint(
-            load_training_checkpoint(path),
+            TrainingCheckpoint.load(path),
             bundle=restored,
             family="unit",
             expected_model_identity={"schema": "wrong/v1"},
@@ -198,7 +197,7 @@ def test_restore_training_checkpoint_rejects_family_mismatch(tmp_path) -> None:
         rng_state={},
     )
 
-    checkpoint = load_training_checkpoint(tmp_path / "checkpoint-janus")
+    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-janus")
     with pytest.raises(ValueError, match="family mismatch"):
         restore_training_checkpoint(
             checkpoint,
@@ -227,7 +226,7 @@ def test_restore_training_checkpoint_strictly_checks_model_identity(tmp_path) ->
         rng_state={},
         model_identity=identity,
     )
-    checkpoint = load_training_checkpoint(path)
+    checkpoint = TrainingCheckpoint.load(path)
 
     restore_training_checkpoint(
         checkpoint,
@@ -422,7 +421,7 @@ def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path
         progress={"next_epoch": 1},
         rng_state={},
     )
-    checkpoint = load_training_checkpoint(tmp_path / "checkpoint-strategy-restore")
+    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-strategy-restore")
     trainer = _Trainer()
     trainer._strategy = _SpyStrategy()
     restored = _Bundle()
@@ -470,7 +469,7 @@ def test_save_training_checkpoint_routes_export_through_strategy(tmp_path) -> No
         strategy=strategy,
     )
 
-    checkpoint = load_training_checkpoint(tmp_path / "checkpoint-strategy")
+    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-strategy")
     assert strategy.calls == [bundle]
     assert checkpoint.checkpoint_state["module"]["weight"].item() == pytest.approx(9.0)
     assert checkpoint.trainable_state is checkpoint.checkpoint_state
@@ -506,7 +505,7 @@ def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) 
         strategy=strategy,
     )
 
-    checkpoint = load_training_checkpoint(tmp_path / "checkpoint-primary-only")
+    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-primary-only")
     assert strategy.calls == [bundle]
     assert checkpoint.trainer_state == {"step": 3, "global_step": 8}
     assert checkpoint.trainable_state["module"]["weight"].item() == pytest.approx(7.0)
@@ -998,7 +997,7 @@ def test_training_checkpoint_exports_lora_with_ema_without_mutating_resume_state
         export_ema=ema,
     )
 
-    checkpoint = load_training_checkpoint(tmp_path / "checkpoint-ema")
+    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-ema")
     saved_trainable = checkpoint.checkpoint_state["module"]["weight"].item()
     published = _exported_adapter_weight(
         tmp_path / "checkpoint-ema" / LORA_WEIGHTS_NAME / "adapter_model.safetensors",
@@ -1406,7 +1405,7 @@ def test_adapter_export_selects_default_and_excludes_frozen_previous(tmp_path) -
         adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
     )
 
-    checkpoint = load_training_checkpoint(tmp_path / "checkpoint-default-only")
+    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-default-only")
     root_state = checkpoint.checkpoint_state["module"]
     assert any(".previous." in name for name in root_state)
     artifact_dir = tmp_path / "checkpoint-default-only" / LORA_WEIGHTS_NAME
@@ -1421,7 +1420,7 @@ def test_load_training_checkpoint_requires_checkpoint_pt(tmp_path) -> None:
     ckpt.mkdir()
 
     with pytest.raises(FileNotFoundError, match=TRAINING_CHECKPOINT_NAME):
-        load_training_checkpoint(ckpt)
+        TrainingCheckpoint.load(ckpt)
 
 
 def test_load_training_checkpoint_rejects_bad_schema(tmp_path) -> None:
@@ -1430,7 +1429,7 @@ def test_load_training_checkpoint_rejects_bad_schema(tmp_path) -> None:
     torch.save({"schema_version": 999}, ckpt / TRAINING_CHECKPOINT_NAME)
 
     with pytest.raises(ValueError, match="schema_version"):
-        load_training_checkpoint(ckpt)
+        TrainingCheckpoint.load(ckpt)
 
 
 @pytest.mark.parametrize(
@@ -1449,7 +1448,7 @@ def test_load_training_checkpoint_rejects_non_integer_schema_version(
     torch.save(payload, ckpt / TRAINING_CHECKPOINT_NAME)
 
     with pytest.raises((TypeError, ValueError), match="schema_version"):
-        load_training_checkpoint(ckpt)
+        TrainingCheckpoint.load(ckpt)
 
 
 @pytest.mark.parametrize(
@@ -1481,7 +1480,7 @@ def test_load_training_checkpoint_accepts_exact_integer_schema_versions(
         ckpt / TRAINING_CHECKPOINT_NAME,
     )
 
-    assert load_training_checkpoint(ckpt).schema_version == schema_version
+    assert TrainingCheckpoint.load(ckpt).schema_version == schema_version
 
 
 def test_load_training_checkpoint_rejects_schema_v2_without_identity(tmp_path) -> None:
@@ -1500,7 +1499,7 @@ def test_load_training_checkpoint_rejects_schema_v2_without_identity(tmp_path) -
     )
 
     with pytest.raises(ValueError, match="model keys mismatch"):
-        load_training_checkpoint(ckpt)
+        TrainingCheckpoint.load(ckpt)
 
 
 def test_load_training_checkpoint_rejects_schema_v2_without_family(tmp_path) -> None:
@@ -1519,7 +1518,7 @@ def test_load_training_checkpoint_rejects_schema_v2_without_family(tmp_path) -> 
     )
 
     with pytest.raises(ValueError, match="family"):
-        load_training_checkpoint(ckpt)
+        TrainingCheckpoint.load(ckpt)
 
 
 def test_save_training_checkpoint_requires_non_empty_identity(tmp_path) -> None:
@@ -1553,32 +1552,28 @@ def test_load_checkpoint_state_strict_rejects_key_mismatch() -> None:
         load_checkpoint_state(_Bundle(), {}, strict=True)
 
 
-def test_infer_next_epoch_falls_back_to_trainer_step_for_checkpoint_final(tmp_path) -> None:
-    """``checkpoint-final`` carries no epoch in its name, so the next epoch falls back to the
-    saved trainer step.
-    """
-    ckpt = tmp_path / "checkpoint-final"
-    ckpt.mkdir()
-
-    assert (
-        TrainingCheckpoint(
-            ckpt, ckpt / TRAINING_CHECKPOINT_NAME, {"trainer": {"step": 12}}, {}
-        ).next_epoch
-        == 12
+@pytest.mark.parametrize("name", ["checkpoint-final", "checkpoint-42"])
+@pytest.mark.parametrize("field", ["next_epoch", "next_step"])
+def test_resume_position_requires_explicit_progress(tmp_path, name, field) -> None:
+    checkpoint = TrainingCheckpoint(
+        tmp_path / name,
+        tmp_path / name / TRAINING_CHECKPOINT_NAME,
+        {"trainer": {"step": 12, "global_step": 24}},
+        {"next_epoch": 42},
     )
+    with pytest.raises(ValueError, match=f"required progress.{field}"):
+        getattr(checkpoint, field)
 
 
-def test_infer_next_epoch_falls_back_to_numeric_checkpoint_suffix(tmp_path) -> None:
-    """With no trainer state the next epoch is parsed from the ``checkpoint-<N>`` directory
-    suffix.
-    """
-    ckpt = tmp_path / "checkpoint-42"
-    ckpt.mkdir()
-
-    assert (
-        TrainingCheckpoint(ckpt, ckpt / TRAINING_CHECKPOINT_NAME, {"trainer": {}}, {}).next_epoch
-        == 42
+def test_resume_positions_use_saved_progress(tmp_path) -> None:
+    checkpoint = TrainingCheckpoint(
+        tmp_path / "checkpoint-42",
+        tmp_path / TRAINING_CHECKPOINT_NAME,
+        {"progress": {"next_epoch": 3, "next_step": 17}, "trainer": {"step": 12}},
+        {"next_epoch": 42},
     )
+    assert checkpoint.next_epoch == 3
+    assert checkpoint.next_step == 17
 
 
 def test_load_training_checkpoint_rejects_non_object_meta(tmp_path) -> None:
@@ -1597,7 +1592,7 @@ def test_load_training_checkpoint_rejects_non_object_meta(tmp_path) -> None:
     (ckpt / CHECKPOINT_META_NAME).write_text(json.dumps([{"next_epoch": 1}]))
 
     with pytest.raises(TypeError, match="JSON object"):
-        load_training_checkpoint(ckpt)
+        TrainingCheckpoint.load(ckpt)
 
 
 def _context(*, rank: int = 0, world_size: int = 1) -> DistributedTrainingContext:
@@ -2221,7 +2216,7 @@ def test_checkpoint_load_rejects_meta_identity_drift(tmp_path) -> None:
     meta_path.write_text(json.dumps(meta))
 
     with pytest.raises(ValueError, match="model_identity disagrees"):
-        load_training_checkpoint(target)
+        TrainingCheckpoint.load(target)
 
 
 def test_checkpoint_load_rejects_meta_without_schema_version(tmp_path) -> None:
@@ -2241,7 +2236,7 @@ def test_checkpoint_load_rejects_meta_without_schema_version(tmp_path) -> None:
     meta_path.write_text(json.dumps(meta))
 
     with pytest.raises(ValueError, match="missing schema_version"):
-        load_training_checkpoint(target)
+        TrainingCheckpoint.load(target)
 
 
 @pytest.mark.parametrize(
@@ -2272,7 +2267,7 @@ def test_checkpoint_load_requires_meta_family_to_match_payload(
     meta_path.write_text(json.dumps(meta))
 
     with pytest.raises(ValueError, match=message):
-        load_training_checkpoint(target)
+        TrainingCheckpoint.load(target)
 
 
 def test_find_latest_complete_checkpoint_skips_staging_and_orders_by_step(tmp_path) -> None:
@@ -2322,7 +2317,7 @@ def test_resave_to_existing_checkpoint_dir_replaces_it(tmp_path) -> None:
             rng_state={},
         )
     assert is_complete_checkpoint(target)
-    assert load_training_checkpoint(target).payload["family"] == "unit"
+    assert TrainingCheckpoint.load(target).payload["family"] == "unit"
 
 
 def test_require_equal_tensor_tree_bridges_devices() -> None:
@@ -2353,3 +2348,16 @@ def test_require_equal_tensor_tree_bridges_devices() -> None:
             cuda_tree,
             label="cross device mismatch",
         )
+
+
+@pytest.mark.parametrize("value", [-1, 1.5, "2", True, None])
+@pytest.mark.parametrize("field", ["next_epoch", "next_step"])
+def test_resume_position_rejects_invalid_values(tmp_path, field, value):
+    checkpoint = TrainingCheckpoint(
+        tmp_path,
+        tmp_path / TRAINING_CHECKPOINT_NAME,
+        {"progress": {field: value}},
+        {},
+    )
+    with pytest.raises(ValueError, match="non-negative integer"):
+        getattr(checkpoint, field)

@@ -681,6 +681,7 @@ class OnlineRecipeRun:
             progress={
                 "completed_epoch": epoch,
                 "next_epoch": epoch,
+                "next_step": self.trainer.state.global_step,
                 "global_step": self.trainer.state.global_step,
             },
             rng_state=capture_rng_state(prompt_generator=self.rng),

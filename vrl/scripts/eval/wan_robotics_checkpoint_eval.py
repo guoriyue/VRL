@@ -37,9 +37,9 @@ from vrl.scripts.eval.score_report import summarize_paired_scores
 from vrl.trainers.checkpointing import (
     RESOLVED_CONFIG_NAME,
     CheckpointTarget,
+    TrainingCheckpoint,
     load_checkpoint_state,
     load_resolved_run_config,
-    load_training_checkpoint,
 )
 from vrl.trainers.data import PromptExample, load_prompt_manifest
 from vrl.utils.artifacts import resolve_artifact_path, sha256_file
@@ -202,7 +202,7 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
         resolved = run.resolve_model(entry, root, device, precision=precision, for_rollout=True)
         bundle = entry.build_rollout(resolved.build)
         if target.path is not None:
-            checkpoint = load_training_checkpoint(target.path)
+            checkpoint = TrainingCheckpoint.load(target.path)
             _validate_loaded_checkpoint(checkpoint, target)
             trainable_state = checkpoint.trainable_state
             load_checkpoint_state(bundle, trainable_state, strict=True)

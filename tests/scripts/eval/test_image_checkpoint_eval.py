@@ -253,7 +253,7 @@ def test_base_disables_adapter_before_checkpoint_restores(tmp_path, plan, monkey
 
     monkeypatch.setattr(checkpoint_eval, "generate_images", generate)
     monkeypatch.setattr(
-        "vrl.trainers.checkpointing.load_training_checkpoint",
+        "vrl.trainers.checkpointing.TrainingCheckpoint.load",
         lambda path: SimpleNamespace(next_epoch=int(path.name.rsplit("-", 1)[1])),
     )
     monkeypatch.setattr("vrl.trainers.checkpointing.restore_model_checkpoint", restore)

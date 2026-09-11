@@ -944,7 +944,7 @@ def test_fsdp_adapter_export_writes_gathered_hf_adapter(cpu_process_group, tmp_p
     from vrl.trainers.checkpointing import (
         LORA_WEIGHTS_NAME,
         AdapterExport,
-        load_training_checkpoint,
+        TrainingCheckpoint,
         save_training_checkpoint,
     )
 
@@ -979,7 +979,7 @@ def test_fsdp_adapter_export_writes_gathered_hf_adapter(cpu_process_group, tmp_p
     # Every exported tensor equals the gathered full state (PEFT strips the
     # ".default" adapter infix on save, so map keys back before comparing).
     gathered = strategy.export_checkpoint_state(bundle)["transformer"]
-    checkpoint_state = load_training_checkpoint(tmp_path).checkpoint_state["transformer"]
+    checkpoint_state = TrainingCheckpoint.load(tmp_path).checkpoint_state["transformer"]
     assert checkpoint_state.keys() == gathered.keys()
     assert all("lora_" in key for key in checkpoint_state)
     for key, tensor in adapter.items():

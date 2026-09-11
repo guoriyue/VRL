@@ -207,7 +207,7 @@ def test_run_generates_base_before_strict_restore_and_current(
         resolve_model_build=lambda *args, **kwargs: build,
         build_rollout=lambda value: bundle,
     )
-    monkeypatch.setattr(checkpoint_compare, "load_training_checkpoint", fake_load_checkpoint)
+    monkeypatch.setattr(checkpoint_compare.TrainingCheckpoint, "load", fake_load_checkpoint)
     monkeypatch.setattr(checkpoint_compare, "restore_model_checkpoint", fake_restore)
     monkeypatch.setattr(
         checkpoint_identity,

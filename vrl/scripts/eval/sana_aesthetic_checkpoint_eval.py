@@ -37,8 +37,8 @@ from vrl.scripts.eval.sana_inference import (
 from vrl.trainers.checkpointing import (
     RESOLVED_CONFIG_NAME,
     TRAINING_CHECKPOINT_NAME,
+    TrainingCheckpoint,
     is_complete_checkpoint,
-    load_training_checkpoint,
     read_checkpoint_meta,
     restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
@@ -398,7 +398,7 @@ def _generate_images(
             else:
                 if target.path is None:
                     raise ValueError(f"checkpoint target has no path: {target.label}")
-                checkpoint = load_training_checkpoint(target.path)
+                checkpoint = TrainingCheckpoint.load(target.path)
                 if checkpoint.meta.get("uses_lora") is not False:
                     raise ValueError(
                         f"full-parameter checkpoint must declare uses_lora=false: {target.path}",

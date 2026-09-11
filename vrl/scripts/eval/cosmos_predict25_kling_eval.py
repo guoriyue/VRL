@@ -30,7 +30,7 @@ from vrl.scripts.eval.denoise_generation import (
 from vrl.scripts.eval.score_report import write_scores
 from vrl.trainers.checkpointing import (
     CheckpointTarget,
-    load_training_checkpoint,
+    TrainingCheckpoint,
     read_checkpoint_meta,
     restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
@@ -303,7 +303,7 @@ def _generate_all(
                         "Cosmos model source changed during runtime construction",
                     )
             logger.info("Loading checkpoint-owned state from %s", target.path)
-            training_checkpoint = load_training_checkpoint(target.path)
+            training_checkpoint = TrainingCheckpoint.load(target.path)
             restore_model_checkpoint(
                 training_checkpoint,
                 bundle=bundle,

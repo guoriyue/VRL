@@ -35,8 +35,8 @@ from vrl.scripts.eval.sana_inference import (
 )
 from vrl.trainers.checkpointing import (
     RESOLVED_CONFIG_NAME,
+    TrainingCheckpoint,
     load_resolved_run_config,
-    load_training_checkpoint,
     read_checkpoint_meta,
     restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
@@ -181,7 +181,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     )
     write_png(base_image, base_path)
 
-    checkpoint = load_training_checkpoint(checkpoint_input)
+    checkpoint = TrainingCheckpoint.load(checkpoint_input)
     _validate_checkpoint(checkpoint)
     checkpoint_path = checkpoint.checkpoint_path
     checkpoint_meta = dict(checkpoint.meta)

@@ -102,6 +102,36 @@ class TrainingCheckpoint:
     payload: dict[str, Any]
     meta: dict[str, Any]
 
+    @classmethod
+    def load(cls, path: str | Path) -> TrainingCheckpoint:
+        """Load ``checkpoint.pt`` from a checkpoint directory or direct file path."""
+
+        raw_path = Path(path).expanduser().resolve()
+        checkpoint_path = raw_path if raw_path.is_file() else raw_path / TRAINING_CHECKPOINT_NAME
+        checkpoint_dir = checkpoint_path.parent
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"training checkpoint file not found: {checkpoint_path}")
+        payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        if not isinstance(payload, dict):
+            raise TypeError(f"{checkpoint_path} must contain a dict payload")
+        schema_version = _require_checkpoint_schema_version(
+            payload,
+            source="checkpoint payload",
+        )
+        _validate_checkpoint_payload(payload, schema_version=schema_version)
+        meta = read_checkpoint_meta(checkpoint_dir)
+        _validate_checkpoint_meta_matches_payload(
+            meta,
+            payload=payload,
+            schema_version=schema_version,
+        )
+        return cls(
+            checkpoint_dir=checkpoint_dir,
+            checkpoint_path=checkpoint_path,
+            payload=payload,
+            meta=meta,
+        )
+
     @property
     def trainer_state(self) -> dict[str, Any]:
         trainer = self.payload.get("trainer")
@@ -165,34 +195,23 @@ class TrainingCheckpoint:
             raise TypeError("checkpoint payload field rng must be a dict")
         return rng
 
+    def _resume_position(self, name: str) -> int:
+        if name not in self.progress:
+            raise ValueError(f"checkpoint is missing required progress.{name}")
+        value = self.progress[name]
+        if type(value) is not int or value < 0:
+            raise ValueError(f"progress.{name} must be a non-negative integer, got {value!r}")
+        return value
+
     @property
     def next_epoch(self) -> int:
-        if "next_epoch" in self.progress:
-            return _non_negative_int(self.progress["next_epoch"], "progress.next_epoch")
-        if "next_epoch" in self.meta:
-            return _non_negative_int(self.meta["next_epoch"], "checkpoint_meta.next_epoch")
-
-        if "step" in self.trainer_state:
-            return _non_negative_int(self.trainer_state["step"], "trainer_state.step")
-
-        checkpoint_name = self.checkpoint_dir.name
-        match = re.fullmatch(r"checkpoint-(\d+)", checkpoint_name)
-        if match:
-            return _non_negative_int(match.group(1), "checkpoint directory suffix")
-
-        raise ValueError(
-            "cannot infer next_epoch: checkpoint_meta.next_epoch and trainer_state.step are missing",
-        )
+        """Read the explicit online resume position saved by the trainer."""
+        return self._resume_position("next_epoch")
 
     @property
     def next_step(self) -> int:
-        if "next_step" in self.progress:
-            return _non_negative_int(self.progress["next_step"], "progress.next_step")
-        if "global_step" in self.trainer_state:
-            return _non_negative_int(self.trainer_state["global_step"], "trainer.global_step")
-        if "step" in self.trainer_state:
-            return _non_negative_int(self.trainer_state["step"], "trainer.step")
-        return self.next_epoch
+        """Read the explicit optimizer resume position saved by the trainer."""
+        return self._resume_position("next_step")
 
 
 @dataclass(frozen=True, slots=True)
@@ -785,36 +804,6 @@ def _publish_checkpoint_dir(staging: Path, final_path: Path) -> None:
         os.close(directory_fd)
 
 
-def load_training_checkpoint(path: str | Path) -> TrainingCheckpoint:
-    """Load ``checkpoint.pt`` from a checkpoint directory or direct file path."""
-
-    raw_path = Path(path).expanduser().resolve()
-    checkpoint_path = raw_path if raw_path.is_file() else raw_path / TRAINING_CHECKPOINT_NAME
-    checkpoint_dir = checkpoint_path.parent
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"training checkpoint file not found: {checkpoint_path}")
-    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    if not isinstance(payload, dict):
-        raise TypeError(f"{checkpoint_path} must contain a dict payload")
-    schema_version = _require_checkpoint_schema_version(
-        payload,
-        source="checkpoint payload",
-    )
-    _validate_checkpoint_payload(payload, schema_version=schema_version)
-    meta = read_checkpoint_meta(checkpoint_dir)
-    _validate_checkpoint_meta_matches_payload(
-        meta,
-        payload=payload,
-        schema_version=schema_version,
-    )
-    return TrainingCheckpoint(
-        checkpoint_dir=checkpoint_dir,
-        checkpoint_path=checkpoint_path,
-        payload=payload,
-        meta=meta,
-    )
-
-
 def load_training_checkpoint_for_resume(
     resume: TrainingResumeConfig,
 ) -> TrainingCheckpoint | None:
@@ -822,7 +811,7 @@ def load_training_checkpoint_for_resume(
 
     if resume.checkpoint_path is None:
         return None
-    return load_training_checkpoint(resume.checkpoint_path)
+    return TrainingCheckpoint.load(resume.checkpoint_path)
 
 
 def prepare_model_config_for_training_resume(
@@ -1712,16 +1701,6 @@ def find_latest_complete_checkpoint(output_dir: str | Path) -> Path | None:
     return best[2] if best else None
 
 
-def _non_negative_int(value: Any, field: str) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field} must be an integer, got {value!r}") from exc
-    if parsed < 0:
-        raise ValueError(f"{field} must be >= 0, got {parsed}")
-    return parsed
-
-
 __all__ = [
     "CHECKPOINT_META_NAME",
     "CHECKPOINT_SCHEMA_VERSION",
@@ -1741,7 +1720,6 @@ __all__ = [
     "load_checkpoint_state",
     "load_full_checkpoint_state",
     "load_resolved_run_config",
-    "load_training_checkpoint",
     "load_training_checkpoint_for_resume",
     "prepare_model_config_for_training_resume",
     "read_checkpoint_meta",

@@ -309,7 +309,7 @@ def _run_checkpoint_ema_export_rank(
     from vrl.trainers.checkpointing import (
         LORA_WEIGHTS_NAME,
         AdapterExport,
-        load_training_checkpoint,
+        TrainingCheckpoint,
         save_training_checkpoint,
     )
     from vrl.trainers.online.ema import EMAModuleWrapper
@@ -429,7 +429,7 @@ def _run_checkpoint_ema_export_rank(
         raw_checkpoint = True
         ema_artifact = True
         if rank == 0:
-            checkpoint = load_training_checkpoint(output_dir)
+            checkpoint = TrainingCheckpoint.load(output_dir)
             raw_checkpoint = all(
                 torch.equal(value, torch.full_like(value, 3.0))
                 for value in checkpoint.checkpoint_state["transformer"].values()

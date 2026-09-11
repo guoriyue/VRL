@@ -53,7 +53,7 @@ from vrl.scripts.eval.denoise_generation import generate_one_video, seed_for
 from vrl.scripts.eval.score_report import summarize_paired_scores, write_scores
 from vrl.trainers.checkpointing import (
     CheckpointTarget,
-    load_training_checkpoint,
+    TrainingCheckpoint,
     restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
@@ -193,7 +193,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
                 videos += _generate_arm(model, BASE_LABEL, examples, sampling, args)
         for target in targets:
             restore_model_checkpoint(
-                load_training_checkpoint(target.path),
+                TrainingCheckpoint.load(target.path),
                 bundle=bundle,
                 family=entry.family,
                 expected_model_identity=identity,
