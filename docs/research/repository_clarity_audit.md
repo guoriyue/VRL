@@ -960,3 +960,27 @@ contained guesses. Removed both:
 - Validation: 61 collector, Janus multisegment, chunk-denoise binding and trajectory
   tests passed. Touched-file Ruff and diff whitespace checks pass. This is a
   dispatch-structure cleanup, not a change to which trajectories are trainable.
+
+## JSON, logging and deadline helper review closure
+
+- Re-read JSON file publication, process logger initialization and monotonic
+  deadline implementations alongside their tests. No production restructure is
+  warranted: these are shared filesystem/framework/runtime boundaries rather than
+  operations belonging to a particular trainer or generation model.
+- Keep _write_atomically: JSON and JSONL writers share publication and temporary
+  cleanup. Keep emit callbacks as the serializer-to-file boundary; keep read_json
+  as the uniform UTF-8 public facade. Atomic publication does not claim durability
+  of the destination directory after power loss.
+- Keep the logging handler/init pair and kv formatter. Logger namespace/format
+  constants specify logging output, not a domain business vocabulary. Existing
+  tests verify repeated initialization and stdout redirection; they do not prove
+  concurrent first-use initialization is thread-safe.
+- Keep OperationDeadline, OperationTimeout and require_timeout: Ray subclasses
+  the error/deadline contract, and reward uses the transport-neutral version.
+  Expiry is monotonic and remaining wait budget cannot become negative.
+- Change: close this narrowly identified structural review in the audit record.
+  Non-goals: utility namespace classes, merging filesystem ownership into callers,
+  or claiming the remaining CUDA/media/lifecycle utility review is complete.
+- Validation: 15 JSON, logger and Ray deadline tests passed. No production edits;
+  diff whitespace check passes. Artifact/config helpers were also rechecked for
+  cross-domain callers, with no additional structural change selected here.
