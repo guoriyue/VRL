@@ -4344,3 +4344,14 @@ this combined regression is compatibility evidence, not architectural completion
 - GradScaler and state-restore suites passed: 32 tests. Touched-file Ruff checks
   pass after removing a duplicate trainer import introduced during the move.
   The repository-wide clarity audit remains incomplete.
+
+## Online trainer owns master-weight detection
+
+- Move `_requires_fp32_master_weights` onto OnlineTrainer as an instance method
+  beside optimizer initialization. Both callers belong to the trainer and always
+  inspect self.model, so remove the redundant model argument and module helper.
+- Keep one dynamic query shared by optimizer creation and state restoration.
+  Do not cache the answer or change FP16/BF16 criteria, optimizer construction,
+  checkpoint requirements or the master-weight implementation.
+- GradScaler and restore suites: 32 passed; touched-file Ruff checks pass.
+  The overall repository clarity audit remains in progress.

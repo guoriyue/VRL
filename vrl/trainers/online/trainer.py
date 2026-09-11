@@ -166,15 +166,6 @@ class PhaseTimer:
 # ---------------------------------------------------------------------------
 
 
-def _requires_fp32_master_weights(model: Any) -> bool:
-    """Return whether the optimizer must preserve sub-ULP update residuals."""
-
-    return any(
-        parameter.requires_grad and parameter.dtype in {torch.float16, torch.bfloat16}
-        for parameter in model.parameters()
-    )
-
-
 # ---------------------------------------------------------------------------
 # OnlineTrainer
 # ---------------------------------------------------------------------------
@@ -732,10 +723,18 @@ class OnlineTrainer:
     # Lazy init
     # ------------------------------------------------------------------
 
+    def _requires_fp32_master_weights(self) -> bool:
+        """Return whether the optimizer must preserve sub-ULP update residuals."""
+
+        return any(
+            parameter.requires_grad and parameter.dtype in {torch.float16, torch.bfloat16}
+            for parameter in self.model.parameters()
+        )
+
     def _ensure_optimizer(self) -> torch.optim.Optimizer:
         if self._optimizer is None:
             trainable = [p for p in self.model.parameters() if p.requires_grad]
-            if _requires_fp32_master_weights(self.model):
+            if self._requires_fp32_master_weights():
                 self._optimizer = FP32MasterWeightOptimizer(
                     trainable,
                     lambda masters: build_optimizer(masters, self.config),
@@ -2198,7 +2197,7 @@ class OnlineTrainer:
         nonzero_checkpoint = max(self.state.step, self.state.global_step) > 0
         if (
             nonzero_checkpoint
-            and _requires_fp32_master_weights(self.model)
+            and self._requires_fp32_master_weights()
             and "optimizer" not in state
         ):
             message = (
