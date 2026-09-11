@@ -204,6 +204,10 @@ def _trainable_result(
             "transition_noise": torch.full((1, 2, 3, 1), value + 6),
             "cache_position": torch.arange(2).view(1, 2),
         },
+        replay_tensor_axes={
+            "transition_noise": ("sample", "temporal_chunk", "denoise_transition"),
+            "cache_position": ("sample", "temporal_chunk"),
+        },
         context={"model_family": "causvid"},
     )
 
@@ -256,3 +260,39 @@ def test_generation_only_result_preserves_optional_transition_count(transition_c
     )
     assert result.denoise_transition_count == transition_count
     assert not result.has_trainable_trajectory
+
+
+def test_prompt_embedding_dimensions_do_not_become_chunk_axes() -> None:
+    request = _request()
+    result = _trainable_result(10.0, sample_start=0)
+    other = _trainable_result(20.0, sample_start=1)
+    # Token count and embedding width happen to equal chunk/transition counts.
+    for batch in (result, other):
+        batch.replay_tensors["prompt_embeds"] = torch.ones(1, 2, 3)
+        batch.replay_tensor_axes["prompt_embeds"] = ("sample",)
+    output = ChunkAutoregressiveDenoiseGatherer().gather_batches(
+        request, request.sample_rows(), [result, other]
+    )
+    from vrl.trajectory.resolver import TrajectoryResolver
+
+    resolver = TrajectoryResolver(output.trajectory)
+    replay = resolver.replay_tensor_dict("denoise", axis="temporal_chunk", axis_index=1)
+    assert replay["prompt_embeds"].shape == (2, 2, 3)
+    assert replay["transition_noise"].shape == (2, 3, 1)
+
+
+@pytest.mark.parametrize("invalid_axes", [None, ("sample",)])
+def test_gather_rejects_missing_or_inconsistent_replay_axes(invalid_axes) -> None:
+    request = _request()
+    batches = [_trainable_result(10.0, sample_start=0), _trainable_result(20.0, sample_start=1)]
+    if invalid_axes is None:
+        for batch in batches:
+            del batch.replay_tensor_axes["transition_noise"]
+        match = "must declare exactly"
+    else:
+        batches[1].replay_tensor_axes["transition_noise"] = invalid_axes
+        match = "must declare the same"
+    with pytest.raises(ValueError, match=match):
+        ChunkAutoregressiveDenoiseGatherer().gather_batches(
+            request, request.sample_rows(), batches
+        )

@@ -36,6 +36,8 @@ class ChunkAutoregressiveDenoiseResult:
     kl: Any | None = None
     finalized_chunk_latents: Any | None = None
     replay_tensors: dict[str, Any] = field(default_factory=dict)
+    # Producer-owned logical axes for each replay tensor, including sample.
+    replay_tensor_axes: dict[str, tuple[str, ...]] = field(default_factory=dict)
     context: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

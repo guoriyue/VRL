@@ -169,6 +169,7 @@ class CausVidTrajectoryMapping(TypedDict):
     timesteps: torch.Tensor
     finalized_chunk_latents: torch.Tensor
     replay_tensors: dict[str, Any]
+    replay_tensor_axes: dict[str, tuple[str, ...]]
     context: dict[str, Any]
 
 
@@ -202,6 +203,10 @@ class CausVidRunResult:
             "replay_tensors": {
                 "prompt_embeds": self.prompt_embeds,
                 "next_sigmas": self.next_sigmas,
+            },
+            "replay_tensor_axes": {
+                "prompt_embeds": ("sample",),
+                "next_sigmas": ("sample", "temporal_chunk", "denoise_transition"),
             },
             "context": dict(context),
         }

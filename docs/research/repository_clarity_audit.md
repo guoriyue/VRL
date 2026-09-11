@@ -2527,3 +2527,28 @@ this combined regression is compatibility evidence, not architectural completion
   fake loaders that deliberately change grad mode; no model download is needed.
 - Validation: 83 Cosmos and shared denoise model-base tests passed. Touched-file
   Ruff and diff checks passed. Full repository clarity review remains active.
+
+## Chunk replay axes are declared by their producer
+
+- Found another shape-based semantic guess in _chunk_replay_axes: any replay
+  tensor beginning [B, C, S] was labelled sample/chunk/transition, even when C
+  and S were coincidentally the token count and embedding width. The resolver
+  then legitimately sliced those incorrectly declared axes.
+- Remove that helper. The existing chunk result now carries replay_tensor_axes;
+  the trajectory builder requires exactly one declaration for each extra tensor,
+  requires sample alignment, and delegates axis/shape validation to the existing
+  trajectory validator. Missing declarations and built-in name collisions fail
+  instead of silently dropping or inferring data. Empty extras need no mapping.
+- CausVid's existing trajectory_mapping owns prompt_embeds=(sample,) and
+  next_sigmas=(sample, temporal_chunk, denoise_transition). The gatherer requires
+  identical declarations across sample batches before using the common schema.
+- Keep the result class, gatherer, family projection and public trajectory
+  builders: they separate producer facts, transport and shared validation. No
+  new wrapper class, independent helper, or ALL_CAPS vocabulary was introduced.
+  Axis strings are existing schema keys. This changes newly constructed chunk
+  trajectories; it does not reinterpret persisted trajectories or claim to fix
+  full-sequence optional-cache axis metadata.
+- Validation: 145 trajectory, chunk binding, CausVid, chunk replay, collector and
+  trainer granularity tests passed. A collision regression selects a chunk while
+  preserving the full prompt embedding; missing and inconsistent declarations
+  fail explicitly. Touched-file Ruff and diff checks passed. Review remains active.

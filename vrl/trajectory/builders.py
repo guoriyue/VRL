@@ -148,6 +148,7 @@ def build_chunk_autoregressive_denoise_trajectory(
     replay_tensors: dict[str, Any],
     context: dict[str, Any],
     kl: Any | None = None,
+    replay_tensor_axes: dict[str, tuple[str, ...]] | None = None,
 ) -> TrajectoryBatch:
     """Build a trainable chunk-autoregressive denoise trajectory.
 
@@ -157,6 +158,8 @@ def build_chunk_autoregressive_denoise_trajectory(
     therefore starts with ``[sample, temporal_chunk, denoise_transition]``.
     Terminal chunk latents are kept separately at ``[sample, temporal_chunk]``
     so replay can reconstruct the cache/conditioning boundary between chunks.
+    Extra replay tensors require an explicit axes declaration for every key;
+    equal dimension lengths do not establish chunk or transition semantics.
     """
 
     batch_size = len(sample_rows)
@@ -232,17 +235,15 @@ def build_chunk_autoregressive_denoise_trajectory(
         ),
     }
     replay_tensor_names: list[str] = []
+    declared_axes = replay_tensor_axes if replay_tensor_axes is not None else {}
+    if declared_axes.keys() != replay_tensors.keys():
+        raise ValueError("chunk replay_tensor_axes must declare exactly the replay_tensors keys")
     for name, value in replay_tensors.items():
         if name in tensors:
-            continue
-        axes = _chunk_replay_axes(
-            value,
-            batch_size=batch_size,
-            chunk_count=chunk_count,
-            transition_count=transition_count,
-        )
-        if axes is None:
-            continue
+            raise ValueError(f"chunk replay tensor {name!r} conflicts with a built-in tensor")
+        axes = declared_axes[name]
+        if not isinstance(axes, tuple) or not axes or axes[0] != "sample":
+            raise ValueError(f"chunk replay tensor {name!r} axes must start with 'sample'")
         tensors[name] = TrajectoryTensor(name, value, axes, "replay_input")
         replay_tensor_names.append(name)
 
@@ -717,34 +718,6 @@ def _chunk_denoise_shape(value: Any, batch_size: int) -> tuple[int, int]:
             "old_log_prob temporal_chunk and denoise_transition dimensions must be >= 1",
         )
     return chunk_count, transition_count
-
-
-def _chunk_replay_axes(
-    value: Any,
-    *,
-    batch_size: int,
-    chunk_count: int,
-    transition_count: int,
-) -> tuple[str, ...] | None:
-    shape = getattr(value, "shape", None)
-    if shape is not None:
-        if len(shape) >= 3 and tuple(int(length) for length in shape[:3]) == (
-            batch_size,
-            chunk_count,
-            transition_count,
-        ):
-            return ("sample", "temporal_chunk", "denoise_transition")
-        if len(shape) >= 2 and tuple(int(length) for length in shape[:2]) == (
-            batch_size,
-            chunk_count,
-        ):
-            return ("sample", "temporal_chunk")
-        if len(shape) >= 1 and int(shape[0]) == batch_size:
-            return ("sample",)
-        return None
-    if isinstance(value, (list, tuple)) and len(value) == batch_size:
-        return ("sample",)
-    return None
 
 
 def _leading_length(value: Any) -> int | None:
