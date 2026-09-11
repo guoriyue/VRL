@@ -1118,3 +1118,14 @@ def test_collect_phase_timings_are_per_call_not_shared(
     assert "collect.batch_build" in first.phases
     assert "collect.reward_score" not in second.phases
     assert "collect.batch_build" not in second.phases
+
+
+@pytest.mark.parametrize("group_size", [True, 2.5, "2"])
+def test_collector_does_not_coerce_group_size_before_request_validation(group_size) -> None:
+    import asyncio
+
+    runtime = _Runtime()
+    collector = _collector(generation_runtime=runtime, reward_runtime=_RewardRuntime())
+    with pytest.raises(ValueError, match="samples_per_prompt must be an integer"):
+        asyncio.run(collector.collect_unscored(["p0"], group_size=group_size))
+    assert runtime.requests == []

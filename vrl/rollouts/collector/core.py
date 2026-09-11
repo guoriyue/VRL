@@ -249,7 +249,7 @@ class RolloutCollector:
 
         collector_request = self.request_builder.build(
             inputs,
-            int(group_size),
+            group_size,
             metadata=metadata,
             request_overrides=request_overrides,
             runtime_debug=runtime_debug,

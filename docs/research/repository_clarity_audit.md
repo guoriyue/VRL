@@ -5481,3 +5481,16 @@ this combined regression is compatibility evidence, not architectural completion
   311 passed. Touched-file Ruff and git diff --check pass. No new tests merely
   mirror the representation change; existing tests exercise prompt identities,
   timing, overlap and cleanup. The full repository audit remains incomplete.
+
+## Collector preserves the group-size value for request validation
+
+- Remove int(group_size) before request construction. GenerationRequest already
+  requires a positive exact integer; collector coercion silently accepted True,
+  fractional values and numeric strings before that boundary could check them.
+- Keep validation on GenerationRequest and the request builder as the adapter;
+  no new helper or duplicate validator is added. Valid group sizes and runtime
+  scheduling stay unchanged. Timing compatibility reads remain pending a fuller
+  review of the simplified test-fake contracts rather than a partial deletion.
+- Three regressions failed before the fix and now verify rejection before any
+  generation request is submitted. Collector and orchestration suites: 314
+  passed. Touched-file Ruff and git diff --check pass. Wider audit remains open.
