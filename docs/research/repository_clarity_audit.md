@@ -6042,3 +6042,21 @@ The broader repository audit remains incomplete.
   Artifact store and disk reward-function suites: 13 passed. Touched-file Ruff
   and diff checks pass. CPU regression proves call ordering, not measured GPU
   transfer savings. Broader repository audit remains incomplete.
+
+## Generation batch identity and retry boundaries: retain shared ownership
+
+- Re-read GenerationSampleBatch, ordered_covering_batches, the local OOM retry
+  driver and BatchExecutorBase. Keep the batch owner for range/key/splitting,
+  the common gather coverage checks and the executor facade used across bindings.
+  Moving these into individual family classes would duplicate their contracts.
+- Keep retry's exception-frame cleanup: its regression uses weak references to
+  prove failed forward locals are released before cache cleanup. Terminal failure
+  tests separately prove diagnostic traceback locals remain available when no
+  split retry will happen. This helper removes real failure-handling complexity.
+- Keep EnginePlan as the request-level width-resolution API. Its small size is
+  not evidence that direct and Ray planning should implement defaults separately.
+  No implementation changes were justified in this review slice.
+- Sample-batch and gatherer suites: 70 passed, including ordering, per-batch
+  replay alignment, dtype preservation and retry/terminal failure behavior.
+  These are component checks, not a complete distributed generation campaign.
+  Whole-repository completion remains unproven.
