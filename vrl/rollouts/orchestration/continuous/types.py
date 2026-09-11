@@ -21,13 +21,11 @@ class ContinuousRolloutSettings:
     (``vrl.trainers.core.types``) remains the single source of default values, and
     the rollout layer must not keep a second copy of them.
 
-    Range validation lives once at the user boundary
-    (``ContinuousRolloutConfig.__post_init__``); this carrier and the mechanisms
-    reading it trust those values. The one check kept here is schedule
-    *routing*, not a range: a zero-version window is serial strict-on-policy
-    execution, which is a different schedule, and this object is the last
-    shared point where both the build factory and direct constructors can be
-    steered there.
+    ``ContinuousRolloutConfig.__post_init__`` validates user settings; individual
+    mechanisms also enforce their own capacity and version invariants. This
+    carrier rejects a nonpositive policy-version window for both factory and
+    direct construction. It does not switch schedules: callers wanting zero
+    staleness must select strict-on-policy execution explicitly.
     """
 
     max_inflight_groups: int
@@ -71,8 +69,9 @@ class ContinuousRolloutItem:
     attempt: int
     batch: RolloutBatch
     # display/provenance-only: receipt time on this process's monotonic clock
-    # (never wall time), exported as a queue-health age gauge. Cross-process
-    # consumers must treat it as an age/duration source, not a timestamp.
+    # (never wall time), exported as a queue-health age gauge. Computing age
+    # requires the same monotonic clock domain; this is not a portable timestamp
+    # for a consumer on another machine.
     completed_at: float = field(default_factory=time.monotonic)
     nbytes: int = 0
     # Per-item typed stats (collect.engine_generate / reward_score / batch_build

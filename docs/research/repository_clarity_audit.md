@@ -4979,3 +4979,20 @@ this combined regression is compatibility evidence, not architectural completion
 - Existing orchestration suite: 272 passed. Touched-file Ruff and git diff
   --check pass. This is behavior-preserving cleanup, not evidence that the
   repository-wide audit is complete.
+
+## Continuous settings documentation matches rejection and clock semantics
+
+- Correct ContinuousRolloutSettings documentation: it rejects nonpositive policy
+  windows; it cannot route callers to another schedule. State that mechanisms
+  retain capacity/version validation rather than claiming all range validation
+  exists exclusively at the configuration boundary.
+- Clarify that completed_at requires a shared monotonic clock domain to compute
+  age and is not a portable cross-machine timestamp. The queue remains local to
+  its owner; no timestamp conversion or distributed clock protocol is added.
+- Keep GeneratedRolloutCapacity as one owner of reservation/waiting/scoring
+  accounting and StalenessPolicy as the shared producer/consumer version rule.
+  Their methods are meaningful state operations and consistency boundaries, not
+  candidates for flattening solely to reduce function count. Behavior is unchanged.
+- Existing continuous orchestration suite: 209 passed. Touched-file Ruff and git
+  diff --check pass. This validates the inspected subsystem, not completion of
+  the repository-wide clarity audit.
