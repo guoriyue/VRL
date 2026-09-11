@@ -4046,3 +4046,16 @@ this combined regression is compatibility evidence, not architectural completion
   own caller review, not mechanical relocation based on function counts.
 - All 37 MAGI subprocess runtime tests passed; touched-file Ruff checks pass.
   No official checkpoint inference was run. The full repository audit continues.
+
+## MAGI optional path initialization stays in its config
+
+- Replace three repeated frozen-field assignments in `Magi1SubprocessConfig`
+  with one loop over its checkpoint, T5 and VAE path schema fields. Handle None
+  directly there and delete the one-line `_optional_source_path` forwarding
+  function. Normalization order and relative-path semantics remain unchanged.
+- Retain `_resolve_from_source`: configuration initialization and runtime path
+  validation share the same source-root resolution rule. Retain `_optional_path`
+  in weight resolution for now; it normalizes absent/string source values at a
+  different input boundary. No path policy or constructor behavior change.
+- All 37 MAGI tests passed and touched-file Ruff checks pass. The repository-wide
+  audit remains in progress.

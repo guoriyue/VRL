@@ -94,21 +94,11 @@ class Magi1SubprocessConfig:
                 f"{MAGI_1_SUPPORTED_SOURCE_REVISION}; got {source_revision!r}",
             )
         object.__setattr__(self, "source_revision", source_revision)
-        object.__setattr__(
-            self,
-            "checkpoint_path",
-            _optional_source_path(source_path, self.checkpoint_path),
-        )
-        object.__setattr__(
-            self,
-            "t5_pretrained_path",
-            _optional_source_path(source_path, self.t5_pretrained_path),
-        )
-        object.__setattr__(
-            self,
-            "vae_pretrained_path",
-            _optional_source_path(source_path, self.vae_pretrained_path),
-        )
+        for name in ("checkpoint_path", "t5_pretrained_path", "vae_pretrained_path"):
+            value = getattr(self, name)
+            object.__setattr__(
+                self, name, None if value is None else _resolve_from_source(source_path, value)
+            )
         python_executable = str(self.python_executable).strip()
         if not python_executable:
             raise ValueError("MAGI-1 python_executable must be non-empty")
@@ -904,10 +894,6 @@ def _resolve_from_source(source_path: Path, value: Path) -> Path:
     if not path.is_absolute():
         path = source_path / path
     return path.resolve()
-
-
-def _optional_source_path(source_path: Path, value: Path | None) -> Path | None:
-    return None if value is None else _resolve_from_source(source_path, value)
 
 
 def _optional_path(value: Any) -> Path | None:
