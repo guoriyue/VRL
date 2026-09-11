@@ -1249,3 +1249,19 @@ contained guesses. Removed both:
   business vocabulary. No storage dtype, conversion, indexing or schema changes.
 - Validation: 43 trajectory/replay tests plus 24 trajectory-granularity and
   Janus/Emu3/GLM replay tests passed. Touched-file Ruff and git diff --check pass.
+
+## Trajectory device conversion failure contract
+
+- Removed move_value_to_device's local _move helper and its TypeError fallback.
+  The shared walker now invokes leaf.to(device) directly. An invalid device or
+  broken tensor-like implementation no longer silently returns the unmoved leaf
+  as though conversion succeeded; original exceptions propagate unchanged.
+- Preserved device=None identity, metadata passthrough, duck-typed tensor support
+  and the shared tree traversal used by resolver, SDE replay and signal assembly.
+  No new tensor wrapper or conversion policy, and no changes to storage dtype
+  rules or schema constants. Tree moves do not promise rollback of custom leaf
+  side effects when a later leaf fails.
+- Validation: 55 trajectory, replay and trainer granularity tests passed. New
+  tests cover a real Tensor receiving an invalid device, original TypeError and
+  RuntimeError propagation, and the no-device no-op. Touched-file Ruff and
+  git diff --check pass.

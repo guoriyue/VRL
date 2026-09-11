@@ -52,20 +52,18 @@ def map_tensor_tree(
 
 
 def move_value_to_device(value: Any, device: Any | None) -> Any:
-    """Move tensor-like leaves in a nested value without requiring torch types."""
+    """Move tensor-like leaves, propagating failures from their ``to`` method.
+
+    ``device=None`` leaves the tree untouched. Values without a callable ``to``
+    are metadata and pass through; a failed device move is not a no-op.
+    """
 
     if device is None:
         return value
 
-    def _move(leaf: Any) -> Any:
-        try:
-            return leaf.to(device)
-        except TypeError:
-            return leaf
-
     return map_tensor_tree(
         value,
-        _move,
+        lambda leaf: leaf.to(device),
         is_leaf=lambda v: (
             callable(getattr(v, "to", None)) and not isinstance(v, (dict, list, tuple))
         ),
