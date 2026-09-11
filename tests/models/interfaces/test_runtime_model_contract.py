@@ -116,7 +116,7 @@ def test_registered_family_runtime_model_satisfies_contract(family: str) -> None
 
     Runs over the family registry (not a hand-written list) so a newly
     registered family cannot silently skip the contract. The check is
-    class-level — ``callable(getattr(cls, m))`` like ``_missing_callables`` —
+    class-level — ``callable(getattr(cls, m))`` like the runtime protocol guard —
     because instantiating a real family model needs weights/GPU.
     """
     runtime_cls = registered_runtime_model_classes()[family]

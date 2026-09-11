@@ -255,10 +255,10 @@ def _require_protocol(value: Any, proto: Any, *, owner: str) -> Any:
     derives from the Protocol (same pattern as the contract tests), so a method
     add/rename auto-widens the runtime checks and error messages."""
 
-    if isinstance(value, proto):
-        return value
     methods = tuple(sorted(proto.__protocol_attrs__))
-    missing = _missing_callables(value, methods)
+    missing = [name for name in methods if not callable(getattr(value, name, None))]
+    if not missing and isinstance(value, proto):
+        return value
     detail = f"; missing: {', '.join(missing)}" if missing else ""
     raise TypeError(f"{owner} must satisfy {proto.__name__}({', '.join(methods)}){detail}")
 
@@ -273,10 +273,6 @@ def require_runtime_model(value: Any, *, owner: str = "model") -> RuntimeModel:
     """Return ``value`` as a RuntimeModel or fail at the runtime boundary."""
 
     return cast("RuntimeModel", _require_protocol(value, RuntimeModel, owner=owner))
-
-
-def _missing_callables(value: Any, names: tuple[str, ...]) -> list[str]:
-    return [name for name in names if not callable(getattr(value, name, None))]
 
 
 __all__ = [

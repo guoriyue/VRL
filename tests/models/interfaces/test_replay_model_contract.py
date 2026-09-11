@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from tests.models.interfaces import registered_replay_model_classes
@@ -11,6 +13,9 @@ from vrl.models.interfaces import (
     ReplayRequestContract,
     ReplayResult,
     ReplaySegmentResult,
+    RuntimeModel,
+    require_replay_model,
+    require_runtime_model,
 )
 
 # ReplayModel's required surface. Derived from the protocol's
@@ -68,7 +73,7 @@ def test_registered_family_replay_model_satisfies_contract(family: str) -> None:
 
     Runs over the family registry (not a hand-written list) so a newly
     registered family cannot silently skip the contract. The check is
-    class-level — ``callable(getattr(cls, m))`` like ``_missing_callables`` —
+    class-level — ``callable(getattr(cls, m))`` like the runtime protocol guard —
     because instantiating a real family model needs weights/GPU.
     """
     replay_cls = registered_replay_model_classes()[family]
@@ -80,3 +85,23 @@ def test_registered_family_replay_model_satisfies_contract(family: str) -> None:
 def test_replay_request_rejects_bare_segment_name(segment_names):
     with pytest.raises(ValueError, match="sequence of names"):
         ReplayRequest(segment_names=segment_names)
+
+
+@pytest.mark.parametrize(
+    "protocol,guard", [(ReplayModel, require_replay_model), (RuntimeModel, require_runtime_model)]
+)
+@pytest.mark.parametrize("bad_method", [None, 42])
+def test_protocol_guard_rejects_noncallable_members(protocol, guard, bad_method):
+    for name in protocol.__protocol_attrs__:
+        methods = {method: lambda: None for method in protocol.__protocol_attrs__}
+        methods[name] = bad_method
+        with pytest.raises(TypeError, match=rf"missing:.*{name}"):
+            guard(SimpleNamespace(**methods))
+
+
+@pytest.mark.parametrize(
+    "protocol,guard", [(ReplayModel, require_replay_model), (RuntimeModel, require_runtime_model)]
+)
+def test_protocol_guard_returns_callable_implementation(protocol, guard):
+    model = SimpleNamespace(**{name: lambda: None for name in protocol.__protocol_attrs__})
+    assert guard(model) is model

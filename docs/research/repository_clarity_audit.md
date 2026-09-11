@@ -1957,3 +1957,16 @@ tracing algorithm construction and evaluator selection together.
 - Validation: 54 Emu3/GLM replay and interface-contract tests passed. Eight new
   cases enter the actual tiny Emu3 replay method with invalid recorded dimensions.
   Touched-file Ruff/diff checks passed; no pretrained model run was performed.
+
+## Runtime protocol acceptance checks callable members
+
+- _require_protocol previously returned on runtime isinstance before checking
+  callable members, leaving the callable check only in its diagnostic path.
+  Require both checks for acceptance; a same-named noncallable attribute no
+  longer passes the runtime/replay model boundary.
+- Inlined the sole-use _missing_callables comprehension into the guard. Keep
+  typed require_replay_model/require_runtime_model facades and derive required
+  names from the actual Protocol rather than a parallel hardcoded method list.
+- Validation: 308 interface/replay/generation-execution tests passed. New tests
+  replace every protocol member with None/42 and check rejection, while complete
+  callable implementations are returned unchanged. Touched-file Ruff/diff pass.
