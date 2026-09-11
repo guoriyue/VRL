@@ -5836,3 +5836,17 @@ The broader repository audit remains incomplete.
   execution/progress and runtime-config suites: 122 passed with three dependency
   warnings. Touched-file Ruff and diff checks pass. Production probe performance
   was not measured; broader repository audit remains incomplete.
+
+## Keep latent decode batching visible at its execution point
+
+- Remove ChunkedLatentDecoder._chunks, a sole-use manual slice-list builder.
+  The decode entrypoint now uses Tensor.split for bounded row batches and keeps
+  the original tensor when batching is disabled or the limit covers all rows.
+- Keep LatentDecodePlan and the shared decoder: Flux, Wan and other families
+  supply distinct preparation/postprocess callbacks through this common boundary.
+  Keep _decode_chunk for that ordered transformation pipeline and the layout
+  normalization. Cross-family consistency matters more than removing these types.
+- Extend the existing decode test across uneven batches, exact/oversized limits,
+  and disabled None/zero/negative limits. Decode, layout parity and VAE memory
+  suites: 29 passed with two dependency warnings. Touched-file Ruff and diff
+  checks pass. Tests use synthetic decode models; no throughput claim. Audit open.

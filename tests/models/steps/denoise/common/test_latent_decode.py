@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from vrl.models.steps.denoise.common import (
@@ -8,10 +9,12 @@ from vrl.models.steps.denoise.common import (
 )
 
 
-def test_chunked_latent_decoder_decodes_in_batch_chunks() -> None:
-    """With ``decode_batch_size=1`` every latent row is its own VAE call, and prepare -> decode ->
-    postprocess compose in that order (``x*2``, ``+10``, ``-1``).
-    """
+@pytest.mark.parametrize(
+    "batch_size,expected_rows",
+    [(1, [1, 1, 1]), (2, [2, 1]), (3, [3]), (4, [3]), (None, [3]), (0, [3]), (-1, [3])],
+)
+def test_chunked_latent_decoder_decodes_in_batch_chunks(batch_size, expected_rows) -> None:
+    """Preserve row order and prepare/decode/postprocess across chunk boundaries."""
     calls: list[torch.Tensor] = []
 
     def decode(batch: torch.Tensor) -> torch.Tensor:
@@ -24,14 +27,14 @@ def test_chunked_latent_decoder_decodes_in_batch_chunks() -> None:
             vae_decode=decode,
             postprocess=lambda x: x - 1,
             output_layout="image_bchw",
-            decode_batch_size=1,
+            decode_batch_size=batch_size,
         )
     )
 
     latents = torch.arange(3.0).view(3, 1, 1, 1)
     out = decoder(latents)
 
-    assert len(calls) == 3
+    assert [batch.shape[0] for batch in calls] == expected_rows
     torch.testing.assert_close(out, latents * 2 + 9)
 
 

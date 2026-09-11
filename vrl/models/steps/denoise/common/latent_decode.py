@@ -30,19 +30,17 @@ class ChunkedLatentDecoder:
         self.plan = plan
 
     def __call__(self, latents: torch.Tensor) -> torch.Tensor:
-        batches = self._chunks(latents)
+        size = self.plan.decode_batch_size
+        batches = (
+            (latents,)
+            if size is None or size <= 0 or size >= latents.shape[0]
+            else latents.split(size, dim=0)
+        )
         decoded = [self._decode_chunk(batch) for batch in batches]
         output = decoded[0] if len(decoded) == 1 else torch.cat(decoded, dim=0)
         if self.plan.output_layout == "video_btchw":
             return output.permute(0, 2, 1, 3, 4)
         return output
-
-    def _chunks(self, latents: torch.Tensor) -> list[torch.Tensor]:
-        batch = latents.shape[0]
-        size = self.plan.decode_batch_size
-        if size is None or size <= 0 or size >= batch:
-            return [latents]
-        return [latents[start : start + size] for start in range(0, batch, size)]
 
     def _decode_chunk(self, latents: torch.Tensor) -> torch.Tensor:
         prepared = self.plan.prepare_latents(latents)
