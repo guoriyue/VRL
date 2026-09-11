@@ -1521,3 +1521,29 @@ close that architectural scope.
 - Validation: 118 full-sequence/Echo tests passed. Nine new tests follow malformed
   defaults through the actual executor parser and require the existing error.
   Touched-file Ruff and git diff --check pass.
+
+## Thin-function candidate rescan and deliberate keeps
+
+Rescanned top-level Python functions with AST, selecting a single return/raise
+statement after an optional docstring. This is candidate discovery, not a quality
+metric or proof that every returned candidate has been reviewed.
+
+Inspected current implementations and callers; retain:
+
+- generation/ray/executor._is_oom_error: text classification at the rank-result
+  boundary. It is distinct from local exception-type checks and has CUDA/HIP
+  and non-OOM tests. Do not collapse transport and local error semantics.
+- Cosmos/Anima script _resolve_sampling adapters: translate CLI flag names into
+  shared configuration projections. Their tests verify override semantics;
+  these are framework adapters rather than duplicate sampling default owners.
+- token paged-attention prefill and mask helpers: typed backend prefill input and
+  conditional/unconditional mask extension shared through PagedCFGTokenRunner.
+- MAGI source-relative/optional-path helpers: reused for checkpoint, T5 and VAE
+  paths. Source normalization and optional-value handling are distinct operations.
+- Task semantic lookups: named access to an isolated family/task taxonomy, not
+  business vocabulary mixed into runtime control flow.
+
+No runtime change or new container class justified in this pass. Tests for Ray
+OOM splitting, Cosmos/Anima CLI adaptation and MAGI integration: 67 passed.
+The remaining AST candidates still require source/caller review; this subsection
+is not a repository-wide completion claim or a mandate to inline short functions.
