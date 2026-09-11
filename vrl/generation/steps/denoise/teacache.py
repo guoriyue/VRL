@@ -26,11 +26,14 @@ Default is OFF so the GRPO baseline stays bit-for-bit.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 import torch
+
+from vrl.utils.config import require_exact_int
 
 
 def rel_l1(cur: torch.Tensor, prev: torch.Tensor) -> float:
@@ -63,10 +66,14 @@ class TeaCacheConfig:
     warmup_steps: int = 2
 
     def __post_init__(self) -> None:
-        if self.threshold <= 0:
-            raise ValueError(f"teacache.threshold must be > 0; got {self.threshold}")
-        if self.warmup_steps < 0:
-            raise ValueError(f"teacache.warmup_steps must be >= 0; got {self.warmup_steps}")
+        if (
+            isinstance(self.threshold, bool)
+            or not isinstance(self.threshold, (int, float))
+            or not math.isfinite(self.threshold)
+            or self.threshold <= 0
+        ):
+            raise ValueError(f"teacache.threshold must be finite and > 0; got {self.threshold!r}")
+        require_exact_int(self.warmup_steps, path="teacache.warmup_steps", minimum=0)
 
     @classmethod
     def from_sampling(cls, value: Any) -> TeaCacheConfig | None:
@@ -85,13 +92,16 @@ class TeaCacheConfig:
             raise TypeError(
                 f"sampling.teacache must be a bool or mapping; got {type(value).__name__}",
             )
-        if not bool(value.get("enabled", True)):
+        enabled = value.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError("teacache.enabled must be a bool")
+        if not enabled:
             return None
         overrides: dict[str, Any] = {}
         if "threshold" in value:
-            overrides["threshold"] = float(value["threshold"])
+            overrides["threshold"] = value["threshold"]
         if "warmup_steps" in value:
-            overrides["warmup_steps"] = int(value["warmup_steps"])
+            overrides["warmup_steps"] = value["warmup_steps"]
         return cls(**overrides)
 
 

@@ -1627,3 +1627,21 @@ is not a repository-wide completion claim or a mandate to inline short functions
 - Follow-up candidate discovered, not changed here: TeaCacheConfig.from_sampling
   coerces enabled/warmup values and threshold validation does not reject NaN.
   Review configuration consumers before consolidating that validation.
+
+## TeaCache runtime configuration validation
+
+- Inspected YAML TeaCacheSection, DenoiseRequestOptions projection, direct probe
+  construction and denoise consumption. YAML already uses StrictBool/StrictInt;
+  runtime parsing must not reintroduce truthiness or truncation for direct callers.
+- TeaCacheConfig now owns finite positive numeric threshold and exact nonnegative
+  warmup validation. from_sampling validates its enable switch as boolean and
+  forwards parameter values unchanged to the dataclass. Malformed strings/bools,
+  fractional warmup and NaN/Inf threshold no longer silently alter skip behavior.
+- Keep from_sampling as the optional bool/mapping construction boundary, the
+  runtime dataclass as parameter owner, and the lightweight YAML schema without
+  importing torch. Defaults and explicit disabled handling remain unchanged.
+  No new wrapper class, standalone helper or constant was introduced.
+- Validation: 185 step/binding/drift-guard tests passed; 23 new malformed-input
+  cases exercise both direct construction and mapping parsing. After tightening
+  test regex escaping for Ruff, all 34 TeaCache tests passed again. Touched-file
+  Ruff lint/format and diff checks passed. No performance/quality claim inferred.

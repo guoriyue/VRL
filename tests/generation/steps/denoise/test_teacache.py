@@ -101,3 +101,32 @@ def test_half_precision_change_above_threshold_runs_forward():
     state.cache_noise_pred(torch.zeros_like(previous))
     assert state.should_run(previous + 1, 1)
     assert state.skips == 0
+
+
+@pytest.mark.parametrize("enabled", ["false", "true", 0, 1, None])
+def test_sampling_enabled_requires_boolean(enabled):
+    with pytest.raises(ValueError, match=r"teacache\.enabled"):
+        TeaCacheConfig.from_sampling({"enabled": enabled})
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("threshold", float("nan")),
+        ("threshold", float("inf")),
+        ("threshold", -1.0),
+        ("threshold", True),
+        ("threshold", "0.15"),
+        ("warmup_steps", True),
+        ("warmup_steps", 1.5),
+        ("warmup_steps", "2"),
+        ("warmup_steps", -1),
+    ],
+)
+@pytest.mark.parametrize("from_mapping", [False, True])
+def test_config_boundaries_reject_invalid_cache_parameters(field, value, from_mapping):
+    with pytest.raises(ValueError, match=rf"teacache\.{field}"):
+        if from_mapping:
+            TeaCacheConfig.from_sampling({field: value})
+        else:
+            TeaCacheConfig(**{field: value})
