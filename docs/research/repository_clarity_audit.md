@@ -5406,3 +5406,23 @@ this combined regression is compatibility evidence, not architectural completion
   suites: 251 passed, one Ray environment FutureWarning. Touched-file Ruff and
   git diff --check pass. No production fleet throughput claim follows from this
   change. The full repository clarity audit remains incomplete.
+
+## Generation pipeline submits each batch's teardown in the same iteration
+
+- Move copy submission directly after each successful forward and completion
+  callback. The next forward still starts after the previous copy is enqueued,
+  without waiting for that copy to finish. This removes prev_result, prev_idx,
+  prev_done and the duplicated final-batch teardown branch.
+- Append CPU result trees in submission order instead of maintaining indexed
+  placeholders. Keep the input-list snapshot, recorded produce fences, source
+  record_stream lifetime protection, pending-copy joins and failure stream
+  synchronization. None results retain their prior behavior.
+- Keep _enqueue_cpu_copies as the tensor-tree/stream boundary and the exported
+  pipeline function as the binding adapter. No additional class, helper, policy
+  constant or alternate execution path is introduced. CUDA ordering and cleanup
+  consistency are more valuable than removing these necessary boundaries.
+- Five relevant pipeline suites: 40 passed, including four real-CUDA checks for
+  serial equivalence, order, typed CPU results and queryable produce fences.
+  Existing tests also cover CPU completion callbacks and failure cleanup.
+  Touched-file Ruff and git diff --check pass. Throughput was not measured;
+  repository-wide completion remains unproven.

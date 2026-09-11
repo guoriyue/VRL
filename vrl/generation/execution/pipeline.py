@@ -55,7 +55,7 @@ def forward_batches_pipelined(
     Before producing batch N+1, enqueue batch N's copy on the copy stream.
     That stream waits for batch N's produce event before reading its tensors;
     compute does not wait for the copy to finish. Copies preserve tensor values,
-    and indexed result slots preserve batch order regardless of copy completion.
+    and results are appended in batch order regardless of copy completion.
 
     Compute uses the executor's canonical ``forward_batch`` implementation;
     teardown is a stream-scoped GPU-to-CPU copy. Results remain in batch order.
@@ -67,34 +67,17 @@ def forward_batches_pipelined(
     copy_stream = torch.cuda.Stream() if cuda else None
 
     batch_list = list(batches)
-    results: list = [None] * len(batch_list)
-    prev_idx = -1
-    prev_result = None
-    prev_done = None  # default-stream event marking prev produce complete
+    results: list = []
     pending_events: list = []
 
     failed = False
     try:
         for idx, batch in enumerate(batch_list):
-            # Start the PREVIOUS batch's teardown on the copy stream BEFORE producing
-            # this batch, so the D2H overlaps this batch's denoise. Wait on prev_done so
-            # the copy never reads tensors a denoise kernel is still writing.
-            if prev_result is not None and copy_stream is not None:
-                copy_stream.wait_event(prev_done)
-                results[prev_idx] = _enqueue_cpu_copies(prev_result, copy_stream)
-                ev = torch.cuda.Event()
-                ev.record(copy_stream)
-                pending_events.append(ev)
-            elif prev_result is not None:
-                results[prev_idx] = prev_result
-
-            prev_result = executor.forward_batch(request, batch)
-            prev_idx = idx
+            result = executor.forward_batch(request, batch)
+            produce_done = None
             if cuda:
-                prev_done = torch.cuda.Event()
-                prev_done.record()  # default stream: this batch's produce is enqueued
-            else:
-                prev_done = None
+                produce_done = torch.cuda.Event()
+                produce_done.record()  # This batch's compute has been enqueued.
             if completion_callback is not None:
                 # Registration happens only after the CUDA event is recorded.
                 # The callback retains this fence; it does not claim completion
@@ -102,20 +85,20 @@ def forward_batches_pipelined(
                 completion_callback(
                     BatchProduceFence(
                         completed_batches=idx + 1,
-                        event=prev_done,
+                        event=produce_done,
                     ),
                 )
 
-        # Flush the final batch's teardown.
-        if prev_result is not None:
-            if copy_stream is not None:
-                copy_stream.wait_event(prev_done)
-                results[prev_idx] = _enqueue_cpu_copies(prev_result, copy_stream)
-                ev = torch.cuda.Event()
-                ev.record(copy_stream)
-                pending_events.append(ev)
+            # Queue this batch's copy before starting the next batch's compute.
+            # Only the copy stream waits for production; the host keeps advancing.
+            if result is not None and copy_stream is not None:
+                copy_stream.wait_event(produce_done)
+                results.append(_enqueue_cpu_copies(result, copy_stream))
+                copy_done = torch.cuda.Event()
+                copy_done.record(copy_stream)
+                pending_events.append(copy_done)
             else:
-                results[prev_idx] = prev_result
+                results.append(result)
     except BaseException:
         failed = True
         raise
