@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
 
 import torch
 
@@ -11,13 +10,13 @@ from vrl.models.interfaces import (
     ReplayModel,
     ReplayRequest,
     ReplayResult,
-    ReplaySegmentResult,
 )
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import ReplayEvaluatorBase
 from vrl.rollouts.evaluators.token.ref_pass import ref_forward
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SegmentSignal, SignalRequest, TrajectorySignalBatch
+from vrl.trajectory.types import TrajectorySegment
 
 
 class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase):
@@ -94,8 +93,8 @@ class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase):
             segment_signals[name] = signal_builder.segment_signal(
                 segment_name=name,
                 log_prob=new_lp,
-                old_log_prob=self._segment_tensor(segment, "token_log_probs").detach(),
-                mask=self._segment_tensor(segment, "token_mask").to(
+                old_log_prob=self._segment_tensor(segment, "old_log_prob").detach(),
+                mask=self._segment_tensor(segment, "mask").to(
                     dtype=new_lp.dtype,
                     device=new_lp.device,
                 ),
@@ -115,59 +114,32 @@ class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase):
         self,
         output: ReplayResult,
         name: str,
-        segment: dict[str, Any],
+        segment: TrajectorySegment,
         temperature: float,
     ) -> torch.Tensor:
         result = output.require_segment(name)
-        return self._extract_logprobs(result, segment, temperature)
-
-    @staticmethod
-    def _segments_from_batch(batch: RolloutBatch) -> dict[str, Any] | None:
-        trajectory = getattr(batch, "trajectory", None)
-        if trajectory is not None:
-            segments: dict[str, Any] = {}
-            for name, segment in trajectory.segments.items():
-                if segment.distribution != "categorical":
-                    continue
-                segments[name] = MultiSegmentTokenLogProbEvaluator._trajectory_segment_payload(
-                    segment,
-                )
-            if segments:
-                return segments
-        return None
-
-    @staticmethod
-    def _trajectory_segment_payload(segment: Any) -> dict[str, Any]:
-        return {
-            "name": segment.name,
-            "token_ids": segment.role_tensor("action").value,
-            "token_log_probs": segment.role_tensor("old_log_prob").value,
-            "token_mask": segment.role_tensor("mask").value,
-        }
-
-    @staticmethod
-    def _extract_logprobs(
-        result: ReplaySegmentResult,
-        segment: dict[str, Any],
-        temperature: float,
-    ) -> torch.Tensor:
-        # The payload-key knowledge (log_probs vs modality-named logits) lives on
-        # ReplaySegmentResult itself; this evaluator only supplies the trajectory
-        # token-id fallback.
         token_ids = result.values.get("token_ids")
         if token_ids is None:
-            token_ids = MultiSegmentTokenLogProbEvaluator._segment_tensor(segment, "token_ids")
+            token_ids = self._segment_tensor(segment, "action")
         return result.logprobs(token_ids, temperature=temperature)
 
     @staticmethod
-    def _segment_tensor(segment: dict[str, Any], key: str) -> torch.Tensor:
-        value = segment.get(key)
-        if value is None:
-            name = segment.get("name", "<unknown>")
-            raise RuntimeError(f"R1 segment {name!r} is missing tensor field {key!r}")
+    def _segments_from_batch(batch: RolloutBatch) -> dict[str, TrajectorySegment] | None:
+        trajectory = batch.trajectory
+        if trajectory is None:
+            return None
+        segments = {
+            name: segment
+            for name, segment in trajectory.segments.items()
+            if segment.distribution == "categorical"
+        }
+        return segments or None
+
+    @staticmethod
+    def _segment_tensor(segment: TrajectorySegment, role: str) -> torch.Tensor:
+        value = segment.role_tensor(role).value
         if not isinstance(value, torch.Tensor):
-            name = segment.get("name", "<unknown>")
-            raise RuntimeError(f"R1 segment {name!r} field {key!r} must be a tensor")
+            raise RuntimeError(f"R1 segment {segment.name!r} role {role!r} must be a tensor")
         return value
 
     @staticmethod

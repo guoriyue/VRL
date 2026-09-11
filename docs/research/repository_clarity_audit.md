@@ -1997,3 +1997,19 @@ tracing algorithm construction and evaluator selection together.
 - Validation: 74 replay/common-factory tests passed. New tests reuse a generator-
   configured evaluator for two actual iterations and reject bare/invalid/duplicate
   names. Touched-file Ruff and diff checks passed. Selection order is preserved.
+
+## Multi-segment evaluator consumes typed trajectory segments directly
+
+- Removed the typed-segment -> temporary payload dict -> tensor extraction round
+  trip. The evaluator retains TrajectorySegment objects and reads action,
+  old_log_prob and mask by their declared roles. Removed the payload factory and
+  the single-use log-prob forwarding method (28 net source lines removed).
+- Keep the small shared role-to-Torch guard and categorical selection method;
+  they own actual checks. Keep enabled order, primary selection, model result
+  lookup, reference no_grad and signal construction. Unselected segments are no
+  longer unpacked just to discard their temporary dictionaries; consumed roles
+  still require unique declared tensors and Torch values.
+- Validation: 74 replay/factory tests plus eight Janus-R1 wiring/model tests passed.
+  An initial command used a nonexistent janus_pro_r1 test directory and ran no
+  tests; corrected to the actual registered Janus test locations. Touched-file
+  Ruff/diff checks passed. No extra container class or schema constants added.
