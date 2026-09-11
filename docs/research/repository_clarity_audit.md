@@ -5588,3 +5588,29 @@ this combined regression is compatibility evidence, not architectural completion
   protocol and Ray lease/runtime suites: 88 passed, 15 dependency/profiler
   warnings. Touched-file Ruff and git diff --check pass. No production cluster
   performance claim is made; the repository-wide audit remains incomplete.
+
+## Weight-transfer helper ownership review: retain transport boundaries
+
+Reviewed vrl/generation/weight_transfer.py and its sender in
+vrl/generation/ray/weight_sync.py against production callers and both transfer
+suites. No implementation edit is justified by this ownership review.
+
+- Keep weight_manifest: it validates the sender's CPU tensor payload and emits
+  the shape/dtype wire schema consumed by the receiver. It has no receiver state.
+- Keep iter_weight_chunks: cloned slices prevent serialization from retaining an
+  entire source tensor's storage. Keep iter_weight_buckets separately: packing
+  several small chunks enforces the per-transport-object tensor-byte ceiling.
+- Keep StagedWeightTransfer as the receiver owner for buffers, offsets and ID
+  checks. Moving stateless sender iteration into it would mix lifecycle owners.
+- Keep GenerationWeightSync as the protocol boundary and RayGenerationWeightSync
+  as the actor-dispatch implementation. Its ACK validator is shared by local,
+  remote and bucketed paths; its local broadcast closure shares one transfer ID,
+  expected version and bounded dispatch policy across transfer phases.
+- No new wrapper, helper class or business-name table is needed. Shape/dtype keys
+  are wire schema. The buffer setting bounds wire objects, not full sender or
+  receiver residency, as the module already documents.
+
+Validation: 56 transfer/Ray-sync tests passed with one Ray environment warning,
+including real local Ray shared-state, ACK, cancellation and incomplete-bucket
+commit checks. This supports retaining these boundaries; it does not establish
+cross-node GPU throughput or finish the wider repository clarity audit.
