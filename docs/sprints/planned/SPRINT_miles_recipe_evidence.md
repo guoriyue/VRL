@@ -193,23 +193,13 @@ scalar bit round-trips, exercise actual online writes/resume, and reject altered
 full-precision artifacts. The remaining comparison protocol and real runs are
 still required.
 
-## 2026-09-09: Explicit same-revision metric comparison
+## 2026-09-10: Exact cross-run comparison retired
 
-`compare_run_metrics` verifies independent successful attempts, bound full-precision
-metrics, stable data and matching code/model/runtime/config identities, then checks
-a caller-declared metric set across the complete configured epoch range. Strict
-numerical-runtime flags are required. Only output directory may differ in config;
-there are no tolerances or automatic baseline rewrites. The CLI publishes the
-protocol and receipt/verdict bindings atomically without replacing prior reports.
-The cross-run guard stays with existing evidence verification; its CLI is the public
-entrypoint, not a new family contract or verification-status registry.
-
-CPU fixtures exercise drift hidden by display rounding, signed zero, nonfinite
-metrics, incomplete/duplicate epochs, identity/config changes, stale verdicts and
-self-comparison. They do not represent real training runs. Same-revision aggregate
-repeatability is narrower than full trajectory determinism; cross-revision baseline
-updates, statistical regression, actual repeated recipe curves and GPU CI integration
-remain open.
+The strict same-revision scalar comparison function, CLI, and dedicated fixtures
+were removed. TrainingRunTrace, full-precision metrics, and artifact integrity
+checks remain. Historical progress below describes earlier implementations;
+there is no current requirement to match complete run configurations or metric
+values exactly across runs.
 
 ## 2026-09-09: Seed trainer initialization and expose strict numerical settings
 
