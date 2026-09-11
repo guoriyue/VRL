@@ -5850,3 +5850,18 @@ The broader repository audit remains incomplete.
   and disabled None/zero/negative limits. Decode, layout parity and VAE memory
   suites: 29 passed with two dependency warnings. Touched-file Ruff and diff
   checks pass. Tests use synthetic decode models; no throughput claim. Audit open.
+
+## CFG packing enforces the equal branch shapes required by splitting
+
+- Extend the existing pair validator to include the batch dimension. Packing
+  previously allowed one conditional row and three unconditional rows, while
+  split_batched_cfg_output unconditionally divides an even output into halves.
+  Reject unequal branch row counts for primary and extra tensor kwargs at packing.
+- Keep shared pack/split/combine functions: they centralize the uncond-first
+  ordering and guidance math across family runners. Keep the pair validator
+  because both primary and extra tensor packing use it. No new wrapper or
+  guidance-formula change; separate-CFG execution remains unchanged.
+- All four unequal-row regression cases failed before the fix. Shared denoise
+  model tests: 102 passed with 16 dependency warnings. Touched-file Ruff and diff
+  checks pass. This validates synthetic/model-component contracts, not a full
+  production training run. Broader repository audit remains incomplete.

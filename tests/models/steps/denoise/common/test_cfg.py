@@ -67,3 +67,28 @@ def test_combine_cfg_supports_sd_and_cosmos_bases() -> None:
 def test_split_batched_cfg_requires_even_batch() -> None:
     with pytest.raises(ValueError, match="must be even"):
         split_batched_cfg_output(torch.zeros(3, 1))
+
+
+@pytest.mark.parametrize(
+    "field", ["hidden_states", "timestep", "encoder_hidden_states", "pooled_projections"]
+)
+def test_pack_batched_cfg_rejects_unequal_branch_rows(field) -> None:
+    cond = DiffusionBranch(
+        hidden_states=torch.zeros(1, 2),
+        timestep=torch.zeros(1),
+        encoder_hidden_states=torch.zeros(1, 2),
+        extra_kwargs={"pooled_projections": torch.zeros(1, 2)},
+    )
+    uncond = DiffusionBranch(
+        hidden_states=torch.zeros(1, 2),
+        timestep=torch.zeros(1),
+        encoder_hidden_states=torch.zeros(1, 2),
+        extra_kwargs={"pooled_projections": torch.zeros(1, 2)},
+    )
+    if field == "pooled_projections":
+        uncond.extra_kwargs[field] = torch.zeros(3, 2)
+    else:
+        value = getattr(uncond, field)
+        setattr(uncond, field, value.expand(3, *value.shape[1:]))
+    with pytest.raises(ValueError, match=field):
+        pack_batched_cfg(cond=cond, uncond=uncond)

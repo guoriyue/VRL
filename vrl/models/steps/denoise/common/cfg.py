@@ -106,9 +106,9 @@ def combine_cfg(
 
 
 def _validate_pair(name: str, cond: torch.Tensor, uncond: torch.Tensor) -> None:
-    if cond.shape[1:] != uncond.shape[1:]:
+    if cond.shape != uncond.shape:
         raise ValueError(
-            f"{name} branch shapes must match after batch dim: "
+            f"{name} branch shapes must match including batch dim: "
             f"cond={tuple(cond.shape)}, uncond={tuple(uncond.shape)}",
         )
 
