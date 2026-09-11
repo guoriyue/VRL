@@ -121,3 +121,13 @@ def test_prepare_wd14_input_pads_white_resizes_and_swaps_to_bgr() -> None:
     assert np.array_equal(batch[0, 5, 224], np.array([255.0, 255.0, 255.0], dtype=np.float32))
     # Center is the pasted red region: BGR puts red in channel 2.
     assert np.array_equal(batch[0, 224, 224], np.array([0.0, 0.0, 255.0], dtype=np.float32))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_tag", [None, 42, True, {}, ["smile"]])
+async def test_wd_tagger_rejects_non_string_tags_before_inference(invalid_tag) -> None:
+    calls = []
+    reward = WDTaggerReward(tagger=lambda images: calls.append(images))
+    with pytest.raises(ValueError, match="must contain only tag strings"):
+        await reward.score(_sample(_image(), tags=["smile", invalid_tag]))
+    assert calls == []

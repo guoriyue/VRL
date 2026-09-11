@@ -53,7 +53,20 @@ class WDTaggerRewardModel:
         # Validate every artifact's tag list before running the tagger so a
         # malformed manifest row fails fast instead of after a full batch.
         wanted = [self._wanted_tags(artifact) for artifact in artifacts]
-        images = [_artifact_image(artifact) for artifact in artifacts]
+        from PIL import Image
+
+        from vrl.rewards.models.media import decode_artifact_frames
+        from vrl.utils.media import to_pil_image
+
+        images = []
+        for artifact in artifacts:
+            if not artifact.path or artifact.path.endswith(".pt"):
+                media = artifact.as_media()
+                if isinstance(media, Image.Image):
+                    images.append(media.convert("RGB"))
+                    continue
+            frames = decode_artifact_frames(artifact, 1)
+            images.append(to_pil_image(frames[frames.shape[0] // 2]))
         return [
             {"wd_tagger": self._recall(tags, probs)}
             for tags, probs in zip(wanted, self.tag_images(images), strict=True)
@@ -120,7 +133,12 @@ class WDTaggerRewardModel:
                 f"non-empty list of tag strings on artifact {artifact.artifact_id!r}, "
                 f"got {type(raw).__name__}",
             )
-        wanted = {str(tag).strip().lower() for tag in raw if str(tag).strip()}
+        if any(not isinstance(tag, str) for tag in raw):
+            raise ValueError(
+                f"wd_tagger metadata[{self._metadata_key!r}] must contain only tag strings "
+                f"on artifact {artifact.artifact_id!r}",
+            )
+        wanted = {tag.strip().lower() for tag in raw if tag.strip()}
         if not wanted:
             raise ValueError(
                 f"wd_tagger requires a non-empty metadata[{self._metadata_key!r}] "
@@ -152,22 +170,6 @@ def prepare_wd14_input(image: Image.Image, size: int = WD14_INPUT_SIZE) -> np.nd
         canvas = canvas.resize((size, size), Image.BICUBIC)
     bgr = np.asarray(canvas, dtype=np.float32)[:, :, ::-1]
     return np.ascontiguousarray(np.expand_dims(bgr, axis=0))
-
-
-def _artifact_image(artifact: Any) -> Image.Image:
-    """Middle frame of the artifact as an RGB PIL image, the tagger's input."""
-
-    from PIL import Image
-
-    from vrl.rewards.models.media import decode_artifact_frames
-    from vrl.utils.media import to_pil_image
-
-    if not artifact.path or artifact.path.endswith(".pt"):
-        media = artifact.as_media()
-        if isinstance(media, Image.Image):
-            return media.convert("RGB")
-    frames = decode_artifact_frames(artifact, 1)
-    return to_pil_image(frames[frames.shape[0] // 2])
 
 
 __all__ = ["WD14_INPUT_SIZE", "WDTaggerRewardModel", "prepare_wd14_input"]

@@ -1328,3 +1328,18 @@ contained guesses. Removed both:
   89 inference/service tests passed, one skipped. New malformed wire-size tests
   initially lacked their exception import; after correction the complete group
   was rerun successfully. Touched-file Ruff and git diff --check pass.
+
+## WD tagger input ownership
+
+- Inlined the sole-use _artifact_image into WDTaggerRewardModel.score_batch,
+  keeping the PIL fast path and existing decode/frame-selection behavior.
+  No new adapter object or media-loading mode introduced.
+- _wanted_tags now requires string elements instead of manufacturing tag names
+  with str(). Case normalization, whitespace handling, deduplication, threshold
+  and recall semantics remain unchanged. Invalid tags fail before inference.
+- Kept WD14_INPUT_SIZE as the checkpoint architecture dimension and category ID
+  as selected_tags.csv protocol data. prepare_wd14_input remains a public,
+  independently verifiable preprocessing boundary (white padding/BGR/raw scale).
+- Validation: all 12 WD tagger tests passed, covering injected batch scoring,
+  preprocessing pixels and invalid tag types without tagger execution. No ONNX
+  model download or inference performed. Ruff and git diff --check pass.
