@@ -5730,3 +5730,17 @@ The broader repository audit remains incomplete.
   Tensor.to. SFT regularizer, shard and recipe-loader suites: 32 passed. Touched-
   file Ruff and git diff --check pass. No real model encoding or GPU performance
   campaign was run. Wider repository completion remains unproven.
+
+## Rollout group splitting uses one ordered deduplication operation
+
+- Replace the parallel seen set and ordered_ids append loop with dict.fromkeys
+  over normalized group IDs. Preserve first-occurrence order, int conversion,
+  per-group selection and the zero/one-group identity return.
+- Keep rollout device movement distinct from move_value_to_device: the former
+  deliberately matches torch.Tensor, while the trajectory helper accepts
+  callable .to leaves. Direct substitution would change metadata behavior.
+  Keep shared tensor-tree traversal and trajectory rebuild helpers; they centralize
+  container and sample-axis behavior rather than merely forwarding one call.
+- Existing collector, orchestration and trajectory operation suites: 333 passed.
+  Touched-file Ruff and git diff --check pass. No speedup is claimed for the
+  deduplication cleanup. The whole-repository audit remains incomplete.

@@ -49,13 +49,9 @@ def split_batch_by_group(batch: RolloutBatch) -> list[RolloutBatch]:
     """Split a rollout batch into group-local batches for bounded training memory."""
 
     group_ids = batch.group_ids
-    ordered_ids: list[int] = []
-    seen: set[int] = set()
-    for group_id in group_ids.detach().cpu().tolist():
-        gid = int(group_id)
-        if gid not in seen:
-            seen.add(gid)
-            ordered_ids.append(gid)
+    ordered_ids = list(
+        dict.fromkeys(int(group_id) for group_id in group_ids.detach().cpu().tolist())
+    )
     if len(ordered_ids) <= 1:
         return [batch]
     return [select_batch(batch, group_ids == group_id) for group_id in ordered_ids]
