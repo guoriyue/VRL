@@ -4380,6 +4380,18 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Token-flow CFG calls the velocity network without a forwarding wrapper
+
+- Remove the local _velocity function that only forwarded to image_head.net.
+  The guided velocity calculation now calls the declared velocity-network
+  interface directly for conditional and unconditional inputs.
+- Keep shared terminal-mean, noise-scale and Gaussian-density functions: sampling
+  and replay both consume them and must use identical formulas. Keep the local
+  guided calculation for the repeated Euler steps; no new class is introduced.
+- Token flow-matching tests: 4 passed. Touched-file Ruff checks pass. Network call
+  order, guidance, Euler updates and densities are unchanged. The full repository
+  clarity audit remains incomplete.
+
 ## Re-noise transition rejects nonfinite sigma before density computation
 
 - Combine finite and positive sigma validation into the existing tensor predicate

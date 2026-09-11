@@ -51,13 +51,10 @@ def _flow_terminal_mean(
     t_grid = torch.linspace(0.0, 1.0, num_steps + 1, device=x.device, dtype=x.dtype)
     dt = 1.0 / num_steps
 
-    def _velocity(xk: torch.Tensor, tk: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
-        return image_head.net(xk, tk, c)
-
     def _guided_velocity(xk: torch.Tensor, tk: torch.Tensor) -> torch.Tensor:
-        v_cond = _velocity(xk, tk, cond)
+        v_cond = image_head.net(xk, tk, cond)
         if cfg_uncond is not None and guidance_scale > 1.0:
-            v_uncond = _velocity(xk, tk, cfg_uncond)
+            v_uncond = image_head.net(xk, tk, cfg_uncond)
             return v_uncond + guidance_scale * (v_cond - v_uncond)
         return v_cond
 
