@@ -4380,6 +4380,17 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Fused log-prob precision helper names its shared accumulation role
+
+- Rename _norm_dtype to _accumulation_dtype: both normalization and weight-gradient
+  accumulation use it. Correct the public docstring to state that fp64 inputs
+  retain fp64 output instead of claiming all outputs are fp32.
+- Keep Torch/Triton forward/backward helpers as backend boundaries and keep
+  _CHUNK_ELEMENTS/_BLOCK_V as memory-chunk and kernel-launch dimensions. Preserve
+  dtype decisions, autograd behavior and kernel selection; no owner class is added.
+- Fused linear log-prob suite: 24 passed. Touched-file Ruff checks pass. This
+  readability correction does not change math or finish the repository audit.
+
 ## Native attention uses the trunk's cache vocabulary directly
 
 - Rename local kv/past and the private forward parameter to past_key_values,

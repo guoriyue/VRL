@@ -51,13 +51,13 @@ def _use_triton(tensor: torch.Tensor) -> bool:
     return tensor.is_cuda and tensor.dtype != torch.float64 and _lse_gather_fwd_kernel is not None
 
 
-def _norm_dtype(z: torch.Tensor) -> torch.dtype:
-    """fp32 normalization like the eager gather path; fp64 passes through."""
+def _accumulation_dtype(z: torch.Tensor) -> torch.dtype:
+    """Use fp32 for normalization and gradient accumulation, preserving fp64."""
     return torch.float64 if z.dtype == torch.float64 else torch.float32
 
 
 def _fwd_torch(z: torch.Tensor, targets: torch.Tensor, inv_temp: float):
-    zf = z.to(_norm_dtype(z)) * inv_temp
+    zf = z.to(_accumulation_dtype(z)) * inv_temp
     lse = torch.logsumexp(zf, dim=-1)
     picked = zf.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
     return picked - lse, lse
@@ -92,7 +92,7 @@ def _bwd_torch(
     inv_temp: float,
 ) -> torch.Tensor:
     """Return d(logprob)/d(z) * grad_rows in z's dtype (new tensor)."""
-    p = torch.exp(z.to(_norm_dtype(z)) * inv_temp - lse.unsqueeze(-1))
+    p = torch.exp(z.to(_accumulation_dtype(z)) * inv_temp - lse.unsqueeze(-1))
     onehot = torch.zeros_like(p)
     onehot.scatter_(-1, targets.unsqueeze(-1), 1.0)
     grad = (grad_rows.to(p.dtype) * inv_temp).unsqueeze(-1)
@@ -134,7 +134,7 @@ class _FusedLinearLogprob(torch.autograd.Function):
         chunk_rows: int,
     ) -> torch.Tensor:
         rows = hidden.shape[0]
-        norm_dtype = _norm_dtype(hidden)
+        norm_dtype = _accumulation_dtype(hidden)
         out = torch.empty(rows, dtype=norm_dtype, device=hidden.device)
         lse = torch.empty(rows, dtype=norm_dtype, device=hidden.device)
         with torch.no_grad():
@@ -161,7 +161,7 @@ class _FusedLinearLogprob(torch.autograd.Function):
         grad_hidden = torch.empty_like(hidden) if need_hidden else None
         # fp32 accumulators: chunks sum into these many times, and bf16
         # accumulation would drift with the chunk count.
-        acc_dtype = _norm_dtype(weight)
+        acc_dtype = _accumulation_dtype(weight)
         grad_weight = (
             torch.zeros(weight.shape, dtype=acc_dtype, device=weight.device)
             if need_weight
@@ -207,9 +207,9 @@ def fused_linear_logprob(
 
     ``hidden`` is ``[..., D]`` (the input of the final vocab projection),
     ``weight`` is the projection's ``[V, D]``, ``token_ids`` matches hidden's
-    leading shape. Returns fp32 log-probs shaped like ``token_ids``, identical
-    (up to fp32 reduction order) to materializing the logits and calling
-    ``gather_categorical_log_probs``.
+    leading shape. Returns log-probs shaped like ``token_ids`` in fp32, or fp64
+    for fp64 inputs. Results match materialized logits followed by
+    ``gather_categorical_log_probs`` up to floating-point reduction order.
     """
     if chunk_rows is not None:
         require_exact_int(chunk_rows, path="chunk_rows", minimum=1)
