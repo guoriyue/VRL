@@ -108,7 +108,11 @@ class ProfilerActivitySelection:
 
         import torch
 
-        by_name = _activity_enum_by_name()
+        # Derive legal names from Torch so new backends need no local allow-list.
+        by_name = {
+            name.lower(): member
+            for name, member in torch.profiler.ProfilerActivity.__members__.items()
+        }
         requested_names = tuple(dict.fromkeys(str(a).lower() for a in config.activities))
 
         unknown = [name for name in requested_names if name not in by_name]
@@ -229,7 +233,8 @@ def capture_torch_trace(
         yield
         return
 
-    trace_dir = _trace_dir(config, output_dir, trace_subdir=trace_subdir)
+    root = Path(config.output_dir) if config.output_dir else Path(output_dir) / "torch_profiler"
+    trace_dir = root / trace_subdir if trace_subdir else root
     trace_dir.mkdir(parents=True, exist_ok=True)
     safe_worker_name = _safe_worker_name(worker_name, step)
     logger.info(
@@ -275,27 +280,6 @@ def capture_torch_trace(
     logger.info("Finished torch profiler for step=%d", step)
 
 
-def _activity_enum_by_name() -> dict[str, Any]:
-    """Map activity name -> ``ProfilerActivity``, derived from the enum itself.
-
-    The enum is the single source of truth for legal activity names; deriving the
-    set here means a new torch backend (e.g. XPU/MTIA) is accepted automatically
-    instead of being rejected by a stale hand-written allow-list.
-    """
-
-    import torch
-
-    return {
-        name.lower(): member
-        for name, member in torch.profiler.ProfilerActivity.__members__.items()
-    }
-
-
-def _trace_dir(config: TorchProfilerConfig, output_dir: str, *, trace_subdir: str) -> Path:
-    root = Path(config.output_dir) if config.output_dir else Path(output_dir) / "torch_profiler"
-    return root / trace_subdir if trace_subdir else root
-
-
 def _safe_worker_name(worker_name: str, step: int) -> str:
     host = _safe_label(socket.gethostname())
     name = _safe_label(worker_name)
@@ -322,7 +306,7 @@ def _discover_trace_files(trace_dir: Path, safe_worker_name: str) -> list[str]:
 
     return sorted(
         path.name
-        for path in trace_dir.glob(f"{safe_worker_name}*.pt.trace.json*")
+        for path in trace_dir.glob(f"{safe_worker_name}.*.pt.trace.json*")
         if path.is_file()
     )
 

@@ -227,3 +227,21 @@ def test_manifest_is_json_with_required_fields(tmp_path: Path) -> None:
 def test_config_selects_capture_window(enabled, skip_first, max_steps, expected) -> None:
     config = TorchProfilerConfig(enabled=enabled, skip_first=skip_first, max_steps=max_steps)
     assert [step for step in range(5) if config.should_capture(step)] == expected
+
+
+def test_capture_manifest_does_not_include_another_step_trace(tmp_path: Path) -> None:
+    cfg = TorchProfilerConfig(enabled=True, activities=("cpu",), max_steps=0)
+    for step in (10, 1):
+        with capture_torch_trace(
+            cfg,
+            output_dir=str(tmp_path),
+            step=step,
+            device="cpu",
+            worker_name="trainer",
+        ):
+            torch.ones(2).sum()
+    manifest_path = tmp_path / "torch_profiler" / "trainer" / "profile_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["step"] == 1
+    assert manifest["trace_files"]
+    assert all("_step1." in name for name in manifest["trace_files"])

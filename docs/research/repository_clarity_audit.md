@@ -1202,3 +1202,20 @@ contained guesses. Removed both:
 - Validation: 64 NextStep parsing, LlamaGen construction and AR scheduler-batching
   tests passed, including invalid dimensions, explicit nulls, seed types and
   preserved defaults. Touched-file Ruff and git diff --check pass.
+
+## Profiler local helper consolidation and trace ownership
+
+- Inlined the sole-use activity enum query into ProfilerActivitySelection.from_config
+  and the sole-use output-directory projection into capture_torch_trace. Both
+  remain lazy with respect to Torch and continue to derive activity vocabulary
+  from Torch's enum, without a local backend table.
+- Fixed trace discovery to require the filename separator after the full worker
+  name. A step1 prefix previously also matched step10, contaminating the current
+  manifest with another step's trace.
+- Retained filename sanitization, summary/table error handling, manifest writing
+  and context-manager APIs: these implement distinct formatting, diagnostics or
+  framework boundaries. No profiler wrapper class or output schema introduced.
+  This does not give repeated captures of the same worker and step unique IDs.
+- Validation: all 25 profiling tests passed, including an actual CPU capture of
+  step10 followed by step1 that verifies the latter manifest includes only step1
+  files. No CUDA capture was added. Touched-file Ruff and git diff --check pass.
