@@ -88,12 +88,7 @@ class TeaCacheConfig:
             raise ValueError("teacache.enabled must be a bool")
         if not enabled:
             return None
-        overrides: dict[str, Any] = {}
-        if "threshold" in value:
-            overrides["threshold"] = value["threshold"]
-        if "warmup_steps" in value:
-            overrides["warmup_steps"] = value["warmup_steps"]
-        return cls(**overrides)
+        return cls(**{name: item for name, item in value.items() if name != "enabled"})
 
 
 class TeaCacheState:

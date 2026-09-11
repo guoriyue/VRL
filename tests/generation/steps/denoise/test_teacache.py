@@ -35,6 +35,11 @@ def test_config_rejects_bad_values():
         TeaCacheConfig(threshold=0.0, warmup_steps=0)
 
 
+def test_enabled_sampling_rejects_unknown_parameter():
+    with pytest.raises(TypeError, match="threshhold"):
+        TeaCacheConfig.from_sampling({"threshhold": 0.3})
+
+
 def test_warmup_and_last_step_always_run():
     cfg = TeaCacheConfig(threshold=999.0, warmup_steps=2)
     state = TeaCacheState(cfg, num_steps=4)

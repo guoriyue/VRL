@@ -76,7 +76,7 @@ def _measure(model, root, device, dtype, threshold):
     num_steps = int(root.sampling.num_steps)
     state = prepare_sampling_state(model, root)
     teacache = (
-        TeaCacheState(TeaCacheConfig.from_sampling({"threshold": threshold}), num_steps)
+        TeaCacheState(TeaCacheConfig(threshold=threshold), num_steps)
         if threshold is not None
         else None
     )

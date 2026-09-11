@@ -5806,3 +5806,18 @@ The broader repository audit remains incomplete.
 - Existing token loop, scheduler batching and NextStep runner tests: 33 passed.
   Touched-file Ruff and diff checks pass. No performance claim; broader audit
   remains incomplete.
+
+## Let TeaCacheConfig own enabled option construction
+
+- Replace the hand-selected threshold/warmup_steps mapping with direct dataclass
+  construction after removing the parser-only enabled flag. Enabled mappings no
+  longer silently discard misspelled keys, and added dataclass fields do not need
+  a second forwarding list. Preserve disabled-input short circuiting and defaults.
+- The drift probe now constructs TeaCacheConfig(threshold=threshold) directly;
+  its already-known numeric input does not need a bool/mapping parser round trip.
+- Keep relative_l1_change as the shared runtime/offline metric boundary. Keep the
+  existing state machine and denoise-loop function; their roles remain separate
+  from config parsing. No new schema table, wrapper or numeric algorithm change.
+- Unknown-option regression failed before the fix. Denoise-step tests: 80 passed;
+  config drift guards and diffusion layout: 117 passed. Touched-file Ruff and diff
+  checks pass. No real-model drift-probe run or speedup claim. Broader audit open.
