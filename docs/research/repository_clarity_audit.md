@@ -7049,3 +7049,16 @@ The broader repository audit remains incomplete.
   table-rendering helper's shared exception handling and artifact utilities'
   shared path/hash contracts. Filename discovery does not validate JSON content
   or prove trace completeness; the broader audit remains incomplete.
+
+## Profiler config uses direct immutable defaults
+
+- Replace all nine field(default=...) declarations in TorchProfilerConfig with
+  direct assignments and remove the unused field import. None carried metadata,
+  a default factory, or nondefault field options; the generated dataclass shape
+  and defaults remain the same.
+- Keep activity selection as the requested/effective/missing capability owner,
+  and keep configuration normalization and capture-window semantics unchanged.
+  This is not a conversion-policy or mutability change.
+- Existing profiler suite: 26 passed, one PyTorch profiler warning. Touched-file
+  Ruff and diff checks pass. No new tests that mirror declaration syntax;
+  broader repository audit remains incomplete.

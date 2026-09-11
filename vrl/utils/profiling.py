@@ -23,7 +23,7 @@ import json
 import os
 import socket
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -42,18 +42,18 @@ class TorchProfilerConfig:
     ``vrl/config/presets/profile/torch_profiler.yaml``.
     """
 
-    enabled: bool = field(default=False)
-    output_dir: str = field(default="")
-    activities: tuple[str, ...] = field(default=("cpu", "cuda"))
-    record_shapes: bool = field(default=False)
-    profile_memory: bool = field(default=False)
-    with_stack: bool = field(default=False)
-    with_flops: bool = field(default=False)
+    enabled: bool = False
+    output_dir: str = ""
+    activities: tuple[str, ...] = ("cpu", "cuda")
+    record_shapes: bool = False
+    profile_memory: bool = False
+    with_stack: bool = False
+    with_flops: bool = False
     # skip_first/max_steps select WHICH outer step indices get a trace; each
     # qualifying step opens its own single-step profiler (not a torch schedule
     # window). See should_capture and capture_torch_trace.
-    skip_first: int = field(default=0)
-    max_steps: int = field(default=1)
+    skip_first: int = 0
+    max_steps: int = 1
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
