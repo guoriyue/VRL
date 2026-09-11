@@ -2297,3 +2297,18 @@ this combined regression is compatibility evidence, not architectural completion
   269 passes. New export/load regressions retain ordinary module/_orig_mod
   children and a sibling trainable parameter. Touched-file Ruff and diff checks
   passed. No full multi-node training claim; repository review remains active.
+
+## FSDP block discovery unwraps declared framework types
+
+- FSDP unwrap_module now recognizes OptimizedModule and PeftModel instead of
+  guessing from _orig_mod/get_base_model/base_model.model attributes. Removed
+  the base_model.model fallback; ordinary library-model children and methods
+  no longer redirect block discovery to an unrelated object.
+- Keep this FSDP-specific helper: its purpose is underlying block discovery,
+  unlike weight namespace unwrapping, which must retain PEFT. No new wrapper
+  class, dispatch table or standalone helper. Tests now use real PEFT/compile
+  wrappers rather than SimpleNamespace objects with matching field names.
+- Validation: 70 FSDP, strategy and FSDP-gather tests passed, two optional tests
+  skipped. New tests preserve ordinary named children and never call an
+  unrelated get_base_model method. Touched-file Ruff and diff checks passed.
+  Repository-wide review is still incomplete.

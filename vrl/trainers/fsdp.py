@@ -95,28 +95,21 @@ def unwrap_module(module: Any) -> nn.Module:
     block discovery and root identification need the underlying library model
     (the diffusers DiT / Llama trunk that actually owns ``_no_split_modules`` and
     the transformer blocks). torch.compile exposes the inner module as
-    ``_orig_mod``; PEFT exposes the base model via ``get_base_model()`` (falling
-    back to ``base_model.model``). Loop because wrapper order/nesting varies.
+    ``_orig_mod``; PeftModel exposes the base model via ``get_base_model()``.
+    Only actual wrapper types are peeled, preserving ordinary model children.
+    Loop because wrapper order/nesting varies.
     """
 
-    seen: set[int] = set()
-    while id(module) not in seen:
-        seen.add(id(module))
-        inner = getattr(module, "_orig_mod", module)
-        if inner is not module:
-            module = inner
-            continue
-        get_base = getattr(module, "get_base_model", None)
-        if callable(get_base):
-            module = get_base()
-            continue
-        base_model = getattr(module, "base_model", None)
-        inner_model = getattr(base_model, "model", None)
-        if inner_model is not None:
-            module = inner_model
-            continue
-        break
-    return module
+    from peft import PeftModel
+    from torch._dynamo.eval_frame import OptimizedModule
+
+    while True:
+        if isinstance(module, OptimizedModule):
+            module = module._orig_mod
+        elif isinstance(module, PeftModel):
+            module = module.get_base_model()
+        else:
+            return module
 
 
 def iter_blocks(base: nn.Module) -> Iterator[nn.Module]:

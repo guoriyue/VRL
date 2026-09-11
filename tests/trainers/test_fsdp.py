@@ -99,17 +99,34 @@ def _shard(module: nn.Module) -> nn.Module:
 # ── pure helpers (no process group) ─────────────────────────────────────────
 
 
-def test_unwrap_module_peels_compile_then_peft_get_base_model() -> None:
+@pytest.mark.parametrize("compiled", [False, True])
+def test_unwrap_module_peels_real_peft_and_compile(compiled) -> None:
+    from peft import LoraConfig, get_peft_model
+
     base = ToyTransformer()
-    peft = SimpleNamespace(get_base_model=lambda: base)
-    compiled = SimpleNamespace(_orig_mod=peft)
-    assert unwrap_module(compiled) is base
+    wrapped = get_peft_model(base, LoraConfig(r=2, target_modules=["lin"]))
+    if compiled:
+        wrapped = torch.compile(wrapped)
+    assert unwrap_module(wrapped) is base
 
 
-def test_unwrap_module_peels_peft_base_model_model() -> None:
+@pytest.mark.parametrize("name", ["_orig_mod", "base_model"])
+def test_unwrap_module_preserves_ordinary_children(name) -> None:
     base = ToyTransformer()
-    peft = SimpleNamespace(base_model=SimpleNamespace(model=base))
-    assert unwrap_module(peft) is base
+    child = nn.Module()
+    child.model = nn.Linear(2, 2)
+    base.add_module(name, child)
+    assert unwrap_module(base) is base
+
+
+def test_unwrap_module_does_not_invoke_unrelated_get_base_model() -> None:
+    base = ToyTransformer()
+
+    def unexpected():
+        pytest.fail("ordinary model methods do not declare PEFT wrapper identity")
+
+    base.get_base_model = unexpected
+    assert unwrap_module(base) is base
 
 
 def test_unwrap_module_returns_plain_module_unchanged() -> None:
