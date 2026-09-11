@@ -14,8 +14,6 @@ from vrl.generation.types import GenerationSampleRow
 from vrl.trajectory.device import move_value_to_device
 from vrl.trajectory.types import (
     TrajectoryBatch,
-    TrajectorySegment,
-    TrajectoryTensor,
 )
 from vrl.trajectory.validation import TrajectoryValidator
 
@@ -32,9 +30,6 @@ def select_trajectory_batch(data: Any, selector: Any) -> Any:
     count = len(positions)
     return _rebuild_trajectory(
         data,
-        request_id=data.request_id,
-        family=data.family,
-        task=data.task,
         sample_rows=[data.sample_rows[i] for i in positions],
         tensor_value_fn=lambda tensor: (
             _select_value(tensor.value, positions, len(data.sample_rows))
@@ -56,9 +51,6 @@ def move_trajectory_batch(data: Any, device: Any) -> Any:
 
     return _rebuild_trajectory(
         data,
-        request_id=data.request_id,
-        family=data.family,
-        task=data.task,
         sample_rows=list(data.sample_rows),
         tensor_value_fn=lambda tensor: move_value_to_device(tensor.value, device),
         axes_sample_length=data.axes["sample"].length,
@@ -69,9 +61,6 @@ def move_trajectory_batch(data: Any, device: Any) -> Any:
 def _rebuild_trajectory(
     data: TrajectoryBatch,
     *,
-    request_id: str,
-    family: str,
-    task: str,
     sample_rows: list[GenerationSampleRow],
     tensor_value_fn: Any,
     axes_sample_length: int | None,
@@ -82,35 +71,23 @@ def _rebuild_trajectory(
         for name, axis in data.axes.items()
     }
     segments = {
-        name: TrajectorySegment(
-            name=segment.name,
-            modality=segment.modality,
-            trainable=segment.trainable,
-            distribution=segment.distribution,
+        name: replace(
+            segment,
             tensors={
-                tensor_name: TrajectoryTensor(
-                    name=tensor.name,
-                    value=tensor_value_fn(tensor),
-                    axes=tensor.axes,
-                    role=tensor.role,
-                )
+                tensor_name: replace(tensor, value=tensor_value_fn(tensor))
                 for tensor_name, tensor in segment.tensors.items()
             },
-            reward_view=segment.reward_view,
             replay_inputs=dict(segment.replay_inputs),
             metadata=dict(segment.metadata),
         )
         for name, segment in data.segments.items()
     }
 
-    out = TrajectoryBatch(
-        request_id=request_id,
-        family=family,
-        task=task,
+    out = replace(
+        data,
         sample_rows=sample_rows,
         axes=axes,
         segments=segments,
-        primary_segment=data.primary_segment,
         reward_views=dict(data.reward_views),
         context=context,
     )

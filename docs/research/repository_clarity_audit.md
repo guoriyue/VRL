@@ -1284,3 +1284,18 @@ contained guesses. Removed both:
   regressions compare sample IDs, actual tensor contents and list/tuple metadata
   for Python/Torch masks and index arrays, and reject malformed selectors.
   Touched-file Ruff and git diff --check pass.
+
+## Trajectory reconstruction preserves its source schema
+
+- Replaced manual reconstruction of tensor, segment and batch dataclasses with
+  dataclasses.replace. Removed request_id/family/task parameters that both callers
+  copied directly from the same source batch. The operation specifies only the
+  fields it changes, avoiding a second field inventory that could omit additions.
+- Kept explicit copies of mutable segment metadata/replay maps and reward-view
+  maps, and retained validation of the rebuilt batch. Selection and movement
+  remain shared operations rather than methods that import Torch into the schema.
+- Reviewed the outer RolloutBatch selection contract: context is shared metadata
+  and intentionally retained; extras select sample-aligned tensor leaves. No new
+  blanket slicing of arbitrary metadata, wrapper class or schema constants.
+- Validation: 51 trajectory, online reward-update and trajectory-granularity tests
+  passed. Touched-file Ruff and git diff --check pass.
