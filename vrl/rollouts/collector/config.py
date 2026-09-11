@@ -95,14 +95,6 @@ class RolloutCollectorConfig:
 _DENOISE_OPTION_FIELDS = frozenset(item.name for item in fields(DenoiseRequestOptions))
 
 
-def _section_values(section: ConfigBase | None) -> dict[str, Any]:
-    """The keys a parsed section was actually given, as plain python values."""
-
-    if section is None:
-        return {}
-    return section.model_dump(mode="python", exclude_none=True, exclude_unset=True)
-
-
 def _merge_flat_section_values(
     values: dict[str, Any],
     section: ConfigBase | None,
@@ -110,7 +102,10 @@ def _merge_flat_section_values(
     *,
     allowed: frozenset[str],
 ) -> None:
-    for key, value in _section_values(section).items():
+    if section is None:
+        return
+    declared = section.model_dump(mode="python", exclude_none=True, exclude_unset=True)
+    for key, value in declared.items():
         if key not in allowed:
             continue
         # Nested blocks (sde, trajectory_storage, torch_profiler) have their own

@@ -116,12 +116,7 @@ class GenerationRequestBuilder:
 
         if isinstance(item, str):
             item = GenerationInput(prompt=item)
-        return GenerationInput(
-            prompt=item.prompt,
-            task_type=item.task_type or task_type_for(self.entry.task),
-            reference_image=item.reference_image,
-            reference_video=item.reference_video,
-        )
+        return replace(item, task_type=item.task_type or task_type_for(self.entry.task))
 
 
 __all__ = [

@@ -931,3 +931,19 @@ contained guesses. Removed both:
   and torch-free config tests passed. Regressions assert malformed versions leave
   live worker weights/current version/staging and runtime health unchanged.
   Touched-file Ruff and diff whitespace checks pass.
+
+## Collector projection forwarding cleanup
+
+- Removed _section_values, whose sole caller was _merge_flat_section_values.
+  The merge adapter now handles absent sections and reads explicitly declared
+  model_dump values directly. Duplicate ownership and nested-block filtering
+  remain in the shared adapter used by rollout and sampling sections.
+- GenerationRequestBuilder applies task defaults with dataclasses.replace instead
+  of rebuilding every conditioning field manually. Existing input values remain
+  intact without another field list to maintain when GenerationInput evolves.
+- Retained schema-derived denoise field sets as real projection boundaries, the
+  request builder as the config-to-request adapter, and shared merge logic. No
+  new class or general-purpose serialization abstraction introduced.
+- Validation: 121 request construction, family/runtime projection, video reference
+  metadata and experiment-config tests passed. Touched-file Ruff and diff
+  whitespace checks pass.
