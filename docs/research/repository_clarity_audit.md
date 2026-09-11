@@ -4032,3 +4032,17 @@ this combined regression is compatibility evidence, not architectural completion
   building. The tests do not claim an upper vocabulary-bound check.
 - All 58 Cosmos3 and shared gatherer tests passed, with dependency warnings;
   touched-file Ruff checks pass. The repository-wide clarity audit continues.
+
+## MAGI subprocess model owns mode selection and unsupported-training diagnostics
+
+- Move `_magi_mode` onto `Magi1SubprocessModel` as `_generation_mode`, beside
+  its sole generation caller. Keep the task-to-CLI mapping as a model-specific
+  adapter; accepted task types and conditioning validation are unchanged.
+- Move `_generation_only_error` onto the same model beside replay entry points.
+  Keep a single diagnostic shared by replay and nonempty trainable-state loading,
+  without introducing a module-level business-message constant or wrapper class.
+- Preserve source/path resolution, environment construction and installation
+  checks in this slice. They belong to the loading workflow and require their
+  own caller review, not mechanical relocation based on function counts.
+- All 37 MAGI subprocess runtime tests passed; touched-file Ruff checks pass.
+  No official checkpoint inference was run. The full repository audit continues.

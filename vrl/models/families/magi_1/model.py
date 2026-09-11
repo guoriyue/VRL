@@ -316,6 +316,40 @@ class Magi1SubprocessModel(torch.nn.Module):
 
         self._device = torch.device(device)
 
+    @staticmethod
+    def _generation_mode(input_value: GenerationInput) -> tuple[str, str | None]:
+        if input_value.reference_image and input_value.reference_video:
+            raise ValueError("MAGI-1 accepts either reference_image or reference_video, not both")
+
+        task_type = input_value.task_type
+        if task_type in (None, ""):
+            if input_value.reference_image:
+                return "i2v", input_value.reference_image
+            if input_value.reference_video:
+                return "v2v", input_value.reference_video
+            return "t2v", None
+
+        # Canonical task_type long forms only (semantics.py owns this vocabulary):
+        # video2world is image-conditioned in this repo — every v2w dataset preset
+        # declares conditioning: reference_image — so it routes to i2v, not v2v.
+        aliases = {
+            "text_to_video": "t2v",
+            "image_to_video": "i2v",
+            "video2world": "i2v",
+        }
+        try:
+            mode = aliases[task_type]
+        except KeyError as error:
+            raise ValueError(f"unsupported MAGI-1 task_type: {task_type!r}") from error
+        conditioning_path = (
+            input_value.reference_image if mode == "i2v" else input_value.reference_video
+        )
+        if mode != "t2v" and not conditioning_path:
+            raise ValueError(f"MAGI-1 {mode} mode requires its reference input")
+        if mode == "t2v" and (input_value.reference_image or input_value.reference_video):
+            raise ValueError("MAGI-1 t2v task_type cannot carry a reference input")
+        return mode, conditioning_path
+
     def generate_chunk_autoregressive(
         self,
         *,
@@ -325,7 +359,7 @@ class Magi1SubprocessModel(torch.nn.Module):
         """Generate each requested sample through the official MAGI CLI."""
 
         input_value = request.inputs[batch.prompt_index]
-        mode, conditioning_path = _magi_mode(input_value)
+        mode, conditioning_path = self._generation_mode(input_value)
         videos: list[torch.Tensor] = []
         temporal_chunk_counts: list[int] = []
         for sample_offset in range(batch.sample_count):
@@ -435,6 +469,14 @@ class Magi1SubprocessModel(torch.nn.Module):
                 f"{completed.returncode}: {detail or 'no subprocess output'}",
             )
 
+    @staticmethod
+    def _generation_only_error() -> str:
+        return (
+            "MAGI-1 replay/training is unavailable: the official 4.5B release is a "
+            "deterministic inference subprocess that exposes only a final MP4, not "
+            "autograd, denoise transition densities, or replayable likelihoods"
+        )
+
     def replay_forward(
         self,
         batch: Any,
@@ -443,7 +485,7 @@ class Magi1SubprocessModel(torch.nn.Module):
         request: ReplayRequest | None = None,
     ) -> ReplayResult:
         del batch, timestep_idx, request
-        raise RuntimeError(_generation_only_error())
+        raise RuntimeError(self._generation_only_error())
 
     @contextlib.contextmanager
     def disable_adapter(self) -> Iterator[None]:
@@ -453,7 +495,7 @@ class Magi1SubprocessModel(torch.nn.Module):
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
         if state_dict:
-            raise RuntimeError(_generation_only_error())
+            raise RuntimeError(self._generation_only_error())
 
 
 def prepare_magi_runtime_config(
@@ -849,48 +891,6 @@ def _source_head_revision(source_path: Path) -> str:
             f"MAGI-1 source checkout at {source_path} has tracked modifications: {detail}",
         )
     return revision
-
-
-def _magi_mode(input_value: GenerationInput) -> tuple[str, str | None]:
-    if input_value.reference_image and input_value.reference_video:
-        raise ValueError("MAGI-1 accepts either reference_image or reference_video, not both")
-
-    task_type = input_value.task_type
-    if task_type in (None, ""):
-        if input_value.reference_image:
-            return "i2v", input_value.reference_image
-        if input_value.reference_video:
-            return "v2v", input_value.reference_video
-        return "t2v", None
-
-    # Canonical task_type long forms only (semantics.py owns this vocabulary):
-    # video2world is image-conditioned in this repo — every v2w dataset preset
-    # declares conditioning: reference_image — so it routes to i2v, not v2v.
-    aliases = {
-        "text_to_video": "t2v",
-        "image_to_video": "i2v",
-        "video2world": "i2v",
-    }
-    try:
-        mode = aliases[task_type]
-    except KeyError as error:
-        raise ValueError(f"unsupported MAGI-1 task_type: {task_type!r}") from error
-    conditioning_path = (
-        input_value.reference_image if mode == "i2v" else input_value.reference_video
-    )
-    if mode != "t2v" and not conditioning_path:
-        raise ValueError(f"MAGI-1 {mode} mode requires its reference input")
-    if mode == "t2v" and (input_value.reference_image or input_value.reference_video):
-        raise ValueError("MAGI-1 t2v task_type cannot carry a reference input")
-    return mode, conditioning_path
-
-
-def _generation_only_error() -> str:
-    return (
-        "MAGI-1 replay/training is unavailable: the official 4.5B release is a "
-        "deterministic inference subprocess that exposes only a final MP4, not "
-        "autograd, denoise transition densities, or replayable likelihoods"
-    )
 
 
 def _unused_local_port() -> int:
