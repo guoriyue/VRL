@@ -1753,3 +1753,19 @@ is not a repository-wide completion claim or a mandate to inline short functions
 - Validation: 26 MAGI tests passed, including five invalid-timeout regressions.
   Touched-file Ruff lint/format and diff checks passed. This validates adapter
   behavior without claiming an upstream model or subprocess benchmark run.
+
+## MAGI sampling conversion does not hide invalid values
+
+- Removed int coercion and duplicate positivity checks from request preparation.
+  Raw sampling overrides now reach the existing shared sampling-contract validator,
+  which requires exact integers before geometry/divisibility checks. The same
+  validator serves build preflight and prepared requests. Runtime JSON geometry
+  and schedule fields can no longer be silently truncated either.
+- Sample index is an exact nonnegative integer; seed is an exact signed integer
+  before adding the sample offset. Keep existing omitted/None seed precedence,
+  official runtime field mapping, and alignment/range errors. No new helpers,
+  schema classes or constants introduced; the base config remains deep-copied.
+- Validation: 37 MAGI tests passed. Eleven new cases cover fractional/string/bool
+  sampling values and invalid sample indices, alongside existing seed/path and
+  geometry tests. Touched-file Ruff and diff checks passed. No upstream inference
+  or repository-wide completion claim follows from these tests.

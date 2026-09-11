@@ -39,6 +39,7 @@ from vrl.generation.types import GenerationInput, GenerationRequest
 from vrl.models.interfaces.replay import ReplayRequest, ReplayResult
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.source_integrity import runtime_source_tree_sha256
+from vrl.utils.config import require_exact_int
 from vrl.utils.deadline import require_timeout
 from vrl.utils.media import read_video_frames
 
@@ -464,8 +465,7 @@ def prepare_magi_runtime_config(
 ) -> dict[str, Any]:
     """Copy and specialize one official JSON config for one VRL sample."""
 
-    if sample_index < 0:
-        raise ValueError("MAGI-1 sample_index must be >= 0")
+    require_exact_int(sample_index, path="MAGI-1 sample_index", minimum=0)
     prepared = copy.deepcopy(dict(base_config))
     runtime = prepared.get("runtime_config")
     engine = prepared.get("engine_config")
@@ -483,15 +483,12 @@ def prepare_magi_runtime_config(
 
     for request_key, runtime_key in _MAGI_1_SAMPLING_RUNTIME_KEYS:
         if request_key in sampling and sampling[request_key] is not None:
-            value = int(sampling[request_key])
-            if value < 1:
-                raise ValueError(f"MAGI-1 sampling.{request_key} must be >= 1")
-            runtime[runtime_key] = value
+            runtime[runtime_key] = sampling[request_key]
 
     base_seed = sampling.get("seed", runtime.get("seed", 1234))
     if base_seed is None:
         base_seed = runtime.get("seed", 1234)
-    runtime["seed"] = int(base_seed) + sample_index
+    runtime["seed"] = require_exact_int(base_seed, path="MAGI-1 seed") + sample_index
     _validate_single_process_config(prepared)
     _validate_magi_sampling_contract(prepared, sampling=sampling)
     _validate_runtime_paths(prepared, source_path=config.source_path)
@@ -670,14 +667,21 @@ def _validate_magi_sampling_contract(
         value = sampling.get(request_key)
         if value is not None:
             runtime[runtime_key] = value
-    chunk_width = int(runtime.get("chunk_width", 0))
-    temporal_factor = int(runtime.get("temporal_downsample_factor", 0))
+    chunk_width = require_exact_int(
+        runtime.get("chunk_width", 0), path="MAGI-1 runtime_config.chunk_width"
+    )
+    temporal_factor = require_exact_int(
+        runtime.get("temporal_downsample_factor", 0),
+        path="MAGI-1 runtime_config.temporal_downsample_factor",
+    )
     if chunk_width < 1 or temporal_factor < 1:
         raise ValueError(
             "MAGI-1 runtime_config.chunk_width and temporal_downsample_factor must be >= 1",
         )
     decoded_chunk_frames = chunk_width * temporal_factor
-    num_frames = int(runtime.get("num_frames", 0))
+    num_frames = require_exact_int(
+        runtime.get("num_frames", 0), path="MAGI-1 runtime_config.num_frames"
+    )
     if num_frames < 1 or num_frames % decoded_chunk_frames:
         raise ValueError(
             "MAGI-1 sampling.num_frames must be a positive multiple of the "
@@ -685,22 +689,26 @@ def _validate_magi_sampling_contract(
         )
 
     for key in ("video_size_h", "video_size_w"):
-        value = int(runtime.get(key, 0))
+        value = require_exact_int(runtime.get(key, 0), path=f"MAGI-1 runtime_config.{key}")
         if value < 16 or value % 16:
             public_name = "height" if key.endswith("_h") else "width"
             raise ValueError(
                 f"MAGI-1 sampling.{public_name} must be a positive multiple of 16; got {value}",
             )
 
-    fps = int(runtime.get("fps", 0))
+    fps = require_exact_int(runtime.get("fps", 0), path="MAGI-1 runtime_config.fps")
     if fps < 2:
         raise ValueError(
             "MAGI-1 sampling.fps must be >= 2 because the official VAE tiled "
             f"decode uses fps // 2 as its minimum tile length; got {fps}",
         )
 
-    num_steps = int(runtime.get("num_steps", 0))
-    window_size = int(runtime.get("window_size", 0))
+    num_steps = require_exact_int(
+        runtime.get("num_steps", 0), path="MAGI-1 runtime_config.num_steps"
+    )
+    window_size = require_exact_int(
+        runtime.get("window_size", 0), path="MAGI-1 runtime_config.window_size"
+    )
     if window_size < 1 or num_steps < 1 or num_steps % window_size:
         raise ValueError(
             "MAGI-1 sampling.num_steps must be positive and divisible by "

@@ -640,3 +640,32 @@ def test_subprocess_config_requires_finite_positive_timeout(tmp_path, timeout):
     config, _ = _installation(tmp_path)
     with pytest.raises(ValueError, match="timeout_seconds"):
         replace(config, timeout_seconds=timeout)
+
+
+@pytest.mark.parametrize(
+    "sampling",
+    [
+        {"num_frames": 48.5},
+        {"height": 384.5},
+        {"width": "640"},
+        {"num_steps": 12.5},
+        {"fps": True},
+        {"seed": 7.5},
+        {"seed": "7"},
+    ],
+)
+def test_prepare_config_rejects_coerced_sampling_values(tmp_path, sampling):
+    config, _ = _installation(tmp_path)
+    with pytest.raises(ValueError, match="must be an integer"):
+        prepare_magi_runtime_config(
+            _base_config(), config=config, sampling=sampling, sample_index=0
+        )
+
+
+@pytest.mark.parametrize("sample_index", [True, 1.5, "1", -1])
+def test_prepare_config_requires_nonnegative_integer_sample_index(tmp_path, sample_index):
+    config, _ = _installation(tmp_path)
+    with pytest.raises(ValueError, match="sample_index"):
+        prepare_magi_runtime_config(
+            _base_config(), config=config, sampling={}, sample_index=sample_index
+        )
