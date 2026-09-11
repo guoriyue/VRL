@@ -5284,3 +5284,18 @@ this combined regression is compatibility evidence, not architectural completion
   profile verifies zero warmup and exactly two active calls. GEMM/Nsight suites:
   42 passed. Touched-file Ruff and git diff --check pass. This does not establish
   GPU profiling accuracy or complete the wider repository audit.
+
+## Profiler field fallback distinguishes zero from absence
+
+- Read the legacy device-time field only when self_device_time_total is absent
+  or None. A present zero no longer falls through to a different legacy value.
+  Keep _event_self_us as the profiler representation adapter; no new helper or
+  compatibility class is introduced.
+- Correct PROJECTION_ORDER's comment: it stabilizes counters and tied report
+  rows, while classify_linear owns match precedence. Keep the category constant
+  and classification behavior unchanged; remove unsupported blanket coverage
+  claims from the comment.
+- Three adapter cases cover zero, nonzero and None; zero failed before the fix.
+  GEMM/Nsight suites: 45 passed, one profiler warning. Touched-file Ruff and git
+  diff --check pass. This is synthetic adapter and CPU profiling evidence, not
+  real GPU capture validation. Wider audit remains incomplete.

@@ -65,10 +65,8 @@ __all__ = [
     "profile_projection_gemms",
 ]
 
-# Projection categories, ordered most-specific first; the FIRST match on the
-# lowercased module FQN wins. Validated against the real diffusers FQNs of
-# CosmosTransformer3DModel / SD3Transformer2DModel / WanTransformer3DModel
-# (every linear in all three lands in a named bucket; "other" stays empty).
+# Stable category order for counters and equal-time report rows. Classification
+# precedence lives in classify_linear; this tuple does not define matching rules.
 PROJECTION_ORDER: tuple[str, ...] = (
     "ffn",
     "qkv",
@@ -240,11 +238,10 @@ def _event_self_us(event: Any, *, cuda: bool) -> tuple[float, float]:
     device_us = 0.0
     if cuda:
         # torch >= 2.1 renamed self_cuda_time_total -> self_device_time_total.
-        device_us = float(
-            getattr(event, "self_device_time_total", None)
-            or getattr(event, "self_cuda_time_total", 0.0)
-            or 0.0
-        )
+        device_time = getattr(event, "self_device_time_total", None)
+        if device_time is None:
+            device_time = getattr(event, "self_cuda_time_total", 0.0)
+        device_us = float(device_time or 0.0)
     return device_us, cpu_us
 
 
