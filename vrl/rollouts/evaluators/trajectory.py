@@ -14,7 +14,7 @@ from typing import Any
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
-from vrl.trajectory import TrajectoryBatch
+from vrl.trajectory import TrajectoryBatch, TrajectorySegment
 from vrl.trajectory.device import move_value_to_device
 
 
@@ -100,9 +100,9 @@ class TrajectorySignalBuilder:
 
         resolved_old = old_log_prob
         if resolved_old is None:
-            resolved_old = self._old_log_prob_from_trajectory(
-                segment,
-                log_prob=log_prob,
+            resolved_old = self._select_loss_value_if_needed(
+                segment.role_tensor("old_log_prob").value,
+                log_prob,
                 timestep_idx=timestep_idx,
             )
         resolved_mask = mask
@@ -148,23 +148,9 @@ class TrajectorySignalBuilder:
     def context(self) -> dict[str, Any]:
         return dict(self.trajectory.context)
 
-    def _old_log_prob_from_trajectory(
-        self,
-        segment: Any,
-        *,
-        log_prob: Any,
-        timestep_idx: int | None,
-    ) -> Any:
-        value = segment.role_tensor("old_log_prob").value
-        return self._select_loss_value_if_needed(
-            value,
-            log_prob,
-            timestep_idx=timestep_idx,
-        )
-
     def _mask_from_trajectory(
         self,
-        segment: Any,
+        segment: TrajectorySegment,
         *,
         log_prob: Any,
         timestep_idx: int | None,
@@ -176,12 +162,11 @@ class TrajectorySignalBuilder:
             if tensor is not None and tensor.role == "mask"
             else segment.role_tensor("mask").value
         )
-        value = self._select_loss_value_if_needed(
+        return self._select_loss_value_if_needed(
             value,
             log_prob,
             timestep_idx=timestep_idx,
         )
-        return value
 
     @classmethod
     def _select_loss_value_if_needed(

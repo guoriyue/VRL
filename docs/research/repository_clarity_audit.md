@@ -2013,3 +2013,16 @@ tracing algorithm construction and evaluator selection together.
   An initial command used a nonexistent janus_pro_r1 test directory and ran no
   tests; corrected to the actual registered Janus test locations. Touched-file
   Ruff/diff checks passed. No extra container class or schema constants added.
+
+## Signal builder removes a single-use role forwarding method
+
+- Inlined _old_log_prob_from_trajectory into segment_signal: read the declared
+  old_log_prob role and call the existing loss-value selection method directly.
+  Typed the mask helper's segment argument as TrajectorySegment and removed an
+  unnecessary return temporary.
+- Keep the shared builder, mask selection and timestep/shape logic: these serve
+  denoise and token evaluators. No representation conversion or new abstraction
+  introduced. Device movement, override precedence and final signal validation
+  remain unchanged; this slice does not redesign timestep-axis selection.
+- Validation: 78 replay/trajectory tests passed. Touched-file Ruff/diff checks
+  passed; the removed method has no remaining references. Full review continues.
