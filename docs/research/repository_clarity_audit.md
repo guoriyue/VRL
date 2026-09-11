@@ -3343,3 +3343,18 @@ this combined regression is compatibility evidence, not architectural completion
   both provider paths and reject malformed versions even when a valid fallback
   exists; existing attach/versionless cases preserve their semantics.
   Touched-file Ruff/diff checks passed. Full review remains incomplete.
+
+## Own collector section projection in its constructor
+
+- Fold _merge_flat_section_values into RolloutCollectorConfig.from_root as one
+  loop over rollout and sampling sections. Remove the single-owner external
+  helper and unused ConfigBase typing import. Preserve rollout-before-sampling
+  order, explicit-field filtering, nested-block exclusion and duplicate-owner
+  errors. No new schema vocabulary or wrapper class.
+- Keep _DENOISE_OPTION_FIELDS: it is derived from the denoise dataclass schema,
+  not a hand-maintained algorithm list. Keep the optional non-draining runtime
+  capability lookup: GenerationRuntime currently does not require that member,
+  and absent support must retain the draining barrier.
+- Validation: 793 rollout/config tests passed; touched-file Ruff/diff checks
+  passed and no removed helper references remain in code/tests. Full repository
+  review remains incomplete.

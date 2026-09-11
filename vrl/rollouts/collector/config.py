@@ -21,7 +21,6 @@ from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.trajectory import TrajectoryStoragePolicy
 
 if TYPE_CHECKING:
-    from vrl.config.base import ConfigBase
     from vrl.config.schema import RootConfig
 
 
@@ -49,24 +48,30 @@ class RolloutCollectorConfig:
         request_sampling: dict[str, Any] = {}
         # The planner batch width and the denoise options are GenerationRequest
         # fields, not sampling keys; only the remaining rollout scalars flatten.
-        _merge_flat_section_values(
-            request_sampling,
-            rollout,
-            "rollout",
-            allowed=generation_request_rollout_fields()
+        rollout_fields = (
+            generation_request_rollout_fields()
             - _DENOISE_OPTION_FIELDS
-            - {"samples_per_generation_batch"},
+            - {"samples_per_generation_batch"}
         )
+        for name, section, allowed in (
+            ("rollout", rollout, rollout_fields),
+            ("sampling", sampling, type(sampling).model_fields if sampling is not None else ()),
+        ):
+            if section is None:
+                continue
+            declared = section.model_dump(mode="python", exclude_none=True, exclude_unset=True)
+            for key, value in declared.items():
+                # Nested blocks have their own projection; only scalars flatten.
+                if key not in allowed or isinstance(value, dict) or is_dataclass(value):
+                    continue
+                if key in request_sampling:
+                    raise ValueError(
+                        f"rollout request key {key!r} has multiple config owners; "
+                        f"remove the duplicate from {name}",
+                    )
+                request_sampling[key] = value
         samples_per_generation_batch = (
             rollout.samples_per_generation_batch if rollout is not None else None
-        )
-        _merge_flat_section_values(
-            request_sampling,
-            sampling,
-            "sampling",
-            allowed=frozenset(type(sampling).model_fields)
-            if sampling is not None
-            else frozenset(),
         )
         hyperparameters = algorithm.hyperparameters if algorithm is not None else None
         train_segments = getattr(hyperparameters, "train_segments", None)
@@ -93,31 +98,6 @@ class RolloutCollectorConfig:
 # Derived from the typed options, so a knob added to DenoiseRequestOptions is
 # automatically kept off the flat sampling dict.
 _DENOISE_OPTION_FIELDS = frozenset(item.name for item in fields(DenoiseRequestOptions))
-
-
-def _merge_flat_section_values(
-    values: dict[str, Any],
-    section: ConfigBase | None,
-    name: str,
-    *,
-    allowed: frozenset[str],
-) -> None:
-    if section is None:
-        return
-    declared = section.model_dump(mode="python", exclude_none=True, exclude_unset=True)
-    for key, value in declared.items():
-        if key not in allowed:
-            continue
-        # Nested blocks (sde, trajectory_storage, torch_profiler) have their own
-        # projection or no wire presence at all; only scalars flatten here.
-        if isinstance(value, dict) or is_dataclass(value):
-            continue
-        if key in values:
-            raise ValueError(
-                f"rollout request key {key!r} has multiple config owners; "
-                f"remove the duplicate from {name}",
-            )
-        values[key] = value
 
 
 __all__ = [
