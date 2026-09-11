@@ -41,77 +41,63 @@ class TrajectoryStoragePolicy:
                 f"{sorted(_VALID_DTYPES)}, got {self.dtype!r}",
             )
 
+    @classmethod
+    def from_config(cls, value: object) -> TrajectoryStoragePolicy:
+        """Parse rollout.trajectory_storage config into a typed storage policy."""
 
-def trajectory_storage_policy_from_cfg(value: object) -> TrajectoryStoragePolicy:
-    """Parse rollout.trajectory_storage config into a typed storage policy."""
-
-    if value is None:
-        return TrajectoryStoragePolicy()
-    if isinstance(value, TrajectoryStoragePolicy):
-        return value
-    value = to_builtin_deep(value)
-    if isinstance(value, Mapping):
-        return TrajectoryStoragePolicy(
-            device=str(value.get("device", "preserve")),
-            dtype=str(value.get("dtype", "preserve")),
+        if value is None:
+            return cls()
+        if isinstance(value, cls):
+            return value
+        value = to_builtin_deep(value)
+        if isinstance(value, Mapping):
+            return cls(
+                device=str(value.get("device", "preserve")),
+                dtype=str(value.get("dtype", "preserve")),
+            )
+        # A non-None, non-mapping value is a misconfiguration (e.g. a bare
+        # ``trajectory_storage: cpu`` string surviving config resolution). Fail
+        # loudly instead of silently degrading to a default no-op policy.
+        raise TypeError(
+            f"rollout.trajectory_storage must be a mapping with 'device'/'dtype' keys, got {value!r}",
         )
-    # A non-None, non-mapping value is a misconfiguration (e.g. a bare
-    # ``trajectory_storage: cpu`` string surviving config resolution). Fail
-    # loudly instead of silently degrading to a default no-op policy.
-    raise TypeError(
-        f"rollout.trajectory_storage must be a mapping with 'device'/'dtype' keys, got {value!r}",
-    )
 
-
-def apply_trajectory_storage_policy(
-    batch: TrajectoryBatch,
-    policy: TrajectoryStoragePolicy,
-) -> TrajectoryBatch:
-    """Apply placement/dtype policy to trajectory tensor leaves."""
-
-    if policy == TrajectoryStoragePolicy():
+    def apply_to_trajectory_(self, batch: TrajectoryBatch) -> TrajectoryBatch:
+        """Replace trajectory tensor leaves in place and return the same batch."""
+        if self == TrajectoryStoragePolicy():
+            return batch
+        for segment in batch.segments.values():
+            for tensor in segment.tensors.values():
+                tensor.value = self.apply_to_value(tensor.value)
         return batch
 
-    for segment in batch.segments.values():
-        for tensor in segment.tensors.values():
-            tensor.value = _apply_value_policy(tensor.value, policy)
-    return batch
+    def apply_to_value(self, value: Any) -> Any:
+        """Return a converted tensor tree; preserve the input for a no-op policy.
 
+        Generation applies this before worker-to-driver transfer to reduce wire
+        bytes. Only floating tensors are cast; integer ids retain their dtype.
+        """
+        if self == TrajectoryStoragePolicy():
+            return value
 
-def apply_value_storage_policy(value: Any, policy: TrajectoryStoragePolicy) -> Any:
-    """Apply the placement/dtype policy to one tensor-like value tree.
+        def _place(tensor: Any) -> Any:
+            kwargs: dict[str, Any] = {}
+            if self.device == "cpu":
+                kwargs["device"] = "cpu"
+            dtype = _torch_dtype(self.dtype)
+            if dtype is not None and tensor.is_floating_point():
+                kwargs["dtype"] = dtype
+            if not kwargs:
+                return tensor
+            return tensor.to(**kwargs)
 
-    The leaf semantics are identical to ``apply_trajectory_storage_policy``;
-    this entry point exists for callers that hold raw tensors/dicts (e.g. the
-    generation worker applying the policy BEFORE tensors cross the
-    worker->driver wire, where downcasting actually saves transfer bytes).
-    Re-applying the same policy driver-side is a no-op.
-    """
-
-    if policy == TrajectoryStoragePolicy():
-        return value
-    return _apply_value_policy(value, policy)
+        return map_tensor_tree(value, _place, is_leaf=_is_torch_tensor)
 
 
 def trajectory_tensor_bytes(value: object) -> int:
     """Return an estimated byte count for tensor-like leaves in ``value``."""
 
     return _tensor_bytes(value, seen=set())
-
-
-def _apply_value_policy(value: Any, policy: TrajectoryStoragePolicy) -> Any:
-    def _place(tensor: Any) -> Any:
-        kwargs: dict[str, Any] = {}
-        if policy.device == "cpu":
-            kwargs["device"] = "cpu"
-        dtype = _torch_dtype(policy.dtype)
-        if dtype is not None and tensor.is_floating_point():
-            kwargs["dtype"] = dtype
-        if not kwargs:
-            return tensor
-        return tensor.to(**kwargs)
-
-    return map_tensor_tree(value, _place, is_leaf=_is_torch_tensor)
 
 
 def _tensor_bytes(value: object, *, seen: set[int]) -> int:
@@ -173,8 +159,5 @@ def _is_torch_tensor(value: object) -> bool:
 
 __all__ = [
     "TrajectoryStoragePolicy",
-    "apply_trajectory_storage_policy",
-    "apply_value_storage_policy",
-    "trajectory_storage_policy_from_cfg",
     "trajectory_tensor_bytes",
 ]

@@ -31,12 +31,6 @@ if TYPE_CHECKING:
     from vrl.trajectory.resolver import TrajectoryResolver as TrajectoryResolver
     from vrl.trajectory.resolver import TrajectoryResolverError as TrajectoryResolverError
     from vrl.trajectory.storage import TrajectoryStoragePolicy as TrajectoryStoragePolicy
-    from vrl.trajectory.storage import (
-        apply_trajectory_storage_policy as apply_trajectory_storage_policy,
-    )
-    from vrl.trajectory.storage import (
-        trajectory_storage_policy_from_cfg as trajectory_storage_policy_from_cfg,
-    )
     from vrl.trajectory.storage import trajectory_tensor_bytes as trajectory_tensor_bytes
     from vrl.trajectory.types import AxisKind as AxisKind
     from vrl.trajectory.types import DistributionKind as DistributionKind
@@ -70,10 +64,6 @@ _PUBLIC_EXPORTS = {
     "TrajectoryTensor": ("vrl.trajectory.types", "TrajectoryTensor"),
     "TrajectoryValidationError": ("vrl.trajectory.validation", "TrajectoryValidationError"),
     "TrajectoryValidator": ("vrl.trajectory.validation", "TrajectoryValidator"),
-    "apply_trajectory_storage_policy": (
-        "vrl.trajectory.storage",
-        "apply_trajectory_storage_policy",
-    ),
     "build_ar_continuous_trajectory": (
         "vrl.trajectory.builders",
         "build_ar_continuous_trajectory",
@@ -95,10 +85,6 @@ _PUBLIC_EXPORTS = {
     "named_tensor": ("vrl.trajectory.views", "named_tensor"),
     "role_tensor": ("vrl.trajectory.views", "role_tensor"),
     "tensor_ref": ("vrl.trajectory.validation", "tensor_ref"),
-    "trajectory_storage_policy_from_cfg": (
-        "vrl.trajectory.storage",
-        "trajectory_storage_policy_from_cfg",
-    ),
     "trajectory_tensor_bytes": ("vrl.trajectory.storage", "trajectory_tensor_bytes"),
 }
 

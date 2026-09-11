@@ -38,7 +38,6 @@ from vrl.generation.types import (
 )
 from vrl.trajectory.storage import (
     TrajectoryStoragePolicy,
-    apply_value_storage_policy,
     trajectory_tensor_bytes,
 )
 from vrl.utils.cuda_memory import (
@@ -340,18 +339,12 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         policy = request.trajectory_storage
         if policy is None or policy == TrajectoryStoragePolicy():
             return batch_result
-        batch_result.observations = apply_value_storage_policy(
-            batch_result.observations,
-            policy,
-        )
-        batch_result.actions = apply_value_storage_policy(batch_result.actions, policy)
-        batch_result.log_probs = apply_value_storage_policy(batch_result.log_probs, policy)
-        batch_result.timesteps = apply_value_storage_policy(batch_result.timesteps, policy)
-        batch_result.kl = apply_value_storage_policy(batch_result.kl, policy)
-        batch_result.replay_tensors = apply_value_storage_policy(
-            batch_result.replay_tensors,
-            policy,
-        )
+        batch_result.observations = policy.apply_to_value(batch_result.observations)
+        batch_result.actions = policy.apply_to_value(batch_result.actions)
+        batch_result.log_probs = policy.apply_to_value(batch_result.log_probs)
+        batch_result.timesteps = policy.apply_to_value(batch_result.timesteps)
+        batch_result.kl = policy.apply_to_value(batch_result.kl)
+        batch_result.replay_tensors = policy.apply_to_value(batch_result.replay_tensors)
         return batch_result
 
     def prepare_denoise_state(

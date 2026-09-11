@@ -8,9 +8,7 @@ import torch
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.trajectory import (
     TrajectoryStoragePolicy,
-    apply_trajectory_storage_policy,
     build_ar_discrete_trajectory,
-    trajectory_storage_policy_from_cfg,
 )
 
 
@@ -21,7 +19,7 @@ def test_default_storage_policy_returns_original_batch() -> None:
     trajectory = _trajectory()
     token_ids = trajectory.segments["image_tokens"].tensors["token_ids"].value
 
-    result = apply_trajectory_storage_policy(trajectory, TrajectoryStoragePolicy())
+    result = TrajectoryStoragePolicy().apply_to_trajectory_(trajectory)
 
     assert result is trajectory
     assert result.segments["image_tokens"].tensors["token_ids"].value is token_ids
@@ -34,10 +32,7 @@ def test_dtype_policy_only_casts_floating_tensors() -> None:
     """
     trajectory = _trajectory()
 
-    result = apply_trajectory_storage_policy(
-        trajectory,
-        TrajectoryStoragePolicy(dtype="float16"),
-    )
+    result = TrajectoryStoragePolicy(dtype="float16").apply_to_trajectory_(trajectory)
 
     segment = result.segments["image_tokens"]
     assert segment.tensors["token_ids"].value.dtype == torch.long
@@ -57,10 +52,7 @@ def test_cpu_storage_policy_moves_tensor_leaves_to_cpu() -> None:
     """A device policy moves every tensor leaf of every segment to that device."""
     trajectory = _trajectory()
 
-    result = apply_trajectory_storage_policy(
-        trajectory,
-        TrajectoryStoragePolicy(device="cpu"),
-    )
+    result = TrajectoryStoragePolicy(device="cpu").apply_to_trajectory_(trajectory)
 
     for tensor in result.segments["image_tokens"].tensors.values():
         assert str(tensor.value.device) == "cpu"
@@ -71,16 +63,16 @@ def test_storage_policy_parser_rejects_unknown_values() -> None:
     naming it, and a bare scalar is a misconfiguration that fails instead of degrading to a
     default.
     """
-    assert trajectory_storage_policy_from_cfg(None) == TrajectoryStoragePolicy()
-    assert trajectory_storage_policy_from_cfg({"device": "cpu"}).device == "cpu"
+    assert TrajectoryStoragePolicy.from_config(None) == TrajectoryStoragePolicy()
+    assert TrajectoryStoragePolicy.from_config({"device": "cpu"}).device == "cpu"
 
     with pytest.raises(ValueError, match="trajectory storage dtype"):
-        trajectory_storage_policy_from_cfg({"dtype": "int8"})
+        TrajectoryStoragePolicy.from_config({"dtype": "int8"})
 
     # A bare non-mapping scalar (e.g. ``trajectory_storage: cpu``) is a
     # misconfiguration and must fail loudly rather than degrade to a default.
     with pytest.raises(TypeError, match="must be a mapping"):
-        trajectory_storage_policy_from_cfg("cpu")
+        TrajectoryStoragePolicy.from_config("cpu")
 
 
 def _trajectory():

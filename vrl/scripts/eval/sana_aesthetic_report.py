@@ -541,7 +541,7 @@ def _erase_meaningless_spelling(
 
     from vrl.config.algorithm import resolve_kl_reward_coef
     from vrl.config.schema import RolloutRuntimeSection
-    from vrl.trajectory import TrajectoryStoragePolicy, trajectory_storage_policy_from_cfg
+    from vrl.trajectory import TrajectoryStoragePolicy
 
     def storage_policy(value: Any) -> Any:
         """Resolve a storage block without hiding unknown keys."""
@@ -549,7 +549,7 @@ def _erase_meaningless_spelling(
         policy_fields = {item.name for item in dataclass_fields(TrajectoryStoragePolicy)}
         if isinstance(value, dict) and set(value) != policy_fields:
             raise ValueError(f"unexpected trajectory_storage keys: {sorted(set(value))}")
-        return trajectory_storage_policy_from_cfg(value)
+        return TrajectoryStoragePolicy.from_config(value)
 
     trainer = actual.get("trainer")
     # Historical reports may carry the threshold under debug. This protocol
@@ -610,7 +610,7 @@ def _erase_meaningless_spelling(
         (
             ("rollout",),
             "trajectory_storage",
-            trajectory_storage_policy_from_cfg(None),
+            TrajectoryStoragePolicy.from_config(None),
             storage_policy,
         ),
         (("reward", "kwargs", "aesthetic"), "device", None, None),

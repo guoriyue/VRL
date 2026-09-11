@@ -24,7 +24,6 @@ from vrl.trajectory import (
     RewardView,
     TrajectorySegment,
     TrajectoryStoragePolicy,
-    apply_trajectory_storage_policy,
     named_tensor,
     role_tensor,
 )
@@ -56,10 +55,7 @@ class TrajectoryRolloutBatchBuilder:
     ) -> None:
         self.output = output
         self.context = context
-        self.trajectory = apply_trajectory_storage_policy(
-            output.trajectory,
-            context.trajectory_storage_policy,
-        )
+        self.trajectory = context.trajectory_storage_policy.apply_to_trajectory_(output.trajectory)
         self.output.trajectory = self.trajectory
 
     def reward_samples(self) -> tuple[RewardSample, ...]:
