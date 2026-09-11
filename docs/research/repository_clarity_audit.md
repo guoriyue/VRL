@@ -5041,3 +5041,20 @@ this combined regression is compatibility evidence, not architectural completion
   /tmp/vrl-generation-rollouts-clarity-followup.log. Touched-file Ruff and git
   diff --check pass. This is cross-layer regression evidence, not a complete
   repository audit or an end-to-end training throughput measurement.
+
+## Shared config helpers document their actual conversion depth
+
+- Correct plain_mapping documentation: OmegaConf conversion and Pydantic
+  model_dump preserve their existing handling, while ordinary Mapping inputs
+  receive only a top-level copy. Point recursive ordinary-container callers to
+  to_builtin_deep without changing either function's behavior.
+- Describe to_builtin_deep key/tuple normalization and unchanged arbitrary
+  leaves; remove the unsupported claim that tuple handling matters only for
+  tests and the implication that arbitrary payloads become serializable.
+- Keep both helpers as shared conversion boundaries with different presence and
+  recursion semantics. Keep JSON helpers and _write_atomically: they centralize
+  atomic publication, exclusive creation and cleanup across writers. Adding a
+  loader/writer class or merging these contracts is outside this documentation
+  correction; no constants or new abstractions are introduced.
+- Existing config-helper and JSON-file tests: 13 passed. Touched-file Ruff and
+  git diff --check pass. Wider repository audit remains incomplete.

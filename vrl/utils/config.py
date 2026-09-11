@@ -8,7 +8,7 @@ from typing import Any
 
 
 def plain_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
-    """Deep-convert a typed/OmegaConf config (or Mapping) into a plain ``dict``.
+    """Read a mapping-shaped config as a ``dict``, preserving field presence.
 
     OmegaConf is checked first: a ``DictConfig`` is itself a ``Mapping``, so a
     shallow ``dict(value)`` would leave nested ``ListConfig``/``DictConfig``
@@ -16,6 +16,9 @@ def plain_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
     rejects. ``to_container`` recurses to plain list/dict. Pydantic models use
     ``exclude_unset`` so omitted defaults stay absent while explicit false,
     zero, and null values retain their presence semantics.
+
+    Ordinary mappings are copied only at the top level. Use ``to_builtin_deep``
+    when nested ordinary containers also need recursive conversion.
     """
 
     from omegaconf import OmegaConf
@@ -56,9 +59,9 @@ def require_exact_int(value: object, *, path: str, minimum: int | None = None) -
 def to_builtin_deep(value: Any) -> Any:
     """Deep-convert OmegaConf configs and nested Mapping/list/tuple to plain types.
 
-    Use for config payloads that must serialize cleanly (e.g. the Ray launch
-    contract). Tuples become lists; YAML-sourced configs never carry tuples, so
-    this only matters for hand-built test values.
+    Mapping keys become strings and tuples become lists. OmegaConf values are
+    resolved through its container conversion. Other leaves pass through
+    unchanged; this does not guarantee arbitrary objects are serializable.
     """
 
     from omegaconf import DictConfig, ListConfig, OmegaConf
