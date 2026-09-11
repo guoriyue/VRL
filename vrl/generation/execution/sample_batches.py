@@ -10,6 +10,7 @@ otherwise disagree silently about what one batch means.
 
 from __future__ import annotations
 
+import traceback
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -337,6 +338,9 @@ def run_sample_batches_with_oom_retry[T](
             # original OOM instead of letting split() mask it with ValueError.
             if not is_cuda_out_of_memory(exc) or batch.sample_count <= 1:
                 raise
+            # Failed forward frames can retain CUDA tensors. Release those
+            # locals before asking the allocator to return unused storage.
+            traceback.clear_frames(exc.__traceback__)
             empty_cuda_cache()
             left, right = batch.split()
             pending.insert(0, right)

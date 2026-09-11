@@ -2814,3 +2814,19 @@ this combined regression is compatibility evidence, not architectural completion
   Added local-exception/remote-text parity cases for CUDA, HIP, CPU and non-memory
   errors. Existing allocator-message and split-retry tests pass. Touched-file
   Ruff/diff checks passed; repository-wide review remains active.
+
+## Local batch OOM retry releases failed frame locals before cache cleanup
+
+- run_sample_batches_with_oom_retry called empty_cuda_cache while the caught
+  exception still retained the failed forward frame and its temporary tensors.
+  The allocator cannot release storage whose tensor remains referenced there.
+- Clear completed traceback frames only after recognizing a splittable OOM and
+  before cache cleanup. Keep terminal/non-OOM exceptions untouched for debugging.
+  The existing retry function still owns split ordering; use the standard-library
+  operation directly rather than adding a separate cleanup helper or owner class.
+- Validation: 343 generation execution/binding and Ray OOM tests passed, two
+  optional backend tests skipped. A weak-reference regression confirms failed
+  forward tensors are gone at the cache-cleanup callback; terminal failures retain
+  diagnostic frame locals. This verifies lifetime/order on CPU, not GPU capacity
+  improvement measurements. Touched-file Ruff and diff checks passed; a deliberate
+  traceback-only test local is annotated for Ruff. Full review remains active.

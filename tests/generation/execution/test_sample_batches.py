@@ -103,3 +103,50 @@ def test_request_rejects_noninteger_sample_counts(field, value):
     values = {"samples_per_prompt": 2, field: value}
     with pytest.raises(ValueError, match=field):
         GenerationRequest(request_id="counts", family="test", task="t2i", inputs=["p"], **values)
+
+
+def test_oom_retry_releases_failed_forward_locals_before_emptying_cache(monkeypatch):
+    import weakref
+
+    import torch
+
+    from vrl.generation.execution import sample_batches
+
+    retained = []
+
+    def forward(batch):
+        temporary = torch.ones(2)
+        if batch.sample_count > 1:
+            retained.append(weakref.ref(temporary))
+            raise RuntimeError("CUDA out of memory")
+        return batch.sample_count
+
+    def empty_cache():
+        assert retained and retained[-1]() is None
+
+    monkeypatch.setattr(sample_batches, "empty_cuda_cache", empty_cache)
+    result = sample_batches.run_sample_batches_with_oom_retry(
+        [sample_batches.GenerationSampleBatch(0, 0, 2)], forward
+    )
+    assert result == [1, 1]
+
+
+@pytest.mark.parametrize("message, count", [("shape mismatch", 2), ("CUDA out of memory", 1)])
+def test_terminal_batch_failure_keeps_forward_traceback_locals(message, count):
+    from vrl.generation.execution.sample_batches import (
+        GenerationSampleBatch,
+        run_sample_batches_with_oom_retry,
+    )
+
+    marker = object()
+
+    def forward(batch):
+        diagnostic = marker  # noqa: F841 - inspected through the preserved traceback below
+        raise RuntimeError(message)
+
+    with pytest.raises(RuntimeError, match=message) as caught:
+        run_sample_batches_with_oom_retry([GenerationSampleBatch(0, 0, count)], forward)
+    trace = caught.value.__traceback__
+    while trace.tb_next is not None:
+        trace = trace.tb_next
+    assert trace.tb_frame.f_locals["diagnostic"] is marker
