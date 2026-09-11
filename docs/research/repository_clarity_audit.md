@@ -5243,3 +5243,17 @@ this combined regression is compatibility evidence, not architectural completion
   evaluation and curve verdict suites: 76 passed. Touched-file Ruff and git
   diff --check pass. Real model generation and wider audit completion remain
   outside this local verification.
+
+## GEMM breakdown owns its textual view
+
+- Move format_report onto the existing Breakdown as to_text. Update the CLI,
+  embedded usage example and exports. No new rendering class or forwarding alias
+  is introduced; the data object already supplies every input to this view.
+- Keep classification, profiler instrumentation and fusion helpers separate:
+  they consume models/events before a breakdown exists. Keep PROJECTION_ORDER
+  as the shared category/display vocabulary. Measurement and percentage formulas
+  remain unchanged in this ownership slice, including existing zero-total behavior.
+- Four complete before/after text comparisons passed for synthetic CPU/CUDA
+  report data with and without unclassified modules. These are rendering checks,
+  not actual GPU profiling. Touched-file Ruff and git diff --check pass; the old
+  formatter name is absent from this module. Wider audit remains incomplete.

@@ -31,10 +31,10 @@ Usage:
 
     # Or wire the reusable core into a REAL training/rollout forward:
     from vrl.scripts.perf.gemm_projection_breakdown import (
-        profile_projection_gemms, format_report,
+        profile_projection_gemms,
     )
     bd = profile_projection_gemms(real_model.transformer, run_one_denoise_step, device=dev)
-    print(format_report(bd))
+    print(bd.to_text())
 """
 
 from __future__ import annotations
@@ -60,7 +60,6 @@ __all__ = [
     "apply_qkv_fusion",
     "build_synthetic_inputs",
     "classify_linear",
-    "format_report",
     "instrument_projection_gemms",
     "profile_projection_gemms",
 ]
@@ -152,6 +151,49 @@ class Breakdown:
         """Device time on CUDA (real kernel time), else CPU time on a CPU run."""
 
         return self.device_us if self.device_kind == "cuda" else self.cpu_us
+
+    def to_text(self) -> str:
+        """Render the breakdown as a sorted table with explicit coverage notes."""
+
+        primary = self.primary_us()
+        unit = "CUDA us" if self.device_kind == "cuda" else "CPU us"
+        total = sum(primary.values()) or 1.0
+
+        rows = sorted(
+            ((cat, primary[cat], self.calls[cat]) for cat in PROJECTION_ORDER if self.calls[cat]),
+            key=lambda r: r[1],
+            reverse=True,
+        )
+        lines = [
+            f"per-projection GEMM breakdown  ({unit}, self-time; device={self.device_kind})",
+            f"{'category':<10}{unit:>14}{'%':>9}{'calls':>9}   modules",
+            "-" * 78,
+        ]
+        for cat, us, calls in rows:
+            n_fqn = len(self.category_fqns.get(cat, []))
+            lines.append(
+                f"{cat:<10}{us:>14,.1f}{100.0 * us / total:>8.1f}%{calls:>9}   {n_fqn} linear(s)"
+            )
+        lines.append("-" * 78)
+        lines.append(f"{'TOTAL':<10}{total:>14,.1f}{100.0:>8.1f}%")
+
+        other = self.category_fqns.get("other", [])
+        if other:
+            lines.append("")
+            lines.append(
+                f"WARNING: {len(other)} linear(s) fell to 'other' (unclassified) -- coverage gap:"
+            )
+            for fqn in other[:20]:
+                lines.append(f"  - {fqn}")
+            if len(other) > 20:
+                lines.append(f"  ... and {len(other) - 20} more")
+        else:
+            lines.append("(coverage: every Linear classified; 'other' empty)")
+        if self.device_kind != "cuda":
+            lines.append(
+                "NOTE: CPU run -- numbers are CPU self-time for self-test; run --device cuda for real GEMM kernel time."
+            )
+        return "\n".join(lines)
 
 
 @contextmanager
@@ -263,50 +305,6 @@ def profile_projection_gemms(
     return bd
 
 
-def format_report(bd: Breakdown) -> str:
-    """Render the breakdown as a sorted table with explicit coverage notes."""
-
-    primary = bd.primary_us()
-    unit = "CUDA us" if bd.device_kind == "cuda" else "CPU us"
-    total = sum(primary.values()) or 1.0
-
-    rows = sorted(
-        ((cat, primary[cat], bd.calls[cat]) for cat in PROJECTION_ORDER if bd.calls[cat]),
-        key=lambda r: r[1],
-        reverse=True,
-    )
-    lines = [
-        f"per-projection GEMM breakdown  ({unit}, self-time; device={bd.device_kind})",
-        f"{'category':<10}{unit:>14}{'%':>9}{'calls':>9}   modules",
-        "-" * 78,
-    ]
-    for cat, us, calls in rows:
-        n_fqn = len(bd.category_fqns.get(cat, []))
-        lines.append(
-            f"{cat:<10}{us:>14,.1f}{100.0 * us / total:>8.1f}%{calls:>9}   {n_fqn} linear(s)"
-        )
-    lines.append("-" * 78)
-    lines.append(f"{'TOTAL':<10}{total:>14,.1f}{100.0:>8.1f}%")
-
-    other = bd.category_fqns.get("other", [])
-    if other:
-        lines.append("")
-        lines.append(
-            f"WARNING: {len(other)} linear(s) fell to 'other' (unclassified) -- coverage gap:"
-        )
-        for fqn in other[:20]:
-            lines.append(f"  - {fqn}")
-        if len(other) > 20:
-            lines.append(f"  ... and {len(other) - 20} more")
-    else:
-        lines.append("(coverage: every Linear classified; 'other' empty)")
-    if bd.device_kind != "cuda":
-        lines.append(
-            "NOTE: CPU run -- numbers are CPU self-time for self-test; run --device cuda for real GEMM kernel time."
-        )
-    return "\n".join(lines)
-
-
 def apply_qkv_fusion(model: nn.Module, family: str) -> bool:
     """Fuse to_q/to_k/to_v into a single to_qkv GEMM where the model supports it.
 
@@ -384,7 +382,7 @@ def main() -> None:
     bd = profile_projection_gemms(
         model, forward_fn, device=device, warmup=args.warmup, active=args.active
     )
-    print(format_report(bd))
+    print(bd.to_text())
 
 
 if __name__ == "__main__":
