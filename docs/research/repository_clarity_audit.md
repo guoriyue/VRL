@@ -3557,3 +3557,19 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: all 272 orchestration tests passed, including the false-capability
   rejection with its updated diagnostic. Touched-file Ruff/diff checks passed.
   Full repository review remains incomplete.
+
+## AR layout owns shared token padding
+
+- Move right_pad into the existing ARRequestLayout as a static method. Its
+  consumers are layout.align_pair and the shared executor tokenizer adapter;
+  remove the module-level export and update both callers without an alias.
+- Clarify that target_length is a minimum width, not a truncation request, and
+  that added attention-mask entries are zero. Tensor contents, dtype/device,
+  and the no-op behavior for sufficiently wide inputs stay unchanged.
+- Keep the tokenizer adapter: Janus, NextStep and LlamaGen share its translation
+  from max_text_length to the padding operation. Emu3 also consumes pair alignment.
+  Preserve this cross-family interface rather than duplicating padding code.
+  No new class, schema table, or truncation policy.
+- Validation: 12 token-binding tests passed with two skips; 145 Janus, NextStep,
+  LlamaGen, Emu3 and Janus-R1 wiring tests passed. Touched-file Ruff/diff checks
+  passed. Full repository review remains incomplete.

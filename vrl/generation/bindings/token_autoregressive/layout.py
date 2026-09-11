@@ -36,41 +36,6 @@ class ARSamplingParams:
     seed: int | None
 
 
-def right_pad(
-    ids: torch.Tensor,
-    mask: torch.Tensor,
-    *,
-    target_length: int,
-    pad_id: int,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Right-pad a ``[B, L]`` ids/mask pair up to ``target_length``.
-
-    Pads only when the input is shorter (``>= target_length`` is a no-op), so an
-    over-length input from a misbehaving stub tokenizer passes through unchanged
-    instead of triggering a negative-width ``torch.full``.
-    """
-
-    current_length = ids.shape[1]
-    if current_length >= target_length:
-        return ids, mask
-    extra_len = target_length - current_length
-    pad_ids = torch.full(
-        (ids.shape[0], extra_len),
-        pad_id,
-        dtype=ids.dtype,
-        device=ids.device,
-    )
-    pad_mask = torch.zeros(
-        (mask.shape[0], extra_len),
-        dtype=mask.dtype,
-        device=mask.device,
-    )
-    return (
-        torch.cat([ids, pad_ids], dim=1),
-        torch.cat([mask, pad_mask], dim=1),
-    )
-
-
 class ARRequestLayout:
     """Prompt-major request layout shared by AR executors and gatherers."""
 
@@ -178,6 +143,41 @@ class ARRequestLayout:
             for field in fields
         }
 
+    @staticmethod
+    def right_pad(
+        ids: torch.Tensor,
+        mask: torch.Tensor,
+        *,
+        target_length: int,
+        pad_id: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Right-pad a ``[B, L]`` ids/mask pair up to ``target_length``.
+
+        ``target_length`` is a minimum width. Inputs already at or above it are
+        returned unchanged; truncation belongs to the tokenizer. Added mask
+        entries are zero, preserving the distinction between tokens and padding.
+        """
+
+        current_length = ids.shape[1]
+        if current_length >= target_length:
+            return ids, mask
+        extra_len = target_length - current_length
+        pad_ids = torch.full(
+            (ids.shape[0], extra_len),
+            pad_id,
+            dtype=ids.dtype,
+            device=ids.device,
+        )
+        pad_mask = torch.zeros(
+            (mask.shape[0], extra_len),
+            dtype=mask.dtype,
+            device=mask.device,
+        )
+        return (
+            torch.cat([ids, pad_ids], dim=1),
+            torch.cat([mask, pad_mask], dim=1),
+        )
+
     def align_pair(
         self,
         a_ids: torch.Tensor,
@@ -189,8 +189,8 @@ class ARRequestLayout:
         """Right-pad two ``[B, L]`` token/mask pairs to a common length."""
 
         target_length = max(a_ids.shape[1], b_ids.shape[1])
-        a_ids, a_mask = right_pad(a_ids, a_mask, target_length=target_length, pad_id=pad_id)
-        b_ids, b_mask = right_pad(b_ids, b_mask, target_length=target_length, pad_id=pad_id)
+        a_ids, a_mask = self.right_pad(a_ids, a_mask, target_length=target_length, pad_id=pad_id)
+        b_ids, b_mask = self.right_pad(b_ids, b_mask, target_length=target_length, pad_id=pad_id)
         return a_ids, a_mask, b_ids, b_mask
 
     @staticmethod
@@ -208,4 +208,4 @@ class ARRequestLayout:
         )
 
 
-__all__ = ["ARBatchPayload", "ARRequestLayout", "ARSamplingParams", "right_pad"]
+__all__ = ["ARBatchPayload", "ARRequestLayout", "ARSamplingParams"]

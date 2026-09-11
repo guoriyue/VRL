@@ -8,7 +8,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout, right_pad
+from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout
 from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
@@ -141,7 +141,7 @@ class ARBatchExecutorBase(BatchExecutorBase):
         without a pad_token).
         """
 
-        return right_pad(ids, mask, target_length=max_text_length, pad_id=pad_id)
+        return ARRequestLayout.right_pad(ids, mask, target_length=max_text_length, pad_id=pad_id)
 
 
 @dataclass(slots=True)
