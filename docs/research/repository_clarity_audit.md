@@ -2192,3 +2192,24 @@ tracing algorithm construction and evaluator selection together.
 - Validation: 68 cache-row, token composition and GLM-family tests passed.
   New cases cover too few/many requested rows and mismatched K or V in a later
   layer. Touched-file Ruff and diff checks passed. Full review remains active.
+
+## Combined regression after replay and cache-boundary cleanup
+
+At commit 4ea7c543d, with a clean worktree, ran:
+
+```text
+.venv/bin/pytest -q tests/rollouts tests/trainers tests/generation/execution tests/generation/bindings tests/generation/steps tests/generation/composition tests/config tests/utils tests/trajectory tests/nn/layers/test_attention_cache_rows.py
+```
+
+Result: 1,815 passed, nine skipped, 16 warnings in 66.33 seconds. This combines
+recent axis selection, resolver dispatch, denoise probe limits, token output
+validation and plain/DynamicCache row handling with trainer, scheduling and
+configuration consumers. No additional runtime edits were required by this run.
+Skipped tests are not counted as verified optional-backend/distributed behavior.
+
+The original repository-wide scope remains open. In particular, optional denoise
+cache axis declarations and their stored representation need a coherent review,
+and model-family/script ownership coverage is not established by this test run.
+Historical entries above describe their respective slices and may name helpers
+removed by later entries; they are not an inventory of current symbols. Passing
+this combined regression is compatibility evidence, not architectural completion.
