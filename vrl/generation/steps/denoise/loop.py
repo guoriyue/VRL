@@ -14,7 +14,6 @@ from vrl.math.denoise.flow_matching import SDEStepResult, sde_step_with_logprob
 from vrl.trajectory.storage import trajectory_tensor_bytes
 from vrl.utils.cuda_memory import (
     cuda_peak_allocated_bytes,
-    cuda_peak_allocated_mb,
     reset_cuda_peak,
 )
 from vrl.utils.profiling import profile_range
@@ -280,7 +279,7 @@ def run_denoise_loop(
                 )
 
     denoise_peak_bytes = cuda_peak_allocated_bytes()
-    peak_memory_mb = cuda_peak_allocated_mb()
+    peak_memory_mb = None if denoise_peak_bytes is None else denoise_peak_bytes / (1024 * 1024)
     memory = None
     if occupancy is not None and denoise_peak_bytes is not None:
         memory = {

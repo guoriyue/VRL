@@ -44,7 +44,6 @@ from vrl.trajectory.storage import (
 from vrl.utils.config import require_exact_int
 from vrl.utils.cuda_memory import (
     cuda_peak_allocated_bytes,
-    cuda_peak_allocated_mb,
     reset_cuda_peak,
 )
 from vrl.utils.media import to_uint8
@@ -451,7 +450,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         context = dict(model.export_batch_context(state))
 
         decode_peak_bytes = cuda_peak_allocated_bytes()
-        decode_peak_mb = cuda_peak_allocated_mb()
+        decode_peak_mb = None if decode_peak_bytes is None else decode_peak_bytes / (1024 * 1024)
         memory = None
         if denoise_result.memory is not None and decode_peak_bytes is not None:
             memory = {**denoise_result.memory, "decode_peak_bytes": decode_peak_bytes}

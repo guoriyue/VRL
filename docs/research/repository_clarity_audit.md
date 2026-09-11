@@ -6641,3 +6641,15 @@ The broader repository audit remains incomplete.
   invalid limits or returning empty results. They now pass, along with existing
   positive-selection and setup coverage: 32 tests passed. Touched-file Ruff
   and diff checks pass. The broader repository audit remains incomplete.
+
+## Denoise and decode metrics share one peak-memory reading per phase
+
+- Both phases queried cuda_peak_allocated_bytes and immediately queried it
+  again through cuda_peak_allocated_mb. Derive MiB from the existing byte
+  reading so the diagnostic and memory record describe the same snapshot.
+- Keep cuda_peak_allocated_mb for callers that only need that unit. Keep the
+  trajectory-buffer owner and its timestep shape adapter: they allocate/write
+  replay tensors and normalize scalar versus batch timestep layouts. No new
+  metrics wrapper or change to denoise scheduling, buffers, or telemetry keys.
+- Denoise-step and full-sequence binding suites: 195 passed. Touched-file Ruff
+  and diff checks pass. No training-throughput claim; broader audit remains open.
