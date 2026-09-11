@@ -257,6 +257,21 @@ Model memory adapter and gate recheck:
   validation and checkpoint dtype parsing have different acceptance contracts.
   Do not merge those semantics based solely on similar names.
 
+Combined regression and export scan:
+
+- Ran generation, rollout, trajectory, utils, and config suites together after
+  the accumulated ownership migrations: 1130 passed, 2 skipped. This included
+  real Ray worker failure/cleanup tests and CPU profiler artifact generation.
+  It does not establish full model-checkpoint or multi-GPU training acceptance.
+- Parsed 499 repository Python modules for duplicate literal `__all__` entries.
+  Removed duplicate `RewardInferenceConfig` and `LogprobMismatchStats` exports.
+  Mismatch algorithm tests: 24 passed. Computed export maps and broader public
+  API semantics are not certified by this narrow static scan.
+- Reviewed Ray launch-input serialization, driver-device discovery, and batch
+  placement: existing classes own resolved settings/plans; device probing is
+  a cross-object runtime adapter. Optimization pass sequencing remains an
+  explicit shared pipeline, independent of family-specific policy roots.
+
 ## Remaining review
 
 These are inspection candidates, not approved mechanical transformations.
