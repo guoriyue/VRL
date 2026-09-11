@@ -3943,3 +3943,20 @@ this combined regression is compatibility evidence, not architectural completion
   before cache clearing, and preservation of terminal failure tracebacks. All
   121 sample-batch and full-sequence layout tests passed, as did touched-file
   Ruff lint and formatting checks. The broader audit remains incomplete.
+
+## Weight sync carries the public buffer option name through assembly
+
+- Rename the `RayGenerationWeightSync` constructor parameter and stored member
+  from `bucket_bytes` to `update_weight_buffer_size`, matching the public worker
+  config. Update launcher, delivery probe and direct test construction. External
+  Python callers using the old keyword must update; no alias is retained.
+- Keep the low-level chunk/bucket iterator parameter `bucket_bytes`: it describes
+  the actual transport byte ceiling. Keep the probe's persisted `bucket_bytes`
+  report key to preserve its existing schema. Sender manifest/chunk construction
+  and receiver staging remain distinct protocol responsibilities; no wrapper
+  class or transfer behavior changes are introduced.
+- Weight-sync, transfer and delivery-probe tests: 57 passed with one Ray future
+  warning. Launcher tests: eight passed with the same dependency warning. The
+  first attempted test command referenced a nonexistent launcher test filename;
+  the corrected file was run successfully. Touched-file Ruff checks pass.
+  These tests do not establish real-GPU throughput. The overall audit continues.

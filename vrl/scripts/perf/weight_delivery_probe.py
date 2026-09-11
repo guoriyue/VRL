@@ -131,13 +131,13 @@ def main(argv: list[str] | None = None) -> None:
         )
         del payload
         engines = [RayGenerationEngine(handle.worker_id, [handle]) for handle in group.handles]
-        bucket_bytes = resolved.generation.worker.update_weight_buffer_size
+        update_weight_buffer_size = resolved.generation.worker.update_weight_buffer_size
         sync = RayGenerationWeightSync(
             engines,
             actor_dispatcher=RayActorDispatcher(tuple(engine.engine_id for engine in engines)),
             worker_rpc_timeout_s=args.timeout_s,
             verify_content=True,
-            bucket_bytes=bucket_bytes,
+            update_weight_buffer_size=update_weight_buffer_size,
         )
 
         async def install_snapshots() -> dict[str, float]:
@@ -165,8 +165,8 @@ def main(argv: list[str] | None = None) -> None:
             "source_build_restore_s": source_ready - source_started,
             "snapshot_export_s": snapshot_ready - source_ready,
             "transport": {
-                "kind": "staged_buckets" if bucket_bytes is not None else "snapshot",
-                "bucket_bytes": bucket_bytes,
+                "kind": "staged_buckets" if update_weight_buffer_size is not None else "snapshot",
+                "bucket_bytes": update_weight_buffer_size,
                 "sync_verify_wall_s": sync_timings,
             },
             "receivers": receivers,

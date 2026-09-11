@@ -947,7 +947,7 @@ async def test_real_ray_bucket_transfer_commits_only_complete_state(local_ray, d
         [engine],
         actor_dispatcher=RayActorDispatcher(("engine",)),
         worker_rpc_timeout_s=30,
-        bucket_bytes=8,
+        update_weight_buffer_size=8,
         verify_content=True,
     )
     state = {"transformer.weight": torch.arange(4, dtype=torch.float32).reshape(2, 2)}

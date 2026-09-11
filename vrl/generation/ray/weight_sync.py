@@ -44,11 +44,13 @@ class RayGenerationWeightSync:
         actor_dispatcher: RayActorDispatcher,
         worker_rpc_timeout_s: float,
         verify_content: bool = False,
-        bucket_bytes: int | None = None,
+        update_weight_buffer_size: int | None = None,
     ) -> None:
-        if bucket_bytes is not None and (type(bucket_bytes) is not int or bucket_bytes < 1):
-            raise ValueError("bucket_bytes must be a positive integer")
-        self.bucket_bytes = bucket_bytes
+        if update_weight_buffer_size is not None and (
+            type(update_weight_buffer_size) is not int or update_weight_buffer_size < 1
+        ):
+            raise ValueError("update_weight_buffer_size must be a positive integer")
+        self.update_weight_buffer_size = update_weight_buffer_size
         self.verify_content = bool(verify_content)
         self.engines = list(engines)
         expected_engine_ids = tuple(engine.engine_id for engine in self.engines)
@@ -69,7 +71,7 @@ class RayGenerationWeightSync:
         policy_version: int,
     ) -> None:
         require_exact_int(policy_version, path="policy_version", minimum=0)
-        if self.bucket_bytes is not None and trainable_state is not None:
+        if self.update_weight_buffer_size is not None and trainable_state is not None:
             await self._push_bucketed(trainable_state, policy_version)
             return
         verification = {"verify_content": True} if self.verify_content else {}
@@ -148,7 +150,7 @@ class RayGenerationWeightSync:
         manifest = weight_manifest(state)
         transfer_id = uuid.uuid4().hex
         ray = require_ray()
-        assert self.bucket_bytes is not None
+        assert self.update_weight_buffer_size is not None
 
         async def broadcast(method: str, payload: Any, **kwargs: Any) -> None:
             shared = ray.put(payload)
@@ -179,7 +181,7 @@ class RayGenerationWeightSync:
             )
             # Await every receiver before putting the next independently owned
             # slice. Receiver copies ensure completed buckets can be reclaimed.
-            for chunk in iter_weight_buckets(state, self.bucket_bytes):
+            for chunk in iter_weight_buckets(state, self.update_weight_buffer_size):
                 await broadcast("receive_weight_bucket", chunk, transfer_id=transfer_id)
             await broadcast(
                 "commit_weight_transfer", transfer_id, verify_content=self.verify_content
