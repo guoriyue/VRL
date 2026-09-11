@@ -69,7 +69,9 @@ def test_colocated_full_generation_bundle_can_fail_strict_guard(
     generation modules is rejected.
     """
     monkeypatch.setenv("VRL_STRICT_REPLAY_MEMORY_GUARD", "1")
-    bundle = SimpleNamespace(loads_full_generation_modules=True)
+    bundle = SimpleNamespace(
+        model=object(), trainable_modules={}, loads_full_generation_modules=True
+    )
     config = _ray_config(colocated=True)
 
     with pytest.raises(ValueError, match="loads_full_generation_modules=true"):
@@ -83,7 +85,9 @@ def test_non_colocated_full_generation_bundle_passes_memory_guard(
     ``validate_driver_state`` returns the config for chaining.
     """
     monkeypatch.setenv("VRL_STRICT_REPLAY_MEMORY_GUARD", "1")
-    bundle = SimpleNamespace(loads_full_generation_modules=True)
+    bundle = SimpleNamespace(
+        model=object(), trainable_modules={}, loads_full_generation_modules=True
+    )
     config = _ray_config(colocated=False)
 
     assert config.validate_driver_state(driver_bundle=bundle) is config

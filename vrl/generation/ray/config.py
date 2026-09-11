@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
+    from vrl.models.interfaces.runtime import RuntimeBundle
 
 from vrl.generation.execution.types import BatchPlacementStrategy
 from vrl.ray.resources import (
@@ -129,11 +130,23 @@ class RayGenerationConfig:
     def validate_driver_state(
         self,
         *,
-        driver_bundle: Any,
+        driver_bundle: RuntimeBundle,
     ) -> RayGenerationConfig:
         """Validate driver CUDA ownership before Ray rollout actors are launched."""
 
-        self._validate_driver_cuda_ownership(_driver_cuda_devices(driver_bundle))
+        # A model's primary device does not describe every training root.
+        # Include both before checking the actual driver/rollout overlap.
+        devices: set[int] = set()
+        model_device = _get_device(driver_bundle.model)
+        if model_device is not None:
+            index = _cuda_device_index(model_device)
+            if index is not None:
+                devices.add(index)
+        for device in _iter_parameter_devices(driver_bundle.trainable_modules):
+            index = _cuda_device_index(device)
+            if index is not None:
+                devices.add(index)
+        self._validate_driver_cuda_ownership(devices)
         self._validate_colocated_replay_memory(driver_bundle)
         return self
 
@@ -202,22 +215,6 @@ class RayGenerationConfig:
         if strict:
             raise ValueError(message)
         logger.warning(message)
-
-
-def _driver_cuda_devices(driver_bundle: Any) -> set[int]:
-    device = _get_device(getattr(driver_bundle, "model", None))
-    if device is not None:
-        parsed = _cuda_device_index(device)
-        return set() if parsed is None else {parsed}
-
-    devices: set[int] = set()
-    for parameter_device in _iter_parameter_devices(
-        getattr(driver_bundle, "trainable_modules", None),
-    ):
-        parsed = _cuda_device_index(parameter_device)
-        if parsed is not None:
-            devices.add(parsed)
-    return devices
 
 
 def _get_device(obj: Any) -> Any | None:

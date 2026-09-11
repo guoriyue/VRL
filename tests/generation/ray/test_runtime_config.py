@@ -1368,12 +1368,16 @@ def test_driver_ownership_rejects_malformed_cuda_device(device) -> None:
         )
 
 
-def test_driver_ownership_discovers_modules_when_policy_device_is_absent() -> None:
+@pytest.mark.parametrize("policy_device", [None, "cpu", "cuda:1"])
+def test_driver_ownership_checks_trainable_modules_regardless_of_policy_device(
+    policy_device,
+) -> None:
     config = _ray_config(_resource_cfg(trainer_devices=[1], rollout_devices=[0]))
     with pytest.raises(ValueError, match="Trainer device cuda:0 overlaps"):
         config.validate_driver_state(
             driver_bundle=_Bundle(
-                model=object(), trainable_modules={"transformer": SimpleNamespace(device="cuda:0")}
+                model=object() if policy_device is None else SimpleNamespace(device=policy_device),
+                trainable_modules={"transformer": SimpleNamespace(device="cuda:0")},
             )
         )
 

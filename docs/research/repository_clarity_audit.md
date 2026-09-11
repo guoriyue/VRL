@@ -3459,3 +3459,24 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: all 272 generation/Ray tests passed, including result request-id
   rejection and OOM retry coverage; touched-file Ruff and diff checks passed.
   No old helper references remain in source or tests. Full review is incomplete.
+
+## Driver ownership includes training roots even with a declared model device
+
+- Reproduced two missed overlaps: a model reporting CPU or cuda:1 suppressed
+  discovery of a training root on rollout GPU cuda:0. The old early return used
+  trainable modules only as a fallback. Earlier device-discovery review entries
+  did not establish that the primary device covers all training roots.
+- RayGenerationConfig.validate_driver_state now collects both model and training
+  root devices. Remove its private single-caller _driver_cuda_devices helper and
+  annotate the boundary with RuntimeBundle, whose model/trainable_modules fields
+  are required. Update two memory-guard fakes to include those fields.
+- Keep _get_device for declared-property error handling, _iter_parameter_devices
+  for cycle-safe traversal, and _cuda_device_index for shared address parsing.
+  Keep cross-node ordinal isolation and approved colocation behavior. No new
+  wrapper class or constants; exhaustive model buffer/storage discovery is not
+  claimed by this change.
+- Validation: the new cases failed before the fix (two missed exceptions), then
+  55 runtime-config/memory-guard tests passed. After preserving the original
+  absent-device case in the parameterization, all three focused cases passed
+  again. Touched-file Ruff/diff checks passed. Full repository review remains
+  incomplete.
