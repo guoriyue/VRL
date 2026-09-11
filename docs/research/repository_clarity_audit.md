@@ -1933,3 +1933,15 @@ tracing algorithm construction and evaluator selection together.
   rows and zero sequence length; outputs match shape/dtype and hidden/weight/bias
   gradients are present, equal and zero. Touched-file Ruff and diff checks pass.
   This proves boundary consistency, not occurrence in a production training run.
+
+## Replay request segment-name boundary
+
+- ReplayRequest now rejects bare str/bytes segment_names instead of iterating
+  characters as independent names. Validation stays in the existing request
+  dataclass; None and sequence handling remain unchanged.
+- Corrected ReplaySegmentResult.logprobs documentation: directly supplied log-probs
+  come from the family's current replay computation, not reused rollout scores.
+  Keep payload selection/access methods as the shared family/evaluator boundary;
+  no new helper, wrapper or constants.
+- Validation: 142 interface/replay tests passed, including four bare-name cases.
+  Touched-file Ruff and diff checks passed. Whole-repository review continues.

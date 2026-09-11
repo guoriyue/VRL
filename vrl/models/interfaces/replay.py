@@ -17,6 +17,8 @@ class ReplayRequest:
     def __post_init__(self) -> None:
         if self.segment_names is None:
             return
+        if isinstance(self.segment_names, (str, bytes)):
+            raise ValueError("ReplayRequest.segment_names must be a sequence of names")
         for name in self.segment_names:
             if not isinstance(name, str) or not name:
                 raise ValueError("ReplayRequest.segment_names must contain non-empty strings")
@@ -55,7 +57,8 @@ class ReplaySegmentResult:
         rollout context). It only applies on the logits path: rollout scoring
         divides logits by temperature, so replay must renormalize with the
         same temperature to keep old/new log-prob parity. Directly stored
-        ``log_probs`` were already scaled at rollout time.
+        ``log_probs`` must already use that temperature in the family's replay
+        computation; this accessor does not rescale precomputed log-probs.
         """
         direct = self.values.get("log_probs")
         if direct is not None:

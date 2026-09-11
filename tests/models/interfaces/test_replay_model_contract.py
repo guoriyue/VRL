@@ -74,3 +74,9 @@ def test_registered_family_replay_model_satisfies_contract(family: str) -> None:
     replay_cls = registered_replay_model_classes()[family]
     missing = [m for m in _REPLAY_MODEL_METHODS if not callable(getattr(replay_cls, m, None))]
     assert not missing, f"{family}: {replay_cls.__name__} missing ReplayModel methods {missing}"
+
+
+@pytest.mark.parametrize("segment_names", ["image", b"image", "", b""])
+def test_replay_request_rejects_bare_segment_name(segment_names):
+    with pytest.raises(ValueError, match="sequence of names"):
+        ReplayRequest(segment_names=segment_names)
