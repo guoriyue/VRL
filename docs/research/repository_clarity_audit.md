@@ -3928,3 +3928,18 @@ this combined regression is compatibility evidence, not architectural completion
   owner lifecycle timeout values and byte conversion constant; these describe
   waiting limits and units, not an algorithm vocabulary table.
 - This ownership cleanup does not complete the repository-wide audit.
+
+## Local OOM retry uses an explicit deque
+
+- Replace list-front removal/insertion with deque popleft/appendleft in
+  `run_sample_batches_with_oom_retry`. Pending batches form a queue; recursive
+  splits are prepended right then left to preserve left-first sample order.
+  This avoids shifting every remaining batch on each operation.
+- Keep the shared execution function and replay/coverage helpers: they enforce
+  cross-family consistency at the batch boundary. No wrapper class, retry policy,
+  exception handling or allocator cleanup changes are introduced. This is not
+  a claim of measurable end-to-end training acceleration.
+- Existing tests cover recursive split order, failed-forward reference release
+  before cache clearing, and preservation of terminal failure tracebacks. All
+  121 sample-batch and full-sequence layout tests passed, as did touched-file
+  Ruff lint and formatting checks. The broader audit remains incomplete.

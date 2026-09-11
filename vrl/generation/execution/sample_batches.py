@@ -11,6 +11,7 @@ otherwise disagree silently about what one batch means.
 from __future__ import annotations
 
 import traceback
+from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -328,9 +329,9 @@ def run_sample_batches_with_oom_retry[T](
     """Run batches, splitting CUDA-OOM batches until the floor is reached."""
 
     results: list[T] = []
-    pending = list(batches)
+    pending = deque(batches)
     while pending:
-        batch = pending.pop(0)
+        batch = pending.popleft()
         try:
             results.append(run_one(batch))
         except RuntimeError as exc:
@@ -343,8 +344,8 @@ def run_sample_batches_with_oom_retry[T](
             traceback.clear_frames(exc.__traceback__)
             empty_cuda_cache()
             left, right = batch.split()
-            pending.insert(0, right)
-            pending.insert(0, left)
+            pending.appendleft(right)
+            pending.appendleft(left)
     return results
 
 
