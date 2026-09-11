@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.stats import RolloutStats
-from vrl.trajectory import trajectory_tensor_bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,27 +46,6 @@ class ContinuousRolloutSettings:
                 "continuous rollout requires max_stale_policy_versions >= 1; "
                 "use strict_on_policy for a zero-staleness serial run",
             )
-
-
-def estimate_batch_bytes(batch: RolloutBatch) -> int:
-    """Rough host-memory footprint of a queued ``RolloutBatch``.
-
-    The trajectory owns replay tensors. Shared tensor objects are deduplicated
-    so queue capacity accounting does not charge the same storage twice. Arbitrary
-    nested extras stay outside this cheap heuristic.
-    """
-
-    payload: dict[str, Any] = {
-        "rewards": batch.rewards,
-        "group_ids": batch.group_ids,
-        # extras whole: trajectory_tensor_bytes recurses mappings, so nested
-        # tensor payloads (reward_components) are counted. A top-level-only
-        # tensor filter silently undercounted exactly what extras carries.
-        "extras": batch.extras,
-    }
-    if batch.trajectory is not None:
-        payload["trajectory"] = batch.trajectory
-    return trajectory_tensor_bytes(payload)
 
 
 @dataclass(slots=True)
@@ -153,5 +130,4 @@ __all__ = [
     "ContinuousRolloutItem",
     "ContinuousRolloutProducerState",
     "ContinuousRolloutSettings",
-    "estimate_batch_bytes",
 ]

@@ -37,7 +37,6 @@ from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutItem,
     ContinuousRolloutProducerState,
     ContinuousRolloutSettings,
-    estimate_batch_bytes,
 )
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.stats import RolloutStats
@@ -775,7 +774,7 @@ class ContinuousRolloutProducer:
             attempt=prompt_batch.failure_counts.get(slot, 0) + 1,
             batch=stored,
             completed_at=time.monotonic(),
-            nbytes=estimate_batch_bytes(stored),
+            nbytes=stored.estimated_payload_bytes(),
             stats=stats,
         )
         self.queue.put(item)

@@ -10,7 +10,6 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutItem,
-    estimate_batch_bytes,
 )
 from vrl.trajectory import build_ar_discrete_trajectory, trajectory_tensor_bytes
 
@@ -109,7 +108,7 @@ def test_batch_byte_estimate_counts_nested_extras_tensors() -> None:
         )
     )
 
-    assert estimate_batch_bytes(batch) == expected
+    assert batch.estimated_payload_bytes() == expected
 
 
 def test_batch_byte_estimate_counts_trajectory_without_flat_aliases_twice() -> None:
@@ -155,7 +154,7 @@ def test_batch_byte_estimate_counts_trajectory_without_flat_aliases_twice() -> N
         tensor.numel() * tensor.element_size() for tensor in (rewards, group_ids, component)
     )
 
-    assert estimate_batch_bytes(batch) == expected
+    assert batch.estimated_payload_bytes() == expected
 
 
 def test_stats_shape() -> None:

@@ -36,5 +36,23 @@ class RolloutBatch:
     # synthetic batches (tests, batch-op fixtures) that never reach replay.
     trajectory: TrajectoryBatch | None = None
 
+    def estimated_payload_bytes(self) -> int:
+        """Estimate queued rewards, groups, extras, and replay payload bytes.
+
+        Repeated objects count once; distinct views may still share storage.
+        This preserves the queue's admission heuristic, not allocator/RSS
+        measurement. Shared batch context and Python object overhead are excluded.
+        """
+        from vrl.trajectory import trajectory_tensor_bytes
+
+        return trajectory_tensor_bytes(
+            {
+                "rewards": self.rewards,
+                "group_ids": self.group_ids,
+                "extras": self.extras,
+                "trajectory": self.trajectory,
+            }
+        )
+
 
 __all__ = ["RolloutBatch"]
