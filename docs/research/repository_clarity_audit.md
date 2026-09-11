@@ -3991,3 +3991,16 @@ this combined regression is compatibility evidence, not architectural completion
 - All 21 Echo tests passed, including velocity/replay checks. Touched-file Ruff
   checks pass. This is a local ownership/documentation cleanup, not a full model
   training validation or completion of the repository-wide audit.
+
+## GLM-Image owns its decode token upsampling
+
+- Move `_upsample_token_ids` onto `GlmImageModel`, immediately before
+  `decode_image_tokens`, its sole production caller. Preserve the reference
+  nearest-neighbor conversion and dependency boundary; no new utility class or
+  forwarding alias is introduced.
+- Retain grid/token/position functions as the explicit shared layout rules and
+  retain pretrained/decode loading functions as lazy framework boundaries.
+  This change does not generalize model-specific raster rules across families.
+- All 22 GLM-Image tests passed, with two dependency warnings. Touched-file Ruff
+  checks pass. No full pretrained image-generation benchmark is claimed, and
+  the repository-wide clarity audit remains incomplete.

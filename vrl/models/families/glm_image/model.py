@@ -598,6 +598,22 @@ class GlmImageModel(ARModelBase):
     # ------------------------------------------------------------------
 
     @torch.no_grad()
+    @staticmethod
+    def _upsample_token_ids(token_ids: torch.Tensor, token_h: int, token_w: int) -> torch.Tensor:
+        """Nearest-upsample a flat d32 raster to the DiT's d16 grid, ``[1, 4*H*W]``.
+
+        Byte-for-byte the reference ``GlmImagePipeline._upsample_token_ids``
+        (pipeline_glm_image.py lines 254-261); reimplemented so the replay-side
+        module tree never imports diffusers.
+        """
+        token_ids = token_ids.view(1, 1, token_h, token_w)
+        token_ids = torch.nn.functional.interpolate(
+            token_ids.float(),
+            scale_factor=2,
+            mode="nearest",
+        ).to(dtype=torch.long)
+        return token_ids.view(1, -1)
+
     def decode_image_tokens(
         self,
         image_token_ids: torch.Tensor,  # [B, L_total] codebook ids
@@ -635,7 +651,7 @@ class GlmImageModel(ARModelBase):
             )
         large = image_token_ids[:, prev_h * prev_w :]
         prior_token_ids = torch.cat(
-            [_upsample_token_ids(large[row], token_h, token_w) for row in range(B)],
+            [self._upsample_token_ids(large[row], token_h, token_w) for row in range(B)],
             dim=0,
         )
 
@@ -682,22 +698,6 @@ class GlmImageModel(ARModelBase):
         if self._decode_pipeline is None:
             self._decode_pipeline = _load_glm_image_decode_pipeline(self.config)
         return self._decode_pipeline
-
-
-def _upsample_token_ids(token_ids: torch.Tensor, token_h: int, token_w: int) -> torch.Tensor:
-    """Nearest-upsample a flat d32 raster to the DiT's d16 grid, ``[1, 4*H*W]``.
-
-    Byte-for-byte the reference ``GlmImagePipeline._upsample_token_ids``
-    (pipeline_glm_image.py lines 254-261); reimplemented so the replay-side
-    module tree never imports diffusers.
-    """
-    token_ids = token_ids.view(1, 1, token_h, token_w)
-    token_ids = torch.nn.functional.interpolate(
-        token_ids.float(),
-        scale_factor=2,
-        mode="nearest",
-    ).to(dtype=torch.long)
-    return token_ids.view(1, -1)
 
 
 # ---------------------------------------------------------------------------
