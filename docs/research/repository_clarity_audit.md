@@ -3606,3 +3606,21 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 26 Janus family and R1 rollout wiring tests passed; touched-file
   Ruff/diff checks passed and old free-helper calls are gone. Full review
   remains incomplete.
+
+## Janus-R1 rejects incompatible segment metadata across batches
+
+- Public gatherer regressions reproduced three silent losses: later batches'
+  visual/cfg flags were replaced by the first batch's values, and a first-batch
+  None log-prob field discarded later batches' populated log-probs. All three
+  cases previously returned a trajectory without rejecting the disagreement.
+- Before concatenation, reuse require_matching_batch_context to compare visual,
+  cfg and log-prob presence for every segment. Add the segment name to mismatch
+  diagnostics while preserving the original cause. No new helper or validator
+  class; these local keys describe the existing segment schema/presence contract.
+- Preserve valid tensor concatenation and all-absent log-prob handling. This
+  strengthens the previous ownership-only change; it does not claim exhaustive
+  validation of segment names, tensor row counts or dtypes. JANUS_R1_SEGMENTS
+  remains the shared model/trajectory schema.
+- Validation: 29 Janus family and R1 wiring tests passed, including the three
+  regressions that failed before the change. Touched-file Ruff/diff checks
+  passed. Full repository review remains incomplete.

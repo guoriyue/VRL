@@ -370,6 +370,20 @@ class JanusProR1GenerationBatchGatherer:
         out: dict[str, dict[str, Any]] = {}
         for name in names:
             first = batches[0].segments[name]
+            try:
+                require_matching_batch_context(
+                    [
+                        {
+                            "visual": batch.segments[name]["visual"],
+                            "cfg": batch.segments[name]["cfg"],
+                            "has_token_log_probs": batch.segments[name]["token_log_probs"]
+                            is not None,
+                        }
+                        for batch in batches
+                    ],
+                )
+            except ValueError as error:
+                raise ValueError(f"Janus-R1 segment {name!r}: {error}") from error
             token_log_probs = None
             if first["token_log_probs"] is not None:
                 token_log_probs = torch.cat(

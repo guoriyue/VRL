@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
 from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
+from vrl.models.families.janus_pro.runtime import (
+    JanusProR1BatchPayload,
+    JanusProR1GenerationBatchGatherer,
+)
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.collector import RolloutCollector
@@ -61,6 +67,39 @@ def test_r1_train_segments_derive_from_algorithm_config() -> None:
         "selfcheck_text": True,
         "final_image": True,
     }
+
+
+@pytest.mark.parametrize("mismatch", ["visual", "cfg", "missing_log_probs"])
+def test_r1_gather_rejects_inconsistent_segment_batches(mismatch: str) -> None:
+    request = GenerationRequest(
+        request_id="r1",
+        family="janus_pro_r1",
+        task="ar_t2i_r1",
+        inputs=["draw text"],
+        samples_per_prompt=2,
+    )
+    batches = [
+        JanusProR1BatchPayload(
+            batch=GenerationSampleBatch(prompt_index=0, sample_start=index, sample_count=1),
+            initial_image=torch.zeros(1, 3, 2, 2),
+            final_image=torch.zeros(1, 3, 2, 2),
+            selfcheck=torch.zeros(1, 2),
+            segments={
+                "initial_image": _segment(1, 3, visual=True),
+                "selfcheck_text": _segment(1, 2, visual=False),
+                "final_image": _segment(1, 5, visual=True),
+            },
+            context={},
+        )
+        for index in range(2)
+    ]
+    if mismatch == "missing_log_probs":
+        # A missing first value must not discard the second batch's log-probs.
+        batches[0].segments["final_image"]["token_log_probs"] = None
+    else:
+        batches[1].segments["final_image"][mismatch] = False
+    with pytest.raises(ValueError, match="segment 'final_image'"):
+        JanusProR1GenerationBatchGatherer().gather_batches(request, _sample_rows(), batches)
 
 
 def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
