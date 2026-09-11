@@ -1370,3 +1370,22 @@ contained guesses. Removed both:
 - Validation: 13 UnifiedReward tests passed. Added capture-boundary tests for
   successful RGB extraction and three decoder/conversion failure points; no
   real model loading or video decoder integration run. Ruff and diff checks pass.
+
+## Shared media resource lifetime follow-through
+
+- Followed the UnifiedReward capture fix through OpenCV/imageio/PIL open sites
+  in rewards, generation, trajectory and shared media utilities. The remaining
+  shared read_video_frames closes its imageio reader in finally; write_mp4 owns
+  its writer with a context manager; read_image_as_frames, generation reference
+  loading and Codex image-QA reference loading close PIL sources after RGB copy.
+- No implementation change justified at these sites. Keep shared media functions
+  as I/O/layout boundaries and keep reference loading on its consuming owner.
+  No generic resource wrapper class or flattening of meaningful adapters.
+- Validation: 8 existing pixel-conversion tests passed. Separately performed real
+  PNG and MP4 write/read round trips in a TemporaryDirectory: RGB dimensions,
+  two-frame order and dark/light pixel ranges matched; artifacts were removed.
+  These successful round trips do not fault-inject decoder failures; exception
+  cleanup evidence here is the inspected finally/context-manager structure.
+- Non-goal: changing the existing ambiguous 4-D reward tensor layout compatibility
+  convention in pil_frames_from_media. That convention requires caller/layout
+  review before any migration and is not resolved by resource-lifetime checks.
