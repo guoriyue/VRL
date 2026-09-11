@@ -171,3 +171,23 @@ class TestReplayContractDispatch:
             rtol=1e-6,
             atol=1e-6,
         )
+
+
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.float32, torch.float64, torch.complex64, torch.bool]
+)
+def test_fused_rejects_noninteger_token_identity_before_projection(dtype, monkeypatch):
+    hidden, weight, bias, ids = _rand_case(1, 2, 4, 3)
+
+    def unexpected_projection(*args, **kwargs):
+        raise AssertionError("invalid IDs must fail before projection")
+
+    monkeypatch.setattr(F, "linear", unexpected_projection)
+    with pytest.raises(ValueError, match="integer tensor dtype"):
+        fused_linear_logprob(hidden, weight, ids.to(dtype), bias=bias)
+
+
+def test_fused_supports_int32_token_ids():
+    hidden, weight, bias, ids = _rand_case(1, 2, 4, 3)
+    actual = fused_linear_logprob(hidden, weight, ids.to(torch.int32), bias=bias)
+    torch.testing.assert_close(actual, _eager(hidden, weight, bias, ids))

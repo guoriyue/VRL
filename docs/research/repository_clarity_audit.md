@@ -1895,3 +1895,15 @@ tracing algorithm construction and evaluator selection together.
   dtype cases and an int32 numeric comparison. Touched-file Ruff and diff checks
   passed. This protects the shared function's input boundary; it is not evidence
   that current production samplers were emitting fractional token IDs.
+
+## Fused categorical path retains the same token identity contract
+
+- Followed the eager identity check into fused_linear_logprob, which independently
+  converted IDs to long. Reject float/complex/bool IDs before projection there
+  too, preserving integer-width conversion and forward/backward implementations.
+- Keep this small entry-point condition local rather than adding a separate
+  validator class/function just to hide one predicate. Shared normalization math
+  and the custom autograd/Triton boundary remain unchanged.
+- Validation: 28 fused/eager log-prob tests passed. Five invalid-dtype tests assert
+  failure before F.linear, plus int32/eager parity. Touched-file Ruff and diff
+  checks passed. No speed or end-to-end training-quality claim was made.

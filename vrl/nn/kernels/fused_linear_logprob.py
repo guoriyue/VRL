@@ -225,6 +225,8 @@ def fused_linear_logprob(
             "weight must be [vocab, hidden_dim] matching hidden's last dim; "
             f"got weight={tuple(weight.shape)} hidden={tuple(hidden.shape)}",
         )
+    if token_ids.is_floating_point() or token_ids.is_complex() or token_ids.dtype == torch.bool:
+        raise ValueError("token_ids must use an integer tensor dtype")
     flat_hidden = hidden.reshape(-1, hidden.shape[-1])
     flat_ids = token_ids.to(device=hidden.device, dtype=torch.long).reshape(-1)
     rows = chunk_rows if chunk_rows is not None else _chunk_rows_for(weight.shape[0])
