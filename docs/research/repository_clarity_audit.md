@@ -4248,3 +4248,17 @@ this combined regression is compatibility evidence, not architectural completion
   introduced; the docstring now describes the actual operation directly.
 - All 20 diagnostic utility/online tests passed; touched-file Ruff checks pass.
   The repository-wide audit remains incomplete.
+
+## Joint trainer regression after ownership and validation changes
+
+- Ran the entire trainer test tree on the current implementation: 580 passed,
+  seven skipped, 15 warnings in 42.53s, process exit zero. This extends evidence
+  beyond individual checkpoint, context, weight-sync and diagnostic suites.
+- Retain scalar distributed wrappers: each fixes a meaningful dtype/reduction
+  combination (integer max, float max, boolean all-true), while their shared
+  scalar collective handles backend/device placement. Uniform names make the
+  calling control flow clearer than repeated op/dtype arguments.
+- Reviewed online config construction and identified two sole-use helpers,
+  `_null_key` and `_required_field_paths`, as the next ownership candidates.
+  No production edits were made while this regression was running. Green trainer
+  tests do not establish full-repository clarity or real multi-GPU training parity.
