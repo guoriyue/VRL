@@ -3828,3 +3828,18 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 132 prompt/data tests passed, including a malformed third physical
   line after a blank line and preserved JSONDecodeError cause. Touched-file
   Ruff/diff checks passed. Full repository review remains incomplete.
+
+## Prompt sampler validates dimensions at construction
+
+- PromptBatchSampler only range-checked num_examples, prompts_per_rank,
+  num_replicas and rank. Fractional/bool dimensions could survive construction
+  and fail later in randperm/range/slicing, obscuring the bad field. Reuse
+  require_exact_int before existing range checks, keeping their diagnostics.
+- Keep _sample_with as the shared sample/preview implementation: cloning the
+  generator for preview must use the same draw and rank slicing as sampling.
+  Preserve RNG consumption, strategy semantics and torch-free config discovery.
+  The local field tuple is the sampler schema, not a new workflow taxonomy;
+  no extra validation function or class.
+- Validation: 151 sampler and config-schema tests passed, including eight
+  constructor rejection cases for bool/fractional dimensions. Touched-file
+  Ruff/diff checks passed. Full repository review remains incomplete.

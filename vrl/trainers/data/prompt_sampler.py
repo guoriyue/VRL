@@ -42,6 +42,8 @@ class PromptBatchSampler:
     rank: int = 0
 
     def __post_init__(self) -> None:
+        for name in ("num_examples", "prompts_per_rank", "num_replicas", "rank"):
+            require_exact_int(getattr(self, name), path=f"prompt sampler {name}")
         if self.num_examples < 1:
             raise ValueError("prompt manifest must contain at least one example")
         if self.prompts_per_rank < 1:

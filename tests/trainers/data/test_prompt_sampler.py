@@ -150,3 +150,16 @@ def test_sequential_sampler_rejects_invalid_epoch_without_changing_rng(epoch, op
     with pytest.raises(ValueError, match="prompt sampling epoch"):
         getattr(sampler, operation)(epoch=epoch)
     assert torch.equal(generator.get_state(), state)
+
+
+@pytest.mark.parametrize("field", ["num_examples", "prompts_per_rank", "num_replicas", "rank"])
+@pytest.mark.parametrize("value", [True, 1.5])
+def test_prompt_sampler_rejects_noninteger_dimensions_at_construction(field, value):
+    dimensions = {"num_examples": 8, "prompts_per_rank": 2, "num_replicas": 2, "rank": 0}
+    dimensions[field] = value
+    with pytest.raises(ValueError, match=field):
+        PromptBatchSampler(
+            generator=torch.Generator().manual_seed(0),
+            strategy="sequential_window",
+            **dimensions,
+        )
