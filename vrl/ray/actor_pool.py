@@ -76,9 +76,13 @@ class RayActorDispatcher:
     """
 
     def __init__(self, worker_ids: list[str] | tuple[str, ...]) -> None:
+        if isinstance(worker_ids, (str, bytes)):
+            raise ValueError("Ray actor worker ids must be a sequence of names")
         worker_ids = tuple(worker_ids)
         if not worker_ids:
             raise ValueError("RayActorDispatcher requires at least one worker")
+        if any(not isinstance(worker_id, str) or not worker_id for worker_id in worker_ids):
+            raise ValueError("Ray actor worker ids must be non-empty strings")
         if len(set(worker_ids)) != len(worker_ids):
             raise ValueError(f"duplicate Ray actor worker ids: {worker_ids}")
         self._worker_ids = worker_ids

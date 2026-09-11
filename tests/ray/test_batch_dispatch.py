@@ -948,3 +948,9 @@ async def test_executor_runtime_debug_exposes_chunk_schedule() -> None:
             "queue_wait_s",
             "execution_s",
         } <= set(row)
+
+
+@pytest.mark.parametrize("worker_ids", ["ab", b"ab", [""], [1], [["w0"]]])
+def test_dispatcher_rejects_invalid_worker_identity(worker_ids):
+    with pytest.raises(ValueError, match="worker ids must be"):
+        RayActorDispatcher(worker_ids)

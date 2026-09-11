@@ -6073,3 +6073,16 @@ The broader repository audit remains incomplete.
   including custom awaitable refs and a real Ray shared-object weight-sync check.
   Touched-file Ruff and diff checks pass. No cross-node performance claim;
   broader repository audit remains incomplete.
+
+## Dispatcher fleet identity is explicit before admission state exists
+
+- Reject bare string/bytes worker_ids before tuple conversion, and reject empty
+  or non-string members before building slot and waiter maps. Previously a bare
+  string became a fleet of characters; malformed members could enter state or
+  fail incidentally during hashing. Keep existing nonempty/unique fleet checks.
+- Keep worker availability, active refs and per-worker admission waiters separate:
+  they encode different scheduling facts. Keep run/run_one and cancellation
+  boundaries; no alternate dispatcher or validation class is introduced.
+- Five malformed-identity cases plus existing deterministic batch dispatch tests:
+  28 passed. Touched-file Ruff and diff checks pass. These tests use controlled
+  awaitable refs, not a new real-Ray fleet run. Broader audit remains incomplete.
