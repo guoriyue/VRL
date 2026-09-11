@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -418,3 +419,24 @@ def test_preallocation_requires_tensor_timestep_schedule(timesteps: object) -> N
     state.timesteps = timesteps
     with pytest.raises(TypeError, match=r"state\.timesteps must be a torch\.Tensor"):
         DenoiseTrajectoryBuffers.allocate(state=state, config=_config(sample_count=2))
+
+
+@pytest.mark.parametrize("steps", [0, -1, True, 1.5, "1"])
+def test_probe_rejects_invalid_step_limit_before_encoding(steps) -> None:
+    executor = _StageTrackingExecutor()
+    request = GenerationRequest(
+        request_id="invalid-probe",
+        family="test",
+        task="t2i",
+        inputs=["prompt"],
+        samples_per_prompt=2,
+    )
+    with pytest.raises(ValueError, match="execute_steps"):
+        executor.forward_probe_batch(request, _chunk(), execute_steps=steps)
+    assert executor.calls == []
+
+
+@pytest.mark.parametrize("steps", [0, -1, True, 1.5, "1"])
+def test_denoise_config_rejects_invalid_direct_step_limit(steps) -> None:
+    with pytest.raises(ValueError, match="execute_steps"):
+        replace(_config(), execute_steps=steps)

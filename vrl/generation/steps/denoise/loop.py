@@ -201,7 +201,7 @@ def run_denoise_loop(
 
     num_steps_to_run = len(state.timesteps)
     if config.execute_steps is not None:
-        num_steps_to_run = max(1, min(num_steps_to_run, int(config.execute_steps)))
+        num_steps_to_run = min(num_steps_to_run, config.execute_steps)
     with torch.no_grad():
         for step_idx in range(num_steps_to_run):
             with profile_range("generation.denoise_step"):

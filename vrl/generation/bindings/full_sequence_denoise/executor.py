@@ -41,6 +41,7 @@ from vrl.trajectory.storage import (
     TrajectoryStoragePolicy,
     trajectory_tensor_bytes,
 )
+from vrl.utils.config import require_exact_int
 from vrl.utils.cuda_memory import (
     cuda_peak_allocated_bytes,
     cuda_peak_allocated_mb,
@@ -250,8 +251,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
     ) -> DiffusionBatchResult:
         """Run a truncated canonical batch for startup memory sizing."""
 
-        if execute_steps < 1:
-            raise ValueError("execute_steps must be >= 1")
+        require_exact_int(execute_steps, path="execute_steps", minimum=1)
         return self._forward_chunk(
             request,
             batch,

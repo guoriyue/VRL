@@ -2129,3 +2129,20 @@ tracing algorithm construction and evaluator selection together.
   unavailable. Corrected literal-dot regexes flagged by Ruff and reran the
   16 new axis tests successfully. Touched-file Ruff and diff checks passed.
   Full repository review remains ongoing.
+
+## Denoise probe step limit is explicit
+
+- DenoiseLoopConfig now validates optional execute_steps as an exact positive
+  integer. The public forward_probe_batch entry uses the same existing integer
+  validator before encoding or model preparation. Previously floats/bools could
+  reach int() in the loop, and nonpositive direct config values were repaired
+  silently by max(1, ...).
+- Removed the loop's cast and lower-bound repair. Keep the upper bound at the
+  available schedule length, full buffer allocation for memory sizing, and the
+  probe's reuse of the canonical generation flow. run_denoise_loop remains a
+  cross-family execution kernel; no wrapper class or new validation helper is
+  warranted. No ALL_CAPS data added.
+- Validation: 184 denoise-step, full-sequence binding and batch-memory-shadow
+  tests passed. Ten new cases verify early probe rejection without encoding
+  and rejection of invalid directly constructed loop configs. Touched-file
+  Ruff and diff checks passed. Repository review remains ongoing.
