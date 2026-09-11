@@ -204,7 +204,7 @@ def instrument_projection_gemms(model: nn.Module) -> Iterator[dict[str, list[str
     Restores the original ``forward`` methods on exit.
     """
 
-    originals: list[tuple[nn.Linear, Any]] = []
+    originals: list[tuple[nn.Linear, Any, bool]] = []
     category_fqns: dict[str, list[str]] = {cat: [] for cat in PROJECTION_ORDER}
 
     def make_wrapper(orig_forward: Any, label: str) -> Any:
@@ -214,21 +214,24 @@ def instrument_projection_gemms(model: nn.Module) -> Iterator[dict[str, list[str
 
         return wrapped
 
-    for fqn, module in model.named_modules():
-        if not isinstance(module, nn.Linear):
-            continue
-        category = classify_linear(fqn)
-        category_fqns[category].append(fqn)
-        originals.append((module, module.forward))
-        module.forward = make_wrapper(module.forward, f"projgemm/{category}")  # type: ignore[method-assign]
-
-    for cat in category_fqns:
-        category_fqns[cat].sort()
     try:
+        for fqn, module in model.named_modules():
+            if not isinstance(module, nn.Linear):
+                continue
+            category = classify_linear(fqn)
+            category_fqns[category].append(fqn)
+            originals.append((module, module.forward, "forward" in module.__dict__))
+            module.forward = make_wrapper(module.forward, f"projgemm/{category}")  # type: ignore[method-assign]
+
+        for cat in category_fqns:
+            category_fqns[cat].sort()
         yield category_fqns
     finally:
-        for module, orig in originals:
-            module.forward = orig  # type: ignore[method-assign]
+        for module, original, had_override in reversed(originals):
+            if had_override:
+                module.forward = original  # type: ignore[method-assign]
+            else:
+                del module.forward
 
 
 def _event_self_us(event: Any, *, cuda: bool) -> tuple[float, float]:

@@ -5299,3 +5299,17 @@ this combined regression is compatibility evidence, not architectural completion
   GEMM/Nsight suites: 45 passed, one profiler warning. Touched-file Ruff and git
   diff --check pass. This is synthetic adapter and CPU profiling evidence, not
   real GPU capture validation. Wider audit remains incomplete.
+
+## Projection instrumentation restores model attributes across setup failures
+
+- Include wrapper installation and module traversal inside the cleanup scope.
+  Previously an exception before yield left already-installed wrappers active.
+  Record whether forward was an instance override, restoring it when present
+  and deleting the temporary attribute otherwise. Unwind in reverse order.
+- Keep the context manager and local wrapper factory as the temporary model
+  instrumentation boundary. No owner class is added. Category assignment,
+  timing ranges and forward arguments remain unchanged.
+- Three regressions failed before the fix: normal exit, body failure and partial
+  traversal all left an instance attribute behind. Existing override restoration
+  also passes. GEMM/Nsight suites: 49 passed, one profiler warning. Touched-file
+  Ruff and git diff --check pass. Wider repository audit remains incomplete.

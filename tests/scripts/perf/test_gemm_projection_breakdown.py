@@ -72,3 +72,47 @@ def test_event_time_fallback_preserves_explicit_zero(device_time, expected):
         self_cpu_time_total=1.0, self_device_time_total=device_time, self_cuda_time_total=9.0
     )
     assert _event_self_us(event, cuda=True) == (expected, 1.0)
+
+
+@pytest.mark.parametrize("failure_stage", [None, "body", "traversal"])
+def test_instrumentation_restores_forward_ownership(failure_stage):
+    import torch
+
+    from vrl.scripts.perf.gemm_projection_breakdown import instrument_projection_gemms
+
+    linear = torch.nn.Linear(2, 2)
+    failure = RuntimeError("profiling failed")
+
+    class Model(torch.nn.Module):
+        def named_modules(self):
+            yield "projection", linear
+            if failure_stage == "traversal":
+                raise failure
+
+    assert "forward" not in linear.__dict__
+    try:
+        with instrument_projection_gemms(Model()):
+            assert "forward" in linear.__dict__
+            if failure_stage == "body":
+                raise failure
+    except RuntimeError as error:
+        assert error is failure
+    else:
+        assert failure_stage is None
+    assert "forward" not in linear.__dict__
+
+
+def test_instrumentation_restores_existing_forward_override():
+    import torch
+
+    from vrl.scripts.perf.gemm_projection_breakdown import instrument_projection_gemms
+
+    linear = torch.nn.Linear(2, 2)
+
+    def original(value):
+        return value
+
+    linear.forward = original
+    with instrument_projection_gemms(linear):
+        assert linear.forward is not original
+    assert linear.forward is original
