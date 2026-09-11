@@ -4106,3 +4106,16 @@ this combined regression is compatibility evidence, not architectural completion
   part of constructing a process identity.
 - All eight distributed-context tests passed; touched-file Ruff checks pass.
   This does not exercise a multi-GPU process group. The repository audit continues.
+
+## Distributed identity validates the global rank range
+
+- `DistributedTrainingContext.from_root` already checked world size against
+  topology and local rank against GPUs per node, but accepted global ranks
+  outside `[0, WORLD_SIZE)`. Those identities reached process-group initialization.
+- Add the missing global-rank check beside the existing topology checks, before
+  device discovery. No new helper, class or environment vocabulary is introduced;
+  valid device mapping and process-group lifecycle are unchanged.
+- Four regressions (negative and upper-bound rank for DDP/FSDP) failed on the old
+  implementation because it did not raise. All 12 distributed-context tests now
+  pass; touched-file Ruff checks pass. No multi-GPU execution is claimed. The
+  full repository clarity audit remains in progress.

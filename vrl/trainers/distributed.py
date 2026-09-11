@@ -122,6 +122,11 @@ class DistributedTrainingContext:
                     f"num_nodes*gpus_per_node={expected} "
                     f"(num_nodes={num_nodes}, gpus_per_node={gpus_per_node})."
                 )
+            if not 0 <= rank < world_size:
+                raise ValueError(
+                    f"distributed.training: RANK={rank} is out of range for "
+                    f"WORLD_SIZE={world_size} (expected 0..{world_size - 1})."
+                )
             if not 0 <= local_rank < gpus_per_node:
                 raise ValueError(
                     f"distributed.training: LOCAL_RANK={local_rank} is out of range for "
