@@ -453,22 +453,6 @@ def _warn_global_std_streaming_divergence(
     )
 
 
-def _default_reference_model(bundle: Any, built: BuiltConfigs) -> Any | None:
-    """Reference model for KL: the (LoRA) policy itself when use_lora and kl_coef>0, else None."""
-
-    # Read off the already-resolved typed bundle instead of re-walking raw cfg.
-    # kl_coef is optional across algorithm-config families: only the
-    # ClippedPolicy-derived configs (grpo/dance_grpo) define it, while
-    # flow_dppo/grpo_guard extend GroupAdvantageConfig and legitimately omit it,
-    # so read the typed field with a default rather than assume every algorithm
-    # config carries it. model.use_lora is always a field on the typed
-    # ModelSection (pydantic default None -> falsy), so read it directly.
-    kl_coef = float(getattr(built.algorithm, "kl_coef", 0.0) or 0.0)
-    if bool(built.root.model.use_lora) and kl_coef > 0:
-        return bundle.model
-    return None
-
-
 def _load_sft_latents_from_config(built: BuiltConfigs, family: str) -> dict[str, Any] | None:
     """Load the clean-latents shard when the diffusion-loss regularizer is on.
 
@@ -896,15 +880,17 @@ async def run_online_recipe(
         collector.set_generation_runtime(generation_runtime)
         log_host_memory("after_rollout_backend_build", log=logger)
 
-        # Forward-process objectives (DiffusionNFT, V-GRPO) own their behaviour
-        # policy through the previous adapter and run no evaluator; only the
-        # evaluator-backed objectives read a reference model for KL.
-        ref_model = (
-            _default_reference_model(bundle, built)
-            if family_entry.policy_semantics.step_kind == "denoise"
+        # Only denoise evaluators consume a KL reference. With LoRA, the policy
+        # itself supplies the base-model reference through adapter disabling.
+        ref_model = None
+        if (
+            family_entry.policy_semantics.step_kind == "denoise"
             and algorithm_and_evaluator.evaluator is not None
-            else None
-        )
+        ):
+            # Algorithm configs without evaluator KL legitimately omit kl_coef.
+            kl_coef = float(getattr(built.algorithm, "kl_coef", 0.0) or 0.0)
+            if built.root.model.use_lora and kl_coef > 0:
+                ref_model = bundle.model
         # The strategy built during preflight is the single owner of trainable-state
         # export for both rollout weight sync and checkpointing. prepare_model
         # (called once in the trainer) creates any process group and wraps the

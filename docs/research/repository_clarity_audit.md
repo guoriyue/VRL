@@ -3843,3 +3843,19 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 151 sampler and config-schema tests passed, including eight
   constructor rejection cases for bool/fractional dimensions. Touched-file
   Ruff/diff checks passed. Full repository review remains incomplete.
+
+## Reference selection stays beside trainer construction
+
+- Inline the single-use _default_reference_model into run_online_recipe's
+  reference-selection block. The denoise/evaluator gate, optional kl_coef lookup,
+  and LoRA condition are now visible together before trainer construction.
+  Remove the outdated algorithm-inheritance explanation; capability/field
+  presence determines this behavior, not a manually enumerated family list.
+- Preserve evaluation order and the same selected bundle.model/None values.
+  Keep SFT shard loading as the provenance-checked persistence boundary and
+  host-memory checking as the streaming update diagnostic. No new owner class,
+  helper, or constants; keep other CLI/framework adapters unchanged.
+- Validation: 103 reward-update-flow, online precision-bridge and SFT-loading
+  tests passed; touched-file Ruff/diff checks passed and no removed helper
+  callers remain. This refactor does not claim real-GPU KL validation. Full
+  repository review remains incomplete.
