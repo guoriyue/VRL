@@ -6694,3 +6694,19 @@ The broader repository audit remains incomplete.
   annotation-only change does not alter execution; no new behavioral test or
   repeat of the preceding 39-test runner verification was necessary. Broader
   repository audit remains incomplete.
+
+## Model base forwarding methods retain real ownership boundaries
+
+- Scanned single-return call methods in vrl/models/steps and inspected the
+  diffusion/token bases and weight loader. Keep forward as nn.Module dispatch,
+  adapter methods as root selection, and load_trainable_state as the model's
+  checkpoint-prefix boundary. load_weights_into returns the underlying module
+  load_state_dict result, so these wrappers are not no-result placeholders.
+- Keep _lm_trunk as a real family override (Janus has an extra causal-LM root),
+  has_trainable_state as the version-slot API, and guidance/device properties
+  as pipeline ownership views. No added class or relocation is warranted merely
+  because their implementations are short.
+- Base-model, weight-utils and PEFT-adapter suites: 75 passed, 16 dependency
+  warnings, including real diffusers LoRA disable/restore coverage. No production
+  edits in this slice. Larger methods and broader repository coverage remain
+  outside what this syntactic scan proves; the overall audit remains open.
