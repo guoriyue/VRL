@@ -27,20 +27,17 @@ def cuda_occupancy_snapshot() -> dict[str, int] | None:
     reading that never reassembles.
     """
 
-    try:
-        import torch
+    import torch
 
-        if not torch.cuda.is_available():
-            return None
-        free_bytes, total_bytes = torch.cuda.mem_get_info()
-        snapshot = {
-            "baseline_allocated_bytes": int(torch.cuda.memory_allocated()),
-            "reserved_start_bytes": int(torch.cuda.memory_reserved()),
-            "free_start_bytes": int(free_bytes),
-            "total_bytes": int(total_bytes),
-        }
-    except Exception:
+    if not torch.cuda.is_available():
         return None
+    free_bytes, total_bytes = torch.cuda.mem_get_info()
+    snapshot = {
+        "baseline_allocated_bytes": int(torch.cuda.memory_allocated()),
+        "reserved_start_bytes": int(torch.cuda.memory_reserved()),
+        "free_start_bytes": int(free_bytes),
+        "total_bytes": int(total_bytes),
+    }
     unknown = snapshot.keys() - {f.name for f in fields(BatchMemoryReading)}
     if unknown:
         raise ValueError(

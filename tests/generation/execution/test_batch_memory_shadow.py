@@ -426,3 +426,33 @@ def test_worker_forwards_batch_memory_without_runtime_debug() -> None:
     assert result.output.memory is None
     assert "batch_memory" not in result.metrics
     assert "engine_counters" not in result.metrics
+
+
+def test_cuda_occupancy_is_absent_only_without_cuda(monkeypatch) -> None:
+    import torch
+
+    from vrl.generation.execution.batch_memory import cuda_occupancy_snapshot
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert cuda_occupancy_snapshot() is None
+
+
+@pytest.mark.parametrize("operation", ["mem_get_info", "memory_allocated", "memory_reserved"])
+def test_cuda_occupancy_preserves_query_errors(monkeypatch, operation) -> None:
+    import torch
+
+    from vrl.generation.execution.batch_memory import cuda_occupancy_snapshot
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda: (8, 16))
+    monkeypatch.setattr(torch.cuda, "memory_allocated", lambda: 4)
+    monkeypatch.setattr(torch.cuda, "memory_reserved", lambda: 6)
+    failure = RuntimeError("CUDA query failed")
+
+    def fail():
+        raise failure
+
+    monkeypatch.setattr(torch.cuda, operation, fail)
+    with pytest.raises(RuntimeError, match="CUDA query failed") as caught:
+        cuda_occupancy_snapshot()
+    assert caught.value is failure

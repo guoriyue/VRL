@@ -2681,3 +2681,20 @@ this combined regression is compatibility evidence, not architectural completion
   tests passed, two optional backend tests skipped. Regressions cover invalid
   roles/modality/distribution and preservation of custom. Touched-file Ruff and
   diff checks passed. Full repository review remains active.
+
+## CUDA occupancy sampling distinguishes absence from failure
+
+- cuda_occupancy_snapshot documented None for non-CUDA execution but caught all
+  exceptions from CUDA queries and returned the same sentinel. A broken CUDA
+  query was therefore indistinguishable from an ordinary missing reading in the
+  denoise loop's memory record path.
+- Remove the blanket catch. Keep the explicit CUDA-unavailable branch; query
+  failures now propagate with their original exception and traceback.
+- Keep this free function as a pre-generation measurement boundary. It records
+  only the starting occupancy; a full BatchMemoryReading also needs peaks that
+  do not exist yet. Keep the field-name check against the existing wire record,
+  lazy Torch import and affine-fit owner. No new wrapper or duplicate taxonomy.
+- Validation: 387 generation execution, step and binding tests passed, two
+  optional backend tests skipped. CPU absence and original exceptions from all
+  three CUDA queries are covered with mocked CUDA APIs; this is not a real-GPU
+  fault-injection run. Touched-file Ruff and diff checks passed. Review is active.
