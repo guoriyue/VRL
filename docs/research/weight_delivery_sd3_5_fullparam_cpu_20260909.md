@@ -1,5 +1,10 @@
 # Real full-parameter CPU weight transport acceptance
 
+> Configuration rename (2026-09-10): the current option is
+> `distributed.rollout.update_weight_buffer_size`. Historical commands below
+> retain the former `weight_sync_bucket_bytes` name used for those measurements.
+
+
 The v2 acceptance CLI completed the configured 64 MiB bucket transport with two
 independent real SD3.5 medium CPU receivers on September 9, 2026 Pacific. This
 extends earlier tiny CPU fixtures and the single-GPU LoRA direct-install probe

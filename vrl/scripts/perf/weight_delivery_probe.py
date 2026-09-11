@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         del payload
         engines = [RayGenerationEngine(handle.worker_id, [handle]) for handle in group.handles]
-        bucket_bytes = resolved.generation.worker.weight_sync_bucket_bytes
+        bucket_bytes = resolved.generation.worker.update_weight_buffer_size
         sync = RayGenerationWeightSync(
             engines,
             actor_dispatcher=RayActorDispatcher(tuple(engine.engine_id for engine in engines)),

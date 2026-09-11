@@ -69,12 +69,12 @@ def test_bucket_setting_survives_public_runtime_projection():
     from vrl.config.schema import RolloutRuntimeSection
     from vrl.generation.ray.config import RolloutWorkerConfig
 
-    public = RolloutRuntimeSection(weight_sync_bucket_bytes=1024)
-    assert RolloutWorkerConfig.from_public_section(public).weight_sync_bucket_bytes == 1024
-    assert RolloutWorkerConfig.from_public_section({}).weight_sync_bucket_bytes is None
+    public = RolloutRuntimeSection(update_weight_buffer_size=1024)
+    assert RolloutWorkerConfig.from_public_section(public).update_weight_buffer_size == 1024
+    assert RolloutWorkerConfig.from_public_section({}).update_weight_buffer_size is None
     for value in (0, -1, True, 1.5):
         with pytest.raises(ValueError):
-            RolloutRuntimeSection(weight_sync_bucket_bytes=value)
+            RolloutRuntimeSection(update_weight_buffer_size=value)
 
 
 def test_receiver_staging_stays_on_cpu_under_a_different_default_device():
@@ -99,3 +99,10 @@ def test_buckets_pack_small_tensors_without_exceeding_tensor_byte_limit():
         sum(value.numel() * value.element_size() for _, _, value in bucket) <= 16
         for bucket in buckets
     )
+
+
+def test_old_weight_buffer_option_is_rejected():
+    from vrl.config.schema import RolloutRuntimeSection
+
+    with pytest.raises(ValueError):
+        RolloutRuntimeSection(weight_sync_bucket_bytes=1024)

@@ -1,5 +1,10 @@
 # SPRINT：权重同步传输——先测瓶颈，再选择传输
 
+> Configuration rename (2026-09-10): the current option is
+> `distributed.rollout.update_weight_buffer_size`. Historical commands below
+> retain the former `weight_sync_bucket_bytes` name used for those measurements.
+
+
 状态：**implementing（用户已要求实现传输选择）；默认传输仍由真实测量决定。**
 真实 full-parameter 多 GPU 作业的性能验收尚未完成，LoRA-only 测试不能替代。
 2026-09-09 按当前代码和 [Miles v0.1 研究](../../research/miles_v01_2609_08368.md)

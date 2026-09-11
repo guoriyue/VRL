@@ -161,7 +161,7 @@ class RayGenerationLauncher:
                     engines,
                     actor_dispatcher=actor_dispatcher,
                     worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
-                    bucket_bytes=worker.weight_sync_bucket_bytes,
+                    bucket_bytes=worker.update_weight_buffer_size,
                 )
                 if worker.sync_trainable_state
                 else None

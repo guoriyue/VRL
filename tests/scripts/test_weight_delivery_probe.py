@@ -71,7 +71,7 @@ def test_probe_cli_exports_real_cpu_parameters_and_checks_two_receivers(
     )
     resolved = SimpleNamespace(
         run=OnlineRunConfig(total_epochs=1, seed=17),
-        generation=SimpleNamespace(worker=SimpleNamespace(weight_sync_bucket_bytes=bucket_bytes)),
+        generation=SimpleNamespace(worker=SimpleNamespace(update_weight_buffer_size=bucket_bytes)),
         family=SimpleNamespace(family="test"),
         built=SimpleNamespace(root=None, precision=None),
         resources=SimpleNamespace(rollout_devices=(), rollout_gpus_per_engine=1),

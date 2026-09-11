@@ -1,5 +1,10 @@
 # SPRINT：Weight delivery：版本 ACK 之外验证真实参数内容
 
+> Configuration rename (2026-09-10): the current option is
+> `distributed.rollout.update_weight_buffer_size`. Historical commands below
+> retain the former `weight_sync_bucket_bytes` name used for those measurements.
+
+
 状态：**implementing；默认训练路径不增加全量 checksum 开销。**
 
 ## 阅读基线与执行边界
