@@ -612,3 +612,23 @@ Torch-free import checks. Touched-file Ruff and diff whitespace checks pass.
 - Validation: all 39 reward service tests passed, including client/server scoring
   and lifecycle tests plus new unknown-cancellation-status and malformed-details
   regressions. Touched-file Ruff and diff whitespace checks pass.
+
+## Reward owner cancellation before task startup
+
+- Fixed a completion-signalling race in `RewardScorerOwner.score_batch`.
+  Cancelling the cross-thread submission could cancel its asyncio task before
+  the coroutine entered its try/finally, leaving the completion event unset.
+  The caller then waited indefinitely for an acknowledgement that could not run.
+- Shield the submission from caller cancellation and send cancellation to the
+  owner loop explicitly. Owner-local state records cancellation before startup;
+  an executing task is cancelled normally. In both cases the execution wrapper
+  reaches its finally and acknowledges completion. No new class or shared lock
+  is needed; the cancellation helper is a real cross-thread callback boundary.
+- Kept shutdown's single-owner lock/event protocol and non-cooperative work
+  semantics: an in-flight synchronous model call must actually return before
+  its caller can declare cancellation complete. This change does not claim GPU
+  preemption or change the service's terminal artifact ownership contract.
+- Validation: all 40 reward service tests passed, including a deterministic
+  queued-before-start cancellation test using an actual blocked owner thread,
+  and existing non-cooperative cancellation coverage. Touched-file Ruff and
+  whitespace checks pass.

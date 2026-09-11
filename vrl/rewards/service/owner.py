@@ -51,24 +51,39 @@ class RewardScorerOwner:
         if not self.alive:
             raise RuntimeError("reward runtime owner is shutting down")
         completed = threading.Event()
+        # These two fields are read/written only on the owner loop.
+        cancellation_requested = False
+        execution_task: asyncio.Task | None = None
 
         async def execute() -> list[RewardInferenceResult]:
+            nonlocal execution_task
+            execution_task = asyncio.current_task()
             try:
+                if cancellation_requested:
+                    raise asyncio.CancelledError
                 return await self._runtime.score_batch(request)
             finally:
                 completed.set()
+
+        def cancel_execution() -> None:
+            nonlocal cancellation_requested
+            cancellation_requested = True
+            if execution_task is not None:
+                execution_task.cancel()
 
         future = asyncio.run_coroutine_threadsafe(
             execute(),
             self._loop,
         )
         try:
-            return await asyncio.wrap_future(future)
+            return await asyncio.shield(asyncio.wrap_future(future))
         except asyncio.CancelledError:
             # Cooperative runtimes stop immediately. A synchronous GPU kernel
             # cannot be preempted, but its eventual result is discarded and no
             # later request can observe it as a successful completion.
-            future.cancel()
+            # Do not cancel the submission before execute() starts: its finally
+            # must run to acknowledge completion even for a queued request.
+            self._loop.call_soon_threadsafe(cancel_execution)
             await asyncio.shield(asyncio.to_thread(completed.wait))
             raise
 

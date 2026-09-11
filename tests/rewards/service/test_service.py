@@ -1024,3 +1024,45 @@ def test_wire_rejects_nonobject_error_details(details):
     )
     assert error.code == "transport_error"
     assert "details must be an object" in str(error)
+
+
+@pytest.mark.asyncio
+async def test_owner_cancellation_before_execution_still_acknowledges_completion(tmp_path):
+    from vrl.rewards.service.owner import RewardScorerOwner
+
+    class Runtime:
+        calls = 0
+
+        async def score_batch(self, request):
+            self.calls += 1
+            return []
+
+        async def shutdown(self):
+            pass
+
+    artifact = tmp_path / "artifact.pt"
+    artifact.write_bytes(b"test")
+    request = _request(str(artifact))
+    runtime = Runtime()
+    owner = RewardScorerOwner(runtime)
+    blocked = threading.Event()
+    release = threading.Event()
+
+    def hold_owner_loop():
+        blocked.set()
+        release.wait(timeout=5)
+
+    owner._loop.call_soon_threadsafe(hold_owner_loop)
+    assert await asyncio.to_thread(blocked.wait, 1)
+    task = asyncio.create_task(owner.score_batch(request))
+    try:
+        await asyncio.sleep(0)  # submit while the owner cannot execute it
+        task.cancel()
+        await asyncio.sleep(0)  # enqueue cancellation on that same owner loop
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(task), timeout=1)
+        assert runtime.calls == 0
+    finally:
+        release.set()
+        await owner.close()
