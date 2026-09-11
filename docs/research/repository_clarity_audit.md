@@ -4900,3 +4900,18 @@ this combined regression is compatibility evidence, not architectural completion
   empty name, plus checks for unknown names and omitted/None equivalence.
   Trajectory, rollout replay and chunk-autoregressive binding suites: 167 passed.
   Touched-file Ruff checks and git diff --check pass. Wider audit remains open.
+
+## Denoise recording casts at the preallocated destination
+
+- Remove explicit dtype conversions immediately before copy_ for actions,
+  log-probabilities, KL, previous means and reference predictions. Destination
+  buffers already own their dtype; copy_ performs the conversion while writing.
+  Preserve detach calls and the existing absolute-value operation for KL.
+- Keep record_step as the transition-write boundary and _expand_timestep for
+  shape normalization. No helper or class is added. Scheduler mathematics,
+  TeaCache, buffer allocation and timestep placement remain unchanged.
+- Added mixed-dtype recording coverage for float16, bfloat16 and float32 buffers
+  on CPU and CUDA, including optional caches, exact cast values and no-grad
+  outputs. All six cases ran. Denoise-step and full-sequence binding suites:
+  189 passed. Touched-file Ruff and git diff --check pass. No training throughput
+  improvement is claimed without a benchmark; the wider audit remains open.

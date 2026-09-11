@@ -126,32 +126,30 @@ class DenoiseTrajectoryBuffers:
         return_kl: bool,
         ref_noise_pred: torch.Tensor | None = None,
     ) -> None:
-        """Write one transition into the preallocated replay tensors."""
+        """Write detached values; copy_ casts into each buffer's allocated dtype."""
         self.observations[:, step_idx].copy_(observation.detach())
         self.actions[:, step_idx].copy_(
-            action.detach().to(dtype=self.actions.dtype),
+            action.detach(),
         )
         self.log_probs[:, step_idx].copy_(
-            sde_result.log_prob.detach().to(dtype=self.log_probs.dtype),
+            sde_result.log_prob.detach(),
         )
         self.timesteps[:, step_idx].copy_(
             self._expand_timestep(timestep.detach()),
         )
         if return_kl:
             self.kl[:, step_idx].copy_(
-                sde_result.log_prob.detach().abs().to(dtype=self.kl.dtype),
+                sde_result.log_prob.detach().abs(),
             )
         else:
             self.kl[:, step_idx].zero_()
         if self.prev_sample_means is not None:
             self.prev_sample_means[:, step_idx].copy_(
-                sde_result.prev_sample_mean.detach().to(
-                    dtype=self.prev_sample_means.dtype,
-                ),
+                sde_result.prev_sample_mean.detach(),
             )
         if self.ref_noise_preds is not None:
             self.ref_noise_preds[:, step_idx].copy_(
-                ref_noise_pred.detach().to(dtype=self.ref_noise_preds.dtype),
+                ref_noise_pred.detach(),
             )
 
     def _expand_timestep(self, timestep: torch.Tensor) -> torch.Tensor:

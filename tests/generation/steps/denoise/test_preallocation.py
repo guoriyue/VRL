@@ -14,6 +14,7 @@ from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
 from vrl.generation.steps.denoise.loop import DenoiseTrajectoryBuffers
 from vrl.generation.types import GenerationRequest
+from vrl.math.denoise.flow_matching import SDEStepResult
 from vrl.trajectory import TrajectoryStoragePolicy
 
 
@@ -36,6 +37,48 @@ def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> 
     assert buffers.kl.shape == (2, 3)
     assert buffers.kl.dtype == torch.float32
     assert buffers.observations.device == state.latents.device
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_record_step_casts_into_allocated_buffers_without_gradients(dtype, device) -> None:
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is unavailable")
+    state = _state(batch=2, steps=1, dtype=dtype)
+    state.latents = state.latents.to(device)
+    state.timesteps = state.timesteps.to(device)
+    config = _config(return_kl=True)
+    config = replace(
+        config,
+        sde=replace(config.sde, return_prev_sample_mean=True, cache_ref_noise_pred=True),
+    )
+    buffers = DenoiseTrajectoryBuffers.allocate(state=state, config=config)
+    values = torch.tensor(
+        [[0.1234, -0.5678], [1.2345, -2.3456]], device=device, requires_grad=True
+    )
+    log_prob = values[:, 0]
+    buffers.record_step(
+        0,
+        observation=values,
+        action=values,
+        timestep=state.timesteps[0],
+        sde_result=SDEStepResult(values, log_prob, values, None),
+        return_kl=True,
+        ref_noise_pred=values,
+    )
+    for output in (
+        buffers.observations,
+        buffers.actions,
+        buffers.prev_sample_means,
+        buffers.ref_noise_preds,
+    ):
+        assert output.dtype == dtype
+        torch.testing.assert_close(output[:, 0], values.detach().to(dtype), rtol=0, atol=0)
+        assert not output.requires_grad
+    torch.testing.assert_close(buffers.log_probs[:, 0], log_prob.detach())
+    torch.testing.assert_close(buffers.kl[:, 0], log_prob.detach().abs())
+    assert not buffers.log_probs.requires_grad
+    assert not buffers.kl.requires_grad
 
 
 def test_preallocate_denoise_buffers_rejects_sample_count_mismatch() -> None:
