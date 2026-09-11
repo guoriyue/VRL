@@ -177,6 +177,21 @@ Checkpoint identity and trajectory review:
   Tensor-tree traversal and byte estimates remain independent algorithms;
   derived Literal validation sets remain schema data. No new wrapper class.
 
+Trainer diagnostic and parking identity review:
+
+- `OnlineTrainer._precision_metadata` replaces `_trainer_precision_metadata`.
+  Both callers already owned config/model/evaluator; they now read through one
+  trainer method instead of unpacking the same state into an external helper.
+  Online trainer tests: 142 passed.
+- `TrainingMemoryState.identity_key` replaces `_training_state_key`. The key
+  compares owner identities and target device, never tensor equality. Strategy
+  tests: 12 passed, 2 skipped; frozen-offload and strategy-MRO tests: 23 passed.
+  This is not a new real multi-GPU parking validation.
+- EMA checkpoint shape validation remains a cross-type comparison. Scalar dtype
+  labeling remains formatting. Strategy selection and FSDP tensor/collective
+  adapters are not candidates for a blanket static-method conversion; their
+  execution and distributed ownership require preserving call order.
+
 ## Remaining review
 
 These are inspection candidates, not approved mechanical transformations.
