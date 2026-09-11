@@ -4171,3 +4171,16 @@ this combined regression is compatibility evidence, not architectural completion
   type is unchanged; no family support or device movement behavior is modified.
 - Strategy/FSDP tests: 72 passed, two skipped, dependency warnings. Touched-file
   Ruff checks pass. The repository-wide audit remains incomplete.
+
+## Adapter export overlap condition stays with its error
+
+- Inline the sole-use `_output_paths_overlap` into adapter export resolution.
+  The same-path and ancestor/descendant checks now sit directly beside the
+  conflicting-export diagnostic; no algorithm or publication-order change.
+- Retain `_safe_relative_output_path` as the shared boundary for adapter names
+  and export directories. Its absolute/drive/traversal/separator checks protect
+  two distinct entry points. Checkpoint/file-name constants remain real schema
+  boundaries, and no path-policy class is introduced for this cleanup.
+- All 110 checkpointing tests passed, including overlapping output paths failing
+  before IO and identical effective PEFT output paths. Touched-file Ruff checks
+  pass. This does not complete the repository-wide audit.

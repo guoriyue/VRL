@@ -340,12 +340,6 @@ def _safe_relative_output_path(
     return PurePosixPath(*segments)
 
 
-def _output_paths_overlap(left: PurePosixPath, right: PurePosixPath) -> bool:
-    """Return whether two artifact writers own the same or nested path."""
-
-    return left == right or left in right.parents or right in left.parents
-
-
 def _resolve_adapter_exports(
     bundle: Any,
     exports: Mapping[str, AdapterExport] | None,
@@ -375,7 +369,11 @@ def _resolve_adapter_exports(
                 f"adapter exports {existing!r} and {name!r} write the same PEFT output path",
             )
         for existing_path, existing_name in output_names.items():
-            if _output_paths_overlap(existing_path, normalized_name):
+            if (
+                existing_path == normalized_name
+                or existing_path in normalized_name.parents
+                or normalized_name in existing_path.parents
+            ):
                 raise ValueError(
                     f"adapter export paths {existing_name!r} and {name!r} overlap",
                 )
