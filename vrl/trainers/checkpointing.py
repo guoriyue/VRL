@@ -515,7 +515,7 @@ def save_training_checkpoint(
     so for them this is a no-op.
     """
 
-    _require_checkpoint_family(family, field="family")
+    _validate_checkpoint_family(family, field="family")
     if not isinstance(model_identity, dict) or not model_identity:
         raise ValueError("model_identity must be a non-empty dict")
     is_primary = True if strategy is None else strategy.context.is_primary
@@ -1011,12 +1011,11 @@ def validate_checkpoint_meta_compatibility(
     )
 
 
-def _require_checkpoint_family(value: Any, *, field: str) -> str:
-    """Return one canonical family name or reject a missing protocol boundary."""
+def _validate_checkpoint_family(value: Any, *, field: str) -> None:
+    """Require a non-empty trimmed family identifier without alias normalization."""
 
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{field} must be a non-empty trimmed string")
-    return value
 
 
 def _require_checkpoint_schema_version(
@@ -1052,9 +1051,9 @@ def _validate_checkpoint_identity_contract(
     """Apply one family/identity policy to payloads and metadata sidecars."""
 
     if strict:
-        _require_checkpoint_family(family, field="runtime family")
+        _validate_checkpoint_family(family, field="runtime family")
     if schema_version == CHECKPOINT_SCHEMA_VERSION:
-        _require_checkpoint_family(
+        _validate_checkpoint_family(
             checkpoint_family,
             field=f"schema-v2 {source} family",
         )
@@ -1125,7 +1124,7 @@ def _validate_checkpoint_meta_matches_payload(
     meta_family = meta.get("family")
     payload_family = payload.get("family")
     if schema_version == CHECKPOINT_SCHEMA_VERSION:
-        _require_checkpoint_family(
+        _validate_checkpoint_family(
             meta_family,
             field="schema-v2 checkpoint metadata family",
         )
@@ -1154,7 +1153,7 @@ def _validate_checkpoint_payload(
     if not isinstance(model, dict):
         raise TypeError("checkpoint payload missing dict field: model")
     if schema_version == CHECKPOINT_SCHEMA_VERSION:
-        _require_checkpoint_family(
+        _validate_checkpoint_family(
             payload.get("family"),
             field="schema-v2 checkpoint payload family",
         )
@@ -1618,7 +1617,7 @@ def write_checkpoint_meta(
     copy for cheap pre-model preflight; ``checkpoint.pt`` remains authoritative.
     """
 
-    _require_checkpoint_family(family, field="family")
+    _validate_checkpoint_family(family, field="family")
     if not isinstance(model_identity, dict) or not model_identity:
         raise ValueError("model_identity must be a non-empty dict")
     meta = {

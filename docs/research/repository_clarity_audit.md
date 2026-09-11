@@ -4196,3 +4196,15 @@ this combined regression is compatibility evidence, not architectural completion
   cross-rank/model-boundary checks, outside any individual adapter export.
 - All 110 checkpointing tests passed with dependency warnings; touched-file Ruff
   checks passed. This slice does not complete the repository-wide audit.
+
+## Checkpoint family validation states its actual contract
+
+- Rename `_require_checkpoint_family` to `_validate_checkpoint_family` and remove
+  its unused return value. All six callers use it only as a guard. Correct the
+  docstring: it validates a non-empty trimmed identifier, not canonical alias
+  resolution. No family vocabulary or compatibility rule changes are introduced.
+- Retain the shared identity/schema validators. Sidecar preflight, authoritative
+  payload validation and sidecar/payload consistency checks serve distinct stages;
+  merging them into a single unchecked loading path would lose those boundaries.
+- All 110 checkpointing tests passed with dependency warnings; touched-file Ruff
+  checks pass. The repository-wide clarity audit remains incomplete.
