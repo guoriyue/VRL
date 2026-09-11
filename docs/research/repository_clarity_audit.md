@@ -4355,3 +4355,15 @@ this combined regression is compatibility evidence, not architectural completion
   checkpoint requirements or the master-weight implementation.
 - GradScaler and restore suites: 32 passed; touched-file Ruff checks pass.
   The overall repository clarity audit remains in progress.
+
+## Trainer restore validates both progress fields before assigning either
+
+- Replace coercive int conversion of step/global_step with the existing exact
+  non-negative integer validator. Validate both locals before assigning trainer
+  progress, so a malformed second field cannot partially overwrite the first.
+- Retain missing-field zero defaults and strict/non-strict optimizer/EMA policy.
+  Invalid progress is rejected in either mode; this does not make the entire
+  optimizer/EMA restoration transaction atomic.
+- Sixteen malformed-progress cases failed before the fix. State restore plus
+  checkpoint suites now pass: 147 tests, dependency warnings. Touched-file Ruff
+  checks pass. The full repository clarity audit remains incomplete.

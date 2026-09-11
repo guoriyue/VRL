@@ -62,6 +62,7 @@ from vrl.trainers.online.precision_guard import (
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer, build_optimizer
 from vrl.trainers.strategy import SingleProcessStrategy, Strategy, TrainingMemoryState
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
+from vrl.utils.config import require_exact_int
 
 if TYPE_CHECKING:
     from vrl.algorithms.trajectory import AlgorithmAdapter
@@ -2191,8 +2192,12 @@ class OnlineTrainer:
         if not isinstance(state, dict):
             raise TypeError("OnlineTrainer.load_state_dict expects a dict")
 
-        self.state.step = int(state.get("step", 0))
-        self.state.global_step = int(state.get("global_step", 0))
+        step = require_exact_int(state.get("step", 0), path="trainer_state.step", minimum=0)
+        global_step = require_exact_int(
+            state.get("global_step", 0), path="trainer_state.global_step", minimum=0
+        )
+        self.state.step = step
+        self.state.global_step = global_step
 
         nonzero_checkpoint = max(self.state.step, self.state.global_step) > 0
         if (

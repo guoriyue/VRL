@@ -15,6 +15,19 @@ from tests.trainers.online._helpers import (
 from vrl.config.precision import RolePrecision
 
 
+@pytest.mark.parametrize("field", ["step", "global_step"])
+@pytest.mark.parametrize("value", [1.9, "2", True, -1])
+@pytest.mark.parametrize("strict", [False, True])
+def test_invalid_progress_does_not_modify_trainer(field, value, strict):
+    trainer = _make_resume_trainer()
+    trainer.state.step = 7
+    trainer.state.global_step = 11
+    state = {"step": 3, "global_step": 5, field: value}
+    with pytest.raises(ValueError, match=rf"trainer_state\.{field}"):
+        trainer.load_state_dict(state, strict=strict)
+    assert (trainer.state.step, trainer.state.global_step) == (7, 11)
+
+
 class TestOnlineTrainerResumeState:
     """Groups tests for online trainer resume state."""
 
