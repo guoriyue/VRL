@@ -4380,6 +4380,18 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## FP8 scalar and row scaling belongs to Fp8Linear
+
+- Move _amax_scale into Fp8Linear as a private static method. Its only callers
+  are weight requantization and the rowwise/tensorwise activation branches.
+  Keep one shared formula rather than duplicating it across those branches.
+- Preserve reduction dtype, floor, scaling, output handling and all GEMM recipe
+  paths. Keep FP8_BLOCK as the kernel block dimension and FP8_E4M3_MAX as the
+  numeric format boundary. No general scale utility or new owner is introduced.
+- FP8 and shared quantized-linear suites: 33 passed, 14 dependency warnings.
+  Touched-file Ruff checks pass and formatting is applied. This ownership cleanup
+  does not establish a training-quality result or finish the repository audit.
+
 ## NVFP4 shape eligibility belongs to Fp4Linear
 
 - Move _alignment_error into Fp4Linear as a static method, shared by its

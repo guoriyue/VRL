@@ -44,12 +44,6 @@ from vrl.nn.quantization.targeting import LinearTargetProfile
 FP8_BLOCK = 128
 
 
-def _amax_scale(t: torch.Tensor, dim: int | None) -> torch.Tensor:
-    """e4m3 scale mapping ``t``'s amax onto FP8_E4M3_MAX (fp32, per-``dim`` or scalar)."""
-    amax = t.abs().amax() if dim is None else t.abs().amax(dim=dim, keepdim=True)
-    return (amax / FP8_E4M3_MAX).clamp_min(1e-12).to(torch.float32)
-
-
 class Fp8Linear(QuantizedLinear):
     """Drop-in ``nn.Linear`` replacement running the matmul in fp8-e4m3.
 
@@ -96,6 +90,12 @@ class Fp8Linear(QuantizedLinear):
         self.register_buffer("weight_scale", torch.empty(0), persistent=False)
         self._requantize_weight()
 
+    @staticmethod
+    def _amax_scale(t: torch.Tensor, dim: int | None) -> torch.Tensor:
+        """e4m3 scale mapping ``t``'s amax onto FP8_E4M3_MAX (fp32, per-``dim`` or scalar)."""
+        amax = t.abs().amax() if dim is None else t.abs().amax(dim=dim, keepdim=True)
+        return (amax / FP8_E4M3_MAX).clamp_min(1e-12).to(torch.float32)
+
     def _requantize_weight(self) -> None:
         """Re-derive the fp8 weight + scale from the source master after a sync."""
         w = self.weight.data
@@ -106,7 +106,7 @@ class Fp8Linear(QuantizedLinear):
             self.weight_fp8 = (wb / scale[:, None, :, None]).reshape(n, k).to(torch.float8_e4m3fn)
             self.weight_scale = scale  # [N/128, K/128]
             return
-        scale = _amax_scale(w, dim=1 if self.recipe == "rowwise" else None)
+        scale = self._amax_scale(w, dim=1 if self.recipe == "rowwise" else None)
         self.weight_fp8 = (w / scale).to(torch.float8_e4m3fn)
         self.weight_scale = scale
 
@@ -120,10 +120,10 @@ class Fp8Linear(QuantizedLinear):
                 out = out.to(x.dtype)
             return out if self.bias is None else out + self.bias
         if self.recipe == "rowwise":
-            x_scale = _amax_scale(x_2d, dim=1)  # [M, 1] per token
+            x_scale = self._amax_scale(x_2d, dim=1)  # [M, 1] per token
             weight_scale = self.weight_scale.reshape(1, self.out_features)  # [1, N] per channel
         else:
-            x_scale = _amax_scale(x_2d, dim=None)  # scalar
+            x_scale = self._amax_scale(x_2d, dim=None)  # scalar
             weight_scale = self.weight_scale
         x_fp8 = (x_2d.to(torch.bfloat16) / x_scale).to(torch.float8_e4m3fn)
         # _scaled_mm rowwise only emits bf16/fp16; DiT layers fed fp32 activations
