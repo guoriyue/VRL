@@ -1,27 +1,19 @@
-"""TeaCache for the diffusion rollout denoise loop.
+"""Latent-change-based TeaCache approximation for diffusion rollout.
 
-TeaCache (Timestep-Embedding Aware Cache) skips the transformer forward on
-denoise steps whose input barely changed since the last real forward, reusing
-the previous step's ``noise_pred``. Diffusion denoise is compute-bound (the
-transformer forward dominates each step), so skipping a fraction of the forwards
-is a direct wall-clock win — typically the single biggest rollout speedup
-available for a dense DiT, larger than fp8 (see SPRINT_rollout_vllm_migration.md).
+Accumulate relative-L1 changes between consecutive latent signals. Reuse the
+last computed noise prediction while the accumulated change stays below the
+configured threshold. Warmup, the final step and a missing cache force a model
+forward. This implementation uses latent signals rather than family-specific
+timestep-modulated features or rescaling polynomials.
 
-Ported from vLLM-Omni's hook-based TeaCache
-(``vllm_omni/diffusion/cache/teacache``) as a *forward-intercepting* technique —
-it is an algorithm, not an engine feature, so it drops into our own denoise loop
-without adopting vLLM's scheduler. The v1 signal is the relative-L1 change of the
-input latents between consecutive steps (model-agnostic, cheap); per-family
-"timestep-modulated input" extractors + the rescale polynomial are a follow-up
-refinement that improves the skip/accuracy trade-off.
+Adapted from the forward-interception approach in vLLM-Omni's
+``vllm_omni/diffusion/cache/teacache`` without adopting its scheduler.
 
-RL caveat — this is NOT pure inference: TeaCache makes the rollout ``noise_pred``
-approximate on skipped steps, so the collection-time log-prob diverges from the
-trainer's exact replay forward. That is the SAME rollout-vs-replay drift fp8
-introduces, and it rides the SAME correction machinery (precision drift guard /
-truncated importance sampling). A run that enables TeaCache must therefore arm
-the drift guard and treat the skip ratio as a tunable that trades speed for drift.
-Default is OFF so the GRPO baseline stays bit-for-bit.
+Skipped forwards change the rollout prediction relative to exact trainer replay.
+The config drift checks require an explicit correction policy when matching
+precision labels would otherwise leave that approximation unguarded. Caching is
+disabled by default. Skip counters measure reuse; training speed and drift must
+be evaluated on the actual workload.
 """
 
 from __future__ import annotations
@@ -43,9 +35,8 @@ def relative_l1_change(cur: torch.Tensor, prev: torch.Tensor) -> float:
     reimplement it: a drifting private copy would silently measure something
     other than the signal the runtime actually skips on.
 
-    Reduced to a scalar in fp32. The ``.item()`` forces a tiny device sync per
-    step; it is negligible against the transformer forward the skip avoids (a
-    per-family on-device accumulator is a follow-up).
+    Reduced to a scalar in fp32. The ``.item()`` requires the host to wait for
+    the reduction, so this metric introduces synchronization on CUDA.
     """
 
     cur = cur.float()
@@ -117,7 +108,7 @@ class TeaCacheState:
         self._cfg = config
         self._num_steps = int(num_steps)
         self._prev_signal: torch.Tensor | None = None
-        self._acc = 0.0
+        self._accumulated_change = 0.0
         self._cached_noise_pred: torch.Tensor | None = None
         self.runs = 0
         self.skips = 0
@@ -143,10 +134,10 @@ class TeaCacheState:
         if forced:
             run = True
         else:
-            self._acc += relative_l1_change(signal, self._prev_signal)
-            run = self._acc >= cfg.threshold
+            self._accumulated_change += relative_l1_change(signal, self._prev_signal)
+            run = self._accumulated_change >= cfg.threshold
             if run:
-                self._acc = 0.0
+                self._accumulated_change = 0.0
         self._prev_signal = signal.detach()
         if run:
             self.runs += 1

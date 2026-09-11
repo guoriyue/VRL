@@ -4380,6 +4380,20 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## TeaCache descriptions follow the implemented signal and measured limits
+
+- Replace promotional speed rankings and future-sprint prose with the actual
+  latent-change accumulation, reuse and forced-forward rules. Retain upstream
+  approach attribution and explain that skip counters alone do not establish
+  training throughput or acceptable replay drift. Document the metric's host
+  synchronization without claiming its cost is negligible.
+- Rename the private _acc state to _accumulated_change. Keep the shared
+  relative_l1_change function because runtime and offline analysis must measure
+  the same signal. No new class, helper or policy table is introduced; threshold,
+  cache behavior and correction-policy validation are unchanged.
+- Denoise and rollout optimization suites: 82 passed, 14 dependency warnings.
+  Touched-file Ruff checks pass. The repository clarity audit remains ongoing.
+
 ## Paged-attention adapter defaults only absent kernel block sizes
 
 - Replace truthiness fallback for kernel_block_size with an explicit None check.
