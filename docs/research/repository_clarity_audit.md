@@ -4274,3 +4274,14 @@ this combined regression is compatibility evidence, not architectural completion
   separate meaningful owners; no duplicate field vocabulary is introduced.
 - Online config, online run config and config suites passed: 361 tests in 11.59s.
   Touched-file Ruff checks pass. The repository-wide audit is still incomplete.
+
+## Online trainer owns EMA restore shape validation
+
+- Move `_validate_ema_state_shapes` onto `OnlineTrainer`, its sole production
+  owner. Read `self.model` directly instead of passing the same owner's model
+  through a free function. No new state object or compatibility wrapper.
+- Retain the named validation step for EMA parameter count, tensor type and
+  shape checks. Preserve strict/non-strict behavior and the existing EMA loader;
+  this ownership change does not alter checkpoint compatibility policy.
+- State-restore and checkpointing suites: 131 passed, dependency warnings.
+  Touched-file Ruff checks pass. The repository-wide audit continues.

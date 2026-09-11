@@ -2277,9 +2277,8 @@ class OnlineTrainer:
             else:
                 ema = self._ensure_ema()
                 assert ema is not None
-                _validate_ema_state_shapes(
+                self._validate_ema_state_shapes(
                     state["ema"],
-                    self.model,
                     strict=strict,
                 )
                 try:
@@ -2346,36 +2345,35 @@ class OnlineTrainer:
             if parameter.requires_grad
         ]
 
-
-def _validate_ema_state_shapes(
-    ema_state: dict[str, Any],
-    model: nn.Module,
-    *,
-    strict: bool,
-) -> None:
-    ema_parameters = ema_state.get("ema_parameters") if isinstance(ema_state, dict) else None
-    if not isinstance(ema_parameters, list):
-        if strict:
-            raise ValueError("checkpoint EMA state missing ema_parameters")
-        return
-    trainable = [p for p in model.parameters() if p.requires_grad]
-    if len(ema_parameters) != len(trainable):
-        if strict:
-            raise ValueError(
-                "checkpoint EMA parameter count mismatch: "
-                f"checkpoint={len(ema_parameters)} current={len(trainable)}",
-            )
-        return
-    for idx, (ema_param, param) in enumerate(zip(ema_parameters, trainable, strict=True)):
-        if not isinstance(ema_param, torch.Tensor):
+    def _validate_ema_state_shapes(
+        self,
+        ema_state: dict[str, Any],
+        *,
+        strict: bool,
+    ) -> None:
+        ema_parameters = ema_state.get("ema_parameters") if isinstance(ema_state, dict) else None
+        if not isinstance(ema_parameters, list):
             if strict:
-                raise ValueError(f"checkpoint EMA parameter {idx} is not a tensor")
+                raise ValueError("checkpoint EMA state missing ema_parameters")
             return
-        if tuple(ema_param.shape) != tuple(param.shape):
+        trainable = [p for p in self.model.parameters() if p.requires_grad]
+        if len(ema_parameters) != len(trainable):
             if strict:
                 raise ValueError(
-                    "checkpoint EMA parameter shape mismatch at index "
-                    f"{idx}: checkpoint={tuple(ema_param.shape)} "
-                    f"current={tuple(param.shape)}",
+                    "checkpoint EMA parameter count mismatch: "
+                    f"checkpoint={len(ema_parameters)} current={len(trainable)}",
                 )
             return
+        for idx, (ema_param, param) in enumerate(zip(ema_parameters, trainable, strict=True)):
+            if not isinstance(ema_param, torch.Tensor):
+                if strict:
+                    raise ValueError(f"checkpoint EMA parameter {idx} is not a tensor")
+                return
+            if tuple(ema_param.shape) != tuple(param.shape):
+                if strict:
+                    raise ValueError(
+                        "checkpoint EMA parameter shape mismatch at index "
+                        f"{idx}: checkpoint={tuple(ema_param.shape)} "
+                        f"current={tuple(param.shape)}",
+                    )
+                return
