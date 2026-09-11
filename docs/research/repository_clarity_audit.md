@@ -6264,3 +6264,22 @@ The broader repository audit remains incomplete.
 - Four constructor regressions failed before the fix. MultiReward and collector
   tests: 62 passed. Touched-file Ruff and diff checks pass. Broader repository
   audit remains incomplete.
+
+## Core gather and rank-lifecycle boundaries retained after review
+
+- Re-read sample_batches.py coverage, concatenation, replay and context helpers,
+  their full-sequence/chunk-autoregressive/token/Janus/NextStep consumers, and
+  rank_group.py with worker load/release ownership. No implementation change is
+  justified by function count: these operations are shared across families or
+  bridge the worker lifecycle to lazily imported torch.distributed.
+- Keep SampleAlignedValues to distinguish ragged sample rows from static Python
+  sequences. Keep dtype agreement before concatenation, per-batch row checks,
+  exact prompt-major coverage and nested context equality; one total row count
+  cannot replace these distinct invariants. Keep RankGroupSpec as the serialized
+  rendezvous contract, with init/destroy outside the data object.
+- The nccl/gloo choices are the supported process-group protocol boundary, not
+  an algorithm vocabulary. No new classes, flattened family implementations or
+  moved ownership are proposed; cross-family consistency outweighs LOC reduction.
+- Rank-group, gatherer and sample-batch suites: 94 passed, including a two-process
+  Gloo rendezvous/all-gather/teardown check and strict replay/dtype tests. These
+  are component evidence, not proof of full training or repository completion.
