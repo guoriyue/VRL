@@ -6130,3 +6130,20 @@ The broader repository audit remains incomplete.
 - Health-monitor suite: 12 passed with one Ray dependency warning, including
   a real blocked actor whose timeout kills the fleet and unblocks an outstanding
   driver call. Touched-file Ruff and diff checks pass. Broader audit incomplete.
+
+## Pipelined execution declares its existing generation contracts
+
+- Replace Any on forward_batches_pipelined's executor, request and batch
+  sequence with existing GenerationBatchExecutor, GenerationRequest and
+  GenerationSampleBatch types. Name family-owned results with BatchPayload and
+  pending copy fences with torch.cuda.Event. Type-only imports preserve lazy
+  loading. The production caller supplies EnginePlan.sample_batches, a tuple;
+  iterate it directly instead of copying the plan into another list.
+- Keep the pipeline function and CUDA tree-copy helper as execution and tensor
+  lifetime boundaries. Preserve record_stream, ordered results, produce fences
+  and exception-path copy synchronization; no new protocol or wrapper class.
+  Family payloads intentionally remain opaque through the existing alias.
+- Pipeline CPU/control-flow and real-CUDA suites: 12 passed, including four
+  CUDA tests for bit-exact results, ordering, CPU payloads and completion fences.
+  Touched-file Ruff and diff checks pass. No throughput measurement claimed;
+  broader repository audit remains incomplete.

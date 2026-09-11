@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 from vrl.generation.execution.types import BatchCompletionCallback, BatchProduceFence
+
+if TYPE_CHECKING:
+    import torch
+
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
+    from vrl.generation.protocols import BatchPayload, GenerationBatchExecutor
+    from vrl.generation.types import GenerationRequest
 
 
 def _enqueue_cpu_copies(value: Any, stream: Any) -> Any:
@@ -41,12 +49,12 @@ def _enqueue_cpu_copies(value: Any, stream: Any) -> Any:
 
 
 def forward_batches_pipelined(
-    executor: Any,
-    request: Any,
-    batches: Any,
+    executor: GenerationBatchExecutor,
+    request: GenerationRequest,
+    batches: Sequence[GenerationSampleBatch],
     *,
     completion_callback: BatchCompletionCallback | None = None,
-) -> list:
+) -> list[BatchPayload]:
     """In-process software pipeline over a request's batches: while batch N+1's
     PRODUCE (encode->prepare->denoise->decode, GPU compute on the default stream)
     runs, batch N's TEARDOWN (the GPU->CPU result copy + host packing, on a copy
@@ -66,13 +74,12 @@ def forward_batches_pipelined(
     cuda = torch.cuda.is_available()
     copy_stream = torch.cuda.Stream() if cuda else None
 
-    batch_list = list(batches)
-    results: list = []
-    pending_events: list = []
+    results: list[BatchPayload] = []
+    pending_events: list[torch.cuda.Event] = []
 
     failed = False
     try:
-        for idx, batch in enumerate(batch_list):
+        for idx, batch in enumerate(batches):
             result = executor.forward_batch(request, batch)
             produce_done = None
             if cuda:
