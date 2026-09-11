@@ -71,6 +71,18 @@ class RewardModelDefinition:
     # Provenance-only: immutable repo revisions/local asset digest for the report.
     provenance: dict[str, Any]
 
+    def to_report_record(self) -> dict[str, Any]:
+        """Project one runtime reward definition into persisted provenance."""
+
+        return {
+            "name": self.name,
+            "score_key": self.score_key,
+            "model_factory": self.model_factory,
+            "device": str(self.model_config["device"]),
+            "dtype": str(self.model_config["dtype"]),
+            "identity": self.provenance,
+        }
+
 
 def normalize_run_config(cfg: DictConfig) -> DictConfig:
     """Require the exact preregistered full-parameter long-run config."""
@@ -276,19 +288,6 @@ def build_reward_model_definitions(
             ),
         )
     return reward_models
-
-
-def reward_model_record(reward_model: RewardModelDefinition) -> dict[str, Any]:
-    """Project one runtime reward definition into persisted provenance."""
-
-    return {
-        "name": reward_model.name,
-        "score_key": reward_model.score_key,
-        "model_factory": reward_model.model_factory,
-        "device": str(reward_model.model_config["device"]),
-        "dtype": str(reward_model.model_config["dtype"]),
-        "identity": reward_model.provenance,
-    }
 
 
 def summarize_scores(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -816,7 +815,7 @@ def _validate_report_provenance(
     if not str(execution.get("generation_device", "")):
         raise ValueError("SANA evaluation report execution provenance is incomplete")
     expected_rewards = [
-        reward_model_record(reward_model)
+        reward_model.to_report_record()
         for reward_model in build_reward_model_definitions(
             root,
             generation_device=str(execution["generation_device"]),

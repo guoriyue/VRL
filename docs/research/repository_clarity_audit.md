@@ -5186,3 +5186,17 @@ this combined regression is compatibility evidence, not architectural completion
 - Existing installer suite: 8 passed. Touched-file Ruff and git diff --check
   pass; no old function references remain in production/tests. No downloads or
   environment changes were performed. The wider audit remains incomplete.
+
+## SANA reward definitions own persisted report projection
+
+- Move reward_model_record to RewardModelDefinition.to_report_record. Report
+  production, provenance validation and tests call the existing data owner;
+  remove the free projection function without a compatibility alias.
+- Preserve every report field, device/dtype string conversion and provenance
+  reference semantics. Keep protocol versions, seed grid and asset digests in
+  this isolated report-contract module. Score aggregation and cross-config
+  comparisons remain functions spanning collections rather than one definition.
+- Existing aesthetic checkpoint evaluation and curve verdict suites: 45 passed.
+  Touched-file Ruff and git diff --check pass; old projection references are
+  absent from production and tests. No real checkpoint generation/scoring was
+  run, and the wider repository audit remains incomplete.

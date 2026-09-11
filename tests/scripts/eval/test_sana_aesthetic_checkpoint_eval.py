@@ -693,7 +693,7 @@ def test_reward_provenance_includes_pinned_revisions_and_asset_hash() -> None:
         parse_config(cfg),
         generation_device="cuda:0",
     )
-    records = [sana_report.reward_model_record(model) for model in reward_models]
+    records = [model.to_report_record() for model in reward_models]
 
     assert (
         records[0]["identity"]["model"]["revision"] == cfg.reward.kwargs.aesthetic.model_revision
@@ -758,7 +758,7 @@ def test_snapshot_materialization_uses_all_four_pinned_revisions(monkeypatch) ->
     )
     assert materialized_reward_models[1].model_config["model_name"].startswith("/immutable/")
     assert "/immutable/" not in json.dumps(
-        [sana_report.reward_model_record(model) for model in materialized_reward_models],
+        [model.to_report_record() for model in materialized_reward_models],
     )
 
 

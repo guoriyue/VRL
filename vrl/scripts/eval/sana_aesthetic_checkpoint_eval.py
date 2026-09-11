@@ -200,9 +200,7 @@ def main(argv: list[str] | None = None) -> None:
         "sampling": sampling,
         "scheduler_protocol": dict(SCHEDULER_PROTOCOL),
         "execution": {"generation_device": str(device)},
-        "rewards": [
-            sana_report.reward_model_record(reward_model) for reward_model in reward_models
-        ],
+        "rewards": [reward_model.to_report_record() for reward_model in reward_models],
         "checkpoints": [_checkpoint_record(target, run_dir) for target in targets],
         "samples": {
             "path": str(sana_report.SAMPLES_RELATIVE_PATH),
