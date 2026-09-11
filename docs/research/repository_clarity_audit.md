@@ -3194,3 +3194,19 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 462 execution/orchestration tests passed, including invalid
   request versions through dataclasses.replace and preserved None/zero/positive
   versions. Touched-file Ruff/diff checks passed. Full review remains open.
+
+## Initialize the rank group before RNG collectives
+
+- execute_batch called _synchronize_rank_rng before load_policy, although
+  load_policy owns rank-group initialization. A cold multi-rank worker could
+  therefore query/broadcast through an uninitialized default group. Move RNG
+  synchronization after successful loading, also keeping failed model builds
+  out of this collective. No new helper or state is introduced.
+- Keep _synchronize_rank_rng: it owns the shared multi-rank RNG operation.
+  Keep the two execution entrypoints' version-result adaptations distinct:
+  batch execution returns wire errors while pipelined execution raises typed
+  errors. Their similar text alone does not justify a new adapter class.
+- Validation: 220 execution/launcher tests passed. A cold-load failure regression
+  verifies init/build/cleanup occur without entering the RNG collective.
+  Touched-file Ruff/diff checks passed; no multi-GPU training claim is made.
+  Repository-wide review remains incomplete.

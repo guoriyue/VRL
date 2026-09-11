@@ -314,12 +314,13 @@ class GenerationWorkerCore:
         )
 
     def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
-        self._synchronize_rank_rng()
         self._memory_parking.require_active(
             "execute_batch",
             executor=self.executor,
         )
         self.load_policy()
+        # Loading owns rank-group initialization, including after cold eviction.
+        self._synchronize_rank_rng()
         request = envelope.request
         batch = envelope.batch
         runtime_debug = request.runtime_debug
