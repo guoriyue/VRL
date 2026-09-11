@@ -4158,3 +4158,16 @@ this combined regression is compatibility evidence, not architectural completion
 - Strategy and FSDP suites passed: 72 passed, two skipped, dependency warnings.
   Touched-file Ruff checks passed. No new compile support or multi-GPU validation
   is claimed; the overall repository audit remains incomplete.
+
+## Parking helper review and capability-based wrapping diagnostic
+
+- Retain the strategy tensor/module migration helpers after reviewing callers:
+  module enumeration includes gradients; in-place tree moves deduplicate tensor
+  identity and record original devices; DTensor moves preserve the wrapper while
+  relocating only local shards. These functions remove real shared complexity.
+- Remove family names and the old sprint reference from the missing-trainable-root
+  diagnostic. State the actual required interfaces (`trainable_modules` and
+  `set_module_root`) instead. Validation remains capability-based and its exception
+  type is unchanged; no family support or device movement behavior is modified.
+- Strategy/FSDP tests: 72 passed, two skipped, dependency warnings. Touched-file
+  Ruff checks pass. The repository-wide audit remains incomplete.

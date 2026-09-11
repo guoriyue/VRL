@@ -588,8 +588,8 @@ def _trainable_module_handles(model: Any) -> list[tuple[str, Any, Any]]:
         raise NotImplementedError(
             "multi-GPU model wrapping needs a non-empty `trainable_modules` mapping "
             f"and a `set_module_root` writer; {type(model).__name__} exposes no "
-            "explicit trainable roots. AR families (janus_pro / nextstep_1) need "
-            "explicit trainable roots first (SPRINT_multi_gpu_training.md §5).",
+            "explicit trainable roots. Define the model's trainable_modules mapping "
+            "and set_module_root(name, module) before distributed wrapping.",
         )
     set_root = getattr(model, "set_module_root", None)
     if not callable(set_root):
