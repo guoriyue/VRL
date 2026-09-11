@@ -283,7 +283,7 @@ class GpuBusyReport:
             gap_kernels = by_dev.get(gap_dev, [])
 
             gaps = _idle_gaps(conn, gap_kernels, win, top=top_gaps, min_gap_ns=min_gap_ns)
-            nvtx = _nvtx_attribution(conn, gap_kernels, top=top_nvtx)
+            nvtx = _nvtx_attribution(conn, gap_kernels, win, top=top_nvtx)
 
             provenance = ReportProvenance(
                 source_path=str(path),
@@ -675,14 +675,16 @@ def _idle_gaps(
 def _nvtx_attribution(
     conn: sqlite3.Connection,
     kernels: Sequence[Interval],
+    window: Interval,
     *,
     top: int,
 ) -> list[NvtxBusy]:
     """Per-NVTX-name kernel-union busy, for the chosen device.
 
     Groups every occurrence of a range *name* (e.g. ``denoise_dit_forward`` x T),
-    sums each occurrence's wall, and unions the device kernels clipped to those
-    occurrences. Returns the ``top`` names by summed wall.
+    clips occurrences to the report window, sums their wall, and unions the
+    device kernels clipped to those occurrences. Returns the ``top`` names by
+    summed wall; occurrences outside the window are excluded.
     """
 
     if not _has_table(conn, "NVTX_EVENTS"):
@@ -692,9 +694,11 @@ def _nvtx_attribution(
     ).fetchall()
     by_name: dict[str, list[Interval]] = {}
     for text, start, end in rows:
+        start = max(int(start), window[0])
+        end = min(int(end), window[1])
         if end <= start:
             continue
-        by_name.setdefault(str(text), []).append((int(start), int(end)))
+        by_name.setdefault(str(text), []).append((start, end))
 
     out: list[NvtxBusy] = []
     for name, spans in by_name.items():

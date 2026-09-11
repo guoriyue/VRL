@@ -6439,3 +6439,16 @@ The broader repository audit remains incomplete.
 - Report suite: 30 passed. CLI --help and SQLite-fixture-to-text/JSON smoke passed.
   Touched-file Ruff and diff checks pass. No new real nsys export or GPU capture
   was run; broader repository audit remains incomplete.
+
+## NVTX attribution uses the same report window as kernel busy time
+
+- Pass the selected window into _nvtx_attribution, clip each occurrence before
+  grouping, and exclude nonoverlapping occurrences. Previously kernels were
+  window-clipped while the NVTX wall denominator and ranking covered the whole
+  capture, yielding misleading fractions for explicit or named windows.
+- Keep per-device unions, per-occurrence wall sums and the separate attribution
+  function; nested ranges still must not be added into an overall wall fraction.
+  No new class or schema keys. Partial ranges count as intersecting occurrences.
+- Window-clipped denominator and outside-window regressions both failed before
+  the fix. Report suite: 31 passed. Touched-file Ruff and diff checks pass.
+  Verification uses SQLite fixtures, not a new nsys capture; broader audit open.

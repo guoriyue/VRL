@@ -162,6 +162,16 @@ def test_explicit_window_clips_busy(tmp_path) -> None:
     (dev,) = rep.per_device
     assert dev.busy_ns == 200
     assert dev.wall_ns == 500
+    (stage,) = rep.nvtx
+    assert stage.summed_wall_ns == 500
+    assert stage.union_busy_ns == 200
+    assert stage.busy_fraction == pytest.approx(200 / 500)
+
+
+def test_nvtx_attribution_excludes_ranges_outside_report_window(tmp_path) -> None:
+    path = _make_db(tmp_path / "cap.sqlite")
+    report = GpuBusyReport.from_capture(path, window=(900, 1000))
+    assert report.nvtx == ()
 
 
 def test_multi_device_busy_is_per_device(tmp_path) -> None:
