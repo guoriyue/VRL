@@ -6060,3 +6060,16 @@ The broader repository audit remains incomplete.
   replay alignment, dtype preservation and retry/terminal failure behavior.
   These are component checks, not a complete distributed generation campaign.
   Whole-repository completion remains unproven.
+
+## Engine aggregate uses asyncio's existing awaitable adapter
+
+- Remove EngineCallRef._gather's local wait_one coroutine, which only awaited its
+  argument. Pass each rank ref to ensure_future directly. Inspected the installed
+  Python implementation: ensure_future already wraps generic __await__ objects.
+- Keep EngineCallRef, uniform_rank_result and rank_handles as aggregate,
+  cross-rank agreement and lifecycle-view boundaries. Preserve sibling task/ref
+  cancellation and rank-order result selection; no replacement adapter is added.
+- Engine and weight-sync suites: 55 passed with one Ray dependency warning,
+  including custom awaitable refs and a real Ray shared-object weight-sync check.
+  Touched-file Ruff and diff checks pass. No cross-node performance claim;
+  broader repository audit remains incomplete.

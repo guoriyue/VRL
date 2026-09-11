@@ -52,10 +52,7 @@ class EngineCallRef:
         return self._gather().__await__()
 
     async def _gather(self) -> Any:
-        async def wait_one(ref: Any) -> Any:
-            return await ref
-
-        tasks = [asyncio.ensure_future(wait_one(ref)) for ref in self.child_refs]
+        tasks = [asyncio.ensure_future(ref) for ref in self.child_refs]
         try:
             results = await asyncio.gather(*tasks)
         except BaseException:
