@@ -69,7 +69,10 @@ def resolve_artifact_path(
         return path.resolve()
     if any(part == ".." for part in path.parts):
         raise ArtifactManifestError(f"artifact paths must stay under data root: {text}")
-    return (root / path).resolve()
+    resolved_path = (root / path).resolve()
+    if not resolved_path.is_relative_to(root):
+        raise ArtifactManifestError(f"artifact paths must stay under data root: {text}")
+    return resolved_path
 
 
 def coerce_data_root(value: str | Path | None) -> Path:

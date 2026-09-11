@@ -1769,3 +1769,21 @@ is not a repository-wide completion claim or a mandate to inline short functions
   sampling values and invalid sample indices, alongside existing seed/path and
   geometry tests. Touched-file Ruff and diff checks passed. No upstream inference
   or repository-wide completion claim follows from these tests.
+
+## Shared artifact path boundary after symlink resolution
+
+- Reviewed utils JSON, lifecycle, memory and artifact helpers against consumers.
+  Keep atomic JSON replacement separate from trainer diagnostic append semantics;
+  keep recursive tensor summaries distinct from generation scalar debug conversion.
+  Keep artifact resolution shared by manifest validation and reward references.
+- Found relative artifact paths rejecting lexical '..' but allowing symlinks to
+  resolve outside data_root despite the stated containment contract. Verify the
+  resolved path remains relative to the canonical root. Explicitly allowed
+  absolute paths and internal symlinks retain their behavior.
+- No new path-policy object or constant. DATA_ROOT_ENV and IMAGE_SUFFIXES remain
+  environment/schema taxonomy boundaries; no business vocabulary moved into flow.
+- Validation: 89 data tests and 27 Codex image-QA tests passed. New tests exercise
+  external symlink rejection, internal symlink acceptance and explicit absolute
+  paths. Touched-file Ruff and diff checks passed. This is path resolution, not
+  protection against filesystem mutation after resolution. Existing manifests
+  relying on relative symlinks outside data_root now fail the declared policy.

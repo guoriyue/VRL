@@ -188,3 +188,26 @@ def test_setup_cli_creates_ignored_external_dirs(
 
     assert (data_root / "video_world" / "references").is_dir()
     assert (data_root / "video_world" / "targets").is_dir()
+
+
+def test_relative_artifact_symlink_must_remain_under_data_root(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    root.mkdir()
+    outside = tmp_path / "outside.ppm"
+    _write_ppm(outside)
+    (root / "reference.ppm").symlink_to(outside)
+    with pytest.raises(ArtifactManifestError, match="stay under data root"):
+        resolve_artifact_path("reference.ppm", data_root=root)
+
+
+def test_artifact_symlink_within_root_and_explicit_absolute_path_remain_supported(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "data"
+    root.mkdir()
+    reference = root / "reference.ppm"
+    _write_ppm(reference)
+    (root / "alias.ppm").symlink_to(reference)
+    assert resolve_artifact_path("alias.ppm", data_root=root) == reference
+    outside = tmp_path / "outside.ppm"
+    assert resolve_artifact_path(outside, data_root=root, allow_absolute=True) == outside
