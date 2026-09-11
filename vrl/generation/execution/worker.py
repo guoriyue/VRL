@@ -694,7 +694,23 @@ class GenerationWorkerCore:
     ) -> dict[str, Any]:
         if not runtime_debug or batch_output is None:
             return {}
-        return _batch_output_debug_metrics(batch_output)
+        metrics: dict[str, Any] = {}
+
+        stage_durations = getattr(batch_output, "stage_durations", None)
+        if isinstance(stage_durations, Mapping):
+            metrics["stage_durations_s"] = {
+                str(key): float(value) for key, value in stage_durations.items()
+            }
+
+        engine_counters = getattr(batch_output, "engine_counters", None)
+        if isinstance(engine_counters, Mapping):
+            metrics["engine_counters"] = _debug_metric_value(dict(engine_counters))
+
+        peak_memory_mb = getattr(batch_output, "peak_memory_mb", None)
+        if peak_memory_mb is not None:
+            metrics["peak_memory_mb"] = float(peak_memory_mb)
+
+        return metrics
 
     @staticmethod
     def _batch_memory_reading(batch_output: Any) -> BatchMemoryReading | None:
@@ -888,26 +904,6 @@ def _require_chunked_executor(executor: Any) -> GenerationBatchExecutor:
             "forward_batch(...) and gather_batches(...)",
         )
     return executor
-
-
-def _batch_output_debug_metrics(output: Any) -> dict[str, Any]:
-    metrics: dict[str, Any] = {}
-
-    stage_durations = getattr(output, "stage_durations", None)
-    if isinstance(stage_durations, Mapping):
-        metrics["stage_durations_s"] = {
-            str(key): float(value) for key, value in stage_durations.items()
-        }
-
-    engine_counters = getattr(output, "engine_counters", None)
-    if isinstance(engine_counters, Mapping):
-        metrics["engine_counters"] = _debug_metric_value(dict(engine_counters))
-
-    peak_memory_mb = getattr(output, "peak_memory_mb", None)
-    if peak_memory_mb is not None:
-        metrics["peak_memory_mb"] = float(peak_memory_mb)
-
-    return metrics
 
 
 def _debug_metric_value(value: Any) -> Any:
