@@ -13,8 +13,8 @@ from vrl.algorithms.types import (
     TrainStepMetrics,
 )
 from vrl.trainers.metrics_io import (
+    MetricsCSV,
     OnlineMetricRow,
-    prepare_metrics_csv,
 )
 
 _EXPECTED_FIXED_COLUMNS = (
@@ -288,17 +288,17 @@ def test_online_metric_row_rejects_invalid_integer_fields(
         OnlineMetricRow.from_step_metrics(epoch, metrics)  # type: ignore[arg-type]
 
 
-def test_prepare_metrics_csv_rejects_resume_across_schema_change(tmp_path) -> None:
+def test_metrics_csv_rejects_resume_across_schema_change(tmp_path) -> None:
     """Appending new-schema rows under an old header silently shifts columns."""
 
     path = tmp_path / "metrics.csv"
     columns = ("epoch", "loss", "approx_kl")
 
-    prepare_metrics_csv(path, columns, resume_at=None)
-    prepare_metrics_csv(path, columns, resume_at=("epoch", 0))
+    MetricsCSV(path, columns, resume_at=None)
+    MetricsCSV(path, columns, resume_at=("epoch", 0))
 
     with pytest.raises(ValueError, match="different metrics schema"):
-        prepare_metrics_csv(
+        MetricsCSV(
             path,
             ("epoch", "loss", "active_clip_fraction", "approx_kl"),
             resume_at=("epoch", 0),
@@ -309,42 +309,42 @@ def test_prepare_metrics_csv_rejects_resume_across_schema_change(tmp_path) -> No
     "columns",
     [(), ("bad,column", "loss")],
 )
-def test_prepare_metrics_csv_rejects_invalid_columns(tmp_path, columns) -> None:
+def test_metrics_csv_rejects_invalid_columns(tmp_path, columns) -> None:
     with pytest.raises(ValueError, match="columns"):
-        prepare_metrics_csv(tmp_path / "metrics.csv", columns, resume_at=None)
+        MetricsCSV(tmp_path / "metrics.csv", columns, resume_at=None)
 
 
-def test_prepare_metrics_csv_discards_rows_not_covered_by_checkpoint(tmp_path) -> None:
+def test_metrics_csv_discards_rows_not_covered_by_checkpoint(tmp_path) -> None:
     path = tmp_path / "metrics.csv"
     columns = ("epoch", "loss")
     header = "epoch,loss\n"
     path.write_text(header + "38,1.0\n39,0.9\n40,0.8\n41,0.7\n42,0")
 
-    prepare_metrics_csv(path, columns, resume_at=("epoch", 40))
+    MetricsCSV(path, columns, resume_at=("epoch", 40))
 
     assert path.read_text() == header + "38,1.0\n39,0.9\n"
 
 
-def test_prepare_metrics_csv_rejects_wrong_row_width(tmp_path) -> None:
+def test_metrics_csv_rejects_wrong_row_width(tmp_path) -> None:
     path = tmp_path / "metrics.csv"
     path.write_text("epoch,loss\n0\n")
 
     with pytest.raises(ValueError, match="has 1 columns; expected 2"):
-        prepare_metrics_csv(path, ("epoch", "loss"), resume_at=("epoch", 1))
+        MetricsCSV(path, ("epoch", "loss"), resume_at=("epoch", 1))
 
 
 @pytest.mark.parametrize(
     "rows",
     ["1,1.0\n0,0.9\n", "0.5,1.0\n"],
 )
-def test_prepare_metrics_csv_rejects_invalid_resume_positions(tmp_path, rows) -> None:
+def test_metrics_csv_rejects_invalid_resume_positions(tmp_path, rows) -> None:
     path = tmp_path / "metrics.csv"
     columns = ("epoch", "loss")
     header = "epoch,loss\n"
     path.write_text(header + rows)
 
     with pytest.raises(ValueError, match=r"integer|strictly increasing"):
-        prepare_metrics_csv(path, columns, resume_at=("epoch", 2))
+        MetricsCSV(path, columns, resume_at=("epoch", 2))
 
 
 def test_full_precision_metrics_detect_changes_hidden_by_display_rounding() -> None:

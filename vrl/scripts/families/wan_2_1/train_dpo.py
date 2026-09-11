@@ -143,7 +143,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         validate_checkpoint_compatibility,
     )
     from vrl.trainers.data import collate_preference, load_pickapic
-    from vrl.trainers.metrics_io import prepare_metrics_csv
+    from vrl.trainers.metrics_io import MetricsCSV
     from vrl.trainers.offline import OfflineDPOTrainer
 
     trainer_section = built.root.trainer
@@ -275,7 +275,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from vrl.trainers.offline.dpo import DPOStepMetrics
 
     metric_fields = tuple(f.name for f in _dc_fields(DPOStepMetrics))
-    prepare_metrics_csv(
+    metrics_csv = MetricsCSV(
         csv_path,
         ("step", *metric_fields),
         resume_at=(
@@ -334,9 +334,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
                 m.raw_ref_loss,
                 m.grad_norm,
             )
-            with open(csv_path, "a") as f:
-                row = ",".join(f"{getattr(m, name):.6f}" for name in metric_fields)
-                f.write(f"{step},{row}\n")
+            row = ",".join(f"{getattr(m, name):.6f}" for name in metric_fields)
+            metrics_csv.append(f"{step},{row}\n")
 
         if checkpointing_steps > 0 and (step + 1) % checkpointing_steps == 0:
             ckpt = out_dir / f"checkpoint-{step + 1}"

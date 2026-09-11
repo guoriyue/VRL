@@ -147,8 +147,8 @@ def test_matching_identity_gates_model_and_threads_restore_and_saves(
     monkeypatch.setattr(checkpointing, "restore_rng_state", lambda _state: None)
     monkeypatch.setattr(checkpointing, "save_resolved_config", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        "vrl.trainers.metrics_io.prepare_metrics_csv",
-        lambda *_args, **_kwargs: None,
+        "vrl.trainers.metrics_io.MetricsCSV",
+        lambda *_args, **_kwargs: SimpleNamespace(append=lambda _row: None),
     )
     monkeypatch.setattr(checkpointing, "capture_rng_state", lambda: {})
     monkeypatch.setattr(checkpointing, "save_training_checkpoint", _save)
