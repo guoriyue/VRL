@@ -6480,3 +6480,17 @@ The broader repository audit remains incomplete.
   staged/published verification and cleanup after final-verification failure.
   These fixture-level tests do not prove a fresh real CountGD installation.
   Broader repository audit remains incomplete.
+
+## SANA score summaries rely on nonempty groups and population statistics
+
+- Remove the unreachable empty-aesthetic branch: each grouped entry is created
+  only while appending a sample row. Use statistics.pstdev directly; it already
+  returns zero for a singleton, so the conditional duplicates its behavior.
+- Keep summarize_scores shared between evaluation and persisted-report checking.
+  Keep fixed evaluation reward selection separate from RewardModelDefinition's
+  per-definition record projection; no misleading single-object constructor for
+  a collection and no new report wrapper. Protocol pins and seed-grid identities
+  remain explicit reproducibility boundaries.
+- SANA checkpoint evaluation and curve-verdict suites: 45 passed. Empty and
+  singleton summary smoke checks passed. Touched-file Ruff and diff checks pass.
+  No checkpoint inference run; broader repository audit remains incomplete.

@@ -294,9 +294,7 @@ def summarize_scores(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for (epoch, label), group in sorted(grouped.items()):
         aesthetic = [float(row["r_aesthetic"]) for row in group]
         pickscore = [float(row["r_pickscore"]) for row in group]
-        if not aesthetic:
-            continue
-        aesthetic_std = statistics.pstdev(aesthetic) if len(aesthetic) > 1 else 0.0
+        aesthetic_std = statistics.pstdev(aesthetic)
         metrics.append(
             {
                 "checkpoint_label": label,
