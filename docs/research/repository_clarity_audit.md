@@ -1113,3 +1113,21 @@ contained guesses. Removed both:
 - Validation: 516 continuous orchestration/config tests passed, including both
   wait fields with all non-finite/non-positive cases. Touched-file Ruff and diff
   whitespace checks pass.
+
+## Preference dataset loading contract
+
+- Removed the unused streaming argument from PickAPicPreferenceDataset.from_hub.
+  The returned Dataset requires column access, indexing and len; handing an
+  IterableDataset directly to it was not a supported execution path. A bounded
+  max_samples request still streams its prefix and materializes indexable rows.
+- Forwarded cache_dir in the bounded branch, which previously ignored the caller's
+  cache location. Full loading and bounded loading now honor the same setting.
+- Retained PreferenceBatch.collate on its batch owner and the Dataset/DataLoader
+  adapter shape. No loader class, new mode or compatibility alias introduced.
+  Earlier audit wording referring to a free collate_preference is historical;
+  current source already uses the classmethod at the DPO DataLoader callsite.
+- Validation: 5 preference-loader and DPO checkpoint-entrypoint tests passed.
+  The environment lacks the Hugging Face datasets implementation, so loader tests
+  use an explicit module-boundary fake for download/materialization and exercise
+  the real preference wrapper. No network dataset load was performed. Touched-file
+  Ruff and diff whitespace checks pass.

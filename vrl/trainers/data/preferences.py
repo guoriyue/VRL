@@ -98,14 +98,13 @@ class PickAPicPreferenceDataset(Dataset):
         cls,
         split: str = "train",
         cache_dir: str | None = None,
-        streaming: bool = False,
         max_samples: int | None = None,
         resolution: int = 512,
         random_crop: bool = False,
         no_hflip: bool = False,
         dataset_name: str = "yuvalkirstain/pickapic_v2",
     ) -> PickAPicPreferenceDataset:
-        """One-liner loader: returns a ready-to-iterate PyTorch Dataset.
+        """Load an indexable preference dataset for a shuffled DataLoader.
 
         Requires ``datasets`` and ``torchvision``. The full train split is
         ~190 GB across ~387 parquet shards, so pass ``max_samples`` for a bounded
@@ -117,12 +116,12 @@ class PickAPicPreferenceDataset(Dataset):
 
         from datasets import Dataset, load_dataset
 
-        if max_samples is not None and not streaming:
+        if max_samples is not None:
             # Stream the first `max_samples` rows, then materialise a map-style
             # Dataset. A plain `load_dataset(split="train[:N]")` (or a post-hoc
             # `.select`) downloads EVERY shard first just to keep N rows — useless on
             # a 190 GB dataset. Streaming reads only the shards actually consumed.
-            stream = load_dataset(dataset_name, split=split, streaming=True)
+            stream = load_dataset(dataset_name, split=split, cache_dir=cache_dir, streaming=True)
             rows = list(itertools.islice(stream, max_samples))
             ds = Dataset.from_list(rows)
         else:
@@ -130,7 +129,7 @@ class PickAPicPreferenceDataset(Dataset):
                 dataset_name,
                 split=split,
                 cache_dir=cache_dir,
-                streaming=streaming,
+                streaming=False,
             )
         return cls(
             ds,
