@@ -567,6 +567,10 @@ def _erase_meaningless_spelling(
     ):
         renamed_section = _section(actual, *path)
         if isinstance(renamed_section, dict) and old in renamed_section:
+            if new in renamed_section:
+                raise ValueError(
+                    f"ambiguous SANA config at {'.'.join(path)}: both {old!r} and {new!r}"
+                )
             renamed_section[new] = renamed_section.pop(old)
 
     # 2026-08 sharing-grammar simplification: allow_overlap was retired and the

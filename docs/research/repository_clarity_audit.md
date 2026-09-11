@@ -6494,3 +6494,15 @@ The broader repository audit remains incomplete.
 - SANA checkpoint evaluation and curve-verdict suites: 45 passed. Empty and
   singleton summary smoke checks passed. Touched-file Ruff and diff checks pass.
   No checkpoint inference run; broader repository audit remains incomplete.
+
+## Historical report config renames reject ambiguous ownership
+
+- Reject a persisted config containing both old and new batch-vocabulary keys
+  before moving the old value. Previously normalization overwrote the new value,
+  potentially erasing a behavioral difference rather than a spelling difference.
+- Keep the three explicit historical mappings as compatibility-schema boundaries
+  and preserve single-spelling normalization. No generic migration framework or
+  new accepted spelling. File publication and provenance validation stay separate.
+- SANA checkpoint/report suites: 48 passed, including three simultaneous-spelling
+  cases verifying the conflicting section is not overwritten. Touched-file Ruff
+  and diff checks pass. Broader repository audit remains incomplete.

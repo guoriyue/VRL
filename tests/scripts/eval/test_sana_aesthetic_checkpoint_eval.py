@@ -1104,3 +1104,22 @@ def test_generate_images_rejects_materialized_source_drift_before_generation(
 
     assert built is True
     assert generated is False
+
+
+@pytest.mark.parametrize(
+    "path,old,new",
+    [
+        (("rollout",), "samples_per_chunk", "samples_per_generation_batch"),
+        (("distributed", "rollout"), "chunk_placement_strategy", "batch_placement_strategy"),
+        (("actor",), "replay_samples_per_chunk", "samples_per_replay_batch"),
+    ],
+)
+def test_historical_config_rename_rejects_simultaneous_spellings(path, old, new):
+    actual = {}
+    section = actual
+    for key in path:
+        section = section.setdefault(key, {})
+    section.update({old: 1, new: 2})
+    with pytest.raises(ValueError, match="ambiguous SANA config"):
+        sana_report._erase_meaningless_spelling(actual, {})
+    assert section == {old: 1, new: 2}
