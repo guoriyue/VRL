@@ -1357,3 +1357,16 @@ contained guesses. Removed both:
   fail before child construction and None/empty mappings retain defaults. Child
   models are test doubles; no real video model was loaded. Touched-file Ruff and
   git diff --check pass.
+
+## UnifiedReward video reader lifetime and defaults
+
+- Put VideoCapture release in _sample_frames' finally block. Metadata reads,
+  frame reads and RGB/PIL conversion failures now release the capture as normal
+  completion does, while propagating the original error.
+- Moved the single-use num_frames/max_new_tokens defaults into their constructor
+  lookups. Kept the checkpoint identifier as model identity, prompt/range grammar
+  in the named asset module, and parsing/rubric/media functions as format adapters.
+  No new reader class, frame algorithm, prompt, score or config key change.
+- Validation: 13 UnifiedReward tests passed. Added capture-boundary tests for
+  successful RGB extraction and three decoder/conversion failure points; no
+  real model loading or video decoder integration run. Ruff and diff checks pass.

@@ -146,3 +146,50 @@ def test_config_validates() -> None:
         },
     )
     RewardConfig.from_cfg(cfg)
+
+
+@pytest.mark.parametrize("failure_at", [None, "get", "read", "convert"])
+def test_frame_sampling_releases_capture_on_success_and_failure(monkeypatch, failure_at) -> None:
+    import cv2
+    import numpy as np
+
+    from vrl.rewards.models.unified_reward_video import _sample_frames
+
+    failure = RuntimeError("decoder failed")
+
+    class Capture:
+        releases = 0
+
+        def get(self, key):
+            if failure_at == "get":
+                raise failure
+            return 1
+
+        def isOpened(self):
+            return True
+
+        def read(self):
+            if failure_at == "read":
+                raise failure
+            return True, np.zeros((2, 2, 3), dtype=np.uint8)
+
+        def release(self):
+            self.releases += 1
+
+    capture = Capture()
+    monkeypatch.setattr(cv2, "VideoCapture", lambda path: capture)
+    if failure_at == "convert":
+
+        def broken_conversion(*args):
+            raise failure
+
+        monkeypatch.setattr(cv2, "cvtColor", broken_conversion)
+    if failure_at:
+        with pytest.raises(RuntimeError) as caught:
+            _sample_frames("video.mp4", 1)
+        assert caught.value is failure
+    else:
+        frames = _sample_frames("video.mp4", 1)
+        assert len(frames) == 1
+        assert frames[0].mode == "RGB"
+    assert capture.releases == 1

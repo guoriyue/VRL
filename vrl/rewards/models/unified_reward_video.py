@@ -39,8 +39,6 @@ from vrl.utils.logging import init_logger, kv
 logger = init_logger(__name__)
 
 _DEFAULT_REWARD_MODEL = "CodeGoat24/UnifiedReward-2.0-qwen-7b"
-_DEFAULT_NUM_FRAMES = 16
-_DEFAULT_MAX_NEW_TOKENS = 256
 
 
 class UnifiedRewardVideoModel:
@@ -55,9 +53,9 @@ class UnifiedRewardVideoModel:
         )
         self.dtype = resolve_torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
         self.device = str(self.worker_config.get("device", "cuda:0"))
-        self.num_frames = int(self.worker_config.get("num_frames", _DEFAULT_NUM_FRAMES))
+        self.num_frames = int(self.worker_config.get("num_frames", 16))
         self.max_new_tokens = int(
-            self.worker_config.get("max_new_tokens", _DEFAULT_MAX_NEW_TOKENS),
+            self.worker_config.get("max_new_tokens", 256),
         )
         self.local_files_only = bool(self.worker_config.get("local_files_only", False))
         self.problem_template = _load_rubric(
@@ -186,24 +184,25 @@ def _sample_frames(video_path: str, num_frames: int) -> list[Any]:
     from PIL import Image
 
     capture = cv2.VideoCapture(video_path)
-    total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    if total <= 0:
+    try:
+        total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total <= 0:
+            return []
+        wanted = {int(i * total / num_frames) for i in range(num_frames)}
+        frames: list[Any] = []
+        index = 0
+        while capture.isOpened():
+            ok, frame = capture.read()
+            if not ok:
+                break
+            if index in wanted:
+                frames.append(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+            index += 1
+            if len(frames) >= num_frames:
+                break
+        return frames
+    finally:
         capture.release()
-        return []
-    wanted = {int(i * total / num_frames) for i in range(num_frames)}
-    frames: list[Any] = []
-    index = 0
-    while capture.isOpened():
-        ok, frame = capture.read()
-        if not ok:
-            break
-        if index in wanted:
-            frames.append(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
-        index += 1
-        if len(frames) >= num_frames:
-            break
-    capture.release()
-    return frames
 
 
 __all__ = ["UnifiedRewardVideoModel"]
