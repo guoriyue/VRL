@@ -218,7 +218,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         "schema_version": REPORT_SCHEMA_VERSION,
         "resolved_config": {
             "path": str(config_path),
-            "sha256": _sha256(config_path),
+            "sha256": sha256_file(config_path),
         },
         "model": {
             "family": "sana",
@@ -372,7 +372,7 @@ def _side_by_side(base_image: Any, current_image: Any) -> Any:
 def _checkpoint_record(checkpoint_path: Path, checkpoint_meta: dict[str, Any]) -> dict[str, Any]:
     return {
         "path": str(checkpoint_path),
-        "sha256": _sha256(checkpoint_path),
+        "sha256": sha256_file(checkpoint_path),
         "bytes": checkpoint_path.stat().st_size,
         "meta": checkpoint_meta,
     }
@@ -381,14 +381,9 @@ def _checkpoint_record(checkpoint_path: Path, checkpoint_meta: dict[str, Any]) -
 def _artifact_record(path: Path, output_dir: Path) -> dict[str, Any]:
     return {
         "path": str(path.relative_to(output_dir)),
-        "sha256": _sha256(path),
+        "sha256": sha256_file(path),
         "bytes": path.stat().st_size,
     }
-
-
-# Canonical per-file digest lives in vrl.rewards.inference; keep the private name
-# as an alias so the pinned test ref (checkpoint_compare._sha256) keeps resolving.
-_sha256 = sha256_file
 
 
 if __name__ == "__main__":

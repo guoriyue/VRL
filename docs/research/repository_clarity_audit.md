@@ -6580,3 +6580,18 @@ The broader repository audit remains incomplete.
   and continuous schedule tests: 118 passed, one Ray warning. Strict/general
   orchestration and topology tests: 37 passed. These tests do not establish
   end-to-end training performance or completion of the repository-wide audit.
+
+## Remove SANA comparison digest alias retained solely for tests
+
+- Remove _sha256 = sha256_file and its stale ownership comment; all three
+  production callers now use the shared artifact helper's actual name.
+- Manifest tests compute expected digests directly with hashlib over fixture
+  bytes, independently of the production helper, instead of preserving a
+  private CLI alias for test access. Keep streaming file hashing centralized
+  in artifacts.py for real checkpoint and media payloads.
+- Reviewed utils deadline/JSON/artifact helpers: their shared timeout,
+  atomic-publication and path-resolution boundaries remain useful without a
+  utility wrapper class. DATA_ROOT_ENV names an environment boundary and
+  IMAGE_SUFFIXES is an isolated extension taxonomy; neither is workflow policy.
+- Comparison suite: 31 passed; touched-file Ruff and diff checks pass. No report
+  format or digest algorithm change. Broader repository audit remains open.

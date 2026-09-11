@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -261,15 +262,20 @@ def test_run_generates_base_before_strict_restore_and_current(
     assert manifest["execution"]["strict_trainable_state_restore"] is True
     assert manifest["scheduler_protocol"] == checkpoint_compare.SCHEDULER_PROTOCOL
     assert manifest["checkpoint"]["meta"]["uses_lora"] is False
-    assert manifest["checkpoint"]["sha256"] == checkpoint_compare._sha256(
-        checkpoint.checkpoint_path,
+    assert (
+        manifest["checkpoint"]["sha256"]
+        == hashlib.sha256(
+            checkpoint.checkpoint_path.read_bytes(),
+        ).hexdigest()
     )
     for name, path in (
         ("base", base_path),
         ("current", current_path),
         ("side_by_side", side_by_side_path),
     ):
-        assert manifest["artifacts"][name]["sha256"] == checkpoint_compare._sha256(path)
+        assert (
+            manifest["artifacts"][name]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        )
 
 
 def test_run_refuses_to_mix_artifacts_with_an_existing_comparison(
