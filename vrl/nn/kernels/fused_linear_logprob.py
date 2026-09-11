@@ -225,7 +225,7 @@ def fused_linear_logprob(
         )
     if token_ids.is_floating_point() or token_ids.is_complex() or token_ids.dtype == torch.bool:
         raise ValueError("token_ids must use an integer tensor dtype")
-    flat_hidden = hidden.reshape(-1, hidden.shape[-1])
+    flat_hidden = hidden.reshape(token_ids.numel(), hidden.shape[-1])
     flat_ids = token_ids.to(device=hidden.device, dtype=torch.long).reshape(-1)
     rows = (
         chunk_rows

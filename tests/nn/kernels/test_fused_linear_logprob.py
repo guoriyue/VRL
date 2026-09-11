@@ -252,3 +252,22 @@ def test_bias_gradient_accumulates_before_half_precision_overflow(device):
     )
     log_probs.backward(upstream)
     torch.testing.assert_close(bias.grad, torch.zeros_like(bias))
+
+
+@pytest.mark.parametrize("rows", [0, 2])
+def test_zero_feature_projection_matches_eager(rows):
+    hidden = torch.empty((rows, 0), dtype=torch.float64, requires_grad=True)
+    weight = torch.empty((3, 0), dtype=torch.float64, requires_grad=True)
+    bias = torch.tensor([0.1, 0.2, 0.3], dtype=torch.float64, requires_grad=True)
+    ids = torch.zeros(rows, dtype=torch.long)
+    actual = fused_linear_logprob(hidden, weight, ids, bias=bias, chunk_rows=1)
+    expected = (
+        F.log_softmax(F.linear(hidden, weight, bias), dim=-1)
+        .gather(-1, ids.unsqueeze(-1))
+        .squeeze(-1)
+    )
+    torch.testing.assert_close(actual, expected)
+    actual_grads = torch.autograd.grad(actual.sum(), (hidden, weight, bias))
+    expected_grads = torch.autograd.grad(expected.sum(), (hidden, weight, bias))
+    for actual_grad, expected_grad in zip(actual_grads, expected_grads, strict=True):
+        torch.testing.assert_close(actual_grad, expected_grad)

@@ -7254,3 +7254,17 @@ The broader repository audit remains incomplete.
 - No further production changes or benchmark claim. This verifies the shared
   bias-reduction fix with real GPU forward/backward execution; the broader
   repository clarity audit remains incomplete.
+
+## Fused projection flattening uses the known token count
+
+- Reshape hidden states with token_ids.numel() after leading-shape validation,
+  instead of asking reshape to infer a dimension from zero elements. This also
+  supports the valid zero-feature, bias-only F.linear case without a special
+  execution branch.
+- Empty and nonempty token-batch regressions both failed on ambiguous reshape
+  before the fix. Values and hidden/weight/bias gradients now match eager
+  float64 linear/log-softmax. Full fused suite: 30 passed. Touched-file Ruff and
+  diff checks pass.
+- Preserve chunk selection, existing dimension checks and numerical precision
+  policy. No new conversion helper or guessed shape default; broader repository
+  clarity audit remains incomplete.
