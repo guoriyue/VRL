@@ -1881,3 +1881,17 @@ Revisited scripts/common/factory.py alongside AlgorithmConfigContract: the exist
 factory structural review above remains relevant. Do not turn its dispatch branches
 into config facts merely to remove a local set; changing dispatch ownership requires
 tracing algorithm construction and evaluator selection together.
+
+## Categorical log-prob token identity boundary
+
+- Inspected shared math callers in replay and GLM/LlamaGen/paged token sampling.
+  Keep gather_categorical_log_probs as their common temperature/normalization
+  implementation; moving it onto one model would duplicate policy math.
+- Reject floating, complex and boolean token IDs before dtype/device conversion.
+  Previously an ID such as 1.9 silently selected token 1. Integer tensor widths
+  still convert to long for gather; no formula, chunking or temperature change.
+- No new validator function/class/constant introduced. Validation: 50 replay,
+  fused-linear log-prob and LlamaGen runner tests passed, including five invalid
+  dtype cases and an int32 numeric comparison. Touched-file Ruff and diff checks
+  passed. This protects the shared function's input boundary; it is not evidence
+  that current production samplers were emitting fractional token IDs.

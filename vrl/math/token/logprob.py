@@ -77,6 +77,9 @@ def gather_categorical_log_probs(
             f"got logits={tuple(logits.shape)} token_ids={tuple(token_ids.shape)}",
         )
 
+    if token_ids.is_floating_point() or token_ids.is_complex() or token_ids.dtype == torch.bool:
+        raise ValueError("token_ids must use an integer tensor dtype")
+
     temp = require_positive_temperature(temperature)
     vocab_size = logits.shape[-1]
     flat_logits = logits.reshape(-1, vocab_size)
