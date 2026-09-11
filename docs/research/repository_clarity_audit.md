@@ -5614,3 +5614,16 @@ Validation: 56 transfer/Ray-sync tests passed with one Ray environment warning,
 including real local Ray shared-state, ACK, cancellation and incomplete-bucket
 commit checks. This supports retaining these boundaries; it does not establish
 cross-node GPU throughput or finish the wider repository clarity audit.
+
+## Generation launch validation uses one sequence traversal
+
+- Merge identical list/tuple recursion in GenerationRuntimeLaunchContract while
+  preserving index-qualified error paths and accepted values. Correct the mapping
+  error to say mapping, matching the actual collections.abc.Mapping check.
+- Keep the launch contract and RayGenerationLaunchInputs as separate process/wire
+  boundaries. Keep the mapping-normalization helper and recursive validator: four
+  fields share normalization, and nested data must report its exact path. Pickle
+  validation remains at construction. No combined runtime/config class is added.
+- Existing runtime config, rollout launcher and worker checkpoint identity suites:
+  63 passed, three dependency warnings. Touched-file Ruff and git diff --check
+  pass. This local simplification does not complete the full repository audit.

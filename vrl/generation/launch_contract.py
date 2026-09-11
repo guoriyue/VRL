@@ -94,7 +94,7 @@ class GenerationRuntimeLaunchContract:
     @classmethod
     def _normalize_config_mapping(cls, value: Any, path: str) -> dict[str, Any]:
         if not isinstance(value, Mapping):
-            raise TypeError(f"{path} must be a dict, got {type(value).__name__}")
+            raise TypeError(f"{path} must be a mapping, got {type(value).__name__}")
         normalized = dict(value)
         cls._validate_serializable_config(normalized, path)
         return normalized
@@ -114,12 +114,7 @@ class GenerationRuntimeLaunchContract:
                 cls._validate_serializable_config(inner, f"{path}.{key}")
             return
 
-        if isinstance(value, list):
-            for index, inner in enumerate(value):
-                cls._validate_serializable_config(inner, f"{path}[{index}]")
-            return
-
-        if isinstance(value, tuple):
+        if isinstance(value, (list, tuple)):
             for index, inner in enumerate(value):
                 cls._validate_serializable_config(inner, f"{path}[{index}]")
             return
