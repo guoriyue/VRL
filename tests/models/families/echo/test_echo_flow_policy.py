@@ -23,7 +23,6 @@ from vrl.models.families.echo.model import (
     EchoModel,
     EchoReplayModel,
     EchoSamplingState,
-    _sigma_from_timestep,
 )
 from vrl.models.families.echo.runtime import EchoBatchExecutor
 
@@ -96,9 +95,9 @@ def _request(num_steps: int = 4) -> DenoiseRequest:
 
 def test_sigma_from_timestep_divides_and_clamps() -> None:
     like = torch.zeros(2, 1)
-    assert abs(float(_sigma_from_timestep(torch.tensor(500.0), 1000, like)) - 0.5) < 1e-6
+    assert abs(float(EchoModel._sigma_from_timestep(torch.tensor(500.0), 1000, like)) - 0.5) < 1e-6
     # sigma=0 is undefined for velocity; clamp keeps it strictly positive.
-    assert float(_sigma_from_timestep(torch.tensor(0.0), 1000, like)) > 0.0
+    assert float(EchoModel._sigma_from_timestep(torch.tensor(0.0), 1000, like)) > 0.0
 
 
 def test_forward_step_velocity_is_rectified_flow_of_x0() -> None:

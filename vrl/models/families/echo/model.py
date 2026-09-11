@@ -370,6 +370,19 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
 
     # -- forward_step --------------------------------------------------
 
+    @staticmethod
+    def _sigma_from_timestep(
+        t: torch.Tensor,
+        num_train_timesteps: int,
+        like: torch.Tensor,
+    ) -> torch.Tensor:
+        """Normalize the flow timestep in fp32 with a positive floor for velocity."""
+
+        sigma = torch.as_tensor(t, device=like.device, dtype=torch.float32) / float(
+            num_train_timesteps
+        )
+        return sigma.clamp_min(1e-6)
+
     def forward_step(self, state: EchoSamplingState, step_idx: int) -> dict[str, Any]:
         """One Echo velocity forward: predict x0, convert to flow-matching velocity.
 
@@ -382,7 +395,7 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
         td = self._transformer_dtype()
         latents = state.latents.to(td)
         t = state.timesteps[step_idx]
-        sigma = _sigma_from_timestep(t, state.num_train_timesteps, latents)
+        sigma = self._sigma_from_timestep(t, state.num_train_timesteps, latents)
         # Echo's wrapper takes sigma directly (its Modality.sigma), broadcast per batch.
         echo_sigma = sigma.reshape(-1).to(td)
         if echo_sigma.numel() == 1:
@@ -454,19 +467,6 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
         pixels = pixels.float()
         # VAE emits [-1, 1]; the rollout wire/reward path expects [0, 1].
         return ((pixels + 1.0) / 2.0).clamp_(0.0, 1.0)
-
-
-def _sigma_from_timestep(
-    t: torch.Tensor,
-    num_train_timesteps: int,
-    like: torch.Tensor,
-) -> torch.Tensor:
-    """Flow-match timestep -> sigma in (0, 1]; guards sigma=0."""
-
-    sigma = torch.as_tensor(t, device=like.device, dtype=torch.float32) / float(
-        num_train_timesteps
-    )
-    return sigma.clamp_min(1e-6)
 
 
 class EchoReplayModel(ReplayRolloutStubs, EchoModel):

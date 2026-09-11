@@ -3977,3 +3977,17 @@ this combined regression is compatibility evidence, not architectural completion
   dependency/test warnings were emitted. Touched-file Ruff checks pass after
   formatting. This does not claim a full pretrained GPU training validation or
   completion of the repository-wide audit.
+
+## Echo owns timestep-to-sigma conversion
+
+- Move `_sigma_from_timestep` onto `EchoModel`, adjacent to its sole production
+  caller `forward_step`. The replay subclass inherits that forward path, so both
+  rollout and replay retain the same normalization and positive sigma floor.
+  Update the existing focused tests to address the owning class.
+- Correct the docstring: the implementation normalizes in fp32 and clamps the
+  minimum; it does not enforce an upper bound of one. No numerical change or
+  additional validation is introduced. Keep the method as the named conversion
+  boundary and retain unrelated family loading adapters and architecture values.
+- All 21 Echo tests passed, including velocity/replay checks. Touched-file Ruff
+  checks pass. This is a local ownership/documentation cleanup, not a full model
+  training validation or completion of the repository-wide audit.
