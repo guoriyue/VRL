@@ -7035,3 +7035,17 @@ The broader repository audit remains incomplete.
   subprocess test. This is lifecycle evidence, not a full training benchmark.
 - No production changes are justified by this review; the broader repository
   clarity audit remains incomplete.
+
+## Profiler trace discovery recognizes explicit output suffixes
+
+- Keep _discover_trace_files as the TensorBoard trace filename adapter, but
+  restrict accepted files to .pt.trace.json and .pt.trace.json.gz. The broad
+  glob alone previously admitted temporary and backup suffixes into manifests.
+- A regression reproduced three unwanted files before the fix; it also covers
+  compressed/uncompressed outputs, another worker and a matching directory.
+  The profiler suite passed all 26 tests, with one PyTorch profiler warning.
+  Touched-file Ruff and diff checks pass.
+- No new class or constant table is needed for two format suffixes. Keep the
+  table-rendering helper's shared exception handling and artifact utilities'
+  shared path/hash contracts. Filename discovery does not validate JSON content
+  or prove trace completeness; the broader audit remains incomplete.

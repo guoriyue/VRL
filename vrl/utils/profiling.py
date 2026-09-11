@@ -307,7 +307,7 @@ def _discover_trace_files(trace_dir: Path, safe_worker_name: str) -> list[str]:
     return sorted(
         path.name
         for path in trace_dir.glob(f"{safe_worker_name}.*.pt.trace.json*")
-        if path.is_file()
+        if path.name.endswith((".pt.trace.json", ".pt.trace.json.gz")) and path.is_file()
     )
 
 

@@ -245,3 +245,20 @@ def test_capture_manifest_does_not_include_another_step_trace(tmp_path: Path) ->
     assert manifest["step"] == 1
     assert manifest["trace_files"]
     assert all("_step1." in name for name in manifest["trace_files"])
+
+
+def test_trace_discovery_excludes_temporary_and_backup_files(tmp_path: Path) -> None:
+    from vrl.utils.profiling import _discover_trace_files
+
+    names = [
+        "worker.1.pt.trace.json",
+        "worker.2.pt.trace.json.gz",
+        "worker.3.pt.trace.json.tmp",
+        "worker.4.pt.trace.json.bak",
+        "worker.5.pt.trace.json.gz.tmp",
+        "another.1.pt.trace.json",
+    ]
+    for name in names:
+        (tmp_path / name).touch()
+    (tmp_path / "worker.6.pt.trace.json").mkdir()
+    assert _discover_trace_files(tmp_path, "worker") == names[:2]
