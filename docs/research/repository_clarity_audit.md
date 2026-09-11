@@ -2327,3 +2327,22 @@ this combined regression is compatibility evidence, not architectural completion
   malformed-declaration and unmatched-block tests verify no sharding begins on
   these invalid inputs. Touched-file Ruff and diff checks passed. Full repository
   review remains active.
+
+## FSDP module ownership description matches implemented operations
+
+- Replaced stale module documentation claiming all operations were collective
+  and optimizer state sharding belonged to later work. The current module
+  implements optimizer gather/restore as well as local wrapper/block/policy
+  inspection. Documented those responsibilities and primary/non-primary export
+  behavior directly, without historical roadmap claims.
+- Keep normalize_fsdp_parameter_dtype as a framework preparation operation.
+  Keep _full_cpu_tensor, _gather_named_full_cpu and _materialize_full_cpu: these
+  share collective ordering and explicitly avoid retaining full tensors on
+  non-primary ranks. Generic tensor-tree mapping would lose that retention
+  behavior. No helper-container class or ALL_CAPS data warranted.
+- Follow-up identified in FSDPStrategy.prepare_model: absent handle.dtype falls
+  back to the first parameter dtype. The relationship to resolved model
+  precision requires caller/family review before changing mixed-dtype behavior.
+- Documentation-only edit; no runtime or numerical changes. Touched-file Ruff
+  and diff checks passed. Existing test results above are not presented as a
+  new run. Full repository review remains open.

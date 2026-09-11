@@ -1,21 +1,19 @@
-"""FSDP2 applier: turn a trainable handle into a sharded module and back.
+"""FSDP2 sharding and model/optimizer state conversion.
 
-This is the torch-native FSDP2 path (``torch.distributed.fsdp.fully_shard`` +
-DTensor), not FSDP1. The design is the standard diffusion ZeRO-3 parallelizer:
-shard each transformer *block* with ``fully_shard`` and then the root, deriving
-the block boundaries from the model's ``_no_split_modules``. There is no
-tensor/pipeline parallel —
-diffusion + LoRA is a pure ZeRO-3 (sharded-params/grads/optim) workload (see
-``SPRINT_multi_gpu_training.md`` §10.5 for why FSDP2, not Megatron).
+The applier shards declared transformer blocks before the trainable root using
+``fully_shard``. Model and optimizer exports materialize DTensors in a consistent
+collective order; restore redistributes full checkpoint state to the sharded
+parameters. Dtype normalization prepares compatible parameter groups before
+sharding without overriding the selected precision policy.
 
-Everything here is collective code: it needs an initialized process group. It is
-exercised on a single CPU rank (``world_size=1`` + gloo) in
-``tests/trainers/test_fsdp.py``, which is enough to prove wrapping, forward /
-backward, full-state gather, and load round-trip without real multi-GPU.
+Mesh construction, sharding and DTensor materialization require the relevant
+process group. Wrapper inspection, block discovery and policy construction are
+local operations. Non-primary ranks still participate in export collectives but
+release full tensors instead of retaining checkpoint copies.
 
-Boundaries this module does NOT cross (they belong to later phases of
-``SPRINT_multi_gpu_training.md``): the online GRPO rank-split collect/train loop,
-the torchrun↔Ray rollout coordination, and optimizer/EMA state sharding.
+Generation scheduling, trainer iteration control and checkpoint file publication
+belong to their respective owners. This module supplies the FSDP-specific
+framework operations they consume.
 """
 
 from __future__ import annotations
