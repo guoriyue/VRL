@@ -81,6 +81,8 @@ def save_sft_latents(
 
     if not latents_by_target:
         raise ValueError("refusing to write an empty sft-latents shard")
+    if any(not isinstance(target, str) or not target.strip() for target in latents_by_target):
+        raise ValueError("sft-latents target keys must be non-empty strings")
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -90,7 +92,7 @@ def save_sft_latents(
             "model_path": str(model_path),
             "model_revision": str(model_revision),
             "latents": {
-                str(target): value.detach().cpu() for target, value in latents_by_target.items()
+                target: value.detach().cpu() for target, value in latents_by_target.items()
             },
         },
         out,
@@ -117,8 +119,8 @@ def load_sft_latents(
     payload = torch.load(shard_path, map_location="cpu", weights_only=True)
     if not isinstance(payload, dict) or "latents" not in payload:
         raise ValueError(f"{shard_path} is not an sft-latents shard")
-    version = int(payload.get("schema_version", 0))
-    if version != SFT_LATENTS_SCHEMA_VERSION:
+    version = payload.get("schema_version")
+    if type(version) is not int or version != SFT_LATENTS_SCHEMA_VERSION:
         raise ValueError(
             f"{shard_path}: unsupported sft-latents schema_version={version}; "
             f"expected {SFT_LATENTS_SCHEMA_VERSION}",
@@ -145,6 +147,8 @@ def load_sft_latents(
     latents = payload["latents"]
     if not isinstance(latents, dict) or not latents:
         raise ValueError(f"{shard_path}: empty sft-latents shard")
+    if any(not isinstance(target, str) or not target.strip() for target in latents):
+        raise ValueError(f"{shard_path}: sft-latents target keys must be non-empty strings")
     return latents
 
 

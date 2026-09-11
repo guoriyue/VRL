@@ -107,3 +107,25 @@ def test_sft_latents_rejects_foreign_payload(tmp_path) -> None:
     torch.save({"weights": torch.zeros(1)}, shard)
     with pytest.raises(ValueError, match="not an sft-latents shard"):
         load_sft_latents(shard)
+
+
+@pytest.mark.parametrize("version", [2.9, "2", True, None])
+def test_shard_schema_version_is_not_coerced(tmp_path, version):
+    path = tmp_path / "shard.pt"
+    torch.save({"schema_version": version, "latents": {"target": torch.zeros(1)}}, path)
+    with pytest.raises(ValueError, match="unsupported sft-latents schema_version"):
+        load_sft_latents(path)
+
+
+@pytest.mark.parametrize("key", [1, "", "   "])
+def test_shard_preserves_target_key_type_instead_of_stringifying(tmp_path, key):
+    path = tmp_path / "shard.pt"
+    latents = {key: torch.zeros(1), "1": torch.ones(1)}
+    with pytest.raises(ValueError, match="target keys must be non-empty strings"):
+        save_sft_latents(
+            path, family="f", model_path="m", model_revision="", latents_by_target=latents
+        )
+    assert not path.exists()
+    torch.save({"schema_version": 2, "latents": latents}, path)
+    with pytest.raises(ValueError, match="target keys must be non-empty strings"):
+        load_sft_latents(path)

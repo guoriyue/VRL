@@ -752,3 +752,18 @@ contained guesses. Removed both:
 - Supervisor regression suite also passed (59 tests). Touched-file Ruff and
   diff whitespace checks pass. SFT latent shard review remains pending after
   this user-steered checkpoint follow-up.
+
+## SFT latent shard version and target identities
+
+- Schema versions must be exact integers matching the supported version. Removed
+  int coercion that accepted a fractional version such as 2.9 as version 2.
+- Save and load require non-empty string target keys. Saving no longer stringifies
+  keys, which could overwrite distinct entries such as integer 1 and string "1".
+  Valid target strings retain their exact identity.
+- Retained save_sft_latents/load_sft_latents as tensor file-format boundaries and
+  SFT_LATENTS_SCHEMA_VERSION as the actual on-disk version. No shard manager class
+  or shared validation wrapper is needed for these checks. This slice does not
+  claim comprehensive tensor-shape or provenance-type validation; those are
+  separate from the corrected version and key semantics.
+- Validation: 16 shard, script-loading and torch-free config-import tests passed.
+  Touched-file Ruff lint/format and diff whitespace checks pass.
