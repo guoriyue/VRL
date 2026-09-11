@@ -130,6 +130,28 @@ Config and utility review:
 - Online config reflection helpers operate on varying dataclass/section types;
   preserve framework-adapter ownership rather than make them instance methods.
 
+Reward runtime and asset review:
+
+- Kling `_DataConfig.build_chat_payload` now owns frame sampling, pixel limits,
+  and prompt selection when assembling a scoring request. Removed the external
+  function's config plumbing. Kling tests: 33 passed; the optional real-processor
+  decode test was excluded, and no production reward checkpoint was run.
+- Moved the two image-QA default prompt templates from execution code into
+  `rewards/assets/codex_image_qa_prompts.py`. AST value comparison against the
+  pre-change source confirms both strings are unchanged. The public model-module
+  export remains available. Image-QA tests: 27 passed without external judging.
+- Removed a duplicate `HuggingFaceRepoRevision` entry in `hub.__all__`.
+- Reward service `wire.py` remains a single client/server protocol codec; its
+  schema-derived field lists and version envelope are real wire boundaries.
+- `_build_prepared_model_in_pool` remains a separate stack frame: the caller
+  clears failed construction tracebacks before closing CuMem. Inlining it could
+  retain partial model tensors during cleanup.
+- Kling special tokens and public score aliases represent checkpoint/output
+  protocols. The score conversion helper remains consistent with other video
+  reward adapters. Shared Hugging Face resolution remains a cross-model helper.
+- Further image-QA output parsing/schema helpers and other reward model loaders
+  still require review; the prompt extraction does not complete the reward audit.
+
 ## Remaining review
 
 These are inspection candidates, not approved mechanical transformations.
