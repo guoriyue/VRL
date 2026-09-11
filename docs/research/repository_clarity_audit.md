@@ -2458,3 +2458,22 @@ this combined regression is compatibility evidence, not architectural completion
   Existing model dtype/provenance propagation and Hub revision kwargs must stay.
 - No runtime change or new test run in this inspection. This is a concrete open
   issue, not a claim of preserved FP32 source precision. Full review is active.
+
+## Component load dtypes prevent avoidable VAE precision loss
+
+- Replaced scalar whole-pipeline dtype loading with a component mapping:
+  default=model dtype, vae=FP32, and declared encoder names=prompt encoder dtype.
+  Both callers pass their existing _frozen_encoder_names declaration. Additional
+  transformers retain the model default instead of inheriting encoder precision.
+  MiniMax's own builder adds audio_vae=FP32 alongside its existing post-load VAE
+  handling; the shared function does not acquire a MiniMax component taxonomy.
+- Keep the cross-family projection helper, model/encoder dtype owners and
+  pretrained revision/offline kwargs. No new policy class or duplicate encoder
+  list. This prevents loss when source weights contain FP32 detail; it cannot
+  recreate precision absent from the checkpoint itself.
+- Validation: 255 loader, denoise, MiniMax and Wan tests passed. A real local
+  DiffusionPipeline save/load preserves VAE value 1.0001 exactly while loading
+  its transformer in BF16; the old whole-pipeline BF16 mapping loses that value.
+  Encoder override projection and MiniMax audio/image VAE mappings are covered.
+  Initial new fixture omitted required revision; corrected before the final
+  passing run. Touched-file Ruff and diff checks passed. Full review is active.

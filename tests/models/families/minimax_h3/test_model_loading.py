@@ -80,7 +80,12 @@ def test_from_build_loads_the_t2va_workflow_and_freezes_the_generation_modules(
     assert calls[1]["load_components"] == {
         "workflow": "t2va",
         "revision": "abc123",
-        "torch_dtype": torch.bfloat16,
+        "torch_dtype": {
+            "default": torch.bfloat16,
+            "text_encoder": torch.bfloat16,
+            "vae": torch.float32,
+            "audio_vae": torch.float32,
+        },
     }
     assert model.transformer is fake.transformer
     assert fake.text_encoder.requires_grad_enabled is False

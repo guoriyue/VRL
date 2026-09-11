@@ -574,6 +574,8 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
 def diffusers_pipeline_dtypes(
     build: ModelBuild,
     model_dtype: torch.dtype,
+    *,
+    encoder_names: tuple[str, ...],
 ) -> tuple[torch.dtype, dict[str, Any]]:
     """Resolve prompt-encoder dtype plus pipeline load kwargs for a family.
 
@@ -591,14 +593,11 @@ def diffusers_pipeline_dtypes(
     # Full-pipeline rollout and component-only replay must resolve the same
     # immutable Hub snapshot; otherwise parity can compare different weights.
     load_kwargs: dict[str, Any] = build.pretrained_kwargs
-    if model_dtype == torch.float32 and prompt_encoder_dtype != torch.float32:
-        load_kwargs["torch_dtype"] = {
-            "transformer": torch.float32,
-            "vae": torch.float32,
-            "default": prompt_encoder_dtype,
-        }
-    elif model_dtype != torch.float32:
-        load_kwargs["torch_dtype"] = model_dtype
+    load_kwargs["torch_dtype"] = {
+        "default": model_dtype,
+        "vae": torch.float32,
+        **{name: prompt_encoder_dtype for name in encoder_names},
+    }
     return prompt_encoder_dtype, load_kwargs
 
 
@@ -694,6 +693,7 @@ class DiffusersPipelineModelBase(DiffusionModelBase):
         prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(
             build,
             build.parameter_dtype,
+            encoder_names=cls._frozen_encoder_names,
         )
         pipeline = pipeline_cls.from_pretrained(
             build.model_name_or_path,
