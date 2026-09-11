@@ -3624,3 +3624,18 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 29 Janus family and R1 wiring tests passed, including the three
   regressions that failed before the change. Touched-file Ruff/diff checks
   passed. Full repository review remains incomplete.
+
+## Byte estimation owns its traversal state locally
+
+- Keep trajectory_tensor_bytes as the shared generation telemetry and continuous
+  capacity API. Move its sole private recursive helper into that function, with
+  one captured seen set and one lazy Tensor import per call. Remove the repeated
+  seen argument without changing traversal order or estimated-byte arithmetic.
+- Clarify object-identity deduplication: distinct tensor views can share backing
+  storage, so this estimate is not unique allocated storage or peak GPU usage.
+- Keep TrajectoryStoragePolicy separate from estimation and preserve its
+  map_tensor_tree conversion boundary. Keep _VALID_DEVICES/_VALID_DTYPES because
+  they derive legal schema values from Literal declarations, not algorithm data.
+  No new wrapper class or changes to capacity/admission policy.
+- Validation: 125 trajectory, generated-capacity, and ready-queue tests passed;
+  touched-file Ruff/diff checks passed. Full repository review remains incomplete.

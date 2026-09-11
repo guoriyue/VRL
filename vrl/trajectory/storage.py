@@ -100,51 +100,56 @@ class TrajectoryStoragePolicy:
 
 
 def trajectory_tensor_bytes(value: object) -> int:
-    """Return an estimated byte count for tensor-like leaves in ``value``."""
+    """Estimate payload bytes, counting each object once within this traversal.
 
-    return _tensor_bytes(value, seen=set())
+    Includes tensor, image and byte leaves. Distinct tensor views may share
+    storage, so this is neither unique storage size nor peak device occupancy.
+    """
 
-
-def _tensor_bytes(value: object, *, seen: set[int]) -> int:
     from torch import Tensor
 
-    if value is None:
-        return 0
-    value_id = id(value)
-    if value_id in seen:
-        return 0
-    seen.add(value_id)
+    seen: set[int] = set()
 
-    if isinstance(value, TrajectoryBatch):
-        total = 0
-        for segment in value.segments.values():
-            for tensor in segment.tensors.values():
-                total += _tensor_bytes(tensor.value, seen=seen)
-        total += _tensor_bytes(value.context, seen=seen)
-        for segment in value.segments.values():
-            total += _tensor_bytes(segment.metadata, seen=seen)
-        for view in value.reward_views.values():
-            total += _tensor_bytes(view.metadata, seen=seen)
-        return total
+    def count_bytes(value: object) -> int:
+        if value is None:
+            return 0
+        value_id = id(value)
+        if value_id in seen:
+            return 0
+        seen.add(value_id)
 
-    if isinstance(value, Tensor):
-        return int(value.numel()) * int(value.element_size())
-    if is_dataclass(value) and not isinstance(value, type):
-        return sum(_tensor_bytes(getattr(value, item.name), seen=seen) for item in fields(value))
-    if isinstance(value, Image):
-        # Pillow commonly retains four-byte internal pixels even for RGB.
-        # Count decoded storage without allocating an image.tobytes() copy.
-        return value.width * value.height * max(4, len(value.getbands()))
-    nbytes = getattr(value, "nbytes", None)
-    if isinstance(nbytes, int):
-        return nbytes
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        return len(value)
-    if isinstance(value, Mapping):
-        return sum(_tensor_bytes(inner, seen=seen) for inner in value.values())
-    if isinstance(value, (list, tuple)):
-        return sum(_tensor_bytes(inner, seen=seen) for inner in value)
-    return 0
+        if isinstance(value, TrajectoryBatch):
+            total = 0
+            for segment in value.segments.values():
+                for tensor in segment.tensors.values():
+                    total += count_bytes(tensor.value)
+            total += count_bytes(value.context)
+            for segment in value.segments.values():
+                total += count_bytes(segment.metadata)
+            for view in value.reward_views.values():
+                total += count_bytes(view.metadata)
+            return total
+
+        if isinstance(value, Tensor):
+            return int(value.numel()) * int(value.element_size())
+        if is_dataclass(value) and not isinstance(value, type):
+            return sum(count_bytes(getattr(value, item.name)) for item in fields(value))
+        if isinstance(value, Image):
+            # Pillow commonly retains four-byte internal pixels even for RGB.
+            # Count decoded storage without allocating an image.tobytes() copy.
+            return value.width * value.height * max(4, len(value.getbands()))
+        nbytes = getattr(value, "nbytes", None)
+        if isinstance(nbytes, int):
+            return nbytes
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return len(value)
+        if isinstance(value, Mapping):
+            return sum(count_bytes(inner) for inner in value.values())
+        if isinstance(value, (list, tuple)):
+            return sum(count_bytes(inner) for inner in value)
+        return 0
+
+    return count_bytes(value)
 
 
 __all__ = [
