@@ -34,8 +34,12 @@ def build_video_world_rows(
     reference_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
     for episode in episodes:
-        prompt = str(episode.get("prompt", "")).strip()
-        episode_id = str(episode.get("episode_id", "")).strip()
+        prompt = episode.get("prompt")
+        episode_id = episode.get("episode_id")
+        if prompt is None or episode_id is None:
+            continue
+        prompt = str(prompt).strip()
+        episode_id = str(episode_id).strip()
         image = episode.get("image")
         if not prompt or not episode_id or image is None:
             continue
@@ -76,8 +80,12 @@ def build_target_video_world_rows(
     writer = video_writer or _write_mp4
     rows: list[dict[str, Any]] = []
     for episode in episodes:
-        prompt = str(episode.get("prompt", "")).strip()
-        episode_id = str(episode.get("episode_id", "")).strip()
+        prompt = episode.get("prompt")
+        episode_id = episode.get("episode_id")
+        if prompt is None or episode_id is None:
+            continue
+        prompt = str(prompt).strip()
+        episode_id = str(episode_id).strip()
         frames = list(episode.get("frames") or [])
         if not prompt or not episode_id or not frames:
             continue

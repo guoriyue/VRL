@@ -4773,6 +4773,21 @@ this combined regression is compatibility evidence, not architectural completion
   checks shape representation, not every possible malformed manifest structure;
   the broader repository audit remains incomplete.
 
+## Video-world skips null identities before text conversion
+
+- Both manifest builders now skip explicit None prompts or episode IDs before
+  converting them to text. Previously these became literal "None" values and
+  could publish media and rows for incomplete episodes.
+- Preserve integer episode IDs, including zero, existing whitespace filtering,
+  and the separate reference-only and target-video builders. No new helper or
+  wrapper class is needed for the conversion order.
+- Four regression cases cover both missing fields and both builders, including
+  preservation of ID zero and absence of media for skipped records. Setup and
+  JRDB import suites: 35 passed. Touched-file Ruff and diff checks pass.
+- Rechecked the schedule factory and continuous facade: retain their protocol,
+  cross-type topology validation, and trainer-to-owner-thread handoff boundaries.
+  This slice does not establish completion of the broader repository audit.
+
 ## Weight staging enforces its declared transfer identifier type
 
 - Replace transfer-ID truthiness with an explicit nonempty-string check in

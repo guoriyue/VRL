@@ -493,3 +493,29 @@ def test_video_world_rejects_metadata_before_media_write(tmp_path, metadata, tar
             video_world.build_video_world_rows(episodes, **kwargs)
     assert not list(tmp_path.rglob("*.png"))
     assert not list(tmp_path.rglob("*.mp4"))
+
+
+@pytest.mark.parametrize("missing_field", ["prompt", "episode_id"])
+@pytest.mark.parametrize("target_video", [False, True])
+def test_video_world_skips_null_identity_and_preserves_zero_id(
+    tmp_path, missing_field, target_video
+):
+    image = Image.new("RGB", (2, 2))
+    complete = {"prompt": "move", "episode_id": 0, "image": image, "frames": [image]}
+    episodes = [{**complete, missing_field: None}, complete]
+    kwargs = dict(reference_dir=tmp_path / "references", data_root=tmp_path, source="unit")
+    if target_video:
+        rows = video_world.build_target_video_world_rows(
+            episodes,
+            **kwargs,
+            target_dir=tmp_path / "targets",
+            fps=24,
+            video_writer=lambda path, frames, fps: path.touch(),
+        )
+    else:
+        rows = video_world.build_video_world_rows(episodes, **kwargs)
+    assert len(rows) == 1
+    assert rows[0]["prompt"] == "move"
+    assert rows[0]["metadata"]["source_episode"] == "0"
+    assert len(list(tmp_path.rglob("*.png"))) == 1
+    assert not list(tmp_path.rglob("*None*"))
