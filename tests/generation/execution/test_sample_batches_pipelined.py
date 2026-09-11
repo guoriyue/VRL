@@ -14,7 +14,7 @@ import pytest
 
 from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionBatchResult
 from vrl.generation.execution.pipeline import (
-    _move_tree_to_cpu_async,
+    _enqueue_cpu_copies,
     forward_batches_pipelined,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
@@ -121,7 +121,7 @@ def test_cuda_completion_fence_is_recorded_before_publication(monkeypatch) -> No
 
     monkeypatch.setattr(
         pipeline,
-        "_move_tree_to_cpu_async",
+        "_enqueue_cpu_copies",
         lambda result, _stream: result,
     )
     published: list[BatchProduceFence] = []
@@ -212,7 +212,7 @@ def test_produce_error_joins_already_submitted_copy(monkeypatch) -> None:
 
     import vrl.generation.execution.pipeline as pipeline
 
-    monkeypatch.setattr(pipeline, "_move_tree_to_cpu_async", teardown)
+    monkeypatch.setattr(pipeline, "_enqueue_cpu_copies", teardown)
 
     with pytest.raises(RuntimeError, match="CUDA out of memory"):
         forward_batches_pipelined(
@@ -285,7 +285,7 @@ def test_async_tree_move_preserves_slots_dataclass_and_records_source_stream(
         context={"prompt": "p"},
     )
 
-    moved = _move_tree_to_cpu_async(batch, copy_stream)
+    moved = _enqueue_cpu_copies(batch, copy_stream)
 
     assert not hasattr(batch, "__dict__")
     assert isinstance(moved, DiffusionBatchResult)

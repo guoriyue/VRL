@@ -7,11 +7,12 @@ from typing import Any
 from vrl.generation.execution.types import BatchCompletionCallback, BatchProduceFence
 
 
-def _move_tree_to_cpu_async(value: Any, stream: Any) -> Any:
-    """Move every CUDA tensor in a (possibly nested) structure to pinned CPU on
-    ``stream`` with a non-blocking copy — NO global sync. Mirrors worker._to_cpu
-    but stream-scoped + event-based, so the D2H drains concurrently with the next
-    batch's denoise instead of blocking it (the copy engine ≠ the tensor cores).
+def _enqueue_cpu_copies(value: Any, stream: Any) -> Any:
+    """Enqueue CUDA tensor copies into pinned CPU buffers on ``stream``.
+
+    Return the rebuilt tensor tree without waiting for the copies. The caller
+    must order this stream after production and wait for copy completion before
+    reading the CPU buffers. Non-CUDA tensors are returned unchanged.
     """
 
     import torch
@@ -80,7 +81,7 @@ def forward_batches_pipelined(
             # the copy never reads tensors a denoise kernel is still writing.
             if prev_result is not None and copy_stream is not None:
                 copy_stream.wait_event(prev_done)
-                results[prev_idx] = _move_tree_to_cpu_async(prev_result, copy_stream)
+                results[prev_idx] = _enqueue_cpu_copies(prev_result, copy_stream)
                 ev = torch.cuda.Event()
                 ev.record(copy_stream)
                 pending_events.append(ev)
@@ -109,7 +110,7 @@ def forward_batches_pipelined(
         if prev_result is not None:
             if copy_stream is not None:
                 copy_stream.wait_event(prev_done)
-                results[prev_idx] = _move_tree_to_cpu_async(prev_result, copy_stream)
+                results[prev_idx] = _enqueue_cpu_copies(prev_result, copy_stream)
                 ev = torch.cuda.Event()
                 ev.record(copy_stream)
                 pending_events.append(ev)

@@ -1,7 +1,7 @@
 """REAL-CUDA bit-exactness of forward_batches_pipelined — the 1-GPU integration
 check the unit tests defer. produce() does an actual GPU matmul (so there is an
 in-flight kernel the side-stream copy must wait on via the Event), the default
-teardown is the real _move_tree_to_cpu_async D2H on the copy stream, and we assert
+teardown is the real _enqueue_cpu_copies D2H on the copy stream, and we assert
 torch.equal vs serial produce+copy. A missing/incorrect Event (torn read) or a
 value-mutating copy would diverge here."""
 
@@ -17,7 +17,7 @@ from vrl.generation.bindings.full_sequence_denoise.executor import (  # noqa: E4
     DiffusionBatchResult,
 )
 from vrl.generation.execution.pipeline import (  # noqa: E402
-    _move_tree_to_cpu_async,
+    _enqueue_cpu_copies,
     forward_batches_pipelined,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch  # noqa: E402
@@ -42,7 +42,7 @@ def _serial(batches):
         r = _produce(c)
         s = torch.cuda.Stream()
         s.wait_stream(torch.cuda.current_stream())
-        cpu = _move_tree_to_cpu_async(r, s)
+        cpu = _enqueue_cpu_copies(r, s)
         s.synchronize()
         results.append(cpu)
     return results

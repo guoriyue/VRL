@@ -4380,6 +4380,22 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Pipelined CPU copy naming exposes submission rather than completion
+
+- Rename the private synchronous helper _move_tree_to_cpu_async to
+  _enqueue_cpu_copies and update both pipeline call sites and test references.
+  Its docstring now states that returned CPU buffers require a completion wait,
+  that the caller must establish producer ordering, and that non-CUDA tensors
+  remain unchanged. There is no coroutine or implicit wait in this helper.
+- Keep the helper: both pipeline teardown sites share pinned allocation,
+  nonblocking copy and record_stream lifetime protection. Keep the schedule
+  factory and topology guard as selection and cross-type validation boundaries;
+  adding wrapper classes would not clarify those responsibilities.
+- Preserve stream/event ordering, exception cleanup, lazy imports and result
+  layout. Pipeline unit and CUDA test files passed: 12 tests. Touched-file Ruff
+  checks pass; no old helper references remain in production or tests. This
+  naming change does not establish a throughput improvement or finish the audit.
+
 ## Offline DPO projection consumes parsed actor scalars directly
 
 - Remove redundant int/bool/str conversions of batch size, accumulation steps,
