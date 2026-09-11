@@ -82,6 +82,9 @@ def gather_categorical_log_probs(
         raise ValueError("token_ids must use an integer tensor dtype")
 
     temp = require_positive_temperature(temperature)
+    if token_ids.numel() == 0:
+        # Preserve the empty token shape and its autograd connection to logits.
+        return logits.float().sum(dim=-1)
     vocab_size = logits.shape[-1]
     flat_logits = logits.reshape(-1, vocab_size)
     flat_ids = token_ids.to(device=logits.device, dtype=torch.long).reshape(-1)

@@ -1921,3 +1921,15 @@ tracing algorithm construction and evaluator selection together.
 - Validation: 38 fused/eager log-prob tests passed, including ten invalid chunk
   arguments. Touched-file Ruff/diff checks passed and removed helper has no
   remaining references. No throughput claim follows from this correctness fix.
+
+## Empty token batches preserve eager/fused parity
+
+- Eager categorical gathering previously reached torch.cat([]) for zero token
+  positions, whereas the fused implementation returned an empty result. Return
+  the empty fp32 reduction shape while retaining the logits' autograd connection.
+- Keep input validation before the empty branch and leave nonempty chunking,
+  normalization and fused backward unchanged. No empty-batch helper/class added.
+- Validation: 40 fused/eager log-prob tests passed. New cases cover zero batch
+  rows and zero sequence length; outputs match shape/dtype and hidden/weight/bias
+  gradients are present, equal and zero. Touched-file Ruff and diff checks pass.
+  This proves boundary consistency, not occurrence in a production training run.

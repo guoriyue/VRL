@@ -198,3 +198,21 @@ def test_fused_rejects_invalid_chunk_rows(chunk_rows):
     hidden, weight, bias, ids = _rand_case(1, 2, 4, 3)
     with pytest.raises(ValueError, match="chunk_rows"):
         fused_linear_logprob(hidden, weight, ids, bias=bias, chunk_rows=chunk_rows)
+
+
+@pytest.mark.parametrize("batch,length", [(0, 3), (2, 0)])
+def test_empty_token_batches_match_eager_and_have_zero_gradients(batch, length):
+    hidden, weight, bias, ids = _rand_case(batch, length, 4, 3)
+    eager_inputs = [tensor.clone().requires_grad_() for tensor in (hidden, weight, bias)]
+    fused_inputs = [tensor.clone().requires_grad_() for tensor in (hidden, weight, bias)]
+    expected = _eager(*eager_inputs, ids)
+    actual = fused_linear_logprob(fused_inputs[0], fused_inputs[1], ids, bias=fused_inputs[2])
+    assert actual.shape == expected.shape == (batch, length)
+    assert actual.dtype == expected.dtype == torch.float32
+    actual.sum().backward()
+    expected.sum().backward()
+    for fused_input, eager_input in zip(fused_inputs, eager_inputs, strict=True):
+        assert fused_input.grad is not None
+        assert eager_input.grad is not None
+        torch.testing.assert_close(fused_input.grad, eager_input.grad)
+        assert torch.count_nonzero(fused_input.grad) == 0
