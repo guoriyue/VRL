@@ -7,7 +7,6 @@ see the family runtime's ``GenerationOutput``.
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -91,8 +90,7 @@ class TokenAutoregressiveLoop:
             raise ValueError("scheduler_batch_size must be a positive integer")
 
     def run(self) -> Any:
-        init = call_with_supported_kwargs(
-            self.runner.init_token,
+        init = self.runner.init_token(
             *self.init_args,
             **dict(self.init_kwargs or {}),
         )
@@ -111,22 +109,7 @@ class TokenAutoregressiveLoop:
         return self.runner.finalize_token(init.state)
 
 
-def call_with_supported_kwargs(fn: Any, *args: Any, **kwargs: Any) -> Any:
-    """Call hooks while dropping optional kwargs unsupported by older signatures."""
-
-    try:
-        signature = inspect.signature(fn)
-    except (TypeError, ValueError):
-        return fn(*args, **kwargs)
-    parameters = signature.parameters
-    if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
-        return fn(*args, **kwargs)
-    supported = {key: value for key, value in kwargs.items() if key in parameters}
-    return fn(*args, **supported)
-
-
 __all__ = [
     "TokenAutoregressiveEnvelope",
     "TokenAutoregressiveLoop",
-    "call_with_supported_kwargs",
 ]

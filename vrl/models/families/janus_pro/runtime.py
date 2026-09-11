@@ -16,7 +16,6 @@ from vrl.generation.bindings.token_autoregressive import (
 )
 from vrl.generation.composition.token_autoregressive.token_loop import (
     TokenAutoregressiveLoop,
-    call_with_supported_kwargs,
 )
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
@@ -263,8 +262,7 @@ class JanusProR1BatchExecutor(JanusProBatchExecutor):
             profile_range("engine.cache_read"),
             profile_range("engine.cache_write"),
         ):
-            result = call_with_supported_kwargs(
-                self.model.generate_with_refine,
+            result = self.model.generate_with_refine(
                 prompt_ids,
                 prompt_mask,
                 guidance_scale=float(

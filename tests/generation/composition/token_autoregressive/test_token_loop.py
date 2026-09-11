@@ -89,7 +89,6 @@ def test_loop_runs_position_major_bounded_row_batches(
     result = TokenAutoregressiveLoop(
         runner=runner,
         scheduler_batch_size=batch_size,
-        init_kwargs={"unsupported_init_kwarg": True},
     ).run()
 
     assert result is runner.state
@@ -182,3 +181,10 @@ def test_envelope_rejects_unknown_row_update() -> None:
             batch,
             TokenStepOutput(updated_row_lanes={"unknown": torch.zeros(1, 1)}),
         )
+
+
+def test_loop_rejects_unrecognized_init_argument_before_generation() -> None:
+    runner = _DeterministicRunner()
+    with pytest.raises(TypeError, match="unsupported_init_kwarg"):
+        TokenAutoregressiveLoop(runner=runner, init_kwargs={"unsupported_init_kwarg": True}).run()
+    assert runner.state["step_calls"] == 0

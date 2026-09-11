@@ -824,3 +824,23 @@ contained guesses. Removed both:
 - Validation: 40 pipeline execution, Ray progress, binding equivalence and real
   CUDA tests passed, including copy completion and failure cleanup. Touched-file
   Ruff and diff whitespace checks pass.
+
+## Token hook signature compatibility review closure
+
+- Audited runtime-provided init arguments against Janus, NextStep, Emu3, GLM-Image
+  and LlamaGen runner signatures, plus Janus R1 generate_with_refine. These are
+  repository-owned interfaces and accept the arguments supplied by their callers.
+- Removed call_with_supported_kwargs and inspect-based argument filtering. Token
+  initialization and R1 refinement now call their declared methods directly;
+  misspelled or unimplemented keywords raise instead of silently changing sampling
+  behavior. This supersedes the earlier provisional keep pending signature review.
+- Updated the fixed-output R1 test model to accept the actual image_sampler
+  argument. Replaced the loop test's implicit tolerance of an unsupported keyword
+  with explicit rejection before any token step runs.
+- Retained family-specific runner signatures, ARBatchInputs projections and the
+  shared token-step protocol. No universal kwargs schema, adapter class or extra
+  compatibility layer was introduced. External old hooks that depended on silently
+  dropped keywords must now implement the invoked interface.
+- Validation: 148 token composition/binding, five model-family and torch-free
+  config-import tests passed; 2 tests skipped. Touched-file Ruff and whitespace
+  checks pass.

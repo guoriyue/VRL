@@ -342,7 +342,9 @@ class _ExecutorModel:
         uncond_attention_mask: torch.Tensor,
         image_size: int,
         refine_mode: str,
+        image_sampler: object,
     ) -> dict[str, object]:
+        del image_sampler  # This fixture returns fixed segments without sampling.
         self.sampling_calls.append((guidance_scale, temperature))
         del (
             guidance_scale,
