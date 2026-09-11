@@ -15,6 +15,7 @@ from typing import Any, Literal
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.generation_memory import GenerationMemoryPolicy
 from vrl.models.interfaces.replay import RuntimeModel
+from vrl.utils.config import require_exact_int
 
 # Single source of truth for the model_config compile block that the
 # ``ModelBuild.torch_compile`` property below consumes.
@@ -373,7 +374,11 @@ class ModelBuild:
     def num_steps(self) -> int | None:
         """Diffusion scheduler step count from ``sampling.num_steps``."""
         num_steps = (self.sampling_config or {}).get("num_steps")
-        return None if num_steps is None else int(num_steps)
+        return (
+            None
+            if num_steps is None
+            else require_exact_int(num_steps, path="sampling.num_steps", minimum=1)
+        )
 
     @property
     def torch_compile(self) -> dict[str, Any] | None:

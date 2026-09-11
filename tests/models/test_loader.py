@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from vrl.config.precision import RolePrecision
@@ -176,3 +177,18 @@ def test_pipeline_dtype_projection_keeps_encoder_override_separate_from_model() 
         "text_encoder_2": torch.float32,
     }
     assert kwargs["revision"] == "snapshot"
+
+
+@pytest.mark.parametrize("num_steps", [0, -1, True, 2.5, "3"])
+def test_model_build_rejects_coerced_scheduler_step_count(num_steps):
+    build = ModelBuild(
+        model_name_or_path="org/model",
+        device="cpu",
+        parameter_dtype=torch.float16,
+        family="sd3_5",
+        precision=RolePrecision("fp16", "tf32"),
+        sampling_config={"num_steps": num_steps},
+        revision=None,
+    )
+    with pytest.raises(ValueError, match=r"sampling.num_steps"):
+        _ = build.num_steps

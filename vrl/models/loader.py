@@ -53,7 +53,7 @@ def load_diffusers_scheduler(
     # prepare_sampling; replay: build_*_replay_runtime_bundle). Only eager-set the
     # static schedules (SD3.5 / Wan), whose sigmas depend solely on num_steps.
     if num_steps is not None and not getattr(scheduler.config, "use_dynamic_shifting", False):
-        scheduler.set_timesteps(int(num_steps), device=build.device)
+        scheduler.set_timesteps(num_steps, device=build.device)
     return scheduler
 
 
@@ -79,7 +79,7 @@ def load_flow_match_scheduler(
     rebuilt = scheduler_cls.from_config(dict(scheduler.config), shift=float(flow_shift))
     num_steps = build.num_steps
     if num_steps is not None:
-        rebuilt.set_timesteps(int(num_steps), device=build.device)
+        rebuilt.set_timesteps(num_steps, device=build.device)
     return rebuilt
 
 

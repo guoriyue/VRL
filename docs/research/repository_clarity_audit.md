@@ -6876,3 +6876,16 @@ The broader repository audit remains incomplete.
   gradient-accumulation max/int fallback in vrl/trainers. This verifies those
   removals, not clarity of every trainer method. No production edits in this
   verification slice; broader repository audit remains incomplete.
+
+## ModelBuild scheduler count rejects coercion at its read boundary
+
+- ModelBuild.num_steps now validates a positive exact integer instead of int()
+  coercion. None remains the explicit deferred-schedule case. Both shared
+  scheduler loaders use the resolved count directly, removing repeated casts.
+- Keep component loading and flow-scheduler reconstruction separate: the latter
+  preserves the model snapshot's flow_shift semantics. No new parser object or
+  default scheduler count is introduced.
+- After correcting a test fixture's omitted required revision argument, five
+  invalid-count cases reproduced missing validation and now pass. Model loader,
+  interfaces and Ray runtime-config suites: 179 passed, four dependency warnings.
+  Touched-file Ruff and diff checks pass. Repository-wide audit remains open.
