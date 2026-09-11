@@ -213,8 +213,9 @@ class ContinuousRolloutProducer:
                 "cannot replace a continuous prompt batch before its ready items "
                 f"are consumed (ready={self.queue.size()})",
             )
-        self._batches.clear()
-        self._install_prompt_batch(prompts, group_size=group_size, runtime_debug=runtime_debug)
+        batch = self._new_prompt_batch(prompts, group_size=group_size, runtime_debug=runtime_debug)
+        self._batches = {batch.batch_id: batch}
+        self._next_batch_id += 1
 
     def append_prompt_batch(
         self,
@@ -229,7 +230,9 @@ class ContinuousRolloutProducer:
             raise RuntimeError("early prefetch requires split generation/reward")
         if len(self._batches) != 1:
             raise RuntimeError("continuous prefetch requires exactly one current batch")
-        self._install_prompt_batch(prompts, group_size=group_size, runtime_debug=runtime_debug)
+        batch = self._new_prompt_batch(prompts, group_size=group_size, runtime_debug=runtime_debug)
+        self._batches[batch.batch_id] = batch
+        self._next_batch_id += 1
 
     def consume_prompt_batch(self, batch_id: int) -> None:
         """Advance the head only after its complete iteration was removed."""
@@ -243,16 +246,18 @@ class ContinuousRolloutProducer:
             raise RuntimeError("continuous consumption left ready items in the head batch")
         del self._batches[batch_id]
 
-    def _install_prompt_batch(
+    def _new_prompt_batch(
         self,
         prompts: list[Any],
         *,
         group_size: int,
         runtime_debug: bool,
-    ) -> None:
+    ) -> _ActivePromptBatch:
+        """Construct and validate a batch before changing installed state."""
+
         prompt_batch = tuple(prompts)
         installed_at = time.monotonic()
-        batch = _ActivePromptBatch(
+        return _ActivePromptBatch(
             batch_id=self._next_batch_id,
             policy_version=self.lifecycle.current_policy_version(),
             prompts=prompt_batch,
@@ -261,8 +266,6 @@ class ContinuousRolloutProducer:
             pending_slots=deque(range(len(prompt_batch))),
             pending_since={slot: installed_at for slot in range(len(prompt_batch))},
         )
-        self._batches[batch.batch_id] = batch
-        self._next_batch_id += 1
 
     async def stop(self, *, wait_timeout_s: float = 30.0) -> None:
         """Cancel producer tasks and bound cooperative teardown.

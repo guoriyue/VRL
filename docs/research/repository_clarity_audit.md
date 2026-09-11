@@ -1589,3 +1589,21 @@ is not a repository-wide completion claim or a mandate to inline short functions
   producer boundaries, with no weight publication or collection. Touched-file
   Ruff lint/format and git diff --check passed. These tests do not prove the
   remaining repository-wide architecture review complete.
+
+## Transactional prompt-batch replacement
+
+- Found set_prompt_batch clearing installed batches before constructing its
+  replacement. An empty prompt list or invalid group size therefore erased a
+  completed batch even though installation failed.
+- Renamed _install_prompt_batch to _new_prompt_batch and made it construct only.
+  Replacement and append now explicitly publish the validated object and advance
+  the ID in their own methods. Failed construction preserves state and the ID.
+- Keep the shared constructor: both paths must capture the same policy version,
+  slot identities and admission timestamps. Do not introduce a replacement flag,
+  new factory class, or duplicate the batch construction. Existing incomplete-work
+  and ready-item guards remain unchanged; no constants were added or moved.
+- Validation: 192 continuous tests passed. Two new regressions drain the existing
+  batch, reject empty prompts/invalid group size, verify its identity survives,
+  then successfully generate the next batch with the next contiguous ID. Initial
+  tests used a nonexistent queue method; corrected to the actual snapshot/remove
+  API before the successful full run. Touched-file Ruff and diff checks passed.
