@@ -2270,6 +2270,17 @@ def test_checkpoint_load_requires_meta_family_to_match_payload(
         TrainingCheckpoint.load(target)
 
 
+@pytest.mark.parametrize("size", [1.9, True, "1", "invalid", [], -1])
+def test_checkpoint_completeness_rejects_invalid_recorded_size(tmp_path, size) -> None:
+    from vrl.trainers.checkpointing import is_complete_checkpoint
+
+    (tmp_path / TRAINING_CHECKPOINT_NAME).write_bytes(b"x")
+    (tmp_path / CHECKPOINT_META_NAME).write_text(
+        json.dumps({"checkpoint_file_bytes": size}), encoding="utf-8"
+    )
+    assert not is_complete_checkpoint(tmp_path)
+
+
 def test_find_latest_complete_checkpoint_skips_staging_and_orders_by_step(tmp_path) -> None:
     from vrl.trainers.checkpointing import find_latest_complete_checkpoint
 

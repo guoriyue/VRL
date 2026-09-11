@@ -1666,8 +1666,12 @@ def is_complete_checkpoint(checkpoint_dir: str | Path) -> bool:
     if not meta:
         return False
     expected_bytes = meta.get("checkpoint_file_bytes")
-    return not (
-        expected_bytes is not None and checkpoint_file.stat().st_size != int(expected_bytes)
+    if expected_bytes is None:
+        return True
+    return (
+        type(expected_bytes) is int
+        and expected_bytes >= 0
+        and checkpoint_file.stat().st_size == expected_bytes
     )
 
 

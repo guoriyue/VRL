@@ -4208,3 +4208,17 @@ this combined regression is compatibility evidence, not architectural completion
   merging them into a single unchecked loading path would lose those boundaries.
 - All 110 checkpointing tests passed with dependency warnings; touched-file Ruff
   checks pass. The repository-wide clarity audit remains incomplete.
+
+## Checkpoint completeness validates recorded byte counts
+
+- Remove `int()` coercion from the optional checkpoint byte-count check. A
+  recorded size must be a non-negative integer equal to the actual file size;
+  malformed types return false instead of silently matching or raising conversion
+  exceptions during discovery. Missing/None size retains existing compatibility.
+- Keep explicit metadata global_step ordering, with no directory-suffix progress
+  inference. Keep discovery/completeness functions and file-name constants as
+  shared persistence boundaries; no new wrapper or metadata vocabulary is added.
+- Six size cases cover fractional, boolean, string, malformed string/list and
+  negative values. Five failed before the fix (the negative case already passed).
+  All 116 checkpointing tests now pass; touched-file Ruff checks pass. The overall
+  repository clarity audit remains incomplete.
