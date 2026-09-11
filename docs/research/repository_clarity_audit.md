@@ -6426,3 +6426,16 @@ The broader repository audit remains incomplete.
 - Runtime-config plus report tests before the script edit: 81 passed with three
   dependency warnings. After the edit, all 30 report tests passed. Touched-file
   Ruff and diff checks pass. Broader repository audit remains incomplete.
+
+## GPU busy report construction belongs to the existing report class
+
+- Move analyze into GpuBusyReport.from_capture, returning cls with the same
+  window selection, per-device union computation, attribution and provenance.
+  Update CLI, tests and documented interface; remove the old free entry without
+  a forwarding alias. The existing report now owns construction and rendering.
+- Keep pure interval functions and SQLite/export adapters outside the report;
+  they represent shared mathematical and external-format operations. Preserve
+  connection closure in finally, CLI options and text/JSON shape. No new class.
+- Report suite: 30 passed. CLI --help and SQLite-fixture-to-text/JSON smoke passed.
+  Touched-file Ruff and diff checks pass. No new real nsys export or GPU capture
+  was run; broader repository audit remains incomplete.

@@ -27,7 +27,7 @@ import math
 import sys
 from pathlib import Path
 
-from vrl.scripts.perf.nsys_report import analyze
+from vrl.scripts.perf.nsys_report import GpuBusyReport
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -81,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         window = (lo, hi)
 
     try:
-        report = analyze(
+        report = GpuBusyReport.from_capture(
             args.capture,
             window_nvtx=args.window_nvtx,
             window=window,

@@ -368,7 +368,7 @@ kernel 的 GPU 时间；异步 launch 让 kernel 溢出 range wall，于是 proj
 | `merge_intervals` / `union_length` / `clip_intervals` / `overlap_length` | 纯区间代数，无 sqlite 无 GPU，可单测 |
 | `open_report(path)` | 接 `.sqlite` 直读，接 `.nsys-rep` 自动 `nsys export` 成临时 sqlite（事后分析，非包采集） |
 | `capture_window` / `nvtx_window` | 默认窗口 = kernel span；`--window-nvtx NAME` = 命名 NVTX range 的 span |
-| `analyze(...) -> GpuBusyReport` | 顶层：每设备 busy + top idle gaps（含 API 分解）+ 每 NVTX-stage 归因 + provenance |
+| `GpuBusyReport.from_capture(...) -> GpuBusyReport` | 顶层：每设备 busy + top idle gaps（含 API 分解）+ 每 NVTX-stage 归因 + provenance |
 | `format_report` / `report_to_dict` | 文本渲染（表头自带"这是 union 不是 projection"告警）/ JSON 导出 |
 
 CLI `vrl/scripts/perf/nsys_gpu_busy.py`（薄消费者，匹配既有 perf 脚本模式）：
@@ -384,7 +384,7 @@ python -m vrl.scripts.perf.nsys_gpu_busy outputs/run.sqlite --window-nvtx rollou
 
 ## 10.3 boundary / idle 分解
 
-`analyze` 对所选设备求 kernel-union 的**补集** = idle 段，取最长的 N 个，每段按
+`GpuBusyReport.from_capture` 对所选设备求 kernel-union 的**补集** = idle 段，取最长的 N 个，每段按
 `CUPTI_ACTIVITY_KIND_RUNTIME`（host CUDA-API，名字按 `_vNNNN` 后缀归一）+
 `CUPTI_ACTIVITY_KIND_MEMCPY`（copy-engine）拆开。这正是手跑两轮里"between-sample boundary =
 cudaMemcpyAsync + cudaLaunchKernel + cudaStreamSynchronize + 纯 Python"的分解，现在可复现：

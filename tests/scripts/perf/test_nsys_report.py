@@ -14,7 +14,7 @@ import sqlite3
 import pytest
 
 from vrl.scripts.perf.nsys_report import (
-    analyze,
+    GpuBusyReport,
     clip_intervals,
     merge_intervals,
     overlap_length,
@@ -107,7 +107,7 @@ def _make_db(path) -> str:
 
 def test_default_window_busy_fraction(tmp_path) -> None:
     path = _make_db(tmp_path / "cap.sqlite")
-    rep = analyze(path)
+    rep = GpuBusyReport.from_capture(path)
     assert rep.window == (0, 800)  # kernel-span default
     (dev,) = rep.per_device
     assert dev.kernel_count == 2
@@ -118,7 +118,7 @@ def test_default_window_busy_fraction(tmp_path) -> None:
 
 def test_idle_gap_is_decomposed(tmp_path) -> None:
     path = _make_db(tmp_path / "cap.sqlite")
-    rep = analyze(path, min_gap_ns=100)
+    rep = GpuBusyReport.from_capture(path, min_gap_ns=100)
     (gap,) = rep.idle_gaps
     assert (gap.start, gap.end) == (200, 500)
     assert gap.duration_ns == 300
@@ -133,7 +133,7 @@ def test_idle_gap_is_decomposed(tmp_path) -> None:
 
 def test_nvtx_attribution_uses_union_not_projection(tmp_path) -> None:
     path = _make_db(tmp_path / "cap.sqlite")
-    rep = analyze(path)
+    rep = GpuBusyReport.from_capture(path)
     (stage,) = rep.nvtx
     assert stage.name == "rollout"
     assert stage.occurrences == 1
@@ -144,7 +144,7 @@ def test_nvtx_attribution_uses_union_not_projection(tmp_path) -> None:
 
 def test_window_nvtx_selects_named_range(tmp_path) -> None:
     path = _make_db(tmp_path / "cap.sqlite")
-    rep = analyze(path, window_nvtx="rollout")
+    rep = GpuBusyReport.from_capture(path, window_nvtx="rollout")
     assert rep.window == (0, 800)
     assert "nvtx" in rep.provenance.window_source
 
@@ -152,13 +152,13 @@ def test_window_nvtx_selects_named_range(tmp_path) -> None:
 def test_unknown_nvtx_window_fails_loud(tmp_path) -> None:
     path = _make_db(tmp_path / "cap.sqlite")
     with pytest.raises(RuntimeError, match="no NVTX range matching"):
-        analyze(path, window_nvtx="does-not-exist")
+        GpuBusyReport.from_capture(path, window_nvtx="does-not-exist")
 
 
 def test_explicit_window_clips_busy(tmp_path) -> None:
     path = _make_db(tmp_path / "cap.sqlite")
     # window 100..600 clips kernel1 to [100,200]=100 and kernel2 to [500,600]=100
-    rep = analyze(path, window=(100, 600))
+    rep = GpuBusyReport.from_capture(path, window=(100, 600))
     (dev,) = rep.per_device
     assert dev.busy_ns == 200
     assert dev.wall_ns == 500
@@ -172,7 +172,7 @@ def test_multi_device_busy_is_per_device(tmp_path) -> None:
     db.execute("insert into TARGET_INFO_GPU values (?,?,?)", (1, "Synthetic GPU 2", 170))
     db.commit()
     db.close()
-    rep = analyze(path)
+    rep = GpuBusyReport.from_capture(path)
     busy = {d.device_id: d.busy_ns for d in rep.per_device}
     # dev0 union = 500 (the gap stays idle); dev1 = 800 (one continuous kernel).
     # They are NOT merged across devices even though they overlap in wall time.
@@ -226,7 +226,7 @@ def test_ray_local_device_ids_are_mapped_to_physical_gpus(tmp_path) -> None:
     db.commit()
     db.close()
 
-    rep = analyze(path)
+    rep = GpuBusyReport.from_capture(path)
     busy = {device.device_id: device.busy_ns for device in rep.per_device}
     assert busy == {1: 200, 3: 800}
     assert {device.name for device in rep.per_device} == {
@@ -239,11 +239,13 @@ def test_ray_local_device_ids_are_mapped_to_physical_gpus(tmp_path) -> None:
 @pytest.mark.parametrize("value", [-1, True, 1.5])
 def test_analysis_rejects_invalid_limits_before_opening_capture(tmp_path, field, value):
     with pytest.raises(ValueError, match=field):
-        analyze(tmp_path / "missing.sqlite", **{field: value})
+        GpuBusyReport.from_capture(tmp_path / "missing.sqlite", **{field: value})
 
 
 def test_zero_report_limits_disable_gap_and_stage_rows(tmp_path):
-    report = analyze(_make_db(tmp_path / "cap.sqlite"), top_gaps=0, top_nvtx=0, min_gap_ns=0)
+    report = GpuBusyReport.from_capture(
+        _make_db(tmp_path / "cap.sqlite"), top_gaps=0, top_nvtx=0, min_gap_ns=0
+    )
     assert report.idle_gaps == ()
     assert report.nvtx == ()
     assert report.per_device
@@ -261,7 +263,7 @@ def test_cli_rejects_invalid_gap_before_nanosecond_conversion(value, capsys):
 
 def test_report_renders_and_serialises(tmp_path) -> None:
     path = _make_db(tmp_path / "cap.sqlite")
-    rep = analyze(path, min_gap_ns=100)
+    rep = GpuBusyReport.from_capture(path, min_gap_ns=100)
     text = rep.to_text()
     assert "kernel-interval UNION" in text
     assert "NOT nsys nvtx_gpu_proj_sum" in text
@@ -285,7 +287,7 @@ def test_capture_without_nvtx_or_memcpy_still_reports(tmp_path) -> None:
     db.execute("insert into CUPTI_ACTIVITY_KIND_KERNEL values (?,?,?,?,?,?)", (0, 100, 0, 1, 1, 0))
     db.commit()
     db.close()
-    rep = analyze(str(path))
+    rep = GpuBusyReport.from_capture(str(path))
     assert rep.per_device[0].busy_ns == 100
     assert rep.per_device[0].name == "device0"  # no TARGET_INFO_GPU -> fallback label
     assert rep.nvtx == ()

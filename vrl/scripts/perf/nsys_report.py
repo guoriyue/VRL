@@ -216,6 +216,95 @@ class GpuBusyReport:
     nvtx: tuple[NvtxBusy, ...] = field()
     provenance: ReportProvenance = field()
 
+    @classmethod
+    def from_capture(
+        cls,
+        path: str | Path,
+        *,
+        window_nvtx: str | None = None,
+        window: Interval | None = None,
+        device_id: int | None = None,
+        top_gaps: int = 10,
+        min_gap_ns: int = 100_000,
+        top_nvtx: int = 20,
+    ) -> GpuBusyReport:
+        """Build the trustworthy GPU-busy report for one capture window.
+
+        ``window`` (explicit ns) > ``window_nvtx`` (span of a named range) > default
+        (the full kernel span). ``device_id`` selects the device for idle-gap and NVTX
+        attribution; default is the device with the most kernels in the window.
+        Per-device busy fractions are always reported for every device.
+        """
+
+        for name, value in (
+            ("top_gaps", top_gaps),
+            ("top_nvtx", top_nvtx),
+            ("min_gap_ns", min_gap_ns),
+        ):
+            require_exact_int(value, path=name, minimum=0)
+
+        conn, sqlite_path = open_report(path)
+        try:
+            if window is not None:
+                win = window
+                window_source = f"explicit {win[0]}..{win[1]} ns"
+            elif window_nvtx is not None:
+                win = nvtx_window(conn, window_nvtx)
+                window_source = f"nvtx~{window_nvtx!r}"
+            else:
+                win = capture_window(conn)
+                window_source = "kernel-span (default)"
+            lo, hi = win
+            if hi <= lo:
+                raise RuntimeError(f"empty window {win}")
+            wall = hi - lo
+
+            names = _device_names(conn)
+            by_dev = _kernels_by_device(conn, win)
+            total_kernels = sum(len(v) for v in by_dev.values())
+
+            per_device: list[DeviceBusy] = []
+            for dev in sorted(by_dev):
+                ivals = by_dev[dev]
+                per_device.append(
+                    DeviceBusy(
+                        device_id=dev,
+                        name=names.get(dev, f"device{dev}"),
+                        kernel_count=len(ivals),
+                        busy_ns=union_length(ivals),
+                        wall_ns=wall,
+                    )
+                )
+
+            if device_id is None:
+                gap_dev = max(by_dev, key=lambda d: len(by_dev[d])) if by_dev else 0
+            else:
+                gap_dev = device_id
+            gap_kernels = by_dev.get(gap_dev, [])
+
+            gaps = _idle_gaps(conn, gap_kernels, win, top=top_gaps, min_gap_ns=min_gap_ns)
+            nvtx = _nvtx_attribution(conn, gap_kernels, top=top_nvtx)
+
+            provenance = ReportProvenance(
+                source_path=str(path),
+                sqlite_path=sqlite_path,
+                nsys_version=_nsys_version(conn),
+                total_kernels=total_kernels,
+                devices=tuple((d, names.get(d, f"device{d}")) for d in sorted(by_dev)),
+                window_source=window_source,
+            )
+            return cls(
+                window=win,
+                wall_ns=wall,
+                per_device=tuple(per_device),
+                gap_device=gap_dev,
+                idle_gaps=tuple(gaps),
+                nvtx=tuple(nvtx),
+                provenance=provenance,
+            )
+        finally:
+            conn.close()
+
     def to_text(self) -> str:
         """Human-readable self. The header states the metric so a number copied out
         of it carries its own caveat (kernel-union over wall, NOT nsys projection)."""
@@ -639,94 +728,6 @@ def _nsys_version(conn: sqlite3.Connection) -> str:
     return "unknown"
 
 
-def analyze(
-    path: str | Path,
-    *,
-    window_nvtx: str | None = None,
-    window: Interval | None = None,
-    device_id: int | None = None,
-    top_gaps: int = 10,
-    min_gap_ns: int = 100_000,
-    top_nvtx: int = 20,
-) -> GpuBusyReport:
-    """Build the trustworthy GPU-busy report for one capture window.
-
-    ``window`` (explicit ns) > ``window_nvtx`` (span of a named range) > default
-    (the full kernel span). ``device_id`` selects the device for idle-gap and NVTX
-    attribution; default is the device with the most kernels in the window.
-    Per-device busy fractions are always reported for every device.
-    """
-
-    for name, value in (
-        ("top_gaps", top_gaps),
-        ("top_nvtx", top_nvtx),
-        ("min_gap_ns", min_gap_ns),
-    ):
-        require_exact_int(value, path=name, minimum=0)
-
-    conn, sqlite_path = open_report(path)
-    try:
-        if window is not None:
-            win = window
-            window_source = f"explicit {win[0]}..{win[1]} ns"
-        elif window_nvtx is not None:
-            win = nvtx_window(conn, window_nvtx)
-            window_source = f"nvtx~{window_nvtx!r}"
-        else:
-            win = capture_window(conn)
-            window_source = "kernel-span (default)"
-        lo, hi = win
-        if hi <= lo:
-            raise RuntimeError(f"empty window {win}")
-        wall = hi - lo
-
-        names = _device_names(conn)
-        by_dev = _kernels_by_device(conn, win)
-        total_kernels = sum(len(v) for v in by_dev.values())
-
-        per_device: list[DeviceBusy] = []
-        for dev in sorted(by_dev):
-            ivals = by_dev[dev]
-            per_device.append(
-                DeviceBusy(
-                    device_id=dev,
-                    name=names.get(dev, f"device{dev}"),
-                    kernel_count=len(ivals),
-                    busy_ns=union_length(ivals),
-                    wall_ns=wall,
-                )
-            )
-
-        if device_id is None:
-            gap_dev = max(by_dev, key=lambda d: len(by_dev[d])) if by_dev else 0
-        else:
-            gap_dev = device_id
-        gap_kernels = by_dev.get(gap_dev, [])
-
-        gaps = _idle_gaps(conn, gap_kernels, win, top=top_gaps, min_gap_ns=min_gap_ns)
-        nvtx = _nvtx_attribution(conn, gap_kernels, top=top_nvtx)
-
-        provenance = ReportProvenance(
-            source_path=str(path),
-            sqlite_path=sqlite_path,
-            nsys_version=_nsys_version(conn),
-            total_kernels=total_kernels,
-            devices=tuple((d, names.get(d, f"device{d}")) for d in sorted(by_dev)),
-            window_source=window_source,
-        )
-        return GpuBusyReport(
-            window=win,
-            wall_ns=wall,
-            per_device=tuple(per_device),
-            gap_device=gap_dev,
-            idle_gaps=tuple(gaps),
-            nvtx=tuple(nvtx),
-            provenance=provenance,
-        )
-    finally:
-        conn.close()
-
-
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
@@ -745,7 +746,6 @@ __all__ = [
     "IdleGap",
     "NvtxBusy",
     "ReportProvenance",
-    "analyze",
     "capture_window",
     "clip_intervals",
     "merge_intervals",
