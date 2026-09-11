@@ -6681,3 +6681,16 @@ The broader repository audit remains incomplete.
   lifecycle changes and no replacement wrapper class.
 - Token-autoregressive binding and Emu3 family suites: 39 passed, 16 dependency
   warnings. Touched-file Ruff and diff checks pass. Broader audit remains open.
+
+## Paged prefill preserves the declared backend result type
+
+- Replace prefill_ar_prompt's Any return annotation with the existing
+  ARAttentionPrefillOutput. The backend already declares that result and both
+  CFG and NextStep callers consume its last_hidden/sequence_states fields.
+- Keep per-sequence cache state opaque: it is backend-owned. The selection and
+  scatter helpers support both required CFG state lists and NextStep's absent
+  unconditional branch, so their None handling is a real boundary.
+- Touched-file Ruff, runtime annotation resolution and diff checks pass. This
+  annotation-only change does not alter execution; no new behavioral test or
+  repeat of the preceding 39-test runner verification was necessary. Broader
+  repository audit remains incomplete.

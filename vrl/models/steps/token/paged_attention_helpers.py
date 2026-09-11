@@ -19,6 +19,7 @@ from vrl.models.steps.token.base import ARDiscreteTokenRunner, ARDiscreteTokenSt
 from vrl.nn.layers.attention.paged import (
     ARAttentionBackend,
     ARAttentionPrefillInput,
+    ARAttentionPrefillOutput,
     ARAttentionStepInput,
 )
 
@@ -40,7 +41,7 @@ def prefill_ar_prompt(
     *,
     branch: str,
     max_new_tokens: int,
-) -> Any:
+) -> ARAttentionPrefillOutput:
     """Prefill one CFG branch through the paged attention backend."""
 
     return attention_backend.prefill(
