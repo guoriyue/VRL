@@ -181,13 +181,15 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
         temperature = require_positive_temperature(temperature)
         batch_size = cond_inputs_embeds.shape[0]
         device = cond_inputs_embeds.device
-        cond_prefill = self._prefill_ar_prompt_paged(
+        cond_prefill = prefill_ar_prompt(
+            self.attention_backend,
             cond_inputs_embeds,
             cond_attention_mask,
             branch="cond",
             max_new_tokens=total_token_num,
         )
-        uncond_prefill = self._prefill_ar_prompt_paged(
+        uncond_prefill = prefill_ar_prompt(
+            self.attention_backend,
             uncond_inputs_embeds,
             uncond_attention_mask,
             branch="uncond",
@@ -247,22 +249,6 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
             cond_logits,
             sampled,
             temperature=state.temperature,
-        )
-
-    def _prefill_ar_prompt_paged(
-        self,
-        inputs_embeds: torch.Tensor,
-        attention_mask: torch.Tensor,
-        *,
-        branch: str,
-        max_new_tokens: int,
-    ) -> Any:
-        return prefill_ar_prompt(
-            self.attention_backend,
-            inputs_embeds,
-            attention_mask,
-            branch=branch,
-            max_new_tokens=max_new_tokens,
         )
 
     def _sample_ar_step(

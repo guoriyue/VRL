@@ -6668,3 +6668,16 @@ The broader repository audit remains incomplete.
 - No production edits justified by this check. This syntactic scan cannot prove
   clarity of larger functions, and passing these suites is not an end-to-end
   training benchmark or a completion claim for the repository-wide audit.
+
+## Paged CFG initialization calls the shared prefill adapter directly
+
+- Remove PagedCFGTokenRunner._prefill_ar_prompt_paged: its two internal callers
+  were its only users, no family overrode it, and it only forwarded the runner's
+  attention_backend to prefill_ar_prompt. Both CFG branches now call that
+  adapter directly, making the backend dependency visible at initialization.
+- Keep prefill_ar_prompt as the request-construction adapter shared with
+  NextStep. Keep the family sampling and embedding hooks: those implement
+  actual family variation. No attention protocol, branch order or KV-state
+  lifecycle changes and no replacement wrapper class.
+- Token-autoregressive binding and Emu3 family suites: 39 passed, 16 dependency
+  warnings. Touched-file Ruff and diff checks pass. Broader audit remains open.
