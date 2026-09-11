@@ -4262,3 +4262,15 @@ this combined regression is compatibility evidence, not architectural completion
   `_null_key` and `_required_field_paths`, as the next ownership candidates.
   No production edits were made while this regression was running. Green trainer
   tests do not establish full-repository clarity or real multi-GPU training parity.
+
+## Online config owns null and required-field handling
+
+- Inline `_null_key` and `_required_field_paths` into their sole caller,
+  `TrainerConfig.from_root`. Explicit-null rejection and nested required-field
+  enumeration now sit inside the missing-value branch; remove both module-level
+  helpers without adding methods or a wrapper class.
+- Preserve dataclass-derived required paths, public-section ownership checks,
+  defaults and error text. Keep `OnlineBatchPlan` and precision construction as
+  separate meaningful owners; no duplicate field vocabulary is introduced.
+- Online config, online run config and config suites passed: 361 tests in 11.59s.
+  Touched-file Ruff checks pass. The repository-wide audit is still incomplete.

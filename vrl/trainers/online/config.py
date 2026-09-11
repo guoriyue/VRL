@@ -23,23 +23,6 @@ if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
 
 
-def _required_field_paths(cls: type[Any], path: str) -> list[str]:
-    """Public paths of ``cls``'s required fields (no default), under ``path``."""
-
-    return [
-        f"{path}.{f.name}"
-        for f in fields(cls)
-        if f.init and f.default is MISSING and f.default_factory is MISSING
-    ]
-
-
-def _null_key(section: Any, name: str, path: str) -> None:
-    """Explicit ``null`` is a misconfiguration; only absence means "use the default"."""
-
-    if section is not None and name in section.model_fields_set:
-        raise ValueError(f"config key {path} is null; delete the key or fill it")
-
-
 @dataclass(frozen=True, slots=True)
 class OnlineBatchPlan:
     """Canonical geometry and memory bounds for one online optimizer update."""
@@ -301,12 +284,19 @@ class TrainerConfig:
             value = None if section is None else getattr(section, f.name)
             required = f.default is MISSING and f.default_factory is MISSING
             if value is None:
-                _null_key(section, f.name, path)
+                if section is not None and f.name in section.model_fields_set:
+                    raise ValueError(f"config key {path} is null; delete the key or fill it")
                 if required:
                     field_type = hints[f.name]
-                    nested = (
-                        _required_field_paths(field_type, path) if is_dataclass(field_type) else []
-                    )
+                    nested = []
+                    if is_dataclass(field_type):
+                        nested = [
+                            f"{path}.{child.name}"
+                            for child in fields(field_type)
+                            if child.init
+                            and child.default is MISSING
+                            and child.default_factory is MISSING
+                        ]
                     missing.extend(nested or [path])
                 continue
             payload[f.name] = value
