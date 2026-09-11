@@ -1,26 +1,16 @@
-"""Batch memory sizing: measure, model, and monitor per-batch CUDA peaks.
+"""CUDA occupancy capture and the affine model used for startup batch sizing.
 
-One topic across three moments of a batch's life, split out of
-``batch_placement`` because sizing and placement only ever shared consumers,
-never meaning: ``cuda_occupancy_snapshot`` captures the pre-loop half of a
-``BatchMemoryReading`` at batch start (called by the regime-neutral denoise
-loop), ``AffinePeakFit`` turns two probe trials into the startup batch-width
-proposal (the worker's ``samples_per_generation_batch: auto`` probe), and
-``build_batch_memory_shadow`` flattens executed-batch readings into the
-drift-calibration rows driver telemetry checks against the probe's verdict.
-The reading dataclass itself stays in ``types.py`` — it rides the Ray wire
-inside batch results; this module owns producing and interpreting it.
+BatchMemoryReading is the worker wire record in types.py. This module owns
+pre-loop occupancy sampling and fitting; the executor logs completed readings
+without an intermediate telemetry representation.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, fields
-from typing import Any
 
 from vrl.generation.execution.types import (
     BatchMemoryReading,
-    GenerationBatchResult,
 )
 
 
@@ -107,41 +97,4 @@ class AffinePeakFit:
         return min(int(headroom // self.slope_bytes_per_sample), max_samples)
 
 
-def build_batch_memory_shadow(
-    batch_results: Sequence[GenerationBatchResult],
-) -> list[dict[str, Any]]:
-    """Raw per-batch memory readings for drift monitoring (no estimation).
-
-    One row per executed batch that carried a typed memory reading; rows
-    without one (AR batches, CPU runs) are skipped, and no reading at all ->
-    empty list so callers emit nothing. These rows are the calibration record
-    the startup batch-size probe is checked against: a steady-state peak that
-    drifts far from the probe's accepted trial means the probe verdict is
-    stale (e.g. the colocated trainer's phase footprint changed).
-    """
-
-    rows: list[dict[str, Any]] = []
-    for result in batch_results:
-        reading = result.memory
-        if reading is None:
-            continue
-        rows.append(
-            {
-                "batch_key": result.batch.batch_key,
-                "sample_count": reading.sample_count,
-                "peak_bytes": reading.peak_bytes,
-                "baseline_allocated_bytes": reading.baseline_allocated_bytes,
-                "denoise_peak_bytes": reading.denoise_peak_bytes,
-                "decode_peak_bytes": reading.decode_peak_bytes,
-                "non_torch_bytes": reading.non_torch_bytes,
-                "budget_bytes": reading.budget_bytes,
-            },
-        )
-    return rows
-
-
-__all__ = [
-    "AffinePeakFit",
-    "build_batch_memory_shadow",
-    "cuda_occupancy_snapshot",
-]
+__all__ = ["AffinePeakFit", "cuda_occupancy_snapshot"]

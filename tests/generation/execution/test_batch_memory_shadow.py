@@ -20,14 +20,12 @@ import vrl.generation.execution.worker as worker_module
 from tests.generation.execution._helpers import launch_contract
 from vrl.generation.execution.batch_memory import (
     AffinePeakFit,
-    build_batch_memory_shadow,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
     BatchMemoryReading,
     BatchSizeProbeResult,
     GenerationBatchEnvelope,
-    GenerationBatchResult,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.engine import RayGenerationEngine
@@ -128,32 +126,6 @@ def test_reading_normalizes_binding_mapping_and_rejects_partial_data() -> None:
     # non-torch = device-used minus torch-reserved: (32-18) - 11 = 3GB.
     assert reading.non_torch_bytes == 3 * GB
     assert reading.budget_bytes == 29 * GB
-
-
-def test_shadow_rows_are_raw_readings_without_estimation() -> None:
-    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=4)
-    rows = build_batch_memory_shadow(
-        [
-            GenerationBatchResult(
-                request_id="req",
-                worker_id="w0",
-                batch=batch,
-                output=None,
-                memory=_reading(),
-            ),
-            GenerationBatchResult(
-                request_id="req",
-                worker_id="w0",
-                batch=batch,
-                output=None,
-            ),
-        ],
-    )
-
-    assert [row["batch_key"] for row in rows] == [batch.batch_key]
-    assert rows[0]["peak_bytes"] == 18 * GB
-    assert rows[0]["non_torch_bytes"] == 3 * GB
-    assert build_batch_memory_shadow([]) == []
 
 
 # -- worker probe -------------------------------------------------------------

@@ -15,6 +15,7 @@ from vrl.generation.execution.batch_placement import (
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
+    BatchMemoryReading,
     GenerationBatchEnvelope,
     GenerationBatchResult,
     PipelinedRequestOutOfMemory,
@@ -560,3 +561,42 @@ async def test_default_uses_per_chunk_path() -> None:
 
     assert worker.request_calls == []
     assert worker.batch_calls == [batch.batch_key]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_reading", [True, False])
+async def test_executor_logs_measured_batch_memory(with_reading, caplog, monkeypatch):
+    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1)
+    worker = _CapacityWorker(worker_id="w0", max_samples=1)
+    execute = worker.execute_batch
+
+    def execute_with_memory(envelope):
+        result = execute(envelope)
+        if with_reading:
+            mib = 2**20
+            result.memory = BatchMemoryReading(
+                sample_count=1,
+                baseline_allocated_bytes=10 * mib,
+                denoise_peak_bytes=18 * mib,
+                decode_peak_bytes=14 * mib,
+                reserved_start_bytes=11 * mib,
+                free_start_bytes=18 * mib,
+                total_bytes=32 * mib,
+            )
+        return result
+
+    monkeypatch.setattr(worker, "execute_batch", execute_with_memory)
+    executor, _ = _executor([batch], [worker])
+    with caplog.at_level("INFO", logger="vrl.generation.ray.executor"):
+        await executor.execute(_request(1))
+    messages = [
+        r.getMessage() for r in caplog.records if r.getMessage().startswith("batch memory:")
+    ]
+    assert messages == (
+        [
+            f"batch memory: batch={batch.batch_key} n=1 peak=18MB "
+            "(denoise=18MB decode=14MB baseline=10MB) budget=29MB non_torch=3MB"
+        ]
+        if with_reading
+        else []
+    )

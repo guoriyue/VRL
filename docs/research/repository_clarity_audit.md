@@ -331,3 +331,24 @@ DPO timestep handling, trajectory, profiler, online lifecycle, evaluation,
 rollouts, storage adoption and the Torch-free config parsing check. Touched
 Python files pass Ruff; `git diff --check` passes. This validates the changes
 above, not completion of the outstanding repository-wide audit.
+
+## Generation memory telemetry review
+
+- Removed `build_batch_memory_shadow`: its sole production consumer converted
+  typed readings into dictionaries solely to read them back for logging. The
+  executor now logs `BatchMemoryReading` directly, preserving log text and
+  skipping absent readings. No intermediate list or new class is needed.
+- Kept CUDA occupancy capture as a lazy runtime sampling boundary: it records
+  pre-loop quantities that cannot be reconstructed from the completed batch.
+  Kept `AffinePeakFit` as the existing owner of startup sizing math. Neither
+  measurement nor the probe/confirmation algorithm changes.
+- Rechecked `_require_chunked_executor` (plugin protocol validation), recursive
+  debug value formatting (serialization boundary), and `_is_oom_error` (rank
+  errors arrive as text). These short functions retain concrete responsibilities.
+- Inspected coordinator policy-version fallback and its collector initialization
+  dependency. No change made: removing it requires resolving version ownership
+  across initial attachment and weight-sync acknowledgement, not just deleting
+  the fallback. This lifecycle review remains outstanding.
+- Validation: 139 execution, OOM-split and Torch-free parsing tests passed.
+  The removed dictionary-construction test is replaced by executor-path log
+  coverage with and without a memory reading. Ruff passes on all touched files.

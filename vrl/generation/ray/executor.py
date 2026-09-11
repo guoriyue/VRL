@@ -15,7 +15,6 @@ import logging
 from dataclasses import replace
 from typing import Any
 
-from vrl.generation.execution.batch_memory import build_batch_memory_shadow
 from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import (
@@ -317,26 +316,24 @@ class RayGenerationExecutor:
             batch_outputs.append(result.output)
 
         output = self.gatherer.gather_batches(request, sample_rows, batch_outputs)
-        # Raw per-batch memory readings (drift monitor for the startup
-        # batch-size probe). Log-only provenance; nothing here changes batch sizing.
-        memory_shadow = build_batch_memory_shadow(
-            results,
-        )
-        if memory_shadow:
-            for row in memory_shadow:
-                logger.info(
-                    "batch memory: batch=%s n=%d peak=%.0fMB "
-                    "(denoise=%.0fMB decode=%.0fMB baseline=%.0fMB) "
-                    "budget=%.0fMB non_torch=%.0fMB",
-                    row["batch_key"],
-                    row["sample_count"],
-                    row["peak_bytes"] / 2**20,
-                    row["denoise_peak_bytes"] / 2**20,
-                    row["decode_peak_bytes"] / 2**20,
-                    row["baseline_allocated_bytes"] / 2**20,
-                    row["budget_bytes"] / 2**20,
-                    row["non_torch_bytes"] / 2**20,
-                )
+        # Log measured peaks without changing the probe's batch-size decision.
+        for result in results:
+            reading = result.memory
+            if reading is None:
+                continue
+            logger.info(
+                "batch memory: batch=%s n=%d peak=%.0fMB "
+                "(denoise=%.0fMB decode=%.0fMB baseline=%.0fMB) "
+                "budget=%.0fMB non_torch=%.0fMB",
+                result.batch.batch_key,
+                reading.sample_count,
+                reading.peak_bytes / 2**20,
+                reading.denoise_peak_bytes / 2**20,
+                reading.decode_peak_bytes / 2**20,
+                reading.baseline_allocated_bytes / 2**20,
+                reading.budget_bytes / 2**20,
+                reading.non_torch_bytes / 2**20,
+            )
         schedule_summary: list[dict[str, Any]] = []
         if schedule_rows:
             by_index = {row["job_index"]: row for row in schedule_rows}
