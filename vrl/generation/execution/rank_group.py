@@ -5,14 +5,16 @@ The ranks of one engine cooperate through torch.distributed collectives
 per rank). This module owns the rendezvous spec that crosses the Ray launch
 boundary and the init/destroy pair the rank program calls around its model
 lifetime. A single-rank engine carries no spec and never touches
-torch.distributed — the entire module is inert until a multi-GPU engine
-backend lands (docs/sprints/SPRINT_engine_worker_vocabulary.md, P4/P5).
+torch.distributed. Multi-rank workers initialize the group before model build
+and destroy it when unloading the policy.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+
+from vrl.utils.config import require_exact_int
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,9 @@ class RankGroupSpec:
     def __post_init__(self) -> None:
         if not self.master_addr:
             raise ValueError("rank group master_addr must be non-empty")
+        require_exact_int(self.master_port, path="rank group.master_port")
+        require_exact_int(self.group_rank, path="rank group.group_rank")
+        require_exact_int(self.group_world_size, path="rank group.group_world_size")
         if not 0 < self.master_port < 65536:
             raise ValueError(f"rank group master_port out of range: {self.master_port}")
         if self.group_world_size < 2:

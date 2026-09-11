@@ -90,3 +90,12 @@ def test_spec_rejects_degenerate_and_out_of_range_shapes() -> None:
         RankGroupSpec("127.0.0.1", 29500, 0, 2, backend="mpi")
     with pytest.raises(ValueError, match="master_port"):
         RankGroupSpec("127.0.0.1", 0, 0, 2)
+
+
+@pytest.mark.parametrize("field", ["master_port", "group_rank", "group_world_size"])
+@pytest.mark.parametrize("value", [True, False, 2.5, "2", float("nan"), float("inf")])
+def test_spec_requires_integer_rendezvous_fields(field, value) -> None:
+    settings = dict(master_addr="127.0.0.1", master_port=29500, group_rank=0, group_world_size=2)
+    settings[field] = value
+    with pytest.raises(ValueError, match=field + " must be an integer"):
+        RankGroupSpec(**settings)

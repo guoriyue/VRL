@@ -3035,3 +3035,21 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 179 generation execution tests passed, including nested scalar
   counter conversion and disabled-debug property isolation; touched-file Ruff
   and diff checks passed. Full repository review remains incomplete.
+
+## Make rank rendezvous integer requirements explicit
+
+- RankGroupSpec previously accepted fractional port/rank/world-size values
+  and bool ranks through numeric range comparisons. Reuse require_exact_int
+  for all three fields before preserving the existing range checks. Invalid
+  launch contracts now fail at construction, before distributed initialization.
+- Replace the stale module claim that multi-rank backends have not landed:
+  GenerationWorkerCore already initializes before model build and destroys
+  the group during policy release.
+- Keep init/destroy as the torch.distributed lifecycle adapter and keep
+  build_rollout_schedule as the factory selecting two protocol implementations;
+  neither belongs on one concrete schedule or on serialized rendezvous data.
+  The topology guard remains cross-type. No new wrapper class or constants.
+- Validation: 30 rank-group, rollout-launcher and sequence-parallel tests passed,
+  including real two-process gloo communication and 18 invalid-field cases.
+  Touched-file Ruff and diff checks passed. No real NCCL validation is claimed;
+  repository-wide clarity review remains incomplete.
