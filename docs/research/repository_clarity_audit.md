@@ -1466,3 +1466,17 @@ close that architectural scope.
 - Validation: 33 media-layout/CLIP/AnimeReward tests passed. Nine new empty-input
   cases cover PIL, sequences, arrays and image/video/batched tensors; valid score
   oracle tests remain green. Touched-file Ruff and git diff --check pass.
+
+## Diffusion sampling matches explicit integer semantics
+
+- DiffusionRequestLayout now uses require_exact_int for request geometry, step
+  count, optional fps/text length and seed. Fractional/string/boolean values no
+  longer get converted before entering model requests and SDE window resolution.
+  Geometry/schedule lengths are positive; integer seeds retain existing semantics.
+- Kept executor-provided defaults, the existing num_frames/frame_count precedence,
+  optional fields and family-specific parse overrides. No new config dataclass,
+  helper table or changes to guidance/SDE mathematics. DenoiseRequest direct
+  construction is a separate boundary and is not claimed validated by this change.
+- Validation: 120 full-sequence binding/composition/step tests passed, including
+  33 new invalid-input cases and existing request-window tests. Touched-file Ruff
+  and git diff --check pass.

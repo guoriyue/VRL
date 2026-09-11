@@ -18,6 +18,7 @@ from vrl.generation.types import (
     GenerationRequest,
     GenerationSampleRow,
 )
+from vrl.utils.config import require_exact_int
 
 TChunk = TypeVar("TChunk")
 
@@ -84,7 +85,7 @@ class DiffusionRequestLayout:
 
         sampling = request.sampling
         options = request.denoise if request.denoise is not None else DenoiseRequestOptions()
-        num_steps = int(sampling["num_steps"])
+        num_steps = require_exact_int(sampling["num_steps"], path="sampling.num_steps", minimum=1)
         fps_value = sampling.get("fps", self.default_fps)
         max_sequence_length = sampling.get(
             "max_sequence_length",
@@ -94,21 +95,22 @@ class DiffusionRequestLayout:
         model_request_kwargs: dict[str, Any] = {
             "num_steps": num_steps,
             "guidance_scale": float(sampling["guidance_scale"]),
-            "height": int(sampling["height"]),
-            "width": int(sampling["width"]),
-            "frame_count": int(
-                sampling.get(
-                    "num_frames",
-                    sampling.get("frame_count", self.default_num_frames),
-                )
+            "height": require_exact_int(sampling["height"], path="sampling.height", minimum=1),
+            "width": require_exact_int(sampling["width"], path="sampling.width", minimum=1),
+            "frame_count": require_exact_int(
+                sampling.get("num_frames", sampling.get("frame_count", self.default_num_frames)),
+                path="sampling.num_frames",
+                minimum=1,
             ),
         }
         if fps_value is not None:
-            model_request_kwargs["fps"] = int(fps_value)
+            model_request_kwargs["fps"] = require_exact_int(
+                fps_value, path="sampling.fps", minimum=1
+            )
         if sampling.get("negative_prompt") is not None:
             model_request_kwargs["negative_prompt"] = sampling["negative_prompt"]
         if seed is not None:
-            model_request_kwargs["seed"] = int(seed)
+            model_request_kwargs["seed"] = require_exact_int(seed, path="sampling.seed")
         # The typed options carry the rollout-owned knobs; only the two values
         # that depend on the executor or the schedule resolve here.
         sde_window_range = options.resolve_sde_window_range(num_steps)
@@ -122,7 +124,13 @@ class DiffusionRequestLayout:
         params = DiffusionSamplingParams(
             model_request=DenoiseRequest(**model_request_kwargs),
             max_sequence_length=(
-                None if max_sequence_length is None else int(max_sequence_length)
+                None
+                if max_sequence_length is None
+                else require_exact_int(
+                    max_sequence_length,
+                    path="sampling.max_sequence_length",
+                    minimum=1,
+                )
             ),
             sde=sde,
             sde_window_size=options.sde_window_size,

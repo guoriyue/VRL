@@ -194,3 +194,18 @@ def _request(
 def test_denoise_options_reject_noninteger_window_size(size: object) -> None:
     with pytest.raises(ValueError, match="window_size"):
         DenoiseRequestOptions(sde_window_size=size)
+
+
+@pytest.mark.parametrize(
+    "field", ["num_steps", "width", "height", "num_frames", "fps", "max_sequence_length"]
+)
+@pytest.mark.parametrize("value", [True, 1.5, "2", 0, -1])
+def test_diffusion_layout_rejects_coerced_or_nonpositive_dimensions(field, value) -> None:
+    with pytest.raises(ValueError, match=field):
+        _layout().parse_sampling_params(_request({field: value}))
+
+
+@pytest.mark.parametrize("seed", [True, 1.5, "2"])
+def test_diffusion_layout_rejects_coerced_seed(seed) -> None:
+    with pytest.raises(ValueError, match=r"sampling.seed"):
+        _layout().parse_sampling_params(_request({"seed": seed}))
