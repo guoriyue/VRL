@@ -82,7 +82,7 @@ class RayGenerationSession:
             raise RuntimeError("RayGenerationSession has no GenerationWeightSync")
         await weight_sync.push_to_rollout_engines(
             state_ref,
-            int(policy_version),
+            policy_version,
         )
 
     async def sleep_engines(self) -> tuple[WorkerMemoryParkingSnapshot, ...]:

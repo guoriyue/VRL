@@ -983,3 +983,18 @@ async def test_weight_sync_rejects_coerced_ack(installed: Any) -> None:
     )
     with pytest.raises(RuntimeError, match="invalid installed policy version"):
         await sync.push_to_rollout_engines({"w": 1}, policy_version=3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy_version", [True, 1.9, "1", -1])
+async def test_session_does_not_coerce_invalid_policy_version(policy_version) -> None:
+    worker = _LocalWorker(installed_version=1)
+    sync = RayGenerationWeightSync(
+        [_engine("rollout-0", worker)],
+        actor_dispatcher=RayActorDispatcher(("rollout-0",)),
+        worker_rpc_timeout_s=1.0,
+    )
+    session = RayGenerationSession(object(), sync, [])
+    with pytest.raises(ValueError, match="policy_version must be"):
+        await session.update_weights({"w": 1}, policy_version)
+    assert worker.calls == []

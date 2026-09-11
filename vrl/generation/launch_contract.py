@@ -19,6 +19,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from vrl.utils.config import require_exact_int
+
 
 @dataclass(frozen=True, slots=True)
 class GenerationRuntimeLaunchContract:
@@ -78,7 +80,7 @@ class GenerationRuntimeLaunchContract:
                 f"sleep_offload must be a bool, got {type(self.sleep_offload).__name__}",
             )
         if self.policy_version is not None:
-            object.__setattr__(self, "policy_version", int(self.policy_version))
+            require_exact_int(self.policy_version, path="policy_version", minimum=0)
         if not isinstance(self.versioned_weight_sync, bool):
             raise TypeError("versioned_weight_sync must be a bool")
 

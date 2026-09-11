@@ -1317,3 +1317,26 @@ def test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet(local_ray) -
     finally:
         for actor in (*actors, arrivals):
             local_ray.kill(actor, no_restart=True)
+
+
+@pytest.mark.parametrize("policy_version", [True, 1.9, "1", -1])
+def test_launch_contract_rejects_invalid_policy_version(policy_version) -> None:
+    with pytest.raises(ValueError, match="policy_version must be"):
+        GenerationRuntimeLaunchContract(
+            family="unit",
+            model_build={},
+            expected_model_identity=_TEST_MODEL_IDENTITY,
+            policy_version=policy_version,
+        )
+
+
+@pytest.mark.parametrize("policy_version", [None, 0, 7])
+def test_launch_contract_preserves_policy_version(policy_version) -> None:
+    contract = GenerationRuntimeLaunchContract(
+        family="unit",
+        model_build={},
+        expected_model_identity=_TEST_MODEL_IDENTITY,
+        policy_version=policy_version,
+    )
+    assert contract.policy_version == policy_version
+    assert type(contract.policy_version) is type(policy_version)

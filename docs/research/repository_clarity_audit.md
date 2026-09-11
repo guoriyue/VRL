@@ -1165,3 +1165,22 @@ contained guesses. Removed both:
   16 scheduler-batching, GLM schedule and decoder-contract tests passed. New
   regressions reject non-integer inputs and verify failed writes preserve all
   cache rows. Ruff on touched files and git diff --check pass.
+
+## Generation launch and session version identity
+
+- GenerationRuntimeLaunchContract now validates an optional non-negative integer
+  policy_version with the existing require_exact_int boundary helper. Previously
+  int() silently changed fractional, boolean and string versions before the
+  worker adopted them as its initial identity. None retains its existing meaning.
+- RayGenerationSession forwards the version unchanged so the weight-sync owner's
+  existing validation cannot be bypassed by conversion in the resource owner.
+- Kept the launch contract as a serializable process boundary and weight-sync
+  Protocol as the implementation seam. No new validation class or duplicate
+  session guard; parking/release timeout constants and lifecycle are unchanged.
+- Validation: 80 runtime-config/session/weight-sync tests passed on the initial
+  run, including existing real-Ray cases. Four new session regressions initially
+  failed because the test omitted the engine helper's ID argument; after fixing
+  that fixture construction, all four passed. They exercise the real sync owner
+  and assert invalid versions never reach the local worker. Launch tests cover
+  None, zero, positive, negative, boolean, fractional and string versions.
+  Touched-file Ruff checks and git diff --check pass.
