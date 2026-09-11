@@ -5879,3 +5879,17 @@ The broader repository audit remains incomplete.
 - Existing CFG and backbone contract tests: 11 passed, covering batched, separate
   and disabled CFG invocation counts and results. Touched-file Ruff and diff
   checks pass; no old local references remain. Broader audit remains incomplete.
+
+## Preference image splitting uses its declared RGB-pair layout
+
+- PreferenceBatch.split_winner_loser now checks [B, 6, H, W] and explicitly
+  selects the winner's three channels and loser's three channels. The previous
+  shape[1] // 2 inferred a layout even for four/eight channels or invalid ranks.
+  Keep this check with the existing layout operation, before trainer VAE staging.
+- Keep collate as the DataLoader adapter and stacked_winner_then_loser as the
+  shared DPO image-order contract. Keep trainer checks for encoder output counts,
+  which involve different inputs. No new class, helper or channel-count table.
+- Four malformed-layout regressions failed before the fix; valid block ordering
+  is covered explicitly. Preference data and offline DPO tests: 31 passed with
+  two dependency warnings. Touched-file Ruff and diff checks pass. No real dataset
+  download or production training run; broader repository audit remains open.

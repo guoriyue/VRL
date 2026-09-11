@@ -45,8 +45,12 @@ class PreferenceBatch:
         return cls(pixel_values=pixel_values, captions=captions)
 
     def split_winner_loser(self) -> tuple[torch.Tensor, torch.Tensor]:
-        c = self.pixel_values.shape[1] // 2
-        return self.pixel_values[:, :c], self.pixel_values[:, c:]
+        if self.pixel_values.ndim != 4 or self.pixel_values.shape[1] != 6:
+            raise ValueError(
+                "preference pixel_values must have RGB pair layout [B, 6, H, W]; "
+                f"got {tuple(self.pixel_values.shape)}"
+            )
+        return self.pixel_values[:, :3], self.pixel_values[:, 3:]
 
     def stacked_winner_then_loser(self) -> torch.Tensor:
         """Return ``[2B, 3, H, W]`` — winner block first, loser second.

@@ -6,8 +6,27 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+import torch
 
-from vrl.trainers.data.preferences import PickAPicPreferenceDataset
+from vrl.trainers.data.preferences import PickAPicPreferenceDataset, PreferenceBatch
+
+
+@pytest.mark.parametrize("shape", [(2, 4, 3, 3), (2, 8, 3, 3), (2, 6, 3), (2, 6, 1, 3, 3)])
+def test_preference_split_rejects_non_rgb_pair_layout(shape):
+    batch = PreferenceBatch(pixel_values=torch.zeros(shape), captions=["a", "b"])
+    with pytest.raises(ValueError, match=r"\[B, 6, H, W\]"):
+        batch.stacked_winner_then_loser()
+
+
+def test_preference_split_preserves_winner_then_loser_blocks():
+    pixels = torch.arange(12.0).reshape(2, 6, 1, 1)
+    batch = PreferenceBatch(pixel_values=pixels, captions=["a", "b"])
+    winner, loser = batch.split_winner_loser()
+    torch.testing.assert_close(winner, pixels[:, :3])
+    torch.testing.assert_close(loser, pixels[:, 3:])
+    torch.testing.assert_close(
+        batch.stacked_winner_then_loser(), torch.cat([pixels[:, :3], pixels[:, 3:]], dim=0)
+    )
 
 
 @pytest.mark.parametrize("max_samples", [None, 2])
