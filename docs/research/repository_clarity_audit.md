@@ -4059,3 +4059,18 @@ this combined regression is compatibility evidence, not architectural completion
   different input boundary. No path policy or constructor behavior change.
 - All 37 MAGI tests passed and touched-file Ruff checks pass. The repository-wide
   audit remains in progress.
+
+## MAGI config normalization and preflight boundary review
+
+- Remove the redundant `float()` conversion from `Magi1SubprocessConfig.from_build`.
+  Its constructor already delegates conversion and finite/positive validation to
+  `require_timeout`. Both direct and build-based construction now pass through
+  that one normalization boundary; accepted values and timeout policy are unchanged.
+- Retain `_validate_single_process_config`: both original JSON preflight and
+  sample-specific runtime configuration call it. Retain environment probing as
+  the dedicated-interpreter import boundary before weight downloads. Keep runtime
+  path validation distinct from source resolution, since existence checks and
+  relative-path interpretation serve different stages.
+- All 37 MAGI tests passed; touched-file Ruff lint/format checks pass. No new tests
+  were added for this redundant conversion removal. Remaining loading helpers
+  still require individual ownership review; the repository audit is incomplete.

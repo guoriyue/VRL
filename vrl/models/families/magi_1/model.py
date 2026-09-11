@@ -191,7 +191,7 @@ class Magi1SubprocessConfig:
             source_revision=str(source_revision),
             config_path=Path(str(config_path)),
             python_executable=str(python_executable),
-            timeout_seconds=float(config.get("timeout_seconds", 7200.0)),
+            timeout_seconds=config.get("timeout_seconds", 7200.0),
         )
         preflight_payload = _preflight_local_installation(preflight)
         _validate_magi_sampling_contract(
