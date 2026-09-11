@@ -1270,3 +1270,45 @@ def test_real_cumem_one_shot_scope_sleep_wake_in_subprocess() -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize("already_initialized", [True, False])
+def test_worker_releases_only_its_own_rank_group(monkeypatch, already_initialized):
+    import torch.distributed as dist
+
+    from vrl.generation.execution.rank_group import RankGroupSpec
+
+    initialized = already_initialized
+    destroyed = []
+
+    def initialize(**kwargs):
+        nonlocal initialized
+        initialized = True
+
+    def destroy():
+        nonlocal initialized
+        destroyed.append(True)
+        initialized = False
+
+    monkeypatch.setattr(dist, "is_initialized", lambda: initialized)
+    monkeypatch.setattr(dist, "init_process_group", initialize)
+    monkeypatch.setattr(dist, "destroy_process_group", destroy)
+    core = _core(None)
+    core.rank_group = RankGroupSpec("127.0.0.1", 29500, 0, 2, backend="gloo")
+    monkeypatch.setattr(core._memory_parking, "release_scope", contextlib.nullcontext)
+
+    def fail_build():
+        raise RuntimeError("model build failed")
+
+    monkeypatch.setattr(core, "_build_executor", fail_build)
+    message = "already initialized" if already_initialized else "model build failed"
+    with pytest.raises(RuntimeError, match=message):
+        core.load_policy()
+    assert initialized is already_initialized
+    assert len(destroyed) == (0 if already_initialized else 1)
+
+    # A repeated release must not destroy a group acquired by another owner.
+    initialized = True
+    core.release_policy()
+    assert initialized is True
+    assert len(destroyed) == (0 if already_initialized else 1)

@@ -67,6 +67,7 @@ class GenerationWorkerCore:
         # None for single-rank engines. A spec makes this rank join its
         # engine's process group around the model lifetime (load -> release).
         self.rank_group = rank_group
+        self._owns_rank_process_group = False
         self.launch_contract = launch_contract
         self.gatherer = gatherer
         from vrl.models.families.registry import get_model_family_entry
@@ -102,6 +103,7 @@ class GenerationWorkerCore:
         try:
             if self.rank_group is not None:
                 init_rank_process_group(self.rank_group)
+                self._owns_rank_process_group = True
             self.executor = self._memory_parking.build(self._build_executor)
             if (
                 self.executor.family != self.family_entry.family
@@ -135,8 +137,9 @@ class GenerationWorkerCore:
         self._weight_transfer = None
         with self._memory_parking.release_scope():
             self.executor = None
-        if self.rank_group is not None:
+        if self._owns_rank_process_group:
             destroy_rank_process_group()
+            self._owns_rank_process_group = False
 
     def sleep(self) -> WorkerMemoryParkingSnapshot:
         """Offload the loaded model to host RAM, freeing the GPU without discarding it.

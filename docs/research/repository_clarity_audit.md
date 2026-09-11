@@ -3053,3 +3053,21 @@ this combined regression is compatibility evidence, not architectural completion
   including real two-process gloo communication and 18 invalid-field cases.
   Touched-file Ruff and diff checks passed. No real NCCL validation is claimed;
   repository-wide clarity review remains incomplete.
+
+## Release only the rank process group acquired by this worker
+
+- GenerationWorkerCore previously used presence of RankGroupSpec as proof of
+  process-group ownership. If init rejected an already initialized group,
+  load_policy's cleanup destroyed that pre-existing group anyway.
+- Track successful init explicitly in the worker and clear ownership only
+  after successful destroy. A model-build failure still destroys the acquired
+  group; rejected init and repeated release leave another owner's group intact.
+- Keep init/destroy as the distributed framework adapter. Ownership belongs
+  to the existing worker, not to the immutable rendezvous spec; no wrapper
+  class or additional helper is introduced. Preserve memory-release ordering
+  and its quarantine behavior. Partial distributed-init failures and external
+  replacement of an owned default group are not addressed by this change.
+- Validation: 207 generation execution/launcher tests passed, including the
+  rejected-init and post-init model-failure cases, each followed by repeated
+  release with an externally initialized group. Touched-file Ruff/diff checks
+  passed. The full repository review remains open.
