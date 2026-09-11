@@ -27,6 +27,21 @@ def test_chunks_are_independent_bounded_storage_and_reassemble_exactly():
         assert torch.equal(actual, expected)
 
 
+@pytest.mark.parametrize("transfer_id", [1, True, b"one", ["one"]])
+def test_worker_rejects_nonstring_transfer_id_before_staging(transfer_id):
+    from tests.generation.execution.test_worker_versioned_slots import _core, _ReadbackModel
+
+    core = _core(_ReadbackModel(), versioned_weight_sync=False)
+    state = {"transformer.weight": torch.ones(2, 2)}
+
+    with pytest.raises(ValueError, match="transfer_id"):
+        core.begin_weight_transfer(weight_manifest(state), transfer_id, 2)
+
+    assert core._weight_transfer is None
+    assert core._policy_version == 1
+    assert torch.all(core.executor.model.module.weight == -99)
+
+
 def test_partial_duplicate_and_foreign_chunks_do_not_finish():
     state = {"weight": torch.ones(4)}
     staged = StagedWeightTransfer("one", 2, weight_manifest(state))

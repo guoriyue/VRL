@@ -4380,6 +4380,20 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Weight staging enforces its declared transfer identifier type
+
+- Replace transfer-ID truthiness with an explicit nonempty-string check in
+  StagedWeightTransfer. Previously integers, booleans, bytes and lists could
+  enter worker staging despite the string protocol. Four worker-boundary
+  regressions failed before the fix and now verify no staged/live state changes.
+- Keep validation on the existing receiver owner and keep sender-side manifest,
+  chunk and bucket functions separate: they implement shared transport data
+  processing, not receiver lifecycle. No validator wrapper or new class is needed.
+- Preserve valid IDs, exact policy-version checks, chunk ordering, receiver
+  buffer ownership and complete-before-install behavior. Transfer and versioned
+  worker suites: 26 passed. Touched-file Ruff checks pass. The repository clarity
+  audit remains incomplete.
+
 ## Engine combination documentation states the single-rank boundary
 
 - Correct RayGenerationEngine.remote's claim that combining one result always

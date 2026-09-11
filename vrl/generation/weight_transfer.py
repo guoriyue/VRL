@@ -56,8 +56,10 @@ class StagedWeightTransfer:
     """Own receiver buffers and reject gaps, duplicates and mixed transfer IDs."""
 
     def __init__(self, transfer_id: str, policy_version: int, manifest: dict[str, Any]) -> None:
-        if not transfer_id or not manifest:
-            raise ValueError("staged weight transfer requires an ID and manifest")
+        if not isinstance(transfer_id, str) or not transfer_id:
+            raise ValueError("transfer_id must be a nonempty string")
+        if not manifest:
+            raise ValueError("staged weight transfer requires a manifest")
         self.transfer_id = transfer_id
         self.policy_version = require_exact_int(policy_version, path="policy_version", minimum=0)
         self._specs = {}
