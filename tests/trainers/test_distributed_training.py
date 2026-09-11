@@ -65,10 +65,11 @@ def test_fsdp_rank0_is_primary() -> None:
     assert ctx.is_primary is True
 
 
-def test_fsdp_missing_env_fails_fast_listing_keys() -> None:
+@pytest.mark.parametrize("strategy", ["fsdp", "ddp"])
+def test_distributed_missing_env_fails_fast_listing_keys(strategy) -> None:
     with pytest.raises(ValueError, match=r"RANK.*LOCAL_RANK.*WORLD_SIZE"):
         DistributedTrainingContext.from_root(
-            parse_config(_cfg({"strategy": "fsdp"})), device=torch.device("cpu"), env={}
+            parse_config(_cfg({"strategy": strategy})), device=torch.device("cpu"), env={}
         )
 
 

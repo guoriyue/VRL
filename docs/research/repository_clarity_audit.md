@@ -4092,3 +4092,17 @@ this combined regression is compatibility evidence, not architectural completion
   adapters. Retain Anima rotary helpers as recognizable model math beside the
   adapter architecture; no new wrapper is justified solely by function counts.
   Full-repository clarity completion remains unproven.
+
+## Distributed context owns launcher environment parsing
+
+- Move `_require_env_int` onto `DistributedTrainingContext`, its sole production
+  owner. Keep this method as the environment string-to-integer boundary used for
+  rank, local rank and world size. No new context or forwarding alias is added.
+- Replace the hardcoded FSDP-only missing-environment diagnostic with a distributed
+  training message: both FSDP and DDP use this path. Extend the existing missing-env
+  test across both strategies. Parsing and device-selection behavior are unchanged.
+- Retain `_TORCHRUN_ENV_KEYS` as launcher protocol keys and retain shared process
+  group lifecycle functions outside the identity class. Group creation is not
+  part of constructing a process identity.
+- All eight distributed-context tests passed; touched-file Ruff checks pass.
+  This does not exercise a multi-GPU process group. The repository audit continues.

@@ -57,6 +57,22 @@ class DistributedTrainingContext:
     def is_primary(self) -> bool:
         return self.rank == 0
 
+    @staticmethod
+    def _require_env_int(env: Mapping[str, str], key: str) -> int:
+        raw = env.get(key)
+        if not raw:
+            missing = [k for k in _TORCHRUN_ENV_KEYS if not env.get(k)]
+            raise ValueError(
+                "distributed training requires torchrun env vars "
+                f"{list(_TORCHRUN_ENV_KEYS)}; missing {missing}. Launch with "
+                "`torchrun --nproc-per-node=<N>` or set them explicitly before the run "
+                "(this fails here, not later at CUDA-device or Ray-launch time)."
+            )
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise ValueError(f"distributed.training: {key}={raw!r} is not an integer") from exc
+
     @classmethod
     def from_root(
         cls,
@@ -93,9 +109,9 @@ class DistributedTrainingContext:
             # Both are torchrun multi-rank strategies: one process per GPU, identity +
             # per-process cuda:<local_rank> device derived from the launcher env. No
             # process group is created here (build_strategy's strategy does that).
-            rank = _require_env_int(env, "RANK")
-            local_rank = _require_env_int(env, "LOCAL_RANK")
-            world_size = _require_env_int(env, "WORLD_SIZE")
+            rank = cls._require_env_int(env, "RANK")
+            local_rank = cls._require_env_int(env, "LOCAL_RANK")
+            world_size = cls._require_env_int(env, "WORLD_SIZE")
             assert training is not None  # strategy came from it
             num_nodes = int(training.num_nodes)
             gpus_per_node = int(training.gpus_per_node)
@@ -145,22 +161,6 @@ class DistributedTrainingContext:
             f"unknown distributed.training.strategy={strategy!r}; "
             "expected 'single_process', 'fsdp', or 'ddp'"
         )
-
-
-def _require_env_int(env: Mapping[str, str], key: str) -> int:
-    raw = env.get(key)
-    if not raw:
-        missing = [k for k in _TORCHRUN_ENV_KEYS if not env.get(k)]
-        raise ValueError(
-            "distributed.training.strategy=fsdp requires torchrun env vars "
-            f"{list(_TORCHRUN_ENV_KEYS)}; missing {missing}. Launch with "
-            "`torchrun --nproc-per-node=<N>` or set them explicitly before the run "
-            "(this fails here, not later at CUDA-device or Ray-launch time)."
-        )
-    try:
-        return int(raw)
-    except ValueError as exc:
-        raise ValueError(f"distributed.training: {key}={raw!r} is not an integer") from exc
 
 
 _CPU_COORDINATION_GROUP: Any = None
