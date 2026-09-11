@@ -3287,3 +3287,25 @@ this combined regression is compatibility evidence, not architectural completion
   global method-name vocabulary table.
 - Validation: executed both controlled reproductions; touched-file Ruff/diff
   checks passed. Full repository review remains incomplete.
+
+## Preserve non-primary generation failures during engine aggregation
+
+- Add generation-specific combiners on RayGenerationExecutor and attach them
+  to every remote batch path (fixed/flexible dispatch and OOM child retries)
+  and pipelined request dispatch. The generic EngineCallRef remains a neutral
+  awaitable aggregator; weight updates keep their uniform echo combiner.
+- Batch aggregation preserves terminal error before stale discard before OOM,
+  then primary success. Validate returned types/request/batch identity and
+  agreement of successful policy versions. Pipeline aggregation preserves any
+  rank's typed OOM and checks request identity. Raised remote exceptions retain
+  existing cancellation behavior. The pipeline's rank correlation gate now
+  accepts any actual member rank, not only rank 0, without rewriting identity.
+- These methods own genuinely shared result-protocol rules; no free helper,
+  method-name dispatch table or new result wrapper is added. Single-rank
+  EngineCallRef bypass remains unchanged.
+- Validation: 481 execution/Ray tests passed. Additional identity-disagreement
+  regressions brought the focused engine suite to 19 passing tests. Controlled
+  multi-rank awaitables verify non-primary batch failures/stale/OOM, pipeline
+  OOM, error precedence and primary selection after success. All remote call
+  sites were inspected for combiner wiring. Touched-file Ruff/diff checks
+  passed. No multi-GPU model run is claimed; full review remains incomplete.

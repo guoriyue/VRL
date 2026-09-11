@@ -112,6 +112,53 @@ class RayGenerationExecutor:
         async with lock:
             return await self._execute(request)
 
+    @staticmethod
+    def _combine_batch_results(results: list[Any]) -> GenerationBatchResult:
+        """Retain any rank failure before selecting the primary rank's payload."""
+
+        if not all(isinstance(result, GenerationBatchResult) for result in results):
+            raise TypeError("generation engine ranks must return GenerationBatchResult")
+        first = results[0]
+        for result in results[1:]:
+            if result.request_id != first.request_id or result.batch != first.batch:
+                raise RuntimeError(
+                    "generation engine ranks returned different request/batch identities"
+                )
+        # A terminal failure must not be hidden by another rank's retryable OOM
+        # or graceful stale-slot discard. Preserve the reporting rank identity.
+        for result in results:
+            if result.error and not result.stale_slot and not is_cuda_out_of_memory(result.error):
+                return result
+        for result in results:
+            if result.stale_slot:
+                return result
+        for result in results:
+            if result.error:
+                return result
+        if any(result.policy_version != first.policy_version for result in results[1:]):
+            raise RuntimeError("generation engine ranks returned different policy versions")
+        return first
+
+    @staticmethod
+    def _combine_pipelined_results(
+        results: list[Any],
+    ) -> GenerationOutput | PipelinedRequestOutOfMemory:
+        """Return an OOM reported by any rank; otherwise keep primary output."""
+
+        if not all(
+            isinstance(result, (GenerationOutput, PipelinedRequestOutOfMemory))
+            for result in results
+        ):
+            raise TypeError(
+                "pipelined engine ranks must return GenerationOutput or PipelinedRequestOutOfMemory"
+            )
+        if any(result.request_id != results[0].request_id for result in results[1:]):
+            raise RuntimeError("pipelined engine ranks returned different request identities")
+        for result in results:
+            if isinstance(result, PipelinedRequestOutOfMemory):
+                return result
+        return results[0]
+
     async def probe_batch_sizes(
         self,
         request: GenerationRequest,
@@ -244,7 +291,9 @@ class RayGenerationExecutor:
                     RayActorJob(
                         job_index=job_index,
                         worker_id=engine.engine_id,
-                        remote_method=engine.remote("execute_batch"),
+                        remote_method=engine.remote(
+                            "execute_batch", combine=self._combine_batch_results
+                        ),
                         payload=assignment.envelope,
                     ),
                 )
@@ -458,7 +507,9 @@ class RayGenerationExecutor:
                 RayActorJob(
                     job_index=0,
                     worker_id=engine.engine_id,
-                    remote_method=engine.remote("execute_request_pipelined"),
+                    remote_method=engine.remote(
+                        "execute_request_pipelined", combine=self._combine_pipelined_results
+                    ),
                     payload=request,
                     keyword_args={
                         "engine_plan": engine_plan,
@@ -482,13 +533,12 @@ class RayGenerationExecutor:
                 "pipelined generation request_id mismatch: "
                 f"{result.request_id!r} != {request.request_id!r}",
             )
-        if (
-            isinstance(result, PipelinedRequestOutOfMemory)
-            and result.worker_id != primary.worker_id
-        ):
+        if isinstance(result, PipelinedRequestOutOfMemory) and result.worker_id not in {
+            rank.worker_id for rank in engine.ranks
+        }:
             raise RuntimeError(
                 "pipelined generation rank mismatch: "
-                f"{result.worker_id!r} != {primary.worker_id!r}",
+                f"{result.worker_id!r} is not a rank of engine {engine.engine_id!r}",
             )
         return result
 
@@ -664,7 +714,9 @@ class RayGenerationExecutor:
                             RayActorJob(
                                 job_index=len(retry_jobs),
                                 worker_id=engine.engine_id,
-                                remote_method=engine.remote("execute_batch"),
+                                remote_method=engine.remote(
+                                    "execute_batch", combine=self._combine_batch_results
+                                ),
                                 payload=child_envelope,
                             ),
                         )
@@ -694,7 +746,9 @@ class RayGenerationExecutor:
                     "dynamic batch placement requires Ray actor ranks; "
                     f"engine {engine.engine_id!r} has no remote execute_batch",
                 )
-            methods[engine.engine_id] = engine.remote("execute_batch")
+            methods[engine.engine_id] = engine.remote(
+                "execute_batch", combine=self._combine_batch_results
+            )
         return methods
 
 

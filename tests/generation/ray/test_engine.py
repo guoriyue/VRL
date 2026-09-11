@@ -205,3 +205,78 @@ def test_rank_actor_satisfies_the_rank_protocol() -> None:
 def test_uniform_ack_requires_matching_types(results) -> None:
     with pytest.raises(RuntimeError, match="ranks disagree"):
         uniform_rank_result("update_weights")(results)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["decode failed", "CUDA out of memory", "stale"])
+async def test_generation_combiner_retains_nonprimary_error_payload(failure):
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
+    from vrl.generation.execution.types import GenerationBatchResult
+    from vrl.generation.ray.executor import RayGenerationExecutor
+
+    good = GenerationBatchResult("request", "r0", GenerationSampleBatch(0, 0, 2), output={})
+    bad = GenerationBatchResult(
+        "request", "r1", good.batch, output=None, error=failure, stale_slot=failure == "stale"
+    )
+    engine = _engine([], {"r0": _Ref(good), "r1": _Ref(bad)})
+    result = await engine.remote(
+        "execute_batch", combine=RayGenerationExecutor._combine_batch_results
+    )("payload")
+    assert result is bad
+
+
+def test_generation_combiner_prioritizes_terminal_errors_over_retry_and_discard():
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
+    from vrl.generation.execution.types import GenerationBatchResult
+    from vrl.generation.ray.executor import RayGenerationExecutor
+
+    batch = GenerationSampleBatch(0, 0, 2)
+    oom = GenerationBatchResult("r", "r0", batch, None, error="CUDA out of memory")
+    stale = GenerationBatchResult("r", "r1", batch, None, error="evicted", stale_slot=True)
+    terminal = GenerationBatchResult("r", "r2", batch, None, error="decode failed")
+    assert RayGenerationExecutor._combine_batch_results([oom, stale, terminal]) is terminal
+    assert RayGenerationExecutor._combine_batch_results([oom, stale]) is stale
+
+
+@pytest.mark.asyncio
+async def test_pipeline_combiner_retains_nonprimary_oom_payload():
+    from vrl.generation.execution.types import PipelinedRequestOutOfMemory
+    from vrl.generation.ray.executor import RayGenerationExecutor
+    from vrl.generation.types import GenerationOutput
+    from vrl.trajectory import TrajectoryBatch
+
+    good = GenerationOutput(
+        output=[],
+        trajectory=TrajectoryBatch(
+            request_id="r",
+            family="test",
+            task="t2i",
+            sample_rows=[],
+            axes={},
+            segments={},
+        ),
+    )
+    bad = PipelinedRequestOutOfMemory("r", "r1", "CUDA out of memory")
+    engine = _engine([], {"r0": _Ref(good), "r1": _Ref(bad)}, method="execute_request_pipelined")
+    result = await engine.remote(
+        "execute_request_pipelined", combine=RayGenerationExecutor._combine_pipelined_results
+    )("payload")
+    assert result is bad
+
+
+@pytest.mark.parametrize("field", ["request_id", "batch", "policy_version"])
+def test_generation_combiner_rejects_rank_identity_disagreement(field):
+    from dataclasses import replace
+
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
+    from vrl.generation.execution.types import GenerationBatchResult
+    from vrl.generation.ray.executor import RayGenerationExecutor
+
+    good = GenerationBatchResult("r", "r0", GenerationSampleBatch(0, 0, 1), {}, policy_version=1)
+    values = {"request_id": "other", "batch": GenerationSampleBatch(0, 1, 1), "policy_version": 2}
+    other = replace(good, worker_id="r1", **{field: values[field]})
+    with pytest.raises(RuntimeError, match="engine ranks returned different"):
+        RayGenerationExecutor._combine_batch_results([good, other])
+    assert (
+        RayGenerationExecutor._combine_batch_results([good, replace(good, worker_id="r1")]) is good
+    )
