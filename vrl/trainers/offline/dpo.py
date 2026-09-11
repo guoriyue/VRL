@@ -82,15 +82,15 @@ class OfflineDPOTrainerConfig:
                 raise ValueError(f"config missing required field: actor.{name}")
             return value
 
-        train_batch_size = int(required("train_batch_size"))
-        gradient_accumulation_steps = int(required("gradient_accumulation_steps"))
+        train_batch_size = required("train_batch_size")
+        gradient_accumulation_steps = required("gradient_accumulation_steps")
         optim: OptimConfig = required("optim")
         if optim.optim_8bit:
             raise ValueError(
                 "actor.optim.optim_8bit=true is not supported by OfflineDPOTrainer; "
                 "use AdamW/Adafactor without 8-bit optimizer state",
             )
-        use_adafactor = bool(required("use_adafactor"))
+        use_adafactor = required("use_adafactor")
         if use_adafactor:
             # An AdamW-only knob moved off its default would be silently ignored
             # under Adafactor; refuse rather than train with a no-op setting.
@@ -106,7 +106,7 @@ class OfflineDPOTrainerConfig:
                     f"actor.use_adafactor=true does not consume AdamW-only key(s): {paths}",
                 )
 
-        scale_lr = bool(required("scale_lr"))
+        scale_lr = required("scale_lr")
         effective_batch_size = train_batch_size * gradient_accumulation_steps
         lr = float(optim.lr) * effective_batch_size if scale_lr else float(optim.lr)
         max_grad_norm = actor.max_norm if actor is not None else None
@@ -122,7 +122,7 @@ class OfflineDPOTrainerConfig:
             adam_epsilon=float(optim.eps),
             max_grad_norm=float(max_grad_norm),
             gradient_accumulation_steps=gradient_accumulation_steps,
-            prediction_type=str(required("prediction_type")),
+            prediction_type=required("prediction_type"),
             use_adafactor=use_adafactor,
         )
 

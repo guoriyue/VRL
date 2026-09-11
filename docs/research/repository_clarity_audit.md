@@ -4379,3 +4379,16 @@ this combined regression is compatibility evidence, not architectural completion
 - Eight regressions failed before the fix. Offline timestep/restore and builder
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
+
+## Offline DPO projection consumes parsed actor scalars directly
+
+- Remove redundant int/bool/str conversions of batch size, accumulation steps,
+  optimizer selection, learning-rate scaling and prediction type in from_root.
+  ActorSection already declares strict integer/boolean fields and a string
+  prediction type; the production caller supplies the parsed RootConfig.
+- Keep the local required-field reader for consistent actor path errors and
+  keep optimizer compatibility checks. No new helper class, schema vocabulary
+  or change to optimizer math is needed. Float normalization is outside this
+  change, as are direct dataclass construction and bypassed schema validation.
+- Existing offline builder and timestep/restore suites: 33 passed, two dependency
+  warnings. Touched-file Ruff checks pass. The broader audit remains incomplete.
