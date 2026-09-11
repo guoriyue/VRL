@@ -24,7 +24,6 @@ from vrl.trainers.checkpointing import (
     TrainingResumeConfig,
     build_adapter_exports,
     export_checkpoint_state,
-    infer_next_epoch,
     load_checkpoint_state,
     load_training_checkpoint,
     prepare_model_config_for_training_resume,
@@ -1561,7 +1560,12 @@ def test_infer_next_epoch_falls_back_to_trainer_step_for_checkpoint_final(tmp_pa
     ckpt = tmp_path / "checkpoint-final"
     ckpt.mkdir()
 
-    assert infer_next_epoch(ckpt, {"step": 12}, None) == 12
+    assert (
+        TrainingCheckpoint(
+            ckpt, ckpt / TRAINING_CHECKPOINT_NAME, {"trainer": {"step": 12}}, {}
+        ).next_epoch
+        == 12
+    )
 
 
 def test_infer_next_epoch_falls_back_to_numeric_checkpoint_suffix(tmp_path) -> None:
@@ -1571,7 +1575,10 @@ def test_infer_next_epoch_falls_back_to_numeric_checkpoint_suffix(tmp_path) -> N
     ckpt = tmp_path / "checkpoint-42"
     ckpt.mkdir()
 
-    assert infer_next_epoch(ckpt, {}, {}) == 42
+    assert (
+        TrainingCheckpoint(ckpt, ckpt / TRAINING_CHECKPOINT_NAME, {"trainer": {}}, {}).next_epoch
+        == 42
+    )
 
 
 def test_load_training_checkpoint_rejects_non_object_meta(tmp_path) -> None:

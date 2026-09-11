@@ -169,7 +169,20 @@ class TrainingCheckpoint:
     def next_epoch(self) -> int:
         if "next_epoch" in self.progress:
             return _non_negative_int(self.progress["next_epoch"], "progress.next_epoch")
-        return infer_next_epoch(self.checkpoint_dir, self.trainer_state, self.meta)
+        if "next_epoch" in self.meta:
+            return _non_negative_int(self.meta["next_epoch"], "checkpoint_meta.next_epoch")
+
+        if "step" in self.trainer_state:
+            return _non_negative_int(self.trainer_state["step"], "trainer_state.step")
+
+        checkpoint_name = self.checkpoint_dir.name
+        match = re.fullmatch(r"checkpoint-(\d+)", checkpoint_name)
+        if match:
+            return _non_negative_int(match.group(1), "checkpoint directory suffix")
+
+        raise ValueError(
+            "cannot infer next_epoch: checkpoint_meta.next_epoch and trainer_state.step are missing",
+        )
 
     @property
     def next_step(self) -> int:
@@ -1606,30 +1619,6 @@ def read_checkpoint_meta(checkpoint_dir: str | Path) -> dict[str, Any]:
     return raw
 
 
-def infer_next_epoch(
-    checkpoint_dir: str | Path,
-    trainer_state: dict[str, Any],
-    meta: dict[str, Any] | None,
-) -> int:
-    """Infer the epoch index to start from when resuming."""
-
-    meta = meta or {}
-    if "next_epoch" in meta:
-        return _non_negative_int(meta["next_epoch"], "checkpoint_meta.next_epoch")
-
-    if "step" in trainer_state:
-        return _non_negative_int(trainer_state["step"], "trainer_state.step")
-
-    checkpoint_name = Path(checkpoint_dir).name
-    match = re.fullmatch(r"checkpoint-(\d+)", checkpoint_name)
-    if match:
-        return _non_negative_int(match.group(1), "checkpoint directory suffix")
-
-    raise ValueError(
-        "cannot infer next_epoch: checkpoint_meta.next_epoch and trainer_state.step are missing",
-    )
-
-
 def write_checkpoint_meta(
     checkpoint_dir: str | Path,
     *,
@@ -1748,7 +1737,6 @@ __all__ = [
     "capture_rng_state",
     "export_checkpoint_state",
     "find_latest_complete_checkpoint",
-    "infer_next_epoch",
     "is_complete_checkpoint",
     "load_checkpoint_state",
     "load_full_checkpoint_state",
