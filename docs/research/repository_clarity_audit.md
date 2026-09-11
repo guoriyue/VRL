@@ -7174,3 +7174,16 @@ The broader repository audit remains incomplete.
 - Continuous orchestration selection: 220 passed, 59 deselected. Touched-file
   Ruff and diff checks pass. No new implementation-mirroring tests for these
   redundant fallback/conversion removals. Broader audit remains incomplete.
+
+## Continuous admission timing is required batch state
+
+- Make _ActivePromptBatch.pending_since required and pop the slot timestamp
+  without a None default at submission. Its sole constructor initializes every
+  pending slot; the retry path records a new timestamp whenever it requeues.
+  Missing state must not silently become a zero-wait observation.
+- Preserve monotonic wait clamping, generated-capacity ownership and bounded
+  reward retry semantics. The max(1, fail_fast_errors) retry bound is deliberate
+  when fail-fast is disabled, not a redundant default to remove.
+- Complete continuous orchestration suite: 216 passed. Touched-file Ruff and
+  diff checks pass. No new wrapper or mirrored implementation test; broader
+  repository clarity audit remains incomplete.

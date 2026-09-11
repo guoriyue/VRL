@@ -71,12 +71,12 @@ class _ActivePromptBatch:
     group_size: int
     runtime_debug: bool
     pending_slots: deque[int]
-    failure_counts: dict[int, int] = field(default_factory=dict)
     # Monotonic stamp of when each pending slot last became admissible (batch
     # install or retry re-queue). _submit() turns it into the slot's admission
     # wait and hands it to the collect task, so each item carries its own
     # timing instead of a shared mutable accumulator.
-    pending_since: dict[int, float] = field(default_factory=dict)
+    pending_since: dict[int, float]
+    failure_counts: dict[int, int] = field(default_factory=dict)
     failure: BaseException | None = None
 
     def __post_init__(self) -> None:
@@ -489,10 +489,8 @@ class ContinuousRolloutProducer:
         return None
 
     def _submit(self, prompt_batch: _ActivePromptBatch, slot: int) -> None:
-        pending_since = prompt_batch.pending_since.pop(slot, None)
-        admission_wait_s = (
-            0.0 if pending_since is None else max(0.0, time.monotonic() - pending_since)
-        )
+        pending_since = prompt_batch.pending_since.pop(slot)
+        admission_wait_s = max(0.0, time.monotonic() - pending_since)
         task = asyncio.create_task(
             self._collect_group(
                 prompt_batch=prompt_batch,
