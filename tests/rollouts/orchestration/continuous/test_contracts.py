@@ -1017,6 +1017,32 @@ async def _collect_iteration(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("ready_count", [0, 1])
+async def test_consumer_timeout_identifies_incomplete_batch_amid_prefetch(ready_count) -> None:
+    queue = ContinuousRolloutQueue(max_items=4)
+    for slot in range(ready_count):
+        queue.put(_item(group_slot=slot, version=1, batch_id=7))
+    for slot in range(2):
+        queue.put(_item(group_slot=slot, version=1, batch_id=8))
+    receipts = queue.snapshot()
+
+    with pytest.raises(TimeoutError) as caught:
+        await _collect_iteration(
+            _consumer(queue, max_stale=1),
+            prompt_batch_id=7,
+            expected_group_count=2,
+            current_policy_version=2,
+            timeout_s=0.001,
+        )
+
+    message = str(caught.value)
+    assert "prompt_batch_id=7" in message
+    assert f"ready_groups={ready_count}/2" in message
+    assert "current_policy_version=2" in message
+    assert queue.snapshot() == receipts
+
+
+@pytest.mark.asyncio
 async def test_consumer_consumes_stale_items_within_bound() -> None:
     """max_stale=1 lets the trainer consume one-version-old groups."""
     queue = ContinuousRolloutQueue(max_items=8)

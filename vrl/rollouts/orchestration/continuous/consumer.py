@@ -100,9 +100,25 @@ class ContinuousRolloutConsumer:
                 )
             remaining_s = deadline - time.monotonic()
             if remaining_s <= 0:
-                raise TimeoutError(
-                    self._timeout_message(expected_group_count, wait_timeout_s, producer_state),
+                ready_groups = sum(
+                    item.batch_id == prompt_batch_id for item in self.queue.snapshot()
                 )
+                message = (
+                    "continuous rollout consumer timed out waiting for "
+                    f"{expected_group_count} same-policy groups after {wait_timeout_s}s "
+                    f"(prompt_batch_id={prompt_batch_id}, "
+                    f"ready_groups={ready_groups}/{expected_group_count}, "
+                    f"current_policy_version={current_policy_version}, "
+                    f"queue={self.queue.stats()})"
+                )
+                if producer_state is not None:
+                    message += (
+                        f" (producer: submitted={producer_state.submitted_count}, "
+                        f"completed={producer_state.completed_count}, "
+                        f"errors={producer_state.error_count}, "
+                        f"last_error={producer_state.last_error})"
+                    )
+                raise TimeoutError(message)
             await asyncio.sleep(min(poll_interval_s, remaining_s))
 
     def _fail_fast_if_producer_stalled(
@@ -148,27 +164,6 @@ class ContinuousRolloutConsumer:
                 f"errors={producer_state.error_count}); "
                 f"last_error={producer_state.last_error}",
             )
-
-    def _timeout_message(
-        self,
-        expected_group_count: int,
-        wait_timeout_s: float,
-        producer_state: ContinuousRolloutProducerState | None,
-    ) -> str:
-        stats = self.queue.stats()
-        message = (
-            "continuous rollout consumer timed out waiting for "
-            f"{expected_group_count} same-policy groups after {wait_timeout_s}s "
-            f"(queue={stats})"
-        )
-        if producer_state is not None:
-            message += (
-                f" (producer: submitted={producer_state.submitted_count}, "
-                f"completed={producer_state.completed_count}, "
-                f"errors={producer_state.error_count}, "
-                f"last_error={producer_state.last_error})"
-            )
-        return message
 
     def validate_ready_versions(self, *, current_policy_version: int | None) -> None:
         """Fail when a ready item falls outside the trainable version window."""

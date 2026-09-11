@@ -5370,3 +5370,21 @@ this combined regression is compatibility evidence, not architectural completion
   diffusion runtime and bottleneck suites: 13 passed. Touched-file Ruff and
   git diff --check pass. Actual model/GPU memory savings were not measured.
   The repository-wide clarity audit remains incomplete.
+
+## Continuous consumer timeout diagnostics follow prompt-batch ownership
+
+- Report prompt_batch_id, target-batch ready_groups/expected_group_count and
+  current_policy_version on timeout. Queue-wide occupancy includes prefetched
+  batches and previously made an incomplete target look ready to consume.
+- Inline the consumer's single-use _timeout_message into its timeout branch,
+  where the requested batch identity already lives. Preserve queue occupancy and
+  producer error counters in the message. Selection, receipt ownership, capacity
+  and staleness behavior are unchanged.
+- Keep the producer's separately shared _drain_timeout_message (two callers),
+  queue/capacity ownership and the staleness policy. Eliminating every short
+  method or merging independent mechanisms is not a goal of this cleanup.
+- Two regressions failed before the fix: zero or one current-batch receipts with
+  a complete prefetched batch. They verify batch-specific diagnostics and that
+  timeout retains all receipts. Continuous orchestration suite: 214 passed.
+  Touched-file Ruff and git diff --check pass. The full repository audit remains
+  incomplete; these tests do not establish distributed/GPU runtime performance.
