@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -67,6 +69,19 @@ def test_vllm_decoder_pack_prefill_rejects_non_contiguous_prompt_mask() -> None:
                 branch="cond",
             )
         )
+
+
+@pytest.mark.parametrize("field", ["num_heads", "num_key_value_heads", "head_dim"])
+def test_attention_dimensions_do_not_read_unused_trunk_defaults(field) -> None:
+    backend = _backend()
+    attention = SimpleNamespace(**{field: 8})
+    if field == "num_heads":
+        result = backend._num_attention_heads(attention)
+    elif field == "num_key_value_heads":
+        result = backend._num_key_value_heads(attention)
+    else:
+        result = backend._head_dim(attention, 2)
+    assert result == 8
 
 
 def _backend() -> VllmDecoderPagedAttentionBackend:

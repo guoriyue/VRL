@@ -4380,6 +4380,19 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Decoder dimensions read fallback config only when needed
+
+- Replace eagerly evaluated getattr defaults in the three head-count/dimension
+  readers with explicit attribute access and fallback on AttributeError. An
+  attention layer's own dimensions no longer require unrelated trunk.config
+  fields to exist. Three regression cases failed before the fix.
+- Preserve integer conversion, absent-attribute fallback and shared decoder
+  methods. Keep the standalone RoPE helpers as mathematical operations; no new
+  dimension resolver class or generic getter is introduced.
+- Decoder-contract and token-AR binding suites: 19 passed, 16 dependency
+  warnings. Touched-file Ruff checks pass. This fixes fallback evaluation order;
+  the repository-wide audit remains incomplete.
+
 ## Shared-GPU installation documents the missing block-table dependency
 
 - Confirmed uvloop was absent from the active environment while uv.lock already

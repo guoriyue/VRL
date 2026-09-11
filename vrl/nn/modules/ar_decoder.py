@@ -519,25 +519,25 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         return typed  # type: ignore[return-value]
 
     def _num_attention_heads(self, attention: Any) -> int:
-        return int(getattr(attention, "num_heads", self.trunk.config.num_attention_heads))
+        try:
+            value = attention.num_heads
+        except AttributeError:
+            value = self.trunk.config.num_attention_heads
+        return int(value)
 
     def _num_key_value_heads(self, attention: Any) -> int:
-        return int(
-            getattr(
-                attention,
-                "num_key_value_heads",
-                self.trunk.config.num_key_value_heads,
-            )
-        )
+        try:
+            value = attention.num_key_value_heads
+        except AttributeError:
+            value = self.trunk.config.num_key_value_heads
+        return int(value)
 
     def _head_dim(self, attention: Any, num_heads: int) -> int:
-        return int(
-            getattr(
-                attention,
-                "head_dim",
-                self.trunk.config.hidden_size // num_heads,
-            )
-        )
+        try:
+            value = attention.head_dim
+        except AttributeError:
+            value = self.trunk.config.hidden_size // num_heads
+        return int(value)
 
     @staticmethod
     def _sliding_window_for_layer(layer: Any) -> int | None:
