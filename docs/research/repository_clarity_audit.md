@@ -3071,3 +3071,19 @@ this combined regression is compatibility evidence, not architectural completion
   rejected-init and post-init model-failure cases, each followed by repeated
   release with an externally initialized group. Touched-file Ruff/diff checks
   passed. The full repository review remains open.
+
+## Put diffusion result row declarations in the gatherer
+
+- Remove DiffusionRequestLayout.ordered_batches, a single-caller static
+  forwarding method on the request parser. DiffusionBatchGatherer now calls
+  ordered_covering_batches directly with its six row-bearing result fields.
+  Drop the gatherer's runtime import of the request parser and remove the
+  parser's unused result typing/imports. Ordering and validation are unchanged.
+- Keep ordered_covering_batches, replay gathering, row checks and static-value
+  comparison shared across the three generation bindings: their consistency
+  prevents different coverage or replay semantics between families. The chunk
+  gatherer's ordering method adds actual family checks and is not equivalent
+  to the removed forwarding method. No new class or constant table is needed.
+- Validation: 188 binding and batch-gatherer tests passed, two skipped; touched
+  Ruff/diff checks passed and the removed method has no remaining code/test
+  references. The full repository review remains incomplete.

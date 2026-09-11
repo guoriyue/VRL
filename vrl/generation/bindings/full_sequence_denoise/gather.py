@@ -12,10 +12,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
-from vrl.generation.bindings.full_sequence_denoise.layout import DiffusionRequestLayout
 from vrl.generation.execution.sample_batches import (
     concatenate_sample_values,
     gather_replay_tensors,
+    ordered_covering_batches,
     require_matching_batch_context,
 )
 from vrl.generation.protocols import BatchPayload
@@ -39,10 +39,11 @@ class DiffusionBatchGatherer:
         sample_rows: Sequence[GenerationSampleRow],
         batches: Sequence[BatchPayload],
     ) -> GenerationOutput:
-        ordered_batches = DiffusionRequestLayout.ordered_batches(
+        ordered_batches = ordered_covering_batches(
             request,
             sample_rows,
             cast("Sequence[DiffusionBatchResult]", batches),
+            row_fields=("observations", "actions", "log_probs", "timesteps", "kl", "video"),
         )
 
         observations = concatenate_sample_values(

@@ -1,26 +1,21 @@
-"""Request layout helpers shared by full-sequence denoise executors and gatherers."""
+"""Request parsing and input layout for full-sequence denoise executors."""
 
 from __future__ import annotations
 
 import dataclasses
 import random
-from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any
 
 import torch
 
-from vrl.generation.execution.sample_batches import ordered_covering_batches
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions, DenoiseSDEParams
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig
 from vrl.generation.types import (
     DenoiseRequest,
     GenerationRequest,
-    GenerationSampleRow,
 )
 from vrl.utils.config import require_exact_int
-
-TChunk = TypeVar("TChunk")
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,27 +146,6 @@ class DiffusionRequestLayout:
             )
         repeat_shape = (count,) + (1,) * (value.ndim - 1)
         return value.repeat(*repeat_shape)
-
-    @staticmethod
-    def ordered_batches(
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        batches: Sequence[TChunk],
-    ) -> list[TChunk]:
-        """Sort diffusion batches and check they exactly cover the sample rows.
-
-        A ``@staticmethod`` so the gatherer can sort without building a throwaway
-        layout, while the ordering stays grouped with the parser it validates
-        for. Reads no parsing fallback; every row-bearing batch tensor must carry
-        exactly ``sample_count`` leading rows.
-        """
-
-        return ordered_covering_batches(
-            request,
-            sample_rows,
-            batches,
-            row_fields=("observations", "actions", "log_probs", "timesteps", "kl", "video"),
-        )
 
     def select_sde_window(
         self,
