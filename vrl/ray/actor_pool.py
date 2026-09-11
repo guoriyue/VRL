@@ -235,15 +235,12 @@ class RayActorDispatcher:
                     break
             return new_refs
 
-        async def await_ref(ref: Any) -> tuple[Any, Any]:
-            return ref, await ref
-
-        # task -> ref, so a completed wrapper maps back to its job/telemetry.
+        # Awaitable task/future -> ref for its job and telemetry ownership.
         waiters: dict[asyncio.Future[Any], Any] = {}
 
         def spawn(refs: list[Any]) -> None:
             for ref in refs:
-                waiters[asyncio.ensure_future(await_ref(ref))] = ref
+                waiters[asyncio.ensure_future(ref)] = ref
 
         def finish_success(
             ref: Any,
@@ -318,7 +315,7 @@ class RayActorDispatcher:
                     job_index, worker_id = ref_to_job.pop(ref)
                     deadline_by_ref.pop(ref)
                     try:
-                        _, result = task.result()
+                        result = task.result()
                     except BaseException as cause:
                         self._finish(ref, worker_id)
                         if self._terminal_error is not None:
@@ -346,7 +343,7 @@ class RayActorDispatcher:
                 job_index, worker_id = ref_to_job.pop(ref)
                 deadline_by_ref.pop(ref)
                 try:
-                    _, result = task.result()
+                    result = task.result()
                 except asyncio.CancelledError as error:
                     failure = error
                 except BaseException as error:

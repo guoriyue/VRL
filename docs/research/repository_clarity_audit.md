@@ -6086,3 +6086,17 @@ The broader repository audit remains incomplete.
 - Five malformed-identity cases plus existing deterministic batch dispatch tests:
   28 passed. Touched-file Ruff and diff checks pass. These tests use controlled
   awaitable refs, not a new real-Ray fleet run. Broader audit remains incomplete.
+
+## Dispatcher result tasks no longer return duplicate reference identity
+
+- Remove the local await_ref wrapper returning (ref, result). The waiters mapping
+  already owns task-to-ref identity; both normal harvesting and cancellation
+  harvesting now read task.result() directly after looking up the ref once.
+  ensure_future handles generic awaitables, including EngineCallRef and Ray refs.
+- Keep spawn/finish_success as reused registration and telemetry operations.
+  Keep run_one's wait_for_result closure: it defers custom waiter invocation
+  inside a task, so removing it would change synchronous exception handling.
+  Preserve deadline, admission and cancellation state machines.
+- Batch dispatch and real actor-pool tests: 37 passed with one Ray warning;
+  deadline/cancellation tests: seven passed. Touched-file Ruff and diff checks
+  pass. No throughput claim; broader repository audit remains incomplete.
