@@ -2112,3 +2112,20 @@ tracing algorithm construction and evaluator selection together.
   failure whose identity must survive without iteration. Touched-file Ruff and
   diff checks passed. Optional-cache schema and full-repository review remain
   open; this slice does not claim either is complete.
+
+## Axis records validate their declared semantics
+
+- TrajectoryAxis now requires a nonempty string name, a kind from the existing
+  AxisKind Literal, and an exact nonnegative integer length when specified.
+  Previously booleans and fractional lengths passed construction, and a typo
+  in denoise_step could cause semantic axis selection to skip that dimension.
+- Reuse require_exact_int and derive kind membership directly from AxisKind;
+  no parallel ALL_CAPS vocabulary or standalone validation helper added.
+  Keep the axis schema, arbitrary valid axis names, None/zero lengths and the
+  batch validator's cross-record checks. No changes to cached replay payload
+  layout or stored-record migration are claimed.
+- Validation: 250 trajectory, replay and generation-binding tests passed;
+  two vLLM paged-attention tests skipped when its internal dependencies were
+  unavailable. Corrected literal-dot regexes flagged by Ruff and reran the
+  16 new axis tests successfully. Touched-file Ruff and diff checks passed.
+  Full repository review remains ongoing.

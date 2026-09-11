@@ -8,9 +8,10 @@ Ray actors, model modules, or scheduler objects.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from vrl.generation.types import GenerationSampleRow
+from vrl.utils.config import require_exact_int
 
 if TYPE_CHECKING:
     from vrl.trajectory.views import RewardView
@@ -68,10 +69,12 @@ class TrajectoryAxis:
     length: int | None = None
 
     def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("TrajectoryAxis.name must be non-empty")
-        if self.length is not None and self.length < 0:
-            raise ValueError("TrajectoryAxis.length must be >= 0 when set")
+        if not isinstance(self.name, str) or not self.name:
+            raise ValueError("TrajectoryAxis.name must be a non-empty string")
+        if self.kind not in get_args(AxisKind):
+            raise ValueError(f"unknown TrajectoryAxis.kind {self.kind!r}")
+        if self.length is not None:
+            require_exact_int(self.length, path="TrajectoryAxis.length", minimum=0)
 
 
 @dataclass(slots=True)
