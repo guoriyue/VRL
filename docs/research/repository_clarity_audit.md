@@ -1148,3 +1148,20 @@ contained guesses. Removed both:
   and rejects three count mismatches before forward or optimizer progress.
   CPU tests use an identity noise adapter to expose the image ordering directly;
   no full Wan GPU training was run. Touched-file Ruff checks pass.
+
+## Token scheduler row identity
+
+- Removed int conversion from the token envelope and ARCacheRows index handling.
+  Fractional values, booleans and numeric strings no longer silently select or
+  overwrite another sample's cache row. Cache operations validate the complete
+  index list before mutation; TokenStepBatch also validates integer row IDs and
+  token positions for direct protocol callers.
+- Retained cache gather/scatter and split/concat helpers: they implement shared
+  tensor/container/Hugging Face cache layouts. Kept the model-facing protocol
+  separate from scheduling, preserving one-way family dependencies. No new
+  class, setting or taxonomy; cache representation redesign is outside this fix.
+- Verified the production ARCacheRows owner is the token envelope, whose loop
+  supplies integer ranges. Validation: 42 protocol/composition/cache tests and
+  16 scheduler-batching, GLM schedule and decoder-contract tests passed. New
+  regressions reject non-integer inputs and verify failed writes preserve all
+  cache rows. Ruff on touched files and git diff --check pass.

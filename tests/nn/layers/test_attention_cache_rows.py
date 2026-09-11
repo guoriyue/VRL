@@ -117,3 +117,18 @@ def test_ar_cache_helpers_preserve_transformers_dynamic_cache_objects() -> None:
         merged_value,
         torch.cat([value[1:2], value[:1]], dim=0),
     )
+
+
+@pytest.mark.parametrize("index", [0.9, True, "0"])
+@pytest.mark.parametrize("operation", ["gather", "scatter", "scatter_rows"])
+def test_cache_rows_reject_non_integer_indices_without_mutation(index, operation) -> None:
+    original = torch.tensor([[10.0], [20.0]])
+    rows = ARCacheRows.from_batched(original, 2)
+    with pytest.raises(ValueError, match="row indices must be integers"):
+        if operation == "gather":
+            rows.gather([index])
+        elif operation == "scatter":
+            rows.scatter([0, index], torch.zeros(2, 1))
+        else:
+            rows.scatter_rows([0, index], [torch.zeros(1, 1), torch.zeros(1, 1)])
+    assert torch.equal(rows.gather([0, 1]), original)

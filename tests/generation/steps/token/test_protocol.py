@@ -32,6 +32,9 @@ def test_token_loop_init_rejects_invalid_shape(
     [
         ([], "must be non-empty"),
         ([-1], "must be non-negative"),
+        ([0.9], "must be integers"),
+        ([True], "must be integers"),
+        (["0"], "must be integers"),
         ([0, 0], "must be unique"),
     ],
 )
@@ -54,3 +57,9 @@ def test_token_step_batch_rejects_negative_position() -> None:
             position=-1,
             row_lanes={},
         )
+
+
+@pytest.mark.parametrize("position", [0.9, True, "0"])
+def test_token_step_batch_rejects_non_integer_position(position) -> None:
+    with pytest.raises(ValueError, match="position must be an integer"):
+        TokenStepBatch(row_indices=[0], position=position, row_lanes={})

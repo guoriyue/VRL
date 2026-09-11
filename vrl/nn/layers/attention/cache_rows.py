@@ -85,7 +85,9 @@ class ARCacheRows:
             self.rows[index] = row_value
 
     def _validate_indices(self, indices: Sequence[int]) -> list[int]:
-        row_indices = [int(index) for index in indices]
+        row_indices = list(indices)
+        if any(isinstance(index, bool) or not isinstance(index, int) for index in row_indices):
+            raise ValueError(f"{self.owner} row indices must be integers")
         if not row_indices:
             raise ValueError(f"{self.owner} requires at least one row index")
         size = len(self.rows)

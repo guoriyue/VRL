@@ -158,6 +158,9 @@ def test_loop_rejects_unknown_row_update() -> None:
     [
         ([], ValueError, "at least one row index"),
         ([3], IndexError, "out of range"),
+        ([0.9], ValueError, "must be integers"),
+        ([True], ValueError, "must be integers"),
+        (["0"], ValueError, "must be integers"),
         ([0, 0], ValueError, "must be unique"),
     ],
 )

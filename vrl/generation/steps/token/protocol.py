@@ -51,10 +51,16 @@ class TokenStepBatch:
     def __post_init__(self) -> None:
         if not self.row_indices:
             raise ValueError("TokenStepBatch.row_indices must be non-empty")
+        if any(
+            isinstance(index, bool) or not isinstance(index, int) for index in self.row_indices
+        ):
+            raise ValueError("TokenStepBatch.row_indices must be integers")
         if any(index < 0 for index in self.row_indices):
             raise ValueError("TokenStepBatch.row_indices must be non-negative")
         if len(set(self.row_indices)) != len(self.row_indices):
             raise ValueError("TokenStepBatch.row_indices must be unique")
+        if isinstance(self.position, bool) or not isinstance(self.position, int):
+            raise ValueError("TokenStepBatch.position must be an integer")
         if self.position < 0:
             raise ValueError("TokenStepBatch.position must be non-negative")
 

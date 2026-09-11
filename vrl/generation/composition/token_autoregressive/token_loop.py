@@ -45,7 +45,7 @@ class TokenAutoregressiveEnvelope:
         *,
         position: int,
     ) -> TokenStepBatch:
-        rows = [int(index) for index in row_indices]
+        rows = list(row_indices)
         return TokenStepBatch(
             row_indices=rows,
             position=position,
