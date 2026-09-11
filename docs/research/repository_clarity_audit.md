@@ -4380,6 +4380,19 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Worker default device discovery preserves failures
+
+- Remove the broad exception-to-CPU fallback in _executor_device. Torch import
+  or CUDA discovery failures must propagate instead of inventing a CPU restore
+  or profiling target. A regression reproduced a swallowed CUDA probe error.
+- Keep the model-device preference, lazy Torch import and availability-based
+  default when no device is supplied. Keep the shared worker method because
+  sleep and profiling both use this decision. This does not require every model
+  to declare a device or change property discovery semantics.
+- Generation execution suite: 218 passed, including both default-device choices
+  and error propagation. Touched-file Ruff checks pass. The wider repository
+  clarity audit remains incomplete.
+
 ## Worker CPU transfer uses method and state shapes matching its dependencies
 
 - Make GenerationWorkerCore._to_cpu a staticmethod: it consumes only its value

@@ -871,16 +871,14 @@ class GenerationWorkerCore:
 
     @staticmethod
     def _executor_device(executor: Any) -> Any:
+        """Use the model device, or discover a default without hiding probe errors."""
         policy = getattr(executor, "model", None)
         device = getattr(policy, "device", None)
         if device is not None:
             return device
-        try:
-            import torch
+        import torch
 
-            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        except Exception:
-            return "cpu"
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     @staticmethod
     def _to_cpu(value: Any) -> Any:

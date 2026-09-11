@@ -228,6 +228,25 @@ def _make_cumem_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def test_executor_device_preserves_cuda_discovery_errors(monkeypatch) -> None:
+    def fail_discovery() -> bool:
+        raise RuntimeError("CUDA device discovery failed")
+
+    monkeypatch.setattr(torch.cuda, "is_available", fail_discovery)
+
+    with pytest.raises(RuntimeError, match="CUDA device discovery failed"):
+        GenerationWorkerCore._executor_device(SimpleNamespace(model=SimpleNamespace()))
+
+
+@pytest.mark.parametrize("cuda_available", [False, True])
+def test_executor_device_default_follows_cuda_availability(monkeypatch, cuda_available) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda_available)
+
+    device = GenerationWorkerCore._executor_device(SimpleNamespace(model=SimpleNamespace()))
+
+    assert device == torch.device("cuda" if cuda_available else "cpu")
+
+
 def test_sleep_parks_model_and_frozen_on_cpu_keeping_executor() -> None:
     model = _SleepModel(device="cuda:0")
     core = _core(model)
