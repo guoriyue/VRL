@@ -1219,3 +1219,21 @@ contained guesses. Removed both:
 - Validation: all 25 profiling tests passed, including an actual CPU capture of
   step10 followed by step1 that verifies the latter manifest includes only step1
   files. No CUDA capture was added. Touched-file Ruff and git diff --check pass.
+
+## Offline optimizer construction ownership
+
+- Inlined the single-consumer _build_optimizer into OfflineDPOTrainer.__init__.
+  Parameter selection, the empty-trainable guard and optimizer construction now
+  form one initialization block. Removed the unused Iterable import and duplicate
+  list materialization. No optimizer wrapper or shared factory was introduced.
+- Preserved standard torch.optim.AdamW, optional lazy Adafactor import, all
+  optimizer arguments, reference freezing and checkpoint/step behavior. Online
+  optimizer integration is not being forced into the offline constructor shape.
+- Changed the former private-helper test to construct an actual trainer; it now
+  checks both AdamW options and Adafactor's fixed-learning-rate settings.
+  Validation: 28 trainer, offline config builder and Wan checkpoint-entrypoint
+  tests passed. Touched-file Ruff and git diff --check pass.
+- Also re-read EnginePlan and DistributedExecutionPlanner: request batch-width
+  resolution and fleet placement have separate owners and remain distinct.
+  Host-memory proc parsing and capture/logging remain shared OS and logging
+  adapters, consistent with the earlier ownership review.

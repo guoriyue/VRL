@@ -16,7 +16,7 @@ before VAE encoding (see ``vrl/scripts/families/wan_2_1/train_dpo.py``).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -140,34 +140,6 @@ class DPOStepMetrics:
     grad_norm: float = 0.0
 
 
-def _build_optimizer(
-    parameters: Iterable[torch.nn.Parameter],
-    cfg: OfflineDPOTrainerConfig,
-) -> torch.optim.Optimizer:
-    if cfg.use_adafactor:
-        try:
-            from transformers.optimization import Adafactor
-        except ImportError as e:
-            raise ImportError(
-                "Install transformers for Adafactor: pip install transformers"
-            ) from e
-        return Adafactor(
-            list(parameters),
-            lr=cfg.lr,
-            scale_parameter=False,
-            relative_step=False,
-            warmup_init=False,
-            weight_decay=cfg.adam_weight_decay,
-        )
-    return torch.optim.AdamW(
-        list(parameters),
-        lr=cfg.lr,
-        betas=(cfg.adam_beta1, cfg.adam_beta2),
-        weight_decay=cfg.adam_weight_decay,
-        eps=cfg.adam_epsilon,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Forward adapters — caller plugs in a model-specific forward function.
 # ---------------------------------------------------------------------------
@@ -240,7 +212,30 @@ class OfflineDPOTrainer:
         trainable = [p for p in model.parameters() if p.requires_grad]
         if not trainable:
             raise RuntimeError("model has no trainable parameters — wire up LoRA / unfreeze first")
-        self._optimizer = _build_optimizer(trainable, self.config)
+        cfg = self.config
+        if cfg.use_adafactor:
+            try:
+                from transformers.optimization import Adafactor
+            except ImportError as exc:
+                raise ImportError(
+                    "Install transformers for Adafactor: pip install transformers"
+                ) from exc
+            self._optimizer = Adafactor(
+                trainable,
+                lr=cfg.lr,
+                scale_parameter=False,
+                relative_step=False,
+                warmup_init=False,
+                weight_decay=cfg.adam_weight_decay,
+            )
+        else:
+            self._optimizer = torch.optim.AdamW(
+                trainable,
+                lr=cfg.lr,
+                betas=(cfg.adam_beta1, cfg.adam_beta2),
+                weight_decay=cfg.adam_weight_decay,
+                eps=cfg.adam_epsilon,
+            )
 
     # ------------------------------------------------------------------
     # Noise injection — branch on prediction_type

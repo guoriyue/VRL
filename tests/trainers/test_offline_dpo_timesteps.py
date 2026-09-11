@@ -119,24 +119,43 @@ def test_offline_dpo_accumulation_boundary_ignores_global_step_offset() -> None:
     assert trainer._mark_gradient_accumulation_step() is True
 
 
-def test_offline_dpo_adamw_consumes_every_resolved_optimizer_value() -> None:
-    import vrl.trainers.offline.dpo as dpo_module
-
-    parameter = torch.nn.Parameter(torch.ones(1))
+@pytest.mark.parametrize("use_adafactor", [False, True])
+def test_offline_dpo_consumes_resolved_optimizer_values(use_adafactor) -> None:
+    model = torch.nn.Linear(1, 1)
+    model.precision = PRECISION
     cfg = OfflineDPOTrainerConfig(
         lr=0.02,
         adam_beta1=0.6,
         adam_beta2=0.7,
         adam_weight_decay=0.04,
         adam_epsilon=1e-5,
+        use_adafactor=use_adafactor,
     )
-
-    optimizer = dpo_module._build_optimizer([parameter], cfg)
+    trainer = OfflineDPOTrainer(
+        model=model,
+        ref_model=None,
+        forward_fn=_noop_forward,
+        noise_scheduler=SimpleNamespace(timesteps=torch.arange(20)),
+        encode_pixels=_noop_encode_pix,
+        encode_text=_noop_encode_text,
+        config=cfg,
+        device="cpu",
+    )
+    optimizer = trainer._optimizer
 
     assert optimizer.defaults["lr"] == pytest.approx(0.02)
-    assert optimizer.defaults["betas"] == pytest.approx((0.6, 0.7))
     assert optimizer.defaults["weight_decay"] == pytest.approx(0.04)
-    assert optimizer.defaults["eps"] == pytest.approx(1e-5)
+    if use_adafactor:
+        from transformers.optimization import Adafactor
+
+        assert isinstance(optimizer, Adafactor)
+        assert optimizer.defaults["scale_parameter"] is False
+        assert optimizer.defaults["relative_step"] is False
+        assert optimizer.defaults["warmup_init"] is False
+    else:
+        assert type(optimizer) is torch.optim.AdamW
+        assert optimizer.defaults["betas"] == pytest.approx((0.6, 0.7))
+        assert optimizer.defaults["eps"] == pytest.approx(1e-5)
 
 
 @pytest.mark.parametrize("float32_precision", ["ieee", "tf32"])
