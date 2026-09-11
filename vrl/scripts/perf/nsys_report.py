@@ -333,10 +333,6 @@ def _has_table(conn: sqlite3.Connection, name: str) -> bool:
     return row is not None
 
 
-def _strip_api_version(name: str) -> str:
-    return _API_VERSION_SUFFIX.sub("", name)
-
-
 def open_report(path: str | Path) -> tuple[sqlite3.Connection, str]:
     """Open a capture as a sqlite connection, exporting from ``.nsys-rep`` if needed.
 
@@ -520,7 +516,7 @@ def _api_breakdown(conn: sqlite3.Connection, lo: int, hi: int) -> tuple[list[Api
             ov = overlap_length(int(start), int(end), lo, hi)
             if ov <= 0:
                 continue
-            name = _strip_api_version(str(raw))
+            name = _API_VERSION_SUFFIX.sub("", str(raw))
             agg = spans.setdefault(name, [0, 0])
             agg[0] += 1
             agg[1] += ov

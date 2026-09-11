@@ -6412,3 +6412,17 @@ The broader repository audit remains incomplete.
   case passed. Launcher and weight-transfer suites: 33 passed with one Ray
   dependency warning, including embedded-Ray launch. Touched-file Ruff and diff
   checks pass. Broader repository audit remains incomplete.
+
+## Resource guards retained; one report-only forwarding helper removed
+
+- Reviewed RayGenerationConfig device discovery, CUDA ordinal resolution and
+  colocated memory checks against runtime-config tests. Keep these distinct
+  compatibility/topology checks, including declared-property error propagation
+  and cross-node ordinal isolation; no ownership relocation is justified.
+- In nsys_report.py, inline the sole _strip_api_version call using the existing
+  named regex. The wrapper added no state or extra validation. Keep the regex
+  as an external report-format boundary, pure interval helpers and SQL/report
+  operations as separate concerns; no new class or data table.
+- Runtime-config plus report tests before the script edit: 81 passed with three
+  dependency warnings. After the edit, all 30 report tests passed. Touched-file
+  Ruff and diff checks pass. Broader repository audit remains incomplete.
