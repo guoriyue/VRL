@@ -1066,3 +1066,20 @@ contained guesses. Removed both:
 - Validation: 52 common-factory and online lifecycle tests passed, covering grouped
   replay exclusions, algorithm/evaluator construction and recipe cleanup. Touched-
   file Ruff and diff whitespace checks pass. No runtime behavior changed.
+
+## Continuous capacity integer accounting
+
+- Ready queue admission requires non-negative integer item bytes. Negative
+  receipts can no longer reduce total occupancy; fractional/string/bool inputs
+  are rejected rather than truncated. Queue limits/resizing use exact integers.
+- Generated capacity validates limits, reservations and reported bytes with the
+  existing scalar validator. NaN cannot poison the byte accumulator and bypass
+  subsequent capacity comparisons. Invalid reports fail before reservation state
+  changes, so normal cancellation/release remains usable.
+- Retained separate ready payload storage and pre-reward capacity accounting;
+  their lifetimes differ. No new helper class or shared container hierarchy.
+  This boundary check does not claim callers may mutate resident receipt sizes;
+  queue items remain producer-owned receipts whose size is fixed after admission.
+- Validation: 152 continuous orchestration tests passed. Regressions assert failed
+  admission/reporting preserve occupancy and allow normal reservation release.
+  Touched-file Ruff and diff whitespace checks pass.

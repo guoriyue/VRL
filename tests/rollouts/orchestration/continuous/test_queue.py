@@ -166,3 +166,13 @@ def test_stats_shape() -> None:
     stats = queue.stats()
     assert stats["ready_items"] == 1.0
     assert stats["ready_bytes"] == 4.0
+
+
+@pytest.mark.parametrize("nbytes", [-1, 0.5, float("nan"), True, "4"])
+def test_invalid_item_size_leaves_queue_unchanged(nbytes) -> None:
+    queue = ContinuousRolloutQueue(max_items=2, max_bytes=8)
+    queue.put(_item(0, 1, nbytes=4))
+    with pytest.raises(ValueError, match="nbytes"):
+        queue.put(_item(1, 1, nbytes=nbytes))
+    assert queue.size() == 1
+    assert queue.stats()["ready_bytes"] == 4

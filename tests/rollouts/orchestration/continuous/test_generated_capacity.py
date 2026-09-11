@@ -106,3 +106,18 @@ def test_scoring_requires_generated_capacity_and_cannot_start_twice() -> None:
         capacity.record_generated((0, 0), nbytes=2)
     assert capacity.stats()["reserved_bytes"] == 4
     assert capacity.stats()["scoring_groups"] == 1
+
+
+@pytest.mark.parametrize("nbytes", [-1, 0.5, float("nan"), True, "4"])
+def test_invalid_byte_counts_leave_reservation_unchanged(nbytes) -> None:
+    capacity = GeneratedRolloutCapacity(max_groups=2, max_bytes=8)
+    with pytest.raises(ValueError):
+        capacity.reserve((0, 0), max_group_bytes=nbytes)
+    assert capacity.stats()["reserved_groups"] == 0
+    assert capacity.reserve((0, 0), max_group_bytes=4)
+    with pytest.raises(ValueError, match="nbytes"):
+        capacity.record_generated((0, 0), nbytes=nbytes)
+    assert capacity.stats()["reserved_bytes"] == 4
+    assert capacity.stats()["unscored_items"] == 0
+    capacity.release((0, 0))
+    assert capacity.stats()["reserved_bytes"] == 0

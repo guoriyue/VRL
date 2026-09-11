@@ -6,13 +6,15 @@ This owner-loop object retains no payloads and performs no queueing or waiting.
 
 from __future__ import annotations
 
+from vrl.utils.config import require_exact_int
+
 
 class GeneratedRolloutCapacity:
     """Account group and byte capacity from generation admission through scoring."""
 
     def __init__(self, *, max_groups: int, max_bytes: int) -> None:
-        if max_groups < 1 or max_bytes < 1:
-            raise ValueError("generated capacity requires positive item and byte limits")
+        require_exact_int(max_groups, path="generated capacity.max_groups", minimum=1)
+        require_exact_int(max_bytes, path="generated capacity.max_bytes", minimum=1)
         self.max_groups = max_groups
         self.max_bytes = max_bytes
         self._reserved: dict[tuple[int, int], int] = {}
@@ -32,7 +34,8 @@ class GeneratedRolloutCapacity:
             raise RuntimeError("generated capacity is closed")
         if key in self._reserved:
             raise RuntimeError(f"duplicate generated group reservation: {key}")
-        if not 0 < max_group_bytes <= self.max_bytes:
+        require_exact_int(max_group_bytes, path="max_group_bytes", minimum=1)
+        if max_group_bytes > self.max_bytes:
             raise ValueError("generated group byte ceiling must fit the capacity budget")
         if (
             len(self._reserved) >= self.max_groups
@@ -57,7 +60,8 @@ class GeneratedRolloutCapacity:
         if key in self._waiting or key in self._scoring:
             raise RuntimeError(f"duplicate generated size report: {key}")
         ceiling = self._reserved[key]
-        if nbytes < 0 or nbytes > ceiling:
+        require_exact_int(nbytes, path="generated group.nbytes", minimum=0)
+        if nbytes > ceiling:
             raise ValueError(
                 f"generated group exceeds reserved byte ceiling: {key} "
                 f"(bytes={nbytes}, ceiling={ceiling})",
