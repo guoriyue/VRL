@@ -1313,3 +1313,18 @@ contained guesses. Removed both:
 - Validation: 50 service tests and 47 reward/config-loading tests passed, including
   both constructors with NaN, positive/negative infinity, zero and negative values.
   Touched-file Ruff and git diff --check pass.
+
+## Reward artifact integrity schema
+
+- RewardInferenceArtifact validates size_bytes as a non-negative integer through
+  require_exact_int. Its previous int(value) check accepted booleans, numeric
+  strings and fractional sizes, including negative fractions truncated to zero.
+  Both direct construction and wire decoding now use the same schema rule.
+- Kept wire envelope/request/result/info/status encode/decode functions as paired
+  protocol adapters. The artifact field set derives from dataclass schema and
+  WIRE_VERSION is a compatibility boundary. Server-side actual file size/hash
+  verification remains separate from structural input validation.
+- No transport class, extra schema field or new integrity protocol. Validation:
+  89 inference/service tests passed, one skipped. New malformed wire-size tests
+  initially lacked their exception import; after correction the complete group
+  was rerun successfully. Touched-file Ruff and git diff --check pass.

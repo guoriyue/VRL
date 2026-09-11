@@ -31,6 +31,7 @@ from vrl.rewards.service.protocol import (
     WIRE_VERSION,
     RemoteRewardServiceError,
     RewardServiceErrorCode,
+    RewardServiceProtocolError,
 )
 from vrl.rewards.service.server import RewardService, RewardServiceConfig
 from vrl.rewards.service.wire import request_from_wire, request_to_wire
@@ -1076,3 +1077,13 @@ def test_reward_timeout_contract_is_shared(timeout_s, entry) -> None:
             RewardInferenceConfig(timeout_s=timeout_s)
         else:
             HttpRewardScorer("http://127.0.0.1:8300", timeout_s=timeout_s)
+
+
+@pytest.mark.parametrize("size_bytes", [True, 1.0, -0.5, "1", -1])
+def test_wire_rejects_non_integer_artifact_size(tmp_path, size_bytes) -> None:
+    artifact_file = tmp_path / "artifact.png"
+    artifact_file.write_bytes(b"x")
+    payload = request_to_wire(_request(str(artifact_file)))
+    payload["request"]["artifacts"][0]["size_bytes"] = size_bytes
+    with pytest.raises(RewardServiceProtocolError, match="size_bytes must be"):
+        request_from_wire(payload)

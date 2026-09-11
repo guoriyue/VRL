@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from vrl.utils.config import require_exact_int
+
 
 @dataclass(frozen=True, slots=True)
 class RewardInferenceArtifact:
@@ -51,8 +53,12 @@ class RewardInferenceArtifact:
             raise ValueError(
                 "RewardInferenceArtifact in-memory media cannot declare file integrity",
             )
-        if self.size_bytes is not None and int(self.size_bytes) < 0:
-            raise ValueError("RewardInferenceArtifact.size_bytes must be >= 0")
+        if self.size_bytes is not None:
+            require_exact_int(
+                self.size_bytes,
+                path="RewardInferenceArtifact.size_bytes",
+                minimum=0,
+            )
         if self.sha256 is not None and (
             len(self.sha256) != 64
             or any(character not in "0123456789abcdef" for character in self.sha256)
