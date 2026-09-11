@@ -18,13 +18,11 @@ from typing import TYPE_CHECKING, Any, Literal
 from vrl.config.algorithm import resolve_kl_reward_coef
 from vrl.config.schema import generation_request_rollout_fields
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
-from vrl.generation.steps.denoise.teacache import TeaCacheConfig
 from vrl.trajectory import TrajectoryStoragePolicy
 
 if TYPE_CHECKING:
     from vrl.config.base import ConfigBase
-    from vrl.config.sampling_schema import SamplingSection
-    from vrl.config.schema import RolloutConfig, RootConfig
+    from vrl.config.schema import RootConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +80,11 @@ class RolloutCollectorConfig:
             request_sampling=request_sampling,
             samples_per_generation_batch=samples_per_generation_batch,
             train_segments=None if train_segments is None else dict(train_segments),
-            denoise=_denoise_options(rollout, sampling, kl_reward_coef=kl_reward_coef),
+            denoise=DenoiseRequestOptions.from_sections(
+                rollout,
+                sampling,
+                kl_reward_coef=kl_reward_coef,
+            ),
             kl_reward_coef=kl_reward_coef,
             trajectory_storage=trajectory_storage,
         )
@@ -91,48 +93,6 @@ class RolloutCollectorConfig:
 # Derived from the typed options, so a knob added to DenoiseRequestOptions is
 # automatically kept off the flat sampling dict.
 _DENOISE_OPTION_FIELDS = frozenset(item.name for item in fields(DenoiseRequestOptions))
-
-
-def _denoise_options(
-    rollout: RolloutConfig | None,
-    sampling: SamplingSection | None,
-    *,
-    kl_reward_coef: float,
-) -> DenoiseRequestOptions:
-    """Project rollout.* / rollout.sde.* / sampling.teacache into the typed options.
-
-    Only YAML-declared values are passed, so the option defaults stay the single
-    source. ``return_kl`` is derived: KL rollout signals are recorded exactly
-    when an SDE block exists and the KL reward coefficient is on.
-    """
-
-    values: dict[str, Any] = {}
-    if rollout is not None:
-        for name in (
-            "denoise_mode",
-            "noise_level",
-            "return_prev_sample_mean",
-            "cache_ref_noise_pred",
-        ):
-            value = getattr(rollout, name)
-            if value is not None:
-                values[name] = value
-        sde = rollout.sde
-        if sde is not None:
-            values["sde_type"] = sde.type
-            if sde.window_size is not None:
-                values["sde_window_size"] = sde.window_size
-            if sde.window_range is not None:
-                values["sde_window_range"] = tuple(sde.window_range)
-            values["return_kl"] = kl_reward_coef > 0.0
-    teacache = getattr(sampling, "teacache", None)
-    if teacache is not None:
-        # Bool flows as-is; the mapping form is the section minus unset keys, so
-        # TeaCacheConfig.from_sampling sees exactly what the YAML declared.
-        values["teacache"] = TeaCacheConfig.from_sampling(
-            teacache if isinstance(teacache, bool) else _section_values(teacache),
-        )
-    return DenoiseRequestOptions(**values)
 
 
 def _section_values(section: ConfigBase | None) -> dict[str, Any]:

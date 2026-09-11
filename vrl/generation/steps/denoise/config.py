@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig
+
+if TYPE_CHECKING:
+    from vrl.config.sampling_schema import SamplingSection
+    from vrl.config.schema import RolloutConfig
+
 
 DenoiseMode = Literal["native", "sde"]
 SdeType = Literal["flow_grpo", "cps", "ddim"]
@@ -58,6 +63,51 @@ class DenoiseRequestOptions:
                     "rollout.sde.window_size cannot exceed rollout.sde.window_range",
                 )
             object.__setattr__(self, "sde_window_range", (lo, hi))
+
+    @classmethod
+    def from_sections(
+        cls,
+        rollout: RolloutConfig | None,
+        sampling: SamplingSection | None,
+        *,
+        kl_reward_coef: float,
+    ) -> DenoiseRequestOptions:
+        """Project rollout.* / rollout.sde.* / sampling.teacache into the typed options.
+
+        Only YAML-declared values are passed, so the option defaults stay the single
+        source. ``return_kl`` is derived: KL rollout signals are recorded exactly
+        when an SDE block exists and the KL reward coefficient is on.
+        """
+
+        values: dict[str, Any] = {}
+        if rollout is not None:
+            for name in (
+                "denoise_mode",
+                "noise_level",
+                "return_prev_sample_mean",
+                "cache_ref_noise_pred",
+            ):
+                value = getattr(rollout, name)
+                if value is not None:
+                    values[name] = value
+            sde = rollout.sde
+            if sde is not None:
+                values["sde_type"] = sde.type
+                if sde.window_size is not None:
+                    values["sde_window_size"] = sde.window_size
+                if sde.window_range is not None:
+                    values["sde_window_range"] = tuple(sde.window_range)
+                values["return_kl"] = kl_reward_coef > 0.0
+        teacache = getattr(sampling, "teacache", None)
+        if teacache is not None:
+            # Bool flows as-is; the mapping form is the section minus unset keys, so
+            # TeaCacheConfig.from_sampling sees exactly what the YAML declared.
+            values["teacache"] = TeaCacheConfig.from_sampling(
+                teacache
+                if isinstance(teacache, bool)
+                else teacache.model_dump(mode="python", exclude_none=True, exclude_unset=True),
+            )
+        return cls(**values)
 
     def resolve_sde_window_range(self, num_steps: int) -> tuple[int, int]:
         """The window bounds for a request with ``num_steps`` denoise steps."""
