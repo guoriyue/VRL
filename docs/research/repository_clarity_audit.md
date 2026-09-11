@@ -805,3 +805,22 @@ contained guesses. Removed both:
   The chunk binding suite then passed all 8 tests with added malformed actions,
   optional KL and finalized-latent axis regressions. Touched-file Ruff and diff
   whitespace checks pass.
+
+## Pipeline dispatch helper review
+
+- Removed the nested _teardown forwarding function: both callers already branch
+  on copy_stream, so its CPU/CUDA decision repeated an established condition.
+  CUDA branches now call _move_tree_to_cpu_async directly; CPU branches retain
+  the existing result directly. No lifecycle state or synchronization changed.
+- Reworded pipeline documentation to distinguish submitting a copy from waiting
+  for its completion, and to identify indexed slots as the batch-order guarantee.
+- Retained the tensor-tree copy helper and pipeline module: pinned storage,
+  source record_stream, produce events and failure barriers manage actual resource
+  lifetimes. Combining synchronous worker copies with this stream-scoped path is
+  a non-goal because their synchronization contracts differ.
+- Rechecked worker's _require_chunked_executor and _debug_metric_value: retained
+  the former as plugin protocol validation and the latter as recursive diagnostic
+  serialization. Neither benefits from a new owner class or a static-method move.
+- Validation: 40 pipeline execution, Ray progress, binding equivalence and real
+  CUDA tests passed, including copy completion and failure cleanup. Touched-file
+  Ruff and diff whitespace checks pass.

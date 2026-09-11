@@ -51,11 +51,10 @@ def forward_batches_pipelined(
     runs, batch N's TEARDOWN (the GPU->CPU result copy + host packing, on a copy
     stream) drains — hiding the copy+CPU boundary behind the next batch's denoise.
 
-    BIT-EXACT by construction: the side-stream copy never changes values, and the
-    only ordering it introduces (teardown(N) before produce(N+1) is launched) is
-    guarded by a default-stream event so the copy never reads tensors a denoise
-    kernel is still writing (torn-read safety). Batches are independent and gather
-    re-orders by ordered_batches, so completion order is irrelevant to the output.
+    Before producing batch N+1, enqueue batch N's copy on the copy stream.
+    That stream waits for batch N's produce event before reading its tensors;
+    compute does not wait for the copy to finish. Copies preserve tensor values,
+    and indexed result slots preserve batch order regardless of copy completion.
 
     Compute uses the executor's canonical ``forward_batch`` implementation;
     teardown is a stream-scoped GPU-to-CPU copy. Results remain in batch order.
@@ -65,11 +64,6 @@ def forward_batches_pipelined(
 
     cuda = torch.cuda.is_available()
     copy_stream = torch.cuda.Stream() if cuda else None
-
-    def _teardown(result: Any) -> Any:
-        if copy_stream is None:
-            return result
-        return _move_tree_to_cpu_async(result, copy_stream)
 
     batch_list = list(batches)
     results: list = [None] * len(batch_list)
@@ -86,12 +80,12 @@ def forward_batches_pipelined(
             # the copy never reads tensors a denoise kernel is still writing.
             if prev_result is not None and copy_stream is not None:
                 copy_stream.wait_event(prev_done)
-                results[prev_idx] = _teardown(prev_result)
+                results[prev_idx] = _move_tree_to_cpu_async(prev_result, copy_stream)
                 ev = torch.cuda.Event()
                 ev.record(copy_stream)
                 pending_events.append(ev)
             elif prev_result is not None:
-                results[prev_idx] = _teardown(prev_result)
+                results[prev_idx] = prev_result
 
             prev_result = executor.forward_batch(request, batch)
             prev_idx = idx
@@ -115,12 +109,12 @@ def forward_batches_pipelined(
         if prev_result is not None:
             if copy_stream is not None:
                 copy_stream.wait_event(prev_done)
-                results[prev_idx] = _teardown(prev_result)
+                results[prev_idx] = _move_tree_to_cpu_async(prev_result, copy_stream)
                 ev = torch.cuda.Event()
                 ev.record(copy_stream)
                 pending_events.append(ev)
             else:
-                results[prev_idx] = _teardown(prev_result)
+                results[prev_idx] = prev_result
     except BaseException:
         failed = True
         raise
