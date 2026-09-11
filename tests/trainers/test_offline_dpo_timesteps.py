@@ -24,6 +24,18 @@ PRECISION = RolePrecision(
 )
 
 
+@pytest.mark.parametrize("value", [1.9, "2", True, -1])
+@pytest.mark.parametrize("strict", [False, True])
+def test_restore_rejects_invalid_progress_before_resetting_accumulation(value, strict):
+    trainer = _make_trainer(torch.arange(4))
+    trainer.global_step = 7
+    trainer._gradient_accumulation_micro_step = 2
+    with pytest.raises(ValueError, match=r"trainer_state\.global_step"):
+        trainer.load_state_dict({"global_step": value}, strict=strict)
+    assert trainer.global_step == 7
+    assert trainer._gradient_accumulation_micro_step == 2
+
+
 def _noop_forward(model, noisy, ts, encoder, extra=None):  # pragma: no cover
     return noisy
 

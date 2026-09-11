@@ -4367,3 +4367,15 @@ this combined regression is compatibility evidence, not architectural completion
 - Sixteen malformed-progress cases failed before the fix. State restore plus
   checkpoint suites now pass: 147 tests, dependency warnings. Touched-file Ruff
   checks pass. The full repository clarity audit remains incomplete.
+
+## Offline DPO restore shares the exact progress boundary
+
+- Replace global_step int coercion with require_exact_int, minimum zero, before
+  assigning progress or resetting the accumulation window. This matches the
+  online restore boundary without introducing a common restore base class.
+- Preserve missing-field zero defaults, optimizer restore policy and valid
+  checkpoint accumulation reset behavior. Invalid values fail in either strict
+  mode without changing progress or the micro-step counter.
+- Eight regressions failed before the fix. Offline timestep/restore and builder
+  suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
+  completion remains unproven.

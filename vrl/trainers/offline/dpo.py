@@ -30,6 +30,7 @@ from vrl.models.precision import (
     model_precision,
 )
 from vrl.trainers.data.preferences import PreferenceBatch
+from vrl.utils.config import require_exact_int
 
 if TYPE_CHECKING:
     from vrl.algorithms.dpo import DiffusionDPOConfig
@@ -450,7 +451,9 @@ class OfflineDPOTrainer:
 
         if not isinstance(state, dict):
             raise TypeError("OfflineDPOTrainer.load_state_dict expects a dict")
-        self.global_step = int(state.get("global_step", 0))
+        self.global_step = require_exact_int(
+            state.get("global_step", 0), path="trainer_state.global_step", minimum=0
+        )
         # Parameter .grad buffers are not checkpointed, so resume must start a
         # fresh accumulation window instead of deriving the boundary from
         # global_step.
