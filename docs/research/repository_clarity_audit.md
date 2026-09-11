@@ -7106,3 +7106,18 @@ The broader repository audit remains incomplete.
   JSON-file tests: seven passed. Touched-file Ruff and diff checks pass.
 - Tests avoid checkpoint loading and video decoding; no IDM training or scoring
   quality claim. The broader repository clarity audit remains incomplete.
+
+## LeRobot v2.0 parses bounded physical JSONL records
+
+- First-frame and target-clip loaders now iterate opened UTF-8 episode files
+  instead of splitting a complete text snapshot on Unicode line boundaries.
+  Keep their prefix limit: the eager shared read_jsonl API would also parse
+  records beyond that limit and change behavior.
+- Two regressions failed with an unterminated JSON string before the fix. Both
+  paths now preserve a Unicode separator inside the task and stop before an
+  intentionally invalid trailing record. LeRobot parsing and setup suites:
+  33 passed. Touched-file Ruff and diff checks pass.
+- Preserve layout-specific adapters, lazy optional decoder imports and the
+  canonical action-column taxonomy/order. No generic loader wrapper or parser
+  API extension. Media decode is faked here; no external dataset download or
+  full import claim. The broader clarity audit remains incomplete.

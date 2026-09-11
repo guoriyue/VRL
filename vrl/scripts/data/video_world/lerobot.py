@@ -188,13 +188,14 @@ def _iter_lerobot_v20(
     chunks_size = int(info.get("chunks_size", 1000))
 
     episodes: list[dict[str, Any]] = []
-    for line in Path(dl("meta/episodes.jsonl")).read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        episodes.append(json.loads(line))
-        if len(episodes) >= limit:
-            break
+    with Path(dl("meta/episodes.jsonl")).open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            episodes.append(json.loads(line))
+            if len(episodes) >= limit:
+                break
 
     for ep in episodes:
         episode = int(ep["episode_index"])
@@ -508,13 +509,14 @@ def _iter_lerobot_v20_target_clips(
     fps = float(info.get("fps") or _video_fps(info, video_key) or 15.0)
 
     episodes: list[dict[str, Any]] = []
-    for line in Path(dl("meta/episodes.jsonl")).read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        episodes.append(json.loads(line))
-        if len(episodes) >= limit:
-            break
+    with Path(dl("meta/episodes.jsonl")).open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            episodes.append(json.loads(line))
+            if len(episodes) >= limit:
+                break
 
     for ep in episodes:
         episode = int(ep["episode_index"])
