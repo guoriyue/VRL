@@ -4380,6 +4380,19 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Engine combination documentation states the single-rank boundary
+
+- Correct RayGenerationEngine.remote's claim that combining one result always
+  yields that result. The implementation skips combine for single-rank engines;
+  document that fact and direct validation/transformation needed on every result
+  to the caller after awaiting. Preserve the raw-ref fast path and timing.
+- Keep uniform_rank_result as an aggregation-policy callback and rank_handles
+  as the shared launcher/session lifecycle view. Neither needs an owning wrapper
+  class solely to reduce module-level function count.
+- Engine and weight-sync suites: 55 passed, one Ray dependency warning.
+  Touched-file Ruff checks pass. This is a documentation correction, not a
+  runtime behavior change or proof that the overall audit is complete.
+
 ## Ray driver device discovery belongs to its validation owner
 
 - Move _get_device, _iter_parameter_devices and _cuda_device_index into

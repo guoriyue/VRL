@@ -121,10 +121,13 @@ class RayGenerationEngine:
         """Submission surface for the dispatcher: the returned callable submits
         one call to every rank and returns a single awaitable ref.
 
-        The single-rank case always returns the raw rank ref — a one-element
-        aggregate carries no information (``combine`` over one result is that
-        result), and the wrapper's extra async hop would change the pool's
-        completion/cancellation timing for the common case."""
+        ``combine`` is called only for multi-rank engines. It must implement
+        cross-rank aggregation; validation or transformation required for every
+        result belongs in the caller after awaiting the ref.
+
+        Single-rank engines return the raw rank ref and skip ``combine`` to
+        preserve the pool's completion/cancellation timing for the common case.
+        """
 
         if len(self.ranks) == 1:
             return getattr(self.ranks[0].actor, method_name).remote
