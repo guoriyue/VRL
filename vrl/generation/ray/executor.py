@@ -31,7 +31,6 @@ from vrl.generation.ray.pipeline_protocol import (
     PipelinedRequestProgress,
 )
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
-from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.operation_deadline import (
     RayCallDeadline,
@@ -99,9 +98,6 @@ class RayGenerationExecutor:
             if any(rank.worker_id == worker_id for rank in engine.ranks):
                 return engine
         return None
-
-    def _rank_by_id(self) -> dict[str, RayActorHandle]:
-        return {rank.worker_id: rank for engine in self.engines for rank in engine.ranks}
 
     async def execute(self, request: GenerationRequest) -> GenerationOutput:
         """Execute with single-flight admission for the pipelined worker."""
@@ -423,7 +419,7 @@ class RayGenerationExecutor:
                 )
         rank_debug_rows: list[dict[str, Any]] = []
         if runtime_debug_on:
-            rank_by_id = self._rank_by_id()
+            rank_by_id = {rank.worker_id: rank for engine in self.engines for rank in engine.ranks}
             for result in results:
                 rank = rank_by_id[result.worker_id]
                 rank_debug_rows.append(

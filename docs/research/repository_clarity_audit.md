@@ -7004,3 +7004,16 @@ The broader repository audit remains incomplete.
   warnings. Touched-file Ruff and diff checks pass; no residual wrapper usages
   in vrl or tests. No extra implementation-mirroring tests were added for this
   direct delegation removal. Broader repository audit remains incomplete.
+
+## Ray executor keeps its diagnostic rank index at the use site
+
+- Inline the private _rank_by_id dictionary comprehension into its sole caller,
+  the runtime-debug result assembly. Remove the annotation-only RayActorHandle
+  import. No override or external consumer exists in vrl or tests.
+- Keep engine lookup and rank-failure combination as substantive operations.
+  Preserve the progress-poll constant as an explicit health-channel cadence;
+  neither protocol timing nor scheduling behavior changes in this cleanup.
+- Existing OOM-split and pipelined-progress suites: 43 passed, one Ray warning,
+  including debug-enabled execution and real multi-rank error propagation.
+  Touched-file Ruff and diff checks pass. No new test of the comprehension's
+  implementation; the broader repository audit remains incomplete.
