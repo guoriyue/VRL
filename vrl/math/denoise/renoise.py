@@ -65,8 +65,8 @@ def renoise_step_with_logprob(
             "next_sigma rank-1 length must be 1 or match the sample batch: "
             f"{int(sigma.shape[0])} != {int(x0.shape[0])}",
         )
-    if bool((sigma <= 0).any()):
-        raise ValueError("next_sigma must be > 0 for a stochastic re-noise transition")
+    if bool(((sigma <= 0) | ~torch.isfinite(sigma)).any()):
+        raise ValueError("next_sigma must be > 0 and finite for a stochastic re-noise transition")
     sigma_view = sigma.reshape((-1,) + (1,) * (x0.ndim - 1)) if sigma.ndim else sigma
     mean = (1 - sigma_view) * x0
 

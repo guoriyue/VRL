@@ -4380,6 +4380,18 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Re-noise transition rejects nonfinite sigma before density computation
+
+- Combine finite and positive sigma validation into the existing tensor predicate
+  and host check. NaN and positive infinity previously escaped the positivity
+  check; negative infinity was already rejected, now with the complete condition.
+- Keep validation in the shared rollout/replay math function, without a helper,
+  new class or upper-bound restriction. Preserve sampling/scoring equations and
+  serialized-action dtype behavior.
+- Six sampling/scoring diagnostic cases failed before the change. Re-noise and
+  CausVid suites: 34 passed. Touched-file Ruff checks pass. The full repository
+  clarity audit remains incomplete.
+
 ## Denoise math names computation precision and distinguishes sigma quantities
 
 - Rename local md to computation_dtype in flow-matching and DDIM math. Clarify

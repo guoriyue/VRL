@@ -86,3 +86,12 @@ def test_renoise_rejects_invalid_sigma_shape(
     # validation this test is asserting on.
     with pytest.raises(ValueError, match=message):
         renoise_step_with_logprob(torch.zeros(2, 1), sigma, noise=torch.zeros(2, 1))
+
+
+@pytest.mark.parametrize("sigma", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("score_recorded", [False, True])
+def test_renoise_rejects_nonfinite_sigma(sigma, score_recorded) -> None:
+    x0 = torch.zeros(2, 3)
+    kwargs = {"next_sample" if score_recorded else "noise": torch.zeros_like(x0)}
+    with pytest.raises(ValueError, match=r"next_sigma.*finite"):
+        renoise_step_with_logprob(x0, torch.tensor([0.2, sigma]), **kwargs)
