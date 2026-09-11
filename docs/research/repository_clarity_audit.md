@@ -7200,3 +7200,20 @@ The broader repository audit remains incomplete.
 - Continuous orchestration suite: 216 passed. Touched-file Ruff and diff checks
   pass. No new abstraction or implementation-mirroring tests; broader repository
   clarity audit remains incomplete.
+
+## Strict schedule coordinator retains phase and thread boundaries
+
+- Reviewed strict schedule calls through the actual coordinator: strategy state
+  export remains on the trainer thread, while prepared snapshot transmission
+  does not reread trainer state. Keep these operations separate for continuous
+  owners as well as strict scheduling.
+- Preserve rollout_phase cleanup sequencing: only successful rollout offload
+  permits trainer restoration, and combined body/cleanup failures retain both
+  causes. Short activation/offload methods also own named phase timing.
+- Keep the missing-capability False fallback for non-draining weight sync:
+  GenerationRuntime does not require that optional extension, so undeclared
+  runtimes must use the draining barrier. This differs from guessing a required
+  field already promised by a protocol.
+- Strict failure, driver frozen-offload, topology and general orchestration
+  suites: 39 passed. No production edit justified in this slice; no new class or
+  generic helper. Broader repository clarity audit remains incomplete.
