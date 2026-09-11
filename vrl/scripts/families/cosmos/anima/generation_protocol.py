@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -310,7 +311,9 @@ def _load_cells(
     cells: list[AnimaGenerationCell] = []
     seen_keys: set[tuple[int, int]] = set()
     seen_paths: set[Path] = set()
-    for line_number, line in enumerate(metadata_path.read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, line in enumerate(
+        io.StringIO(metadata_path.read_text(encoding="utf-8"), newline=None), 1
+    ):
         if not line.strip():
             continue
         raw = json.loads(line)
@@ -436,7 +439,9 @@ def _validate_anchor_manifest(
     anchors_by_path: dict[Path, tuple[str, int, int, dict[str, Any]]] = {}
     required_fields = {"prompt", "target_image", "metadata"}
     anchor_fields = {"anchor_sample_index", "anchor_seed", "anchor_source"}
-    for line_number, line in enumerate(anchor_path.read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, line in enumerate(
+        io.StringIO(anchor_path.read_text(encoding="utf-8"), newline=None), 1
+    ):
         if not line.strip():
             continue
         raw = json.loads(line)

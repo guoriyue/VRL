@@ -366,3 +366,20 @@ def test_report_rejects_mismatched_pixel_protocol(
             reward_backend="countgd",
             output_dir=tmp_path / "report",
         )
+
+
+@pytest.mark.parametrize("literal_file", ["metadata.jsonl", "anchor_manifest.jsonl"])
+def test_archive_preserves_unicode_separator_in_prompt(tmp_path, literal_file):
+    root = _write_archive(tmp_path / "generation", color=(10, 20, 30))
+    prompt = "four people\u2028in a studio"
+    for name in ("metadata.jsonl", "anchor_manifest.jsonl"):
+        path = root / name
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        for row in rows:
+            row["prompt"] = prompt
+        path.write_text(
+            "".join(json.dumps(row, ensure_ascii=name != literal_file) + "\n" for row in rows),
+            encoding="utf-8",
+        )
+    archive = AnimaGenerationArchive.load(root)
+    assert all(cell.prompt == prompt for cell in archive.cells)

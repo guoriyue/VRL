@@ -7121,3 +7121,17 @@ The broader repository audit remains incomplete.
   canonical action-column taxonomy/order. No generic loader wrapper or parser
   API extension. Media decode is faked here; no external dataset download or
   full import claim. The broader clarity audit remains incomplete.
+
+## Anima archive readers preserve Unicode prompt content
+
+- Metadata-cell and anchor-manifest readers now iterate physical text lines
+  through StringIO rather than splitting Unicode separators inside JSON values.
+  Keep separate schema checks and physical line-number diagnostics; the readers
+  validate different parts of the persisted generation contract.
+- Two archive-load regressions failed before the fix, independently placing a
+  literal Unicode line separator in metadata or anchor JSONL while keeping the
+  paired prompt identical. Both now pass, including real tiny image archives.
+  Anima checkpoint-evaluation suite: 14 passed. Touched-file Ruff and diff checks
+  pass. No GPU generation or reward-model evaluation was required.
+- Preserve the schema-version constants and archive validation owners. No new
+  generic parsing helper or class; broader repository audit remains incomplete.
