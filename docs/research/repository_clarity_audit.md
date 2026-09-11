@@ -4380,6 +4380,20 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Worker CPU transfer uses method and state shapes matching its dependencies
+
+- Make GenerationWorkerCore._to_cpu a staticmethod: it consumes only its value
+  argument, never the class. Replace its single-key mutable dictionary with a
+  nonlocal boolean recording whether any CUDA copy was submitted.
+- Keep this worker-owned transfer boundary and its local tensor callback. It
+  completes copies before returning, unlike the pipeline enqueue helper; their
+  stream synchronization and non-CUDA leaf handling remain distinct. No shared
+  class or new file is introduced merely to unify similar-looking code.
+- Preserve pinned allocation, detach behavior, lazy imports and synchronization.
+  Generation execution tests: 215 passed. Touched-file Ruff checks pass. Device
+  discovery fallback behavior is unchanged and still requires separate review;
+  the repository audit remains incomplete.
+
 ## Pipelined CPU copy naming exposes submission rather than completion
 
 - Rename the private synchronous helper _move_tree_to_cpu_async to

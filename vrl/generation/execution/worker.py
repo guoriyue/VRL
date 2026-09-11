@@ -882,8 +882,8 @@ class GenerationWorkerCore:
         except Exception:
             return "cpu"
 
-    @classmethod
-    def _to_cpu(cls, value: Any) -> Any:
+    @staticmethod
+    def _to_cpu(value: Any) -> Any:
         """Move a batch output to CPU with pinned, queued copies.
 
         Per-tensor ``.cpu()`` synchronizes the stream once per tensor (~376ms
@@ -896,9 +896,10 @@ class GenerationWorkerCore:
         # trajectory package (the walker's home) pulls torch transitively.
         from vrl.trajectory.device import map_tensor_tree
 
-        pending = {"cuda_copies": False}
+        cuda_copies_pending = False
 
         def _pinned_copy(leaf: Any) -> Any:
+            nonlocal cuda_copies_pending
             tensor = leaf.detach()
             if getattr(tensor, "is_cuda", False):
                 import torch
@@ -910,7 +911,7 @@ class GenerationWorkerCore:
                     pin_memory=True,
                 )
                 host.copy_(tensor, non_blocking=True)
-                pending["cuda_copies"] = True
+                cuda_copies_pending = True
                 return host
             return tensor.cpu()
 
@@ -919,7 +920,7 @@ class GenerationWorkerCore:
             _pinned_copy,
             is_leaf=lambda candidate: hasattr(candidate, "detach") and hasattr(candidate, "cpu"),
         )
-        if pending["cuda_copies"]:
+        if cuda_copies_pending:
             import torch
 
             torch.cuda.synchronize()
