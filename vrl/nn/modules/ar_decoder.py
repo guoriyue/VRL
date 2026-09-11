@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass
 from typing import Any
@@ -480,7 +479,8 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         return self._scale_shim
 
     def _allocate_blocks(self, max_tokens: int) -> tuple[int, ...]:
-        blocks_needed = max(1, math.ceil(max_tokens / self.config.block_size))
+        block_size = self.config.block_size
+        blocks_needed = max(1, (max_tokens + block_size - 1) // block_size)
         start = self._next_block_id
         self._next_block_id += blocks_needed
         return tuple(range(start, start + blocks_needed))

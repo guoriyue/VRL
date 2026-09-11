@@ -6338,3 +6338,16 @@ The broader repository audit remains incomplete.
 - Decoder contract, Janus/NextStep paged backend and real paged CUDA kernel
   suites: nine passed with 16 dependency warnings. Touched-file Ruff and diff
   checks pass. Broader repository audit remains incomplete.
+
+## Paged block counts stay in integer arithmetic
+
+- Compute ceiling division of token count by block width with integer arithmetic
+  in _allocate_blocks, removing the module's sole math use. The caller supplies
+  a token-span length plus validated max_new_tokens; block width is a validated
+  positive integer. Preserve the minimum one-block rule and contiguous ID range.
+- Keep _allocate_blocks as the state transition advancing _next_block_id, and
+  keep sequence descriptors and cache expansion separately owned. No generic
+  arithmetic helper, class or kernel change is introduced.
+- Decoder contract and Janus/NextStep paged backend suites: eight passed with
+  16 dependency warnings. Touched-file Ruff and diff checks pass. No throughput
+  claim; broader repository audit remains incomplete.
