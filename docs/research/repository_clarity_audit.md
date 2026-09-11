@@ -192,6 +192,20 @@ Trainer diagnostic and parking identity review:
   adapters are not candidates for a blanket static-method conversion; their
   execution and distributed ownership require preserving call order.
 
+Segment lookup and weight-sync boundary review:
+
+- `TrajectorySegment.role_tensor` and `named_tensor` now own lookup into their
+  tensor collection. Removed the standalone view helpers and facade exports;
+  migrated collector, evaluators, Janus, and resolver. Resolver still owns
+  cross-segment addressing and delegates role selection to the same method.
+- Validation: trajectory/rollout/binding tests 385 passed, 2 skipped; Janus replay
+  and R1 model tests 6 passed; torch-free config parsing 1 passed.
+- `_require_installed_policy_version` remains the shared untyped Ray ACK boundary
+  for direct and bucketed weight installs. `_validate_prepared_weight_snapshot`
+  remains a recursive CPU/detachment guard before cross-thread handoff. Neither
+  should be deleted or hidden by a helper-container class merely to reduce the
+  free-function count. No weight protocol behavior changed in this pass.
+
 ## Remaining review
 
 These are inspection candidates, not approved mechanical transformations.
