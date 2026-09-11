@@ -104,15 +104,17 @@ class TrajectoryRolloutBatchBuilder:
     def build(self, rewards_raw: torch.Tensor) -> RolloutBatch:
         """Convert the engine output and reward tensor into a trainer batch."""
 
-        trainable = self._trainable_segments()
+        trainable = [segment for segment in self.trajectory.segments.values() if segment.trainable]
         if not trainable:
             raise RuntimeError(
                 "generation-only trajectory cannot build a trainer RolloutBatch: "
                 "no trainable policy segment or replay facts were recorded",
             )
-        if self._is_multisegment_categorical(trainable):
-            return self._pack_ar(self._primary_trainable_segment(), rewards_raw)
         segment = self._primary_trainable_segment()
+        if self.context.trajectory_layout == "multisegment_token" or (
+            len(trainable) > 1 and all(item.distribution == "categorical" for item in trainable)
+        ):
+            return self._pack_ar(segment, rewards_raw)
         if segment.distribution == "flow_matching" or (
             segment.distribution == "gaussian" and segment.modality == "latent"
         ):
@@ -211,9 +213,6 @@ class TrajectoryRolloutBatchBuilder:
                 f"RewardView references unknown trajectory tensor {ref!r}",
             ) from exc
 
-    def _trainable_segments(self) -> list[TrajectorySegment]:
-        return [segment for segment in self.trajectory.segments.values() if segment.trainable]
-
     def _primary_trainable_segment(
         self,
     ) -> TrajectorySegment:
@@ -232,16 +231,6 @@ class TrajectoryRolloutBatchBuilder:
             [row.prompt_index for row in self.output.sample_rows],
             dtype=torch.long,
             device=device,
-        )
-
-    def _is_multisegment_categorical(
-        self,
-        trainable: list[TrajectorySegment],
-    ) -> bool:
-        if self.context.trajectory_layout == "multisegment_token":
-            return True
-        return len(trainable) > 1 and all(
-            segment.distribution == "categorical" for segment in trainable
         )
 
     @staticmethod

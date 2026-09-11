@@ -947,3 +947,16 @@ contained guesses. Removed both:
 - Validation: 121 request construction, family/runtime projection, video reference
   metadata and experiment-config tests passed. Touched-file Ruff and diff
   whitespace checks pass.
+
+## Collector batch dispatch clarity
+
+- Inlined _trainable_segments and _is_multisegment_categorical into their sole
+  caller, build. The complete dispatch decision is now visible together, and
+  primary trainable segment selection appears once before the branches.
+- Retained primary-segment validation, reward-view selection and reference
+  resolution as diagnostic boundaries. Retained group-ID construction shared by
+  AR/diffusion packing; the two packers retain their different reward adjustment
+  and device semantics. No new dispatcher class or distribution taxonomy added.
+- Validation: 61 collector, Janus multisegment, chunk-denoise binding and trajectory
+  tests passed. Touched-file Ruff and diff whitespace checks pass. This is a
+  dispatch-structure cleanup, not a change to which trajectories are trainable.
