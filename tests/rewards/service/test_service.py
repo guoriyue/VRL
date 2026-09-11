@@ -1104,3 +1104,36 @@ def test_service_info_rejects_noninteger_capacity(field, value) -> None:
     info[field] = value
     with pytest.raises(RewardServiceProtocolError, match=field):
         info_from_wire({"version": WIRE_VERSION, "info": info})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fallback", [False, True])
+async def test_cli_restores_signal_handlers_when_shutdown_fails(monkeypatch, fallback):
+    from vrl.rewards.service.server import _run_cli
+
+    loop = asyncio.get_running_loop()
+    previous = {signal.SIGINT: object(), signal.SIGTERM: object()}
+    handlers = dict(previous)
+    removed = []
+
+    def install(signum, callback, *args):
+        if fallback:
+            raise NotImplementedError
+        handlers[signum] = callback
+
+    monkeypatch.setattr(loop, "add_signal_handler", install)
+    monkeypatch.setattr(loop, "remove_signal_handler", removed.append)
+    monkeypatch.setattr(signal, "getsignal", handlers.get)
+    monkeypatch.setattr(signal, "signal", handlers.__setitem__)
+
+    class Service:
+        async def start(self):
+            raise RuntimeError("startup failed")
+
+        async def shutdown_async(self):
+            raise RuntimeError("shutdown failed")
+
+    with pytest.raises(RuntimeError, match="shutdown failed"):
+        await _run_cli(Service())
+    assert handlers == previous
+    assert removed == ([] if fallback else [signal.SIGTERM, signal.SIGINT])

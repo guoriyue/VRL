@@ -3766,3 +3766,20 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: all 61 service tests passed after the fix; six new wire cases
   failed before it. Touched-file Ruff/diff checks passed. Full review remains
   incomplete.
+
+## Reward CLI scopes signal registrations to its lifetime
+
+- _run_cli removed loop signal handlers only after shutdown_async returned; a
+  shutdown exception skipped removal. Its signal.signal fallback never restored
+  the previous process handler. Replace the installed list with ExitStack cleanup
+  callbacks, registered after each successful installation. Loop removal precedes
+  process-handler restoration; partial registration also unwinds earlier handlers.
+- Keep _run_cli as the CLI/framework adapter rather than making RewardService own
+  process signals. SIGINT/SIGTERM are actual process boundaries. Preserve service
+  start/wait/shutdown order and propagated shutdown errors; no new owner class or
+  cleanup helper. This does not claim preservation of preexisting asyncio loop
+  callback registrations for arbitrary embedded use.
+- Validation: 63 service tests passed. Two added cases simulate startup/shutdown
+  failure and confirm original process handlers are restored for loop and fallback
+  registration paths. Touched-file Ruff/diff checks passed. Full review remains
+  incomplete.

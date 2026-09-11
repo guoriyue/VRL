@@ -22,7 +22,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -712,31 +712,34 @@ class RewardService:
 async def _run_cli(service: RewardService) -> None:
     loop = asyncio.get_running_loop()
     stop_requested = asyncio.Event()
-    installed: list[signal.Signals] = []
 
     def request_stop(signum: signal.Signals) -> None:
         logger.info("reward_service: received %s", signum.name)
         stop_requested.set()
 
-    for signum in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(signum, request_stop, signum)
-            installed.append(signum)
-        except (NotImplementedError, RuntimeError):
-            signal.signal(
-                signum,
-                lambda _number, _frame, signum=signum: loop.call_soon_threadsafe(
-                    request_stop,
+    with ExitStack() as signal_handlers:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            previous = signal.getsignal(signum)
+            try:
+                loop.add_signal_handler(signum, request_stop, signum)
+            except (NotImplementedError, RuntimeError):
+                signal.signal(
                     signum,
-                ),
-            )
-    try:
-        await service.start()
-        await stop_requested.wait()
-    finally:
-        await service.shutdown_async()
-        for signum in installed:
-            loop.remove_signal_handler(signum)
+                    lambda _number, _frame, signum=signum: loop.call_soon_threadsafe(
+                        request_stop,
+                        signum,
+                    ),
+                )
+                signal_handlers.callback(signal.signal, signum, previous)
+            else:
+                # Remove the loop registration before restoring the process handler.
+                signal_handlers.callback(signal.signal, signum, previous)
+                signal_handlers.callback(loop.remove_signal_handler, signum)
+        try:
+            await service.start()
+            await stop_requested.wait()
+        finally:
+            await service.shutdown_async()
 
 
 def main(argv: Sequence[str] | None = None) -> None:
