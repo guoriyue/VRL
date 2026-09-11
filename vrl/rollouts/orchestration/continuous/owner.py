@@ -157,7 +157,7 @@ class _ContinuousOwnerRuntime:
 
             iteration = await self.consumer.collect_iteration(
                 expected_group_count=len(prompts),
-                prompt_batch_id=self.producer.current_batch_id,
+                prompt_batch_id=batch_id,
                 current_policy_version=current_policy_version,
                 wait_timeout_s=self.settings.wait_timeout_s,
                 poll_interval_s=self.settings.queue_poll_interval_s,
@@ -170,7 +170,7 @@ class _ContinuousOwnerRuntime:
                 self._installed_prompt_batch = self._prefetched_prompt_batch
                 self._prefetched_prompt_batch = None
                 assert self.queue is not None
-                self.queue.set_item_limit(max(1, len(next_prompts or [])))
+                self.queue.set_item_limit(1 if next_prompts is None else len(next_prompts))
             elif next_prompts is not None:
                 # Debug metadata belongs to generation time. This prefetch runs
                 # during the current training step, even when the trainer consumes

@@ -7187,3 +7187,16 @@ The broader repository audit remains incomplete.
 - Complete continuous orchestration suite: 216 passed. Touched-file Ruff and
   diff checks pass. No new wrapper or mirrored implementation test; broader
   repository clarity audit remains incomplete.
+
+## Continuous owner uses explicit prefetch absence and captured batch identity
+
+- Pass the already captured batch_id to consumer selection, matching the ID
+  later retired by the producer. Express queue resizing as one slot when no
+  next batch exists, otherwise its validated nonempty prompt count; remove the
+  truthiness/list fallback and max clamp.
+- Keep queue identity-based removal and byte accounting, and keep staleness as
+  a separate policy shared by producer and consumer. Empty queue age defaults
+  remain meaningful, unlike an already complete iteration's age reduction.
+- Continuous orchestration suite: 216 passed. Touched-file Ruff and diff checks
+  pass. No new abstraction or implementation-mirroring tests; broader repository
+  clarity audit remains incomplete.
