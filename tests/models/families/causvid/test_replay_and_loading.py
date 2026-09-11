@@ -28,7 +28,6 @@ from vrl.models.families.causvid.model import (
     _require_causvid_flash_attention,
     _require_noncommercial_license,
     _require_pinned_source_import,
-    _resolve_artifacts,
     _resolve_base_model,
     _resolve_checkpoint,
     _resolve_source_root,
@@ -477,7 +476,7 @@ def test_artifact_resolution_keeps_source_import_gate(
     )
     build = SimpleNamespace(model_config={"accept_noncommercial_license": True})
 
-    resolved = _resolve_artifacts(build)
+    resolved = CausVidResolvedArtifacts.from_build(build)
 
     assert gated_paths == [source_root]
     assert resolved == CausVidResolvedArtifacts(

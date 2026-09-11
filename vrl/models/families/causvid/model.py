@@ -65,6 +65,22 @@ class CausVidResolvedArtifacts:
     base_model_dir: Path
     checkpoint_file: Path
 
+    @classmethod
+    def from_build(cls, build: ModelBuild) -> CausVidResolvedArtifacts:
+        model_config = build.model_config or {}
+        _require_noncommercial_license(model_config)
+        source_root = _resolve_source_root(model_config)
+        # Fail on a missing/wrong editable install before either multi-gigabyte
+        # checkpoint resolver is allowed to touch the Hub cache.
+        _require_pinned_source_import(source_root)
+        _require_causvid_flash_attention()
+        base_model_dir = _resolve_base_model(model_config)
+        checkpoint = _resolve_checkpoint(build)
+        return cls(
+            base_model_dir=base_model_dir,
+            checkpoint_file=checkpoint,
+        )
+
 
 @dataclass(slots=True)
 class CausVidCache:
@@ -767,7 +783,7 @@ def _require_noncommercial_license(model_config: Mapping[str, Any]) -> None:
 
 
 def _load_official_backend(build: ModelBuild, *, generation: bool) -> _OfficialCausVidBackend:
-    artifacts = _resolve_artifacts(build)
+    artifacts = CausVidResolvedArtifacts.from_build(build)
 
     # Importing this module triggers upstream's FlexAttention compile; this is
     # intentionally inside the explicit heavy-load path and nowhere else.
@@ -828,22 +844,6 @@ def _load_official_backend(build: ModelBuild, *, generation: bool) -> _OfficialC
         text_encoder=text_encoder,
         tokenizer=tokenizer,
         vae=vae,
-    )
-
-
-def _resolve_artifacts(build: ModelBuild) -> CausVidResolvedArtifacts:
-    model_config = build.model_config or {}
-    _require_noncommercial_license(model_config)
-    source_root = _resolve_source_root(model_config)
-    # Fail on a missing/wrong editable install before either multi-gigabyte
-    # checkpoint resolver is allowed to touch the Hub cache.
-    _require_pinned_source_import(source_root)
-    _require_causvid_flash_attention()
-    base_model_dir = _resolve_base_model(model_config)
-    checkpoint = _resolve_checkpoint(build)
-    return CausVidResolvedArtifacts(
-        base_model_dir=base_model_dir,
-        checkpoint_file=checkpoint,
     )
 
 

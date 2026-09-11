@@ -1709,3 +1709,18 @@ is not a repository-wide completion claim or a mandate to inline short functions
 - Validation: 96 chunk-binding, shared gather, CausVid and MAGI tests passed.
   Ten malformed-count and three valid optional-count regressions added.
   Touched-file Ruff and diff checks passed. No real model generation claimed.
+
+## CausVid artifact construction ownership
+
+- Moved the single-purpose _resolve_artifacts factory into the existing
+  CausVidResolvedArtifacts.from_build classmethod, updating backend construction
+  and its existing source-import-gate test. No additional object or forwarding
+  compatibility function remains.
+- Kept individual source/checkpoint/base-model resolvers as external-resource
+  boundaries. Kept pinned repository/revision/file constants for reproducibility
+  and protocol paths. Preserve the license/source/import/attention checks before
+  weight resolution; this refactor does not change download or loading behavior.
+- Validation: all 20 CausVid tests passed. Existing artifact-resolution test
+  exercises the classmethod and retained source gate. Touched-file Ruff and
+  diff checks passed; search confirms the removed factory has no references.
+  Real checkpoint/model loading was not run. Whole-repository review continues.
