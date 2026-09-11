@@ -1389,3 +1389,20 @@ contained guesses. Removed both:
 - Non-goal: changing the existing ambiguous 4-D reward tensor layout compatibility
   convention in pil_frames_from_media. That convention requires caller/layout
   review before any migration and is not resolved by resource-lifetime checks.
+
+## Reward video tensor layout ambiguity removed
+
+- Traced pil_frames_from_media through its Aesthetic/PickScore/AnimeReward users,
+  TorchRewardModel artifact handoff and collector reward-output selection. The
+  generated video contract is CTHW (BCTHW for a batch). The helper additionally
+  guessed TCHW only when dimension zero was not 1/3/4, making frame counts alter
+  the meaning of the same caller's layout.
+- Removed that guess. Torch videos always follow the declared channel-first
+  contract; external TCHW callers must permute explicitly. Migrated the AnimeReward
+  frame-window and empty-video fixtures to CTHW; empty video tensors raise clearly.
+- Kept the shared conversion boundary, PIL frame lists and NumPy HWC/THWC paths.
+  No layout flag or wrapper class. This resolves the specific deferred 4-D tensor
+  compatibility branch, not every image-layout/range heuristic in media utilities.
+- Validation: 24 shared-layout and Aesthetic/PickScore/AnimeReward tests passed,
+  including pixel/frame-order checks at 1, 3, 4 and 10 frames and rejection of
+  unambiguous TCHW input. Touched-file Ruff and git diff --check pass.

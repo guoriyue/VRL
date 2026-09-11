@@ -81,7 +81,7 @@ def test_still_is_held_across_the_whole_frame_window() -> None:
 def test_longer_clip_is_subsampled_to_the_window() -> None:
     """More frames than the window are evenly subsampled, never truncated."""
     model, processor = _model(num_frames=4)
-    clip = torch.zeros(10, 3, 8, 8)
+    clip = torch.zeros(3, 10, 8, 8)
 
     model.score_media(media=clip, prompt="1girl, solo")
 
@@ -120,7 +120,7 @@ def test_empty_media_fails_loud() -> None:
     model, _ = _model()
 
     with pytest.raises(ValueError, match="empty media"):
-        model.score_media(media=torch.zeros(0, 3, 8, 8), prompt="1girl")
+        model.score_media(media=torch.zeros(3, 0, 8, 8), prompt="1girl")
 
 
 def test_unsupported_media_type_fails_loud() -> None:

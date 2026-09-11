@@ -67,9 +67,8 @@ def pil_frames_from_media(media: Any) -> list[list[Image.Image]]:
     """Per-sample RGB PIL frame lists from a ``score_media`` payload.
 
     Tensors: ``[C,H,W]`` -> one sample with one frame; ``[C,T,H,W]`` -> one sample
-    with ``T`` frames; ``[B,C,T,H,W]`` -> ``B`` samples. A 4-D tensor whose
-    leading dim is not a channel count (1/3/4) is read as ``[N,C,H,W]`` frames of
-    one sample, the layout image-only rewards are handed for frame windows.
+    with ``T`` frames; ``[B,C,T,H,W]`` -> ``B`` samples. Tensor videos are always channel-first;
+    callers with ``[T,C,H,W]`` frames must permute to ``[C,T,H,W]`` explicitly.
     ``numpy`` ``HWC`` / ``THWC`` arrays, a PIL image, and a list of PIL images are
     one sample each. Anything else raises ``TypeError``.
     """
@@ -94,8 +93,8 @@ def pil_frames_from_media(media: Any) -> list[list[Image.Image]]:
         raise TypeError(f"reward media must be a tensor, array, or PIL image, got {type(media)}")
     if media.ndim == 3:
         return [[to_pil_image(media)]]
-    if media.ndim == 4 and media.shape[0] not in (1, 3, 4):
-        return [[to_pil_image(frame) for frame in media]]
+    if media.numel() == 0:
+        raise ValueError("reward received an empty media tensor")
     videos = [media] if media.ndim == 4 else list(media) if media.ndim == 5 else None
     if videos is None:
         raise TypeError(f"reward media tensor must be 3-5 dimensional, got {tuple(media.shape)}")
