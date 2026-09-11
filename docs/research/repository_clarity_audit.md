@@ -2229,3 +2229,20 @@ this combined regression is compatibility evidence, not architectural completion
   replaces property AttributeError during attribute lookup. Corrected that
   assertion; RuntimeError identity is retained, both error types propagate.
   Touched-file Ruff and diff checks passed. Full review remains open.
+
+## Shared weight preflight establishes actual tensor identity
+
+- require_weights_for now requires Torch Tensor payload values instead of only
+  checking shape/dtype attributes. A non-tensor impostor could pass preflight,
+  causing load_state_dict to fail after earlier parameters had been copied.
+  Removed the redundant tensor check in verify_weights_in; it already invokes
+  the shared preflight. Torch remains lazily imported at the validation call.
+- Keep shared load/require/readback functions: single-transformer and multi-root
+  families use this boundary, and readback is explicitly acceptance-only.
+  No helper class or ALL_CAPS constants added. This does not promise rollback
+  for all loader/backend errors, only rejection of non-tensor values before
+  live copying starts.
+- Validation: 134 model-weight, trainer-weight-sync, online-state and model
+  interface tests passed. A valid first parameter followed by a shape/dtype
+  impostor is rejected without changing either live parameter. Touched-file
+  Ruff and diff checks passed. Repository review remains ongoing.

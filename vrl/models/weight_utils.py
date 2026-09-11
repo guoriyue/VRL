@@ -78,6 +78,8 @@ def require_weights_for(
     unwrapped module rather than threaded in by each caller.
     """
 
+    from torch import Tensor
+
     module = unwrap_compile_and_ddp(module)
     label = type(module).__name__
     state = dict(state_dict)
@@ -114,7 +116,7 @@ def require_weights_for(
         )
     for name, value in stripped.items():
         parameter = trainable[name]
-        if not hasattr(value, "shape") or not hasattr(value, "dtype"):
+        if not isinstance(value, Tensor):
             raise TypeError(f"{label}: trainable state {name!r} must be a tensor")
         if tuple(value.shape) != tuple(parameter.shape):
             raise ValueError(
@@ -144,8 +146,6 @@ def verify_weights_in(module: Any, state_dict: Mapping[str, Any], *, prefix: str
     parameters = dict(unwrap_compile_and_ddp(module).named_parameters())
     for name, value in expected.items():
         actual = parameters[name].detach()
-        if not isinstance(value, torch.Tensor):
-            raise TypeError(f"{prefix}.{name}: expected a tensor payload")
         for tensor in (actual, value):
             if isinstance(tensor, DTensor) or tensor.is_quantized or tensor.is_meta:
                 raise NotImplementedError(

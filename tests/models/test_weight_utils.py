@@ -106,3 +106,24 @@ def test_multi_root_readback_cannot_ignore_missing_expert_or_frozen_parameter():
         verify_trainable_modules(modules, {"low.weight": payload["low.weight"]})
     with pytest.raises(ValueError, match="exactly trainable keys"):
         verify_trainable_modules(modules, {**payload, "low.bias": modules["low"].bias.detach()})
+
+
+def test_tensor_impostor_is_rejected_before_any_weight_copy() -> None:
+    from types import SimpleNamespace
+
+    import torch
+
+    from vrl.models.weight_utils import load_weights_into
+
+    module = torch.nn.Linear(2, 2)
+    original = {name: value.clone() for name, value in module.state_dict().items()}
+    payload = {
+        "transformer.weight": torch.full_like(module.weight, 99),
+        "transformer.bias": SimpleNamespace(shape=module.bias.shape, dtype=module.bias.dtype),
+    }
+
+    with pytest.raises(TypeError, match="must be a tensor"):
+        load_weights_into(module, payload, prefix="transformer")
+
+    for name, value in module.state_dict().items():
+        torch.testing.assert_close(value, original[name])
