@@ -91,6 +91,8 @@ class TrajectoryTensor:
             raise ValueError("TrajectoryTensor.name must be non-empty")
         if not self.axes:
             raise ValueError("TrajectoryTensor.axes must be non-empty")
+        if self.role not in get_args(TensorRole):
+            raise ValueError(f"unknown TrajectoryTensor.role {self.role!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +124,10 @@ class TrajectorySegment:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("TrajectorySegment.name must be non-empty")
+        if self.modality not in get_args(SegmentModality):
+            raise ValueError(f"unknown TrajectorySegment.modality {self.modality!r}")
+        if self.distribution not in get_args(DistributionKind):
+            raise ValueError(f"unknown TrajectorySegment.distribution {self.distribution!r}")
         if self.reward_view is not None and not self.reward_view:
             raise ValueError("TrajectorySegment.reward_view must be non-empty when set")
 

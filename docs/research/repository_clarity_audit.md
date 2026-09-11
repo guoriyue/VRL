@@ -2664,3 +2664,20 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 804 trajectory, generation binding, rollout and online trainer
   tests passed, two optional backend tests skipped. Touched-file Ruff and diff
   checks passed. Full repository review remains active.
+
+## Trajectory roles and segment kinds use their existing schema definitions
+
+- TensorRole, SegmentModality and DistributionKind already define closed Literal
+  vocabularies, but their dataclasses accepted arbitrary strings. Tensor role
+  typos could surface as missing-role failures later, while distribution values
+  route collector batch construction and evaluator selection.
+- Add constructor checks in TrajectoryTensor and TrajectorySegment using get_args
+  of those existing definitions, matching TrajectoryAxis.kind. No duplicated
+  ALL_CAPS allowlist, external validation helper or new class. Keep the explicit
+  custom distribution extension and downstream family dispatch interfaces.
+- This validates newly constructed records, including dataclass reconstruction;
+  it does not claim arbitrary post-construction mutation is prevented.
+- Validation: 813 trajectory, generation binding, rollout and online trainer
+  tests passed, two optional backend tests skipped. Regressions cover invalid
+  roles/modality/distribution and preservation of custom. Touched-file Ruff and
+  diff checks passed. Full repository review remains active.
