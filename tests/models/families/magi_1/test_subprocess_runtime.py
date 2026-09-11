@@ -22,7 +22,6 @@ from vrl.models.families.magi_1.model import (
     Magi1SubprocessConfig,
     Magi1SubprocessModel,
     _source_head_revision,
-    build_magi_command,
     magi_subprocess_environment,
     normalize_magi_1_model_build,
     prepare_magi_runtime_config,
@@ -198,8 +197,7 @@ def test_command_targets_official_entry_and_i2v_flag(tmp_path: Path) -> None:
     prepared_path = tmp_path / "prepared.json"
     output_path = tmp_path / "output.mp4"
 
-    command = build_magi_command(
-        config=config,
+    command = config.build_command(
         prepared_config_path=prepared_path,
         mode="i2v",
         prompt="a red kite",

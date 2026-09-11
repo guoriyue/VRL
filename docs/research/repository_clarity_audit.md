@@ -1724,3 +1724,17 @@ is not a repository-wide completion claim or a mandate to inline short functions
   exercises the classmethod and retained source gate. Touched-file Ruff and
   diff checks passed; search confirms the removed factory has no references.
   Real checkpoint/model loading was not run. Whole-repository review continues.
+
+## MAGI subprocess command ownership
+
+- Moved build_magi_command onto the existing Magi1SubprocessConfig as build_command.
+  Interpreter and entry path now come from self; model execution and its CLI
+  contract test call that owner directly. Removed the old export/function.
+- Keep prepare_magi_runtime_config as the adapter between base JSON, process
+  config and per-sample inputs. Keep magi_subprocess_environment shared by
+  preflight probing and generation. Keep pinned hashes, source paths and the
+  sampling-to-runtime key map as explicit upstream protocol boundaries.
+- No new launcher abstraction, CLI flag changes, environment changes or process
+  execution changes. Validation: all 21 MAGI tests passed; touched-file Ruff and
+  diff checks passed. No Python references to the removed function remain.
+  Real upstream subprocess inference was not run. Repository review continues.

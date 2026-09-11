@@ -123,6 +123,43 @@ class Magi1SubprocessConfig:
     def entry_path(self) -> Path:
         return self.source_path / "inference" / "pipeline" / "entry.py"
 
+    def build_command(
+        self,
+        *,
+        prepared_config_path: Path,
+        mode: str,
+        prompt: str,
+        output_path: Path,
+        conditioning_path: str | None,
+    ) -> list[str]:
+        """Build argv for the official ``inference/pipeline/entry.py`` CLI."""
+
+        if mode not in {"t2v", "i2v", "v2v"}:
+            raise ValueError(f"unsupported MAGI-1 mode: {mode!r}")
+        command = [
+            self.python_executable,
+            str(self.entry_path),
+            "--config_file",
+            str(prepared_config_path),
+            "--mode",
+            mode,
+            "--prompt",
+            prompt,
+            "--output_path",
+            str(output_path),
+        ]
+        if mode == "i2v":
+            if not conditioning_path:
+                raise ValueError("MAGI-1 i2v mode requires a reference image")
+            command.extend(("--image_path", conditioning_path))
+        elif mode == "v2v":
+            if not conditioning_path:
+                raise ValueError("MAGI-1 v2v mode requires a reference video")
+            command.extend(("--prefix_video_path", conditioning_path))
+        elif conditioning_path is not None:
+            raise ValueError("MAGI-1 t2v mode does not accept a conditioning path")
+        return command
+
     @classmethod
     def from_build(cls, build: ModelBuild) -> Magi1SubprocessConfig:
         config = build.model_config or {}
@@ -350,8 +387,7 @@ class Magi1SubprocessModel(torch.nn.Module):
                 json.dumps(prepared, indent=2),
                 encoding="utf-8",
             )
-            command = build_magi_command(
-                config=self.config,
+            command = self.config.build_command(
                 prepared_config_path=config_path,
                 mode=mode,
                 prompt=prompt,
@@ -460,44 +496,6 @@ def prepare_magi_runtime_config(
     _validate_magi_sampling_contract(prepared, sampling=sampling)
     _validate_runtime_paths(prepared, source_path=config.source_path)
     return prepared
-
-
-def build_magi_command(
-    *,
-    config: Magi1SubprocessConfig,
-    prepared_config_path: Path,
-    mode: str,
-    prompt: str,
-    output_path: Path,
-    conditioning_path: str | None,
-) -> list[str]:
-    """Build argv for the official ``inference/pipeline/entry.py`` CLI."""
-
-    if mode not in {"t2v", "i2v", "v2v"}:
-        raise ValueError(f"unsupported MAGI-1 mode: {mode!r}")
-    command = [
-        config.python_executable,
-        str(config.entry_path),
-        "--config_file",
-        str(prepared_config_path),
-        "--mode",
-        mode,
-        "--prompt",
-        prompt,
-        "--output_path",
-        str(output_path),
-    ]
-    if mode == "i2v":
-        if not conditioning_path:
-            raise ValueError("MAGI-1 i2v mode requires a reference image")
-        command.extend(("--image_path", conditioning_path))
-    elif mode == "v2v":
-        if not conditioning_path:
-            raise ValueError("MAGI-1 v2v mode requires a reference video")
-        command.extend(("--prefix_video_path", conditioning_path))
-    elif conditioning_path is not None:
-        raise ValueError("MAGI-1 t2v mode does not accept a conditioning path")
-    return command
 
 
 def magi_subprocess_environment(source_path: Path) -> dict[str, str]:
@@ -920,7 +918,6 @@ __all__ = [
     "Magi1Model",
     "Magi1SubprocessConfig",
     "Magi1SubprocessModel",
-    "build_magi_command",
     "magi_subprocess_environment",
     "normalize_magi_1_model_build",
     "prepare_magi_runtime_config",
