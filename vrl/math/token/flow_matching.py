@@ -88,7 +88,7 @@ def _isotropic_gaussian_logprob(delta: torch.Tensor, std_scalar: float) -> torch
     sq_err = (delta**2).sum(dim=-1)  # [B]
     return (
         -sq_err / (2.0 * std_scalar**2)
-        - float(dim) * math.log(max(std_scalar, 1e-12))
+        - float(dim) * math.log(std_scalar)
         - 0.5 * float(dim) * math.log(2.0 * math.pi)
     )
 

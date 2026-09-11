@@ -6788,3 +6788,18 @@ The broader repository audit remains incomplete.
 - Token flow math and NextStep family suites: 70 passed, two dependency
   warnings, including CFG scale behavior and sample/replay agreement.
   Touched-file Ruff and diff checks pass. Broader repository audit remains open.
+
+## Token Gaussian scoring uses one standard deviation throughout
+
+- Remove the 1e-12 floor applied only inside log(std) in the shared Gaussian
+  density. The quadratic term already used the actual std, so a smaller valid
+  positive scale produced an inconsistent density normalization.
+- Independent Normal-distribution comparison at std=1e-13 reproduced a
+  6.907755278982137 log-density error for three dimensions. Normal and small
+  scales now match reference values and gradients in float64.
+- Keep the shared sampling/replay math helpers; no new epsilon policy or
+  changes to random draws. This corrects absolute density, not a demonstrated
+  training-speed improvement; numerical underflow at still smaller scales is
+  not resolved by this change.
+- Token-flow and NextStep suites: 72 passed, two dependency warnings. Touched-
+  file Ruff and diff checks pass. Broader repository audit remains open.

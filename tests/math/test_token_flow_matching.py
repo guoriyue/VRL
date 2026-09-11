@@ -13,6 +13,7 @@ import torch
 
 from vrl.math.token.flow_matching import (
     _flow_terminal_mean,
+    _isotropic_gaussian_logprob,
     flow_logprob_at,
     flow_sample_with_logprob,
 )
@@ -170,3 +171,14 @@ def test_token_flow_rejects_invalid_noise_scale(noise_level, replay):
             flow_logprob_at(head, cond, prior, saved_noise=prior, noise_level=noise_level)
         else:
             flow_sample_with_logprob(head, cond, initial_noise=prior, noise_level=noise_level)
+
+
+@pytest.mark.parametrize("std", [0.25, 1e-13])
+def test_token_gaussian_density_matches_normal_distribution(std: float) -> None:
+    delta = (torch.tensor([[0.0, 0.5, -1.0]], dtype=torch.float64) * std).requires_grad_()
+    actual = _isotropic_gaussian_logprob(delta, std)
+    expected = torch.distributions.Normal(torch.zeros_like(delta), std).log_prob(delta).sum(-1)
+    torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
+    actual_grad = torch.autograd.grad(actual.sum(), delta, retain_graph=True)[0]
+    expected_grad = torch.autograd.grad(expected.sum(), delta)[0]
+    torch.testing.assert_close(actual_grad, expected_grad)
