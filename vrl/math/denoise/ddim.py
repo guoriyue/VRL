@@ -52,11 +52,11 @@ def ddim_step_with_logprob(
     import torch
     from diffusers.utils.torch_utils import randn_tensor
 
-    md = torch.float32 if math_dtype is None else math_dtype
-    model_output = model_output.to(md)
-    sample = sample.to(md)
+    computation_dtype = torch.float32 if math_dtype is None else math_dtype
+    model_output = model_output.to(computation_dtype)
+    sample = sample.to(computation_dtype)
     if prev_sample is not None:
-        prev_sample = prev_sample.to(md)
+        prev_sample = prev_sample.to(computation_dtype)
 
     timesteps_table = scheduler.timesteps.to(sample.device)
     if step_index is None:
@@ -69,11 +69,11 @@ def ddim_step_with_logprob(
     elif isinstance(step_index, int):
         step_index = [step_index] * len(timestep)
 
-    alphas_cumprod = scheduler.alphas_cumprod.to(sample.device, md)
+    alphas_cumprod = scheduler.alphas_cumprod.to(sample.device, computation_dtype)
     final_alpha_cumprod = getattr(scheduler, "final_alpha_cumprod", None)
     if final_alpha_cumprod is None:
-        final_alpha_cumprod = torch.ones((), dtype=md)
-    final_alpha_cumprod = torch.as_tensor(final_alpha_cumprod).to(sample.device, md)
+        final_alpha_cumprod = torch.ones((), dtype=computation_dtype)
+    final_alpha_cumprod = torch.as_tensor(final_alpha_cumprod).to(sample.device, computation_dtype)
 
     ndim = sample.ndim
     view_shape = (-1,) + (1,) * (ndim - 1)

@@ -16,8 +16,8 @@ class SDEStepResult:
     prev_sample_mean: Any
     std_dev_t: Any
     sqrt_neg_dt: Any | None = None
-    # Flow-domain sigma of the CURRENT step (post EDM conversion, so it lives in
-    # the same [0, 1] domain as std_dev_t / sqrt_neg_dt). Flash-GRPO's temporal
+    # Current step's sigma in [0, 1] after EDM-to-flow conversion. The standard
+    # deviation and sqrt(-dt) are separate flow-domain quantities. Flash-GRPO's temporal
     # gradient rectification reads it: the log-prob gradient magnitude scales as
     # sqrt(-dt)/std + std*sqrt(-dt)*(1-sigma)/(2*sigma), and the loss weight is
     # that factor's reciprocal. None on the DDIM path (alphas ladder, no sigma).
@@ -81,11 +81,11 @@ def sde_step_with_logprob(
     import torch
     from diffusers.utils.torch_utils import randn_tensor
 
-    md = torch.float32 if math_dtype is None else math_dtype
-    model_output = model_output.to(md)
-    sample = sample.to(md)
+    computation_dtype = torch.float32 if math_dtype is None else math_dtype
+    model_output = model_output.to(computation_dtype)
+    sample = sample.to(computation_dtype)
     if prev_sample is not None:
-        prev_sample = prev_sample.to(md)
+        prev_sample = prev_sample.to(computation_dtype)
 
     if step_index is None:
         step_index = [scheduler.index_for_timestep(t) for t in timestep]

@@ -4380,6 +4380,17 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Denoise math names computation precision and distinguishes sigma quantities
+
+- Rename local md to computation_dtype in flow-matching and DDIM math. Clarify
+  SDEStepResult.sigma's comment: sigma's [0, 1] range does not imply the same
+  range for standard deviation or sqrt(-dt), although all use flow-domain math.
+- Keep standalone step functions as the shared generation/replay mathematical
+  boundary. No scheduler owner or parameter wrapper is introduced, and equations,
+  public arguments, dtype choices and output fields remain unchanged.
+- Flow-matching and DDIM suites: 17 passed. Touched-file Ruff checks pass. The
+  repository-wide clarity audit remains incomplete.
+
 ## Quantization defaults and explicit targets share one profile conversion
 
 - Convert the selected default-or-explicit target through LinearTargetProfile
