@@ -138,27 +138,6 @@ def quantize_nvfp4(
     )
 
 
-def _alignment_error(linear: nn.Linear) -> str | None:
-    """Why packed NVFP4 ``scaled_mm`` cannot take ``linear``'s shape, else ``None``.
-
-    One source for both lanes: the constructor raises this message, and the swap
-    traversal skips the same shapes through ``Fp4Linear.can_replace``. Two copies
-    would eventually let traversal hand the constructor a shape it rejects.
-    """
-
-    if linear.in_features % NVFP4_K_ALIGNMENT:
-        return (
-            f"Fp4Linear needs in_features % {NVFP4_K_ALIGNMENT} == 0 for "
-            f"packed nvfp4 scaled_mm, got {linear.in_features}"
-        )
-    if linear.out_features % NVFP4_N_ALIGNMENT:
-        return (
-            f"Fp4Linear needs out_features % {NVFP4_N_ALIGNMENT} == 0 for "
-            f"nvfp4 scaled_mm, got {linear.out_features}"
-        )
-    return None
-
-
 class Fp4Linear(QuantizedLinear):
     """Drop-in ``nn.Linear`` replacement whose selected GEMM runs in NVFP4."""
 
@@ -168,9 +147,30 @@ class Fp4Linear(QuantizedLinear):
     # rollout -> replay SDE/reward gate.
     default_target_profile = LinearTargetProfile.MLP_ONLY
 
+    @staticmethod
+    def _alignment_error(linear: nn.Linear) -> str | None:
+        """Why packed NVFP4 ``scaled_mm`` cannot take ``linear``'s shape, else ``None``.
+
+        One source for both lanes: the constructor raises this message, and the swap
+        traversal skips the same shapes through ``Fp4Linear.can_replace``. Two copies
+        would eventually let traversal hand the constructor a shape it rejects.
+        """
+
+        if linear.in_features % NVFP4_K_ALIGNMENT:
+            return (
+                f"Fp4Linear needs in_features % {NVFP4_K_ALIGNMENT} == 0 for "
+                f"packed nvfp4 scaled_mm, got {linear.in_features}"
+            )
+        if linear.out_features % NVFP4_N_ALIGNMENT:
+            return (
+                f"Fp4Linear needs out_features % {NVFP4_N_ALIGNMENT} == 0 for "
+                f"nvfp4 scaled_mm, got {linear.out_features}"
+            )
+        return None
+
     def __init__(self, linear: nn.Linear) -> None:
         super().__init__()
-        error = _alignment_error(linear)
+        error = self._alignment_error(linear)
         if error is not None:
             raise ValueError(error)
         self.in_features = linear.in_features
@@ -198,7 +198,7 @@ class Fp4Linear(QuantizedLinear):
     def can_replace(cls, linear: nn.Linear) -> bool:
         """Skip shapes packed NVFP4 ``scaled_mm`` cannot take (see ``_alignment_error``)."""
 
-        return _alignment_error(linear) is None
+        return cls._alignment_error(linear) is None
 
     def _requantize_weight(self) -> None:
         """Rebuild the packed NVFP4 weight and scales from the source master."""

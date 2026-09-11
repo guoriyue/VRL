@@ -4380,6 +4380,19 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## NVFP4 shape eligibility belongs to Fp4Linear
+
+- Move _alignment_error into Fp4Linear as a static method, shared by its
+  constructor and class-level can_replace check. Those are its only callers;
+  no module alias or separate shape-policy class is needed.
+- Preserve one alignment rule for direct construction and replacement traversal,
+  along with existing messages and supported shapes. Keep format constants and
+  standalone tensor-layout/quantization functions as the numeric representation
+  boundary; do not reorganize them solely to minimize free-function count.
+- FP4 and shared quantized-linear suites: 34 passed, 14 dependency warnings.
+  Touched-file Ruff checks pass and formatting is applied. This ownership change
+  does not alter quantization math or complete the wider repository audit.
+
 ## Drift-source enablement stays inside its sole diagnostic consumer
 
 - Inline _sampling_enables into unguarded_drift_sources's traversal. The local
