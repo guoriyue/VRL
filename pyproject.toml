@@ -113,9 +113,9 @@ ocr = [
 # for shared-GPU memory parking (sleep_offload) in both the rollout worker and the
 # in-process reward runtime — those paths fail loud without it. The conflicts below
 # keep the ABI isolated, so shared-GPU run envs install vllm directly (--no-deps)
-# plus the seven vLLM dependencies its imported entry points need and the core
+# plus the additional dependencies its imported entry points need and the core
 # closure lacks (cbor2, gguf, mistral-common[image], openai, openai-harmony,
-# cloudpickle, py-cpuinfo) rather than through this extra. See README
+# cloudpickle, py-cpuinfo, uvloop) rather than through this extra. See README
 # "Shared-GPU topologies".
 ar-vllm = [
     "vllm>=0.21.0,<0.22",

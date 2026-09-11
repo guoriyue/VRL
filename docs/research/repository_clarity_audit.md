@@ -4380,6 +4380,20 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Shared-GPU installation documents the missing block-table dependency
+
+- Confirmed uvloop was absent from the active environment while uv.lock already
+  records 0.22.1. Installed only uvloop==0.22.1 with --no-deps; Torch and vLLM
+  versions were unchanged. The previously failing real CUDA KV-cache test then
+  passed. This resolves the import failure recorded below.
+- Add uvloop to README's explicit shared-GPU installation command and matching
+  pyproject comment. Describe the imported dependency closure rather than claim
+  every package is a direct vLLM requirement. No production abstraction, new
+  core dependency, lockfile change or skip rule is needed for this correction.
+- Full tests/nn rerun: 172 passed, 16 dependency warnings in 4.65 seconds. Log:
+  /tmp/vrl-nn-clarity-regression-restored.log. The overall repository clarity
+  audit remains incomplete despite this now-green subsystem regression.
+
 ## Paged-kernel import diagnostics report evidence instead of an ABI guess
 
 - Joint tests/nn regression produced 170 passes and one failure: installed vLLM

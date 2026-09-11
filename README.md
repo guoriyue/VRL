@@ -245,13 +245,14 @@ it serves both full-sequence denoise and token-autoregressive families, not just
 > (`pip install "vllm>=0.21.0,<0.22" --no-deps`) rather than via the extra.
 > `--no-deps` also drops vLLM's own declared dependencies. The internal entry
 > points VRL imports (`CuMemAllocator`, the paged-attention kernels, the fp8
-> utils) load seven of them that the core/`cosmos`/`reward` closure does not
-> already carry, so install those alongside:
-> `pip install cbor2 gguf "mistral-common[image]" openai openai-harmony cloudpickle py-cpuinfo`.
+> utils) also need packages outside the core/`cosmos`/`reward` closure,
+> including transitive dependencies, so install those alongside:
+> `pip install cbor2 gguf "mistral-common[image]" openai openai-harmony cloudpickle py-cpuinfo uvloop`.
 > (Measured on vllm 0.21.0 by importing those entry points and intersecting the
 > loaded modules with vLLM's `Requires-Dist`; without them the import chain
 > stops at `cbor2`, then `gguf`, and `tests/nn/kernels/test_vllm_paged_attention_real_ops.py`
-> fails loud instead of skipping.)
+> fails loud instead of skipping.) The block-table import also requires `uvloop`;
+> its absence was reproduced with vLLM 0.21.0 and fixed using the locked 0.22.1 version.
 > The core environment declares `pyzmq`, which vLLM imports while initializing
 > this allocator even though VRL does not use vLLM's distributed serving path.
 
