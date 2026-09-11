@@ -376,6 +376,50 @@ class _ReplaySampleBatch:
             )
         return batches
 
+    @classmethod
+    def plan_balanced(
+        cls,
+        batches: list[RolloutBatch],
+        advantages: list[torch.Tensor],
+        samples_per_replay_batch: int,
+        device: torch.device,
+    ) -> list[_ReplaySampleBatch]:
+        """Plan replay execution slots with equal slot counts across ranks.
+
+        Local zero-advantage filtering can leave different ranks with different
+        numbers of prompt groups or sample batches. DDP/FSDP forward/backward issue
+        collectives, so the number of replay slots must be globally balanced even
+        when only some slots carry training signal.
+        """
+
+        sample_batches: list[_ReplaySampleBatch] = []
+        for batch, adv in zip(batches, advantages, strict=True):
+            sample_batches.extend(cls.from_prompt_group(batch, adv, samples_per_replay_batch))
+
+        target_count = _distributed_max_int(len(sample_batches), device)
+        if target_count == len(sample_batches):
+            return sample_batches
+        if target_count <= 0:
+            return []
+        if not sample_batches:
+            raise RuntimeError(
+                "distributed replay planner cannot synthesize dummy slots without a "
+                "local real batch; call _all_ranks_have_work before planning replay batches",
+            )
+        # Use the smallest available local batch as the dummy template to minimize
+        # the extra zero-loss forward/backward work needed for collective balance.
+        template = min(sample_batches, key=lambda batch: int(batch.batch.rewards.shape[0]))
+        sample_batches.extend(
+            cls(
+                batch=template.batch,
+                advantages=torch.zeros_like(template.advantages),
+                loss_weight=0.0,
+                is_dummy=True,
+            )
+            for _ in range(target_count - len(sample_batches))
+        )
+        return sample_batches
+
 
 def _all_reduce_scalar(
     value: float,
@@ -499,51 +543,6 @@ def _distributed_initial_replay_stats(
         ),
         total_weight > 0,
     )
-
-
-def _balanced_training_sample_batches(
-    batches: list[RolloutBatch],
-    advantages: list[torch.Tensor],
-    samples_per_replay_batch: int,
-    device: torch.device,
-) -> list[_ReplaySampleBatch]:
-    """Plan replay execution slots with equal slot counts across ranks.
-
-    Local zero-advantage filtering can leave different ranks with different
-    numbers of prompt groups or sample batches. DDP/FSDP forward/backward issue
-    collectives, so the number of replay slots must be globally balanced even
-    when only some slots carry training signal.
-    """
-
-    sample_batches: list[_ReplaySampleBatch] = []
-    for batch, adv in zip(batches, advantages, strict=True):
-        sample_batches.extend(
-            _ReplaySampleBatch.from_prompt_group(batch, adv, samples_per_replay_batch)
-        )
-
-    target_count = _distributed_max_int(len(sample_batches), device)
-    if target_count == len(sample_batches):
-        return sample_batches
-    if target_count <= 0:
-        return []
-    if not sample_batches:
-        raise RuntimeError(
-            "distributed replay planner cannot synthesize dummy slots without a "
-            "local real batch; call _all_ranks_have_work before planning replay batches",
-        )
-    # Use the smallest available local batch as the dummy template to minimize
-    # the extra zero-loss forward/backward work needed for collective balance.
-    template = min(sample_batches, key=lambda batch: int(batch.batch.rewards.shape[0]))
-    sample_batches.extend(
-        _ReplaySampleBatch(
-            batch=template.batch,
-            advantages=torch.zeros_like(template.advantages),
-            loss_weight=0.0,
-            is_dummy=True,
-        )
-        for _ in range(target_count - len(sample_batches))
-    )
-    return sample_batches
 
 
 class OnlineTrainer:
@@ -1325,7 +1324,7 @@ class OnlineTrainer:
         cfg = self.config
         loss_scale = int(total_groups) * len(train_indices)
         samples_per_replay_batch = cfg.batch_plan.samples_per_replay_batch
-        for sample_batch in _balanced_training_sample_batches(
+        for sample_batch in _ReplaySampleBatch.plan_balanced(
             batches,
             advantages,
             samples_per_replay_batch,

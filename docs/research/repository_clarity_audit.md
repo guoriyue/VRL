@@ -5511,3 +5511,19 @@ this combined regression is compatibility evidence, not architectural completion
   reconstruction. Touched-file Ruff and git diff --check pass; removed helpers
   have no remaining collector/test references. Whole-repository completion is
   still unproven.
+
+## Replay sample batches own balanced plan construction
+
+- Move _balanced_training_sample_batches into the existing _ReplaySampleBatch
+  as plan_balanced. Prompt-group slicing and zero-weight dummy-slot construction
+  now live together; the trainer requests a plan without owning its assembly.
+  Construct via cls and reuse cls.from_prompt_group. Remove the old free function
+  and update the trainer and distributed regression callers, without an alias.
+- Keep scalar collective helpers free: parity and initial-replay statistics also
+  consume them, so they have no single batch owner. Collective ordering, smallest
+  dummy-template selection, loss weights and empty-rank rejection stay unchanged.
+  No new class or distributed abstraction is introduced for line-count reduction.
+- Existing distributed agreement and advantage/metrics suites: 14 passed,
+  including real two-process Gloo planning checks. Touched-file Ruff and
+  git diff --check pass. These do not establish NCCL/FSDP performance or full
+  repository completion; the audit remains open.
