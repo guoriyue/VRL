@@ -206,6 +206,22 @@ Segment lookup and weight-sync boundary review:
   should be deleted or hidden by a helper-container class merely to reduce the
   free-function count. No weight protocol behavior changed in this pass.
 
+Profiling ownership review:
+
+- `TorchProfilerConfig.should_capture` owns enabled/skip/window selection;
+  `ResolvedActivities.from_config` owns construction against supported Torch
+  activities. Removed the two external owner-specific helpers.
+- Profiling tests: 24 passed, including real CPU trace/summary/manifest output,
+  unsupported activity handling, and finite/unlimited capture windows. No new
+  CUDA profiling validation or output schema change.
+- Retain `capture_torch_trace` and `profile_range` as context-manager framework
+  boundaries. Enum discovery stays derived from Torch's enum; file discovery,
+  filename sanitization, and summary/manifest I/O stay cohesive in the module.
+- Logging's handler/init helpers manage a process-wide logging namespace and
+  redirected stdout; `kv` is pure formatting. They should not be relocated to
+  arbitrary consumer classes. Logging names/format strings are output protocol
+  data rather than model-specific workflow vocabularies.
+
 ## Remaining review
 
 These are inspection candidates, not approved mechanical transformations.
