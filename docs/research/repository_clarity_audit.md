@@ -238,6 +238,25 @@ Dataset and evaluation helper review:
   and video generation adapters remain shared evaluator/model boundaries.
   Sampling/runtime identity types already own record parsing/serialization.
 
+Model memory adapter and gate recheck:
+
+- Removed `_call_required` from VAE memory configuration: it discarded `owner`
+  and only invoked `getattr`. Tiling/slicing now call the target methods directly;
+  removed the unused lower-level owner argument. The upper generation-memory
+  adapter retains owner context for unsupported-target errors. Tests: 17 passed,
+  including real VAE toggle behavior. Policy values and dispatch stay unchanged.
+- Retain the VAE application module as a framework adapter, separate from the
+  torch-free policy values. Shared denoise CFG/timestep/replay tensor helpers
+  likewise represent cross-family numerical/layout operations, not candidates
+  for a single monolithic model utility class.
+- Rechecked config gates with unused `precision`: their uniform registry
+  signature is deliberate, and they perform actual checks. Compile gate now
+  reads `compile_conflicts` directly. Preserve uniform gate signatures rather
+  than special-case dispatch merely to eliminate an unused parameter.
+- Canonical dtype aliases remain isolated in `models/dtypes.py`; plain-precision
+  validation and checkpoint dtype parsing have different acceptance contracts.
+  Do not merge those semantics based solely on similar names.
+
 ## Remaining review
 
 These are inspection candidates, not approved mechanical transformations.
