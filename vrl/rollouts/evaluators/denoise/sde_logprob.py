@@ -104,10 +104,11 @@ class DiffusionSDELogProbEvaluator(ReplayEvaluatorBase):
         # rerunning the ref forward every ppo_epoch (Lever D); the math is
         # identical, only the transformer forward is skipped.
         if signal_request.need_ref:
-            cached_ref_noise_pred = self._cached_ref_noise_pred(
-                batch,
-                timestep_idx,
-                device,
+            stored_ref_noise_pred = replay.get("ref_noise_pred")
+            cached_ref_noise_pred = (
+                move_value_to_device(stored_ref_noise_pred[:, timestep_idx], device)
+                if stored_ref_noise_pred is not None
+                else None
             )
             with torch.no_grad():
                 if cached_ref_noise_pred is not None:
@@ -162,7 +163,12 @@ class DiffusionSDELogProbEvaluator(ReplayEvaluatorBase):
         # (return_prev_sample_mean) and replayed back unchanged. Trust-region
         # losses (Flow-DPPO / GRPO-Guard) read it; None for recipes that did not
         # opt in. Sliced to this step to match result.prev_sample_mean's shape.
-        old_prev_sample_mean = self._old_prev_sample_mean(batch, timestep_idx, device)
+        stored_prev_sample_mean = replay.get("old_prev_sample_mean")
+        old_prev_sample_mean = (
+            move_value_to_device(stored_prev_sample_mean[:, timestep_idx], device)
+            if stored_prev_sample_mean is not None
+            else None
+        )
 
         return TrajectorySignalBuilder(batch).single_segment(
             segment_name="denoise",
@@ -177,40 +183,3 @@ class DiffusionSDELogProbEvaluator(ReplayEvaluatorBase):
             timestep_idx=timestep_idx,
             mask_key="mask",
         )
-
-    @staticmethod
-    def _old_prev_sample_mean(batch: RolloutBatch, timestep_idx: int, device: object) -> object:
-        """Rollout proposal mean for ``timestep_idx`` from the trajectory, or None.
-
-        Stored as a denoise replay tensor at generation; absent unless the recipe
-        set return_prev_sample_mean. Shaped ``[B, num_steps, *latent]`` -> sliced
-        to ``[B, *latent]`` so it lines up with the replayed prev_sample_mean.
-        """
-
-        from vrl.trajectory import TrajectoryResolver
-
-        replay = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")
-        stored = replay.get("old_prev_sample_mean")
-        if stored is None:
-            return None
-        step = stored[:, timestep_idx] if getattr(stored, "ndim", 0) > 1 else stored
-        return move_value_to_device(step, device)
-
-    @staticmethod
-    def _cached_ref_noise_pred(batch: RolloutBatch, timestep_idx: int, device: object) -> object:
-        """Frozen reference noise_pred for ``timestep_idx`` from the trajectory, or None.
-
-        Stored as a denoise replay tensor at generation when the recipe set
-        sampling.cache_ref_noise_pred; absent otherwise. Shaped
-        ``[B, num_steps, *latent]`` -> sliced to ``[B, *latent]`` so it lines up
-        with the replayed observations/actions for sde_step_with_logprob.
-        """
-
-        from vrl.trajectory import TrajectoryResolver
-
-        replay = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")
-        stored = replay.get("ref_noise_pred")
-        if stored is None:
-            return None
-        step = stored[:, timestep_idx] if getattr(stored, "ndim", 0) > 1 else stored
-        return move_value_to_device(step, device)

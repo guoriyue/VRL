@@ -14,6 +14,7 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 import torch
 
 from vrl.config.precision import RolePrecision
@@ -117,12 +118,18 @@ def test_layout_parses_cache_ref_noise_pred_flag() -> None:
 # -- replay-side consumption ------------------------------------------------
 
 
-def _batch(*, ref_noise_pred: torch.Tensor | None) -> RolloutBatch:
+def _batch(
+    *,
+    ref_noise_pred: torch.Tensor | None,
+    old_prev_sample_mean: torch.Tensor | None = None,
+) -> RolloutBatch:
     observations = torch.ones(2, 2, 3)
     actions = torch.ones(2, 2, 3) * 0.5
     replay_tensors: dict[str, Any] = {}
     if ref_noise_pred is not None:
         replay_tensors["ref_noise_pred"] = ref_noise_pred
+    if old_prev_sample_mean is not None:
+        replay_tensors["old_prev_sample_mean"] = old_prev_sample_mean
     request = GenerationRequest(
         request_id="req",
         family="sd3_5",
@@ -276,3 +283,25 @@ class _CountingReplayModel(DiffusionModelBase):
                 ),
             },
         )
+
+
+@pytest.mark.parametrize("name", ["ref_noise_pred", "old_prev_sample_mean"])
+def test_replay_cache_requires_a_step_dimension(name: str) -> None:
+    caches = {"ref_noise_pred": None, name: torch.zeros(2)}
+    with pytest.raises(IndexError):
+        DiffusionSDELogProbEvaluator(_Scheduler()).evaluate(
+            _CountingReplayModel(),
+            _batch(**caches),
+            timestep_idx=1,
+            signal_request=SignalRequest(need_ref=True),
+        )
+
+
+def test_replay_reads_requested_proposal_mean_step() -> None:
+    stored = torch.arange(12, dtype=torch.float32).reshape(2, 2, 3)
+    signals = DiffusionSDELogProbEvaluator(_Scheduler()).evaluate(
+        _CountingReplayModel(),
+        _batch(ref_noise_pred=None, old_prev_sample_mean=stored),
+        timestep_idx=1,
+    )
+    torch.testing.assert_close(signals.primary.old_prev_sample_mean, stored[:, 1])

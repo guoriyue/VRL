@@ -2048,3 +2048,26 @@ tracing algorithm construction and evaluator selection together.
   denoise-axis cases and rejection of accidental token-axis slicing, plus the
   existing diffusion deferred-device-move regression. Touched-file Ruff and
   diff checks passed. The full repository review remains ongoing.
+
+## Denoise evaluator reuses its replay payload for optional caches
+
+- Removed _cached_ref_noise_pred and _old_prev_sample_mean. Both independently
+  rebuilt the same replay dictionary already available in evaluate, then
+  guessed that a rank-one value was already step-selected. The consuming
+  branches now read that dictionary and explicitly select [:, timestep_idx]
+  before device movement, matching DenoiseTrajectoryBuffers allocation and
+  FullSequenceDenoiseExecutor export contracts.
+- Keep absent-cache behavior, reference-demand gating, device movement, and
+  cached/fresh reference math. No new class, helper module or constants added.
+  Shared trajectory resolution remains the cross-family boundary; changing
+  its representation is not necessary to remove these duplicate consumers.
+- Remaining schema work: optional replay tensors currently declare only sample
+  alignment even when their payload includes steps. This slice preserves that
+  stored representation. A future axis-schema change must cover persisted
+  trajectory reads as well as producers; it must not cause these caches to be
+  sliced twice or old payloads to be silently interpreted as step-selected.
+- Validation: 180 replay, full-sequence-denoise binding and trust-region tests
+  passed, including cached/fresh reference parity, requested proposal-mean
+  selection and rank-one cache rejection. An initial test-helper edit also
+  inserted setup into an unrelated test; corrected that insertion before the
+  successful run. Touched-file Ruff and diff checks passed.
