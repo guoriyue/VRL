@@ -2510,3 +2510,20 @@ this combined regression is compatibility evidence, not architectural completion
   load-argument checks for FP32 VAE, encoder override and offline/revision kwargs.
   Shared real local pipeline precision preservation still passes. Touched-file
   Ruff/diff checks passed; full repository review remains active.
+
+## Cosmos loaders preserve caller autograd mode
+
+- Predict2, Predict2.5 and Cosmos3 from_build previously unconditionally enabled
+  gradients after loading, overriding callers running under no_grad and failing
+  to restore loader changes when construction raised. Scope the load operation
+  with Torch's existing set_grad_enabled context using the entry mode. This
+  restores thread-local state on both success and failure without a new helper.
+- Keep family constructors, safety-checker scopes, component precision and the
+  Predict2.5 skip-text-encoder branch. These express actual backend construction
+  boundaries; reducing their number is not a goal. No new constant or taxonomy.
+- Replace the old test's unconditional gradient reset with a scoped context and
+  correct its description. Sixteen regression cases cover enabled/disabled entry
+  modes, successful/failing loaders and all four construction paths. They use
+  fake loaders that deliberately change grad mode; no model download is needed.
+- Validation: 83 Cosmos and shared denoise model-base tests passed. Touched-file
+  Ruff and diff checks passed. Full repository clarity review remains active.

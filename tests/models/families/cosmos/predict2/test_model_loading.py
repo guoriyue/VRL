@@ -9,8 +9,8 @@ does not exercise:
   * the diffusers ``CosmosSafetyChecker`` is swapped for a passthrough during
     ``from_pretrained`` so RL training does not depend on the safety classifier
     weights, then restored afterwards;
-  * diffusers' ``from_pretrained`` disables autograd globally, which the wrapper
-    re-enables via ``torch.set_grad_enabled(True)``;
+  * loader changes to thread-local autograd mode are restored to the caller's
+    mode, including when loading fails;
   * frozen modules (vae fp32, text_encoder build dtype) are staged to the build
     device and have grad disabled.
 
@@ -29,6 +29,7 @@ import sys
 import types
 from typing import Any
 
+import pytest
 import torch
 
 from tests.models.steps.denoise.fixtures import RecordingModule
@@ -72,10 +73,10 @@ def _ensure_transformers_importable() -> None:
     sys.modules["transformers"] = stub
 
 
-def test_cosmos_predict2_from_build_swaps_safety_checker_and_re_enables_grad(
+def test_cosmos_predict2_from_build_swaps_safety_checker_and_restores_grad(
     monkeypatch,
 ) -> None:
-    """Cosmos Predict2 ``from_build`` swaps the safety checker, re-enables grad, stages frozen modules."""
+    """Cosmos Predict2 ``from_build`` swaps the safety checker, restores grad mode, stages frozen modules."""
     _ensure_transformers_importable()
 
     import diffusers.pipelines.cosmos.pipeline_cosmos2_video2world as v2w_mod
@@ -94,8 +95,7 @@ def test_cosmos_predict2_from_build_swaps_safety_checker_and_re_enables_grad(
     def fake_from_pretrained(model_name_or_path: str, **kwargs: Any) -> _FakePipeline:
         calls.append({"model_name_or_path": model_name_or_path, **kwargs})
         captured["safety_checker_during_load"] = v2w_mod.CosmosSafetyChecker
-        # diffusers' real from_pretrained disables autograd globally; emulate so
-        # the wrapper's re-enable is actually observable.
+        # Simulate a loader that changes the caller thread's grad mode.
         torch.set_grad_enabled(False)
         return pipeline
 
@@ -114,10 +114,7 @@ def test_cosmos_predict2_from_build_swaps_safety_checker_and_re_enables_grad(
         precision=RolePrecision("bf16", "tf32"),
     )
 
-    # The wrapper's contract is to leave training code with autograd enabled
-    # after diffusers' loader disables it globally. Keep that process-global
-    # state true after the test so downstream trainer tests are not affected.
-    try:
+    with torch.set_grad_enabled(True):
         model = CosmosPredict2Model.from_build(build)
 
         # Wrapper wraps the fake pipeline and forwards only the model name + dtype.
@@ -145,7 +142,7 @@ def test_cosmos_predict2_from_build_swaps_safety_checker_and_re_enables_grad(
         assert passthrough.check_video_safety(sentinel) is sentinel
         assert v2w_mod.CosmosSafetyChecker is original_safety_checker
 
-        # Grad re-enable: from_pretrained turned grad off, wrapper turns it on.
+        # Restore the enabled mode established by the enclosing context.
         assert torch.is_grad_enabled() is True
 
         # Frozen-module staging: vae fp32 + text_encoder build dtype, both frozen
@@ -155,8 +152,6 @@ def test_cosmos_predict2_from_build_swaps_safety_checker_and_re_enables_grad(
         assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]
         assert pipeline.text_encoder.requires_grad_enabled is False
         assert pipeline.text_encoder.to_calls == [("cuda:0", torch.bfloat16)]
-    finally:
-        torch.set_grad_enabled(True)
 
 
 def test_custom_cosmos_loaders_apply_component_dtypes(monkeypatch) -> None:
@@ -201,3 +196,60 @@ def test_custom_cosmos_loaders_apply_component_dtypes(monkeypatch) -> None:
         assert calls[0]["torch_dtype"] == expected
         assert calls[0]["revision"] == "snapshot"
         assert calls[0]["local_files_only"] is True
+
+
+@pytest.mark.parametrize(
+    "family", ["predict2", "predict2_5", "predict2_5_without_encoder", "cosmos3"]
+)
+@pytest.mark.parametrize("grad_enabled", [False, True])
+@pytest.mark.parametrize("fail_load", [False, True])
+def test_cosmos_load_preserves_caller_grad_mode(monkeypatch, family, grad_enabled, fail_load):
+    import diffusers
+
+    from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
+    from vrl.models.families.cosmos.predict2.model import CosmosPredict2Model
+    from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25Model
+
+    model_class, pipeline_name = {
+        "predict2": (CosmosPredict2Model, "Cosmos2VideoToWorldPipeline"),
+        "predict2_5": (CosmosPredict25Model, "Cosmos2_5_PredictBasePipeline"),
+        "cosmos3": (Cosmos3Model, "Cosmos3OmniPipeline"),
+        "predict2_5_without_encoder": (CosmosPredict25Model, "Cosmos2_5_PredictBasePipeline"),
+    }[family]
+    failure = RuntimeError("loader failed after changing grad mode")
+
+    def load(*args, **kwargs):
+        torch.set_grad_enabled(not grad_enabled)
+        if fail_load:
+            raise failure
+        return _FakePipeline()
+
+    monkeypatch.setattr(
+        diffusers,
+        pipeline_name,
+        types.SimpleNamespace(from_pretrained=load),
+        raising=False,
+    )
+    skip_encoder = family == "predict2_5_without_encoder"
+    if skip_encoder:
+        monkeypatch.setattr(
+            "vrl.models.families.cosmos.predict2_5.model._load_pipeline_without_text_encoder",
+            load,
+        )
+    build = ModelBuild(
+        model_config={"skip_text_encoder": skip_encoder},
+        model_name_or_path="local-model",
+        revision=None,
+        device="cpu",
+        parameter_dtype=torch.bfloat16,
+        family=family,
+        precision=RolePrecision("bf16", "tf32"),
+    )
+    with torch.set_grad_enabled(grad_enabled):
+        if fail_load:
+            with pytest.raises(RuntimeError, match="loader failed") as caught:
+                model_class.from_build(build)
+            assert caught.value is failure
+        else:
+            model_class.from_build(build)
+        assert torch.is_grad_enabled() is grad_enabled

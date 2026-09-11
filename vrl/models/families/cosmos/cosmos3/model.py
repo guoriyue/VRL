@@ -95,12 +95,12 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             encoder_names=(),
         )
         # enable_safety_checker=False avoids the cosmos_guardrail import/dep in dev.
-        pipeline = Cosmos3OmniPipeline.from_pretrained(
-            build.model_name_or_path,
-            enable_safety_checker=False,
-            **kwargs,
-        )
-        torch.set_grad_enabled(True)
+        with torch.set_grad_enabled(torch.is_grad_enabled()):
+            pipeline = Cosmos3OmniPipeline.from_pretrained(
+                build.model_name_or_path,
+                enable_safety_checker=False,
+                **kwargs,
+            )
         pipeline.set_progress_bar_config(disable=True)
         if hasattr(pipeline, "vae"):
             pipeline.vae.requires_grad_(False)

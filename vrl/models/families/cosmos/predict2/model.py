@@ -207,14 +207,11 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
             build.parameter_dtype,
             encoder_names=cls._frozen_encoder_names,
         )
-        with no_safety_checker(_v2w_mod):
+        with torch.set_grad_enabled(torch.is_grad_enabled()), no_safety_checker(_v2w_mod):
             pipeline = Cosmos2VideoToWorldPipeline.from_pretrained(
                 build.model_name_or_path,
                 **load_kwargs,
             )
-
-        # diffusers from_pretrained disables grad globally — re-enable.
-        torch.set_grad_enabled(True)
 
         pipeline.set_progress_bar_config(disable=True)
         pipeline.vae.requires_grad_(False)

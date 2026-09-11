@@ -185,19 +185,19 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         )
         revision = kwargs.get("revision")
         skip_text_encoder = bool((build.model_config or {}).get("skip_text_encoder", False))
-        if skip_text_encoder:
-            pipeline = _load_pipeline_without_text_encoder(
-                Cosmos2_5_PredictBasePipeline,
-                build,
-                revision=revision,
-            )
-        else:
-            with no_safety_checker(_predict_mod):
-                pipeline = Cosmos2_5_PredictBasePipeline.from_pretrained(
-                    build.model_name_or_path,
-                    **kwargs,
+        with torch.set_grad_enabled(torch.is_grad_enabled()):
+            if skip_text_encoder:
+                pipeline = _load_pipeline_without_text_encoder(
+                    Cosmos2_5_PredictBasePipeline,
+                    build,
+                    revision=revision,
                 )
-        torch.set_grad_enabled(True)
+            else:
+                with no_safety_checker(_predict_mod):
+                    pipeline = Cosmos2_5_PredictBasePipeline.from_pretrained(
+                        build.model_name_or_path,
+                        **kwargs,
+                    )
         pipeline.set_progress_bar_config(disable=True)
         if hasattr(pipeline, "vae"):
             pipeline.vae.requires_grad_(False)
