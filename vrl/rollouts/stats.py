@@ -92,15 +92,15 @@ class RolloutStats:
     def add_phase(self, name: str, seconds: float) -> None:
         """Accumulate ``seconds`` under phase ``name`` (sums on repeat)."""
 
-        if not name:
-            raise ValueError("phase name must be non-empty")
+        if not isinstance(name, str) or not name:
+            raise ValueError("phase name must be a non-empty string")
         self.phase_seconds[name] = self.phase_seconds.get(name, 0.0) + float(seconds)
 
     def add_phases(self, phases: Mapping[str, float]) -> None:
         """Accumulate every ``(name, seconds)`` pair from ``phases``."""
 
         for name, seconds in phases.items():
-            self.add_phase(str(name), float(seconds))
+            self.add_phase(name, seconds)
 
     @contextlib.contextmanager
     def phase(self, name: str) -> Iterator[None]:
@@ -119,8 +119,8 @@ class RolloutStats:
     def add_counter(self, name: str, value: float = 1.0) -> None:
         """Accumulate a unitless count without treating it as phase time."""
 
-        if not name:
-            raise ValueError("counter name must be non-empty")
+        if not isinstance(name, str) or not name:
+            raise ValueError("counter name must be a non-empty string")
         normalized = float(value)
         if not math.isfinite(normalized):
             raise ValueError(f"counter {name!r} must be finite")
@@ -135,8 +135,8 @@ class RolloutStats:
         summing snapshots into impossible values.
         """
 
-        if not name:
-            raise ValueError("gauge name must be non-empty")
+        if not isinstance(name, str) or not name:
+            raise ValueError("gauge name must be a non-empty string")
         normalized = float(value)
         if not math.isfinite(normalized):
             raise ValueError(f"gauge {name!r} must be finite")
@@ -146,7 +146,7 @@ class RolloutStats:
         """Record every gauge observation in ``gauges``."""
 
         for name, value in gauges.items():
-            self.observe_gauge(str(name), float(value))
+            self.observe_gauge(name, value)
 
     def merge(self, other: RolloutStats) -> None:
         """Fold another accumulator into this one without losing concurrent calls."""

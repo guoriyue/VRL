@@ -6207,3 +6207,16 @@ The broader repository audit remains incomplete.
 - Stats, collector, continuous orchestration and trainer reward-update tests:
   281 passed. Touched-file Ruff and diff checks pass; no old method references
   remain in vrl/tests Python sources. Broader repository audit incomplete.
+
+## Bulk metric recording delegates validation without coercing names
+
+- Require nonempty string names at add_phase/add_counter/observe_gauge, and
+  remove str/float conversion from add_phases/observe_gauges. Previously bulk
+  recording turned None and numeric keys into plausible strings while singular
+  calls treated them differently; numeric values were also converted twice.
+- Keep bulk methods as shared merge entry points and _sum_optional as the shared
+  absent-versus-zero reduction. Preserve dynamic metric names and the distinct
+  sum/peak semantics; no metric-name vocabulary table or validation class.
+- Twenty boundary cases cover singular and bulk entry points; nine failed before
+  the fix. Stats, collector, continuous and trainer reward-update suites: 301
+  passed. Touched-file Ruff and diff checks pass. Broader audit incomplete.

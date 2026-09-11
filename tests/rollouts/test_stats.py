@@ -5,7 +5,23 @@ from __future__ import annotations
 import json
 import logging
 
+import pytest
+
 from vrl.rollouts.stats import LoggingStatsSink, RolloutStats
+
+
+@pytest.mark.parametrize("name", [None, 0, 1, ""])
+@pytest.mark.parametrize(
+    "method", ["add_phase", "add_phases", "add_counter", "observe_gauge", "observe_gauges"]
+)
+def test_metric_names_require_nonempty_strings(name, method) -> None:
+    stats = RolloutStats()
+    with pytest.raises(ValueError, match="name must be"):
+        if method in {"add_phases", "observe_gauges"}:
+            getattr(stats, method)({name: 1.0})
+        else:
+            getattr(stats, method)(name, 1.0)
+    assert stats.as_metrics_dict() == {}
 
 
 def test_add_phase_sums_on_repeat() -> None:
