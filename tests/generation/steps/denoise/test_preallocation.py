@@ -187,6 +187,12 @@ def test_denoise_config_rejects_invalid_sample_identity(field, value) -> None:
         replace(_config(), **{field: value})
 
 
+@pytest.mark.parametrize("mode", ["Native", "unknown", "", None])
+def test_denoise_config_rejects_unknown_mode(mode) -> None:
+    with pytest.raises(ValueError, match="denoise_mode"):
+        replace(_config(), denoise_mode=mode)
+
+
 def test_denoise_config_rejects_empty_sample_batch() -> None:
     with pytest.raises(ValueError, match="sample_count"):
         replace(_config(), sample_count=0)

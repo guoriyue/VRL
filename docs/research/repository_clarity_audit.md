@@ -4380,6 +4380,18 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Direct denoise configuration rejects unknown execution modes
+
+- Use the existing DenoiseMode literal for DenoiseLoopConfig and validate it
+  at construction. Unknown strings and None previously reached the loop's
+  non-native branch and selected SDE execution instead of reporting an error.
+- Keep the existing native/SDE loop branches and shared mode vocabulary. No
+  separate constant list or validator helper is introduced. Normal parsed
+  request behavior is unchanged; direct construction now has the same allowed
+  modes. Four malformed-mode regressions failed before the fix.
+- Denoise and full-sequence binding suites: 183 passed. Touched-file Ruff lint
+  passes and formatting is applied. The overall repository audit is ongoing.
+
 ## Denoise configuration owns exact sample identity validation
 
 - Validate sample_start as a nonnegative exact integer and sample_count as a

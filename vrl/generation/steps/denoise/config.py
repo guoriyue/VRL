@@ -148,7 +148,7 @@ class DenoiseLoopConfig:
     seed: int | None
     sde: DenoiseSDEParams
     sde_window: tuple[int, int] | None
-    denoise_mode: str = "sde"
+    denoise_mode: DenoiseMode = "sde"
     teacache: TeaCacheConfig | None = None
     # Memory probes may execute fewer steps while retaining full buffer allocation.
     execute_steps: int | None = None
@@ -156,6 +156,10 @@ class DenoiseLoopConfig:
     def __post_init__(self) -> None:
         require_exact_int(self.sample_start, path="sample_start", minimum=0)
         require_exact_int(self.sample_count, path="sample_count", minimum=1)
+        if self.denoise_mode not in get_args(DenoiseMode):
+            raise ValueError(
+                f"denoise_mode must be one of {get_args(DenoiseMode)}; got {self.denoise_mode!r}"
+            )
         if self.execute_steps is not None:
             require_exact_int(self.execute_steps, path="execute_steps", minimum=1)
 
