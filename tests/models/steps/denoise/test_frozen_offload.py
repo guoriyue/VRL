@@ -13,6 +13,7 @@ slot and a non-module scheduler next to the frozen VAE.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -113,3 +114,19 @@ def test_pipeline_failure_is_not_treated_as_absence(operation) -> None:
         else:
             model.generation_memory_targets()
     assert caught.value is failure
+
+
+@pytest.mark.parametrize("components", [None, [], "vae"])
+def test_invalid_pipeline_components_cannot_silently_skip_offload(components) -> None:
+    transformer = nn.Linear(2, 2)
+    model = _TinyDiffusionModel(SimpleNamespace(transformer=transformer, components=components))
+    with pytest.raises(TypeError, match=r"pipeline\.components must be a mapping"):
+        model.move_frozen_components("meta")
+    assert next(transformer.parameters()).device.type == "cpu"
+
+
+def test_absent_pipeline_requires_no_component_movement() -> None:
+    model = _TinyDiffusionModel(SimpleNamespace(transformer=nn.Linear(2, 2)))
+    object.__setattr__(model, "_pipeline", None)
+    model.move_frozen_components("meta")
+    assert next(model.transformer.parameters()).device.type == "cpu"

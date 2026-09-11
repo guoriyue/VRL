@@ -2412,3 +2412,17 @@ this combined regression is compatibility evidence, not architectural completion
   shared replay mixin. New tests exercise replay absence explicitly and preserve
   pipeline RuntimeError identity. Touched-file Ruff/diff checks passed. Full
   repository review remains active.
+
+## Frozen offload rejects malformed component inventories
+
+- move_frozen_components distinguishes absent pipeline from an existing pipeline
+  without a valid components mapping. The latter now raises instead of silently
+  skipping frozen offload. Pipeline-free models and replay no-op interfaces
+  remain valid; module deduplication and transformer/non-module exclusions stay.
+- The component inventory remains pipeline-owned, with no frozen-name table,
+  extra helper or runtime class. This validates the existing interface rather
+  than guessing another way to discover components.
+- Validation: 443 denoise-model, rollout-orchestration and trainer-strategy tests
+  passed, two optional tests skipped. New malformed-inventory cases fail before
+  movement; absent pipeline remains a no-op. Touched-file Ruff and diff checks
+  passed. Full repository review remains active.

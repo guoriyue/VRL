@@ -556,9 +556,11 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         """
 
         pipeline = getattr(self, "pipeline", None)
+        if pipeline is None:
+            return
         components = getattr(pipeline, "components", None)
         if not isinstance(components, Mapping):
-            return
+            raise TypeError("diffusion pipeline.components must be a mapping for frozen offload")
         transformer = getattr(self, "transformer", None)
         moved: set[int] = set()
         for module in components.values():
