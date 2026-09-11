@@ -51,10 +51,7 @@ class TrajectoryStoragePolicy:
             return value
         value = to_builtin_deep(value)
         if isinstance(value, Mapping):
-            return cls(
-                device=str(value.get("device", "preserve")),
-                dtype=str(value.get("dtype", "preserve")),
-            )
+            return cls(**value)
         # A non-None, non-mapping value is a misconfiguration (e.g. a bare
         # ``trajectory_storage: cpu`` string surviving config resolution). Fail
         # loudly instead of silently degrading to a default no-op policy.

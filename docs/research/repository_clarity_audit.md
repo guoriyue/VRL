@@ -6164,3 +6164,18 @@ The broader repository audit remains incomplete.
 - Full-sequence binding and worker debug/versioned-slot suites: 126 passed.
   Touched-file Ruff and diff checks pass; no old private method references remain
   in vrl or tests. Broader repository audit remains incomplete.
+
+## Storage policy parsing uses its dataclass schema directly
+
+- Replace manual device/dtype extraction and str conversion in
+  TrajectoryStoragePolicy.from_config with cls(**value) after config-container
+  normalization. Dataclass defaults own omitted fields and its constructor
+  rejects unknown fields rather than silently dropping a misspelled setting.
+- Keep from_config as the configuration adapter, Literal-derived valid-value
+  constants as schema boundaries, tensor-tree conversion and byte estimation as
+  distinct operations. Keep the report's complete-field check: it requires an
+  exact persisted shape, which is stricter than allowing config defaults.
+  No generic parser or new owner class is introduced.
+- Two unknown-field cases failed before the fix. Trajectory and binding storage
+  tests: 88 passed; SANA curve-verdict tests: 13 passed. Touched-file Ruff and
+  diff checks pass. Broader repository audit remains incomplete.

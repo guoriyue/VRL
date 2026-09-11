@@ -75,6 +75,12 @@ def test_storage_policy_parser_rejects_unknown_values() -> None:
         TrajectoryStoragePolicy.from_config("cpu")
 
 
+@pytest.mark.parametrize("unknown_key", ["dytpe", "storage_device"])
+def test_storage_policy_parser_rejects_unknown_fields(unknown_key: str) -> None:
+    with pytest.raises(TypeError, match=unknown_key):
+        TrajectoryStoragePolicy.from_config({"device": "cpu", unknown_key: "float16"})
+
+
 def _trajectory():
     request = GenerationRequest(
         request_id="req",
