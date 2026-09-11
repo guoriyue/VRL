@@ -90,22 +90,21 @@ class AffinePeakFit:
             intercept_bytes=peak_low - slope * n_low,
         )
 
-    def max_samples_within(self, budget_bytes: int) -> int:
-        """Largest n with predicted peak <= budget (0 = not even the intercept fits)."""
+    def max_samples_within(self, budget_bytes: int, *, max_samples: int) -> int:
+        """Bound the fitted capacity by the request's actual sample ceiling.
 
+        Return zero when the intercept exceeds the budget. A non-growing fit
+        cannot predict a memory ceiling, so use the request ceiling and let the
+        worker's real confirmation trial determine whether it fits.
+        """
+        if max_samples < 1:
+            raise ValueError("max_samples must be >= 1")
         headroom = budget_bytes - self.intercept_bytes
         if headroom < 0:
             return 0
         if self.slope_bytes_per_sample <= 0:
-            # A flat/degenerate fit carries no per-sample signal; the caller's
-            # ceiling (samples_per_prompt) applies, the confirm run still guards.
-            return _FLAT_FIT_UNBOUNDED
-        return int(headroom // self.slope_bytes_per_sample)
-
-
-# Sentinel ceiling for a degenerate flat fit; callers always min() against the
-# request ceiling so any large value works. Named to keep call sites readable.
-_FLAT_FIT_UNBOUNDED = 1 << 20
+            return max_samples
+        return min(int(headroom // self.slope_bytes_per_sample), max_samples)
 
 
 def build_batch_memory_shadow(

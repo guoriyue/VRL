@@ -90,13 +90,24 @@ def test_affine_fit_recovers_slope_intercept_and_budget_division() -> None:
     assert fit.slope_bytes_per_sample == 2 * GB
     assert fit.intercept_bytes == 10 * GB
     # (32 - 10) // 2 = 11 samples fit the full card.
-    assert fit.max_samples_within(32 * GB) == 11
+    assert fit.max_samples_within(32 * GB, max_samples=64) == 11
     # Not even the intercept fits.
-    assert fit.max_samples_within(9 * GB) == 0
-    # Flat fit carries no per-sample signal: effectively unbounded, the
-    # caller's ceiling and the confirm run take over.
-    flat = AffinePeakFit.from_trials(1, 12 * GB, 4, 12 * GB)
-    assert flat.max_samples_within(32 * GB) > 1_000_000
+    assert fit.max_samples_within(9 * GB, max_samples=64) == 0
+    assert fit.max_samples_within(32 * GB, max_samples=4) == 4
+
+
+@pytest.mark.parametrize("ceiling", [1, 16, 2**21])
+@pytest.mark.parametrize("high_peak", [12 * GB, 11 * GB])
+def test_non_growing_fit_uses_actual_request_ceiling(ceiling, high_peak) -> None:
+    fit = AffinePeakFit.from_trials(1, 12 * GB, 4, high_peak)
+    assert fit.max_samples_within(32 * GB, max_samples=ceiling) == ceiling
+    assert fit.max_samples_within(9 * GB, max_samples=ceiling) == 0
+
+
+def test_affine_fit_rejects_invalid_request_ceiling() -> None:
+    fit = AffinePeakFit.from_trials(1, 12 * GB, 4, 18 * GB)
+    with pytest.raises(ValueError, match="max_samples"):
+        fit.max_samples_within(32 * GB, max_samples=0)
 
 
 def test_affine_fit_rejects_degenerate_points() -> None:

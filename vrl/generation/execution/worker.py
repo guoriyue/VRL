@@ -519,7 +519,10 @@ class GenerationWorkerCore:
                     n_high,
                     high.peak_bytes,
                 )
-                candidate = max(1, min(fit.max_samples_within(usable_bytes), max_samples))
+                candidate = max(
+                    1,
+                    fit.max_samples_within(usable_bytes, max_samples=max_samples),
+                )
                 final = n_high if candidate >= n_high else candidate
                 if candidate > n_high:
                     confirm = run_trial(candidate, timed_label="confirm")
