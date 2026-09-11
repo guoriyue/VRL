@@ -52,6 +52,18 @@ class TrainingMemoryState:
     grad_scaler: Any | None
     device: torch.device
 
+    @property
+    def identity_key(self) -> tuple[int, int, int, int, int, str]:
+        """Identify live owners and device without comparing tensor contents."""
+        return (
+            id(self.model),
+            id(self.ref_model),
+            id(self.optimizer),
+            id(self.ema),
+            id(self.grad_scaler),
+            str(self.device),
+        )
+
 
 @dataclass(slots=True)
 class _ModuleRestore:
@@ -207,7 +219,7 @@ class _TrainingStateParking:
         self.validate_training_state_parking()
         if not isinstance(state, TrainingMemoryState):
             raise TypeError("training state parking requires TrainingMemoryState")
-        key = _training_state_key(state)
+        key = state.identity_key
         if self._parked_training_state is not None:
             if self._parked_training_state.key == key:
                 return
@@ -299,7 +311,7 @@ class _TrainingStateParking:
         parked = self._parked_training_state
         if parked is None:
             return
-        same_state = parked.key == _training_state_key(state)
+        same_state = parked.key == state.identity_key
         self._restore_parked_training_state(parked)
         self._parked_training_state = None
         if not same_state:
@@ -455,17 +467,6 @@ class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy):
             # Drop only this adapter's restore ticket; the live objects deliberately
             # remain on CPU until process exit instead of racing another GPU owner.
             self._parked_training_state = None
-
-
-def _training_state_key(state: TrainingMemoryState) -> tuple[int, int, int, int, int, str]:
-    return (
-        id(state.model),
-        id(state.ref_model),
-        id(state.optimizer),
-        id(state.ema),
-        id(state.grad_scaler),
-        str(state.device),
-    )
 
 
 def _module_device(module: Any, fallback: torch.device) -> torch.device:

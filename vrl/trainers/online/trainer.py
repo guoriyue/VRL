@@ -232,26 +232,6 @@ def _model_transformer_dtype(model: Any) -> str | None:
     return None
 
 
-def _trainer_precision_metadata(
-    config: TrainerConfig,
-    model: Any,
-    evaluator: Evaluator | None,
-) -> dict[str, Any]:
-    training_precision = _precision_label(config.train_precision)
-    rollout_precision = _precision_label(config.rollout_precision or training_precision)
-    return {
-        "training_precision": training_precision,
-        "rollout_precision": rollout_precision,
-        # Report the dtype the evaluator actually consumes instead of carrying a
-        # duplicate TrainerConfig projection of the public precision policy.
-        "math_precision": _precision_label(
-            getattr(evaluator, "math_dtype", None) or torch.float32,
-        ),
-        "effective_float32_precision": float32_precision_state(),
-        "trainer_transformer_dtype": _model_transformer_dtype(model),
-    }
-
-
 # ---------------------------------------------------------------------------
 # OnlineTrainer
 # ---------------------------------------------------------------------------
@@ -1636,11 +1616,7 @@ class OnlineTrainer:
         # Debug first step: compare old vs fresh log-probs on first timestep
         # (using first filtered batch so memory footprint is bounded).
         first_step_debug_record: dict[str, Any] | None = None
-        precision_metadata = _trainer_precision_metadata(
-            cfg,
-            self.model,
-            self.evaluator,
-        )
+        precision_metadata = self._precision_metadata()
         first_debug_batch = _training_sample_batches(
             filtered_batches[0],
             filtered_advs[0],
@@ -1966,7 +1942,7 @@ class OnlineTrainer:
         ):
             return None
         cfg = self.config
-        precision_metadata = _trainer_precision_metadata(cfg, self.model, self.evaluator)
+        precision_metadata = self._precision_metadata()
         guard_batch = move_training_batch_to_device(
             batch,
             self.device,
@@ -2359,6 +2335,22 @@ class OnlineTrainer:
         self._replay_parity_passed = False
         self._precision_drift_guard_pending = True
         self.rollout_schedule.reset()
+
+    def _precision_metadata(self) -> dict[str, Any]:
+        """Describe the configured and observed precision of this trainer."""
+        training_precision = _precision_label(self.config.train_precision)
+        rollout_precision = _precision_label(self.config.rollout_precision or training_precision)
+        return {
+            "training_precision": training_precision,
+            "rollout_precision": rollout_precision,
+            # Report the dtype the evaluator actually consumes instead of carrying a
+            # duplicate TrainerConfig projection of the public precision policy.
+            "math_precision": _precision_label(
+                getattr(self.evaluator, "math_dtype", None) or torch.float32,
+            ),
+            "effective_float32_precision": float32_precision_state(),
+            "trainer_transformer_dtype": _model_transformer_dtype(self.model),
+        }
 
     def _optimizer_parameter_manifest(self) -> list[dict[str, Any]]:
         """Stable named identity for positional optimizer checkpoint slots."""
