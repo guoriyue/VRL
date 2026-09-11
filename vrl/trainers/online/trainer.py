@@ -395,40 +395,39 @@ class _TrainingGenerationSampleBatch:
     loss_weight: float
     is_dummy: bool = False
 
+    @classmethod
+    def from_prompt_group(
+        cls,
+        batch: RolloutBatch,
+        advantages: torch.Tensor,
+        samples_per_replay_batch: int,
+    ) -> list[_TrainingGenerationSampleBatch]:
+        """Split one prompt group for replay without changing full-group loss math."""
 
-def _training_sample_batches(
-    batch: RolloutBatch,
-    advantages: torch.Tensor,
-    samples_per_replay_batch: int,
-) -> list[_TrainingGenerationSampleBatch]:
-    """Split one prompt group for replay without changing full-group loss math."""
+        batch_size = int(batch.rewards.shape[0])
+        if batch_size != int(advantages.shape[0]):
+            raise ValueError(
+                "rollout batch and advantages must have the same sample count "
+                f"({batch_size} != {int(advantages.shape[0])})",
+            )
+        if batch_size <= 0:
+            return []
+        slice_size = int(samples_per_replay_batch)
+        if slice_size <= 0 or slice_size >= batch_size:
+            return [cls(batch=batch, advantages=advantages, loss_weight=1.0)]
 
-    batch_size = int(batch.rewards.shape[0])
-    if batch_size != int(advantages.shape[0]):
-        raise ValueError(
-            "rollout batch and advantages must have the same sample count "
-            f"({batch_size} != {int(advantages.shape[0])})",
-        )
-    if batch_size <= 0:
-        return []
-    slice_size = int(samples_per_replay_batch)
-    if slice_size <= 0 or slice_size >= batch_size:
-        return [
-            _TrainingGenerationSampleBatch(batch=batch, advantages=advantages, loss_weight=1.0)
-        ]
-
-    batches: list[_TrainingGenerationSampleBatch] = []
-    for start in range(0, batch_size, slice_size):
-        stop = min(start + slice_size, batch_size)
-        selector = torch.arange(start, stop, device=batch.rewards.device)
-        batches.append(
-            _TrainingGenerationSampleBatch(
-                batch=select_batch(batch, selector),
-                advantages=advantages[selector.to(advantages.device)],
-                loss_weight=float(stop - start) / float(batch_size),
-            ),
-        )
-    return batches
+        batches: list[_TrainingGenerationSampleBatch] = []
+        for start in range(0, batch_size, slice_size):
+            stop = min(start + slice_size, batch_size)
+            selector = torch.arange(start, stop, device=batch.rewards.device)
+            batches.append(
+                cls(
+                    batch=select_batch(batch, selector),
+                    advantages=advantages[selector.to(advantages.device)],
+                    loss_weight=float(stop - start) / float(batch_size),
+                ),
+            )
+        return batches
 
 
 def _all_reduce_scalar(
@@ -571,7 +570,9 @@ def _balanced_training_sample_batches(
 
     sample_batches: list[_TrainingGenerationSampleBatch] = []
     for batch, adv in zip(batches, advantages, strict=True):
-        sample_batches.extend(_training_sample_batches(batch, adv, samples_per_replay_batch))
+        sample_batches.extend(
+            _TrainingGenerationSampleBatch.from_prompt_group(batch, adv, samples_per_replay_batch)
+        )
 
     target_count = _distributed_max_int(len(sample_batches), device)
     if target_count == len(sample_batches):
@@ -1399,7 +1400,7 @@ class OnlineTrainer:
             cfg.timestep_selection,
         )
         samples_per_replay_batch = cfg.batch_plan.samples_per_replay_batch
-        first_batch = _training_sample_batches(
+        first_batch = _TrainingGenerationSampleBatch.from_prompt_group(
             batch.batches[0],
             batch.advantages[0],
             samples_per_replay_batch,
@@ -1580,7 +1581,7 @@ class OnlineTrainer:
         # (using first filtered batch so memory footprint is bounded).
         first_step_debug_record: dict[str, Any] | None = None
         precision_metadata = self._precision_metadata()
-        first_debug_batch = _training_sample_batches(
+        first_debug_batch = _TrainingGenerationSampleBatch.from_prompt_group(
             filtered_batches[0],
             filtered_advs[0],
             samples_per_replay_batch,

@@ -4285,3 +4285,14 @@ this combined regression is compatibility evidence, not architectural completion
   this ownership change does not alter checkpoint compatibility policy.
 - State-restore and checkpointing suites: 131 passed, dependency warnings.
   Touched-file Ruff checks pass. The repository-wide audit continues.
+
+## Replay sample batch construction belongs to its carrier
+
+- Move `_training_sample_batches` onto `_TrainingGenerationSampleBatch` as
+  `from_prompt_group`, constructing through cls. Update balanced planning, replay
+  debug paths and the direct loss-weight test. No new class or alias is added.
+- Preserve batch slicing, advantage alignment, full-group loss weights and empty
+  handling. Keep cross-rank slot balancing outside the carrier because it owns
+  collective coordination and dummy-slot planning across multiple prompt groups.
+- Advantage/metrics, distributed skip-backward agreement and diagnostics tests:
+  30 passed. Touched-file Ruff checks pass. The repository-wide audit continues.
