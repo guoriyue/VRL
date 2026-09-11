@@ -157,7 +157,7 @@ class Breakdown:
 
         primary = self.primary_us()
         unit = "CUDA us" if self.device_kind == "cuda" else "CPU us"
-        total = sum(primary.values()) or 1.0
+        total = sum(primary.values())
 
         rows = sorted(
             ((cat, primary[cat], self.calls[cat]) for cat in PROJECTION_ORDER if self.calls[cat]),
@@ -171,11 +171,11 @@ class Breakdown:
         ]
         for cat, us, calls in rows:
             n_fqn = len(self.category_fqns.get(cat, []))
-            lines.append(
-                f"{cat:<10}{us:>14,.1f}{100.0 * us / total:>8.1f}%{calls:>9}   {n_fqn} linear(s)"
-            )
+            percentage = 100.0 * us / total if total > 0 else 0.0
+            lines.append(f"{cat:<10}{us:>14,.1f}{percentage:>8.1f}%{calls:>9}   {n_fqn} linear(s)")
         lines.append("-" * 78)
-        lines.append(f"{'TOTAL':<10}{total:>14,.1f}{100.0:>8.1f}%")
+        total_percentage = 100.0 if total > 0 else 0.0
+        lines.append(f"{'TOTAL':<10}{total:>14,.1f}{total_percentage:>8.1f}%")
 
         other = self.category_fqns.get("other", [])
         if other:

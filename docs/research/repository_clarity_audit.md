@@ -5257,3 +5257,16 @@ this combined regression is compatibility evidence, not architectural completion
   report data with and without unclassified modules. These are rendering checks,
   not actual GPU profiling. Touched-file Ruff and git diff --check pass; the old
   formatter name is absent from this module. Wider audit remains incomplete.
+
+## GEMM reports retain measured zero instead of a denominator sentinel
+
+- Preserve the measured total in Breakdown.to_text. Previously `sum(...) or
+  1.0` changed a zero measurement into a displayed 1.0 microsecond total and
+  100 percent. Guard percentage division separately; zero time now displays
+  zero total and zero percentage.
+- Keep report ownership, category order, profiling hooks and measurement
+  collection unchanged. No helper class or generic percentage utility is added.
+- Two zero-total regressions failed before the fix; positive totals remain
+  covered for both CPU/CUDA-labelled synthetic reports. GEMM and Nsight report
+  tests: 34 passed. Touched-file Ruff and git diff --check pass. Synthetic CUDA
+  labels are not evidence of GPU execution. Wider repository audit remains open.
