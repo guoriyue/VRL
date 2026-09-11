@@ -360,34 +360,6 @@ class _ReplayMetrics:
         )
 
 
-def _rollout_reward_components(
-    batches: list[RolloutBatch],
-) -> dict[str, list[float]]:
-    """Extract batch-aligned component scores before sample filtering."""
-
-    components: dict[str, list[float]] = {}
-    for batch in batches:
-        payload = batch.extras.get("reward_components")
-        if payload is None:
-            continue
-        if not isinstance(payload, Mapping):
-            raise TypeError("rollout reward_components must be a mapping")
-        batch_size = int(batch.rewards.shape[0])
-        for raw_name, raw_values in payload.items():
-            name = str(raw_name)
-            if isinstance(raw_values, torch.Tensor):
-                values = raw_values.detach().cpu().reshape(-1).tolist()
-            else:
-                values = list(raw_values)
-            if len(values) != batch_size:
-                raise ValueError(
-                    "rollout reward component/sample mismatch: "
-                    f"component={name!r}, scores={len(values)}, expected={batch_size}",
-                )
-            components.setdefault(name, []).extend(float(value) for value in values)
-    return components
-
-
 @dataclass(frozen=True, slots=True)
 class _ReplaySampleBatch:
     """One replay slice with its advantages and full-group loss contribution."""
@@ -991,6 +963,34 @@ class OnlineTrainer:
         batch = await self.collect_training_batch(prompts, next_prompts=next_prompts)
         return await self.train_on_rollout_batch(batch)
 
+    @staticmethod
+    def _collect_reward_components(
+        batches: list[RolloutBatch],
+    ) -> dict[str, list[float]]:
+        """Extract batch-aligned component scores before sample filtering."""
+
+        components: dict[str, list[float]] = {}
+        for batch in batches:
+            payload = batch.extras.get("reward_components")
+            if payload is None:
+                continue
+            if not isinstance(payload, Mapping):
+                raise TypeError("rollout reward_components must be a mapping")
+            batch_size = int(batch.rewards.shape[0])
+            for raw_name, raw_values in payload.items():
+                name = str(raw_name)
+                if isinstance(raw_values, torch.Tensor):
+                    values = raw_values.detach().cpu().reshape(-1).tolist()
+                else:
+                    values = list(raw_values)
+                if len(values) != batch_size:
+                    raise ValueError(
+                        "rollout reward component/sample mismatch: "
+                        f"component={name!r}, scores={len(values)}, expected={batch_size}",
+                    )
+                components.setdefault(name, []).extend(float(value) for value in values)
+        return components
+
     async def collect_training_batch(
         self,
         prompts: list[Any],
@@ -1004,7 +1004,7 @@ class OnlineTrainer:
         and carried through the batch so both halves' phase timings land in one
         accumulator, exactly as the previous single method did.
 
-        ``next_prompts`` is the recipe loop's lookahead: only that loop knows both
+        ``next_prompts`` is the recipe loop's next-batch prefetch input: only that loop knows both
         the gradient-accumulation split and the next epoch's draw (previewed off
         the checkpointed RNG), so the value cannot be reconstructed downstream and
         is forwarded verbatim. Continuous rollout installs it as the producer's
@@ -1024,7 +1024,7 @@ class OnlineTrainer:
             next_prompts=next_prompts,
         )
         all_batches: list[RolloutBatch] = iteration.batches
-        reward_components = _rollout_reward_components(all_batches)
+        reward_components = self._collect_reward_components(all_batches)
 
         # 2. Compute advantages (per-prompt normalization).
         # Rewards are concatenated across all collected batches, normalized

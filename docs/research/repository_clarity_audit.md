@@ -4320,3 +4320,15 @@ this combined regression is compatibility evidence, not architectural completion
 - Advantage/metrics, reward update flow and trajectory granularity tests passed:
   27 tests, including existing zero-width whole-group paths. Touched-file Ruff
   checks pass. The repository-wide audit remains incomplete.
+
+## Online collection owns reward component aggregation
+
+- Move `_rollout_reward_components` onto `OnlineTrainer` as
+  `_collect_reward_components`, adjacent to collection. Its only caller needs
+  these values for advantage calculation before constructing TrainingBatch, so
+  the trainer collection flow is the owner rather than the passive batch carrier.
+- Preserve per-batch score-count validation, tensor conversion and aggregation.
+  No utility class, reward schema or advantage behavior changes are introduced.
+  Update the adjacent next_prompts docstring to use next-batch prefetch wording.
+- Advantage/metrics and reward update flow tests passed: 18 tests. Touched-file
+  Ruff checks pass. The repository-wide clarity audit remains incomplete.
