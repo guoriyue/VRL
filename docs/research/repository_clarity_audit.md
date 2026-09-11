@@ -482,3 +482,37 @@ above, not completion of the outstanding repository-wide audit.
 - Validation: all 124 continuous orchestration tests passed, including real
   event-loop timeout coverage with a poll interval much longer than its budget
   and invalid-setting rejection. Touched-file Ruff and whitespace checks pass.
+
+## Config rule and launch-gate review closure
+
+Reviewed current `vrl/config/rules.py`, `vrl/config/algorithm.py`,
+`vrl/config/validation.py`, `vrl/algorithms/config_contract.py`, and their rule,
+contract and validation-tier tests. No further structural change is warranted
+for these four modules in this audit:
+
+- Algorithm SDE, step-KL, SFT and consumed-section facts are already owned by
+  algorithm configs. Tests enumerate the schema's supported kinds and verify
+  that changing a declaration changes validation without changing the kind.
+- Keep the remaining explicit Janus-R1/NextStep pairing checks in the single
+  cross-section entrypoint. The user rejected a separate FamilyTrainingContract;
+  rebuilding that abstraction would violate the requested direction.
+- Keep `algorithm_config_class`: this is the lazy import dispatch boundary,
+  not a duplicate algorithm-fact table. Its unsupported-kind error is explicit.
+- Keep `compile_conflicts` as the shared matrix queried both by launch and
+  narrower runtime checks. `gate_compile_compatible` aggregates its conflicts
+  into a configuration error; it is not just a forwarding alias.
+- Keep the common gate signatures and `TRAINING_GATES` tuple. This is an ordered
+  validation registry, a legitimate protocol/config table rather than workflow
+  business vocabulary. Production reward contracts and dataset provenance stay
+  with their owners, and the gate performs only orchestration.
+- Keep tier separation: section shape, cross-section relationships, then launch
+  checks requiring precision/runtime imports or files. Do not create per-rule
+  classes, recreate deleted family contracts, or inline gates to reduce LOC.
+
+This closes the above module slice, not schema/loading/precision or the entire
+configuration package's remaining source review. The broader remaining list
+should be read with these explicit module closures to avoid repeated cleanup.
+
+Validation: all 320 `tests/config` tests passed against the current worktree,
+including all experiment parsing, declared algorithm facts, launch tiers,
+precision and Torch-free parsing. No production code changed in this review.
