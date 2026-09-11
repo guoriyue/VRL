@@ -88,20 +88,6 @@ def to_pil_image(image: Any) -> PILImage.Image:
     return Image.fromarray(image_to_uint8_hwc(image), mode="RGB")
 
 
-def load_reference_image(reference_image: Any) -> Any:
-    """Load a reference-image path into an RGB ``PIL.Image``.
-
-    Non-string or empty values pass through unchanged, so callers can forward an
-    already-loaded image (or ``None``) without special-casing.
-    """
-
-    if not isinstance(reference_image, str) or not reference_image:
-        return reference_image
-    from PIL import Image
-
-    return Image.open(reference_image).convert("RGB")
-
-
 def write_png(image: Any, path: str | Path) -> None:
     """Write a tensor/ndarray/PIL image to an RGB PNG file."""
 
@@ -242,7 +228,6 @@ __all__ = [
     "align_frame_counts",
     "frames_thwc_to_float",
     "image_to_uint8_hwc",
-    "load_reference_image",
     "read_image_as_frames",
     "read_video_frames",
     "sample_frames",

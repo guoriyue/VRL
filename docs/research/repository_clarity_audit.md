@@ -999,3 +999,21 @@ contained guesses. Removed both:
 - Validation: 348 media/reward tests passed, 5 skipped. Added pixel-exact NumPy
   CHW/HWC singleton regressions and consistent multi-image rejection checks.
   Touched-file Ruff and diff whitespace checks pass.
+
+## Reference-image loading owner
+
+- Removed load_reference_image from utils.media and its export. Its sole production
+  caller was ReferenceConditionedBatches._reference_image_for_chunk; that existing
+  owner now loads the selected prompt's image directly instead of forwarding to
+  an otherwise unused utility facade.
+- String and Path inputs load to RGB through a context-managed Image.open. The
+  source handle closes before returning the converted image. Previously Path
+  inputs silently passed through without being loaded. Non-path loaded values
+  retain the established pass-through behavior.
+- Retained ReferenceConditionedBatches as the shared family hook implementation
+  and left encode/prepare hooks separate: model conditioning stages consume
+  different payloads. No new image loader class or cross-call cache introduced.
+- Validation: 51 media, full-sequence binding, tiny pipeline and torch-free config
+  tests passed. Reference selection now uses actual files instead of mocking the
+  deleted helper and covers both path representations. Touched-file Ruff and
+  diff whitespace checks pass.

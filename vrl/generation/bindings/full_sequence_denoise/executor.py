@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -45,7 +46,7 @@ from vrl.utils.cuda_memory import (
     cuda_peak_allocated_mb,
     reset_cuda_peak,
 )
-from vrl.utils.media import load_reference_image, to_uint8
+from vrl.utils.media import to_uint8
 
 
 @dataclass(slots=True)
@@ -131,7 +132,12 @@ class ReferenceConditionedBatches:
             raise ValueError(
                 f"{request.family} requires reference_image for prompt index {batch.prompt_index}",
             )
-        return load_reference_image(ref)
+        if not isinstance(ref, (str, Path)) or not ref:
+            return ref
+        from PIL import Image
+
+        with Image.open(ref) as image:
+            return image.convert("RGB")
 
 
 class DiffusionBatchExecutorBase(BatchExecutorBase):
