@@ -22,6 +22,7 @@ from vrl.generation.execution.sample_batches import (
     concatenate_sample_values,
     ordered_covering_batches,
     require_matching_batch_context,
+    require_sample_rows,
 )
 from vrl.generation.types import (
     GenerationOutput,
@@ -361,6 +362,13 @@ class JanusProR1GenerationBatchGatherer:
     def _concatenate_segments(
         batches: Sequence[JanusProR1BatchPayload],
     ) -> dict[str, dict[str, Any]]:
+        tensor_fields = (
+            "token_ids",
+            "token_mask",
+            "prompt_embeds",
+            "attention_mask",
+            "prompt_attention_mask",
+        )
         names = tuple(batches[0].segments)
         expected_names = set(JANUS_R1_SEGMENTS)
         for index, batch in enumerate(batches):
@@ -369,6 +377,17 @@ class JanusProR1GenerationBatchGatherer:
                     f"Janus-R1 batch at ordered index {index} has invalid segment names: "
                     f"expected {JANUS_R1_SEGMENTS}, got {tuple(batch.segments)}",
                 )
+
+            for name, segment in batch.segments.items():
+                for field in (*tensor_fields, "token_log_probs"):
+                    value = segment[field]
+                    if field == "token_log_probs" and value is None:
+                        continue
+                    require_sample_rows(
+                        f"at ordered index {index} segment {name!r}.{field}",
+                        value,
+                        batch.batch.sample_count,
+                    )
 
         out: dict[str, dict[str, Any]] = {}
         for name in names:
@@ -400,13 +419,7 @@ class JanusProR1GenerationBatchGatherer:
                         [batch.segments[name][field] for batch in batches],
                         name=f"segment {name!r}.{field}",
                     )
-                    for field in (
-                        "token_ids",
-                        "token_mask",
-                        "prompt_embeds",
-                        "attention_mask",
-                        "prompt_attention_mask",
-                    )
+                    for field in tensor_fields
                 },
                 "token_log_probs": token_log_probs,
                 "visual": first["visual"],

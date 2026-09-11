@@ -3688,3 +3688,20 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: all 39 Janus family and R1 wiring tests passed, including four
   schema regressions that failed before the fix. Touched-file Ruff/diff checks
   passed. Full repository review remains incomplete.
+
+## Janus-R1 validates per-batch segment row ownership
+
+- Reproduced a public gatherer accepting two one-sample batches whose final-image
+  segments held zero and two rows respectively. The combined row count passed,
+  but sample provenance was wrong. Validate each segment tensor against its own
+  batch.sample_count before concatenation, allowing only optional log-prob None.
+- Promote the existing _require_rows implementation to require_sample_rows and
+  reuse it from coverage, replay and Janus-R1 gathering. This is one shared
+  validation boundary, not a new helper implementation. Reuse the local tensor
+  schema tuple for validation and concatenation.
+- Preserve valid segment ordering, dtype checks and optional-field consistency.
+  No model-family taxonomy, extra owner class or compatibility alias.
+- Validation: the shifted-row regression failed before the fix; all 110 batch
+  gatherer, sample-batch, Janus and R1 wiring tests passed afterwards. No old
+  helper references remain; touched-file Ruff/diff checks passed. Full review
+  remains incomplete.

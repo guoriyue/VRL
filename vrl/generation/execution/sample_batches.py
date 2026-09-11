@@ -36,7 +36,7 @@ class SampleAlignedValues:
             raise ValueError("SampleAlignedValues.values must be non-empty")
 
 
-def _require_rows(name: str, value: Any, count: int) -> None:
+def require_sample_rows(name: str, value: Any, count: int) -> None:
     """Require a batch payload to have ``count`` leading batch rows.
 
     Accepts a tensor-like ``.shape`` or a plain list/tuple length so a gatherer
@@ -108,7 +108,7 @@ def gather_replay_tensors(
             raise ValueError(f"replay tensor {key!r} must be present on all results")
         elif all(isinstance(value, torch.Tensor) for value in values):
             for value, sample_count in zip(values, sample_counts, strict=True):
-                _require_rows(f"replay_tensors.{key}", value, sample_count)
+                require_sample_rows(f"replay_tensors.{key}", value, sample_count)
             gathered[key] = concatenate_sample_values(
                 values,
                 name=f"replay_tensors.{key}",
@@ -227,7 +227,7 @@ def ordered_covering_batches[TBatch: BatchResultWithIdentity](
             sample_count=sample_count,
         )
         for field_name in row_fields:
-            _require_rows(field_name, getattr(result, field_name), sample_count)
+            require_sample_rows(field_name, getattr(result, field_name), sample_count)
         actual.extend(
             (prompt_index, sample_index)
             for sample_index in range(sample_start, sample_start + sample_count)
@@ -355,5 +355,6 @@ __all__ = [
     "gather_replay_tensors",
     "ordered_covering_batches",
     "require_matching_batch_context",
+    "require_sample_rows",
     "run_sample_batches_with_oom_retry",
 ]

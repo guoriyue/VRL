@@ -75,6 +75,7 @@ def test_r1_train_segments_derive_from_algorithm_config() -> None:
         "visual",
         "cfg",
         "missing_log_probs",
+        "shifted_rows",
         "missing_segment_0",
         "missing_segment_1",
         "extra_segment_0",
@@ -111,7 +112,11 @@ def test_r1_gather_rejects_inconsistent_segment_batches(mismatch: str) -> None:
         for index in range(2)
     ]
     error_pattern = "segment 'final_image'"
-    if mismatch.startswith(("missing_segment_", "extra_segment_")):
+    if mismatch == "shifted_rows":
+        # Two expected rows in total can still belong to the wrong batch.
+        batches[0].segments["final_image"] = _segment(0, 5, visual=True)
+        batches[1].segments["final_image"] = _segment(2, 5, visual=True)
+    elif mismatch.startswith(("missing_segment_", "extra_segment_")):
         index = int(mismatch[-1])
         if mismatch.startswith("missing"):
             del batches[index].segments["selfcheck_text"]
