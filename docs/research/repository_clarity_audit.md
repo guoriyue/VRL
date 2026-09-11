@@ -5313,3 +5313,17 @@ this combined regression is compatibility evidence, not architectural completion
   traversal all left an instance attribute behind. Existing override restoration
   also passes. GEMM/Nsight suites: 49 passed, one profiler warning. Touched-file
   Ruff and git diff --check pass. Wider repository audit remains incomplete.
+
+## Bottleneck CLI rejects invalid counts before model setup
+
+- Validate --steps >= 1 and --warmup >= 0 immediately after argparse's integer
+  parsing. Previously zero steps reached later per-step division, while negative
+  warmup silently skipped execution. Report option-specific usage errors before
+  configuration loading or model construction.
+- Keep CLI orchestration and shared diffusion runtime functions as entrypoint
+  and cross-profiler boundaries. No validation helper or config class is added.
+  Kernel classification, monitor lifecycle and timing implementation remain
+  outside this change and require their own review.
+- Three early-boundary regressions failed before the fix. Bottleneck argument
+  and shared diffusion runtime suites: 7 passed. Touched-file Ruff and git diff
+  --check pass. No actual GPU profile was run; wider audit remains incomplete.

@@ -94,6 +94,10 @@ def main(argv=None):
         "1x128 triton block GEMM",
     )
     args = p.parse_args(argv)
+    if args.steps < 1:
+        p.error("--steps must be >= 1")
+    if args.warmup < 0:
+        p.error("--warmup must be >= 0")
 
     device = torch.device(args.device)
     precision = normalize_precision(args.precision)
