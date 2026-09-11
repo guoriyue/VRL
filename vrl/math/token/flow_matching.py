@@ -75,6 +75,8 @@ def _flow_noise_std(noise_level: float, num_steps: int) -> float:
     normalize by the same scale.
     """
 
+    if not math.isfinite(noise_level) or noise_level <= 0:
+        raise ValueError("noise_level must be finite and > 0 for Gaussian token scoring")
     return noise_level * math.sqrt(1.0 / num_steps)
 
 

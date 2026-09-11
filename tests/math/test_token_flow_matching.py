@@ -157,3 +157,16 @@ def test_token_flow_rejects_invalid_step_count(num_steps, replay):
         else:
             flow_sample_with_logprob(head, cond, initial_noise=prior, num_steps=num_steps)
     assert head.calls == []
+
+
+@pytest.mark.parametrize("noise_level", [0.0, -1.0, float("nan"), float("inf")])
+@pytest.mark.parametrize("replay", [False, True])
+def test_token_flow_rejects_invalid_noise_scale(noise_level, replay):
+    head = _FakeHead(2)
+    cond = torch.zeros(1, 2)
+    prior = torch.zeros_like(cond)
+    with pytest.raises(ValueError, match="noise_level"):
+        if replay:
+            flow_logprob_at(head, cond, prior, saved_noise=prior, noise_level=noise_level)
+        else:
+            flow_sample_with_logprob(head, cond, initial_noise=prior, noise_level=noise_level)

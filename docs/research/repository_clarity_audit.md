@@ -4380,6 +4380,18 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Token Gaussian noise scale rejects invalid densities explicitly
+
+- Require finite positive noise_level in the existing shared _flow_noise_std.
+  Sampling and replay previously accepted zero, negative, NaN and infinite scales
+  despite requiring a nondegenerate Gaussian density. Eight regressions reproduced
+  the missing field error before the fix.
+- Preserve the scale formula and existing small-log-scale floor for valid inputs.
+  No new helper, policy class or deterministic scoring convention is introduced.
+  Validation happens at scale construction, after the terminal mean calculation.
+- Token math and NextStep suites: 70 passed, two dependency warnings. Touched-file
+  Ruff checks pass. Full repository clarity completion remains unproven.
+
 ## Token-flow Euler step count has one exact integer boundary
 
 - Validate num_steps with require_exact_int, minimum one, in the shared terminal
