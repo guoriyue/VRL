@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from typing import Any, Literal
 from urllib.parse import urlparse
+
+from vrl.utils.deadline import require_timeout
 
 
 def require_http_origin(url: str, *, context: str) -> str:
@@ -53,9 +54,7 @@ class RewardInferenceConfig:
             raise ValueError(
                 f"reward inference.kind must be 'in_process' or 'http', got {self.kind!r}",
             )
-        timeout_s = float(self.timeout_s)
-        if not math.isfinite(timeout_s) or timeout_s <= 0:
-            raise ValueError("reward inference.timeout_s must be a finite number > 0")
+        timeout_s = require_timeout(self.timeout_s, name="reward inference.timeout_s")
         endpoint = self.endpoint.strip()
         expected_model = self.expected_model.strip()
         expected_model_version = self.expected_model_version.strip()

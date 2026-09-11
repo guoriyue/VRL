@@ -42,6 +42,7 @@ from vrl.rewards.service.wire import (
     score_response_from_wire,
     status_from_wire,
 )
+from vrl.utils.deadline import require_timeout
 
 if TYPE_CHECKING:
     from vrl.config.reward_inference import RewardInferenceConfig
@@ -94,11 +95,10 @@ class HttpRewardScorer:
             expected_model_version = (
                 "" if expected_model_version is None else expected_model_version
             )
-        if timeout_s <= 0:
-            raise ValueError("reward service timeout_s must be > 0")
+        timeout_s = require_timeout(timeout_s, name="reward service timeout_s")
 
         self._base_url = service_url
-        self._timeout = aiohttp.ClientTimeout(total=float(timeout_s))
+        self._timeout = aiohttp.ClientTimeout(total=timeout_s)
         self._expected_model = str(expected_model).strip()
         self._expected_model_version = str(expected_model_version).strip()
         self._session: aiohttp.ClientSession | None = None

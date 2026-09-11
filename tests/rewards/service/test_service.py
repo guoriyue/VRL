@@ -1066,3 +1066,13 @@ async def test_owner_cancellation_before_execution_still_acknowledges_completion
     finally:
         release.set()
         await owner.close()
+
+
+@pytest.mark.parametrize("timeout_s", [0, -1, float("nan"), float("inf"), -float("inf")])
+@pytest.mark.parametrize("entry", ["config", "client"])
+def test_reward_timeout_contract_is_shared(timeout_s, entry) -> None:
+    with pytest.raises(ValueError, match="timeout_s must be finite and > 0"):
+        if entry == "config":
+            RewardInferenceConfig(timeout_s=timeout_s)
+        else:
+            HttpRewardScorer("http://127.0.0.1:8300", timeout_s=timeout_s)

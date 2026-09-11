@@ -1299,3 +1299,17 @@ contained guesses. Removed both:
   blanket slicing of arbitrary metadata, wrapper class or schema constants.
 - Validation: 51 trajectory, online reward-update and trajectory-granularity tests
   passed. Touched-file Ruff and git diff --check pass.
+
+## Reward HTTP timeout boundary consistency
+
+- RewardInferenceConfig and HttpRewardScorer now share require_timeout rather
+  than implementing different checks. Direct client construction previously
+  accepted NaN/infinite timeout values that config construction rejected.
+  Removed the client's redundant float conversion after normalization.
+- Kept service wire serialization/deserialization functions as transport adapters
+  and WIRE_VERSION as protocol data. No new timeout setting, wrapper class or
+  change to cancellation/identity semantics. The shared deadline module remains
+  dependency-light and does not import Torch.
+- Validation: 50 service tests and 47 reward/config-loading tests passed, including
+  both constructors with NaN, positive/negative infinity, zero and negative values.
+  Touched-file Ruff and git diff --check pass.
