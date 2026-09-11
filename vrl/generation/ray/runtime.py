@@ -28,9 +28,9 @@ _RaySessionFactory = Callable[[], Awaitable[RayGenerationSession]]
 
 @dataclass(frozen=True, slots=True)
 class _PendingPolicyInstall:
-    """Trainer state retained only until one worker fleet acknowledges it."""
+    """Trainer payload retained until fleet acknowledgement, before Ray serialization."""
 
-    state_ref: Any
+    trainable_state: Any
     policy_version: int
 
 
@@ -307,7 +307,7 @@ class RayGenerationRuntime:
             self._probed_samples_per_generation_batch = resolved
             return resolved
 
-    async def update_weights(self, state_ref: Any, policy_version: int) -> None:
+    async def update_weights(self, trainable_state: Any, policy_version: int) -> None:
         """Install on active workers or stage the accepted target while inactive."""
 
         await self._admit_operation("update_weights")
@@ -328,14 +328,14 @@ class RayGenerationRuntime:
 
         require_exact_int(policy_version, path="policy_version", minimum=0)
         policy = _PendingPolicyInstall(
-            state_ref=state_ref,
+            trainable_state=trainable_state,
             policy_version=policy_version,
         )
         try:
             session = self._session
             if session is not None and not self._session_parked:
                 await session.update_weights(
-                    policy.state_ref,
+                    policy.trainable_state,
                     policy.policy_version,
                 )
                 with self.lifecycle.publication_guard("publish policy version"):
@@ -611,7 +611,7 @@ class RayGenerationRuntime:
                         pending.policy_version != self._installed_policy_version
                     ):
                         await session.update_weights(
-                            pending.state_ref,
+                            pending.trainable_state,
                             pending.policy_version,
                         )
                     if pending is not None:
@@ -636,7 +636,7 @@ class RayGenerationRuntime:
             active_policy_version = self.current_policy_version
             if pending is not None:
                 await candidate.update_weights(
-                    pending.state_ref,
+                    pending.trainable_state,
                     pending.policy_version,
                 )
                 active_policy_version = pending.policy_version

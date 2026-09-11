@@ -3519,3 +3519,22 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 47 weight-sync and weight-transfer tests passed, including real
   Ray wrong-ACK attribution, bucket transfer, and abort coverage. Touched-file
   Ruff/diff checks passed. Full repository review remains incomplete.
+
+## Name weight payloads separately from transport references
+
+- The generation protocol, runtime pending install, session, syncer and worker
+  called their payload state_ref even though serialization occurs only in the
+  syncer and Ray dereferences the argument before the worker receives it. Rename
+  the production chain to trainable_state and the actual ray.put result to
+  shared_state_ref. Update the pending-install assertion accordingly.
+- Clarify the protocol and pending-install documentation. Preserve Any because
+  this change does not redefine supported payloads; preserve None semantics,
+  bucket transport, version publication, and deferred-install lifetimes.
+- No compatibility alias, new class, helper, or constants. This is a parameter
+  naming change: external keyword callers must use trainable_state; repository
+  searches found no state_ref keyword callers remaining. Test-double positional
+  parameter names need not be rewritten to establish this production boundary.
+- Validation: 944 generation and continuous-orchestration tests passed, two
+  skipped; touched-file Ruff/diff checks passed. Coverage includes real Ray
+  dereferencing and deferred-install lifecycle behavior. Full review remains
+  incomplete.

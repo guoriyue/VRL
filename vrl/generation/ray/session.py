@@ -76,12 +76,12 @@ class RayGenerationSession:
 
         return rank_handles(self.engines)
 
-    async def update_weights(self, state_ref: Any, policy_version: int) -> None:
+    async def update_weights(self, trainable_state: Any, policy_version: int) -> None:
         weight_sync = self.weight_sync
         if weight_sync is None:
             raise RuntimeError("RayGenerationSession has no GenerationWeightSync")
         await weight_sync.push_to_rollout_engines(
-            state_ref,
+            trainable_state,
             policy_version,
         )
 

@@ -171,7 +171,7 @@ def _assert_pending_install(
 ) -> None:
     policy = runtime._pending_install
     assert policy is not None
-    assert policy.state_ref == state_ref
+    assert policy.trainable_state == state_ref
     assert policy.policy_version == policy_version
 
 

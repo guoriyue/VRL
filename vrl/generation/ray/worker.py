@@ -98,17 +98,17 @@ class RayGenerationWorker:
     def abort_weight_transfer(self, transfer_id: str) -> None:
         self.core.abort_weight_transfer(transfer_id)
 
-    def verify_active_weights(self, state_ref: Any, policy_version: int) -> int:
+    def verify_active_weights(self, trainable_state: Any, policy_version: int) -> int:
         """Read back the state already active on this rank for acceptance."""
 
-        return self.core.verify_active_weights(state_ref, policy_version)
+        return self.core.verify_active_weights(trainable_state, policy_version)
 
     def update_weights(
-        self, state_ref: Any, policy_version: int, *, verify_content: bool = False
+        self, trainable_state: Any, policy_version: int, *, verify_content: bool = False
     ) -> int:
         if verify_content:
-            return self.core.update_weights(state_ref, policy_version, verify_content=True)
-        return self.core.update_weights(state_ref, policy_version)
+            return self.core.update_weights(trainable_state, policy_version, verify_content=True)
+        return self.core.update_weights(trainable_state, policy_version)
 
     def supports_versioned_trainable_state(self) -> bool:
         return self.core.supports_versioned_trainable_state()

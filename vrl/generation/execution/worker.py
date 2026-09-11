@@ -176,7 +176,7 @@ class GenerationWorkerCore:
         self._memory_parking.wake(self.executor)
 
     def update_weights(
-        self, state_ref: Any, policy_version: int, *, verify_content: bool = False
+        self, trainable_state: Any, policy_version: int, *, verify_content: bool = False
     ) -> int:
         """Install weights and return the policy version as the commit ACK.
 
@@ -205,7 +205,7 @@ class GenerationWorkerCore:
                 raise NotImplementedError(
                     "live weight readback does not verify retained version slots"
                 )
-            if state_ref is None:
+            if trainable_state is None:
                 raise ValueError("content verification requires an explicit weight payload")
             verifier = getattr(policy_obj, "verify_trainable_state", None)
             if not callable(verifier):
@@ -218,16 +218,16 @@ class GenerationWorkerCore:
                     policy_obj,
                     owner=f"{type(self.executor).__name__}.model",
                 )
-                model.install_trainable_state(policy_version, state_ref)
+                model.install_trainable_state(policy_version, trainable_state)
                 self._uses_versioned_slots = True
-            elif state_ref is not None:
+            elif trainable_state is not None:
                 model = require_runtime_model(
                     policy_obj,
                     owner=f"{type(self.executor).__name__}.model",
                 )
-                model.load_trainable_state(state_ref)
+                model.load_trainable_state(trainable_state)
             if verifier is not None:
-                verifier(state_ref)
+                verifier(trainable_state)
         except BaseException as error:
             self._memory_parking.record_model_failure(policy_obj, error)
             raise
@@ -269,7 +269,7 @@ class GenerationWorkerCore:
             self._weight_transfer.require_id(transfer_id)
             self._weight_transfer = None
 
-    def verify_active_weights(self, state_ref: Any, policy_version: int) -> int:
+    def verify_active_weights(self, trainable_state: Any, policy_version: int) -> int:
         """Acceptance-only readback; never activate, load, or acknowledge a new version.
 
         Version-slot acceptance runs after the isolated worker has executed the
@@ -280,16 +280,16 @@ class GenerationWorkerCore:
         require_exact_int(policy_version, path="policy_version", minimum=0)
         self._memory_parking.require_active("verify_active_weights", executor=self.executor)
         model = getattr(self.executor, "model", None)
-        if state_ref is None:
+        if trainable_state is None:
             raise ValueError("active weight verification requires an explicit payload")
         if self._uses_versioned_slots:
             verifier = getattr(model, "verify_active_trainable_state", None)
-            args = (policy_version, state_ref)
+            args = (policy_version, trainable_state)
         else:
             if self._policy_version != policy_version:
                 raise RuntimeError("active weight verification policy version mismatch")
             verifier = getattr(model, "verify_trainable_state", None)
-            args = (state_ref,)
+            args = (trainable_state,)
         if not callable(verifier):
             raise NotImplementedError("model does not support active weight content verification")
         try:

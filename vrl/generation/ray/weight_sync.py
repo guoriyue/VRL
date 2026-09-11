@@ -14,11 +14,15 @@ from vrl.utils.deadline import require_timeout
 
 
 class GenerationWeightSync(Protocol):
-    """Push trainable generation state to engines with a known policy version."""
+    """Push a trainable-state payload with a known policy version.
+
+    The sender supplies the payload itself; transport references belong to the
+    implementation. None retains the worker's existing bootstrap semantics.
+    """
 
     async def push_to_rollout_engines(
         self,
-        state_ref: Any,
+        trainable_state: Any,
         policy_version: int,
     ) -> None: ...
 
@@ -61,12 +65,12 @@ class RayGenerationWeightSync:
 
     async def push_to_rollout_engines(
         self,
-        state_ref: Any,
+        trainable_state: Any,
         policy_version: int,
     ) -> None:
         require_exact_int(policy_version, path="policy_version", minimum=0)
-        if self.bucket_bytes is not None and state_ref is not None:
-            await self._push_bucketed(state_ref, policy_version)
+        if self.bucket_bytes is not None and trainable_state is not None:
+            await self._push_bucketed(trainable_state, policy_version)
             return
         verification = {"verify_content": True} if self.verify_content else {}
         remote_engines: list[tuple[RayGenerationEngine, Any]] = []
@@ -84,7 +88,7 @@ class RayGenerationWeightSync:
                 )
             else:
                 # Local test double: call the single rank directly.
-                installed = update_weights(state_ref, policy_version, **verification)
+                installed = update_weights(trainable_state, policy_version, **verification)
                 self._require_installed_policy_version(engine, installed, policy_version)
 
         if not remote_engines:
@@ -97,13 +101,13 @@ class RayGenerationWeightSync:
         # re-serialize and store one copy per rank, so weight-sync cost grew
         # linearly in fleet size for identical data. Ray auto-dereferences
         # the ref into the real dict before the rank method runs.
-        shared_state = ray.put(state_ref)
+        shared_state_ref = ray.put(trainable_state)
         remote_jobs = [
             RayActorJob(
                 job_index=job_index,
                 worker_id=engine.engine_id,
                 remote_method=remote,
-                payload=shared_state,
+                payload=shared_state_ref,
                 keyword_args={"policy_version": policy_version, **verification},
             )
             for job_index, (engine, remote) in enumerate(remote_engines)
