@@ -4236,3 +4236,15 @@ this combined regression is compatibility evidence, not architectural completion
   suites on the current implementation: 116 passed in 7.30s, exit zero. No
   implementation changed in this slice. This validates consumer integration
   beyond the checkpoint unit suite; full repository clarity remains unproven.
+
+## Diagnostic record summarization is local to append
+
+- Move the sole-use recursive `_json_safe` into `append_jsonl_record` as
+  `summarize`. Its responsibility is nested tensor summarization and fallback
+  string formatting, not generic JSON validation. The lazy torch import now
+  belongs to one append invocation rather than every recursive visit.
+- Retain the public append API and shared `tensor_stats` function. No writer
+  class, record schema, nonfinite-value policy or append semantics change is
+  introduced; the docstring now describes the actual operation directly.
+- All 20 diagnostic utility/online tests passed; touched-file Ruff checks pass.
+  The repository-wide audit remains incomplete.

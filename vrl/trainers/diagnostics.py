@@ -197,29 +197,25 @@ def tensor_stats(value: Any) -> dict[str, Any]:
 
 
 def append_jsonl_record(path: str | Path, record: Mapping[str, Any]) -> None:
-    """Append one JSON object to a JSONL file.
+    """Append one diagnostic JSON object, summarizing nested tensors as statistics."""
 
-    Named against ``vrl.utils.json_files.write_jsonl``, which *overwrites*
-    a file with many rows — same word, opposite semantics."""
+    import torch
+
+    def summarize(value: Any) -> Any:
+        if isinstance(value, torch.Tensor):
+            return tensor_stats(value)
+        if isinstance(value, Mapping):
+            return {str(key): summarize(inner) for key, inner in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [summarize(inner) for inner in value]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(_json_safe(record), sort_keys=True) + "\n")
-
-
-def _json_safe(value: Any) -> Any:
-    import torch
-
-    if isinstance(value, torch.Tensor):
-        return tensor_stats(value)
-    if isinstance(value, Mapping):
-        return {str(key): _json_safe(inner) for key, inner in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(inner) for inner in value]
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return str(value)
+        handle.write(json.dumps(summarize(record), sort_keys=True) + "\n")
 
 
 __all__ = [
