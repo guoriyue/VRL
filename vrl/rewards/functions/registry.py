@@ -119,6 +119,11 @@ class MultiReward(RewardFunction):
         self,
         rewards: list[tuple[str, float, RewardFunction]],
     ) -> None:
+        names = [name for name, _, _ in rewards]
+        if any(not isinstance(name, str) or not name for name in names):
+            raise ValueError("reward component names must be non-empty strings")
+        if len(set(names)) != len(names):
+            raise ValueError("reward component names must be unique")
         self.rewards = rewards
         # Composite teardown is retryable: remember children whose shutdown
         # already succeeded so a retry reaches only the ones that actually

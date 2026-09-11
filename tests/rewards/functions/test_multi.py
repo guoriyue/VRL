@@ -59,6 +59,22 @@ class _TimedBatchReward(RewardFunction):
         )
 
 
+def test_multi_reward_rejects_duplicate_component_names() -> None:
+    with pytest.raises(ValueError, match="unique"):
+        MultiReward(
+            [
+                ("ocr", 1.0, _QueuedBatchReward([[0.1]])),
+                ("ocr", 0.5, _QueuedBatchReward([[0.9]])),
+            ]
+        )
+
+
+@pytest.mark.parametrize("name", ["", None, 1])
+def test_multi_reward_requires_nonempty_component_names(name) -> None:
+    with pytest.raises(ValueError, match="non-empty strings"):
+        MultiReward([(name, 1.0, _QueuedBatchReward([[0.1]]))])
+
+
 @pytest.mark.asyncio
 async def test_multi_reward_preserves_samples_for_every_component() -> None:
     seen: dict[str, list[tuple[str, str]]] = {}

@@ -6250,3 +6250,17 @@ The broader repository audit remains incomplete.
 - MultiReward, collector and prompt collection suites: 80 passed, including
   child timing aggregation and per-call timing ownership. Touched-file Ruff and
   diff checks pass. Broader repository audit remains incomplete.
+
+## MultiReward component names identify one contribution each
+
+- Validate nonempty string and unique component names in MultiReward.__init__.
+  The config dictionary naturally has unique keys, but direct construction
+  previously allowed two contributions with the same name: totals included both
+  while the component dictionary retained only the last. Reject that ambiguity
+  before scoring instead of attempting to repair names downstream.
+- Keep the named registry and lazy builtin loader as configuration lookup and
+  import boundaries. Keep component tuples, scoring order, weighted reduction
+  and retryable child teardown; no wrapper class or new vocabulary table.
+- Four constructor regressions failed before the fix. MultiReward and collector
+  tests: 62 passed. Touched-file Ruff and diff checks pass. Broader repository
+  audit remains incomplete.
