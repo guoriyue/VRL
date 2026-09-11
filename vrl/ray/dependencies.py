@@ -57,30 +57,27 @@ class ClusterTopology:
     driver_gpus: float
     non_driver_gpus: float
 
+    @classmethod
+    def from_ray(cls, ray: Any) -> ClusterTopology:
+        """Sum alive-node GPUs split by driver vs non-driver node.
 
-def inspect_cluster(ray: Any) -> ClusterTopology:
-    """Sum alive-node GPUs split by driver vs non-driver node.
+        Requires an initialized/attached Ray cluster. Nodes matching the current
+        process's node ip count as the driver/head.
+        """
 
-    Requires an initialized/attached Ray cluster. Nodes matching the current
-    process's node ip count as the driver/head.
-    """
-
-    try:
-        driver_node_ip: str | None = current_node_ip()
-    except Exception:
-        driver_node_ip = None
-    driver_gpus = 0.0
-    non_driver_gpus = 0.0
-    for node in ray.nodes():
-        if not node.get("Alive"):
-            continue
-        node_gpus = float(node.get("Resources", {}).get("GPU", 0.0))
-        node_ip = node.get("NodeManagerAddress")
-        if driver_node_ip is not None and node_ip == driver_node_ip:
-            driver_gpus += node_gpus
-        else:
-            non_driver_gpus += node_gpus
-    return ClusterTopology(driver_gpus=driver_gpus, non_driver_gpus=non_driver_gpus)
+        driver_node_ip = current_node_ip()
+        driver_gpus = 0.0
+        non_driver_gpus = 0.0
+        for node in ray.nodes():
+            if not node.get("Alive"):
+                continue
+            node_gpus = float(node.get("Resources", {}).get("GPU", 0.0))
+            node_ip = node.get("NodeManagerAddress")
+            if node_ip == driver_node_ip:
+                driver_gpus += node_gpus
+            else:
+                non_driver_gpus += node_gpus
+        return cls(driver_gpus=driver_gpus, non_driver_gpus=non_driver_gpus)
 
 
 def kill_actors(ray: Any, actors: list[Any]) -> list[tuple[Any, Exception]]:
@@ -132,7 +129,6 @@ __all__ = [
     "ClusterTopology",
     "current_gpu_ids",
     "current_node_ip",
-    "inspect_cluster",
     "kill_actors",
     "kill_and_retain",
     "require_ray",

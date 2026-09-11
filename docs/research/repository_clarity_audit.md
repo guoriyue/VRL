@@ -2777,3 +2777,20 @@ this combined regression is compatibility evidence, not architectural completion
   of UUID, malformed, fractional, boolean, None and negative IDs. Existing real
   Ray placement integration passes. Touched-file Ruff/diff checks passed; full
   repository review remains active.
+
+## Cluster topology construction belongs to its existing record
+
+- Move inspect_cluster into ClusterTopology.from_ray and update the preflight
+  consumer, tests and fixture documentation. Remove the free constructor export;
+  no compatibility forwarding function remains because no repository caller needs
+  it. The existing class now owns construction of its two aggregate values.
+- Remove the driver-IP query catch: previously a failed lookup classified every
+  live node's GPUs as non-driver resources. Discovery now propagates the original
+  failure rather than constructing a misleading topology.
+- Keep cross_node_preflight independent: it compares live topology with requested
+  rollout resources and owns the driver-GPU isolation check. Keep lazy dependency
+  adapters and shared actor cleanup functions; grouping those by name alone would
+  not improve ownership. No new class or ALL_CAPS vocabulary was introduced.
+- Validation: 53 dependency, cross-node preflight, placement and rollout launcher
+  tests passed, including original driver lookup error identity. Touched-file Ruff
+  and diff checks passed. Full repository review remains active.

@@ -29,8 +29,8 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from vrl.ray.dependencies import (
+    ClusterTopology,
     current_gpu_ids,
-    inspect_cluster,
     kill_actors,
     require_ray,
 )
@@ -207,7 +207,7 @@ def cross_node_preflight(ray: Any, resources: ResolvedDistributedResources) -> N
     drops the placement-group trainer reservation.
     """
 
-    topology = inspect_cluster(ray)
+    topology = ClusterTopology.from_ray(ray)
 
     needed = resources.rollout_num_gpus
     if topology.non_driver_gpus < needed:
