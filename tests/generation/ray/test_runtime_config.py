@@ -108,10 +108,11 @@ def test_launch_contract_accepts_primitive_config_leaves() -> None:
     assert contract.expected_model_identity == _TEST_MODEL_IDENTITY
 
 
-def test_launch_contract_rejects_empty_registry_identity() -> None:
-    with pytest.raises(ValueError, match=r"family must be non-empty"):
+@pytest.mark.parametrize("family", ["", None, True, 123, ["unit"], {"name": "unit"}])
+def test_launch_contract_rejects_invalid_registry_identity(family) -> None:
+    with pytest.raises(ValueError, match=r"family must be a non-empty string"):
         GenerationRuntimeLaunchContract(
-            family="",
+            family=family,
             model_build={},
             expected_model_identity=_TEST_MODEL_IDENTITY,
         )

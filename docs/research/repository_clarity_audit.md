@@ -6544,3 +6544,19 @@ The broader repository audit remains incomplete.
 - Checkpoint-comparison suite: 31 passed. Touched-file Ruff and diff checks
   pass. This verifies control flow with test models, not training throughput;
   the broader repository audit remains incomplete.
+
+## Generation launch identity rejects non-string values at construction
+
+- GenerationRuntimeLaunchContract previously checked only family truthiness.
+  Nonempty lists, dictionaries, numbers and booleans passed construction and
+  reached worker-side registry lookup. Require a nonempty string on the driver
+  instead, without string coercion or a duplicate family vocabulary.
+- Expanded the existing identity test: four truthy invalid values initially
+  failed because no exception was raised; empty string and None already failed
+  validation but required the updated diagnostic. All six now pass.
+- Keep the standalone contract as a cross-process boundary and its recursive
+  mapping checks as shared validation within that owner. Registry resolution
+  remains with the registry; no new validation helper or wrapper class.
+- Runtime configuration and worker checkpoint identity suites: 60 passed,
+  three dependency warnings. Touched-file Ruff and diff checks pass. The broader
+  repository audit remains incomplete.

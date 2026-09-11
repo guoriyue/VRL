@@ -45,8 +45,8 @@ class GenerationRuntimeLaunchContract:
     versioned_weight_sync: bool = False
 
     def __post_init__(self) -> None:
-        if not self.family:
-            raise ValueError("GenerationRuntimeLaunchContract.family must be non-empty")
+        if not isinstance(self.family, str) or not self.family:
+            raise ValueError("GenerationRuntimeLaunchContract.family must be a non-empty string")
         object.__setattr__(
             self,
             "model_build",
