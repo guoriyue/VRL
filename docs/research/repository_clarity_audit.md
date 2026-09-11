@@ -1184,3 +1184,21 @@ contained guesses. Removed both:
   and assert invalid versions never reach the local worker. Launch tests cover
   None, zero, positive, negative, boolean, fractional and string versions.
   Touched-file Ruff checks and git diff --check pass.
+
+## AR sampling geometry contract
+
+- ARRequestLayout now requires positive integer image_token_num, image_size and
+  max_text_length, using require_exact_int instead of silently truncating or
+  parsing values. Explicit family defaults remain supported; explicit null does
+  not fall back to a default. Seed must be an integer when supplied; negative
+  integer seeds retain their existing torch-compatible meaning.
+- Removed the redundant samples_per_prompt conversion in the seed-offset formula;
+  GenerationRequest owns that field's integer contract.
+- Retained _sampling_int because three geometry fields share its required/default
+  semantics. Retained right_pad and the tokenizer adapter used by Janus, NextStep
+  and LlamaGen; their shared shape keeps family tokenizer handling consistent.
+  No new dataclass, configuration keys or module split, and no redesign of
+  generation defaults or RNG sequencing.
+- Validation: 64 NextStep parsing, LlamaGen construction and AR scheduler-batching
+  tests passed, including invalid dimensions, explicit nulls, seed types and
+  preserved defaults. Touched-file Ruff and git diff --check pass.

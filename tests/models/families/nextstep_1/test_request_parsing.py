@@ -336,3 +336,58 @@ def test_batch_context_keeps_only_flow_replay_parameters(
     assert loop_kwargs["init_kwargs"]["image_token_num"] == 4
     assert loop_kwargs["scheduler_batch_size"] == 3
     assert decoded_sizes == [32]
+
+
+@pytest.mark.parametrize("key", ["image_token_num", "image_size", "max_text_length"])
+@pytest.mark.parametrize("value", [1.9, True, "2", 0, -1, None])
+def test_ar_layout_rejects_invalid_shape_sampling(key, value) -> None:
+    sampling = {"image_token_num": 8, "image_size": 256, "max_text_length": 16}
+    sampling[key] = value
+    request = GenerationRequest(
+        request_id="req",
+        family="nextstep_1",
+        task="ar_t2i",
+        inputs=["draw text"],
+        samples_per_prompt=1,
+        sampling=sampling,
+    )
+    with pytest.raises(ValueError, match=f"request.sampling.{key}"):
+        ARRequestLayout().parse_sampling_params(request)
+
+
+@pytest.mark.parametrize("seed", [True, 1.9, "2"])
+def test_ar_layout_rejects_coerced_seed(seed) -> None:
+    request = GenerationRequest(
+        request_id="req",
+        family="nextstep_1",
+        task="ar_t2i",
+        inputs=["draw text"],
+        samples_per_prompt=1,
+        sampling={"seed": seed},
+    )
+    layout = ARRequestLayout(
+        default_image_token_num=8,
+        default_image_size=256,
+        default_max_text_length=16,
+    )
+    with pytest.raises(ValueError, match=r"request\.sampling\.seed"):
+        layout.parse_sampling_params(request)
+
+
+@pytest.mark.parametrize("seed", [None, 0, -1, 7])
+def test_ar_layout_preserves_defaults_and_integer_seed(seed) -> None:
+    request = GenerationRequest(
+        request_id="req",
+        family="nextstep_1",
+        task="ar_t2i",
+        inputs=["draw text"],
+        samples_per_prompt=1,
+        sampling={"seed": seed},
+    )
+    params = ARRequestLayout(
+        default_image_token_num=8,
+        default_image_size=256,
+        default_max_text_length=16,
+    ).parse_sampling_params(request)
+    assert (params.image_token_num, params.image_size, params.max_text_length) == (8, 256, 16)
+    assert params.seed == seed

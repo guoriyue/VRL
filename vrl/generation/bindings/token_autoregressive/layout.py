@@ -13,6 +13,7 @@ from vrl.generation.execution.sample_batches import (
     ordered_covering_batches,
 )
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
+from vrl.utils.config import require_exact_int
 
 
 class ARBatchPayload(Protocol):
@@ -110,7 +111,11 @@ class ARRequestLayout:
                 "max_text_length",
                 self.default_max_text_length,
             ),
-            seed=None if sampling.get("seed") is None else int(sampling.get("seed")),
+            seed=(
+                None
+                if sampling.get("seed") is None
+                else require_exact_int(sampling["seed"], path="request.sampling.seed")
+            ),
         )
 
     def resolve_scheduler_batch_size(self, request: GenerationRequest) -> int | None:
@@ -154,7 +159,7 @@ class ARRequestLayout:
     def chunk_seed_offset(self, request: GenerationRequest, batch: GenerationSampleBatch) -> int:
         """Return the prompt-major sample offset for deterministic batch seeding."""
 
-        return batch.prompt_index * int(request.samples_per_prompt) + batch.sample_start
+        return batch.prompt_index * request.samples_per_prompt + batch.sample_start
 
     def cat_batch_fields(
         self,
@@ -194,11 +199,13 @@ class ARRequestLayout:
         key: str,
         default: int | None,
     ) -> int:
-        if key in sampling:
-            return int(sampling[key])
-        if default is None:
+        if key not in sampling and default is None:
             raise ValueError(f"request.sampling.{key} is required")
-        return int(default)
+        return require_exact_int(
+            sampling.get(key, default),
+            path=f"request.sampling.{key}",
+            minimum=1,
+        )
 
 
 __all__ = ["ARBatchPayload", "ARRequestLayout", "ARSamplingParams", "right_pad"]
