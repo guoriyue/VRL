@@ -409,16 +409,17 @@ def test_metrics_resume_requires_declared_position_column_even_for_new_file(tmp_
     assert not path.exists()
 
 
-@pytest.mark.parametrize("quoted_name", ['"loss"', 'loss"detail'])
-def test_metrics_header_roundtrips_quotes_and_resumes(tmp_path, quoted_name):
+@pytest.mark.parametrize("column_name", ['"loss"', 'loss"detail', "r_文字识别"])
+@pytest.mark.parametrize("initial_resume", [None, ("epoch", 0)])
+def test_metrics_header_roundtrips_and_resumes(tmp_path, column_name, initial_resume):
     import csv
 
     path = tmp_path / "metrics.csv"
-    columns = ("epoch", quoted_name)
-    writer = MetricsCSV(path, columns)
+    columns = ("epoch", column_name)
+    writer = MetricsCSV(path, columns, resume_at=initial_resume)
     writer.append("0,0.5\n")
     writer.append("1,0.4\n")
     MetricsCSV(path, columns, resume_at=("epoch", 1))
-    with path.open(newline="") as handle:
+    with path.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.reader(handle))
     assert rows == [list(columns), ["0", "0.5"]]

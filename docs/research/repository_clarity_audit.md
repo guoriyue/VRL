@@ -6750,3 +6750,15 @@ The broader repository audit remains incomplete.
 - Metrics IO suite: 36 passed, including invalid integer fields, full-precision
   serialization and resume alignment. Touched-file Ruff and diff checks pass.
   This slice does not establish completion of the broader repository audit.
+
+## Metrics initialization uses the same UTF-8 contract as append and resume
+
+- Both new-file branches now specify UTF-8, matching append, resume reads and
+  atomic rewrite. Previously initialization alone relied on locale encoding,
+  despite allowing non-ASCII custom column names.
+- Extend existing header round-trip tests with a Chinese component column and
+  both fresh creation and resume-with-missing-file initialization. Keep CSV
+  quoting and atomic resume replacement; no new writer abstraction.
+- Metrics IO suite: 40 passed. Touched-file Ruff and diff checks pass. Tests ran
+  in the current environment, not a separate non-UTF-8 locale; the explicit
+  encoding removes that dependency by inspection. Broader audit remains open.

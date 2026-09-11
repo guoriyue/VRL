@@ -311,7 +311,7 @@ class MetricsCSV:
         csv.writer(header, lineterminator="\n").writerow(column_names)
         normalized_header = header.getvalue()
         if resume_at is None:
-            path.write_text(normalized_header)
+            path.write_text(normalized_header, encoding="utf-8")
             return
 
         position_column, resume_position = resume_at
@@ -320,7 +320,7 @@ class MetricsCSV:
             raise ValueError(f"metrics CSV is missing resume column {position_column!r}: {path}")
         if not path.exists():
             logger.warning("Resume requested but metrics file does not exist; creating %s", path)
-            path.write_text(normalized_header)
+            path.write_text(normalized_header, encoding="utf-8")
             return
 
         text = path.read_text(encoding="utf-8")
