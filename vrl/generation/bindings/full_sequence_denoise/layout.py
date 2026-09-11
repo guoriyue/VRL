@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import random
 from dataclasses import dataclass
 from typing import Any
@@ -27,8 +26,8 @@ class DiffusionSamplingParams:
     sde_window_range: tuple[int, int]
     denoise_mode: str
     teacache: TeaCacheConfig | None = None
-    # The RESOLVED stochastic window, drawn once at parse time (see
-    # select_sde_window). Every sample batch of the request reads this field, so
+    # The stochastic window is drawn once at parse time. Every sample batch
+    # of the request reads this field, so
     # chunked groups share one window — Flash-GRPO's iso-temporal grouping.
     sde_window: tuple[int, int] | None = None
 
@@ -105,58 +104,36 @@ class DiffusionRequestLayout:
             return_prev_sample_mean=options.return_prev_sample_mean,
             cache_ref_noise_pred=options.cache_ref_noise_pred,
         )
-        params = DiffusionSamplingParams(
+        if max_sequence_length is not None:
+            max_sequence_length = require_exact_int(
+                max_sequence_length,
+                path="sampling.max_sequence_length",
+                minimum=1,
+            )
+
+        # Resolve once per request, before constructing the final params. All
+        # sample batches share this window (Flash-GRPO iso-temporal grouping).
+        # Preserve the seed-derived stream across ranks and re-parses; unseeded
+        # requests use the module RNG synchronized by the worker.
+        sde_window = None
+        window_size = options.sde_window_size
+        if window_size > 0:
+            lo, hi = sde_window_range
+            seed = model_request.seed
+            rng = random.Random(int(seed) ^ 0x5DE317D0) if seed is not None else random
+            start = rng.randint(lo, hi - window_size)
+            sde_window = (start, start + window_size)
+
+        return DiffusionSamplingParams(
             model_request=model_request,
-            max_sequence_length=(
-                None
-                if max_sequence_length is None
-                else require_exact_int(
-                    max_sequence_length,
-                    path="sampling.max_sequence_length",
-                    minimum=1,
-                )
-            ),
+            max_sequence_length=max_sequence_length,
             sde=sde,
             sde_window_size=options.sde_window_size,
             sde_window_range=sde_window_range,
             denoise_mode=options.denoise_mode,
             teacache=options.teacache,
+            sde_window=sde_window,
         )
-        # Resolve the stochastic window HERE, once per request, so every sample
-        # batch built from these params shares it (see select_sde_window).
-        return dataclasses.replace(params, sde_window=self.select_sde_window(params))
-
-    def select_sde_window(
-        self,
-        params: DiffusionSamplingParams,
-    ) -> tuple[int, int] | None:
-        """Pick the stochastic denoise-step window for a request.
-
-        Drawn once per REQUEST (parse_sampling_params stores the result on the
-        params), not per sample batch: all chunks of a request — and therefore
-        all G samples of a prompt group — share one window, which is what makes
-        a group's stochastic step land on the same timestep (Flash-GRPO's
-        iso-temporal grouping; group advantages are then never confounded by
-        timestep difficulty).
-
-        When the request carries a seed the draw is derived from it, so
-        multi-rank engines and re-parses agree deterministically. Integer
-        arithmetic, not tuple hashing — hash() is process-randomized and would
-        silently break cross-rank agreement. Without a seed it falls back to
-        the module RNG (rank-coherent only via the worker RNG sync).
-        """
-
-        sde_window_size = params.sde_window_size
-        if sde_window_size <= 0:
-            return None
-        lo, hi = params.sde_window_range
-        seed = params.model_request.seed
-        if seed is not None:
-            rng = random.Random(int(seed) ^ 0x5DE317D0)
-            start = rng.randint(lo, hi - sde_window_size)
-        else:
-            start = random.randint(lo, hi - sde_window_size)
-        return (start, start + sde_window_size)
 
 
 __all__ = [

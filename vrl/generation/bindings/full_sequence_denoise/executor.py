@@ -189,7 +189,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
             # Resolved once per request at parse time (NOT drawn here): every
             # sample batch of the request shares the window, so a chunked prompt
             # group keeps its stochastic step on one timestep (iso-temporal
-            # grouping — see DiffusionRequestLayout.select_sde_window).
+            # grouping — see DiffusionRequestLayout.parse_sampling_params).
             sde_window=params.sde_window,
             denoise_mode=params.denoise_mode,
             teacache=params.teacache,

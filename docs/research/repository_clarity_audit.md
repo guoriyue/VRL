@@ -3118,3 +3118,19 @@ this combined regression is compatibility evidence, not architectural completion
   two skipped. Explicit single-sample cases verify mapping copies retain value
   identity through both concrete family executors. Touched-file Ruff/diff
   checks passed. Full repository review remains incomplete.
+
+## Construct complete diffusion sampling parameters once
+
+- Fold the sole production use of select_sde_window into parse_sampling_params.
+  Validate max_sequence_length before consuming RNG, resolve the stochastic
+  window, then construct DiffusionSamplingParams once. Remove the provisional
+  params object, dataclasses.replace and the separate selection method.
+- Preserve the exact seed XOR stream, inclusive randint bounds and unseeded
+  module RNG. The request parser remains the owner; window selection stays
+  outside per-batch execution so all samples share the request window. No new
+  helper, class or configuration constant is introduced.
+- Validation: 347 binding/execution tests passed, two skipped. The updated
+  parser-level regression checks one unseeded draw and no draw for disabled
+  windows; existing seeded reparse and request-window tests also pass. Removed
+  method has no remaining code/test references; touched-file Ruff/diff checks
+  passed. Full repository review remains incomplete.

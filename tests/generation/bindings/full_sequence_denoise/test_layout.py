@@ -46,19 +46,25 @@ def test_diffusion_layout_selects_request_owned_sde_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks request window policy resolves before entering the denoise loop."""
+    draws = []
+
+    def draw(lo, hi):
+        draws.append((lo, hi))
+        return hi
+
+    monkeypatch.setattr(
+        "vrl.generation.bindings.full_sequence_denoise.layout.random.randint",
+        draw,
+    )
     layout = _layout()
     params = layout.parse_sampling_params(
         _request(denoise=DenoiseRequestOptions(sde_window_size=2, sde_window_range=(3, 8))),
     )
-    monkeypatch.setattr(
-        "vrl.generation.bindings.full_sequence_denoise.layout.random.randint",
-        lambda lo, hi: hi,
-    )
-
-    assert layout.select_sde_window(params) == (6, 8)
-
+    assert params.sde_window == (6, 8)
+    assert draws == [(3, 6)]
     no_window = layout.parse_sampling_params(_request())
-    assert layout.select_sde_window(no_window) is None
+    assert no_window.sde_window is None
+    assert draws == [(3, 6)]
 
 
 @pytest.mark.parametrize(
