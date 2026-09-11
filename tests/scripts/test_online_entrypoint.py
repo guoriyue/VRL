@@ -177,3 +177,19 @@ def test_rank_local_cuda_selection_rejects_duplicate_devices() -> None:
             parse_config(_distributed_cfg(gpus_per_node=2)),
             environ=environ,
         )
+
+
+@pytest.mark.parametrize("visible", ["0,,1", ",0,1", "0,1,", "0,-1", "0,GPU-uuid", "0,00"])
+def test_rank_local_selection_rejects_ambiguous_mask_without_mutation(visible: str) -> None:
+    environ = {
+        "LOCAL_RANK": "0",
+        "LOCAL_WORLD_SIZE": "2",
+        "WORLD_SIZE": "2",
+        "CUDA_VISIBLE_DEVICES": visible,
+    }
+    original = dict(environ)
+    with pytest.raises(ValueError, match="CUDA_VISIBLE_DEVICES"):
+        narrow_rank_local_cuda_visibility(
+            parse_config(_distributed_cfg(gpus_per_node=2)), environ=environ
+        )
+    assert environ == original

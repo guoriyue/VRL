@@ -76,7 +76,13 @@ def narrow_rank_local_cuda_visibility(
             raise ValueError(
                 "CUDA_VISIBLE_DEVICES is empty for a GPU-distributed rank-local launch",
             )
-        devices = [token.strip() for token in raw_visible.split(",") if token.strip()]
+        tokens = [token.strip() for token in raw_visible.split(",")]
+        if any(not token or not token.isascii() or not token.isdecimal() for token in tokens):
+            raise ValueError(
+                "CUDA_VISIBLE_DEVICES must contain non-negative integer device ordinals "
+                f"without empty entries: {raw_visible!r}",
+            )
+        devices = [int(token) for token in tokens]
         if len(set(devices)) != len(devices):
             raise ValueError(
                 "CUDA_VISIBLE_DEVICES contains duplicate devices before rank-local "
@@ -88,14 +94,7 @@ def narrow_rank_local_cuda_visibility(
                 f"LOCAL_WORLD_SIZE={local_world_size}, "
                 f"CUDA_VISIBLE_DEVICES={raw_visible!r}",
             )
-        selected = devices[local_rank]
+        selected = str(devices[local_rank])
 
-    try:
-        physical_device = int(selected)
-    except ValueError as exc:
-        raise ValueError(
-            "symmetric-colocated rank-local Ray placement currently requires integer "
-            f"CUDA device ordinals, got {selected!r}",
-        ) from exc
     environment["CUDA_VISIBLE_DEVICES"] = selected
-    return str(physical_device)
+    return selected

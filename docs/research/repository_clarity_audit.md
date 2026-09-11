@@ -1031,3 +1031,20 @@ contained guesses. Removed both:
 - Validation: 40 shard, encode-target, script-loader and trainer regularizer tests
   passed. Regressions exercise both source representations and retained empty /
   whitespace behavior. Touched-file Ruff and diff whitespace checks pass.
+
+## Rank-local CUDA mask interpretation
+
+- CUDA visibility narrowing validates the complete ordinal list before selecting
+  a rank. Empty entries are no longer silently removed, negative/non-ordinal
+  tokens are rejected, and duplicate ordinals are compared numerically so 0 and
+  00 cannot assign two local ranks to the same device.
+- Removed redundant selected-device parsing after validated selection. Failure
+  leaves the supplied environment unchanged; valid selection publishes one
+  canonical ordinal. This path continues to support integer ordinals only.
+- Retained the standalone launch-environment function/module as a pre-import
+  boundary: CUDA visibility must be set before trainer/Torch/Ray initialization.
+  CLI/report filename and schema constants remain real external boundaries;
+  no broad relocation of evaluation fixtures or standalone probe scripts made.
+- Validation: 16 online entrypoint and torch-free config tests passed, including
+  malformed-mask/no-mutation regressions and existing rank-to-device mappings.
+  Touched-file Ruff and diff whitespace checks pass.
