@@ -407,3 +407,18 @@ def test_metrics_resume_requires_declared_position_column_even_for_new_file(tmp_
     with pytest.raises(ValueError, match="missing resume column 'step'"):
         MetricsCSV(path, ("epoch", "loss"), resume_at=("step", 1))
     assert not path.exists()
+
+
+@pytest.mark.parametrize("quoted_name", ['"loss"', 'loss"detail'])
+def test_metrics_header_roundtrips_quotes_and_resumes(tmp_path, quoted_name):
+    import csv
+
+    path = tmp_path / "metrics.csv"
+    columns = ("epoch", quoted_name)
+    writer = MetricsCSV(path, columns)
+    writer.append("0,0.5\n")
+    writer.append("1,0.4\n")
+    MetricsCSV(path, columns, resume_at=("epoch", 1))
+    with path.open(newline="") as handle:
+        rows = list(csv.reader(handle))
+    assert rows == [list(columns), ["0", "0.5"]]

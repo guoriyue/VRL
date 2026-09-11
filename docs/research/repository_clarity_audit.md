@@ -2893,3 +2893,17 @@ this combined regression is compatibility evidence, not architectural completion
   preserve existing contents or leave absent files absent; an unknown resume
   column is rejected for a new file. Touched-file Ruff/diff checks passed. Full
   repository review remains active.
+
+## Metrics header uses the same CSV grammar as readers
+
+- MetricsCSV accepted quote characters in column names but joined names with
+  commas directly. A literal name such as '"loss"' was read as loss by a CSV
+  parser, so the initialized schema did not round-trip through the file format.
+- Use csv.writer with an explicit newline to produce the header inside the
+  existing initialization owner. Ordinary headers remain byte-identical. Keep
+  current column validation and resume schema comparison; no wrapper function
+  or expanded vocabulary. Existing incorrectly escaped quoted-name files fail
+  schema matching rather than being silently interpreted as the new schema.
+- Validation: 178 metrics-IO and online trainer tests passed. Standard CSV reads
+  preserve both leading and embedded quotes after initialization, append and
+  resume alignment. Touched-file Ruff/diff checks passed. Full review is active.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import logging
 import os
 from collections.abc import Sequence
@@ -306,7 +307,9 @@ class MetricsCSV:
             or len(column_names) != len(set(column_names))
         ):
             raise ValueError("metrics columns must be unique non-empty CSV-safe strings")
-        normalized_header = ",".join(column_names) + "\n"
+        header = io.StringIO()
+        csv.writer(header, lineterminator="\n").writerow(column_names)
+        normalized_header = header.getvalue()
         if resume_at is None:
             path.write_text(normalized_header)
             return
