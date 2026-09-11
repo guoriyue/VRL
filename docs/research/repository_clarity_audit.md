@@ -5865,3 +5865,17 @@ The broader repository audit remains incomplete.
   model tests: 102 passed with 16 dependency warnings. Touched-file Ruff and diff
   checks pass. This validates synthetic/model-component contracts, not a full
   production training run. Broader repository audit remains incomplete.
+
+## Forward prepared backbone branches through one argument-conversion boundary
+
+- DiffusionBackboneCaller now passes DiffusionBranch directly to _forward_branch.
+  Move the repeated as_transformer_kwargs conversion from four CFG/no-CFG call
+  sites to this existing execution boundary. Remove the old _call_transformer
+  name without a forwarding alias; transformer invocation order is unchanged.
+- Keep runner branch construction, postprocessing and finalization hooks, which
+  preserve cross-family execution shape. Keep current output-format adaptation;
+  this review does not establish that all model callers use a single return type.
+  No new facade or numeric/output compatibility change is introduced.
+- Existing CFG and backbone contract tests: 11 passed, covering batched, separate
+  and disabled CFG invocation counts and results. Touched-file Ruff and diff
+  checks pass; no old local references remain. Broader audit remains incomplete.

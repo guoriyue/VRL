@@ -187,11 +187,11 @@ class DiffusionBackboneCaller:
             uncond_branch = self.runner.build_branch(request, "uncond")
             if self.runner.cfg_mode == "batched_cfg":
                 batched = pack_batched_cfg(cond=cond_branch, uncond=uncond_branch)
-                raw = self._call_transformer(batched.as_transformer_kwargs())
+                raw = self._forward_branch(batched)
                 raw_uncond, raw_cond = split_batched_cfg_output(raw)
             elif self.runner.cfg_mode == "separate_cfg":
-                raw_cond = self._call_transformer(cond_branch.as_transformer_kwargs())
-                raw_uncond = self._call_transformer(uncond_branch.as_transformer_kwargs())
+                raw_cond = self._forward_branch(cond_branch)
+                raw_uncond = self._forward_branch(uncond_branch)
             else:
                 raise ValueError("single_branch runner cannot run CFG")
             noise_pred_uncond = self.runner.postprocess_branch(
@@ -200,7 +200,7 @@ class DiffusionBackboneCaller:
                 raw_uncond,
             )
         else:
-            raw_cond = self._call_transformer(cond_branch.as_transformer_kwargs())
+            raw_cond = self._forward_branch(cond_branch)
             noise_pred_uncond = None
 
         noise_pred_cond = self.runner.postprocess_branch(request, cond_branch, raw_cond)
@@ -231,8 +231,10 @@ class DiffusionBackboneCaller:
             noise_pred_uncond=noise_pred_uncond,
         )
 
-    def _call_transformer(self, kwargs: dict[str, Any]) -> torch.Tensor:
-        output = self.transformer(**kwargs)
+    def _forward_branch(self, branch: DiffusionBranch) -> torch.Tensor:
+        """Invoke one prepared branch and extract its prediction tensor."""
+
+        output = self.transformer(**branch.as_transformer_kwargs())
         if isinstance(output, torch.Tensor):
             return output
         if isinstance(output, tuple):
