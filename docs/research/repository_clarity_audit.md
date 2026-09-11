@@ -6737,3 +6737,16 @@ The broader repository audit remains incomplete.
   keep model Any because factory plugins have two supported execution shapes.
   Reward inference/service suites: 136 passed, one skipped. Touched-file Ruff
   and diff checks pass. The repository-wide audit remains incomplete.
+
+## Online metric integer handling uses the shared validator
+
+- OnlineMetricRow now validates epoch/trained_prompt_num with require_exact_int,
+  already used by MetricsCSV for resume positions, rather than maintaining a
+  second bool/type/lower-bound expression. Error paths still name the field.
+- Full-precision serialization reads the validated integer fields directly
+  instead of converting them to integers again. Keep metadata-derived column
+  order and formatting, and keep initialization inside OnlineMetricsCSV: no
+  second header table or new schema helper is introduced.
+- Metrics IO suite: 36 passed, including invalid integer fields, full-precision
+  serialization and resume alignment. Touched-file Ruff and diff checks pass.
+  This slice does not establish completion of the broader repository audit.

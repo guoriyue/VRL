@@ -141,9 +141,7 @@ class OnlineMetricRow:
 
     def __post_init__(self) -> None:
         for name in ("epoch", "trained_prompt_num"):
-            value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(f"online metric {name} must be a non-negative integer")
+            require_exact_int(getattr(self, name), path=f"online metric {name}", minimum=0)
         self._component_columns(self.component_names)
         if len(self.component_values) != len(self.component_names):
             raise ValueError(
@@ -250,7 +248,7 @@ class OnlineMetricRow:
             # Python float repr round-trips every finite binary64 value, including
             # signed zero. This preserves aggregated metrics, not source tensor bits.
             values = [
-                str(int(getattr(self, item.name)))
+                str(getattr(self, item.name))
                 if item.metadata.get("csv_format") == "d"
                 else repr(float(getattr(self, item.name)))
                 for item in self._fixed_fields()
