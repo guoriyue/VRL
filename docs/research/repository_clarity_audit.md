@@ -5987,3 +5987,17 @@ The broader repository audit remains incomplete.
 - Strict failure, orchestration and frozen-driver-offload tests: 34 passed. Tests
   cover collection failure, offload failure, no-parking and restoration failure.
   Touched-file Ruff and diff checks pass. Broader audit remains incomplete.
+
+## Reward launch parsing preserves explicit parking types
+
+- RewardRuntimeLaunchContract.from_component_config now requires a boolean
+  sleep_offload and uses require_exact_int for the nonnegative residual-byte
+  limit. Previously bool("false") enabled parking and int(1.5) truncated its
+  budget. Keep absent-field defaults and the open model-factory parameter bag.
+- Keep build_reward_scorer as transport-selection/lazy-import boundary. Keep
+  _build_prepared_model_in_pool: its separate frame allows failed lazy model
+  preparation references to be cleared before pool cleanup. Removing that helper
+  would change failure ownership, not merely reduce navigation.
+- Six invalid-config regressions failed before the fix. Runtime factory,
+  in-process scorer and service tests: 95 passed, one skipped. Touched-file Ruff
+  and diff checks pass. No new GPU parking benchmark; broader audit incomplete.
