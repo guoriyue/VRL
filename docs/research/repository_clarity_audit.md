@@ -2571,3 +2571,22 @@ this combined regression is compatibility evidence, not architectural completion
   and dtype for homogeneous inputs, the integer-loss example, and each of the
   six full-sequence fields. Touched-file Ruff and diff checks passed after
   removing an extra import-block blank line. Full review remains active.
+
+## Schedule construction consumes its declared config directly
+
+- OnlineTrainer supplies RolloutOrchestrationConfig to build_rollout_schedule.
+  Annotate that actual boundary and read reward_collection_mode directly rather
+  than treating a missing field as an implicit default. The strict schedule test
+  fixture now uses the real config and its default instead of a partial namespace.
+- The factory passes config.continuous to ContinuousRolloutSchedule.from_config,
+  whose parameter is now ContinuousRolloutConfig. Remove parent-object probing,
+  the synthetic missing-block fallback and unnecessary bool conversion while
+  projecting settings. TYPE_CHECKING imports preserve the runtime import boundary.
+- Keep the factory (mode selection), class constructor (runtime projection and
+  algorithm/isolation gates), and shared settings carrier (owner-loop handoff).
+  Their distinct responsibilities justify these interfaces; no extra wrapper or
+  config-default table is added. Existing config defaults and scheduling behavior
+  for valid inputs remain unchanged. Partial duck-typed configs are not the API.
+- Validation: 579 orchestration and config tests passed; touched-file Ruff and
+  diff checks passed. This is an ownership/interface clarification, not a claim
+  of throughput improvement or completed repository review.

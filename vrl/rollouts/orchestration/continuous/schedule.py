@@ -9,7 +9,7 @@ training work cannot starve rollout admission or completion harvesting.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vrl.rollouts.orchestration.continuous.owner import (
     ContinuousRolloutOwner,
@@ -18,6 +18,9 @@ from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSetting
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.rollouts.stats import RolloutStats
+
+if TYPE_CHECKING:
+    from vrl.trainers.core.types import ContinuousRolloutConfig
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +44,7 @@ class ContinuousRolloutSchedule:
     @classmethod
     def from_config(
         cls,
-        config: Any,
+        config: ContinuousRolloutConfig,
         *,
         lifecycle: RolloutRuntimeCoordinator,
         algorithm_tolerates_off_policy_staleness: bool,
@@ -51,30 +54,20 @@ class ContinuousRolloutSchedule:
         Copies resolved fields without importing the trainer-owned config type.
         """
 
-        # ContinuousRolloutConfig (vrl.trainers.core.types) is the single source of
-        # these defaults. The rollout layer receives its already-resolved fields so it
-        # needs no vrl.trainers import and keeps no second copy of the defaults.
-        cont = getattr(config, "continuous", None)
-        if cont is None:
-            raise RuntimeError(
-                "rollout_orchestration.schedule_mode='continuous' requires a continuous config "
-                "block (ContinuousRolloutConfig); none was provided",
-            )
-
         # Constructing the settings enforces max_stale_policy_versions >= 1 (its
         # __post_init__), so the fail-fast on an unsound zero-window config happens
         # here without a second copy of the check.
         settings = ContinuousRolloutSettings(
-            max_inflight_groups=cont.max_inflight_groups,
-            max_ready_bytes_mb=cont.max_ready_bytes_mb,
-            split_generation_reward=bool(cont.split_generation_reward),
-            max_unscored_groups=cont.max_unscored_groups,
-            max_unscored_bytes_mb=cont.max_unscored_bytes_mb,
-            max_generated_group_bytes_mb=cont.max_generated_group_bytes_mb,
-            max_stale_policy_versions=cont.max_stale_policy_versions,
-            wait_timeout_s=cont.wait_timeout_s,
-            queue_poll_interval_s=cont.queue_poll_interval_s,
-            fail_fast_errors=cont.fail_fast_errors,
+            max_inflight_groups=config.max_inflight_groups,
+            max_ready_bytes_mb=config.max_ready_bytes_mb,
+            split_generation_reward=config.split_generation_reward,
+            max_unscored_groups=config.max_unscored_groups,
+            max_unscored_bytes_mb=config.max_unscored_bytes_mb,
+            max_generated_group_bytes_mb=config.max_generated_group_bytes_mb,
+            max_stale_policy_versions=config.max_stale_policy_versions,
+            wait_timeout_s=config.wait_timeout_s,
+            queue_poll_interval_s=config.queue_poll_interval_s,
+            fail_fast_errors=config.fail_fast_errors,
         )
 
         # A likelihood-free algorithm has no way to reweight off-policy samples, so

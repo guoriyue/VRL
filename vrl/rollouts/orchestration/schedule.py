@@ -42,7 +42,7 @@ class RolloutSchedule(Protocol):
 
 
 def build_rollout_schedule(
-    config: Any,
+    config: RolloutOrchestrationConfig,
     *,
     collector: Any,
     strategy: Any,
@@ -78,14 +78,14 @@ def build_rollout_schedule(
     )
 
     if mode is RolloutScheduleMode.STRICT_ON_POLICY:
-        requested_arm = getattr(config, "reward_collection_mode", None)
+        requested_arm = config.reward_collection_mode
         return StrictOnPolicyRolloutSchedule(
             lifecycle=lifecycle,
             reward_mode=None if requested_arm is None else RewardCollectionMode(requested_arm),
         )
     if mode is RolloutScheduleMode.CONTINUOUS:
         return ContinuousRolloutSchedule.from_config(
-            config,
+            config.continuous,
             lifecycle=lifecycle,
             algorithm_tolerates_off_policy_staleness=algorithm_tolerates_off_policy_staleness,
         )

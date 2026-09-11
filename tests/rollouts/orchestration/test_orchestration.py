@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -10,10 +9,10 @@ import pytest
 from tests.rollouts.collector._helpers import PromptCollectionFake
 
 
-def _schedule_config(mode: str) -> SimpleNamespace:
-    return SimpleNamespace(
-        schedule_mode=mode,
-    )
+def _schedule_config(mode: str):
+    from vrl.trainers.core.types import RolloutOrchestrationConfig
+
+    return RolloutOrchestrationConfig(schedule_mode=mode)
 
 
 def _batch(prompts: list[str], group_size: int):
