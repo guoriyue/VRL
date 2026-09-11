@@ -259,28 +259,6 @@ def cuda_peak_allocated_mb() -> float | None:
     return None if peak_bytes is None else peak_bytes / (1024 * 1024)
 
 
-def gpu_used_bytes(device: str | None = None) -> int:
-    """Driver-level physical bytes in use on a CUDA device (0 without CUDA).
-
-    ``device=None`` measures the process's current CUDA device. A non-CUDA
-    ``device`` string (or a CPU-only box) reads as 0 — memory-parking proofs
-    on CPU components are trivially satisfied.
-    """
-
-    if device is not None and not str(device).startswith("cuda"):
-        return 0
-    try:
-        import torch
-    except ImportError:
-        return 0
-    if not torch.cuda.is_available():
-        return 0
-    target = None if device is None else torch.device(device)
-    torch.cuda.synchronize(target)
-    free_bytes, total_bytes = torch.cuda.mem_get_info(target)
-    return int(total_bytes - free_bytes)
-
-
 def gpu_process_used_bytes(device: str | None = None) -> int:
     """Physical CUDA memory attributed to this process, including CuMem pools.
 
@@ -379,7 +357,6 @@ __all__ = [
     "cuda_peak_allocated_mb",
     "empty_cuda_cache",
     "gpu_process_used_bytes",
-    "gpu_used_bytes",
     "is_cuda_out_of_memory",
     "release_cuda_memory",
     "release_cuda_memory_for_parking",

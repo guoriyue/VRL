@@ -143,8 +143,7 @@ class WorkerMemoryParking:
             )
         baseline_gpu_used_bytes = None
         if state.required:
-            # Device-wide rather than process-local: the topology must keep other
-            # owners stable until the corresponding residual sample is taken.
+            # Compare this process against its own preload physical-memory baseline.
             baseline_gpu_used_bytes = gpu_process_used_bytes()
         self._phase = _ParkingPhase.ACTIVE
         self._failure_reason = None
