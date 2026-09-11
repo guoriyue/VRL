@@ -514,6 +514,19 @@ def test_model_precision_snapshot_records_effective_backend(
     }
 
 
+@pytest.mark.parametrize("count", [True, 1.5, "2", 0, -1])
+def test_generation_rejects_invalid_image_count_before_pipeline_access(count) -> None:
+    with pytest.raises(ValueError, match="num_images"):
+        sana_inference.generate_prompt_images(
+            None,
+            scheduler=None,
+            prompt="draw",
+            seed=0,
+            num_images=count,
+            device=torch.device("cpu"),
+        )
+
+
 def test_generation_preserves_device_autocast_query_failure(monkeypatch) -> None:
     failure = TypeError("device autocast query failed")
     calls = []

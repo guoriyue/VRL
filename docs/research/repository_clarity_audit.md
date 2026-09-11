@@ -5228,3 +5228,18 @@ this combined regression is compatibility evidence, not architectural completion
   and exactly one device-qualified call. SANA comparison, aesthetic evaluation
   and curve verdict suites: 71 passed. Touched-file Ruff and git diff --check
   pass. No real model generation was run; the repository audit remains open.
+
+## SANA generation requires an explicit positive integer image count
+
+- Replace the lower-bound-only num_images check with shared require_exact_int.
+  Booleans and fractions previously passed that check, while strings failed
+  through comparison TypeError. Invalid counts now fail before scheduler or
+  pipeline access with a named argument error.
+- Keep the shared inference function, scheduler adapter and protocol constants;
+  no new validation wrapper is introduced. Valid sampling, seeds, pipeline
+  placement and image conversion are unchanged.
+- Five invalid-count cases cover the boundary; three failed before the fix and
+  nonpositive integers already failed correctly. SANA comparison, aesthetic
+  evaluation and curve verdict suites: 76 passed. Touched-file Ruff and git
+  diff --check pass. Real model generation and wider audit completion remain
+  outside this local verification.
