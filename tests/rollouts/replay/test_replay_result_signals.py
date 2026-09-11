@@ -201,3 +201,43 @@ def test_signal_builder_rejects_mismatched_trajectory_mask() -> None:
             segment_name="image_tokens",
             log_prob=torch.zeros(2, 2),
         )
+
+
+@pytest.mark.parametrize("step_dim", [0, 1])
+def test_signal_builder_selects_declared_denoise_axis(step_dim: int) -> None:
+    from vrl.trajectory import TrajectoryAxis
+
+    batch, old_log_prob, token_mask = _discrete_batch()
+    trajectory = batch.trajectory
+    assert trajectory is not None
+    trajectory.axes["iteration"] = TrajectoryAxis("iteration", "denoise_step", 2)
+    segment = trajectory.segments["image_tokens"]
+    for tensor in segment.tensors.values():
+        if tensor.role in {"old_log_prob", "mask"}:
+            tensor.axes = ("iteration", "sample") if step_dim == 0 else ("sample", "iteration")
+            if step_dim == 0:
+                tensor.value = tensor.value.transpose(0, 1)
+
+    signal = (
+        TrajectorySignalBuilder(batch)
+        .single_segment(
+            segment_name="image_tokens",
+            log_prob=torch.zeros(2),
+            timestep_idx=1,
+        )
+        .primary
+    )
+
+    assert torch.equal(signal.old_log_prob, old_log_prob[:, 1])
+    assert torch.equal(signal.mask, token_mask[:, 1])
+
+
+def test_signal_builder_does_not_guess_token_axis_is_denoise_step() -> None:
+    batch, _, _ = _discrete_batch()
+
+    with pytest.raises(ValueError, match="log_prob/old_log_prob shape mismatch"):
+        TrajectorySignalBuilder(batch).single_segment(
+            segment_name="image_tokens",
+            log_prob=torch.zeros(2),
+            timestep_idx=1,
+        )

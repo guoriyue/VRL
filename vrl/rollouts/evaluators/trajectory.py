@@ -14,7 +14,7 @@ from typing import Any
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
-from vrl.trajectory import TrajectoryBatch, TrajectorySegment
+from vrl.trajectory import TrajectoryBatch, TrajectorySegment, TrajectoryTensor
 from vrl.trajectory.device import move_value_to_device
 
 
@@ -100,16 +100,14 @@ class TrajectorySignalBuilder:
 
         resolved_old = old_log_prob
         if resolved_old is None:
-            resolved_old = self._select_loss_value_if_needed(
-                segment.role_tensor("old_log_prob").value,
-                log_prob,
+            resolved_old = self._select_denoise_step(
+                segment.role_tensor("old_log_prob"),
                 timestep_idx=timestep_idx,
             )
         resolved_mask = mask
         if resolved_mask is None:
             resolved_mask = self._mask_from_trajectory(
                 segment,
-                log_prob=log_prob,
                 timestep_idx=timestep_idx,
                 mask_key=mask_key,
             )
@@ -152,53 +150,36 @@ class TrajectorySignalBuilder:
         self,
         segment: TrajectorySegment,
         *,
-        log_prob: Any,
         timestep_idx: int | None,
         mask_key: str,
     ) -> Any:
         tensor = segment.tensors.get(mask_key)
-        value = (
-            tensor.value
-            if tensor is not None and tensor.role == "mask"
-            else segment.role_tensor("mask").value
-        )
-        return self._select_loss_value_if_needed(
-            value,
-            log_prob,
-            timestep_idx=timestep_idx,
-        )
+        if tensor is None or tensor.role != "mask":
+            tensor = segment.role_tensor("mask")
+        return self._select_denoise_step(tensor, timestep_idx=timestep_idx)
 
-    @classmethod
-    def _select_loss_value_if_needed(
-        cls,
-        value: Any,
-        log_prob: Any,
+    def _select_denoise_step(
+        self,
+        tensor: TrajectoryTensor,
         *,
         timestep_idx: int | None,
     ) -> Any:
-        if cls._same_shape(value, log_prob):
-            return value
-        if timestep_idx is None:
-            return value
-        value_shape = getattr(value, "shape", None)
-        log_prob_shape = getattr(log_prob, "shape", None)
-        if value_shape is None or log_prob_shape is None:
-            return value
-        if len(value_shape) == len(log_prob_shape) + 1 and int(value_shape[0]) == int(
-            log_prob_shape[0]
-        ):
-            selected = value[:, timestep_idx]
-            if cls._same_shape(selected, log_prob):
-                return selected
-        return value
+        """Select the declared denoise axis before moving recorded values."""
 
-    @staticmethod
-    def _same_shape(left: Any, right: Any) -> bool:
-        left_shape = getattr(left, "shape", None)
-        right_shape = getattr(right, "shape", None)
-        if left_shape is None or right_shape is None:
-            return True
-        return tuple(left_shape) == tuple(right_shape)
+        if timestep_idx is None:
+            return tensor.value
+        step_dims = [
+            dim
+            for dim, name in enumerate(tensor.axes)
+            if self.trajectory.axes[name].kind == "denoise_step"
+        ]
+        if not step_dims:
+            return tensor.value
+        if len(step_dims) != 1:
+            raise ValueError(f"tensor {tensor.name!r} must have exactly one denoise_step axis")
+        key = [slice(None)] * len(tensor.axes)
+        key[step_dims[0]] = timestep_idx
+        return tensor.value[tuple(key)]
 
 
 __all__ = ["TrajectorySignalBuilder"]

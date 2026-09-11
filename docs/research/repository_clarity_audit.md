@@ -2026,3 +2026,25 @@ tracing algorithm construction and evaluator selection together.
   remain unchanged; this slice does not redesign timestep-axis selection.
 - Validation: 78 replay/trajectory tests passed. Touched-file Ruff/diff checks
   passed; the removed method has no remaining references. Full review continues.
+
+## Signal timestep selection follows declared trajectory axes
+
+- Replaced the signal builder's rank/shape heuristic with selection of the
+  tensor axis declared as denoise_step. Previously an extra token dimension
+  could be mistaken for a timestep; selection also assumed dimension one.
+  The new method reads TrajectoryTensor axes and the trajectory axis kinds,
+  independently of the replay output shape. Multiple denoise-step axes fail
+  explicitly. Removed _same_shape and the old conditional selection method.
+- Keep the shared builder, role lookup, mask-name preference, explicit value
+  overrides and final signal shape validation. The remaining selection method
+  serves both recorded old log probabilities and masks; no new helper module,
+  class or ALL_CAPS table is needed. Cross-family signal construction remains
+  shared rather than duplicated for line-count reduction.
+- Denoise callers supply timestep_idx; token and chunk-autoregressive callers
+  retain their complete loss axes. Malformed token signals now reach the shape
+  error instead of being silently sliced to fit. Selection still precedes
+  device movement.
+- Validation: 81 replay/trajectory tests passed, including new renamed/reordered
+  denoise-axis cases and rejection of accidental token-axis slicing, plus the
+  existing diffusion deferred-device-move regression. Touched-file Ruff and
+  diff checks passed. The full repository review remains ongoing.
