@@ -584,9 +584,7 @@ class GenericDiffusionBatchExecutor(DiffusionBatchExecutorBase):
         super().__init__(model, gatherer=gatherer)
         self.family = family
         self.task = task
-        self.default_num_frames = int(num_frames)
-        self.default_max_sequence_length = (
-            None if max_sequence_length is None else int(max_sequence_length)
-        )
-        self.default_fps = None if fps is None else int(fps)
+        self.default_num_frames = num_frames
+        self.default_max_sequence_length = max_sequence_length
+        self.default_fps = fps
         self.batch_passthrough_keys = tuple(batch_passthrough_keys)

@@ -218,3 +218,18 @@ def test_direct_denoise_request_validates_geometry(field, value) -> None:
     values[field] = value
     with pytest.raises(ValueError, match=field):
         DenoiseRequest(**values)
+
+
+@pytest.mark.parametrize("field", ["num_frames", "fps", "max_sequence_length"])
+@pytest.mark.parametrize("value", [True, 1.5, "2"])
+def test_generic_executor_preserves_invalid_defaults_for_request_validation(field, value) -> None:
+    executor = GenericDiffusionBatchExecutor(
+        model=object(),
+        family="test",
+        task="t2i",
+        **{field: value},
+    )
+    request = _request()
+    request.sampling.pop(field, None)
+    with pytest.raises(ValueError, match="frame_count" if field == "num_frames" else field):
+        executor.parse_sampling_params(request)

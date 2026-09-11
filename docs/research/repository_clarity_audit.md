@@ -1509,3 +1509,15 @@ close that architectural scope.
   surface; this changes neither numerical behavior nor configuration defaults.
 - Validation: 109 full-sequence binding and Echo flow-policy tests passed.
   Touched-file Ruff and git diff --check pass.
+
+## Generic diffusion defaults do not bypass request validation
+
+- Removed int coercion of num_frames/fps/max_sequence_length from the generic
+  executor constructor. Original default values reach the existing parser/request
+  owner, so malformed values cannot be normalized into accepted integers first.
+- Kept validation on consumption rather than adding duplicate constructor guards;
+  request overrides and optional defaults retain their precedence. Kept the generic
+  executor as the shared implementation replacing behavior-free family subclasses.
+- Validation: 118 full-sequence/Echo tests passed. Nine new tests follow malformed
+  defaults through the actual executor parser and require the existing error.
+  Touched-file Ruff and git diff --check pass.
