@@ -1237,3 +1237,15 @@ contained guesses. Removed both:
   resolution and fleet placement have separate owners and remain distinct.
   Host-memory proc parsing and capture/logging remain shared OS and logging
   adapters, consistent with the earlier ownership review.
+
+## Trajectory resolver error flow
+
+- Removed _fail, which only raised TrajectoryResolverError. Error branches now
+  raise directly, making termination visible at the check and avoiding an extra
+  forwarding frame. Wrapped slicing errors explicitly preserve their cause.
+- Kept tensor/role accessors as the resolver API, reference parsing and recursive
+  slicing as layout logic, and map_tensor_tree/byte counting as shared algorithms.
+  Storage-policy Literal-derived sets are schema boundaries, not duplicated
+  business vocabulary. No storage dtype, conversion, indexing or schema changes.
+- Validation: 43 trajectory/replay tests plus 24 trajectory-granularity and
+  Janus/Emu3/GLM replay tests passed. Touched-file Ruff and git diff --check pass.

@@ -36,7 +36,7 @@ class TrajectoryResolver:
 
         trajectory = getattr(batch, "trajectory", None)
         if not isinstance(trajectory, TrajectoryBatch):
-            _fail("RolloutBatch is missing first-class TrajectoryBatch")
+            raise TrajectoryResolverError("RolloutBatch is missing first-class TrajectoryBatch")
         return cls(trajectory=trajectory)
 
     def primary_trainable_segment_name(self) -> str:
@@ -44,17 +44,19 @@ class TrajectoryResolver:
 
         if self.trajectory.primary_segment is not None:
             return self.trajectory.primary_segment
-        _fail("TrajectoryBatch has no trainable segment")
+        raise TrajectoryResolverError("TrajectoryBatch has no trainable segment")
 
     def tensor(self, segment_name: str, tensor_name: str) -> TrajectoryTensor:
         """Read one named tensor from a trajectory segment."""
 
         segment = self.trajectory.segments.get(segment_name)
         if segment is None:
-            _fail(f"unknown trajectory segment {segment_name!r}")
+            raise TrajectoryResolverError(f"unknown trajectory segment {segment_name!r}")
         tensor = segment.tensors.get(tensor_name)
         if tensor is None:
-            _fail(f"segment {segment_name!r} is missing tensor {tensor_name!r}")
+            raise TrajectoryResolverError(
+                f"segment {segment_name!r} is missing tensor {tensor_name!r}"
+            )
         return tensor
 
     def tensor_value(self, segment_name: str, tensor_name: str) -> Any:
@@ -67,7 +69,7 @@ class TrajectoryResolver:
 
         segment = self.trajectory.segments.get(segment_name)
         if segment is None:
-            _fail(f"unknown trajectory segment {segment_name!r}")
+            raise TrajectoryResolverError(f"unknown trajectory segment {segment_name!r}")
         return segment.role_tensor(role)
 
     def role_value(self, segment_name: str, role: TensorRole) -> Any:
@@ -89,10 +91,12 @@ class TrajectoryResolver:
         name = segment_name or self.primary_trainable_segment_name()
         segment = self.trajectory.segments.get(name)
         if segment is None:
-            _fail(f"unknown trajectory segment {name!r}")
+            raise TrajectoryResolverError(f"unknown trajectory segment {name!r}")
         replay = segment.replay_inputs.get(replay_input_name)
         if replay is None:
-            _fail(f"segment {name!r} is missing replay input {replay_input_name!r}")
+            raise TrajectoryResolverError(
+                f"segment {name!r} is missing replay input {replay_input_name!r}"
+            )
         out: dict[str, Any] = {}
         for ref in replay.tensor_refs:
             segment_ref, tensor_name = _split_ref(
@@ -100,7 +104,7 @@ class TrajectoryResolver:
                 "tensor",
             )
             if segment_ref != name:
-                _fail(
+                raise TrajectoryResolverError(
                     f"replay input {name}.{replay_input_name} crosses segment boundary "
                     f"with tensor ref {ref!r}",
                 )
@@ -124,10 +128,10 @@ class TrajectoryResolver:
 
 def _split_ref(ref: str, kind: str) -> tuple[str, str]:
     if "." not in ref:
-        _fail(f"{kind} ref {ref!r} must be 'segment.name'")
+        raise TrajectoryResolverError(f"{kind} ref {ref!r} must be 'segment.name'")
     segment_name, name = ref.split(".", 1)
     if not segment_name or not name:
-        _fail(f"{kind} ref {ref!r} must be 'segment.name'")
+        raise TrajectoryResolverError(f"{kind} ref {ref!r} must be 'segment.name'")
     return segment_name, name
 
 
@@ -135,12 +139,12 @@ def _slice_axis(value: Any, ref: str, axis_dim: int, axis_index: int) -> Any:
     shape = _shape(value)
     if shape is not None:
         if axis_dim >= len(shape):
-            _fail(
+            raise TrajectoryResolverError(
                 f"tensor {ref!r} rank {len(shape)} cannot slice axis dim {axis_dim}",
             )
         axis_length = shape[axis_dim]
         if axis_index >= axis_length:
-            _fail(
+            raise TrajectoryResolverError(
                 f"tensor {ref!r} axis index {axis_index} is out of range for length {axis_length}",
             )
     select = getattr(value, "select", None)
@@ -148,7 +152,7 @@ def _slice_axis(value: Any, ref: str, axis_dim: int, axis_index: int) -> Any:
         try:
             return select(axis_dim, axis_index)
         except Exception as exc:  # pragma: no cover - defensive for tensor-like objects.
-            _fail(f"failed to slice tensor {ref!r}: {exc}")
+            raise TrajectoryResolverError(f"failed to slice tensor {ref!r}: {exc}") from exc
     try:
         key = [slice(None)] * (axis_dim + 1)
         key[axis_dim] = axis_index
@@ -163,7 +167,7 @@ def _slice_sequence_axis(value: Any, axis_dim: int, axis_index: int, ref: str) -
             return value[axis_index]
         return [_slice_sequence_axis(item, axis_dim - 1, axis_index, ref) for item in value]
     except Exception as exc:  # pragma: no cover - defensive for non-indexable values.
-        _fail(f"failed to slice tensor {ref!r}: {exc}")
+        raise TrajectoryResolverError(f"failed to slice tensor {ref!r}: {exc}") from exc
 
 
 def _shape(value: Any) -> tuple[int, ...] | None:
@@ -174,10 +178,6 @@ def _shape(value: Any) -> tuple[int, ...] | None:
         return (len(value),)
     except TypeError:
         return None
-
-
-def _fail(message: str) -> None:
-    raise TrajectoryResolverError(message)
 
 
 __all__ = [
