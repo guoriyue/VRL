@@ -38,6 +38,23 @@ def test_ar_split_and_concat_rows_preserve_nested_kv_order() -> None:
     )
 
 
+@pytest.mark.parametrize("nested", [False, True])
+def test_ar_split_rejects_scalar_tensor_without_batch_dimension(nested) -> None:
+    value = torch.tensor(1.0)
+    if nested:
+        value = {"cache": value}
+    with pytest.raises(ValueError, match="leading batch dimension"):
+        ar_split_rows(value, 1)
+
+
+def test_ar_scatter_scalar_error_preserves_existing_row() -> None:
+    original = torch.ones(1, 2)
+    rows = ARCacheRows([original])
+    with pytest.raises(ValueError, match="leading batch dimension"):
+        rows.scatter([0], torch.tensor(1.0))
+    assert rows[0] is original
+
+
 def test_ar_split_rows_rejects_wrong_batch_size() -> None:
     with pytest.raises(ValueError, match="cannot split tensor"):
         ar_split_rows(torch.zeros(2, 4), 3)

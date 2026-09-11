@@ -4380,6 +4380,19 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## AR cache splitting diagnoses scalar tensors at the row boundary
+
+- Reject scalar tensors explicitly before indexing shape[0], reporting the
+  missing leading batch dimension rather than an incidental tuple IndexError.
+  Direct, nested and scatter regressions failed before the change; scatter
+  coverage also confirms that a rejected value leaves the original row intact.
+- Keep shared split/concat functions used by GLM, native attention and ARCacheRows,
+  and retain HF cache conversion helpers as framework adapters. Do not force
+  non-owning callers through a mutable cache container merely to remove helpers.
+- Cache-row and native attention suites: 35 passed. Touched-file Ruff checks
+  pass. Valid tensor slicing and cache reconstruction are unchanged; the wider
+  repository clarity audit remains incomplete.
+
 ## AR backend factory name states that it constructs an object
 
 - Rename resolve_attention_backend to build_attention_backend, updating the

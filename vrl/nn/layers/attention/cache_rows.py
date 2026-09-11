@@ -118,6 +118,8 @@ def _is_hf_cache(value: Any) -> bool:
 
 def _split_plain_rows(value: Any, batch_size: int) -> list[Any]:
     if isinstance(value, torch.Tensor):
+        if value.ndim == 0:
+            raise ValueError("cannot split scalar AR tensor: expected a leading batch dimension")
         if value.shape[0] != batch_size:
             raise ValueError(
                 f"cannot split tensor with batch={value.shape[0]} into {batch_size} rows",
