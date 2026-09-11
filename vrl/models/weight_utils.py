@@ -24,6 +24,9 @@ from vrl.utils.config import require_exact_int
 def unwrap_compile_and_ddp(module: Any) -> Any:
     """Peel torch.compile (``_orig_mod``) and DDP / FSDP1 (``.module``) wrappers.
 
+    Only framework wrapper instances are peeled; a normal model may own a
+    child named ``module`` or ``_orig_mod`` without being a wrapper.
+
     Sync payload keys live in the policy's uncompiled, unwrapped namespace. Both
     ends peel through here: the sync sender
     (``trainers.weight_sync.flatten_trainable_module_state``) and the receiver
@@ -39,12 +42,17 @@ def unwrap_compile_and_ddp(module: Any) -> Any:
     keys on a still-compiled module would mismatch.
     """
 
+    from torch._dynamo.eval_frame import OptimizedModule
+    from torch.distributed.fsdp import FullyShardedDataParallel
+    from torch.nn.parallel import DistributedDataParallel
+
     while True:
-        unwrapped = getattr(module, "_orig_mod", module)
-        unwrapped = getattr(unwrapped, "module", unwrapped)
-        if unwrapped is module:
+        if isinstance(module, OptimizedModule):
+            module = module._orig_mod
+        elif isinstance(module, (DistributedDataParallel, FullyShardedDataParallel)):
+            module = module.module
+        else:
             return module
-        module = unwrapped
 
 
 def load_weights_into(

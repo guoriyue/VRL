@@ -147,3 +147,23 @@ def test_state_slots_reject_ambiguous_versions_without_replacing_state(version, 
 def test_state_slots_require_exact_retention_limit(limit):
     with pytest.raises(ValueError, match="max_retained"):
         TrainableStateSlots(max_retained=limit)
+
+
+@pytest.mark.parametrize("child_name", ["module", "_orig_mod"])
+def test_unwrap_preserves_ordinary_named_submodules(child_name) -> None:
+    import torch
+
+    from vrl.models.weight_utils import load_weights_into, unwrap_compile_and_ddp
+    from vrl.trainers.weight_sync import flatten_trainable_module_state
+
+    model = torch.nn.Module()
+    model.register_parameter("scale", torch.nn.Parameter(torch.tensor([2.0])))
+    model.add_module(child_name, torch.nn.Linear(2, 1, bias=False))
+    assert unwrap_compile_and_ddp(model) is model
+
+    payload = flatten_trainable_module_state({"policy": model})
+    assert set(payload) == {"policy.scale", f"policy.{child_name}.weight"}
+    replacement = {name: torch.full_like(value, 7) for name, value in payload.items()}
+    load_weights_into(model, replacement, prefix="policy")
+    assert torch.equal(model.scale, torch.tensor([7.0]))
+    assert torch.all(getattr(model, child_name).weight == 7)

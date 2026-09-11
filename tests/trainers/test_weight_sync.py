@@ -122,7 +122,7 @@ def test_flatten_trainable_module_state_skips_frozen_parameters() -> None:
 # State export contract (readiness P5): rollout payload keys must be flat
 # policy-facing names — no training-time wrapper prefix leaks through.
 # --------------------------------------------------------------------------
-class _DDPLike(torch.nn.Module):
+class _DDPLike(torch.nn.parallel.DistributedDataParallel):
     """Mimics DDP / FSDP1: the inner module sits under ``.module`` so the
     wrapper's own ``state_dict()`` keys carry a ``module.`` prefix.
 
@@ -133,7 +133,7 @@ class _DDPLike(torch.nn.Module):
     """
 
     def __init__(self, inner: torch.nn.Module) -> None:
-        super().__init__()
+        torch.nn.Module.__init__(self)
         self.module = inner
 
 

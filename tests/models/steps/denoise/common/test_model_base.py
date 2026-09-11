@@ -68,12 +68,6 @@ class _PluralAdapterTransformer(nn.Linear):
         self.adapters_enabled = True
 
 
-class _CompiledWrapper(nn.Module):
-    def __init__(self, module: nn.Module) -> None:
-        super().__init__()
-        self._orig_mod = module
-
-
 class _ModelBaseStub(DiffusionModelBase):
     precision = RolePrecision(
         dtype="fp32",
@@ -528,7 +522,7 @@ def test_load_trainable_state_accepts_compiled_transformer_wrapper() -> None:
     """Checks weight sync loads into torch.compile wrapped modules."""
     runtime = _ModelBaseStub()
     original = runtime.transformer
-    runtime._set_transformer(_CompiledWrapper(original))
+    runtime._set_transformer(torch.compile(original))
     replacement = {
         "weight": torch.full_like(original.weight, 2.0),
         "bias": torch.full_like(original.bias, 3.0),

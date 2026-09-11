@@ -2281,3 +2281,19 @@ this combined regression is compatibility evidence, not architectural completion
   17.16 seconds, including local real-Ray ACK/deadline/partial-transfer tests.
   This does not establish multi-node or full-model training performance. Full
   repository review remains open.
+
+## Weight namespace unwrapping recognizes framework types
+
+- unwrap_compile_and_ddp now peels actual OptimizedModule, DDP and FSDP1
+  instances. Attribute-name guessing previously peeled any ordinary child named
+  module or _orig_mod, potentially excluding the parent's other parameters from
+  export and changing the accepted weight namespace.
+- Keep this shared framework adapter and its lazy imports, nested wrapping,
+  and PEFT preservation. No wrapper registry, extra class or ALL_CAPS table.
+  Updated the DDP test double to identify as DDP and replaced a compile-shaped
+  fake with torch.compile; nominal wrapper types are now part of the contract.
+- Validation: 197 weight, checkpoint, DDP and denoise-base tests; 61 FSDP/strategy
+  tests (two optional tests skipped); and 11 PEFT adapter tests passed, totaling
+  269 passes. New export/load regressions retain ordinary module/_orig_mod
+  children and a sibling trainable parameter. Touched-file Ruff and diff checks
+  passed. No full multi-node training claim; repository review remains active.
