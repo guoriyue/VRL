@@ -5791,3 +5791,18 @@ The broader repository audit remains incomplete.
 - Both regression arms failed before the fix because initial weights were pushed.
   All 216 continuous orchestration tests pass. Touched-file Ruff and diff checks
   pass. No production throughput measurement; broader audit remains incomplete.
+
+## Reuse exact-integer validation at token scheduling boundaries
+
+- TokenLoopInit row_count/step_count, TokenStepBatch position and the token loop's
+  optional scheduler_batch_size now call the existing require_exact_int helper.
+  Remove four handwritten bool/type/lower-bound checks while retaining the same
+  accepted values and ValueError behavior. Diagnostics now include the value and
+  distinguish an invalid type from an invalid lower bound.
+- Keep row-list emptiness, uniqueness and row-routing validation with their
+  existing owners. Keep cache gather/scatter and the token-step protocol types:
+  these represent actual family-neutral state-routing boundaries. No new helper,
+  wrapper class or family import is introduced; config utilities remain a leaf.
+- Existing token loop, scheduler batching and NextStep runner tests: 33 passed.
+  Touched-file Ruff and diff checks pass. No performance claim; broader audit
+  remains incomplete.

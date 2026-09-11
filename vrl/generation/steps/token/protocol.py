@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from vrl.utils.config import require_exact_int
+
 
 @dataclass(slots=True)
 class TokenLoopInit:
@@ -26,18 +28,8 @@ class TokenLoopInit:
     row_lanes: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if (
-            isinstance(self.row_count, bool)
-            or not isinstance(self.row_count, int)
-            or self.row_count < 1
-        ):
-            raise ValueError("TokenLoopInit.row_count must be a positive integer")
-        if (
-            isinstance(self.step_count, bool)
-            or not isinstance(self.step_count, int)
-            or self.step_count < 1
-        ):
-            raise ValueError("TokenLoopInit.step_count must be a positive integer")
+        require_exact_int(self.row_count, path="TokenLoopInit.row_count", minimum=1)
+        require_exact_int(self.step_count, path="TokenLoopInit.step_count", minimum=1)
 
 
 @dataclass(slots=True)
@@ -59,10 +51,7 @@ class TokenStepBatch:
             raise ValueError("TokenStepBatch.row_indices must be non-negative")
         if len(set(self.row_indices)) != len(self.row_indices):
             raise ValueError("TokenStepBatch.row_indices must be unique")
-        if isinstance(self.position, bool) or not isinstance(self.position, int):
-            raise ValueError("TokenStepBatch.position must be an integer")
-        if self.position < 0:
-            raise ValueError("TokenStepBatch.position must be non-negative")
+        require_exact_int(self.position, path="TokenStepBatch.position", minimum=0)
 
 
 @dataclass(slots=True)

@@ -105,7 +105,7 @@ def test_loop_defaults_to_one_full_row_batch() -> None:
 
 
 def test_loop_rejects_invalid_batch_size() -> None:
-    with pytest.raises(ValueError, match="scheduler_batch_size must be a positive integer"):
+    with pytest.raises(ValueError, match="scheduler_batch_size must be >= 1"):
         TokenAutoregressiveLoop(
             runner=_DeterministicRunner(),
             scheduler_batch_size=0,

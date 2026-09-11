@@ -13,6 +13,7 @@ from typing import Any
 
 from vrl.generation.steps.token import TokenLoopInit, TokenStepBatch, TokenStepOutput
 from vrl.nn.layers.attention.cache_rows import ARCacheRows
+from vrl.utils.config import require_exact_int
 
 
 @dataclass(slots=True)
@@ -78,14 +79,8 @@ class TokenAutoregressiveLoop:
         self.scheduler_batch_size = scheduler_batch_size
         self.init_args = init_args
         self.init_kwargs = init_kwargs
-        if self.scheduler_batch_size is None:
-            return
-        if (
-            isinstance(self.scheduler_batch_size, bool)
-            or not isinstance(self.scheduler_batch_size, int)
-            or self.scheduler_batch_size < 1
-        ):
-            raise ValueError("scheduler_batch_size must be a positive integer")
+        if scheduler_batch_size is not None:
+            require_exact_int(scheduler_batch_size, path="scheduler_batch_size", minimum=1)
 
     def run(self) -> Any:
         init = self.runner.init_token(
