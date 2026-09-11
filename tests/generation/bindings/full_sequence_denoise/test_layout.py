@@ -61,7 +61,10 @@ def test_diffusion_layout_selects_request_owned_sde_window(
     assert layout.select_sde_window(no_window) is None
 
 
-@pytest.mark.parametrize("window_range", [(2, 2), "bad"])
+@pytest.mark.parametrize(
+    "window_range",
+    [(2, 2), "bad", "05", (0, 5, 10), (0,), (), (0.5, 5), (0, 5.5), (False, 5), ("0", 5)],
+)
 def test_denoise_options_reject_invalid_sde_window_range(window_range: object) -> None:
     """A malformed window range fails when the typed options are built."""
     with pytest.raises(ValueError, match="window_range"):
@@ -185,3 +188,9 @@ def _request(
         sampling=sampling,
         denoise=denoise,
     )
+
+
+@pytest.mark.parametrize("size", [0.5, True, "2"])
+def test_denoise_options_reject_noninteger_window_size(size: object) -> None:
+    with pytest.raises(ValueError, match="window_size"):
+        DenoiseRequestOptions(sde_window_size=size)

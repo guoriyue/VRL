@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig
+from vrl.utils.config import require_exact_int
 
 if TYPE_CHECKING:
     from vrl.config.sampling_schema import SamplingSection
@@ -47,15 +48,16 @@ class DenoiseRequestOptions:
             raise ValueError(
                 f"rollout.sde.type must be one of {get_args(SdeType)}; got {self.sde_type!r}",
             )
-        if self.sde_window_size < 0:
-            raise ValueError("rollout.sde.window_size must be >= 0")
+        require_exact_int(self.sde_window_size, path="rollout.sde.window_size", minimum=0)
         if self.sde_window_range is not None:
-            try:
-                lo, hi = (int(self.sde_window_range[0]), int(self.sde_window_range[1]))
-            except (TypeError, IndexError, ValueError) as exc:
-                raise ValueError(
-                    "rollout.sde.window_range must contain two integer values",
-                ) from exc
+            if (
+                not isinstance(self.sde_window_range, (tuple, list))
+                or len(self.sde_window_range) != 2
+            ):
+                raise ValueError("rollout.sde.window_range must contain two integer values")
+            lo, hi = self.sde_window_range
+            require_exact_int(lo, path="rollout.sde.window_range[0]")
+            require_exact_int(hi, path="rollout.sde.window_range[1]")
             if lo < 0 or hi <= lo:
                 raise ValueError("rollout.sde.window_range must satisfy 0 <= lo < hi")
             if self.sde_window_size > hi - lo:

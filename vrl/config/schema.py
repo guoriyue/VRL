@@ -334,7 +334,8 @@ class SdeConfig(ConfigBase):
     """Typed rollout.sde block. ``type`` is the user-facing allow-list, replacing
     hand-written membership checks previously duplicated in the
     schema cross-validator, layout, and flow_matching. The layout request-boundary
-    guard stays for over-the-wire request dicts; ``window_*`` stay permissive.
+    guard stays for over-the-wire request dicts. Window fields require integers;
+    their bounds are checked against the request schedule.
 
     ``type`` names the replay/sampling transition distribution (flow_grpo, ddim,
     or cps); it is orthogonal to ``denoise_mode`` (native/sde), which owns the
@@ -344,7 +345,7 @@ class SdeConfig(ConfigBase):
     # reader: vrl/generation/bindings/full_sequence_denoise/layout.py, which
     # owns the range/size checks against num_steps at the request boundary.
     window_size: StrictInt | None = None
-    window_range: list[int] | None = None
+    window_range: list[StrictInt] | None = None
 
 
 class RolloutConfig(ConfigBase):

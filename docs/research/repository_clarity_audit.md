@@ -860,3 +860,20 @@ contained guesses. Removed both:
 - Validation: 72 denoise, request-layout and experiment-config tests passed.
   Direct checks confirmed true/empty/partial mappings match constructor defaults
   and overrides. Touched-file Ruff and diff whitespace checks pass.
+
+## Exact SDE window declarations
+
+- DenoiseRequestOptions now requires a two-element list/tuple of integer window
+  bounds. Removed indexing plus int coercion that silently ignored a third bound,
+  accepted a two-character string as a range, or truncated fractional boundaries.
+  The window size likewise requires a non-negative integer.
+- SdeConfig uses StrictInt for range elements so YAML parsing cannot coerce values
+  before the request boundary checks them. Updated the stale permissiveness comment.
+- Retained the existing options owner, schedule-dependent range resolution and
+  seeded window selection. List-to-tuple normalization remains a representation
+  conversion without changing bounds. No standalone validator class or helper was
+  added; valid window selection and implicit full-schedule ranges are unchanged.
+- Validation: 378 config, denoise and layout tests passed. Regression cases cover
+  extra/missing bounds and malformed integer values; direct schema checks confirm
+  fractional/string/bool bounds fail before projection. Touched-file Ruff and
+  diff whitespace checks pass.
