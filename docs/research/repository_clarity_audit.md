@@ -4380,6 +4380,20 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Ray driver device discovery belongs to its validation owner
+
+- Move _get_device, _iter_parameter_devices and _cuda_device_index into
+  RayGenerationConfig. Their only production entry is validate_driver_state;
+  no external production or test caller imports these private helpers.
+- Retain distinct helpers for property access, recursive traversal and CUDA
+  index parsing. The traversal uses class dispatch for recursion and device
+  access; the two independent transformations are static methods. No new class
+  or generic device utility is introduced.
+- Preserve property-error propagation, cycle protection, parameter inspection,
+  current-device handling, lazy Torch import and ownership/memory guards.
+  Runtime-config and trainer-memory-guard suites: 55 passed, 3 dependency
+  warnings. Touched-file Ruff checks pass. The full clarity audit is ongoing.
+
 ## Generation and rollout joint regression after worker cleanup
 
 - Reviewed sample_batches helpers against diffusion, token AR and chunk AR

@@ -137,13 +137,13 @@ class RayGenerationConfig:
         # A model's primary device does not describe every training root.
         # Include both before checking the actual driver/rollout overlap.
         devices: set[int] = set()
-        model_device = _get_device(driver_bundle.model)
+        model_device = self._get_device(driver_bundle.model)
         if model_device is not None:
-            index = _cuda_device_index(model_device)
+            index = self._cuda_device_index(model_device)
             if index is not None:
                 devices.add(index)
-        for device in _iter_parameter_devices(driver_bundle.trainable_modules):
-            index = _cuda_device_index(device)
+        for device in self._iter_parameter_devices(driver_bundle.trainable_modules):
+            index = self._cuda_device_index(device)
             if index is not None:
                 devices.add(index)
         self._validate_driver_cuda_ownership(devices)
@@ -216,77 +216,79 @@ class RayGenerationConfig:
             raise ValueError(message)
         logger.warning(message)
 
-
-def _get_device(obj: Any) -> Any | None:
-    """Read an optional device without hiding errors from a declared property."""
-    if obj is None:
-        return None
-    try:
-        return obj.device
-    except AttributeError:
-        # A property may itself raise AttributeError. Only an absent declaration
-        # permits discovery through the trainable modules instead.
-        if inspect.getattr_static(obj, "device", None) is not None:
-            raise
-        return None
-
-
-def _iter_parameter_devices(obj: Any, seen: set[int] | None = None) -> Iterable[Any]:
-    if obj is None or isinstance(obj, (str, bytes)):
-        return
-    if seen is None:
-        seen = set()
-    obj_id = id(obj)
-    if obj_id in seen:
-        return
-    seen.add(obj_id)
-
-    if isinstance(obj, Mapping):
-        for value in obj.values():
-            yield from _iter_parameter_devices(value, seen)
-        return
-
-    device = _get_device(obj)
-    if device is not None:
-        yield device
-        return
-
-    parameters = getattr(obj, "parameters", None)
-    if callable(parameters):
-        for parameter in parameters():
-            device = getattr(parameter, "device", None)
-            if device is not None:
-                yield device
-        return
-
-    if isinstance(obj, Iterable):
-        for value in obj:
-            yield from _iter_parameter_devices(value, seen)
-
-
-def _cuda_device_index(device: Any) -> int | None:
-    device_type = getattr(device, "type", None)
-    if device_type is not None:
-        if str(device_type).lower() != "cuda":
+    @staticmethod
+    def _get_device(obj: Any) -> Any | None:
+        """Read an optional device without hiding errors from a declared property."""
+        if obj is None:
             return None
-        index = getattr(device, "index", None)
-        if index is not None:
-            return require_exact_int(index, path="CUDA device index", minimum=0)
-    else:
-        text = str(device).lower()
-        if not text.startswith("cuda"):
+        try:
+            return obj.device
+        except AttributeError:
+            # A property may itself raise AttributeError. Only an absent declaration
+            # permits discovery through the trainable modules instead.
+            if inspect.getattr_static(obj, "device", None) is not None:
+                raise
             return None
-        match = re.fullmatch(r"cuda(?::([0-9]+))?", text)
-        if match is None:
-            raise ValueError(f"invalid CUDA device {device!r}; expected 'cuda' or 'cuda:<index>'")
-        if match.group(1) is not None:
-            return int(match.group(1))
 
-    # Unindexed CUDA means the current device, not ordinal zero. This function
-    # runs at driver validation; parsing config still does not import Torch.
-    import torch
+    @classmethod
+    def _iter_parameter_devices(cls, obj: Any, seen: set[int] | None = None) -> Iterable[Any]:
+        if obj is None or isinstance(obj, (str, bytes)):
+            return
+        if seen is None:
+            seen = set()
+        obj_id = id(obj)
+        if obj_id in seen:
+            return
+        seen.add(obj_id)
 
-    return torch.cuda.current_device()
+        if isinstance(obj, Mapping):
+            for value in obj.values():
+                yield from cls._iter_parameter_devices(value, seen)
+            return
+
+        device = cls._get_device(obj)
+        if device is not None:
+            yield device
+            return
+
+        parameters = getattr(obj, "parameters", None)
+        if callable(parameters):
+            for parameter in parameters():
+                device = getattr(parameter, "device", None)
+                if device is not None:
+                    yield device
+            return
+
+        if isinstance(obj, Iterable):
+            for value in obj:
+                yield from cls._iter_parameter_devices(value, seen)
+
+    @staticmethod
+    def _cuda_device_index(device: Any) -> int | None:
+        device_type = getattr(device, "type", None)
+        if device_type is not None:
+            if str(device_type).lower() != "cuda":
+                return None
+            index = getattr(device, "index", None)
+            if index is not None:
+                return require_exact_int(index, path="CUDA device index", minimum=0)
+        else:
+            text = str(device).lower()
+            if not text.startswith("cuda"):
+                return None
+            match = re.fullmatch(r"cuda(?::([0-9]+))?", text)
+            if match is None:
+                raise ValueError(
+                    f"invalid CUDA device {device!r}; expected 'cuda' or 'cuda:<index>'"
+                )
+            if match.group(1) is not None:
+                return int(match.group(1))
+
+        # Unindexed CUDA means the current device, not ordinal zero. This function
+        # runs at driver validation; parsing config still does not import Torch.
+        import torch
+
+        return torch.cuda.current_device()
 
 
 __all__ = [
