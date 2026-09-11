@@ -130,16 +130,6 @@ class TrajectorySegment:
             )
         return matches[0]
 
-    def named_tensor(self, name: str) -> TrajectoryTensor:
-        """Read one named tensor from a segment or fail with the missing name."""
-
-        try:
-            return self.tensors[name]
-        except KeyError as exc:
-            raise RuntimeError(
-                f"segment {self.name!r} is missing tensor {name!r}",
-            ) from exc
-
 
 @dataclass(slots=True)
 class TrajectoryBatch:

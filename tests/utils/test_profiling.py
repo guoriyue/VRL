@@ -15,7 +15,7 @@ import torch
 
 from vrl.scripts.perf.profile_smoke import run_smoke
 from vrl.utils.profiling import (
-    ResolvedActivities,
+    ProfilerActivitySelection,
     TorchProfilerConfig,
     _safe_label,
     _safe_worker_name,
@@ -125,29 +125,29 @@ def test_safe_worker_name_includes_step() -> None:
 def test_resolve_unknown_activity_fails_fast() -> None:
     cfg = TorchProfilerConfig(activities=("cpu", "gpu"))
     with pytest.raises(ValueError, match="Unknown torch profiler activities"):
-        ResolvedActivities.from_config(cfg, supported={CPU, CUDA})
+        ProfilerActivitySelection.from_config(cfg, supported={CPU, CUDA})
 
 
 def test_resolve_cpu_only_reports_missing_cuda() -> None:
     cfg = TorchProfilerConfig(activities=("cpu", "cuda"))
-    resolved = ResolvedActivities.from_config(cfg, supported={CPU})
-    assert resolved.requested == ("cpu", "cuda")
-    assert resolved.effective == ("cpu",)
-    assert resolved.missing == ("cuda",)
-    assert resolved.torch_activities == (CPU,)
+    selection = ProfilerActivitySelection.from_config(cfg, supported={CPU})
+    assert selection.requested == ("cpu", "cuda")
+    assert selection.effective == ("cpu",)
+    assert selection.missing == ("cuda",)
+    assert selection.torch_activities == (CPU,)
 
 
 def test_resolve_all_supported() -> None:
     cfg = TorchProfilerConfig(activities=("cpu", "cuda"))
-    resolved = ResolvedActivities.from_config(cfg, supported={CPU, CUDA})
-    assert resolved.missing == ()
-    assert resolved.effective == ("cpu", "cuda")
+    selection = ProfilerActivitySelection.from_config(cfg, supported={CPU, CUDA})
+    assert selection.missing == ()
+    assert selection.effective == ("cpu", "cuda")
 
 
 def test_resolve_deduplicates_requested() -> None:
     cfg = TorchProfilerConfig(activities=("cpu", "cpu", "cuda"))
-    resolved = ResolvedActivities.from_config(cfg, supported={CPU, CUDA})
-    assert resolved.requested == ("cpu", "cuda")
+    selection = ProfilerActivitySelection.from_config(cfg, supported={CPU, CUDA})
+    assert selection.requested == ("cpu", "cuda")
 
 
 def test_capture_fails_fast_on_missing_activity(

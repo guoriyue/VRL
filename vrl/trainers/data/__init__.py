@@ -24,7 +24,6 @@ if TYPE_CHECKING:
         PickAPicPreferenceDataset as PickAPicPreferenceDataset,
     )
     from vrl.trainers.data.preferences import PreferenceBatch as PreferenceBatch
-    from vrl.trainers.data.preferences import collate_preference as collate_preference
     from vrl.trainers.data.prompt_sampler import PromptBatchSampler as PromptBatchSampler
     from vrl.trainers.data.prompt_sampler import PromptSamplingStrategy as PromptSamplingStrategy
     from vrl.trainers.data.prompts import ImageCaptionPromptDataset as ImageCaptionPromptDataset
@@ -46,7 +45,6 @@ _PUBLIC_EXPORTS = {
     "PromptExample": ("vrl.trainers.data.prompts", "PromptExample"),
     "PromptSamplingStrategy": ("vrl.trainers.data.prompt_sampler", "PromptSamplingStrategy"),
     "ResolvedArtifact": ("vrl.trainers.data.artifacts", "ResolvedArtifact"),
-    "collate_preference": ("vrl.trainers.data.preferences", "collate_preference"),
     "load_prompt_examples_from_config": (
         "vrl.trainers.data.prompts",
         "load_prompt_examples_from_config",

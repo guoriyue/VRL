@@ -130,7 +130,7 @@ class TrajectoryRolloutBatchBuilder:
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
         observations = segment.role_tensor("observation").value
-        kl_tensor = segment.named_tensor("kl").value
+        kl_tensor = segment.tensors["kl"].value
         device = observations.device
 
         if self.context.kl_reward_coef > 0:

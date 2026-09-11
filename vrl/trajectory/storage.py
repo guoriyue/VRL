@@ -80,18 +80,23 @@ class TrajectoryStoragePolicy:
         if self == TrajectoryStoragePolicy():
             return value
 
-        def _place(tensor: Any) -> Any:
+        from torch import Tensor
+
+        from vrl.models.dtypes import resolve_torch_dtype
+
+        dtype = None if self.dtype == "preserve" else resolve_torch_dtype(self.dtype)
+
+        def _place(tensor: Tensor) -> Tensor:
             kwargs: dict[str, Any] = {}
             if self.device == "cpu":
                 kwargs["device"] = "cpu"
-            dtype = _torch_dtype(self.dtype)
             if dtype is not None and tensor.is_floating_point():
                 kwargs["dtype"] = dtype
             if not kwargs:
                 return tensor
             return tensor.to(**kwargs)
 
-        return map_tensor_tree(value, _place, is_leaf=_is_torch_tensor)
+        return map_tensor_tree(value, _place, is_leaf=lambda leaf: isinstance(leaf, Tensor))
 
 
 def trajectory_tensor_bytes(value: object) -> int:
@@ -101,6 +106,8 @@ def trajectory_tensor_bytes(value: object) -> int:
 
 
 def _tensor_bytes(value: object, *, seen: set[int]) -> int:
+    from torch import Tensor
+
     if value is None:
         return 0
     value_id = id(value)
@@ -120,7 +127,7 @@ def _tensor_bytes(value: object, *, seen: set[int]) -> int:
             total += _tensor_bytes(view.metadata, seen=seen)
         return total
 
-    if _is_torch_tensor(value):
+    if isinstance(value, Tensor):
         return int(value.numel()) * int(value.element_size())
     if is_dataclass(value) and not isinstance(value, type):
         return sum(_tensor_bytes(getattr(value, item.name), seen=seen) for item in fields(value))
@@ -138,23 +145,6 @@ def _tensor_bytes(value: object, *, seen: set[int]) -> int:
     if isinstance(value, (list, tuple)):
         return sum(_tensor_bytes(inner, seen=seen) for inner in value)
     return 0
-
-
-def _torch_dtype(name: TrajectoryStorageDType) -> Any | None:
-    if name == "preserve":
-        return None
-
-    from vrl.models.dtypes import resolve_torch_dtype
-
-    return resolve_torch_dtype(name)
-
-
-def _is_torch_tensor(value: object) -> bool:
-    try:
-        import torch
-    except ImportError:  # pragma: no cover - torch is a project dependency.
-        return False
-    return isinstance(value, torch.Tensor)
 
 
 __all__ = [

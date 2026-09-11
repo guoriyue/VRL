@@ -77,7 +77,7 @@ class TorchProfilerConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class ResolvedActivities:
+class ProfilerActivitySelection:
     """What the profiler was asked for vs. what this machine can actually record.
 
     ``effective`` is the set the profiler runs with; ``missing`` is requested but
@@ -98,7 +98,7 @@ class ResolvedActivities:
         config: TorchProfilerConfig,
         *,
         supported: Any = None,
-    ) -> ResolvedActivities:
+    ) -> ProfilerActivitySelection:
         """Resolve requested activities against this machine's real capability.
 
         Unknown names fail fast (a typo'd activity is a config bug, not something to
@@ -212,18 +212,18 @@ def capture_torch_trace(
 
     import torch
 
-    resolved = ResolvedActivities.from_config(config)
-    if resolved.missing:
+    selection = ProfilerActivitySelection.from_config(config)
+    if selection.missing:
         raise RuntimeError(
             "Torch profiler requested unsupported activities "
-            f"{list(resolved.missing)} (requested={list(resolved.requested)}, "
+            f"{list(selection.missing)} (requested={list(selection.requested)}, "
             f"supported={[a.name.lower() for a in torch.profiler.supported_activities()]})",
         )
-    if not resolved.torch_activities:
+    if not selection.torch_activities:
         logger.warning(
             "Torch profiler enabled but no requested activity is supported "
             "(requested=%s); skipping capture for step=%d",
-            list(resolved.requested),
+            list(selection.requested),
             step,
         )
         yield
@@ -235,7 +235,7 @@ def capture_torch_trace(
     logger.info(
         "Starting torch profiler for step=%d (activities=%s); traces -> %s",
         step,
-        list(resolved.effective),
+        list(selection.effective),
         trace_dir,
     )
     handler = torch.profiler.tensorboard_trace_handler(
@@ -245,7 +245,7 @@ def capture_torch_trace(
     prof = None
     try:
         with torch.profiler.profile(
-            activities=list(resolved.torch_activities),
+            activities=list(selection.torch_activities),
             record_shapes=bool(config.record_shapes),
             profile_memory=bool(config.profile_memory),
             with_stack=bool(config.with_stack),
@@ -260,11 +260,11 @@ def capture_torch_trace(
     finally:
         summary_path = trace_dir / f"{safe_worker_name}.summary.txt"
         if prof is not None:
-            _write_summary(prof, summary_path, resolved.effective)
+            _write_summary(prof, summary_path, selection.effective)
         _write_manifest(
             trace_dir,
             config=config,
-            resolved=resolved,
+            selection=selection,
             step=step,
             worker_name=safe_worker_name,
             trace_subdir=trace_subdir,
@@ -354,7 +354,7 @@ def _write_manifest(
     trace_dir: Path,
     *,
     config: TorchProfilerConfig,
-    resolved: ResolvedActivities,
+    selection: ProfilerActivitySelection,
     step: int,
     worker_name: str,
     trace_subdir: str,
@@ -368,7 +368,7 @@ def _write_manifest(
 
     cuda_available = bool(torch.cuda.is_available())
     cuda_device_name = None
-    if cuda_available and "cuda" in resolved.effective:
+    if cuda_available and "cuda" in selection.effective:
         try:
             cuda_device_name = torch.cuda.get_device_name()
         except Exception:
@@ -379,9 +379,9 @@ def _write_manifest(
         "worker_name": worker_name,
         "step": step,
         "trace_subdir": trace_subdir,
-        "requested_activities": list(resolved.requested),
-        "effective_activities": list(resolved.effective),
-        "missing_activities": list(resolved.missing),
+        "requested_activities": list(selection.requested),
+        "effective_activities": list(selection.effective),
+        "missing_activities": list(selection.missing),
         "record_shapes": bool(config.record_shapes),
         "profile_memory": bool(config.profile_memory),
         "with_stack": bool(config.with_stack),
@@ -406,7 +406,7 @@ def _write_manifest(
 
 
 __all__ = [
-    "ResolvedActivities",
+    "ProfilerActivitySelection",
     "TorchProfilerConfig",
     "capture_torch_trace",
     "nvtx_enabled",

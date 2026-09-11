@@ -35,6 +35,15 @@ class PreferenceBatch:
     pixel_values: torch.Tensor  # [B, 6, H, W]
     captions: list[str]
 
+    @classmethod
+    def collate(cls, examples: Iterable[dict[str, Any]]) -> PreferenceBatch:
+        """Collate a list of __getitem__ outputs into a ``PreferenceBatch``."""
+        items = list(examples)
+        pixel_values = torch.stack([e["pixel_values"] for e in items])
+        pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
+        captions = [e["caption"] for e in items]
+        return cls(pixel_values=pixel_values, captions=captions)
+
     def split_winner_loser(self) -> tuple[torch.Tensor, torch.Tensor]:
         c = self.pixel_values.shape[1] // 2
         return self.pixel_values[:, :c], self.pixel_values[:, c:]
@@ -147,12 +156,3 @@ class PickAPicPreferenceDataset(Dataset):
         # Stack on channel dim — winner-then-loser convention
         pix = torch.cat([winner, loser], dim=0)  # [6, H, W]
         return {"pixel_values": pix, "caption": row["caption"]}
-
-
-def collate_preference(examples: Iterable[dict[str, Any]]) -> PreferenceBatch:
-    """Collate a list of __getitem__ outputs into a ``PreferenceBatch``."""
-    items = list(examples)
-    pixel_values = torch.stack([e["pixel_values"] for e in items])
-    pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-    captions = [e["caption"] for e in items]
-    return PreferenceBatch(pixel_values=pixel_values, captions=captions)

@@ -142,7 +142,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         save_training_checkpoint,
         validate_checkpoint_compatibility,
     )
-    from vrl.trainers.data import PickAPicPreferenceDataset, collate_preference
+    from vrl.trainers.data import PickAPicPreferenceDataset, PreferenceBatch
     from vrl.trainers.metrics_io import MetricsCSV
     from vrl.trainers.offline import OfflineDPOTrainer
 
@@ -225,7 +225,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         batch_size=train_batch_size,
         shuffle=bool(sampler.shuffle),
         num_workers=int(sampler.dataloader_num_workers),
-        collate_fn=collate_preference,
+        collate_fn=PreferenceBatch.collate,
         drop_last=bool(sampler.drop_last),
     )
     logger.info("Loaded %d preference pairs", len(ds))
