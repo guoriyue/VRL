@@ -285,6 +285,44 @@ def test_build_positive_images_prepares_manifests_end_to_end(tmp_path: Path) -> 
     assert report["hand_crops_written"] == 1
 
 
+def test_positive_download_uses_manifest_fractional_score_threshold(tmp_path: Path) -> None:
+    metadata = tmp_path / "posts.jsonl"
+    _write_jsonl(
+        metadata,
+        [
+            {
+                "id": post_id,
+                "score": score,
+                "tag_string": "1girl solo full_body standing",
+                "file_ext": "jpg",
+                "file_url": f"https://example.test/{post_id}.jpg",
+            }
+            for post_id, score in ((1, 20), (2, 21))
+        ],
+    )
+    image_root = tmp_path / "images"
+    output = tmp_path / "positives.jsonl"
+
+    def fetch(url: str, target: Path) -> None:
+        target.write_bytes(b"image")
+
+    report = build_positive_images(
+        metadata=metadata,
+        image_root=image_root,
+        output=output,
+        min_score=20.5,
+        limit=1,
+        fetch_images=True,
+        fetch=fetch,
+    )
+
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert [row["post_id"] for row in rows] == [2]
+    assert (image_root / "2.jpg").exists()
+    assert not (image_root / "1.jpg").exists()
+    assert report["fetched"]["downloaded"] == report["positives_written"] == 1
+
+
 def test_positive_and_hand_crop_rows(tmp_path: Path) -> None:
     """Checks positive image rows and hand crop rows."""
     metadata = tmp_path / "posts.jsonl"

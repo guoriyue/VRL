@@ -43,8 +43,8 @@ def build_positive_images(
         targets = select_positive_targets(
             metadata,
             resolved_image_root,
-            min_score=int(min_score),
-            limit=None if limit is None else int(limit),
+            min_score=min_score,
+            limit=limit,
             source=source,
         )
         downloaded, skipped, failed = download_danbooru_images(
@@ -231,7 +231,7 @@ def select_positive_targets(
     metadata_path: str | Path,
     image_root: Path,
     *,
-    min_score: int,
+    min_score: float,
     limit: int | None,
     source: str,
 ) -> dict[str, Path]:

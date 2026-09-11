@@ -6612,3 +6612,18 @@ The broader repository audit remains incomplete.
   payload type boundary. No broad removal of semantic aliases or protocol APIs.
 - Setup and Danbooru tests: 25 passed, using offline download fixtures.
   Touched-file Ruff and diff checks pass. Repository-wide audit remains open.
+
+## Danbooru download selection preserves manifest selection parameters
+
+- build_positive_images truncated min_score to int only for download selection,
+  while manifest selection used the declared float. With scores 20 then 21,
+  threshold 20.5 and limit 1, it downloaded the rejected first image and emitted
+  a manifest referencing the missing second image.
+- Pass min_score and limit unchanged to both selection paths; annotate the
+  target selector threshold as float to match positive_image_rows. Keep the
+  selector as a shared metadata-to-download-target adapter used by the CLI and
+  manifest builder, without adding another configuration object.
+- Regression reproduced the missing referenced image before the fix and now
+  verifies the accepted file exists, rejected file does not, and counts agree.
+  Danbooru/setup suites: 26 passed; touched-file Ruff and diff checks pass.
+  No live network download was needed. Broader repository audit remains open.
