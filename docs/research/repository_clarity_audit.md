@@ -4962,3 +4962,20 @@ this combined regression is compatibility evidence, not architectural completion
   the real CPU collective smoke. Touched-file Ruff and git diff --check pass.
   Address reachability and NCCL verification are outside this change; the wider
   repository audit remains open.
+
+## Schedule entrypoint uses direct resource predicates and domain names
+
+- Rename requested_arm to reward_mode at schedule construction and remove
+  redundant bool calls around topology predicates in if statements. Preserve
+  enum conversion, branch order, diagnostics and GPU isolation requirements.
+- Keep build_rollout_schedule as the runtime-selection factory and
+  validate_rollout_schedule_topology as a guard spanning configuration and
+  resolved resources. Keep coordinator query methods as a consistent lifecycle
+  surface rather than removing an individual forwarding method in isolation.
+- Reviewed the strict phase manager: it rethrows body failures after cleanup
+  and combines cleanup failures explicitly. No changes to phase ordering,
+  cancellation, weight synchronization or protocol shapes are part of this
+  expression cleanup. No new class or constants are introduced.
+- Existing orchestration suite: 272 passed. Touched-file Ruff and git diff
+  --check pass. This is behavior-preserving cleanup, not evidence that the
+  repository-wide audit is complete.

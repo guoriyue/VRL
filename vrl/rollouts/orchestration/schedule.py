@@ -77,10 +77,10 @@ def build_rollout_schedule(
     )
 
     if mode is RolloutScheduleMode.STRICT_ON_POLICY:
-        requested_arm = config.reward_collection_mode
+        reward_mode = config.reward_collection_mode
         return StrictOnPolicyRolloutSchedule(
             lifecycle=lifecycle,
-            reward_mode=None if requested_arm is None else RewardCollectionMode(requested_arm),
+            reward_mode=None if reward_mode is None else RewardCollectionMode(reward_mode),
         )
     if mode is RolloutScheduleMode.CONTINUOUS:
         return ContinuousRolloutSchedule.from_config(
@@ -105,17 +105,17 @@ def validate_rollout_schedule_topology(
     mode = RolloutScheduleMode(config.schedule_mode)
     if mode is not RolloutScheduleMode.CONTINUOUS:
         return
-    if bool(resources.colocated):
+    if resources.colocated:
         raise ValueError(
             "continuous rollout requires disjoint trainer and rollout GPUs; "
             "use strict_on_policy with gpu_pool=trainer for shared-GPU phase handoff",
         )
-    if bool(resources.lifecycle.release_rollout_before_reward):
+    if resources.lifecycle.release_rollout_before_reward:
         raise ValueError(
             "continuous rollout cannot hand the rollout GPU to reward scoring "
             "mid-iteration; use a dedicated reward GPU or strict_on_policy",
         )
-    if bool(resources.lifecycle.release_trainer_before_reward):
+    if resources.lifecycle.release_trainer_before_reward:
         raise ValueError(
             "continuous rollout cannot run reward scoring on the trainer GPU while "
             "backward overlaps; use a CPU/dedicated reward or strict_on_policy",
