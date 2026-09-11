@@ -1984,3 +1984,16 @@ tracing algorithm construction and evaluator selection together.
   paths, exception/gradient/adapter restoration, and actual multi-segment scoring
   with trainable payloads (current gradients retained, reference gradients absent).
   Touched-file Ruff/diff checks passed. No training-speed claim is inferred.
+
+## Multi-segment selection is stable across evaluations
+
+- Materialize enabled_segments once as a tuple in the existing evaluator. A
+  generator previously worked for one evaluation, then was exhausted on the
+  next. Validate individual names and duplicates without a new config object.
+- Keep empty selection construction supported: interface tests use it to check
+  evaluator capabilities, and evaluation retains its existing no-enabled-segment
+  error. An initial stricter empty-selection check was corrected after that
+  existing contract test exposed the compatibility requirement.
+- Validation: 74 replay/common-factory tests passed. New tests reuse a generator-
+  configured evaluator for two actual iterations and reject bare/invalid/duplicate
+  names. Touched-file Ruff and diff checks passed. Selection order is preserved.

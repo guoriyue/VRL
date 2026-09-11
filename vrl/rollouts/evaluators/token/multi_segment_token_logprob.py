@@ -26,7 +26,14 @@ class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase):
     replay_granularity = "trajectory"
 
     def __init__(self, *, enabled_segments: Iterable[str]) -> None:
-        self.enabled_segments = enabled_segments
+        if isinstance(enabled_segments, (str, bytes)):
+            raise ValueError("enabled_segments must be an iterable of segment names")
+        names = tuple(enabled_segments)
+        if any(not isinstance(name, str) or not name for name in names):
+            raise ValueError("enabled_segments must contain non-empty segment names")
+        if len(names) != len(set(names)):
+            raise ValueError("enabled_segments must contain unique segment names")
+        self.enabled_segments = names
 
     def evaluate(
         self,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 
+import pytest
 import torch
 
 from vrl.config.precision import RolePrecision
@@ -241,3 +242,21 @@ def test_reference_normalization_has_no_grad_but_current_policy_does():
     assert segment.log_prob.requires_grad
     assert segment.ref_log_prob is not None
     assert not segment.ref_log_prob.requires_grad
+
+
+def test_evaluator_retains_generator_segment_selection_across_iterations():
+    evaluator = MultiSegmentTokenLogProbEvaluator(
+        enabled_segments=(name for name in ("selfcheck_text", "final_image"))
+    )
+    model = _SegmentReplayModel()
+    batch = _trajectory_batch()
+    first = evaluator.evaluate(model, batch)
+    second = evaluator.evaluate(model, batch)
+    assert tuple(first.segments) == tuple(second.segments) == ("selfcheck_text", "final_image")
+    assert len(model.calls) == 4
+
+
+@pytest.mark.parametrize("names", ["image", b"image", ("",), (1,), ("image", "image")])
+def test_evaluator_rejects_invalid_segment_selection_at_construction(names):
+    with pytest.raises(ValueError, match="enabled_segments"):
+        MultiSegmentTokenLogProbEvaluator(enabled_segments=names)
