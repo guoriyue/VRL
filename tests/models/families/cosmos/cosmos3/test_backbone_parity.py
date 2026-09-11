@@ -11,6 +11,7 @@ audit in ``docs/sprints/done/SPRINT_tiny-real-diffusers-fixtures_audit.md`` §9.
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from tests.models.steps.denoise.fixtures import (
@@ -45,6 +46,20 @@ _PACKED_STATIC_TRANSFORMER_KWARGS = frozenset(
         "vision_noisy_frame_indexes",
     }
 )
+
+
+@pytest.mark.parametrize("name", ["cond_input_ids", "uncond_input_ids"])
+@pytest.mark.parametrize("token_id", [1.9, "2", True, -1])
+def test_replay_rejects_invalid_token_ids_before_segment_building(name, token_id):
+    model = _model()
+    replay = {
+        "cond_input_ids": ([1, 2],),
+        "uncond_input_ids": ([0],),
+        "vision_condition_mask": torch.zeros(1, 1, 1),
+    }
+    replay[name] = ([token_id],)
+    with pytest.raises(ValueError, match=rf"{name}\[0\]"):
+        model.restore_eval_state(replay, {}, torch.zeros(1), 0)
 
 
 def _model(**vae_stats: float) -> Cosmos3Model:

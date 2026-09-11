@@ -4017,3 +4017,18 @@ this combined regression is compatibility evidence, not architectural completion
 - Five Cosmos3 family tests and 87 shared gatherer/family-MRO tests passed, with
   dependency warnings. Touched-file Ruff checks pass. These checks do not prove
   full pretrained GPU training parity. The repository-wide audit continues.
+
+## Cosmos3 replay token IDs are validated rather than coerced
+
+- Replace `int(token_id)` in the model-owned replay row reader with the existing
+  `require_exact_int` boundary, minimum zero and a field/index error path.
+  Fractional values, numeric strings, booleans and negative IDs no longer pass
+  through as silently converted model inputs. Valid Python integer rows and
+  packed input layout are unchanged; no new validator helper is introduced.
+- Add eight public restore-entry regressions covering both conditional and
+  unconditional rows. Previously they proceeded beyond the ID boundary and
+  failed later on deliberately minimal latent geometry rather than identifying
+  the invalid token. They now report the offending field/index before segment
+  building. The tests do not claim an upper vocabulary-bound check.
+- All 58 Cosmos3 and shared gatherer tests passed, with dependency warnings;
+  touched-file Ruff checks pass. The repository-wide clarity audit continues.

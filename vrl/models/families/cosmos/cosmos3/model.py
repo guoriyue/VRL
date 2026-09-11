@@ -48,6 +48,7 @@ from vrl.models.steps.denoise import (
 from vrl.models.steps.denoise.base import diffusers_pipeline_dtypes
 from vrl.models.steps.denoise.common import align_replay_tensor
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
+from vrl.utils.config import require_exact_int
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -329,7 +330,10 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
         row = value[0]
         if not isinstance(row, (list, tuple)):
             raise TypeError(f"Cosmos3 replay {name} row must be a token-id sequence")
-        return [int(token_id) for token_id in row]
+        return [
+            require_exact_int(token_id, path=f"Cosmos3 replay {name}[{index}]", minimum=0)
+            for index, token_id in enumerate(row)
+        ]
 
     @staticmethod
     def _assemble_packed_static(text: dict[str, Any], vision: dict[str, Any]) -> dict[str, Any]:
