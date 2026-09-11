@@ -6653,3 +6653,18 @@ The broader repository audit remains incomplete.
   metrics wrapper or change to denoise scheduling, buffers, or telemetry keys.
 - Denoise-step and full-sequence binding suites: 195 passed. Touched-file Ruff
   and diff checks pass. No training-throughput claim; broader audit remains open.
+
+## Combined generation and rollout orchestration verification
+
+- Ran the complete tests/generation and tests/rollouts/orchestration directories
+  together after the recent launch-contract and phase-memory changes:
+  1085 passed, 17 dependency warnings, 48.36 seconds. Process exited cleanly.
+  Coverage includes paged attention comparisons, real Ray worker failure,
+  continuous owner cadence, cancellation and strict phase failure handling.
+- Also scanned module-level functions in both production directories for bodies
+  consisting solely of a return after removing their docstring. Only rank_handles
+  matched. Inspected its launcher and session callers: retain this shared fleet
+  rank projection, which includes nonprimary ranks for lifecycle cleanup.
+- No production edits justified by this check. This syntactic scan cannot prove
+  clarity of larger functions, and passing these suites is not an end-to-end
+  training benchmark or a completion claim for the repository-wide audit.
