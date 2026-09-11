@@ -6836,3 +6836,17 @@ The broader repository audit remains incomplete.
 - Offline timestep suite: 32 passed, two dependency warnings. Touched-file Ruff
   and diff checks pass. This is scheduler integration evidence, not completed
   model training or completion of the repository-wide clarity audit.
+
+## Offline gradient accumulation has one validated count
+
+- Validate gradient_accumulation_steps as a positive exact integer in
+  OfflineDPOTrainerConfig. Previously loss scaling used max(1, value) while
+  the update counter used max(1, int(value)); a fractional direct config could
+  therefore scale gradients differently from its update cadence.
+- Remove both runtime coercion/clamping expressions. Keep the stateful
+  _mark_gradient_accumulation_step method and existing resume counter reset.
+  Five constructor regression cases initially failed to reject invalid counts.
+- Offline timestep and config-builder suites: 46 passed, two dependency
+  warnings. Touched-file Ruff and diff checks pass. Valid configured counts
+  preserve behavior; config objects remain mutable as before. Overall audit
+  remains incomplete.

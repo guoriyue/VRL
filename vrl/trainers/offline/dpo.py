@@ -65,6 +65,13 @@ class OfflineDPOTrainerConfig:
         default="flow_matching"
     )  # "epsilon" | "v_prediction" | "flow_matching"
 
+    def __post_init__(self) -> None:
+        require_exact_int(
+            self.gradient_accumulation_steps,
+            path="gradient_accumulation_steps",
+            minimum=1,
+        )
+
     @classmethod
     def from_root(
         cls,
@@ -376,7 +383,7 @@ class OfflineDPOTrainer:
             loss = loss + cfg.sft_weight * sft_loss_val
 
         # 6. Backward + step (with optional accumulation)
-        loss_scaled = loss / max(1, cfg.gradient_accumulation_steps)
+        loss_scaled = loss / cfg.gradient_accumulation_steps
         loss_scaled.backward()
 
         grad_norm = 0.0
@@ -433,7 +440,7 @@ class OfflineDPOTrainer:
         )
 
     def _mark_gradient_accumulation_step(self) -> bool:
-        accumulation_steps = max(1, int(self.config.gradient_accumulation_steps))
+        accumulation_steps = self.config.gradient_accumulation_steps
         self._gradient_accumulation_micro_step += 1
         if self._gradient_accumulation_micro_step < accumulation_steps:
             return False

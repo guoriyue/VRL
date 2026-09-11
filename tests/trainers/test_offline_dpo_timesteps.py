@@ -448,3 +448,9 @@ def test_real_scheduler_noise_uses_sampled_table_position(kind):
         )
     torch.testing.assert_close(noisy, expected_noisy)
     torch.testing.assert_close(target, expected_target)
+
+
+@pytest.mark.parametrize("steps", [0, -1, True, 1.5, "2"])
+def test_offline_config_rejects_invalid_accumulation_steps(steps):
+    with pytest.raises(ValueError, match="gradient_accumulation_steps"):
+        OfflineDPOTrainerConfig(gradient_accumulation_steps=steps)
