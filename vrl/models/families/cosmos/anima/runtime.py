@@ -40,7 +40,7 @@ def build_anima_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     # Trainer replay reads bundle.scheduler directly (no prepare_sampling),
     # so the timestep table must be set here.
     if num_steps is not None:
-        model.set_num_steps(int(num_steps))
+        model.set_num_steps(num_steps)
 
     from vrl.models.steps.denoise.build import assemble_replay_bundle
 

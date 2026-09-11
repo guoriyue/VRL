@@ -6889,3 +6889,16 @@ The broader repository audit remains incomplete.
   invalid-count cases reproduced missing validation and now pass. Model loader,
   interfaces and Ray runtime-config suites: 179 passed, four dependency warnings.
   Touched-file Ruff and diff checks pass. Repository-wide audit remains open.
+
+## Family replay setup consumes validated scheduler counts directly
+
+- Remove repeated int(num_steps) casts after ModelBuild.num_steps in FLUX,
+  Mochi, PixArt-Sigma, MiniMax-H3, Anima and VDN-H3 replay construction. These
+  six sites consume the validated int-or-None property; their existing None
+  guards remain the explicit deferred-initialization choice.
+- Keep all family-specific scheduler construction and conversion: dynamic mu,
+  sigma direction, DDIM ladder, and coupled audio/video or hybrid setup have
+  real owners and are not replaced with a generic table or new wrapper.
+- Six family suites: 60 passed, 23 dependency/test warnings. Touched-file Ruff
+  and diff checks pass. No added tests for these redundant-cast removals and
+  no full-model training claim; broader repository audit remains open.

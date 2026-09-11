@@ -57,7 +57,7 @@ def build_vdn_h3_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     model.install_hybrid_attention(build)
     num_steps = build.num_steps
     if num_steps is not None:
-        model.set_num_steps(int(num_steps))
+        model.set_num_steps(num_steps)
     return assemble_replay_bundle(model, build)
 
 

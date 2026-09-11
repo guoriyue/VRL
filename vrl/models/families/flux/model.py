@@ -561,7 +561,7 @@ class FluxReplayModel(DiffusersReplayModelBase, FluxModel):
         height, width = sampling.get("height"), sampling.get("width")
         if num_steps is not None and height and width:
             image_seq_len = (int(height) // 16) * (int(width) // 16)
-            self._set_dynamic_timesteps(int(num_steps), image_seq_len, build.device)
+            self._set_dynamic_timesteps(num_steps, image_seq_len, build.device)
 
 
 __all__ = ["FluxModel", "FluxReplayModel", "FluxSamplingState"]

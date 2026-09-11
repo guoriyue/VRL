@@ -317,7 +317,7 @@ class PixArtSigmaReplayModel(DiffusersReplayModelBase, PixArtSigmaModel):
         if num_steps is not None:
             self._scheduler = pixart_ddim_scheduler(
                 self._scheduler.config,
-                int(num_steps),
+                num_steps,
                 build.device,
             )
 

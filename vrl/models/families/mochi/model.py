@@ -297,7 +297,7 @@ class MochiReplayModel(DiffusersReplayModelBase, MochiModel):
         if num_steps is not None:
             self._scheduler = standard_mochi_scheduler(
                 self._scheduler.config,
-                int(num_steps),
+                num_steps,
                 build.device,
             )
 
