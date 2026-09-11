@@ -531,3 +531,35 @@ class TestDiagnostics:
         assert resolved.logprob_abs_diff_max == pytest.approx(1.0)
         assert trainer._replay_parity_passed is False
         assert not (tmp_path / "training_debug.jsonl").exists()
+
+
+@pytest.mark.parametrize("source", ["getter", "parameters"])
+def test_precision_metadata_preserves_model_query_failure(source):
+    from types import SimpleNamespace
+
+    from vrl.trainers.online import OnlineTrainer
+
+    failure = RuntimeError("model dtype query failed")
+
+    def fail():
+        raise failure
+
+    model = SimpleNamespace(**{"_transformer_dtype" if source == "getter" else "parameters": fail})
+    with pytest.raises(RuntimeError, match="model dtype query failed") as caught:
+        OnlineTrainer._precision_metadata(SimpleNamespace(model=model))
+    assert caught.value is failure
+
+
+def test_precision_metadata_keeps_parameterless_model_dtype_unknown():
+    from types import SimpleNamespace
+
+    import torch.nn as nn
+
+    from vrl.trainers.online import OnlineTrainer
+
+    trainer = SimpleNamespace(
+        model=nn.Module(),
+        config=SimpleNamespace(train_precision="fp32", rollout_precision=None),
+        evaluator=SimpleNamespace(),
+    )
+    assert OnlineTrainer._precision_metadata(trainer)["trainer_transformer_dtype"] is None

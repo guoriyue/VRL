@@ -206,32 +206,6 @@ def _precision_label(value: Any) -> str:
     }.get(token, token)
 
 
-def _dtype_label(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value).removeprefix("torch.")
-
-
-def _model_transformer_dtype(model: Any) -> str | None:
-    getter = getattr(model, "_transformer_dtype", None)
-    if callable(getter):
-        try:
-            return _dtype_label(getter())
-        except Exception:
-            pass
-    transformer = getattr(model, "transformer", None)
-    dtype = getattr(transformer, "dtype", None)
-    if dtype is not None:
-        return _dtype_label(dtype)
-    parameters = getattr(transformer if transformer is not None else model, "parameters", None)
-    if callable(parameters):
-        try:
-            return _dtype_label(next(parameters()).dtype)
-        except (StopIteration, RuntimeError, TypeError):
-            return None
-    return None
-
-
 # ---------------------------------------------------------------------------
 # OnlineTrainer
 # ---------------------------------------------------------------------------
@@ -2336,6 +2310,18 @@ class OnlineTrainer:
 
     def _precision_metadata(self) -> dict[str, Any]:
         """Describe the configured and observed precision of this trainer."""
+        getter = getattr(self.model, "_transformer_dtype", None)
+        if callable(getter):
+            transformer_dtype = getter()
+        else:
+            transformer = getattr(self.model, "transformer", None)
+            transformer_dtype = getattr(transformer, "dtype", None)
+            if transformer_dtype is None:
+                source = transformer if transformer is not None else self.model
+                parameters = getattr(source, "parameters", None)
+                parameter = next(iter(parameters()), None) if callable(parameters) else None
+                transformer_dtype = parameter.dtype if parameter is not None else None
+
         training_precision = _precision_label(self.config.train_precision)
         rollout_precision = _precision_label(self.config.rollout_precision or training_precision)
         return {
@@ -2347,7 +2333,11 @@ class OnlineTrainer:
                 getattr(self.evaluator, "math_dtype", None) or torch.float32,
             ),
             "effective_float32_precision": float32_precision_state(),
-            "trainer_transformer_dtype": _model_transformer_dtype(self.model),
+            "trainer_transformer_dtype": (
+                str(transformer_dtype).removeprefix("torch.")
+                if transformer_dtype is not None
+                else None
+            ),
         }
 
     def _optimizer_parameter_manifest(self) -> list[dict[str, Any]]:

@@ -2966,3 +2966,19 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 147 checkpointing, online lifecycle, Wan DPO identity and DPO config
   tests passed. Repository search finds no old callable references. Touched-file
   Ruff/diff checks passed. Full repository review remains active.
+
+## Precision metadata owns its model dtype lookup
+
+- _model_transformer_dtype and _dtype_label served only OnlineTrainer's precision
+  metadata, adding two jumps around a short projection. Move the lookup and
+  formatting into _precision_metadata and remove both module-level helpers.
+- Preserve the family getter / transformer dtype / parameter-source order, but
+  propagate failures from an explicitly supplied getter or parameter iterator.
+  Previously these errors were swallowed and replaced by another source or None.
+  A parameterless model still reports unknown; first-parameter fallback remains
+  the existing convention and is not claimed to describe heterogeneous models.
+- Keep _precision_label for configured precision vocabulary and the existing
+  metadata method as the trace owner. No new class, alias table or adapter layer.
+- Validation: 145 online trainer tests passed. New cases verify query exception
+  identity and parameterless unknown; existing first-step diagnostics still report
+  float32. Touched-file Ruff/diff checks passed. Full review remains active.
