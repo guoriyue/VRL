@@ -5657,3 +5657,19 @@ cross-node GPU throughput or finish the wider repository clarity audit.
   benchmark suite now has 15 passing tests. Touched-file Ruff and git diff --check
   pass. Tests use synthetic run logs; no performance acceptance campaign was run.
   Repository-wide completion remains unproven.
+
+## Algorithm/evaluator pairs own recipe construction
+
+- Move build_algorithm_and_evaluator into the existing AlgorithmEvaluatorPair as
+  from_configs, constructing return values through cls. Update online recipe,
+  factory/lifecycle tests and the real-checkpoint test caller. Remove the free
+  constructor/export without a compatibility wrapper or a new class.
+- Keep algorithm/evaluator pairing branches in this one composition point for
+  now; no registry or declaration carrier is added merely to relocate names.
+  Keep reward function/runtime construction and cross-type parking validation
+  separate from pair construction because their inputs/lifecycles differ.
+  This ownership change does not claim to retire all algorithm name checks.
+- Existing common factory and online lifecycle suites: 52 passed, three dependency
+  warnings. Touched-file Ruff and git diff --check pass; source/tests have no old
+  function references. Real-checkpoint test calls were migrated but those tests
+  were not run. The full repository audit remains incomplete.

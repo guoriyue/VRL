@@ -36,7 +36,7 @@ from vrl.run import (
     resolve_online_run,
 )
 from vrl.scripts.common.factory import (
-    build_algorithm_and_evaluator,
+    AlgorithmEvaluatorPair,
     build_reward_runtime,
     validate_reward_memory_parking,
 )
@@ -849,7 +849,7 @@ async def run_online_recipe(
         )
         collector_config = resolved.collector
         reward_runtime = lifecycle.reward_runtime = build_reward_runtime(reward_inputs)
-        algorithm_and_evaluator = build_algorithm_and_evaluator(
+        algorithm_and_evaluator = AlgorithmEvaluatorPair.from_configs(
             family_entry=family_entry,
             built=built,
             collector_config=collector_config,

@@ -24,6 +24,188 @@ class AlgorithmEvaluatorPair:
     algorithm: Algorithm
     evaluator: Evaluator | None
 
+    @classmethod
+    def from_configs(
+        cls,
+        *,
+        family_entry: ModelFamilyEntry,
+        built: BuiltConfigs,
+        collector_config: Any,
+        scheduler: Any | None = None,
+    ) -> AlgorithmEvaluatorPair:
+        """Build the algorithm/evaluator pair for a strict online recipe."""
+
+        if not family_entry.supports_policy_replay:
+            raise RuntimeError(
+                f"{family_entry.family} is generation-only: its runtime exposes no "
+                "trainable actions, transition likelihoods, or policy replay evaluator",
+            )
+        algorithm_config = built.algorithm
+        algorithm_section = built.root.algorithm
+        if algorithm_section is None:
+            raise ValueError("online recipe requires an algorithm section")
+        kind = algorithm_section.kind
+        if kind == "diffusion_dpo":
+            raise ValueError(
+                "diffusion_dpo is an offline recipe and is not supported by common online recipe",
+            )
+        reward = built.reward
+        if reward is None:
+            raise ValueError("online recipe requires reward configuration")
+        diffusion_logprob_kinds = {"grpo", "dance_grpo", "flash_grpo", "flow_dppo", "grpo_guard"}
+        precision = built.precision
+        if precision.diffusion_math != "fp32" and kind not in diffusion_logprob_kinds:
+            raise ValueError(
+                "precision.diffusion_math.dtype overrides are supported only by "
+                "diffusion log-prob "
+                f"objectives; algorithm.kind={kind!r} keeps its protected math in fp32",
+            )
+
+        if kind in diffusion_logprob_kinds:
+            # These are flow-matching GRPO-family algorithms on the same SDE
+            # evaluator. dance_grpo reuses FlowGRPO unchanged (its delta is the
+            # trainer's random timestep selection + multi-reward); flow_dppo /
+            # grpo_guard are trust-region variants whose loss reads the rollout
+            # proposal mean (rollout.return_prev_sample_mean).
+            from vrl.algorithms.grpo.continuous import GRPO, FlashGRPO, FlowDPPO, GRPOGuard
+
+            is_chunk_autoregressive = (
+                family_entry.policy_semantics.generation_regime == "chunk_autoregressive"
+            )
+            if is_chunk_autoregressive and float(getattr(algorithm_config, "sft_weight", 0.0)) > 0:
+                raise ValueError(
+                    f"{family_entry.family} grouped causal-chunk replay does not "
+                    "implement the full-sequence scheduler target required by "
+                    "algorithm.sft_weight; set sft_weight=0",
+                )
+            advantage_estimator = algorithm_config.build_estimator(
+                component_weights=reward.weights,
+            )
+            if kind == "flow_dppo":
+                algorithm: object = FlowDPPO(
+                    algorithm_config,
+                    advantage_estimator=advantage_estimator,
+                )
+            elif kind == "grpo_guard":
+                algorithm = GRPOGuard(
+                    algorithm_config,
+                    advantage_estimator=advantage_estimator,
+                )
+            elif kind == "flash_grpo":
+                algorithm = FlashGRPO(
+                    algorithm_config,
+                    advantage_estimator=advantage_estimator,
+                )
+            else:
+                algorithm = GRPO(
+                    algorithm_config,
+                    advantage_estimator=advantage_estimator,
+                )
+            if is_chunk_autoregressive:
+                if precision.diffusion_math != "fp32":
+                    raise ValueError(
+                        f"{family_entry.family} uses an exact fp32 Gaussian re-noise "
+                        "policy; precision.diffusion_math.dtype overrides are not "
+                        "implemented for grouped causal-chunk replay",
+                    )
+                if kind == "dance_grpo":
+                    raise ValueError(
+                        f"{family_entry.family} uses one ordered full-trajectory replay; "
+                        "DanceGRPO's random denoise-timestep subset is not defined for "
+                        "the [temporal_chunk, denoise_transition] policy axes. Use grpo.",
+                    )
+                if kind in {"flash_grpo", "flow_dppo", "grpo_guard"}:
+                    raise ValueError(
+                        f"{family_entry.family} uses grouped causal-chunk replay; "
+                        f"algorithm.kind={kind!r} requires reverse-SDE dt signals that "
+                        "the batch re-noise policy does not expose. Use grpo.",
+                    )
+                from vrl.rollouts.evaluators.denoise import (
+                    ChunkAutoregressiveDenoiseLogProbEvaluator,
+                )
+
+                return cls(
+                    algorithm=algorithm,
+                    evaluator=ChunkAutoregressiveDenoiseLogProbEvaluator(),
+                )
+
+            math_dtype = resolve_torch_dtype(precision.diffusion_math)
+            denoise = collector_config.denoise or DenoiseRequestOptions()
+            from vrl.rollouts.evaluators.denoise.sde_logprob import (
+                DiffusionSDELogProbEvaluator,
+            )
+
+            return cls(
+                algorithm=algorithm,
+                evaluator=DiffusionSDELogProbEvaluator(
+                    scheduler,
+                    noise_level=denoise.noise_level,
+                    sde_type=denoise.sde_type or "flow_grpo",
+                    math_dtype=math_dtype,
+                ),
+            )
+
+        if kind == "token_grpo":
+            from vrl.algorithms.grpo.token import TokenGRPO
+
+            if family_entry.policy_semantics.action_distribution == "continuous":
+                from vrl.rollouts.evaluators.token import ContinuousTokenLogProbEvaluator
+
+                evaluator = ContinuousTokenLogProbEvaluator()
+            else:
+                from vrl.rollouts.evaluators.token import TokenLogProbEvaluator
+
+                evaluator = TokenLogProbEvaluator()
+            return cls(
+                algorithm=TokenGRPO(
+                    algorithm_config,
+                    advantage_estimator=algorithm_config.build_estimator(
+                        component_weights=reward.weights,
+                    ),
+                ),
+                evaluator=evaluator,
+            )
+
+        if kind == "token_grpo_multisegment":
+            from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPO
+            from vrl.rollouts.evaluators.token import MultiSegmentTokenLogProbEvaluator
+
+            if family_entry.family != "janus_pro_r1":
+                raise ValueError(
+                    "token_grpo_multisegment currently requires model family janus_pro_r1",
+                )
+            segment_flags = dict(algorithm_config.train_segments or {})
+            enabled_segments = tuple(
+                name for name, enabled in segment_flags.items() if bool(enabled)
+            )
+            return cls(
+                algorithm=MultiSegmentTokenGRPO(
+                    algorithm_config,
+                    advantage_estimator=algorithm_config.build_estimator(
+                        component_weights=reward.weights,
+                    ),
+                ),
+                evaluator=MultiSegmentTokenLogProbEvaluator(enabled_segments=enabled_segments),
+            )
+
+        if kind == "diffusion_nft":
+            from vrl.algorithms.diffusion_nft import DiffusionNFT
+
+            return cls(
+                algorithm=DiffusionNFT(algorithm_config),
+                evaluator=None,
+            )
+
+        if kind == "v_grpo":
+            from vrl.algorithms.v_grpo import VGRPO
+
+            return cls(
+                algorithm=VGRPO(algorithm_config),
+                evaluator=None,
+            )
+
+        raise ValueError(f"unsupported online algorithm.kind: {kind!r}")
+
 
 def build_reward_function(reward: ResolvedReward) -> RewardFunction:
     """Build the online reward function from the resolved reward inputs.
@@ -98,188 +280,8 @@ def validate_reward_memory_parking(
     )
 
 
-def build_algorithm_and_evaluator(
-    *,
-    family_entry: ModelFamilyEntry,
-    built: BuiltConfigs,
-    collector_config: Any,
-    scheduler: Any | None = None,
-) -> AlgorithmEvaluatorPair:
-    """Build the algorithm/evaluator pair for a strict online recipe."""
-
-    if not family_entry.supports_policy_replay:
-        raise RuntimeError(
-            f"{family_entry.family} is generation-only: its runtime exposes no "
-            "trainable actions, transition likelihoods, or policy replay evaluator",
-        )
-    algorithm_config = built.algorithm
-    algorithm_section = built.root.algorithm
-    if algorithm_section is None:
-        raise ValueError("online recipe requires an algorithm section")
-    kind = algorithm_section.kind
-    if kind == "diffusion_dpo":
-        raise ValueError(
-            "diffusion_dpo is an offline recipe and is not supported by common online recipe",
-        )
-    reward = built.reward
-    if reward is None:
-        raise ValueError("online recipe requires reward configuration")
-    diffusion_logprob_kinds = {"grpo", "dance_grpo", "flash_grpo", "flow_dppo", "grpo_guard"}
-    precision = built.precision
-    if precision.diffusion_math != "fp32" and kind not in diffusion_logprob_kinds:
-        raise ValueError(
-            "precision.diffusion_math.dtype overrides are supported only by "
-            "diffusion log-prob "
-            f"objectives; algorithm.kind={kind!r} keeps its protected math in fp32",
-        )
-
-    if kind in diffusion_logprob_kinds:
-        # These are flow-matching GRPO-family algorithms on the same SDE
-        # evaluator. dance_grpo reuses FlowGRPO unchanged (its delta is the
-        # trainer's random timestep selection + multi-reward); flow_dppo /
-        # grpo_guard are trust-region variants whose loss reads the rollout
-        # proposal mean (rollout.return_prev_sample_mean).
-        from vrl.algorithms.grpo.continuous import GRPO, FlashGRPO, FlowDPPO, GRPOGuard
-
-        is_chunk_autoregressive = (
-            family_entry.policy_semantics.generation_regime == "chunk_autoregressive"
-        )
-        if is_chunk_autoregressive and float(getattr(algorithm_config, "sft_weight", 0.0)) > 0:
-            raise ValueError(
-                f"{family_entry.family} grouped causal-chunk replay does not "
-                "implement the full-sequence scheduler target required by "
-                "algorithm.sft_weight; set sft_weight=0",
-            )
-        advantage_estimator = algorithm_config.build_estimator(
-            component_weights=reward.weights,
-        )
-        if kind == "flow_dppo":
-            algorithm: object = FlowDPPO(
-                algorithm_config,
-                advantage_estimator=advantage_estimator,
-            )
-        elif kind == "grpo_guard":
-            algorithm = GRPOGuard(
-                algorithm_config,
-                advantage_estimator=advantage_estimator,
-            )
-        elif kind == "flash_grpo":
-            algorithm = FlashGRPO(
-                algorithm_config,
-                advantage_estimator=advantage_estimator,
-            )
-        else:
-            algorithm = GRPO(
-                algorithm_config,
-                advantage_estimator=advantage_estimator,
-            )
-        if is_chunk_autoregressive:
-            if precision.diffusion_math != "fp32":
-                raise ValueError(
-                    f"{family_entry.family} uses an exact fp32 Gaussian re-noise "
-                    "policy; precision.diffusion_math.dtype overrides are not "
-                    "implemented for grouped causal-chunk replay",
-                )
-            if kind == "dance_grpo":
-                raise ValueError(
-                    f"{family_entry.family} uses one ordered full-trajectory replay; "
-                    "DanceGRPO's random denoise-timestep subset is not defined for "
-                    "the [temporal_chunk, denoise_transition] policy axes. Use grpo.",
-                )
-            if kind in {"flash_grpo", "flow_dppo", "grpo_guard"}:
-                raise ValueError(
-                    f"{family_entry.family} uses grouped causal-chunk replay; "
-                    f"algorithm.kind={kind!r} requires reverse-SDE dt signals that "
-                    "the batch re-noise policy does not expose. Use grpo.",
-                )
-            from vrl.rollouts.evaluators.denoise import (
-                ChunkAutoregressiveDenoiseLogProbEvaluator,
-            )
-
-            return AlgorithmEvaluatorPair(
-                algorithm=algorithm,
-                evaluator=ChunkAutoregressiveDenoiseLogProbEvaluator(),
-            )
-
-        math_dtype = resolve_torch_dtype(precision.diffusion_math)
-        denoise = collector_config.denoise or DenoiseRequestOptions()
-        from vrl.rollouts.evaluators.denoise.sde_logprob import (
-            DiffusionSDELogProbEvaluator,
-        )
-
-        return AlgorithmEvaluatorPair(
-            algorithm=algorithm,
-            evaluator=DiffusionSDELogProbEvaluator(
-                scheduler,
-                noise_level=denoise.noise_level,
-                sde_type=denoise.sde_type or "flow_grpo",
-                math_dtype=math_dtype,
-            ),
-        )
-
-    if kind == "token_grpo":
-        from vrl.algorithms.grpo.token import TokenGRPO
-
-        if family_entry.policy_semantics.action_distribution == "continuous":
-            from vrl.rollouts.evaluators.token import ContinuousTokenLogProbEvaluator
-
-            evaluator = ContinuousTokenLogProbEvaluator()
-        else:
-            from vrl.rollouts.evaluators.token import TokenLogProbEvaluator
-
-            evaluator = TokenLogProbEvaluator()
-        return AlgorithmEvaluatorPair(
-            algorithm=TokenGRPO(
-                algorithm_config,
-                advantage_estimator=algorithm_config.build_estimator(
-                    component_weights=reward.weights,
-                ),
-            ),
-            evaluator=evaluator,
-        )
-
-    if kind == "token_grpo_multisegment":
-        from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPO
-        from vrl.rollouts.evaluators.token import MultiSegmentTokenLogProbEvaluator
-
-        if family_entry.family != "janus_pro_r1":
-            raise ValueError(
-                "token_grpo_multisegment currently requires model family janus_pro_r1",
-            )
-        segment_flags = dict(algorithm_config.train_segments or {})
-        enabled_segments = tuple(name for name, enabled in segment_flags.items() if bool(enabled))
-        return AlgorithmEvaluatorPair(
-            algorithm=MultiSegmentTokenGRPO(
-                algorithm_config,
-                advantage_estimator=algorithm_config.build_estimator(
-                    component_weights=reward.weights,
-                ),
-            ),
-            evaluator=MultiSegmentTokenLogProbEvaluator(enabled_segments=enabled_segments),
-        )
-
-    if kind == "diffusion_nft":
-        from vrl.algorithms.diffusion_nft import DiffusionNFT
-
-        return AlgorithmEvaluatorPair(
-            algorithm=DiffusionNFT(algorithm_config),
-            evaluator=None,
-        )
-
-    if kind == "v_grpo":
-        from vrl.algorithms.v_grpo import VGRPO
-
-        return AlgorithmEvaluatorPair(
-            algorithm=VGRPO(algorithm_config),
-            evaluator=None,
-        )
-
-    raise ValueError(f"unsupported online algorithm.kind: {kind!r}")
-
-
 __all__ = [
     "AlgorithmEvaluatorPair",
-    "build_algorithm_and_evaluator",
     "build_reward_function",
     "build_reward_runtime",
     "validate_reward_memory_parking",

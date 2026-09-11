@@ -20,7 +20,7 @@ from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.run import ResolvedReward, resolve_reward_inputs
 from vrl.scripts.common.factory import (
-    build_algorithm_and_evaluator,
+    AlgorithmEvaluatorPair,
     build_reward_function,
 )
 
@@ -60,7 +60,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
     collector_config = RolloutCollectorConfig.from_root(parse_config(cfg))
     built = build_configs(cfg)
 
-    pair = build_algorithm_and_evaluator(
+    pair = AlgorithmEvaluatorPair.from_configs(
         family_entry=get_model_family_entry("wan_2_1"),
         built=built,
         collector_config=collector_config,
@@ -91,7 +91,7 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
         overrides=[f"/recipe/online={recipe}"],
     )
 
-    pair = build_algorithm_and_evaluator(
+    pair = AlgorithmEvaluatorPair.from_configs(
         family_entry=get_model_family_entry("sd3_5"),
         built=build_configs(cfg),
         collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
@@ -104,7 +104,7 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
 def test_chunk_autoregressive_factory_builds_grouped_grpo_evaluator() -> None:
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
 
-    pair = build_algorithm_and_evaluator(
+    pair = AlgorithmEvaluatorPair.from_configs(
         family_entry=get_model_family_entry("causvid"),
         built=build_configs(cfg),
         collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
@@ -118,7 +118,7 @@ def test_generation_only_chunk_family_fails_before_algorithm_construction() -> N
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
 
     with pytest.raises(RuntimeError, match=r"generation-only.*no trainable actions"):
-        build_algorithm_and_evaluator(
+        AlgorithmEvaluatorPair.from_configs(
             family_entry=get_model_family_entry("magi_1"),
             built=build_configs(cfg),
             collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
@@ -143,7 +143,7 @@ def test_chunk_autoregressive_factory_rejects_undefined_algorithm_semantics(
     )
 
     with pytest.raises(ValueError, match=message):
-        build_algorithm_and_evaluator(
+        AlgorithmEvaluatorPair.from_configs(
             family_entry=get_model_family_entry("causvid"),
             built=build_configs(cfg),
             collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
@@ -157,7 +157,7 @@ def test_chunk_autoregressive_factory_rejects_non_fp32_transition_math() -> None
     )
 
     with pytest.raises(ValueError, match="exact fp32 Gaussian re-noise"):
-        build_algorithm_and_evaluator(
+        AlgorithmEvaluatorPair.from_configs(
             family_entry=get_model_family_entry("causvid"),
             built=build_configs(cfg),
             collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
@@ -170,7 +170,7 @@ def test_chunk_autoregressive_factory_rejects_full_sequence_sft_regularizer() ->
     built.algorithm.sft_weight = 0.1
 
     with pytest.raises(ValueError, match=r"grouped causal-chunk replay.*sft_weight"):
-        build_algorithm_and_evaluator(
+        AlgorithmEvaluatorPair.from_configs(
             family_entry=get_model_family_entry("causvid"),
             built=built,
             collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
@@ -352,7 +352,7 @@ def test_token_objective_rejects_unused_math_precision_override() -> None:
     built = build_configs(cfg)
 
     with pytest.raises(ValueError, match=r"precision\.diffusion_math\.dtype.*diffusion log-prob"):
-        build_algorithm_and_evaluator(
+        AlgorithmEvaluatorPair.from_configs(
             built=built,
             family_entry=get_model_family_entry("emu3"),
             collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),

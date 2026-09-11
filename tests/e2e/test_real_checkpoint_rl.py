@@ -32,7 +32,7 @@ from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.run import resolve_reward_inputs
 from vrl.scripts.common.factory import (
-    build_algorithm_and_evaluator,
+    AlgorithmEvaluatorPair,
     build_reward_function,
 )
 from vrl.trainers.data.prompts import PromptExample
@@ -739,7 +739,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 ),
                 lifecycle=lifecycle,
             )
-        pair = build_algorithm_and_evaluator(
+        pair = AlgorithmEvaluatorPair.from_configs(
             family_entry=entry,
             built=built,
             collector_config=collector_config,
