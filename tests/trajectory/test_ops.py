@@ -115,3 +115,27 @@ def test_sample_selection_preserves_minimax_exported_vae_geometry() -> None:
     selected = select_trajectory_batch(trajectory, [2, 0])
     assert selected.context["vae_geometry"] == [4, 2, 8]
     assert len(selected.sample_rows) == 2
+
+
+@pytest.mark.parametrize("positions", [[2, 0, 1], [2, 0]])
+@pytest.mark.parametrize("container", ["tensor", "list", "tuple"])
+def test_selection_uses_declared_nonleading_sample_axis(positions, container) -> None:
+    from vrl.trajectory.types import TrajectoryTensor
+    from vrl.trajectory.validation import TrajectoryValidator
+
+    trajectory = _trajectory(samples=3)
+    values = torch.arange(6).reshape(2, 3)
+    payload = values
+    if container == "list":
+        payload = values.tolist()
+    elif container == "tuple":
+        payload = tuple(tuple(row) for row in values.tolist())
+    trajectory.segments["image_tokens"].tensors["token_sample_cache"] = TrajectoryTensor(
+        "token_sample_cache", payload, ("token", "sample"), "replay_input"
+    )
+    TrajectoryValidator(trajectory).validate_batch()
+    selected = select_trajectory_batch(trajectory, positions)
+    actual = selected.segments["image_tokens"].tensors["token_sample_cache"].value
+    assert isinstance(actual, type(payload))
+    assert torch.equal(torch.as_tensor(actual), values[:, positions])
+    assert [row.sample_index for row in selected.sample_rows] == positions

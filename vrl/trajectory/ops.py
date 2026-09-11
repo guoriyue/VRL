@@ -32,8 +32,8 @@ def select_trajectory_batch(data: Any, selector: Any) -> Any:
         data,
         sample_rows=[data.sample_rows[i] for i in positions],
         tensor_value_fn=lambda tensor: (
-            _select_value(tensor.value, positions, len(data.sample_rows))
-            if tensor.axes and tensor.axes[0] == "sample"
+            _select_value(tensor.value, positions, tensor.axes.index("sample"))
+            if "sample" in tensor.axes
             else tensor.value
         ),
         axes_sample_length=count,
@@ -94,19 +94,22 @@ def _rebuild_trajectory(
     return TrajectoryValidator(out).validate_batch()
 
 
-def _select_value(value: Any, positions: list[int], batch_size: int) -> Any:
+def _select_value(value: Any, positions: list[int], axis_dim: int) -> Any:
+    """Select the declared sample dimension, including nested Python payloads."""
     if value is None:
         return None
-    shape = getattr(value, "shape", None)
-    if shape is not None and len(shape) > 0 and int(shape[0]) == batch_size:
-        return value[positions]
-    if isinstance(value, list) and len(value) == batch_size:
-        return [value[i] for i in positions]
-    if isinstance(value, tuple) and len(value) == batch_size:
-        return tuple(value[i] for i in positions)
+    if isinstance(value, (list, tuple)):
+        selected = (
+            [value[i] for i in positions]
+            if axis_dim == 0
+            else [_select_value(inner, positions, axis_dim - 1) for inner in value]
+        )
+        return tuple(selected) if isinstance(value, tuple) else selected
     if isinstance(value, dict):
-        return {key: _select_value(inner, positions, batch_size) for key, inner in value.items()}
-    return value
+        return {key: _select_value(inner, positions, axis_dim) for key, inner in value.items()}
+    key = [slice(None)] * (axis_dim + 1)
+    key[axis_dim] = positions
+    return value[tuple(key)]
 
 
 def _selector_positions(selector: Any, batch_size: int) -> list[int]:

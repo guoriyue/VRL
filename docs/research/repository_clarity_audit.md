@@ -2628,3 +2628,21 @@ this combined regression is compatibility evidence, not architectural completion
   endorsement of implicit list/tuple context slicing.
 - Validation: 663 trajectory, rollout, MiniMax and online trainer tests passed;
   touched-file Ruff and diff checks passed. Full repository review remains active.
+
+## Sample selection follows the declared axis position
+
+- TrajectoryValidator accepts tensor axes (token, sample), but selection only
+  visited tensors whose first axis was sample. A same-count row permutation
+  could therefore reorder sample identities while silently retaining the old
+  tensor order; a shorter selection failed only in subsequent shape validation.
+- select_trajectory_batch now locates sample in each tensor's declared axes.
+  The existing _select_value indexes that dimension directly instead of testing
+  whether a leading length happens to equal the batch size. Nested list/tuple
+  payloads preserve their container type; dictionaries recurse at the same axis.
+- Keep the shared selection API, recursive helper and structural rebuild/validator
+  boundary. No new wrapper or axis taxonomy; tensors without a sample axis and
+  shared context remain unchanged. Other consumers' axis support is not implied.
+- Validation: 651 trajectory, rollout and online trainer tests passed. New cases
+  cover same-count permutations and subsets with a nonleading sample axis for
+  tensors, lists and tuples. Touched-file Ruff and diff checks passed. Full
+  repository review remains active.
