@@ -2758,3 +2758,22 @@ this combined regression is compatibility evidence, not architectural completion
 - Remaining separate concern: current_gpu_ids in dependencies.py still skips
   malformed ID values during normalization. This slice only removes exception
   swallowing at the worker/launcher call sites; full review remains active.
+
+## Ray GPU ID normalization does not drop or truncate assignments
+
+- Installed Ray get_gpu_ids declares List[int] or List[str], using IDs from
+  CUDA_VISIBLE_DEVICES when set. The repository placement protocol stores integer
+  ordinals. current_gpu_ids previously skipped failed int conversions and accepted
+  lossy conversions such as 1.5 -> 1, yielding an incomplete or altered assignment.
+- Retain integer/decimal-string normalization in the existing dependency adapter;
+  reject malformed strings and non-integer values with their list position.
+  Reuse require_exact_int after string parsing, with no new helper or vocabulary.
+  Empty assignments remain valid for actors that do not request GPUs.
+- GPU UUID strings remain outside this repository's integer placement protocol;
+  they now produce an explicit error instead of silently disappearing. This does
+  not add UUID/MIG topology support. Keep the lazy Ray import and metadata APIs.
+- Validation: 52 dependency, cross-node preflight, global placement and rollout
+  launcher tests passed. Cases cover integer/string/mixed valid IDs and rejection
+  of UUID, malformed, fractional, boolean, None and negative IDs. Existing real
+  Ray placement integration passes. Touched-file Ruff/diff checks passed; full
+  repository review remains active.

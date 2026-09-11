@@ -7,6 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from vrl.utils.config import require_exact_int
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,11 +34,13 @@ def current_gpu_ids() -> list[int]:
 
     ray = require_ray()
     out: list[int] = []
-    for gpu_id in ray.get_gpu_ids():
-        try:
-            out.append(int(gpu_id))
-        except (TypeError, ValueError):
-            continue
+    for index, gpu_id in enumerate(ray.get_gpu_ids()):
+        path = f"Ray GPU ID[{index}]"
+        if isinstance(gpu_id, str):
+            if not gpu_id.isascii() or not gpu_id.isdecimal():
+                raise ValueError(f"{path} must be a non-negative integer ordinal, got {gpu_id!r}")
+            gpu_id = int(gpu_id)
+        out.append(require_exact_int(gpu_id, path=path, minimum=0))
     return out
 
 

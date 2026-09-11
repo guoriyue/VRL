@@ -60,3 +60,26 @@ def test_inspect_cluster_counts_the_current_node_as_driver(monkeypatch):
     )
     assert topo.driver_gpus == 1.0
     assert topo.non_driver_gpus == 1.0
+
+
+@pytest.mark.parametrize(
+    "values, expected", [([], []), ([0, 2], [0, 2]), (["0", "2"], [0, 2]), ([0, "2"], [0, 2])]
+)
+def test_current_gpu_ids_preserves_all_assigned_ordinals(monkeypatch, values, expected):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        dependencies, "require_ray", lambda: SimpleNamespace(get_gpu_ids=lambda: values)
+    )
+    assert dependencies.current_gpu_ids() == expected
+
+
+@pytest.mark.parametrize("invalid", ["GPU-uuid", "bad", "", "1.5", "-1", 1.5, True, None, -1])
+def test_current_gpu_ids_rejects_instead_of_dropping_or_truncating(monkeypatch, invalid):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        dependencies, "require_ray", lambda: SimpleNamespace(get_gpu_ids=lambda: [0, invalid])
+    )
+    with pytest.raises(ValueError, match=r"Ray GPU ID\[1\]"):
+        dependencies.current_gpu_ids()
