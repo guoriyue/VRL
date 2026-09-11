@@ -219,16 +219,17 @@ class ArtifactManifestReport:
         source_episodes = tuple(sorted(episode_names))
         if not examples:
             warnings.append(f"{path}: manifest is empty")
+        report = cls(
+            manifest_path=path,
+            data_root=root,
+            row_count=len(examples),
+            artifact_count=len(resolved),
+            resolved_artifacts=tuple(resolved),
+            warnings=tuple(warnings),
+            source_episodes=source_episodes,
+        )
         if eval_examples is None:
-            return cls(
-                manifest_path=path,
-                data_root=root,
-                row_count=len(examples),
-                artifact_count=len(resolved),
-                resolved_artifacts=tuple(resolved),
-                warnings=tuple(warnings),
-                source_episodes=source_episodes,
-            )
+            return report
 
         if eval_manifest_path is None:
             raise ValueError("eval_examples require eval_manifest_path to name them in errors")
@@ -243,14 +244,9 @@ class ArtifactManifestReport:
         overlap = tuple(sorted(set(source_episodes).intersection(eval_report.source_episodes)))
         if overlap:
             warnings.append("train/eval source_episode overlap: " + ", ".join(overlap))
-        return cls(
-            manifest_path=path,
-            data_root=root,
-            row_count=len(examples),
-            artifact_count=len(resolved),
-            resolved_artifacts=tuple(resolved),
+        return replace(
+            report,
             warnings=tuple(warnings),
-            source_episodes=source_episodes,
             eval_manifest_path=eval_report.manifest_path,
             eval_source_episodes=eval_report.source_episodes,
             source_episode_overlap=overlap,

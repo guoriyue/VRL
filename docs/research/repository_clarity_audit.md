@@ -5544,3 +5544,17 @@ this combined regression is compatibility evidence, not architectural completion
   including uneven replay weighting and empty-update paths. Touched-file Ruff
   and git diff --check pass. No throughput benefit is claimed for this local
   simplification. Full repository completion remains unproven.
+
+## Artifact reports reuse their validated training-manifest fields
+
+- Build the training ArtifactManifestReport once in from_examples and use
+  dataclasses.replace to add eval provenance and overlap warnings. Remove the
+  duplicate training-field constructor list from the optional eval branch.
+- Keep the frozen report, recursive eval validation, output schema and warning
+  behavior. Preserve SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS as an ordered
+  schema contract and DEFAULT_ARTIFACT_FIELDS as reflected schema fields.
+  Artifact reading/value helpers keep format-specific checks out of iteration;
+  no new helper, class or flexible keyword-field bag is introduced.
+- Existing artifact and video-world manifest suites: 22 passed, including train/
+  eval overlap reporting. Touched-file Ruff and git diff --check pass. The wider
+  repository clarity audit remains incomplete.
