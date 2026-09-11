@@ -379,3 +379,30 @@ def test_zero_variance_arms_still_yield_a_positive_bound(tmp_path: Path) -> None
 
     assert result["gates"]["positive_lower_confidence_bound"]["value"] == pytest.approx(30.0)
     assert result["gates"]["positive_lower_confidence_bound"]["pass"] is True
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "collect.generation_wall",
+        "collect.reward_wall",
+        "collect.generation_reward_overlap",
+    ],
+)
+def test_collection_row_requires_measured_phase_fields(tmp_path, missing):
+    row = {
+        "step": 7,
+        "collect.wall": 10.0,
+        "collect.generation_wall": 6.0,
+        "collect.reward_wall": 4.0,
+        "collect.generation_reward_overlap": 0.0,
+    }
+    del row[missing]
+    path = tmp_path / "rollout_stats.jsonl"
+    path.write_text(json.dumps(row) + "\n")
+    with pytest.raises(ValueError) as caught:
+        RunMetrics.from_run_dir(tmp_path, warmup_iterations=0)
+    message = str(caught.value)
+    assert str(path) in message
+    assert "step=7" in message
+    assert missing in message

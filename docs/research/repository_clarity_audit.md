@@ -5642,3 +5642,18 @@ cross-node GPU throughput or finish the wider repository clarity audit.
   skipped collection rows and acceptance analysis. Touched-file Ruff and
   git diff --check pass; source/tests have no old constructor references. No
   training benchmark was launched. The wider repository audit remains open.
+
+## Overlap analysis distinguishes missing timings from measured zero
+
+- Require generation, reward and overlap phase fields on rows containing
+  collect.wall. The production collector emits all three; substituting zero for
+  absent fields hid incomplete measurements and could distort acceptance math.
+  Errors now identify rollout_stats.jsonl, the step and missing field.
+- Keep rows without collection excluded, and keep optional reward queue-wait
+  defaulting to zero. Explicit zero overlap remains valid for serial arms. Checks
+  stay in RunMetrics.from_run_dir without another schema class/helper. Benchmark
+  thresholds and statistical reduction rules remain unchanged.
+- Three missing-field regressions failed before the fix; the complete overlap
+  benchmark suite now has 15 passing tests. Touched-file Ruff and git diff --check
+  pass. Tests use synthetic run logs; no performance acceptance campaign was run.
+  Repository-wide completion remains unproven.

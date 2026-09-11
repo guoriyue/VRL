@@ -154,10 +154,19 @@ class RunMetrics:
             # gradient-accumulation microbatch); skip rather than score it as zero.
             if "collect.wall" not in row:
                 continue
+            try:
+                generation_wall = float(row["collect.generation_wall"])
+                reward_wall = float(row["collect.reward_wall"])
+                overlap = float(row["collect.generation_reward_overlap"])
+            except KeyError as error:
+                raise ValueError(
+                    f"{stats_path}: collection row step={row.get('step')} "
+                    f"is missing required timing {error.args[0]!r}",
+                ) from error
             metrics.collect_wall.append(float(row["collect.wall"]))
-            metrics.generation_wall.append(float(row.get("collect.generation_wall", 0.0)))
-            metrics.reward_wall.append(float(row.get("collect.reward_wall", 0.0)))
-            metrics.overlap.append(float(row.get("collect.generation_reward_overlap", 0.0)))
+            metrics.generation_wall.append(generation_wall)
+            metrics.reward_wall.append(reward_wall)
+            metrics.overlap.append(overlap)
             metrics.reward_queue_wait.append(float(row.get("reward.queue_wait_s", 0.0)))
         if not metrics.collect_wall:
             raise RuntimeError(f"{run_dir}: no steady-state step recorded a collect.wall")
