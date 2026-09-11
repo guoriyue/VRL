@@ -219,3 +219,25 @@ def test_evaluator_reads_r1_segments_from_canonical_trajectory_fields() -> None:
     assert signals.segments["final_image"].old_log_prob.shape == (2, 3)
     assert "primary_segment" not in signals.context
     assert "segment_order" not in signals.context
+
+
+def test_reference_normalization_has_no_grad_but_current_policy_does():
+    from vrl.rollouts.evaluators.types import SignalRequest
+
+    class TrainablePayloadModel(_SegmentReplayModel):
+        def replay_r1_segment(self, **kwargs):
+            values = super().replay_r1_segment(**kwargs)
+            values["logits"].requires_grad_()
+            return values
+
+    evaluator = MultiSegmentTokenLogProbEvaluator(enabled_segments=("selfcheck_text",))
+    signals = evaluator.evaluate(
+        TrainablePayloadModel(),
+        _trajectory_batch(),
+        ref_model=TrainablePayloadModel(),
+        signal_request=SignalRequest(need_ref=True),
+    )
+    segment = signals.segments["selfcheck_text"]
+    assert segment.log_prob.requires_grad
+    assert segment.ref_log_prob is not None
+    assert not segment.ref_log_prob.requires_grad

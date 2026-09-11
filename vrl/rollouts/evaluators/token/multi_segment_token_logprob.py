@@ -76,12 +76,13 @@ class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase):
             )
             ref_lp = None
             if ref_output is not None:
-                ref_lp = self._compute_segment_logprobs(
-                    ref_output,
-                    name,
-                    segment,
-                    temperature,
-                )
+                with torch.no_grad():
+                    ref_lp = self._compute_segment_logprobs(
+                        ref_output,
+                        name,
+                        segment,
+                        temperature,
+                    )
 
             segment_signals[name] = signal_builder.segment_signal(
                 segment_name=name,

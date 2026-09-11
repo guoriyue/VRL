@@ -1970,3 +1970,17 @@ tracing algorithm construction and evaluator selection together.
 - Validation: 308 interface/replay/generation-execution tests passed. New tests
   replace every protocol member with None/42 and check rejection, while complete
   callable implementations are returned unchanged. Touched-file Ruff/diff pass.
+
+## Reference token scoring consistently excludes autograd
+
+- ref_forward now applies no_grad to both explicit-reference and adapter-disabled
+  paths. Keep reference selection/adapter lifecycle and the shared three-evaluator
+  helper. A reference model with trainable parameters must not create a loss graph.
+- Traced multi-segment evaluation beyond forward: its later log-prob conversion
+  also runs under no_grad, since payloads can retain trainable tensors/weights.
+  Current policy normalization remains differentiable. No generic context wrapper
+  or constants introduced; denoise reference conventions are not merged here.
+- Validation: 43 replay tests passed. New tests check both reference-selection
+  paths, exception/gradient/adapter restoration, and actual multi-segment scoring
+  with trainable payloads (current gradients retained, reference gradients absent).
+  Touched-file Ruff/diff checks passed. No training-speed claim is inferred.
