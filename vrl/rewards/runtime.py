@@ -490,7 +490,9 @@ def build_reward_scorer(
 ) -> RewardScorer:
     """Build the runtime selected by the typed inference deployment config."""
 
-    cfg = dict(worker_config or {})
+    if worker_config is not None and not isinstance(worker_config, Mapping):
+        raise TypeError("reward worker_config must be a mapping or None")
+    cfg = {} if worker_config is None else dict(worker_config)
     if "service_url" in cfg:
         raise ValueError(
             "worker_config.service_url was removed; configure "

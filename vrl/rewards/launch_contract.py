@@ -36,7 +36,9 @@ class RewardRuntimeLaunchContract:
         cls,
         component_config: Mapping[str, Any] | None,
     ) -> RewardRuntimeLaunchContract:
-        cfg = dict(component_config or {})
+        if component_config is not None and not isinstance(component_config, Mapping):
+            raise TypeError("reward component_config must be a mapping or None")
+        cfg = {} if component_config is None else dict(component_config)
         residual_limit = require_exact_int(
             cfg.get("memory_parking_residual_bytes_limit", 0),
             path="reward memory_parking_residual_bytes_limit",

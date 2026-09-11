@@ -11,7 +11,7 @@ from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
 )
-from vrl.rewards.runtime import InProcessRewardScorer
+from vrl.rewards.runtime import InProcessRewardScorer, build_reward_scorer
 
 
 @pytest.mark.parametrize(
@@ -28,6 +28,13 @@ from vrl.rewards.runtime import InProcessRewardScorer
 def test_runtime_rejects_coerced_parking_configuration(field, value):
     with pytest.raises(ValueError, match=field):
         InProcessRewardScorer({field: value})
+
+
+@pytest.mark.parametrize("build", [InProcessRewardScorer, build_reward_scorer])
+@pytest.mark.parametrize("worker_config", [False, 0, "", [], [("device", "cpu")]])
+def test_runtime_rejects_nonmapping_worker_config(build, worker_config) -> None:
+    with pytest.raises(TypeError, match="must be a mapping"):
+        build(worker_config)
 
 
 class _FakeRewardModel:

@@ -6710,3 +6710,16 @@ The broader repository audit remains incomplete.
   warnings, including real diffusers LoRA disable/restore coverage. No production
   edits in this slice. Larger methods and broader repository coverage remain
   outside what this syntactic scan proves; the overall audit remains open.
+
+## Reward runtime config distinguishes missing from malformed containers
+
+- RewardRuntimeLaunchContract and build_reward_scorer used dict(value or {}),
+  silently accepting False, zero, empty text/lists and iterable key-value pairs
+  despite their Mapping-or-None signatures. Both public construction routes
+  now validate that boundary and default only when the value is None.
+- Keep factory deployment selection separate from launch-contract parsing:
+  HTTP mode must reject local worker configuration without interpreting its
+  model fields. No new wrapper/helper, string-field policy or deployment change.
+- Ten regression cases across direct runtime and factory construction initially
+  failed to raise; all now pass. Reward inference and service suites: 136 passed,
+  one skipped. Touched-file Ruff and diff checks pass. Broader audit remains open.
