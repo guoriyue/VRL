@@ -287,11 +287,9 @@ class _ReplayMetrics:
     ) -> TrainStepMetrics:
         """Build the public step result while preserving each reduction rule."""
 
-        def mean(values: Sequence[float]) -> float:
-            return sum(values) / len(values) if values else 0.0
+        total_weight = sum(self.weights)
 
         def weighted_mean(values: Sequence[float]) -> float:
-            total_weight = sum(self.weights)
             if not values or total_weight <= 0:
                 return 0.0
             if len(values) != len(self.weights):
@@ -321,7 +319,7 @@ class _ReplayMetrics:
                 self.weights,
             ),
             initial_replay=initial_replay,
-            grad_norm=mean(self.grad_norms),
+            grad_norm=sum(self.grad_norms) / len(self.grad_norms) if self.grad_norms else 0.0,
             adv_saturation=adv_saturation,
             adv_zero_rate=adv_zero_rate,
             group_size=group_size,

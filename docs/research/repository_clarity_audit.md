@@ -5527,3 +5527,20 @@ this combined regression is compatibility evidence, not architectural completion
   including real two-process Gloo planning checks. Touched-file Ruff and
   git diff --check pass. These do not establish NCCL/FSDP performance or full
   repository completion; the audit remains open.
+
+## Replay metric assembly exposes its shared denominator
+
+- Compute the replay weight sum once per _ReplayMetrics.build call instead of
+  recomputing it inside each of four weighted scalar reductions. Inline the
+  single-use ordinary mean at the grad_norm field; empty gradients still yield
+  zero. Remove that local forwarding helper without adding a replacement class.
+- Keep the weighted_mean closure, which shares length validation and reduction
+  across four fields. Preserve PolicyUpdateStats and LogprobMismatchStats
+  reductions as their own semantic boundaries. PromptBatchSampler's separate
+  sample/preview methods and lazy torch imports remain necessary for RNG state
+  ownership and torch-free config loading; they are not cleanup targets merely
+  because their entry methods are short.
+- Existing advantage/metrics and distributed agreement suites: 14 passed,
+  including uneven replay weighting and empty-update paths. Touched-file Ruff
+  and git diff --check pass. No throughput benefit is claimed for this local
+  simplification. Full repository completion remains unproven.
