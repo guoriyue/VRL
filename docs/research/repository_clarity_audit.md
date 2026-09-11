@@ -1798,3 +1798,16 @@ is not a repository-wide completion claim or a mandate to inline short functions
 - Validation: 44 memory-guard, online reward-flow and lifecycle tests passed.
   A direct capture against this host's /proc also returned positive RSS/total
   values. Touched-file Ruff and diff checks passed. Repository review continues.
+
+## Config conversion exposes required-dependency failures
+
+- Confirmed pyproject declares OmegaConf as required. Removed broad import-error
+  fallback from plain_mapping and to_builtin_deep: broken dependency initialization
+  must propagate rather than silently return incompletely converted data.
+- Keep lazy imports, shared conversion functions and their existing representation
+  rules. No ConfigConverter wrapper or new dependency added. Their users include
+  trajectory storage policy, Ray resource parsing and generation runtime config.
+- Validation: 368 utility/config/trajectory tests and 56 Ray resource tests passed.
+  New tests preserve the original injected import failure through both APIs and
+  check nested interpolation/tuple conversion. Touched-file Ruff and diff checks
+  passed. Environments without the declared required dependency now fail clearly.

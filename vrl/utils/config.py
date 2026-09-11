@@ -18,12 +18,9 @@ def plain_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
     zero, and null values retain their presence semantics.
     """
 
-    try:
-        from omegaconf import OmegaConf
-    except Exception:
-        OmegaConf = None  # type: ignore[assignment]
+    from omegaconf import OmegaConf
 
-    if OmegaConf is not None and OmegaConf.is_config(value):
+    if OmegaConf.is_config(value):
         raw = OmegaConf.to_container(value, resolve=True, throw_on_missing=True)
         if isinstance(raw, Mapping):
             return dict(raw)
@@ -64,10 +61,7 @@ def to_builtin_deep(value: Any) -> Any:
     this only matters for hand-built test values.
     """
 
-    try:
-        from omegaconf import DictConfig, ListConfig, OmegaConf
-    except Exception:
-        return value
+    from omegaconf import DictConfig, ListConfig, OmegaConf
 
     if isinstance(value, (DictConfig, ListConfig)):
         return OmegaConf.to_container(value, resolve=True)
