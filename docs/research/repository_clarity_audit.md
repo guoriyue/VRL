@@ -3179,3 +3179,18 @@ this combined regression is compatibility evidence, not architectural completion
   retries, and unchanged absent sampling.seed. These are CPU serialization/
   orchestration checks, not a multi-GPU training run. Touched-file Ruff/diff
   checks passed; full repository review remains incomplete.
+
+## Align request version identity with weight installation
+
+- GenerationRequest.policy_version previously rejected only negative values;
+  bools, fractional values and NaN passed that boundary. True and 1.0 can
+  compare equal to installed integer version 1 in worker version checks.
+- Reuse require_exact_int with minimum zero in the request, matching launch
+  contracts, weight installation and staleness validation. None remains the
+  explicit unspecified-version case. No conversion, fallback, helper class
+  or new vocabulary constant is introduced.
+- Keep the validation in the request data boundary and the shared primitive
+  in utils.config: both have existing consumers and clear ownership.
+- Validation: 462 execution/orchestration tests passed, including invalid
+  request versions through dataclasses.replace and preserved None/zero/positive
+  versions. Touched-file Ruff/diff checks passed. Full review remains open.

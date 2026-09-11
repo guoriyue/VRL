@@ -77,3 +77,18 @@ def test_sample_rows_are_deterministic() -> None:
         "req-1:prompt:0:sample:1",
     ]
     assert [(row.prompt_index, row.sample_index) for row in rows] == [(0, 0), (0, 1)]
+
+
+@pytest.mark.parametrize("version", [True, False, 1.0, 1.5, "1", float("nan"), float("inf"), -1])
+def test_request_rejects_noninteger_or_negative_policy_version(version):
+    from dataclasses import replace
+
+    with pytest.raises(ValueError, match=r"GenerationRequest\.policy_version"):
+        replace(_request(), policy_version=version)
+
+
+@pytest.mark.parametrize("version", [None, 0, 1, 123])
+def test_request_preserves_optional_integer_policy_version(version):
+    from dataclasses import replace
+
+    assert replace(_request(), policy_version=version).policy_version is version

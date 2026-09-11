@@ -168,8 +168,12 @@ class GenerationRequest:
             )
         if not isinstance(self.runtime_debug, bool):
             raise TypeError("GenerationRequest.runtime_debug must be a bool")
-        if self.policy_version is not None and self.policy_version < 0:
-            raise ValueError("GenerationRequest.policy_version must be >= 0")
+        if self.policy_version is not None:
+            require_exact_int(
+                self.policy_version,
+                path="GenerationRequest.policy_version",
+                minimum=0,
+            )
 
         if self.sde_window_seed is not None:
             require_exact_int(
