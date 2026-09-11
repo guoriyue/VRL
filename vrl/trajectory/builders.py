@@ -96,7 +96,7 @@ def build_diffusion_trajectory(
         *(tensor_ref("denoise", name) for name in replay_tensor_names),
     )
 
-    reward_modality = _reward_modality_for_task(request.task)
+    reward_modality = task_modality(request.task)
     trajectory = TrajectoryBatch(
         request_id=request.request_id,
         family=request.family,
@@ -246,7 +246,7 @@ def build_chunk_autoregressive_denoise_trajectory(
         tensors[name] = TrajectoryTensor(name, value, axes, "replay_input")
         replay_tensor_names.append(name)
 
-    reward_modality = _reward_modality_for_task(request.task)
+    reward_modality = task_modality(request.task)
     replay_tensor_refs = (
         tensor_ref("denoise", "observations"),
         tensor_ref("denoise", "actions"),
@@ -325,7 +325,7 @@ def build_chunk_autoregressive_generation_trajectory(
         raise ValueError(
             f"output has {output_rows} rows, expected {batch_size}",
         )
-    reward_modality = _reward_modality_for_task(request.task)
+    reward_modality = task_modality(request.task)
     trajectory = TrajectoryBatch(
         request_id=request.request_id,
         family=request.family,
@@ -784,12 +784,6 @@ def _serializable_value(value: Any) -> Any:
     if isinstance(value, dict):
         return _serializable_context(value)
     return _DROP
-
-
-def _reward_modality_for_task(task: str) -> str:
-    # Video-task set is owned by vrl.models.families.semantics (single source), so a
-    # new video token can't silently fall through to the "image" default here.
-    return task_modality(task)
 
 
 def _segment_trainable(
