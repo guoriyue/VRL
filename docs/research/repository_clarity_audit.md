@@ -2606,3 +2606,25 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 536 continuous orchestration and config tests passed, including
   rejection of string/integer/None flags and preservation of both boolean values.
   Touched-file Ruff and diff checks passed. Repository-wide review remains active.
+
+## Sample selection preserves batch-shared context
+
+- Found a concrete shape collision beyond chunk axes: select_trajectory_batch
+  applied _select_value to context, treating every list/tuple whose length equalled
+  the sample count as sample-aligned. MiniMax exports vae_geometry as three fixed
+  values; selecting two rows from a three-sample batch reduced that geometry to
+  two values, incompatible with replay's three-value geometry unpacking.
+- Keep context as a shallow dictionary copy during sample selection. Document
+  its shared-metadata meaning on TrajectoryBatch; sample-aligned replay values
+  belong in segment tensors with explicit axes. This agrees with generation's
+  require_matching_batch_context contract and family context exporters.
+- Correct the earlier synthetic selection test that assumed context captions/IDs
+  were row metadata. It now verifies static geometry/schedules remain whole while
+  sample identities and tensors are selected. A regression calls the actual
+  MiniMax context exporter and verifies geometry survives the colliding count.
+- Keep selection/rebuild/device helpers: they provide shared trajectory structure
+  and validation across training consumers. No new context wrapper, field-name
+  taxonomy or family-specific exception. This supersedes the earlier audit's
+  endorsement of implicit list/tuple context slicing.
+- Validation: 663 trajectory, rollout, MiniMax and online trainer tests passed;
+  touched-file Ruff and diff checks passed. Full repository review remains active.

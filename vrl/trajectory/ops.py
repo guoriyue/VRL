@@ -37,7 +37,7 @@ def select_trajectory_batch(data: Any, selector: Any) -> Any:
             else tensor.value
         ),
         axes_sample_length=count,
-        context=_select_value(data.context, positions, len(data.sample_rows)),
+        context=dict(data.context),
     )
 
 

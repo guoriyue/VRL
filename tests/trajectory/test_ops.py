@@ -83,11 +83,11 @@ def _trajectory(
 )
 def test_select_keeps_tensor_rows_and_metadata_aligned(selector, positions) -> None:
     trajectory = _trajectory(samples=3)
-    trajectory.context = {"captions": ["A", "B", "C"], "ids": (10, 20, 30)}
+    trajectory.context = {"geometry": [4, 8, 16], "schedule": (10, 20, 30)}
     selected = select_trajectory_batch(trajectory, selector)
     assert [row.sample_index for row in selected.sample_rows] == positions
-    assert selected.context["captions"] == [trajectory.context["captions"][i] for i in positions]
-    assert selected.context["ids"] == tuple(trajectory.context["ids"][i] for i in positions)
+    assert selected.context == trajectory.context
+    assert selected.context is not trajectory.context
     for name, tensor in selected.segments["image_tokens"].tensors.items():
         original = trajectory.segments["image_tokens"].tensors[name]
         if original.axes and original.axes[0] == "sample":
@@ -101,3 +101,17 @@ def test_select_keeps_tensor_rows_and_metadata_aligned(selector, positions) -> N
 def test_select_rejects_ambiguous_selectors(selector) -> None:
     with pytest.raises(ValueError, match=r"trajectory .*selector"):
         select_trajectory_batch(_trajectory(samples=3), selector)
+
+
+def test_sample_selection_preserves_minimax_exported_vae_geometry() -> None:
+    from types import SimpleNamespace
+
+    from vrl.models.families.minimax_h3.model import MiniMaxH3Model
+
+    model = SimpleNamespace(_vae_geometry=lambda: (4, 2, 8))
+    state = SimpleNamespace(height=32, width=32, num_frames=4, fps=24, timesteps=torch.ones(2))
+    trajectory = _trajectory(samples=3)
+    trajectory.context = MiniMaxH3Model.export_batch_context(model, state)
+    selected = select_trajectory_batch(trajectory, [2, 0])
+    assert selected.context["vae_geometry"] == [4, 2, 8]
+    assert len(selected.sample_rows) == 2

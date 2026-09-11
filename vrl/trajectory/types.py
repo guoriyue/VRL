@@ -149,6 +149,7 @@ class TrajectoryBatch:
     segments: dict[str, TrajectorySegment]
     primary_segment: str | None = None
     reward_views: dict[str, RewardView] = field(default_factory=dict)
+    # Batch-shared replay metadata; sample-aligned values belong in segment tensors.
     context: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
