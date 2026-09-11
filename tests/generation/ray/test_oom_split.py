@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -86,6 +87,10 @@ class _CapacityWorker:
             batch=batch,
             output={"batch_key": batch.batch_key, "samples": batch.sample_count},
         )
+
+    def executed_batches(self) -> list[str]:
+        """Read actor-side dispatch history in the real Ray regression."""
+        return list(self.executed)
 
 
 @dataclass
@@ -615,3 +620,49 @@ async def test_executor_logs_measured_batch_memory(with_reading, caplog, monkeyp
 def test_local_and_remote_oom_classification_agree(message, expected):
     assert is_cuda_out_of_memory(message) is expected
     assert is_cuda_out_of_memory(RuntimeError(message)) is expected
+
+
+@pytest.mark.slow_test
+@pytest.mark.parametrize("failure", [_OOM_MESSAGE, "decode failed"])
+def test_real_multirank_nonprimary_failure_reaches_driver(local_ray, failure):
+    actor_cls = local_ray.remote(num_cpus=0)(_CapacityWorker)
+    actors = [
+        actor_cls.remote(worker_id="r0", max_samples=8),
+        actor_cls.remote(worker_id="r1", max_samples=2, fail_message=failure),
+    ]
+    engine = RayGenerationEngine(
+        "engine",
+        [RayActorHandle(worker_id=f"r{index}", actor=actor) for index, actor in enumerate(actors)],
+    )
+    executor = RayGenerationExecutor(
+        planner=_StaticPlanner([GenerationSampleBatch(0, 0, 8)]),
+        engines=[engine],
+        gatherer=_CoverageGatherer(),
+        actor_dispatcher=RayActorDispatcher(("engine",)),
+        generation_stall_timeout_s=30.0,
+    )
+    try:
+        if failure == _OOM_MESSAGE:
+            output = asyncio.run(executor.execute(_request(8, runtime_debug=True)))
+            assert sorted(entry["batch_key"] for entry in output.output) == [
+                _key(0, 2),
+                _key(2, 2),
+                _key(4, 2),
+                _key(6, 2),
+            ]
+            assert all(
+                row["worker_id"] == "r1" for row in output.runtime_debug["batch_oom_splits"]
+            )
+            histories = local_ray.get([actor.executed_batches.remote() for actor in actors])
+            assert histories[0] == histories[1]
+            assert len(histories[0]) == 7
+        else:
+            with pytest.raises(RuntimeError, match="decode failed"):
+                asyncio.run(executor.execute(_request(8)))
+            assert local_ray.get([actor.executed_batches.remote() for actor in actors]) == [
+                [_key(0, 8)],
+                [_key(0, 8)],
+            ]
+    finally:
+        for actor in actors:
+            local_ray.kill(actor, no_restart=True)

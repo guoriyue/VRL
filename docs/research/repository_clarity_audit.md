@@ -3309,3 +3309,22 @@ this combined regression is compatibility evidence, not architectural completion
   OOM, error precedence and primary selection after success. All remote call
   sites were inspected for combiner wiring. Touched-file Ruff/diff checks
   passed. No multi-GPU model run is claimed; full review remains incomplete.
+
+## Verify non-primary errors through real Ray dispatch and retry
+
+- Extend the existing capacity-worker fixture with an actor-readable dispatch
+  history and exercise two real Ray actors through RayGenerationExecutor,
+  RayGenerationEngine and the production actor dispatcher. No production
+  code or protocol changes in this validation slice.
+- Rank0 accepts eight samples while rank1 accepts two. The driver's request
+  degrades to four two-sample outputs; all split diagnostics retain rank1, and
+  both actor histories contain the same seven original/child dispatches.
+  A separate rank1 decode failure reaches the caller with only the initial
+  dispatch, proving terminal errors are not converted to OOM retries.
+- The small fixture method is necessary to inspect actor-owned state across
+  the actual process boundary. Existing OOM message constants remain fixture
+  vocabulary, not production policy tables.
+- Validation: 24 OOM-split tests passed, including both real Ray cases;
+  touched-file Ruff/diff checks passed. Actors use CPU scripted capacity, so
+  this verifies transport/admission/aggregation/retry, not CUDA collective
+  recovery after a real rank OOM. Full repository review remains incomplete.
