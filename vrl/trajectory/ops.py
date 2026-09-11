@@ -28,7 +28,7 @@ def select_trajectory_batch(data: Any, selector: Any) -> Any:
     if not isinstance(data, TrajectoryBatch):
         return data
 
-    positions = _selector_positions(selector)
+    positions = _selector_positions(selector, len(data.sample_rows))
     count = len(positions)
     return _rebuild_trajectory(
         data,
@@ -37,12 +37,12 @@ def select_trajectory_batch(data: Any, selector: Any) -> Any:
         task=data.task,
         sample_rows=[data.sample_rows[i] for i in positions],
         tensor_value_fn=lambda tensor: (
-            _select_value(tensor.value, selector, len(data.sample_rows))
+            _select_value(tensor.value, positions, len(data.sample_rows))
             if tensor.axes and tensor.axes[0] == "sample"
             else tensor.value
         ),
         axes_sample_length=count,
-        context=_select_value(data.context, selector, len(data.sample_rows)),
+        context=_select_value(data.context, positions, len(data.sample_rows)),
     )
 
 
@@ -117,28 +117,40 @@ def _rebuild_trajectory(
     return TrajectoryValidator(out).validate_batch()
 
 
-def _select_value(value: Any, selector: Any, batch_size: int) -> Any:
+def _select_value(value: Any, positions: list[int], batch_size: int) -> Any:
     if value is None:
         return None
     shape = getattr(value, "shape", None)
     if shape is not None and len(shape) > 0 and int(shape[0]) == batch_size:
-        return value[selector.to(value.device)] if hasattr(selector, "to") else value[selector]
+        return value[positions]
     if isinstance(value, list) and len(value) == batch_size:
-        return [value[i] for i in _selector_positions(selector)]
+        return [value[i] for i in positions]
     if isinstance(value, tuple) and len(value) == batch_size:
-        return tuple(value[i] for i in _selector_positions(selector))
+        return tuple(value[i] for i in positions)
     if isinstance(value, dict):
-        return {key: _select_value(inner, selector, batch_size) for key, inner in value.items()}
+        return {key: _select_value(inner, positions, batch_size) for key, inner in value.items()}
     return value
 
 
-def _selector_positions(selector: Any) -> list[int]:
+def _selector_positions(selector: Any, batch_size: int) -> list[int]:
+    """Normalize one-dimensional masks/indices once for every sample-aligned value."""
+    is_boolean_mask = False
     if hasattr(selector, "detach"):
-        selector_cpu = selector.detach().cpu()
-        if str(selector_cpu.dtype) == "torch.bool":
-            return [int(i) for i in selector_cpu.nonzero(as_tuple=False).flatten().tolist()]
-        return [int(i) for i in selector_cpu.reshape(-1).tolist()]
-    return [int(i) for i in selector]
+        if selector.is_floating_point() or selector.is_complex():
+            raise ValueError("trajectory selector must contain only booleans or only integers")
+        is_boolean_mask = str(selector.dtype) == "torch.bool"
+        if selector.ndim != 1:
+            raise ValueError("trajectory selector must be one-dimensional")
+        values = selector.detach().cpu().tolist()
+    else:
+        values = list(selector)
+    if is_boolean_mask or (values and all(isinstance(value, bool) for value in values)):
+        if len(values) != batch_size:
+            raise ValueError("trajectory boolean selector must match the sample count")
+        return [index for index, selected in enumerate(values) if selected]
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+        raise ValueError("trajectory selector must contain only booleans or only integers")
+    return values
 
 
 __all__ = [

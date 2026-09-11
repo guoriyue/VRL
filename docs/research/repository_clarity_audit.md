@@ -1265,3 +1265,22 @@ contained guesses. Removed both:
   tests cover a real Tensor receiving an invalid device, original TypeError and
   RuntimeError propagation, and the no-device no-op. Touched-file Ruff and
   git diff --check pass.
+
+## Trajectory selection uses one row interpretation
+
+- Normalize the selector once at select_trajectory_batch, then use the same
+  positions for sample identities, tensor leaves and list/tuple context values.
+  Python boolean masks previously became integer row IDs for identities/context
+  while tensor indexing treated them as masks, producing incompatible selections.
+- Reject mixed boolean/integer, fractional/string and multidimensional selectors;
+  boolean masks must match the sample count. Preserve integer ordering and
+  Python-style negative indices. Tensor selectors are copied to CPU once rather
+  than reparsed for every list-valued field.
+- Retained the shared reconstruction and value-selection functions: both carry
+  structural rules across trajectory consumers. No selector class, schema field
+  or dtype policy introduced. Context's existing sample-alignment convention and
+  non-sample metadata handling are unchanged.
+- Validation: 65 trajectory, replay and trainer-granularity tests passed. New
+  regressions compare sample IDs, actual tensor contents and list/tuple metadata
+  for Python/Torch masks and index arrays, and reject malformed selectors.
+  Touched-file Ruff and git diff --check pass.

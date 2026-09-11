@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from vrl.generation.types import GenerationRequest
@@ -69,3 +70,34 @@ def _trajectory(
         context={},
     )
     return trajectory
+
+
+@pytest.mark.parametrize(
+    ("selector", "positions"),
+    [
+        ([True, False, True], [0, 2]),
+        (torch.tensor([True, False, True]), [0, 2]),
+        ([2, 0], [2, 0]),
+        (torch.tensor([2, 0]), [2, 0]),
+    ],
+)
+def test_select_keeps_tensor_rows_and_metadata_aligned(selector, positions) -> None:
+    trajectory = _trajectory(samples=3)
+    trajectory.context = {"captions": ["A", "B", "C"], "ids": (10, 20, 30)}
+    selected = select_trajectory_batch(trajectory, selector)
+    assert [row.sample_index for row in selected.sample_rows] == positions
+    assert selected.context["captions"] == [trajectory.context["captions"][i] for i in positions]
+    assert selected.context["ids"] == tuple(trajectory.context["ids"][i] for i in positions)
+    for name, tensor in selected.segments["image_tokens"].tensors.items():
+        original = trajectory.segments["image_tokens"].tensors[name]
+        if original.axes and original.axes[0] == "sample":
+            assert torch.equal(tensor.value, original.value[positions])
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [[True, False], [0.5], [True, 0], ["1"], torch.tensor([[0, 1]]), torch.tensor([0.5])],
+)
+def test_select_rejects_ambiguous_selectors(selector) -> None:
+    with pytest.raises(ValueError, match=r"trajectory .*selector"):
+        select_trajectory_batch(_trajectory(samples=3), selector)
