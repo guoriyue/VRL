@@ -50,13 +50,14 @@ class ReplaySegmentResult:
     def logprobs(self, token_ids: Any | None = None, *, temperature: float = 1.0) -> Any:
         """Per-token log-probs for this segment.
 
-        Families either store them directly (``log_probs``) or store logits
-        under the ``logits`` key. That field-name knowledge lives here with the
+        Families provide precomputed ``log_probs``, materialized ``logits``, or
+        a fused vocab-head payload (``head_hidden`` and ``head_weight`` with
+        optional ``head_bias``). That field-name knowledge lives here with the
         payload contract, so consumers (evaluators) do not switch on payload
         keys and a new modality only touches this method.
 
         ``temperature`` is the rollout sampling temperature (recorded in the
-        rollout context). It only applies on the logits path: rollout scoring
+        rollout context). It applies to both logits and fused-head paths: rollout scoring
         divides logits by temperature, so replay must renormalize with the
         same temperature to keep old/new log-prob parity. Directly stored
         ``log_probs`` must already use that temperature in the family's replay

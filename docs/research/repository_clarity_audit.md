@@ -7268,3 +7268,16 @@ The broader repository audit remains incomplete.
 - Preserve chunk selection, existing dimension checks and numerical precision
   policy. No new conversion helper or guessed shape default; broader repository
   clarity audit remains incomplete.
+
+## Replay payload documentation covers the fused-head path
+
+- Correct ReplaySegmentResult.logprobs documentation to describe all three
+  existing payload forms and temperature normalization for both logits and
+  fused-head evaluation. Precomputed log probabilities remain already normalized.
+- Keep payload dispatch with the result type, shared temperature validation,
+  and separate categorical/fused implementations with different memory
+  requirements. No new dispatcher or sampling-distribution change.
+- Following the recent fused-kernel fixes, verified complete rollout replay and
+  model-interface suites: 168 passed, two dependency warnings. Touched-file Ruff
+  and diff checks pass. This slice changes documentation only; broader repository
+  clarity audit remains incomplete.
