@@ -2071,3 +2071,25 @@ tracing algorithm construction and evaluator selection together.
   selection and rank-one cache rejection. An initial test-helper edit also
   inserted setup into an unrelated test; corrected that insertion before the
   successful run. Touched-file Ruff and diff checks passed.
+
+## Replay resolver rejects incomplete axis requests
+
+- The replay_tensor_dict boundary previously ignored axis-only/index-only
+  requests and unknown axis names, returning the entire payload. Negative
+  indices also selected from the end under tensor indexing semantics. Require
+  paired axis/index arguments, a declared axis, and an exact nonnegative integer
+  index before resolving payloads. Reuse require_exact_int instead of adding
+  another independent numeric validator.
+- Keep static tensors without the selected axis unchanged and retain the
+  existing per-tensor upper-bound check, slicing-before-device-movement and
+  shared resolver API. The helper is a cross-family resolution boundary, not
+  removable forwarding boilerplate. No ALL_CAPS data or runtime class added.
+- Inspected denoise model-base, SDE evaluator and CausVid call sites: production
+  step selections already supply both arguments; full replay uses neither.
+  storage.py controls runtime placement/dtype rather than persisted schema
+  migration. Optional-cache axis declarations remain a separate open item;
+  this change does not claim to migrate them or complete the repository audit.
+- Validation: 198 trajectory, replay and full-sequence-denoise binding tests
+  passed. Nine new resolver cases cover invalid/partial requests, upper bounds,
+  correct step selection and unchanged static payload identity. Touched-file
+  Ruff and diff checks passed.

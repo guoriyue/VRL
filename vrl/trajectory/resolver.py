@@ -15,6 +15,7 @@ from vrl.trajectory.validation import (
     TrajectoryValidator,
     tensor_ref,
 )
+from vrl.utils.config import require_exact_int
 
 
 class TrajectoryResolverError(ValueError):
@@ -86,7 +87,18 @@ class TrajectoryResolver:
         axis_index: int | None = None,
         device: Any | None = None,
     ) -> dict[str, Any]:
-        """Return named replay tensors declared by a segment ReplayInput."""
+        """Return replay tensors, optionally selecting one explicitly named axis.
+
+        Axis and index must be provided together. Tensors without that axis
+        retain their full value, such as static prompt embeddings during replay.
+        """
+
+        if (axis is None) != (axis_index is None):
+            raise TrajectoryResolverError("replay axis and axis_index must be provided together")
+        if axis is not None:
+            if axis not in self.trajectory.axes:
+                raise TrajectoryResolverError(f"unknown replay axis {axis!r}")
+            axis_index = require_exact_int(axis_index, path="replay.axis_index", minimum=0)
 
         name = segment_name or self.primary_trainable_segment_name()
         segment = self.trajectory.segments.get(name)
