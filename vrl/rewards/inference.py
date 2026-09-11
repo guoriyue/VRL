@@ -97,11 +97,11 @@ class RewardInferenceArtifact:
         Returns ``(prompt, resolved_media_path)``.
         """
 
-        prompt = self.prompt or str(self.metadata.get("prompt", ""))
-        if not prompt:
+        prompt = self.prompt
+        if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError(
                 f"{family} requires a prompt for artifact {self.artifact_id!r}; "
-                "found none on self.prompt or self.metadata['prompt']",
+                "artifact.prompt must be a non-empty string",
             )
         video_path = str(Path(self.as_path()).expanduser().resolve())
         return prompt, video_path

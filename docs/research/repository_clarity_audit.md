@@ -651,3 +651,22 @@ Torch-free import checks. Touched-file Ruff and diff whitespace checks pass.
 - Validation: 40 reward service tests and eight CountGD installer tests passed;
   source search finds no remaining Python `_load_service` references. Ruff on
   touched files and diff whitespace checks pass.
+
+## Explicit captions for video reward judges
+
+- `RewardInferenceArtifact.require_prompt_and_video_path` now reads only the
+  declared `artifact.prompt`. Removed its fallback to arbitrary metadata and
+  string coercion, which could turn null metadata into the literal caption
+  `None` or choose a second caption source when the actual field was absent.
+- Caption-conditioned judges reject missing, non-string or whitespace-only
+  prompts at their shared boundary. General artifacts still permit absent
+  captions for scorers that do not consume them. Existing artifact stores
+  already populate the explicit prompt field.
+- Retained the method as cross-family consistency: Kling, HPSv3, UnifiedReward,
+  Qwen-VL and VideoCon share its prompt/path precondition. No per-judge duplicate
+  validators, prompt registry or new class added. Metadata-only captions are
+  intentionally no longer accepted by these judges.
+- Validation: 156 reward inference/service/model/Kling tests passed, two skipped.
+  New regressions cover malformed explicit captions despite available metadata
+  and preserve the explicit field when metadata disagrees. Touched-file Ruff and
+  whitespace checks pass. Full reward numerical/model execution is not claimed.

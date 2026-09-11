@@ -96,3 +96,31 @@ def test_result_rejects_invalid_timing() -> None:
             scores={"overall_reward": 1.0},
             timing_ms={"inference_ms": -1.0},
         )
+
+
+@pytest.mark.parametrize("prompt", ["", "   ", None, 123])
+def test_video_judge_requires_explicit_artifact_prompt(tmp_path, prompt):
+    artifact = RewardInferenceArtifact(
+        artifact_id="a",
+        sample_id="s",
+        path=str(tmp_path / "video.mp4"),
+        prompt=prompt,
+        metadata={"prompt": "an unrelated fallback caption"},
+    )
+    with pytest.raises(ValueError, match=r"artifact\.prompt must be a non-empty string"):
+        artifact.require_prompt_and_video_path(family="judge")
+
+
+def test_video_judge_uses_artifact_prompt_without_metadata_override(tmp_path):
+    path = tmp_path / "video.mp4"
+    artifact = RewardInferenceArtifact(
+        artifact_id="a",
+        sample_id="s",
+        path=str(path),
+        prompt="the actual caption",
+        metadata={"prompt": "another caption"},
+    )
+    assert artifact.require_prompt_and_video_path(family="judge") == (
+        "the actual caption",
+        str(path.resolve()),
+    )
