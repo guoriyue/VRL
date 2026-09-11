@@ -385,3 +385,25 @@ def test_metric_row_keeps_one_declared_reward_component(names):
     assert row.component_names == ("ocr",)
     assert row.component_values == (0.75,)
     assert OnlineMetricRow.csv_columns(row.component_names)[-1] == "r_ocr"
+
+
+@pytest.mark.parametrize("position", [float("nan"), float("inf"), 1.5, True, "1", -1])
+@pytest.mark.parametrize("exists", [False, True])
+def test_metrics_resume_rejects_invalid_position_without_changing_file(tmp_path, position, exists):
+    path = tmp_path / "metrics.csv"
+    original = "epoch,loss\n0,0.5\n1,0.4\n"
+    if exists:
+        path.write_text(original)
+    with pytest.raises(ValueError, match="metrics resume position"):
+        MetricsCSV(path, ("epoch", "loss"), resume_at=("epoch", position))
+    if exists:
+        assert path.read_text() == original
+    else:
+        assert not path.exists()
+
+
+def test_metrics_resume_requires_declared_position_column_even_for_new_file(tmp_path):
+    path = tmp_path / "metrics.csv"
+    with pytest.raises(ValueError, match="missing resume column 'step'"):
+        MetricsCSV(path, ("epoch", "loss"), resume_at=("step", 1))
+    assert not path.exists()

@@ -10,6 +10,8 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from vrl.utils.config import require_exact_int
+
 if TYPE_CHECKING:
     from vrl.algorithms.types import TrainStepMetrics
 
@@ -310,8 +312,9 @@ class MetricsCSV:
             return
 
         position_column, resume_position = resume_at
-        if resume_position < 0:
-            raise ValueError(f"metrics resume position must be >= 0, got {resume_position}")
+        require_exact_int(resume_position, path="metrics resume position", minimum=0)
+        if position_column not in column_names:
+            raise ValueError(f"metrics CSV is missing resume column {position_column!r}: {path}")
         if not path.exists():
             logger.warning("Resume requested but metrics file does not exist; creating %s", path)
             path.write_text(normalized_header)
@@ -328,8 +331,6 @@ class MetricsCSV:
                 "start a fresh output_dir.",
             )
 
-        if position_column not in column_names:
-            raise ValueError(f"metrics CSV is missing resume column {position_column!r}: {path}")
         position_index = column_names.index(position_column)
         retained_lines: list[str] = []
         previous_position = -1

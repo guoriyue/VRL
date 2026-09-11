@@ -2877,3 +2877,19 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 163 metrics-IO and online trainer tests passed. Raw strings/bytes
   fail, while list/tuple containing ocr preserve one component and its value.
   Touched-file Ruff/diff checks passed. Full repository review remains active.
+
+## Metrics resume validates the checkpoint position before touching CSV contents
+
+- MetricsCSV only tested resume_position < 0. NaN passed and made every row's
+  position < resume_position false, so alignment could discard all metrics.
+  Fractional and boolean positions likewise had no valid checkpoint meaning.
+- Reuse require_exact_int with a nonnegative bound before resume file creation
+  or alignment. Check the declared position column before the missing-file branch
+  too; previously an invalid column was accepted only when creating a new file.
+- Keep initialization/resume inside MetricsCSV and retain atomic replacement,
+  complete-line recovery and checkpoint-position semantics. No new free helper,
+  wrapper, config vocabulary or parallel validation table.
+- Validation: 176 metrics-IO and online trainer tests passed. Invalid positions
+  preserve existing contents or leave absent files absent; an unknown resume
+  column is rejected for a new file. Touched-file Ruff/diff checks passed. Full
+  repository review remains active.
