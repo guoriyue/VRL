@@ -191,15 +191,14 @@ def _split_hf_cache_rows(value: Any, batch_size: int) -> list[Any]:
             "AR KV row scheduling currently supports transformers DynamicCache; "
             f"got {type(value).__name__}",
         )
-    layer_pairs = _cache_kv_pairs(value)
-    rows: list[Any] = []
-    for row in range(batch_size):
-        rows.append(
-            _cache_from_kv_pairs(
-                [(key[row : row + 1], val[row : row + 1]) for key, val in layer_pairs],
-            ),
-        )
-    return rows
+    split_layers = [
+        (ar_split_rows(key, batch_size), ar_split_rows(val, batch_size))
+        for key, val in _cache_kv_pairs(value)
+    ]
+    return [
+        _cache_from_kv_pairs([(keys[row], values[row]) for keys, values in split_layers])
+        for row in range(batch_size)
+    ]
 
 
 def _concat_hf_cache_rows(values: Sequence[Any]) -> Any:

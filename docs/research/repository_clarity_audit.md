@@ -2177,3 +2177,18 @@ tracing algorithm construction and evaluator selection together.
   New cases reject missing/extra fields, unequal sequence lengths and mixed
   containers; reversed mapping insertion order preserves tensor alignment.
   Touched-file Ruff and diff checks passed. Full repository review continues.
+
+## DynamicCache splitting shares exact row-count semantics
+
+- Replaced direct per-row K/V slices in _split_hf_cache_rows with existing
+  ar_split_rows for every layer's key and value before constructing output
+  caches. Previously requesting too many rows produced empty cache rows and
+  requesting too few silently discarded rows, unlike the plain tensor path.
+- Keep the HF read/reconstruction adapters as external API boundaries and the
+  recursive public split/concat API shared by attention and generation. No new
+  helper, class or constant introduced. Valid row ordering and tensor views
+  remain unchanged; empty DynamicCache objects still have no tensor batch size
+  to validate.
+- Validation: 68 cache-row, token composition and GLM-family tests passed.
+  New cases cover too few/many requested rows and mismatched K or V in a later
+  layer. Touched-file Ruff and diff checks passed. Full review remains active.

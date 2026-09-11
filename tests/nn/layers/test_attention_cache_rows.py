@@ -162,3 +162,27 @@ def test_concat_mapping_order_does_not_change_key_alignment() -> None:
     assert list(merged) == ["key", "value"]
     torch.testing.assert_close(merged["key"], torch.tensor([[1], [3]]))
     torch.testing.assert_close(merged["value"], torch.tensor([[2], [4]]))
+
+
+@pytest.mark.parametrize("requested_rows", [1, 3])
+def test_dynamic_cache_split_requires_exact_batch_size(requested_rows) -> None:
+    cache = DynamicCache()
+    key = torch.zeros(2, 1, 3, 4)
+    cache.update(key, key.clone(), layer_idx=0)
+
+    with pytest.raises(ValueError, match="cannot split tensor with batch=2"):
+        ar_split_rows(cache, requested_rows)
+
+
+@pytest.mark.parametrize("invalid_part", ["key", "value"])
+def test_dynamic_cache_split_validates_every_layer_tensor(invalid_part) -> None:
+    cache = DynamicCache()
+    cache.update(torch.zeros(2, 1, 3, 4), torch.zeros(2, 1, 3, 4), layer_idx=0)
+    cache.update(
+        torch.zeros(1 if invalid_part == "key" else 2, 1, 3, 4),
+        torch.zeros(1 if invalid_part == "value" else 2, 1, 3, 4),
+        layer_idx=1,
+    )
+
+    with pytest.raises(ValueError, match="cannot split tensor with batch=1 into 2 rows"):
+        ar_split_rows(cache, 2)
