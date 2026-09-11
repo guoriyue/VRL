@@ -3750,3 +3750,19 @@ this combined regression is compatibility evidence, not architectural completion
   continuous-field mapping test and schema-change resume rejection test. This
   comment/documentation change passed touched-file Ruff/diff checks; execution
   tests were not rerun. Full repository review remains incomplete.
+
+## Reward service capacity fields are integer protocol values
+
+- Reviewed client/wire/protocol ownership. Keep encode/decode functions shared
+  by both HTTP endpoints, _parse_status as the client's protocol-error adapter,
+  and WIRE_VERSION/_ARTIFACT_WIRE_FIELDS as real wire/schema boundaries.
+- RewardServiceInfo only compared capacities numerically, accepting booleans,
+  fractional counts and NaN. Six info_from_wire regression cases reproduced
+  these invalid payloads passing validation. Reuse require_exact_int for both
+  capacity fields before checking pending capacity against concurrency.
+- Preserve JSON shape, error adaptation, client identity checks and valid service
+  values. No new wrapper or validation function, and no request scheduling or
+  cancellation change.
+- Validation: all 61 service tests passed after the fix; six new wire cases
+  failed before it. Touched-file Ruff/diff checks passed. Full review remains
+  incomplete.

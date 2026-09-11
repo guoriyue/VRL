@@ -1087,3 +1087,20 @@ def test_wire_rejects_non_integer_artifact_size(tmp_path, size_bytes) -> None:
     payload["request"]["artifacts"][0]["size_bytes"] = size_bytes
     with pytest.raises(RewardServiceProtocolError, match="size_bytes must be"):
         request_from_wire(payload)
+
+
+@pytest.mark.parametrize("field", ["max_concurrency", "max_pending_requests"])
+@pytest.mark.parametrize("value", [True, 1.5, float("nan")])
+def test_service_info_rejects_noninteger_capacity(field, value) -> None:
+    from vrl.rewards.service.wire import info_from_wire
+
+    info = {
+        "model_name": "test",
+        "model_version": "v1",
+        "generation_overlap_safe": False,
+        "max_concurrency": 1,
+        "max_pending_requests": 8,
+    }
+    info[field] = value
+    with pytest.raises(RewardServiceProtocolError, match=field):
+        info_from_wire({"version": WIRE_VERSION, "info": info})
