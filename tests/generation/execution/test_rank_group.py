@@ -1,9 +1,9 @@
 """Process-group smoke for multi-rank engines — CPU + gloo, no GPU needed.
 
 Two real OS processes rendezvous through the same RankGroupSpec the launcher
-stamps, exchange tensors through a collective, and leave the group cleanly. This pins the P3 runtime (init /
-collective / destroy) on a single-GPU dev box; the nccl path differs only by
-backend string and device placement.
+stamps, exchange tensors through all_gather, and leave the group cleanly.
+This exercises CPU rendezvous and collective lifecycle; it does not verify
+NCCL collectives or GPU placement.
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
 
 
 @pytest.mark.slow_test
-def test_two_ranks_rendezvous_all_to_all_and_leave() -> None:
+def test_two_ranks_rendezvous_all_gather_and_leave() -> None:
     context = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue = context.Queue()
     port = _free_port()
@@ -130,3 +130,9 @@ def test_spec_requires_integer_rendezvous_fields(field, value) -> None:
     settings[field] = value
     with pytest.raises(ValueError, match=field + " must be an integer"):
         RankGroupSpec(**settings)
+
+
+@pytest.mark.parametrize("address", [123, True, b"127.0.0.1", ["127.0.0.1"]])
+def test_spec_rejects_nonstring_rendezvous_address(address) -> None:
+    with pytest.raises(ValueError, match="master_addr"):
+        RankGroupSpec(address, 29500, 0, 2)

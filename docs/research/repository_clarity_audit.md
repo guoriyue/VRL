@@ -4946,3 +4946,19 @@ this combined regression is compatibility evidence, not architectural completion
   deprecation warnings, process exit zero. Coverage includes prompt-major
   planning, invalid widths, OOM splitting and family gather paths. Touched-file
   Ruff and git diff --check pass. The repository-wide audit remains open.
+
+## Rank rendezvous rejects non-string addresses before URL construction
+
+- Require master_addr to be a non-empty string in RankGroupSpec. Previously,
+  truthy integers, booleans, bytes and lists passed validation and were formatted
+  into TCP URLs. Four constructor regressions failed before this fix.
+- Keep init/destroy free functions as the process-group lifecycle and lazy
+  torch.distributed import boundary. Backend names remain the supported protocol
+  choices. No network validator abstraction or hostname restriction is added.
+- Rename the CPU smoke test to all_gather, matching the actual collective, and
+  remove its implication that it establishes NCCL/GPU behavior. Preserve real
+  two-process rendezvous, RNG synchronization and teardown coverage.
+- Rank-group, worker sleep and batch-memory shadow suites: 101 passed, including
+  the real CPU collective smoke. Touched-file Ruff and git diff --check pass.
+  Address reachability and NCCL verification are outside this change; the wider
+  repository audit remains open.

@@ -35,8 +35,8 @@ class RankGroupSpec:
     backend: str = "nccl"
 
     def __post_init__(self) -> None:
-        if not self.master_addr:
-            raise ValueError("rank group master_addr must be non-empty")
+        if not isinstance(self.master_addr, str) or not self.master_addr:
+            raise ValueError("rank group master_addr must be a non-empty string")
         require_exact_int(self.master_port, path="rank group.master_port")
         require_exact_int(self.group_rank, path="rank group.group_rank")
         require_exact_int(self.group_world_size, path="rank group.group_world_size")
