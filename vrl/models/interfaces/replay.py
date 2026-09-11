@@ -112,6 +112,12 @@ class ReplayResult:
                     f"ReplaySegmentResult.segment={segment.segment!r}",
                 )
 
+    @classmethod
+    def from_segment(cls, name: str, values: dict[str, Any]) -> ReplayResult:
+        """Build one segment with its mapping key and segment name aligned."""
+
+        return cls(segments={name: ReplaySegmentResult(segment=name, values=values)})
+
     def require_segment(self, segment_name: str) -> ReplaySegmentResult:
         """Return a replay segment result or fail with a helpful segment list."""
 
@@ -205,14 +211,6 @@ class ReplayRequestContract:
         )
 
 
-def single_segment_result(name: str, values: dict[str, Any]) -> ReplayResult:
-    """Wrap one segment's payload as a ``ReplayResult`` (key == segment name)."""
-
-    return ReplayResult(
-        segments={name: ReplaySegmentResult(segment=name, values=values)},
-    )
-
-
 def replay_context_image_size(
     batch: Any,
     *,
@@ -285,5 +283,4 @@ __all__ = [
     "replay_context_image_size",
     "require_replay_model",
     "require_runtime_model",
-    "single_segment_result",
 ]

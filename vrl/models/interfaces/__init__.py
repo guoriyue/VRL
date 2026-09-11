@@ -14,7 +14,6 @@ from vrl.models.interfaces.replay import (
     replay_context_image_size,
     require_replay_model,
     require_runtime_model,
-    single_segment_result,
 )
 from vrl.models.interfaces.runtime import (
     ModelBuild,
@@ -41,5 +40,4 @@ __all__ = [
     "replay_context_image_size",
     "require_replay_model",
     "require_runtime_model",
-    "single_segment_result",
 ]

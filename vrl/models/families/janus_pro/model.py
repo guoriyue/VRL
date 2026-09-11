@@ -54,7 +54,6 @@ from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
     ReplaySegmentResult,
-    single_segment_result,
 )
 from vrl.models.peft_adapter import peel_peft
 from vrl.models.steps.token.base import (
@@ -429,7 +428,7 @@ class JanusProModel(ARModelBase):
             prompt_mask,
             image_token_ids,
         )
-        return single_segment_result(
+        return ReplayResult.from_segment(
             "image_tokens",
             {**values, "image_token_ids": image_token_ids},
         )

@@ -64,7 +64,6 @@ from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
     replay_context_image_size,
-    single_segment_result,
 )
 from vrl.models.steps.token.base import (
     ARModelBase,
@@ -568,7 +567,7 @@ class GlmImageModel(ARModelBase):
             gen_hidden,
             lambda: self.image_gen_logits(gen_hidden),
         )
-        return single_segment_result(
+        return ReplayResult.from_segment(
             "image_tokens",
             {**values, "image_token_ids": image_token_ids},
         )

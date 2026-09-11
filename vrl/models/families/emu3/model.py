@@ -44,7 +44,6 @@ from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
     replay_context_image_size,
-    single_segment_result,
 )
 from vrl.models.steps.token.base import (
     ARModelBase,
@@ -495,7 +494,7 @@ class Emu3Model(ARModelBase):
         ).to(logits.device)
         allowed = emu3_allowed_token_mask(forced, self.image_vocab_size)
         logits = logits.masked_fill(~allowed.unsqueeze(0), float("-inf"))
-        return single_segment_result(
+        return ReplayResult.from_segment(
             "image_tokens",
             {"logits": logits, "image_token_ids": image_token_ids},
         )

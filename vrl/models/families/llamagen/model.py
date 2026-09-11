@@ -48,7 +48,6 @@ from vrl.models.families.llamagen.config import (
 from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
-    single_segment_result,
 )
 from vrl.models.steps.token.base import (
     ARModelBase,
@@ -338,7 +337,7 @@ class LlamaGenModel(ARModelBase):
 
         caption_embeds, caption_mask = self.encode_caption(prompt_ids, prompt_mask)
         logits = self.forward_image_logits(caption_embeds, caption_mask, image_token_ids)
-        return single_segment_result(
+        return ReplayResult.from_segment(
             "image_tokens",
             {"logits": logits, "image_token_ids": image_token_ids},
         )

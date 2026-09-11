@@ -44,7 +44,6 @@ from vrl.models.families.nextstep_1.config import (
 from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
-    single_segment_result,
 )
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.steps.token.lora import install_token_lora_adapter
@@ -264,7 +263,7 @@ class NextStep1Model(ARModelBase):
             num_steps=batch.context.get("num_steps"),
             noise_level=batch.context.get("noise_level"),
         )
-        return single_segment_result(
+        return ReplayResult.from_segment(
             "image_tokens",
             {"log_probs": log_probs, "tokens": tokens},
         )

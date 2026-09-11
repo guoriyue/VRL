@@ -7281,3 +7281,16 @@ The broader repository audit remains incomplete.
   model-interface suites: 168 passed, two dependency warnings. Touched-file Ruff
   and diff checks pass. This slice changes documentation only; broader repository
   clarity audit remains incomplete.
+
+## ReplayResult owns single-segment construction
+
+- Move single_segment_result into ReplayResult.from_segment and update all five
+  family callers together: Emu3, GLM-Image, Janus, LlamaGen and NextStep. Remove
+  the old free function and both exports rather than retaining a forwarding alias.
+- Preserve the shared key/segment-name construction invariant and multi-segment
+  constructor behavior. Keep protocol-checking functions as actual interface
+  boundaries; no extra builder class or copied family construction logic.
+- Interface, five family and rollout replay suites: 332 passed, two dependency
+  warnings. Touched-file Ruff and diff checks pass, and no old symbol remains in
+  vrl/tests. External users of the removed export must use the class method.
+  No new mirrored tests; broader repository clarity audit remains incomplete.
