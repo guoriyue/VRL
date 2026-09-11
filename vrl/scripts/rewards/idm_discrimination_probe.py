@@ -23,7 +23,6 @@ Run:
 from __future__ import annotations
 
 import argparse
-import json
 import statistics
 from pathlib import Path
 
@@ -31,6 +30,7 @@ import torch
 
 from vrl.rewards.models.idm_action_following import load_idm_checkpoint, score_action_following
 from vrl.scripts.eval.robotics_discrimination import build_discrimination_candidates
+from vrl.utils.json_files import read_jsonl
 from vrl.utils.media import read_video_frames
 
 _DEFAULT_MANIFEST = Path("data/external/video_world/manifests/droid_targets_eval.jsonl")
@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     idm = load_idm_checkpoint(str(args.checkpoint), device=args.device)
 
-    rows = [json.loads(line) for line in args.eval_manifest.read_text().splitlines()]
+    rows = read_jsonl(args.eval_manifest)
     rows = [row for row in rows if row.get("metadata", {}).get("target_actions")]
     if len(rows) < 2:
         raise SystemExit("need >= 2 eval rows (wrong_clip pairs each clip with another)")

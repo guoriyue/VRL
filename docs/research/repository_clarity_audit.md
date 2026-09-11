@@ -7091,3 +7091,18 @@ The broader repository audit remains incomplete.
   image-caption list facade as a public API. No new loader object or helper;
   field mapping, metadata precedence and decoding diagnostics stay unchanged.
   Broader repository audit remains incomplete.
+
+## IDM scripts reuse the shared JSONL reader
+
+- Replace duplicated json.loads/read_text/splitlines comprehensions in DROID
+  IDM training and discrimination scripts with read_jsonl. This shares explicit
+  UTF-8, physical-line parsing, blank-line handling and object-row validation.
+- Keep pair construction and discrimination control flow local to their scripts,
+  and retain CLI manifest-path constants as concrete file defaults. No new
+  loader class or forwarding function is introduced.
+- Two script regressions previously failed on a blank first line; both now
+  parse a manifest containing blank lines and a Unicode separator in its prompt
+  before reaching the intended missing-action diagnostic. Combined with shared
+  JSON-file tests: seven passed. Touched-file Ruff and diff checks pass.
+- Tests avoid checkpoint loading and video decoding; no IDM training or scoring
+  quality claim. The broader repository clarity audit remains incomplete.

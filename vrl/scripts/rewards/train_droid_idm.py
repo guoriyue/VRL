@@ -19,12 +19,12 @@ Run:
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import torch
 
 from vrl.rewards.models.idm_action_following import FramePairIDM, frame_pairs_from_clip
+from vrl.utils.json_files import read_jsonl
 from vrl.utils.media import read_video_frames
 
 _DEFAULT_MANIFEST_DIR = Path("data/external/video_world/manifests")
@@ -70,7 +70,7 @@ def load_pair_dataset(
     """
 
     root = manifest.parent.parent.parent  # data root: manifests/ -> video_world/ -> external/
-    rows = [json.loads(line) for line in manifest.read_text().splitlines()]
+    rows = read_jsonl(manifest)
     rows = [row for row in rows if row.get("metadata", {}).get("target_actions")]
     if not rows:
         raise SystemExit(f"no rows with target_actions in {manifest}")
