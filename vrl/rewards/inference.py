@@ -12,6 +12,7 @@ artifacts.py, and the worker launch contract in launch_contract.py.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -179,6 +180,9 @@ class RewardInferenceResult:
     def __post_init__(self) -> None:
         if not self.artifact_id:
             raise ValueError("RewardInferenceResult.artifact_id is required")
+        for name, value in (("scores", self.scores), ("timing_ms", self.timing_ms)):
+            if not isinstance(value, Mapping):
+                raise TypeError(f"RewardInferenceResult.{name} must be a mapping")
         scores = {str(name): float(value) for name, value in self.scores.items()}
         if not all(math.isfinite(value) for value in scores.values()):
             raise ValueError(
@@ -186,8 +190,7 @@ class RewardInferenceResult:
             )
         timing_ms = {str(name): float(value) for name, value in self.timing_ms.items()}
         for field_name, value in timing_ms.items():
-            normalized = float(value)
-            if not math.isfinite(normalized) or normalized < 0:
+            if not math.isfinite(value) or value < 0:
                 raise ValueError(
                     f"RewardInferenceResult timing {field_name!r} must be finite and non-negative",
                 )

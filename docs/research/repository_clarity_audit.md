@@ -6015,3 +6015,17 @@ The broader repository audit remains incomplete.
   failed-build frame and transport factory. No scoring or parking policy change.
 - Inference, multi-reward and service suites: 135 passed, one skipped. Touched-file
   Ruff and diff checks pass. No production GPU performance claim; audit remains open.
+
+## Reward result schema rejects malformed mappings before conversion
+
+- RewardInferenceResult validates scores and timing_ms as mappings before using
+  .items(). Null/list/scalar wire fields previously leaked AttributeError past
+  the wire parser's typed protocol-error conversion. Both direct and HTTP inputs
+  now receive field-specific errors through the same existing schema owner.
+- Remove the second float conversion from the timing validation loop; values
+  were already normalized by the preceding comprehension. Keep wire error
+  wrapping and request result-order validation as actual transport/identity
+  boundaries. No new parser helper or result wrapper.
+- Twelve direct/wire malformed-field regressions failed before the fix.
+  Inference and service suites: 126 passed, one skipped. Touched-file Ruff and
+  diff checks pass. Broader repository audit remains incomplete.
