@@ -180,7 +180,7 @@ class _FusedLinearLogprob(torch.autograd.Function):
                 if grad_weight is not None:
                     grad_weight.addmm_(grad_z.mT.to(acc_dtype), h.to(acc_dtype))
                 if grad_bias is not None:
-                    grad_bias.add_(grad_z.sum(dim=0).to(acc_dtype))
+                    grad_bias.add_(grad_z.sum(dim=0, dtype=acc_dtype))
         return (
             grad_hidden,
             grad_weight.to(weight.dtype) if grad_weight is not None else None,

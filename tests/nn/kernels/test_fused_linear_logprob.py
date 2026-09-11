@@ -231,3 +231,16 @@ def test_fused_accepts_single_token_hidden_vector():
     expected = F.log_softmax(F.linear(hidden, weight), dim=-1)[token_id]
     assert actual.shape == torch.Size([])
     torch.testing.assert_close(actual, expected)
+
+
+def test_bias_gradient_accumulates_before_half_precision_overflow():
+    hidden = torch.zeros((4096, 1), dtype=torch.float16)
+    weight = torch.zeros((2, 1), dtype=torch.float16)
+    bias = torch.zeros(2, dtype=torch.float16, requires_grad=True)
+    ids = torch.zeros(4096, dtype=torch.long)
+    log_probs = fused_linear_logprob(hidden, weight, ids, bias=bias, chunk_rows=2048)
+    # Each chunk has a bias-gradient magnitude of 102400, beyond fp16 range,
+    # but the complete batch cancels exactly and has a representable gradient.
+    upstream = torch.cat((torch.full((2048,), 100.0), torch.full((2048,), -100.0)))
+    log_probs.backward(upstream)
+    torch.testing.assert_close(bias.grad, torch.zeros_like(bias))

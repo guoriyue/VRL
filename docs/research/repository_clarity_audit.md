@@ -7229,3 +7229,16 @@ The broader repository audit remains incomplete.
 - Fused linear log-prob suite: 26 passed. Touched-file Ruff and diff checks pass.
   No added implementation-mirroring test or numerical change; no throughput
   improvement claim. Broader repository clarity audit remains incomplete.
+
+## Fused bias gradient reduces in the accumulation dtype
+
+- Move the bias-gradient dtype selection into sum itself. Previously a chunk
+  reduced in fp16 and only then converted to the fp32 accumulator, allowing
+  overflow before the promised accumulation precision could help.
+- A regression with two opposite-sign chunks reproduced NaN bias gradients;
+  each chunk exceeds fp16 range while the full-batch gradient is exactly zero.
+  It now returns zero. Complete fused log-prob suite: 27 passed. Touched-file
+  Ruff and diff checks pass.
+- Reuse the existing accumulation-dtype owner and preserve the final gradient
+  cast, chunk sizes and backend selection. No new helper or numerical policy
+  table; no full training-quality claim. Broader audit remains incomplete.
