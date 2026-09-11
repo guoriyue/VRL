@@ -5687,3 +5687,27 @@ cross-node GPU throughput or finish the wider repository clarity audit.
 - Existing common factory suite: 25 passed, two dependency warnings. Touched-file
   Ruff and git diff --check pass. No new tests merely mirror the refactor.
   Repository-wide completion remains unproven.
+
+## SFT latent helpers retain distinct identity, persistence and recipe boundaries
+
+Reviewed trainers/data/sft_latents.py, its encode_targets producer, the recipe
+loader and online regularizer consumer. This pass does not justify merging them
+into a single additional object.
+
+- Keep CleanTargetRef.from_source: producer and consumer share the exactly-one
+  target identity rule across PromptExample and rollout metadata representations.
+- Keep save_sft_latents/load_sft_latents: they are the shared tensor-persistence
+  boundary, with call-time torch imports. SFT_LATENTS_SCHEMA_VERSION is an actual
+  file-schema version and should remain explicit.
+- Keep _load_sft_latents_from_config as the recipe adapter: disabled SFT does not
+  read a configured shard, and enabled SFT supplies family/model provenance.
+  Moving this logic into CleanTargetRef would give one target dataset/config
+  responsibilities unrelated to its identity.
+- Do not treat the documented [C,T,H,W] shape as a validated load guarantee:
+  load_sft_latents currently validates schema, provenance and target keys but not
+  tensor rank. Shape requirements require a separate producer/consumer analysis
+  before tightening this persistence boundary; this remains an audit limitation.
+
+Existing shard, recipe-loader and regularizer suites: 32 passed. No production
+model encode was run and no implementation change was made in this review.
+The broader repository audit remains incomplete.
