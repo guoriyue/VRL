@@ -475,6 +475,13 @@ class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy):
 
 
 def _module_device(module: Any, fallback: torch.device) -> torch.device:
+    """Record the single restore destination used by module-level parking.
+
+    Restore calls to(device), including the model's frozen-component hook;
+    this is not a snapshot of arbitrary per-submodule device placement. The
+    fallback serves modules without registered tensor storage.
+    """
+
     for tensor in _module_tensors(module):
         return torch.device(tensor.device)
     return torch.device(fallback)

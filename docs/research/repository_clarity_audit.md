@@ -2378,3 +2378,21 @@ this combined regression is compatibility evidence, not architectural completion
   Removed symbols have no remaining source/test references. No new tests for
   this behavior-preserving relocation. Touched-file Ruff and diff checks passed.
   Full repository review remains active.
+
+## Training parking device recording has a narrower contract than placement snapshots
+
+- Inspected _module_device, module/tensor restore records, rollback and the
+  diffusion move_frozen_components hook. Added a docstring identifying the
+  actual module-level contract: one restore destination, not arbitrary mixed
+  placement preservation. The current first registered tensor chooses that
+  destination; tensor-free modules use the supplied training device.
+- Keep _move_module and separate optimizer/EMA tensor restore handling. Model
+  movement includes unregistered frozen pipeline components, so replacing it
+  with a parameter-only tensor walker would omit live accelerator allocations.
+  No new snapshot class or inference helper introduced.
+- Open limitation: mixed per-submodule placement is not recorded/restored by
+  this path. A proper extension needs model-owned placement capture including
+  unregistered components, plus rollback and accelerator tests. This review
+  does not label that limitation fixed or claim generic mixed-device support.
+- Documentation-only change; touched-file Ruff and diff checks passed. No new
+  runtime test run claimed. Full repository review remains active.
