@@ -1677,3 +1677,19 @@ is not a repository-wide completion claim or a mandate to inline short functions
   malformed-count cases cover empty, static and tensor replay payloads. Touched
   Ruff lint/format and diff checks passed. This strengthens the direct shared
   API contract; it does not imply validated production batches were malformed.
+
+## Chunk gatherer helper ownership
+
+- Moved its three module-private helpers into ChunkAutoregressiveDenoiseGatherer
+  as static methods. Repository search found only this class calling them. The
+  two field helpers now accept ChunkAutoregressiveDenoiseResult sequences rather
+  than untyped batches, making their actual ownership explicit.
+- Keep separate methods for batch homogeneity, required fields and optional
+  fields: the required-field operation is reused six times, while optional KL
+  must distinguish all-absent from partially absent values. Keep the shared
+  ordering/coverage/concatenation functions in execution.sample_batches for
+  cross-family consistency. No new class, constant or runtime state introduced.
+- Non-goal: reducing line count or removing meaningful checks. This is an
+  ownership change preserving validation order and output/error behavior.
+- Validation: 42 shared batch-gatherer/chunk-binding tests passed. Touched-file
+  Ruff and diff checks passed. Full repository review remains incomplete.

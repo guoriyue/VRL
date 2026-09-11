@@ -37,7 +37,7 @@ class ChunkAutoregressiveDenoiseGatherer:
         sample_rows: Sequence[GenerationSampleRow],
         batches: Sequence[BatchPayload],
     ) -> GenerationOutput:
-        ordered = _ordered_batches(
+        ordered = self._ordered_batches(
             request,
             sample_rows,
             cast("Sequence[ChunkAutoregressiveDenoiseResult]", batches),
@@ -50,13 +50,13 @@ class ChunkAutoregressiveDenoiseGatherer:
             trajectory = build_chunk_autoregressive_denoise_trajectory(
                 request=request,
                 sample_rows=rows,
-                observations=_cat_field(ordered, "observations"),
-                actions=_cat_field(ordered, "actions"),
-                old_log_prob=_cat_field(ordered, "old_log_prob"),
-                mask=_cat_field(ordered, "mask"),
-                timesteps=_cat_field(ordered, "timesteps"),
-                kl=_cat_optional_field(ordered, "kl"),
-                finalized_chunk_latents=_cat_field(
+                observations=self._cat_field(ordered, "observations"),
+                actions=self._cat_field(ordered, "actions"),
+                old_log_prob=self._cat_field(ordered, "old_log_prob"),
+                mask=self._cat_field(ordered, "mask"),
+                timesteps=self._cat_field(ordered, "timesteps"),
+                kl=self._cat_optional_field(ordered, "kl"),
+                finalized_chunk_latents=self._cat_field(
                     ordered,
                     "finalized_chunk_latents",
                 ),
@@ -80,47 +80,49 @@ class ChunkAutoregressiveDenoiseGatherer:
             trajectory=trajectory,
         )
 
+    @staticmethod
+    def _ordered_batches(
+        request: GenerationRequest,
+        sample_rows: Sequence[GenerationSampleRow],
+        batches: Sequence[ChunkAutoregressiveDenoiseResult],
+    ) -> list[ChunkAutoregressiveDenoiseResult]:
+        ordered = ordered_covering_batches(
+            request,
+            sample_rows,
+            batches,
+            row_fields=("output",),
+        )
+        first = ordered[0]
+        for batch in ordered:
+            if batch.temporal_chunk_count != first.temporal_chunk_count:
+                raise ValueError("all results must have the same temporal_chunk_count")
+            if batch.has_trainable_trajectory != first.has_trainable_trajectory:
+                raise ValueError("cannot gather mixed trainable and generation-only results")
+            if batch.has_trainable_trajectory:
+                if batch.denoise_transition_count != first.denoise_transition_count:
+                    raise ValueError(
+                        "all trainable results must have the same denoise_transition_count",
+                    )
+                batch.validate_trainable_trajectory()
+        return ordered
 
-def _ordered_batches(
-    request: GenerationRequest,
-    sample_rows: Sequence[GenerationSampleRow],
-    batches: Sequence[ChunkAutoregressiveDenoiseResult],
-) -> list[ChunkAutoregressiveDenoiseResult]:
-    ordered = ordered_covering_batches(
-        request,
-        sample_rows,
-        batches,
-        row_fields=("output",),
-    )
-    first = ordered[0]
-    for batch in ordered:
-        if batch.temporal_chunk_count != first.temporal_chunk_count:
-            raise ValueError("all results must have the same temporal_chunk_count")
-        if batch.has_trainable_trajectory != first.has_trainable_trajectory:
-            raise ValueError("cannot gather mixed trainable and generation-only results")
-        if batch.has_trainable_trajectory:
-            if batch.denoise_transition_count != first.denoise_transition_count:
-                raise ValueError(
-                    "all trainable results must have the same denoise_transition_count",
-                )
-            batch.validate_trainable_trajectory()
-    return ordered
+    @staticmethod
+    def _cat_field(batches: Sequence[ChunkAutoregressiveDenoiseResult], field_name: str) -> Any:
+        values = [getattr(batch, field_name) for batch in batches]
+        if any(value is None for value in values):
+            raise ValueError(f"trainable batch field {field_name!r} must be present")
+        return concatenate_sample_values(values, name=field_name)
 
-
-def _cat_field(batches: Sequence[Any], field_name: str) -> Any:
-    values = [getattr(batch, field_name) for batch in batches]
-    if any(value is None for value in values):
-        raise ValueError(f"trainable batch field {field_name!r} must be present")
-    return concatenate_sample_values(values, name=field_name)
-
-
-def _cat_optional_field(batches: Sequence[Any], field_name: str) -> Any | None:
-    values = [getattr(batch, field_name) for batch in batches]
-    if all(value is None for value in values):
-        return None
-    if any(value is None for value in values):
-        raise ValueError(f"optional batch field {field_name!r} must be present on all results")
-    return concatenate_sample_values(values, name=field_name)
+    @staticmethod
+    def _cat_optional_field(
+        batches: Sequence[ChunkAutoregressiveDenoiseResult], field_name: str
+    ) -> Any | None:
+        values = [getattr(batch, field_name) for batch in batches]
+        if all(value is None for value in values):
+            return None
+        if any(value is None for value in values):
+            raise ValueError(f"optional batch field {field_name!r} must be present on all results")
+        return concatenate_sample_values(values, name=field_name)
 
 
 __all__ = ["ChunkAutoregressiveDenoiseGatherer"]
