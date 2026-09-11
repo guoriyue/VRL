@@ -157,20 +157,20 @@ class DiskRewardArtifactStore:
             raise TypeError(
                 f"{self.media_type} reward artifact materialization requires tensor sample output",
             )
-        tensor = output.detach().cpu()
-        if tensor.numel() == 0:
+        if output.numel() == 0:
             raise ValueError(f"{self.media_type} reward artifact tensor must be non-empty")
-        if self.media_type == "image" and tensor.ndim not in {3, 4}:
+        if self.media_type == "image" and output.ndim not in {3, 4}:
             raise ValueError(
                 "image reward artifact expects [C,H,W] or [B,C,H,W] tensor, "
-                f"got shape={tuple(tensor.shape)}",
+                f"got shape={tuple(output.shape)}",
             )
-        if self.media_type == "video" and tensor.ndim not in {4, 5}:
+        if self.media_type == "video" and output.ndim not in {4, 5}:
             raise ValueError(
                 "video reward artifact expects [C,T,H,W] or [B,C,T,H,W] tensor, "
-                f"got shape={tuple(tensor.shape)}",
+                f"got shape={tuple(output.shape)}",
             )
 
+        tensor = output.detach().cpu()
         metadata = dict(sample.metadata or {})
         materialization_id = uuid.uuid4().hex
         artifact_id = f"{sample.sample_id}:{materialization_id}"

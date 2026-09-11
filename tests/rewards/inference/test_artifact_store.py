@@ -68,9 +68,12 @@ def test_video_artifact_store_rejects_mp4_for_non_video_media_type(tmp_path: Pat
         DiskRewardArtifactStore(tmp_path, media_type="image", artifact_format="mp4")
 
 
-def test_video_artifact_store_rejects_bad_shape(tmp_path: Path) -> None:
+def test_video_artifact_store_rejects_bad_shape(tmp_path: Path, monkeypatch) -> None:
     store = DiskRewardArtifactStore(tmp_path, media_type="video")
 
+    monkeypatch.setattr(
+        torch.Tensor, "cpu", lambda self: pytest.fail("invalid shape reached CPU copy")
+    )
     with pytest.raises(ValueError, match="video reward artifact expects"):
         store.materialize([_sample(torch.ones(2, 2))])
 

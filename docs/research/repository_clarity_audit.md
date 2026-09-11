@@ -6029,3 +6029,16 @@ The broader repository audit remains incomplete.
 - Twelve direct/wire malformed-field regressions failed before the fix.
   Inference and service suites: 126 passed, one skipped. Touched-file Ruff and
   diff checks pass. Broader repository audit remains incomplete.
+
+## Artifact geometry is checked before device-to-host staging
+
+- DiskRewardArtifactStore._write_one checks output type, nonemptiness and media
+  rank before detach().cpu(). These are tensor metadata checks; an invalid shape
+  need not trigger device transfer before reporting its input error.
+- Keep materialization, hashing and owned-path cleanup unchanged. Keep release
+  and retain as distinct terminal ownership operations, and the provenance filter
+  as the scalar wire boundary. No new staging helper or artifact type is added.
+- Strengthened bad-shape test failed before the change by reaching Tensor.cpu.
+  Artifact store and disk reward-function suites: 13 passed. Touched-file Ruff
+  and diff checks pass. CPU regression proves call ordering, not measured GPU
+  transfer savings. Broader repository audit remains incomplete.
