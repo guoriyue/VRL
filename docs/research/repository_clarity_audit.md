@@ -6530,3 +6530,17 @@ The broader repository audit remains incomplete.
   execution ordering, model loading or report-format change; no new façade.
 - Checkpoint-comparison suite: 31 passed. Touched-file Ruff and diff checks pass.
   Broader repository audit remains incomplete.
+
+## SANA comparison inherits shared sampling protocol fields
+
+- Comparison generation now copies OFFICIAL_SAMPLING_PROTOCOL and overrides
+  its four CLI sampling controls instead of restating the other four fixed
+  protocol fields. This removes a second maintenance location without changing
+  current sampling values or mutating the shared dictionary.
+- Keep _generate_one as the comparison entrypoint's single-image argument
+  adapter. Keep the shared protocol mapping as evaluation identity, and keep
+  require_official=False because this CLI permits sampling overrides. No new
+  class, image-conversion change, or report schema change.
+- Checkpoint-comparison suite: 31 passed. Touched-file Ruff and diff checks
+  pass. This verifies control flow with test models, not training throughput;
+  the broader repository audit remains incomplete.

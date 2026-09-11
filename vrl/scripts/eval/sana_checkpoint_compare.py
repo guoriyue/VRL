@@ -29,6 +29,7 @@ from vrl.models.dtypes import dtype_to_wire_name
 from vrl.models.precision import float32_precision_state, model_precision
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval.sana_inference import (
+    OFFICIAL_SAMPLING_PROTOCOL,
     SCHEDULER_PROTOCOL,
     generate_prompt_images,
     load_official_scheduler,
@@ -346,14 +347,11 @@ def _generate_one(
         num_images=1,
         device=device,
         sampling={
-            "negative_prompt": "",
+            **OFFICIAL_SAMPLING_PROTOCOL,
             "height": height,
             "width": width,
             "num_inference_steps": steps,
             "guidance_scale": guidance_scale,
-            "max_sequence_length": 300,
-            "use_resolution_binning": True,
-            "complex_human_instruction": "official_pipeline_default",
         },
         require_official=False,
     )
