@@ -1343,3 +1343,17 @@ contained guesses. Removed both:
 - Validation: all 12 WD tagger tests passed, covering injected batch scoring,
   preprocessing pixels and invalid tag types without tagger execution. No ONNX
   model download or inference performed. Ruff and git diff --check pass.
+
+## Robotics reward optional-section semantics
+
+- Replaced truthiness fallbacks in RoboticsRewardWeights.from_mapping and
+  _child_config with explicit None handling and Mapping validation. False, zero,
+  empty strings/lists and pair sequences no longer masquerade as missing config.
+- Kept _child_config because three child configurations share its copy/validation
+  rule. Weight names remain dataclass-derived; the thin reward-function binding
+  remains a registry/factory protocol adapter consistent with other rewards.
+  No new class/table, changes to weights, device inheritance or model selection.
+- Validation: 25 robotics tests passed. New cases verify all malformed sections
+  fail before child construction and None/empty mappings retain defaults. Child
+  models are test doubles; no real video model was loaded. Touched-file Ruff and
+  git diff --check pass.

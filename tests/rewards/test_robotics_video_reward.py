@@ -114,3 +114,35 @@ def test_robotics_reward_weights_reject_unknown_or_non_finite_values() -> None:
         RoboticsRewardWeights.from_mapping({"unknown": 1.0})
     with pytest.raises(ValueError, match="finite and non-negative"):
         RoboticsRewardWeights.from_mapping({"motion_dynamics": float("nan")})
+
+
+@pytest.mark.parametrize("field", ["weights", "kling", "dino", "motion"])
+@pytest.mark.parametrize("value", [False, 0, "", [], [("device", "cpu")]])
+def test_robotics_reward_rejects_non_mapping_sections_before_model_construction(
+    field, value, monkeypatch
+) -> None:
+    from vrl.rewards.models import robotics_video_reward as robotics
+
+    def unexpected_construction(config):
+        pytest.fail("child constructed before config validation")
+
+    monkeypatch.setattr(robotics, "KlingVideoRewardModel", unexpected_construction)
+    monkeypatch.setattr(robotics, "TargetDinoSimilarityModel", unexpected_construction)
+    monkeypatch.setattr(robotics, "MotionDynamicsModel", unexpected_construction)
+    with pytest.raises(TypeError, match="must be a mapping"):
+        robotics.RoboticsVideoRewardModel({field: value})
+
+
+@pytest.mark.parametrize("value", [None, {}])
+def test_robotics_reward_preserves_explicit_default_sections(value, monkeypatch) -> None:
+    from vrl.rewards.models import robotics_video_reward as robotics
+
+    monkeypatch.setattr(robotics, "KlingVideoRewardModel", _FakeKling)
+    monkeypatch.setattr(robotics, "TargetDinoSimilarityModel", _FakeDino)
+    monkeypatch.setattr(robotics, "MotionDynamicsModel", _FakeMotion)
+    model = robotics.RoboticsVideoRewardModel(
+        {field: value for field in ("weights", "kling", "dino", "motion")},
+    )
+    assert model.weights == robotics.RoboticsRewardWeights()
+    for child in (model.kling, model.dino, model.motion):
+        assert child.config == {"device": "cuda:0"}

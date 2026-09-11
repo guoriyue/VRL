@@ -23,7 +23,9 @@ class RoboticsRewardWeights:
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any] | None) -> RoboticsRewardWeights:
-        payload = dict(value or {})
+        if value is not None and not isinstance(value, Mapping):
+            raise TypeError("robotics reward weights must be a mapping")
+        payload = {} if value is None else dict(value)
         allowed = {item.name for item in fields(cls)}
         unknown = sorted(set(payload) - allowed)
         if unknown:
@@ -105,7 +107,9 @@ class RoboticsVideoRewardModel:
 
 
 def _child_config(worker_config: Mapping[str, Any], name: str) -> dict[str, Any]:
-    value = worker_config.get(name) or {}
+    value = worker_config.get(name)
+    if value is None:
+        return {}
     if not isinstance(value, Mapping):
         raise TypeError(f"robotics reward worker_config.{name} must be a mapping")
     return dict(value)
