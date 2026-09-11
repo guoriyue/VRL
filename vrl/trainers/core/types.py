@@ -14,6 +14,7 @@ import math
 from dataclasses import dataclass, field
 
 from vrl.utils.config import require_exact_int
+from vrl.utils.deadline import require_timeout
 
 
 @dataclass(slots=True)
@@ -155,10 +156,12 @@ class ContinuousRolloutConfig:
             path="continuous.max_stale_policy_versions",
             minimum=1,
         )
-        if float(self.wait_timeout_s) <= 0:
-            raise ValueError("continuous.wait_timeout_s must be > 0")
-        if float(self.queue_poll_interval_s) <= 0:
-            raise ValueError("continuous.queue_poll_interval_s must be > 0")
+        self.wait_timeout_s = require_timeout(
+            self.wait_timeout_s, name="continuous.wait_timeout_s"
+        )
+        self.queue_poll_interval_s = require_timeout(
+            self.queue_poll_interval_s, name="continuous.queue_poll_interval_s"
+        )
         require_exact_int(self.fail_fast_errors, path="continuous.fail_fast_errors", minimum=0)
 
 

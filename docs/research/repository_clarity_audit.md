@@ -1099,3 +1099,17 @@ contained guesses. Removed both:
 - Validation: 506 continuous orchestration and config tests passed, including
   malformed count tests across all six affected fields. Touched-file Ruff and
   diff whitespace checks pass.
+
+## Continuous wait configuration boundary
+
+- Replaced comparison-only timeout checks with the existing require_timeout
+  validator. ContinuousRolloutConfig now rejects NaN/infinity as well as zero or
+  negative waits and stores the validated float before producer construction.
+- Removed duplicate float conversions from schedule projection. Consumer-owned
+  direct-call validation remains because callers can invoke that boundary without
+  config construction; producer/drain lifecycle and configured defaults are unchanged.
+- No new timeout helper, setting or scheduler class. This unifies the declared
+  configuration contract with the existing finite-positive wait semantics.
+- Validation: 516 continuous orchestration/config tests passed, including both
+  wait fields with all non-finite/non-positive cases. Touched-file Ruff and diff
+  whitespace checks pass.

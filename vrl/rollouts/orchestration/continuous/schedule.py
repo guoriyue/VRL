@@ -72,8 +72,8 @@ class ContinuousRolloutSchedule:
             max_unscored_bytes_mb=cont.max_unscored_bytes_mb,
             max_generated_group_bytes_mb=cont.max_generated_group_bytes_mb,
             max_stale_policy_versions=cont.max_stale_policy_versions,
-            wait_timeout_s=float(cont.wait_timeout_s),
-            queue_poll_interval_s=float(cont.queue_poll_interval_s),
+            wait_timeout_s=cont.wait_timeout_s,
+            queue_poll_interval_s=cont.queue_poll_interval_s,
             fail_fast_errors=cont.fail_fast_errors,
         )
 

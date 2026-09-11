@@ -941,3 +941,12 @@ def test_continuous_schedule_does_not_coerce_policy_window(window) -> None:
             _Collector(runtime),
             _Syncer(runtime),
         )
+
+
+@pytest.mark.parametrize("name", ["wait_timeout_s", "queue_poll_interval_s"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), 0.0, -1.0])
+def test_continuous_config_requires_finite_positive_waits(name, value) -> None:
+    from vrl.trainers.core.types import ContinuousRolloutConfig
+
+    with pytest.raises(ValueError, match=name):
+        ContinuousRolloutConfig(**{name: value})
