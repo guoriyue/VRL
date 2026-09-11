@@ -162,7 +162,11 @@ class RolloutCollector:
         self._generation_runtime = runtime
 
     @property
-    def generation_runtime(self) -> GenerationRuntime:
+    def generation_runtime(self) -> GenerationRuntime | None:
+        """Return the attached runtime, or None during setup."""
+        return self._generation_runtime
+
+    def _require_generation_runtime(self) -> GenerationRuntime:
         if self._generation_runtime is None:
             raise RuntimeError(
                 "RolloutCollector generation runtime is not initialized; "
@@ -198,12 +202,12 @@ class RolloutCollector:
             raise errors[0]
 
     async def activate_generation_runtime(self) -> None:
-        await self.generation_runtime.activate()
+        await self._require_generation_runtime().activate()
 
     async def offload_generation_runtime_memory(self) -> None:
         errors: list[BaseException] = []
         try:
-            await self.generation_runtime.offload()
+            await self._require_generation_runtime().offload()
         except BaseException as error:
             errors.append(error)
         if self._requires_reward_memory_release() and self._reward_phase_started:
@@ -258,7 +262,7 @@ class RolloutCollector:
         profile = os.environ.get("VRL_PROFILE") == "1"
         phase_t = time.perf_counter() if profile else None
 
-        output = await self.generation_runtime.generate(collector_request.request)
+        output = await self._require_generation_runtime().generate(collector_request.request)
         unscored = UnscoredRollout(
             output=output,
             collector_request=collector_request,
@@ -282,7 +286,7 @@ class RolloutCollector:
         if self.requires_generation_offload_before_reward:
             # Shared single-GPU reward runs park rollout model memory before the
             # in-process reward model takes over the physical GPU.
-            await self.generation_runtime.offload()
+            await self._require_generation_runtime().offload()
         # Symmetric handoff to the generation side's activate(): pre-warm the
         # reward model here so its build/wake latency is not billed to the
         # measured scoring phase below.

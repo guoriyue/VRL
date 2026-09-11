@@ -207,9 +207,17 @@ def test_collector_requires_runtime_before_collect() -> None:
     import asyncio
 
     collector = _collector()
+    assert collector.generation_runtime is None
 
     with pytest.raises(RuntimeError, match="runtime is not initialized"):
         asyncio.run(collect_scored(collector, ["p0"], group_size=1))
+    with pytest.raises(RuntimeError, match="runtime is not initialized"):
+        asyncio.run(collector.activate_generation_runtime())
+
+    runtime = _Runtime()
+    collector.set_generation_runtime(runtime)
+    assert collector.generation_runtime is runtime
+    asyncio.run(collector.activate_generation_runtime())
 
 
 @pytest.mark.asyncio

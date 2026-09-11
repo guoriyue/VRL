@@ -496,9 +496,7 @@ def test_coordinator_reads_syncer_version_until_collector_runtime_is_attached():
     from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 
     class UnattachedCollector:
-        @property
-        def generation_runtime(self):
-            raise RuntimeError("generation runtime is not initialized")
+        generation_runtime = None
 
     runtime = _Runtime()
     runtime.current_policy_version = 23
@@ -515,3 +513,26 @@ def test_coordinator_reads_syncer_version_until_collector_runtime_is_attached():
     lifecycle.collector = _Collector(runtime)
     runtime.current_policy_version = 29
     assert lifecycle.current_policy_version() == 29
+
+
+def test_coordinator_does_not_hide_runtime_provider_errors():
+    from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
+
+    class BrokenCollector:
+        @property
+        def generation_runtime(self):
+            raise RuntimeError("provider failed")
+
+    lifecycle = RolloutRuntimeCoordinator(
+        collector=BrokenCollector(),
+        strategy=None,
+        training_state_getter=lambda: None,
+        weight_syncer=_Syncer(_Runtime()),
+        sync_state_getter=None,
+        weights_initialized=lambda: True,
+        set_weights_initialized=lambda value: None,
+    )
+    with pytest.raises(RuntimeError, match="provider failed"):
+        lifecycle.current_policy_version()
+    with pytest.raises(RuntimeError, match="provider failed"):
+        lifecycle.requires_driver_model_offload()

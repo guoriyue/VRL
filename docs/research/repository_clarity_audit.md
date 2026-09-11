@@ -374,3 +374,24 @@ above, not completion of the outstanding repository-wide audit.
   cover unversioned pushes, clearing a reported version, and pre-attachment
   syncer reads. The subsequent constructor-only consolidation passed the trainer
   weight-sync suite separately. Touched-file Ruff checks pass.
+
+## Collector attachment boundary
+
+- `RolloutCollector.generation_runtime` now explicitly returns an optional runtime
+  during setup, matching the collector's constructor state. The scheduling
+  protocol declares the same optional return type.
+- Removed coordinator `_collector_generation_runtime`, which caught every
+  `RuntimeError` and interpreted it as missing attachment. Coordinator queries
+  now read the property directly; provider failures propagate instead of being
+  hidden behind a syncer fallback or a false offload requirement.
+- Collector execution uses `_require_generation_runtime` for the shared
+  initialization precondition before generate/activate/offload. This private
+  method stays because four execution sites require the same actionable failure;
+  state queries and execution preconditions are intentionally different APIs.
+- No new exception/state classes, constants, scheduling policy or transport
+  changes. Runtime attachment and the trainer's capability-based syncer factory
+  continue to work with optional setup state.
+- Validation: 356 rollout and online lifecycle tests passed; expanded direct
+  collector attachment/activation test passed separately. Provider-error tests
+  verify propagation through both version lookup and driver offload decisions.
+  Ruff and diff whitespace checks pass for the touched files.

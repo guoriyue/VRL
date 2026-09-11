@@ -43,7 +43,7 @@ class RolloutCollectorControl(Protocol):
     """Generation-runtime controls required for a complete phase handoff."""
 
     @property
-    def generation_runtime(self) -> GenerationRuntime: ...
+    def generation_runtime(self) -> GenerationRuntime | None: ...
 
     @property
     def requires_generation_offload_before_reward(self) -> bool: ...
@@ -139,7 +139,7 @@ class RolloutRuntimeCoordinator:
 
     def current_policy_version(self) -> int | None:
         """Read a provider's published version; never infer one from push count."""
-        for provider in (self._collector_generation_runtime(), self.weight_syncer):
+        for provider in (self.collector.generation_runtime, self.weight_syncer):
             if provider is None:
                 continue
             value = provider.current_policy_version
@@ -148,7 +148,7 @@ class RolloutRuntimeCoordinator:
         return None
 
     def requires_driver_model_offload(self) -> bool:
-        runtime = self._collector_generation_runtime()
+        runtime = self.collector.generation_runtime
         if runtime is None:
             return False
         return bool(runtime.requires_driver_model_offload)
@@ -170,7 +170,7 @@ class RolloutRuntimeCoordinator:
         # slots, so the weight-sync barrier can skip draining in-flight generation
         # (old requests keep their slot). getattr-with-default keeps any runtime
         # that does not advertise the capability on the safe draining barrier.
-        runtime = self._collector_generation_runtime()
+        runtime = self.collector.generation_runtime
         return bool(getattr(runtime, "supports_non_draining_weight_sync", False))
 
     def validate_training_state_parking(self) -> None:
@@ -260,17 +260,6 @@ class RolloutRuntimeCoordinator:
 
     def requires_generation_offload_before_reward(self) -> bool:
         return bool(self.collector.requires_generation_offload_before_reward)
-
-    def _collector_generation_runtime(self) -> GenerationRuntime | None:
-        # The collector's `generation_runtime` property raises RuntimeError before
-        # set_generation_runtime() has run (the cross-node/continuous path queries
-        # the policy version during setup, before the runtime is attached). This
-        # means "no collector-runtime provider yet" — fall through to the
-        # weight syncer rather than crashing.
-        try:
-            return self.collector.generation_runtime
-        except RuntimeError:
-            return None
 
 
 def _validate_prepared_weight_snapshot(value: Any) -> None:
