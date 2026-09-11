@@ -373,6 +373,15 @@ def test_runtime_resolves_auto_once_and_rewrites_requests() -> None:
     assert [req.samples_per_generation_batch for req in executed] == [4, 4]
 
 
+@pytest.mark.parametrize("engine_ids", ["w0", b"w0", [1], [b"worker-0"], [["worker-0"]]])
+def test_planner_rejects_invalid_engine_id_types_before_batch_planning(engine_ids) -> None:
+    from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
+
+    # The unresolved auto width would fail later: identity errors belong first.
+    with pytest.raises(ValueError, match="engine IDs"):
+        DistributedExecutionPlanner().plan_with_engine(_request(), engine_ids)
+
+
 def test_planner_rejects_unresolved_auto() -> None:
     from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
 

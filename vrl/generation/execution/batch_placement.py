@@ -76,11 +76,15 @@ class DistributedExecutionPlanner:
         request: GenerationRequest,
         engine_ids: Sequence[str],
     ) -> DistributedGenerationPlan:
+        if isinstance(engine_ids, (str, bytes)):
+            raise ValueError(
+                "DistributedExecutionPlanner engine IDs must be a sequence of strings"
+            )
         engine_ids = tuple(engine_ids)
         if not engine_ids:
             raise ValueError("DistributedExecutionPlanner requires at least one engine")
-        if any(not engine_id for engine_id in engine_ids):
-            raise ValueError("DistributedExecutionPlanner engine IDs must be non-empty")
+        if any(not isinstance(engine_id, str) or not engine_id for engine_id in engine_ids):
+            raise ValueError("DistributedExecutionPlanner engine IDs must be non-empty strings")
         if len(set(engine_ids)) != len(engine_ids):
             raise ValueError("DistributedExecutionPlanner engine IDs must be unique")
         engine_plan = EnginePlan.from_request(request)

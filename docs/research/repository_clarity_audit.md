@@ -5388,3 +5388,21 @@ this combined regression is compatibility evidence, not architectural completion
   timeout retains all receipts. Continuous orchestration suite: 214 passed.
   Touched-file Ruff and git diff --check pass. The full repository audit remains
   incomplete; these tests do not establish distributed/GPU runtime performance.
+
+## Distributed placement treats engine identities as explicit strings
+
+- Reject a bare str/bytes engine_ids argument before tuple conversion, and
+  require every sequence element to be a non-empty string before uniqueness
+  checking. A bare ID could previously become character-sized worker identities;
+  non-string elements could reach unrelated width-resolution failures or an
+  unhashable-type exception.
+- Keep validation inline in DistributedExecutionPlanner; no separate validator
+  or new carrier is needed. Keep EnginePlan separate from fleet placement, and
+  retain shared replay/coverage helpers: direct and distributed execution plus
+  different model gatherers depend on those consistent boundaries. The strategy
+  Literal remains the protocol vocabulary rather than a duplicated name table.
+- Five regression inputs failed before the fix and now report the engine-ID
+  boundary before unresolved auto sizing. Generation execution and Ray OOM split
+  suites: 251 passed, one Ray environment FutureWarning. Touched-file Ruff and
+  git diff --check pass. No production fleet throughput claim follows from this
+  change. The full repository clarity audit remains incomplete.
