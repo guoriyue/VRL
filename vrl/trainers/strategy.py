@@ -658,11 +658,18 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
         prepared_handles: list[tuple[str, nn.Module, Any, torch.dtype]] = []
         for name, handle, writer in handles:
             parameter_dtype = getattr(handle, "dtype", None)
-            if not isinstance(parameter_dtype, torch.dtype):
-                try:
-                    parameter_dtype = next(handle.parameters()).dtype
-                except StopIteration as exc:
-                    raise ValueError(f"FSDP trainable handle {name!r} has no parameters") from exc
+            if parameter_dtype is None:
+                parameter_dtypes = {parameter.dtype for parameter in handle.parameters()}
+                if not parameter_dtypes:
+                    raise ValueError(f"FSDP trainable handle {name!r} has no parameters")
+                if len(parameter_dtypes) != 1:
+                    raise ValueError(
+                        f"FSDP trainable handle {name!r} has mixed parameter dtypes; "
+                        "declare its target dtype explicitly before preparation",
+                    )
+                parameter_dtype = parameter_dtypes.pop()
+            elif not isinstance(parameter_dtype, torch.dtype):
+                raise TypeError(f"FSDP trainable handle {name!r} dtype must be a torch.dtype")
             normalize_fsdp_parameter_dtype(
                 handle,
                 parameter_dtype,

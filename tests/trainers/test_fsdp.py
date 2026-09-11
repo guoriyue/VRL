@@ -625,6 +625,7 @@ def test_fsdp_actor_prepare_normalizes_mixed_sources_before_first_forward(
 ) -> None:
     policy = FakePolicy(ToyTransformer().to(dtype=torch.bfloat16))
     policy.transformer.head.to(dtype=torch.float32)
+    policy.transformer.dtype = torch.bfloat16
 
     FSDPStrategy(
         _cpu_fsdp_context(),
@@ -1174,3 +1175,24 @@ def test_apply_fsdp_rejects_unmatched_blocks_before_sharding(monkeypatch) -> Non
     with pytest.raises(ValueError, match="no modules match declared FSDP block classes"):
         apply_fsdp(model, mesh=None, mp_policy=mixed_precision_policy("none"))
     assert calls == []
+
+
+@pytest.mark.parametrize("first_dtype", [torch.float32, torch.bfloat16])
+def test_fsdp_rejects_undeclared_mixed_dtype_without_casting(first_dtype) -> None:
+    model = ToyTransformer().to(first_dtype)
+    model.head.to(torch.bfloat16 if first_dtype == torch.float32 else torch.float32)
+    original = {name: parameter.dtype for name, parameter in model.named_parameters()}
+    with pytest.raises(ValueError, match="mixed parameter dtypes"):
+        _fsdp_strategy(_cpu_fsdp_context(), precision_policy="actor").prepare_model(
+            FakePolicy(model)
+        )
+    assert {name: parameter.dtype for name, parameter in model.named_parameters()} == original
+
+
+def test_fsdp_rejects_invalid_declared_dtype_instead_of_using_first_parameter() -> None:
+    model = ToyTransformer()
+    model.dtype = "bf16"
+    with pytest.raises(TypeError, match=r"dtype must be a torch\.dtype"):
+        _fsdp_strategy(_cpu_fsdp_context(), precision_policy="actor").prepare_model(
+            FakePolicy(model)
+        )

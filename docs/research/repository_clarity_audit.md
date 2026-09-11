@@ -2346,3 +2346,20 @@ this combined regression is compatibility evidence, not architectural completion
 - Documentation-only edit; no runtime or numerical changes. Touched-file Ruff
   and diff checks passed. Existing test results above are not presented as a
   new run. Full repository review remains open.
+
+## FSDP strategy no longer chooses mixed precision by first parameter
+
+- Removed the strategy fallback to next(handle.parameters()).dtype. Without a
+  handle dtype, require a single common parameter dtype; mixed values require
+  an explicit target. Invalid non-None dtype declarations fail instead of being
+  ignored. Parameter registration order can no longer select the target through
+  this fallback and silently cast all other parameters.
+- Keep the existing handle dtype contract, normalization function and strategy
+  owner. Model-specific dtype properties still own their implementation; this
+  change does not redefine those properties as config provenance. No additional
+  precision class or standalone helper introduced.
+- Validation: 78 FSDP/strategy/gather tests passed, two optional tests skipped.
+  Mixed-source actor fixture now declares its target and still forwards after
+  normalization; new opposite-first-dtype cases reject ambiguity without casts.
+  Invalid string dtype is rejected. Touched-file Ruff and diff checks passed.
+  Full repository review remains active.
