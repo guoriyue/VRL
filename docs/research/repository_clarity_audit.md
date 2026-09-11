@@ -2982,3 +2982,21 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 145 online trainer tests passed. New cases verify query exception
   identity and parameterless unknown; existing first-step diagnostics still report
   float32. Touched-file Ruff/diff checks passed. Full review remains active.
+
+## Share role labels and reuse the existing dtype conversion boundary
+
+- Remove trainer._precision_label and its duplicate dtype alias table. Trainer
+  metadata now uses models.dtypes.dtype_to_precision_token for evaluator math
+  dtype and the guard's named normalize_role_precision_label for role labels.
+- Keep the short shared role-label function: traces and guard decisions must
+  agree on legacy empty/no normalization and retain quantization/autocast
+  suffixes. Config normalize_precision cannot parse those composite labels.
+  No new class, vocabulary table, or forwarding module is introduced.
+- Configured role labels come from PrecisionRolePolicy.label through
+  TrainerConfig.from_root; arbitrary torch dtype aliases are not role policy
+  labels. Math dtype conversion now rejects unsupported non-plain dtypes
+  instead of emitting an unchecked diagnostic token.
+- Validation: 148 online trainer tests passed, including three math dtypes and
+  composite rollout policy preservation. Touched-file Ruff and diff checks
+  passed. This supersedes the previous decision to retain _precision_label;
+  the repository-wide review remains incomplete.

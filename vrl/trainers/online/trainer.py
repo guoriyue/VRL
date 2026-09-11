@@ -24,6 +24,7 @@ from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
 )
 from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
+from vrl.models.dtypes import dtype_to_precision_token
 from vrl.models.precision import (
     apply_float32_precision,
     float32_precision_state,
@@ -56,6 +57,7 @@ from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.online.precision_guard import (
     enforce_precision_drift,
     measure_precision_drift,
+    normalize_role_precision_label,
 )
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer, build_optimizer
 from vrl.trainers.strategy import SingleProcessStrategy, Strategy, TrainingMemoryState
@@ -193,17 +195,6 @@ def _requires_fp32_master_weights(model: Any) -> bool:
         parameter.requires_grad and parameter.dtype in {torch.float16, torch.bfloat16}
         for parameter in model.parameters()
     )
-
-
-def _precision_label(value: Any) -> str:
-    token = str(value or "").strip().lower().removeprefix("torch.")
-    return {
-        "": "fp32",
-        "no": "fp32",
-        "float32": "fp32",
-        "bfloat16": "bf16",
-        "float16": "fp16",
-    }.get(token, token)
 
 
 # ---------------------------------------------------------------------------
@@ -2322,14 +2313,16 @@ class OnlineTrainer:
                 parameter = next(iter(parameters()), None) if callable(parameters) else None
                 transformer_dtype = parameter.dtype if parameter is not None else None
 
-        training_precision = _precision_label(self.config.train_precision)
-        rollout_precision = _precision_label(self.config.rollout_precision or training_precision)
+        training_precision = normalize_role_precision_label(self.config.train_precision)
+        rollout_precision = normalize_role_precision_label(
+            self.config.rollout_precision or training_precision
+        )
         return {
             "training_precision": training_precision,
             "rollout_precision": rollout_precision,
             # Report the dtype the evaluator actually consumes instead of carrying a
             # duplicate TrainerConfig projection of the public precision policy.
-            "math_precision": _precision_label(
+            "math_precision": dtype_to_precision_token(
                 getattr(self.evaluator, "math_dtype", None) or torch.float32,
             ),
             "effective_float32_precision": float32_precision_state(),

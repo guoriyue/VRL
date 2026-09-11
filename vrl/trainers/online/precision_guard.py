@@ -49,7 +49,9 @@ def resolve_guard_mode(
         raise ValueError(
             f"precision drift guard mode must be auto/off/warn/fail; got {mode!r}",
         )
-    role_match = _normalize_precision_label(rollout_precision) == _normalize_precision_label(
+    role_match = normalize_role_precision_label(
+        rollout_precision
+    ) == normalize_role_precision_label(
         training_precision,
     )
     return "off" if role_match else "fail"
@@ -155,9 +157,9 @@ def measure_precision_drift(
     if mode == "off":
         return None
 
-    training_label = _normalize_precision_label(training_precision)
-    rollout_label = _normalize_precision_label(rollout_precision)
-    math_label = _normalize_precision_label(math_precision)
+    training_label = normalize_role_precision_label(training_precision)
+    rollout_label = normalize_role_precision_label(rollout_precision)
+    math_label = normalize_role_precision_label(math_precision)
     worst: LogprobMismatchStats | None = None
     worst_timestep = -1
     worst_key: tuple[bool, bool, float, float, float] | None = None
@@ -264,7 +266,9 @@ def run_precision_drift_guard(
     return record
 
 
-def _normalize_precision_label(precision: str) -> str:
+def normalize_role_precision_label(precision: str) -> str:
+    """Normalize role labels while retaining quantization and autocast suffixes."""
+
     token = str(precision or "").strip().lower()
     return "fp32" if token in ("", "no") else token
 
@@ -273,6 +277,7 @@ __all__ = [
     "PrecisionDriftError",
     "enforce_precision_drift",
     "measure_precision_drift",
+    "normalize_role_precision_label",
     "resolve_guard_mode",
     "run_precision_drift_guard",
     "select_guard_timesteps",

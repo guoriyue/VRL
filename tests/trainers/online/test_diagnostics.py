@@ -563,3 +563,34 @@ def test_precision_metadata_keeps_parameterless_model_dtype_unknown():
         evaluator=SimpleNamespace(),
     )
     assert OnlineTrainer._precision_metadata(trainer)["trainer_transformer_dtype"] is None
+
+
+@pytest.mark.parametrize(
+    "math_dtype, token",
+    [("float32", "fp32"), ("bfloat16", "bf16"), ("float16", "fp16")],
+)
+def test_precision_metadata_preserves_role_execution_policy(math_dtype, token):
+    from types import SimpleNamespace
+
+    import torch
+
+    from vrl.trainers.online import OnlineTrainer
+    from vrl.trainers.online.precision_guard import resolve_guard_mode
+
+    trainer = SimpleNamespace(
+        model=torch.nn.Module(),
+        config=SimpleNamespace(train_precision="no", rollout_precision="bf16+fp8+no-autocast"),
+        evaluator=SimpleNamespace(math_dtype=getattr(torch, math_dtype)),
+    )
+    metadata = OnlineTrainer._precision_metadata(trainer)
+    assert metadata["training_precision"] == "fp32"
+    assert metadata["rollout_precision"] == "bf16+fp8+no-autocast"
+    assert metadata["math_precision"] == token
+    assert (
+        resolve_guard_mode(
+            "auto",
+            training_precision=metadata["training_precision"],
+            rollout_precision=metadata["rollout_precision"],
+        )
+        == "fail"
+    )
