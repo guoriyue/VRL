@@ -69,7 +69,20 @@ def test_r1_train_segments_derive_from_algorithm_config() -> None:
     }
 
 
-@pytest.mark.parametrize("mismatch", ["visual", "cfg", "missing_log_probs"])
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "visual",
+        "cfg",
+        "missing_log_probs",
+        "token_ids",
+        "token_log_probs",
+        "token_mask",
+        "prompt_embeds",
+        "attention_mask",
+        "prompt_attention_mask",
+    ],
+)
 def test_r1_gather_rejects_inconsistent_segment_batches(mismatch: str) -> None:
     request = GenerationRequest(
         request_id="r1",
@@ -96,8 +109,11 @@ def test_r1_gather_rejects_inconsistent_segment_batches(mismatch: str) -> None:
     if mismatch == "missing_log_probs":
         # A missing first value must not discard the second batch's log-probs.
         batches[0].segments["final_image"]["token_log_probs"] = None
-    else:
+    elif mismatch in {"visual", "cfg"}:
         batches[1].segments["final_image"][mismatch] = False
+    else:
+        value = batches[1].segments["final_image"][mismatch]
+        batches[1].segments["final_image"][mismatch] = value.to(torch.float64)
     with pytest.raises(ValueError, match="segment 'final_image'"):
         JanusProR1GenerationBatchGatherer().gather_batches(request, _sample_rows(), batches)
 

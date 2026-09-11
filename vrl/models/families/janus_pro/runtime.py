@@ -19,6 +19,7 @@ from vrl.generation.composition.token_autoregressive.token_loop import (
 )
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
+    concatenate_sample_values,
     ordered_covering_batches,
     require_matching_batch_context,
 )
@@ -386,33 +387,26 @@ class JanusProR1GenerationBatchGatherer:
                 raise ValueError(f"Janus-R1 segment {name!r}: {error}") from error
             token_log_probs = None
             if first["token_log_probs"] is not None:
-                token_log_probs = torch.cat(
+                token_log_probs = concatenate_sample_values(
                     [batch.segments[name]["token_log_probs"] for batch in batches],
-                    dim=0,
+                    name=f"segment {name!r}.token_log_probs",
                 )
             out[name] = {
                 "name": name,
-                "token_ids": torch.cat(
-                    [batch.segments[name]["token_ids"] for batch in batches],
-                    dim=0,
-                ),
+                **{
+                    field: concatenate_sample_values(
+                        [batch.segments[name][field] for batch in batches],
+                        name=f"segment {name!r}.{field}",
+                    )
+                    for field in (
+                        "token_ids",
+                        "token_mask",
+                        "prompt_embeds",
+                        "attention_mask",
+                        "prompt_attention_mask",
+                    )
+                },
                 "token_log_probs": token_log_probs,
-                "token_mask": torch.cat(
-                    [batch.segments[name]["token_mask"] for batch in batches],
-                    dim=0,
-                ),
-                "prompt_embeds": torch.cat(
-                    [batch.segments[name]["prompt_embeds"] for batch in batches],
-                    dim=0,
-                ),
-                "attention_mask": torch.cat(
-                    [batch.segments[name]["attention_mask"] for batch in batches],
-                    dim=0,
-                ),
-                "prompt_attention_mask": torch.cat(
-                    [batch.segments[name]["prompt_attention_mask"] for batch in batches],
-                    dim=0,
-                ),
                 "visual": first["visual"],
                 "cfg": first["cfg"],
             }

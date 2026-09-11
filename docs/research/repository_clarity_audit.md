@@ -3655,3 +3655,19 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: the new dtype-mismatch case failed before the fix; 342 gatherer,
   binding, AR-family and R1 wiring tests passed afterwards with two skips.
   Touched-file Ruff/diff checks passed. Full repository review remains incomplete.
+
+## Janus-R1 segment tensors share dtype-safe concatenation
+
+- Six public gatherer regression cases reproduced implicit dtype promotion in
+  segment token IDs/log-probs/masks, prompt embeddings and attention masks. The
+  preceding AR field fix covered top-level payload fields, not these nested
+  Janus-R1 segment tensors.
+- Route nested fields through concatenate_sample_values, reporting segment and
+  field names. Replace repeated required-field cat blocks with one local schema
+  tuple; keep optional log-prob handling explicit. No new helper or owner class.
+- Preserve matching metadata checks, optional absence, tensor values for valid
+  homogeneous batches, and JANUS_R1_SEGMENTS. The local tuple describes concrete
+  trajectory fields rather than a workflow-owned algorithm taxonomy.
+- Validation: six added dtype cases failed before the fix; all 80 Janus family,
+  R1 wiring and batch-gatherer tests passed afterwards. Touched-file Ruff/diff
+  checks passed. Full repository review remains incomplete.
