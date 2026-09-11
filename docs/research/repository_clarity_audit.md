@@ -4850,3 +4850,21 @@ this combined regression is compatibility evidence, not architectural completion
   change, as are direct dataclass construction and bypassed schema validation.
 - Existing offline builder and timestep/restore suites: 33 passed, two dependency
   warnings. Touched-file Ruff checks pass. The broader audit remains incomplete.
+
+## Rollout selection owns its tensor callback
+
+- Move the sole-use _select_tensor_tree callback into select_batch and traverse
+  the complete extras dictionary once. The callback closes over the detached
+  selector and batch size instead of forwarding both through a module helper
+  for every extras entry. No public API or new class is introduced.
+- Keep map_tensor_tree as the shared recursion boundary for generation copies,
+  trajectory storage, rollout selection and weight snapshots. Keep the private
+  tensor-only device mover shared by extras and context: replacing it with the
+  duck-typed trajectory mover would broaden which objects receive to().
+- Preserve leading-dimension selection, scalar and non-sample tensor handling,
+  context ownership and trajectory reconstruction. Container support expansion
+  and merging distinct transfer policies are outside this change; shared
+  traversal consistency remains more valuable than removing every helper.
+- Existing trajectory, online reward/update-flow and deferred replay suites:
+  102 passed. Touched-file Ruff checks and git diff --check pass. No old helper
+  references remain in production or tests. The repository audit is ongoing.

@@ -15,31 +15,23 @@ def select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
     """Select ``RolloutBatch`` rows by a boolean mask or long indices."""
 
     selector = selector.detach()
-    new_extras: dict[str, Any] = {}
     batch_size = batch.rewards.shape[0]
-    for key, value in batch.extras.items():
-        new_extras[key] = _select_tensor_tree(value, selector, batch_size)
-    return RolloutBatch(
-        rewards=batch.rewards[selector.to(batch.rewards.device)],
-        group_ids=batch.group_ids[selector.to(batch.group_ids.device)],
-        extras=new_extras,
-        context=batch.context,
-        trajectory=select_trajectory_batch(batch.trajectory, selector),
-    )
 
-
-def _select_tensor_tree(value: Any, selector: torch.Tensor, batch_size: int) -> Any:
-    """Select per-sample tensor leaves inside nested rollout metadata."""
-
-    def _select(leaf: torch.Tensor) -> torch.Tensor:
+    def select_sample_tensor(leaf: torch.Tensor) -> torch.Tensor:
         if leaf.dim() > 0 and leaf.shape[0] == batch_size:
             return leaf[selector.to(leaf.device)]
         return leaf
 
-    return map_tensor_tree(
-        value,
-        _select,
-        is_leaf=lambda v: isinstance(v, torch.Tensor),
+    return RolloutBatch(
+        rewards=batch.rewards[selector.to(batch.rewards.device)],
+        group_ids=batch.group_ids[selector.to(batch.group_ids.device)],
+        extras=map_tensor_tree(
+            batch.extras,
+            select_sample_tensor,
+            is_leaf=lambda value: isinstance(value, torch.Tensor),
+        ),
+        context=batch.context,
+        trajectory=select_trajectory_batch(batch.trajectory, selector),
     )
 
 
