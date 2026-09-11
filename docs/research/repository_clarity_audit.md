@@ -166,9 +166,16 @@ Checkpoint identity and trajectory review:
 - Trajectory builders remain explicit adapters from different family payloads
   to the neutral trajectory schema. Do not put every regime's tensors into
   constructors on `TrajectoryBatch` merely to eliminate module functions.
-- Follow-up found in `trajectory/storage.py`: policy parsing and application
-  are external despite an existing `TrajectoryStoragePolicy` owner. Review
-  both raw-tree and trajectory mutation callers together before consolidating.
+- Completed the storage-policy follow-up: `TrajectoryStoragePolicy.from_config`,
+  `apply_to_value`, and `apply_to_trajectory_` own parsing, tree conversion, and
+  in-place trajectory mutation. Removed three public free functions, their lazy
+  facade exports, and the internal application forwarder. Migrated worker,
+  collector, tests, and Sana report comparison. No-op identity, integer dtype,
+  conversion scope, and metadata handling remain unchanged.
+- Storage/trajectory, full-sequence binding, collector, and config tests:
+  117 passed (including torch-free parsing). Sana report tests: 32 passed.
+  Tensor-tree traversal and byte estimates remain independent algorithms;
+  derived Literal validation sets remain schema data. No new wrapper class.
 
 ## Remaining review
 
