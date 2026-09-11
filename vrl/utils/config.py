@@ -83,8 +83,10 @@ def import_from_path(path: str) -> Any:
     module_name, separator, attr_name = path.partition(":")
     if not separator or not module_name or not attr_name:
         raise ValueError(f"import path must use 'module:attribute' syntax: {path!r}")
-    module = importlib.import_module(module_name)
-    return getattr(module, attr_name)
+    value = importlib.import_module(module_name)
+    for attribute in attr_name.split("."):
+        value = getattr(value, attribute)
+    return value
 
 
 __all__ = [

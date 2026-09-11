@@ -1811,3 +1811,17 @@ is not a repository-wide completion claim or a mandate to inline short functions
   New tests preserve the original injected import failure through both APIs and
   check nested interpolation/tuple conversion. Touched-file Ruff and diff checks
   passed. Environments without the declared required dependency now fail clearly.
+
+## Dynamic imports can address class-owned factories
+
+- Found import_from_path documenting dotted attribute chains while performing
+  only one getattr on the module. Resolve each explicit attribute component so
+  module:Class.from_build can address a constructor without an external wrapper.
+- Keep the shared import function and mandatory colon grammar; direct module
+  attributes remain supported. No alternate module guessing, exception fallback,
+  registration table or compatibility forwarding function added. Existing registry
+  paths remain unchanged; no production recipe was migrated in this slice.
+- Validation: 72 utility/family-registry/checkpoint-identity tests passed. New
+  tests call a class-owned factory, preserve missing-attribute errors, retain
+  direct class lookup and reject missing module/attribute separators. Touched-file
+  Ruff and diff checks passed. Repository-wide review remains incomplete.
