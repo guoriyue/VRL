@@ -7135,3 +7135,17 @@ The broader repository audit remains incomplete.
   pass. No GPU generation or reward-model evaluation was required.
 - Preserve the schema-version constants and archive validation owners. No new
   generic parsing helper or class; broader repository audit remains incomplete.
+
+## Performance report readers retain physical JSONL records
+
+- Overlap benchmark stats now use the shared strict read_jsonl boundary. The
+  append-only baseline reader instead iterates its file directly, preserving
+  its documented policy of skipping malformed JSON lines. Neither splits valid
+  Unicode line separators inside JSON string values anymore.
+- Two regressions failed before the fix: baseline silently discarded a valid
+  record, and overlap metrics raised a JSON parse error. Both now pass; the
+  baseline test also keeps an unrelated malformed line to verify tolerance.
+  Baseline and overlap suites: 29 passed. Touched-file Ruff and diff checks pass.
+- Keep A/B/C arm definitions, acceptance thresholds and statistical aggregation
+  as the benchmark protocol. No new parser class or tolerant-mode flag on the
+  shared reader. Broader repository clarity audit remains incomplete.

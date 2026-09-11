@@ -406,3 +406,23 @@ def test_collection_row_requires_measured_phase_fields(tmp_path, missing):
     assert str(path) in message
     assert "step=7" in message
     assert missing in message
+
+
+def test_run_metrics_preserves_record_with_unicode_annotation(tmp_path):
+    run_dir = _write_run(
+        tmp_path,
+        "A",
+        0,
+        steps=1,
+        collect_wall=10.0,
+        generation_wall=6.0,
+        reward_wall=4.0,
+        overlap=0.0,
+    )
+    path = run_dir / "rollout_stats.jsonl"
+    row = json.loads(path.read_text())
+    row["annotation"] = "first\u2028second"
+    path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    metrics = RunMetrics.from_run_dir(run_dir, warmup_iterations=0)
+    assert metrics.steps == 1
+    assert metrics.mean_collect_wall() == 10.0

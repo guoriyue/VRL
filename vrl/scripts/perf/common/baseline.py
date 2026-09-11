@@ -187,14 +187,15 @@ def read_baseline(path: Path | str | None = None) -> list[dict[str, Any]]:
     if not target.exists():
         return []
     rows: list[dict[str, Any]] = []
-    for line in target.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            rows.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+    with target.open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
     return rows
 
 

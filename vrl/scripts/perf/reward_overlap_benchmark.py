@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any
 
 from vrl.rollouts.collector.core import RewardCollectionMode
+from vrl.utils.json_files import read_jsonl
 
 # Arm id -> the reward_collection_mode value it forces. The A/B/C labels are the
 # benchmark protocol; values come from the production scheduling contract.
@@ -140,7 +141,7 @@ class RunMetrics:
         if not stats_path.exists():
             raise FileNotFoundError(f"missing {stats_path}; the run wrote no phase stats")
 
-        rows = [json.loads(line) for line in stats_path.read_text().splitlines() if line.strip()]
+        rows = read_jsonl(stats_path)
         rows.sort(key=lambda row: int(row.get("step", 0)))
         steady = rows[warmup_iterations:]
         if not steady:

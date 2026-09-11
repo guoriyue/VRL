@@ -175,3 +175,10 @@ def test_collect_provenance_never_raises() -> None:
     assert prov.timestamp
     assert prov.hostname
     assert isinstance(prov.gpu_count, int)
+
+
+def test_read_preserves_unicode_record_around_malformed_line(tmp_path):
+    path = tmp_path / "baseline.jsonl"
+    row = {"probe": "first\u2028second", "metrics": {"ms": 1}}
+    path.write_text("broken\n" + json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert read_baseline(path) == [row]
