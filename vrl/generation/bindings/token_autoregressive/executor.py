@@ -127,23 +127,6 @@ class ARBatchExecutorBase(BatchExecutorBase):
         embed = self.model.language_model.get_input_embeddings()
         return embed(token_ids)
 
-    @staticmethod
-    def _align_tokenizer_output(
-        ids: Any,
-        mask: Any,
-        *,
-        max_text_length: int,
-        pad_id: int,
-    ) -> tuple[Any, Any]:
-        """Right-pad ids/mask to ``max_text_length``.
-
-        Belt-and-braces shared by family tokenizers: enforce the length even
-        if the tokenizer ignored ``padding="max_length"`` (stubs / tokenizers
-        without a pad_token).
-        """
-
-        return ARRequestLayout.right_pad(ids, mask, target_length=max_text_length, pad_id=pad_id)
-
 
 @dataclass(slots=True)
 class ARBatchInputs:

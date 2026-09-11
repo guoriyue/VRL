@@ -9,6 +9,7 @@ import torch
 from vrl.generation.bindings.token_autoregressive import (
     ARBatchInputs,
     ARDiscreteBatchExecutorBase,
+    ARRequestLayout,
     ARSamplingParams,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
@@ -260,10 +261,10 @@ class LlamaGenBatchExecutor(ARDiscreteBatchExecutorBase):
         )
         ids = enc["input_ids"]
         mask = enc["attention_mask"]
-        ids, mask = self._align_tokenizer_output(
+        ids, mask = ARRequestLayout.right_pad(
             ids,
             mask,
-            max_text_length=max_text_length,
+            target_length=max_text_length,
             pad_id=getattr(tokenizer, "pad_token_id", None) or 0,
         )
         return ids.to(device), mask.to(device)

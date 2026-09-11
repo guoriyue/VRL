@@ -6990,3 +6990,17 @@ The broader repository audit remains incomplete.
   helper abstraction; the existing shared rollout/replay entry points remain.
 - This corrects a small normalization offset; no throughput or training-quality
   improvement is claimed. The broader repository clarity audit remains open.
+
+## Token families call the existing padding owner directly
+
+- Removed ARBatchExecutorBase._align_tokenizer_output: its only operation was
+  forwarding to ARRequestLayout.right_pad while renaming target_length. No
+  repository override or independent interface consumer was found.
+- Janus, NextStep and LlamaGen now consistently call ARRequestLayout.right_pad.
+  Keep the shared layout implementation and family-specific tokenization:
+  minimum-width padding, tokenizer-owned truncation, masks and device moves
+  retain their existing semantics. No duplicated algorithm or replacement class.
+- Existing token binding and three family suites: 131 passed, 16 dependency
+  warnings. Touched-file Ruff and diff checks pass; no residual wrapper usages
+  in vrl or tests. No extra implementation-mirroring tests were added for this
+  direct delegation removal. Broader repository audit remains incomplete.
