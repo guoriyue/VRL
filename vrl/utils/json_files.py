@@ -1,8 +1,9 @@
 """Read and write JSON / JSONL files the same way everywhere.
 
 Every writer here is atomic: the content goes to a temporary file in the
-destination directory, is fsynced, then renamed into place. A reader never
-sees a half-written file, and a crashed writer leaves nothing behind.
+destination directory, is fsynced, then published by rename or exclusive link.
+Readers do not see partially written destination files. Normal completion and
+exceptions remove temporary files; abrupt process termination may leave one.
 """
 
 from __future__ import annotations

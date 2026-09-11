@@ -438,3 +438,27 @@ above, not completion of the outstanding repository-wide audit.
   cases reject fractional, boolean and string sample identity/count inputs at
   both construction and direct range-validation boundaries. Touched-file Ruff
   and whitespace checks pass.
+
+## Data schema placement and external helper review
+
+- Moved `SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS` from generic path utilities
+  into the existing data artifact-validation module. All current consumers are
+  data provenance validation or dataset derivation; no reward runtime depends
+  on this schema. Retained its eight ordered keys and existing data-module
+  export, and updated direct imports without a compatibility forwarding alias.
+- Kept `DATA_ROOT_ENV` (environment boundary) and `IMAGE_SUFFIXES` (shared media
+  extension classification) in the Torch-free utility leaf. Kept path/hash
+  helpers as cross-domain operations; they have no state that would justify an
+  artifact utility class.
+- Reviewed token and denoise generic build modules. Retained descriptor-driven
+  builders and common config projection because they remove family duplication,
+  maintain lazy import boundaries, and enforce quantize/device/compile ordering.
+  Their short validation helpers are shared within the build sequence, not
+  arbitrary forwarding layers.
+- Reviewed JSON/JSONL read/write helpers and shared atomic publication. Retained
+  them as the common filesystem boundary. Corrected the module docstring:
+  finally cleanup cannot promise removal after abrupt process termination, and
+  exclusive publication uses a hard link rather than a rename.
+- Validation: 70 data and Torch-free config tests passed; touched-file Ruff and
+  whitespace checks pass. Schema order/content and atomic-write implementation
+  are unchanged. This review does not establish full model-family audit coverage.

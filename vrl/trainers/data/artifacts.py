@@ -10,11 +10,25 @@ from typing import Any
 from vrl.trainers.data.prompts import PromptExample, load_prompt_manifest
 from vrl.utils.artifacts import (
     IMAGE_SUFFIXES,
-    SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
     ArtifactManifestError,
     coerce_data_root,
     resolve_artifact_path,
 )
+
+# Ordered manifest provenance contract shared by data validation and dataset
+# derivation. Order is load-bearing: validators report the first
+# missing field, so this must remain an explicit schema rather than a set.
+SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS = (
+    "source",
+    "source_repo",
+    "source_split",
+    "source_episode",
+    "source_video",
+    "source_frame_index",
+    "decode_method",
+    "conditioning",
+)
+
 
 # Derived from PromptExample fields tagged metadata={'artifact': True} — single source of truth.
 DEFAULT_ARTIFACT_FIELDS = tuple(

@@ -24,13 +24,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from vrl.trainers.data.artifacts import ArtifactManifestReport
+from vrl.trainers.data.artifacts import (
+    SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
+    ArtifactManifestReport,
+)
 from vrl.trainers.data.prompts import (
     PromptExample,
     load_prompt_image_manifest,
     load_prompt_manifest,
 )
-from vrl.utils.artifacts import SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS
 
 if TYPE_CHECKING:
     from vrl.config.schema import DataConfig

@@ -28,20 +28,6 @@ def sha256_file(path: str | Path) -> str:
 # artifacts leaf rather than duplicated inside either consumer.
 IMAGE_SUFFIXES = frozenset({".bmp", ".gif", ".jpeg", ".jpg", ".png", ".ppm", ".webp"})
 
-# Ordered manifest provenance contract shared by data validation and reward
-# artifact materialization. Order is load-bearing: validators report the first
-# missing field, so this must remain an explicit schema rather than a set.
-SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS = (
-    "source",
-    "source_repo",
-    "source_split",
-    "source_episode",
-    "source_video",
-    "source_frame_index",
-    "decode_method",
-    "conditioning",
-)
-
 
 class ArtifactManifestError(ValueError):
     """Raised when an artifact path violates storage policy."""
@@ -95,7 +81,6 @@ def coerce_data_root(value: str | Path | None) -> Path:
 __all__ = [
     "DATA_ROOT_ENV",
     "IMAGE_SUFFIXES",
-    "SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS",
     "ArtifactManifestError",
     "coerce_data_root",
     "default_data_root",

@@ -14,8 +14,11 @@ from pathlib import Path
 from typing import Any
 
 from vrl.scripts.data.common import emit
-from vrl.trainers.data.artifacts import ArtifactManifestReport
-from vrl.utils.artifacts import SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS, sha256_file
+from vrl.trainers.data.artifacts import (
+    SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
+    ArtifactManifestReport,
+)
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
 
 COMMAND_NAME = "derive-text-video-targets"
