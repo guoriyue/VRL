@@ -274,3 +274,28 @@ def test_cosmos_encoded_batch_reuses_text_expansion(negative):
         assert result["negative_prompt_embeds"] is None
     else:
         assert torch.equal(result["negative_prompt_embeds"], torch.ones(3, 2))
+
+
+@pytest.mark.parametrize("family", ["cosmos3", "minimax_h3"])
+def test_single_sample_families_preserve_encoded_values(family):
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
+    from vrl.models.families.cosmos.cosmos3.runtime import Cosmos3BatchExecutor
+    from vrl.models.families.minimax_h3.runtime import MiniMaxH3BatchExecutor
+
+    executor_cls = Cosmos3BatchExecutor if family == "cosmos3" else MiniMaxH3BatchExecutor
+    encoded = (
+        {"cond_input_ids": [1, 2], "uncond_input_ids": [0], "guidance_scale": 7.0}
+        if family == "cosmos3"
+        else {"prompt_embeds": torch.ones(1, 4, 8), "max_text_tokens": 4}
+    )
+    executor = executor_cls(SimpleNamespace())
+    result = executor.build_batch_encoded(
+        encoded=encoded,
+        generation_request=_request(),
+        video_request=None,
+        params=None,
+        batch=GenerationSampleBatch(0, 0, 1),
+    )
+    assert result is not encoded
+    assert result.keys() == encoded.keys()
+    assert all(result[key] is value for key, value in encoded.items())

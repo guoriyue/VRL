@@ -3103,3 +3103,18 @@ this combined regression is compatibility evidence, not architectural completion
   after adding explicit Cosmos positive/negative embedding checks, all 93 layout
   tests passed. Touched-file Ruff/diff checks passed; no repeat_batch references
   remain in code/tests. Full repository review remains open.
+
+## Inherit single-sample encoded preparation instead of overriding it
+
+- Remove Cosmos3 and MiniMax-H3 build_batch_encoded overrides that only copied
+  the encoded mapping. The base executor already preserves their supported
+  inputs: token-ID lists and scalar guidance, or singleton prompt embeddings
+  plus max_text_tokens. Preserve their family-specific prompt encoders.
+- Keep ReferenceConditionedBatches: it shares real image loading and argument
+  threading for Wan/Cosmos, not an empty override. Update its stale docstring
+  and the generic executor description to reflect current ownership. No
+  capacity changes, new configuration table, or per-family wrapper is added.
+- Validation: 171 generation binding and MiniMax-H3/Cosmos3 model tests passed,
+  two skipped. Explicit single-sample cases verify mapping copies retain value
+  identity through both concrete family executors. Touched-file Ruff/diff
+  checks passed. Full repository review remains incomplete.

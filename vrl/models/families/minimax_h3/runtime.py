@@ -109,19 +109,6 @@ class MiniMaxH3BatchExecutor(DiffusionBatchExecutorBase):
             **params.text_encode_kwargs(),
         )
 
-    def build_batch_encoded(
-        self,
-        *,
-        encoded: dict[str, Any],
-        generation_request: GenerationRequest,
-        video_request: DenoiseRequest,
-        params: DiffusionSamplingParams,
-        batch: GenerationSampleBatch,
-    ) -> dict[str, Any]:
-        # batch=1: ``prompt_embeds`` is already [1, tokens, dim]; nothing to repeat.
-        del generation_request, video_request, params, batch
-        return dict(encoded)
-
 
 __all__ = [
     "DEFAULT_FPS",

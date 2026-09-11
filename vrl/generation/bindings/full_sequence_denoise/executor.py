@@ -78,10 +78,9 @@ class ReferenceConditionedBatches:
     """Reference-image threading for per-batch encode/prepare.
 
     Cosmos Predict2 Video2World and Wan 2.1 I2V condition every batch on a
-    reference image carried by its ``GenerationInput``. The two executors had
-    copy-pasted these
-    hooks; ``build_batch_encoded`` stays family-specific because the encoded
-    payloads genuinely differ (Wan carries ``image_embeds``).
+    reference image carried by its ``GenerationInput``. Shared hooks load and
+    pass that image to encoding and sampling preparation. Tensor expansion is
+    owned by the base executor; families may specialize the encoded payload.
     """
 
     model: Any
@@ -570,7 +569,7 @@ class GenericDiffusionBatchExecutor(DiffusionBatchExecutorBase):
     dispatches here; the launcher reads that block wholesale into these
     constructor kwargs (family/task come from the registry entry, the worker
     injects family/task from the launch contract). Families with real
-    per-batch tensor logic (cosmos predict2/2.5, cosmos3, echo, wan i2v) keep
+    per-batch input preparation (cosmos predict2/2.5, cosmos3, echo, wan i2v) keep
     their own subclass.
     """
 

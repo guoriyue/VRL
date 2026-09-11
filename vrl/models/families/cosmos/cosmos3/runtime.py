@@ -88,19 +88,6 @@ class Cosmos3BatchExecutor(DiffusionBatchExecutorBase):
             fps=video_request.fps or 24,
         )
 
-    def build_batch_encoded(
-        self,
-        *,
-        encoded: dict[str, Any],
-        generation_request: GenerationRequest,
-        video_request: DenoiseRequest,
-        params: DiffusionSamplingParams,
-        batch: GenerationSampleBatch,
-    ) -> dict[str, Any]:
-        # batch=1: input_ids are python lists (not tensors); pass through unchanged.
-        del generation_request, video_request, params, batch
-        return dict(encoded)
-
 
 __all__ = [
     "Cosmos3BatchExecutor",
