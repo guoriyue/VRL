@@ -1787,3 +1787,14 @@ is not a repository-wide completion claim or a mandate to inline short functions
   paths. Touched-file Ruff and diff checks passed. This is path resolution, not
   protection against filesystem mutation after resolution. Existing manifests
   relying on relative symlinks outside data_root now fail the declared policy.
+
+## Host-memory snapshot parser ownership
+
+- Moved _read_proc_field_mb into HostMemorySnapshot as a private static method;
+  only capture() calls it. Keep the parser shared for RSS/available/total units
+  and missing-field handling instead of inlining three copies.
+- Keep log_host_memory as the shared trainer/worker logging facade. No new
+  memory-monitor object, polling state or constants. Missing metrics remain None.
+- Validation: 44 memory-guard, online reward-flow and lifecycle tests passed.
+  A direct capture against this host's /proc also returned positive RSS/total
+  values. Touched-file Ruff and diff checks passed. Repository review continues.

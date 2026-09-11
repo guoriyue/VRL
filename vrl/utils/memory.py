@@ -23,10 +23,26 @@ class HostMemorySnapshot:
         """Capture Linux host memory without adding a psutil dependency."""
 
         return cls(
-            rss_mb=_read_proc_field_mb("/proc/self/status", "VmRSS"),
-            available_mb=_read_proc_field_mb("/proc/meminfo", "MemAvailable"),
-            total_mb=_read_proc_field_mb("/proc/meminfo", "MemTotal"),
+            rss_mb=cls._read_proc_field_mb("/proc/self/status", "VmRSS"),
+            available_mb=cls._read_proc_field_mb("/proc/meminfo", "MemAvailable"),
+            total_mb=cls._read_proc_field_mb("/proc/meminfo", "MemTotal"),
         )
+
+    @staticmethod
+    def _read_proc_field_mb(path: str, field: str) -> float | None:
+        """Read ``field:`` (kB) from a /proc table and return it in MiB."""
+        try:
+            with open(path, encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.startswith(f"{field}:"):
+                        continue
+                    parts = line.split()
+                    if len(parts) < 2:
+                        return None
+                    return float(parts[1]) / 1024.0
+        except OSError:
+            return None
+        return None
 
     def __str__(self) -> str:
         """Format host-memory values with unknown fields omitted."""
@@ -57,22 +73,6 @@ def log_host_memory(label: str, *, log: logging.Logger | None = None) -> HostMem
     target = log or logger
     target.info("host_memory[%s]: %s", label, snapshot)
     return snapshot
-
-
-def _read_proc_field_mb(path: str, field: str) -> float | None:
-    """Read ``field:`` (kB) from a /proc table and return it in MiB."""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            for line in handle:
-                if not line.startswith(f"{field}:"):
-                    continue
-                parts = line.split()
-                if len(parts) < 2:
-                    return None
-                return float(parts[1]) / 1024.0
-    except OSError:
-        return None
-    return None
 
 
 __all__ = [
