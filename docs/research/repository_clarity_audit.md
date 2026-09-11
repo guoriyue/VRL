@@ -2093,3 +2093,22 @@ tracing algorithm construction and evaluator selection together.
   passed. Nine new resolver cases cover invalid/partial requests, upper bounds,
   correct step selection and unchanged static payload identity. Touched-file
   Ruff and diff checks passed.
+
+## Resolver owns explicit tensor and sequence slicing
+
+- Moved axis slicing into TrajectoryResolver and removed the standalone
+  _slice_sequence_axis and _shape helpers. The old len(value) shape fallback
+  classified nested lists as rank one, rejecting legal second-axis selection.
+  It also retried arbitrary failed tensor indexing as sequence iteration.
+- Dispatch lists/tuples explicitly and recurse over their declared axis;
+  tensor-like values retain shape bounds, select or tuple indexing. Tensor
+  operation failures are wrapped with the tensor reference and original cause,
+  never retried as an unrelated operation. No eager Torch import introduced.
+- Keep _split_ref as the small reference-format parser and retain the shared
+  cross-family resolver API. No new class or ALL_CAPS table; consistency of
+  tensor/sequence resolution matters more than flattening every helper.
+- Validation: 201 trajectory, replay and full-sequence-denoise binding tests
+  passed. New tests cover accepted nested lists/tuples and a backend indexing
+  failure whose identity must survive without iteration. Touched-file Ruff and
+  diff checks passed. Optional-cache schema and full-repository review remain
+  open; this slice does not claim either is complete.

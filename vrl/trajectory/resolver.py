@@ -123,7 +123,7 @@ class TrajectoryResolver:
             tensor = self.tensor(segment_ref, tensor_name)
             value = tensor.value
             if axis is not None and axis_index is not None and axis in tensor.axes:
-                value = _slice_axis(
+                value = self._slice_axis(
                     value,
                     tensor_ref(segment_ref, tensor_name),
                     tensor.axes.index(axis),
@@ -137,6 +137,39 @@ class TrajectoryResolver:
             return ref
         return tensor_ref(segment_name, ref)
 
+    @classmethod
+    def _slice_axis(cls, value: Any, ref: str, axis_dim: int, axis_index: int) -> Any:
+        """Slice declared axes without retrying tensor failures as sequences."""
+
+        if isinstance(value, (list, tuple)):
+            try:
+                if axis_dim == 0:
+                    return value[axis_index]
+                return [cls._slice_axis(item, ref, axis_dim - 1, axis_index) for item in value]
+            except IndexError as exc:
+                raise TrajectoryResolverError(f"failed to slice tensor {ref!r}: {exc}") from exc
+
+        shape = getattr(value, "shape", None)
+        if shape is not None:
+            if axis_dim >= len(shape):
+                raise TrajectoryResolverError(
+                    f"tensor {ref!r} rank {len(shape)} cannot slice axis dim {axis_dim}",
+                )
+            axis_length = shape[axis_dim]
+            if axis_index >= axis_length:
+                raise TrajectoryResolverError(
+                    f"tensor {ref!r} axis index {axis_index} is out of range for length {axis_length}",
+                )
+        try:
+            select = getattr(value, "select", None)
+            if callable(select):
+                return select(axis_dim, axis_index)
+            key = [slice(None)] * (axis_dim + 1)
+            key[axis_dim] = axis_index
+            return value[tuple(key)]
+        except Exception as exc:
+            raise TrajectoryResolverError(f"failed to slice tensor {ref!r}: {exc}") from exc
+
 
 def _split_ref(ref: str, kind: str) -> tuple[str, str]:
     if "." not in ref:
@@ -145,51 +178,6 @@ def _split_ref(ref: str, kind: str) -> tuple[str, str]:
     if not segment_name or not name:
         raise TrajectoryResolverError(f"{kind} ref {ref!r} must be 'segment.name'")
     return segment_name, name
-
-
-def _slice_axis(value: Any, ref: str, axis_dim: int, axis_index: int) -> Any:
-    shape = _shape(value)
-    if shape is not None:
-        if axis_dim >= len(shape):
-            raise TrajectoryResolverError(
-                f"tensor {ref!r} rank {len(shape)} cannot slice axis dim {axis_dim}",
-            )
-        axis_length = shape[axis_dim]
-        if axis_index >= axis_length:
-            raise TrajectoryResolverError(
-                f"tensor {ref!r} axis index {axis_index} is out of range for length {axis_length}",
-            )
-    select = getattr(value, "select", None)
-    if callable(select):
-        try:
-            return select(axis_dim, axis_index)
-        except Exception as exc:  # pragma: no cover - defensive for tensor-like objects.
-            raise TrajectoryResolverError(f"failed to slice tensor {ref!r}: {exc}") from exc
-    try:
-        key = [slice(None)] * (axis_dim + 1)
-        key[axis_dim] = axis_index
-        return value[tuple(key)]
-    except Exception:
-        return _slice_sequence_axis(value, axis_dim, axis_index, ref)
-
-
-def _slice_sequence_axis(value: Any, axis_dim: int, axis_index: int, ref: str) -> Any:
-    try:
-        if axis_dim == 0:
-            return value[axis_index]
-        return [_slice_sequence_axis(item, axis_dim - 1, axis_index, ref) for item in value]
-    except Exception as exc:  # pragma: no cover - defensive for non-indexable values.
-        raise TrajectoryResolverError(f"failed to slice tensor {ref!r}: {exc}") from exc
-
-
-def _shape(value: Any) -> tuple[int, ...] | None:
-    shape = getattr(value, "shape", None)
-    if shape is not None:
-        return tuple(int(dim) for dim in shape)
-    try:
-        return (len(value),)
-    except TypeError:
-        return None
 
 
 __all__ = [

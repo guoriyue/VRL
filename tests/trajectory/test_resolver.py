@@ -55,3 +55,35 @@ def test_replay_slices_step_tensors_and_preserves_static_payload(resolver) -> No
     torch.testing.assert_close(selected["observations"], complete["observations"][:, 1])
     assert selected["prompt_embeds"] is complete["prompt_embeds"]
     assert complete["observations"].shape == (2, 3, 2)
+
+
+@pytest.mark.parametrize("container", [list, tuple])
+def test_replay_slices_nested_sequences(resolver, container) -> None:
+    observations = resolver.tensor("denoise", "observations")
+    values = observations.value.tolist()
+    observations.value = container(container(row) for row in values)
+    # Revalidate the same representation accepted at the public boundary.
+    resolver = TrajectoryResolver(resolver.trajectory)
+
+    selected = resolver.replay_tensor_dict("denoise", axis="denoise", axis_index=1)
+
+    assert selected["observations"] == [row[1] for row in values]
+
+
+def test_replay_preserves_tensor_index_failure_without_sequence_retry(resolver) -> None:
+    failure = RuntimeError("backend indexing failed")
+
+    class BrokenTensor:
+        shape = (2, 3, 2)
+
+        def __getitem__(self, key):
+            raise failure
+
+        def __iter__(self):
+            pytest.fail("a failed tensor operation must not fall back to iteration")
+
+    resolver.tensor("denoise", "observations").value = BrokenTensor()
+
+    with pytest.raises(ValueError, match="backend indexing failed") as caught:
+        resolver.replay_tensor_dict("denoise", axis="denoise", axis_index=1)
+    assert caught.value.__cause__ is failure
