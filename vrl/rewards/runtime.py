@@ -277,9 +277,7 @@ class InProcessRewardScorer:
     ) -> None:
         # Typed runtime contract; the verbatim bag still feeds the factory.
         self._launch = RewardRuntimeLaunchContract.from_component_config(worker_config)
-        self._worker_config = self._launch.component_config
-        self._sleep_offload = self._launch.sleep_offload
-        if model is not None and self._sleep_offload:
+        if model is not None and self._launch.sleep_offload:
             raise ValueError(
                 "sleep_offload requires the runtime to build the model itself "
                 "(worker_config.model_factory) so it can capture the pre-load "
@@ -288,13 +286,12 @@ class InProcessRewardScorer:
         self._model = model
         self._pool: CumemPool | None = None
         self._preload_gpu_used_bytes: int | None = None
-        self._parking_residual_bytes_limit = self._launch.memory_parking_residual_bytes_limit
 
     @property
     def requires_memory_parking(self) -> bool:
         """Whether topology/config requires this runtime to release GPU pages."""
 
-        return self._sleep_offload
+        return self._launch.sleep_offload
 
     async def activate(self) -> None:
         """Build or wake the model so scoring starts resident.
@@ -311,7 +308,7 @@ class InProcessRewardScorer:
     async def park_memory(self) -> None:
         """Park reward pages and validate the residual-memory gate; safe to retry."""
 
-        if not self._sleep_offload:
+        if not self._launch.sleep_offload:
             raise RuntimeError(
                 "reward runtime was not configured for complete memory parking",
             )
@@ -332,7 +329,7 @@ class InProcessRewardScorer:
         validate_parking_residual(
             residual_bytes=self._gpu_used_bytes(),
             baseline_bytes=baseline_bytes,
-            limit_bytes=self._parking_residual_bytes_limit,
+            limit_bytes=self._launch.memory_parking_residual_bytes_limit,
             context="reward memory parking",
         )
 
@@ -345,7 +342,7 @@ class InProcessRewardScorer:
                     "(import path to a RewardModel factory) or an explicit model",
                 )
             factory = import_from_path(factory_path)
-            if self._sleep_offload:
+            if self._launch.sleep_offload:
                 # Claim the pool before capturing the baseline so a box without
                 # CuMem leaves no phantom baseline behind for shutdown's residual
                 # check. get_instance() only does Python bookkeeping, so ordering
@@ -359,7 +356,7 @@ class InProcessRewardScorer:
                     model = _build_prepared_model_in_pool(
                         pool,
                         factory,
-                        self._worker_config,
+                        self._launch.component_config,
                     )
                 except BaseException as load_error:
                     # Commit neither half of a failed model/pool build. Dropping
@@ -380,7 +377,7 @@ class InProcessRewardScorer:
                 self._pool = pool
                 self._model = model
             else:
-                self._model = factory(self._worker_config)
+                self._model = factory(self._launch.component_config)
         return self._model
 
     async def score_batch(
@@ -418,11 +415,10 @@ class InProcessRewardScorer:
         ) -> RewardInferenceResult:
             if not isinstance(raw_scores, Mapping):
                 raise TypeError("reward model must return a mapping of scores")
-            scores = {str(key): float(value) for key, value in raw_scores.items()}
             return RewardInferenceResult(
                 artifact_id=artifact.artifact_id,
-                scores=scores,
-                reward_model_version=str(reward_model_version) or None,
+                scores=raw_scores,
+                reward_model_version=reward_model_version or None,
                 timing_ms={"inference_ms": inference_ms},
             )
 
@@ -465,14 +461,14 @@ class InProcessRewardScorer:
         # release the configured device cache for every runtime. The shared
         # path additionally proves the release against its pre-load baseline.
         self._release_cuda_memory_for_parking()
-        if self._sleep_offload and self._preload_gpu_used_bytes is not None:
+        if self._launch.sleep_offload and self._preload_gpu_used_bytes is not None:
             baseline_bytes = self._preload_gpu_used_bytes
             # A failure retains the pool/baseline so terminal cleanup can retry
             # cache release; the trainer remains parked until this succeeds.
             validate_parking_residual(
                 residual_bytes=self._gpu_used_bytes(),
                 baseline_bytes=baseline_bytes,
-                limit_bytes=self._parking_residual_bytes_limit,
+                limit_bytes=self._launch.memory_parking_residual_bytes_limit,
                 context="reward memory release during shutdown",
             )
         self._pool = None

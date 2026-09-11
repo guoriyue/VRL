@@ -6001,3 +6001,17 @@ The broader repository audit remains incomplete.
 - Six invalid-config regressions failed before the fix. Runtime factory,
   in-process scorer and service tests: 95 passed, one skipped. Touched-file Ruff
   and diff checks pass. No new GPU parking benchmark; broader audit incomplete.
+
+## Reward runtime reads launch configuration from its existing owner
+
+- Remove the runtime's duplicate component_config, sleep_offload and residual
+  limit attributes. Read the parsed RewardRuntimeLaunchContract directly at model
+  construction, parking and shutdown. Update configuration-inspection tests to
+  inspect that owner; no forwarding properties or aliases are added.
+- Remove score-map float/key conversion before RewardInferenceResult construction:
+  its existing post-init already normalizes scores and checks finiteness. Retain
+  the explicit plugin Mapping check and shared per-artifact result construction.
+- Keep model/pool/preload baseline as actual runtime state, plus the isolated
+  failed-build frame and transport factory. No scoring or parking policy change.
+- Inference, multi-reward and service suites: 135 passed, one skipped. Touched-file
+  Ruff and diff checks pass. No production GPU performance claim; audit remains open.

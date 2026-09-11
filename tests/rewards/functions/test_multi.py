@@ -330,7 +330,10 @@ def test_shared_parking_allows_one_gpu_reward_with_cpu_sibling() -> None:
     runtimes = {name: fn.scorer for name, _, fn in reward.rewards}
     functions = {name: fn for name, _, fn in reward.rewards}
     assert runtimes["aesthetic"].requires_memory_parking is True
-    assert runtimes["aesthetic"]._parking_residual_bytes_limit == CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
+    assert (
+        runtimes["aesthetic"]._launch.memory_parking_residual_bytes_limit
+        == CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
+    )
     assert runtimes["ocr"].requires_memory_parking is False
     assert functions["ocr"].resolve_execution_device(device="cuda:0", kwargs={}) == "cpu"
 
@@ -381,7 +384,7 @@ def test_gpu_resource_allows_component_cpu_downgrade() -> None:
     runtimes = {name: fn.scorer for name, _, fn in reward.rewards}
     runtime = runtimes["kling_video_reward"]
     assert isinstance(runtime, InProcessRewardScorer)
-    assert runtime._worker_config["device"] == "cpu"
+    assert runtime._launch.component_config["device"] == "cpu"
     assert runtime.requires_memory_parking is False
     assert runtimes["aesthetic"].requires_memory_parking is True
 
