@@ -3783,3 +3783,19 @@ this combined regression is compatibility evidence, not architectural completion
   failure and confirm original process handlers are restored for loop and fallback
   registration paths. Touched-file Ruff/diff checks passed. Full review remains
   incomplete.
+
+## Artifact report construction owns its private helpers
+
+- Move _artifact_values and _assert_readable into ArtifactManifestReport; only
+  its from_examples constructor consumes them. Inline the single-use episode
+  accumulation there and read PromptExample.metadata directly, whose declared
+  field has a dict default. Remove the defensive copy/fallback for absent metadata.
+- Preserve artifact-field conversion, file/Pillow checks, error messages, sorted
+  unique source episodes and train/eval overlap reporting. No new wrapper class
+  or compatibility helper.
+- Keep shared prompt artifact/reference resolution APIs and SFT shard load/save
+  functions as path and persistence boundaries. Keep SFT_LATENTS_SCHEMA_VERSION
+  as the file-format version. Those functions need no synthetic loader object.
+- Validation: all 89 data tests passed, covering manifest validation, provenance
+  and dataset behavior. Touched-file Ruff/diff checks passed; removed free-helper
+  callers are gone. Full repository review remains incomplete.

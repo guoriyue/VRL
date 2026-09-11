@@ -61,6 +61,36 @@ class ArtifactManifestReport:
     eval_source_episodes: tuple[str, ...] = ()
     source_episode_overlap: tuple[str, ...] = ()
 
+    @staticmethod
+    def _artifact_values(example: PromptExample, field_name: str) -> tuple[str, ...]:
+        value = getattr(example, field_name, None)
+        if value is None:
+            value = example.metadata.get(field_name)
+        if value is None or value == "":
+            return ()
+        if isinstance(value, str):
+            return (value,)
+        if isinstance(value, Iterable):
+            return tuple(str(item) for item in value if str(item).strip())
+        raise ArtifactManifestError(f"artifact field {field_name!r} must be a string or list")
+
+    @staticmethod
+    def _assert_readable(path: Path, *, manifest_path: Path, row_index: int) -> None:
+        try:
+            with path.open("rb") as handle:
+                handle.read(1)
+            if path.suffix.lower() in IMAGE_SUFFIXES:
+                try:
+                    from PIL import Image
+                except ImportError:
+                    return
+                with Image.open(path) as image:
+                    image.verify()
+        except Exception as exc:
+            raise ArtifactManifestError(
+                f"{manifest_path}: row {row_index} artifact is not readable: {path}",
+            ) from exc
+
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable report payload."""
 
@@ -155,12 +185,12 @@ class ArtifactManifestReport:
                         f"{path}: row {row_index} metadata.{field_name} is required",
                     )
             for field_name in required_artifact_fields:
-                if not _artifact_values(example, field_name):
+                if not cls._artifact_values(example, field_name):
                     raise ArtifactManifestError(
                         f"{path}: row {row_index} is missing required field {field_name}",
                     )
             for field_name in artifact_fields:
-                for raw_value in _artifact_values(example, field_name):
+                for raw_value in cls._artifact_values(example, field_name):
                     resolved_path = resolve_artifact_path(
                         raw_value,
                         data_root=root,
@@ -170,7 +200,7 @@ class ArtifactManifestReport:
                         raise ArtifactManifestError(
                             f"{path}: row {row_index} {field_name} does not exist: {resolved_path}",
                         )
-                    _assert_readable(resolved_path, manifest_path=path, row_index=row_index)
+                    cls._assert_readable(resolved_path, manifest_path=path, row_index=row_index)
                     resolved.append(
                         ResolvedArtifact(
                             row_index=row_index,
@@ -179,7 +209,12 @@ class ArtifactManifestReport:
                             resolved_path=resolved_path,
                         ),
                     )
-        source_episodes = tuple(sorted(_source_episodes(examples)))
+        episode_names: set[str] = set()
+        for example in examples:
+            value = example.metadata.get("source_episode")
+            if value:
+                episode_names.add(str(value))
+        source_episodes = tuple(sorted(episode_names))
         if not examples:
             warnings.append(f"{path}: manifest is empty")
         if eval_examples is None:
@@ -363,46 +398,6 @@ def validate_reference_images(
                 f"{manifest}: row {row_index} reference_image does not exist: {path}",
             )
         example.reference_image = str(path.resolve())
-
-
-def _artifact_values(example: PromptExample, field_name: str) -> tuple[str, ...]:
-    value = getattr(example, field_name, None)
-    if value is None:
-        value = example.metadata.get(field_name)
-    if value is None or value == "":
-        return ()
-    if isinstance(value, str):
-        return (value,)
-    if isinstance(value, Iterable):
-        return tuple(str(item) for item in value if str(item).strip())
-    raise ArtifactManifestError(f"artifact field {field_name!r} must be a string or list")
-
-
-def _source_episodes(examples: Sequence[PromptExample]) -> set[str]:
-    out: set[str] = set()
-    for example in examples:
-        metadata = dict(getattr(example, "metadata", None) or {})
-        value = metadata.get("source_episode")
-        if value:
-            out.add(str(value))
-    return out
-
-
-def _assert_readable(path: Path, *, manifest_path: Path, row_index: int) -> None:
-    try:
-        with path.open("rb") as handle:
-            handle.read(1)
-        if path.suffix.lower() in IMAGE_SUFFIXES:
-            try:
-                from PIL import Image
-            except ImportError:
-                return
-            with Image.open(path) as image:
-                image.verify()
-    except Exception as exc:
-        raise ArtifactManifestError(
-            f"{manifest_path}: row {row_index} artifact is not readable: {path}",
-        ) from exc
 
 
 __all__ = [
