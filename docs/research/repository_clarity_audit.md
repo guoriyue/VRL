@@ -29,6 +29,18 @@ No repository-wide completion claim is supported yet.
 The denoise refactor preserves existing partial-step behavior; this cleanup does
 not establish new guarantees about partially populated trajectory buffers.
 
+Additional execution/capacity changes:
+
+- `AffinePeakFit.max_samples_within` now accepts the actual request ceiling.
+  Removed `_FLAT_FIT_UNBOUNDED`, whose arbitrary integer pretended to represent
+  infinity. Confirmation trials, OOM bisection, and throughput checks remain.
+  Execution tests: 120 passed, including flat/negative slopes and large ceilings.
+- `RolloutBatch.estimated_payload_bytes` owns the queue's payload estimate;
+  removed `estimate_batch_bytes` from continuous scheduling types. Counts remain
+  unchanged, and documentation distinguishes object deduplication from shared
+  storage and allocator/RSS measurements. Continuous/collector tests: 149 passed;
+  torch-free config parsing: 1 passed.
+
 ## Inspected boundaries retained
 
 - `run_denoise_loop`: shared numerical execution entry across model bindings;
@@ -48,14 +60,32 @@ not establish new guarantees about partially populated trajectory buffers.
 - `HEALTH_CONCURRENCY_GROUP`: Ray concurrency-group protocol name, not business
   routing data.
 
+Further inspected execution boundaries:
+
+- `sample_batches.py`: strict replay merge, sample coverage, and OOM splitting
+  serve driver/executor/gatherer callers. These are shared algorithms and tensor
+  shape rules; a helper-container class would add no ownership.
+- `EnginePlan.from_request`: already owns one batch-width fallback shared by
+  direct and distributed execution. Preserve that single resolution path.
+- `pipeline.py`: copy-stream/event lifetimes and exception cleanup form a real
+  CUDA execution boundary. Keep it separate from family-specific denoise logic.
+  No CUDA implementation change was made or newly GPU-validated in this audit.
+- `rank_group.py`: explicit torch.distributed init/destroy framework boundary;
+  `RankGroupSpec` remains the serializable rendezvous value, not a runtime owner.
+- `_await_owner_future`: asyncio/concurrent-future cancellation adapter, retained
+  because shielding prevents caller cancellation from cancelling owner cleanup.
+- Ready queue, generated capacity, and staleness policy: separate state and
+  invariants (ready payload ownership, pre-reward reservations, version bounds).
+  Do not merge them solely because they are used by one scheduling subsystem.
+
 ## Remaining review
 
 These are inspection candidates, not approved mechanical transformations.
 
 1. Generation execution: worker/planner, sample batching and OOM retry, pipeline
    transfers, rank groups, memory sizing, bindings and gatherers, token loop.
-   Review the arbitrary flat-fit capacity sentinel in `batch_memory.py` against
-   callers before deciding its replacement.
+   The flat-fit capacity sentinel is now removed; worker lifecycle and binding
+   helper ownership still require further review.
 2. Continuous scheduling: producer, consumer, owner shutdown, ready/generated
    capacity, staleness, weight synchronization; inspect ownership without
    collapsing independent execution or resource lifetimes.
