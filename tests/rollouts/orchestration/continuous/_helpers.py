@@ -9,7 +9,6 @@ from typing import Any
 
 from vrl.rollouts.orchestration.continuous.owner import (
     ContinuousRolloutOwner,
-    _await_owner_future,
 )
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutProducerState
 
@@ -58,4 +57,4 @@ async def owner_snapshot(owner: ContinuousRolloutOwner) -> OwnerSnapshot:
         )
 
     future = asyncio.run_coroutine_threadsafe(_copy(), loop)
-    return await _await_owner_future(future)
+    return await owner._await_command(future)

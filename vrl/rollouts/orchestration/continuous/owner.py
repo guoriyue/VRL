@@ -482,7 +482,7 @@ class ContinuousRolloutOwner:
             ),
             loop,
         )
-        return await _await_owner_future(future)
+        return await self._await_command(future)
 
     async def commit_weights(self, prepared_weights: Any) -> RolloutStats:
         runtime, loop = self._ensure_thread()
@@ -490,7 +490,7 @@ class ContinuousRolloutOwner:
             runtime.commit_weights(prepared_weights),
             loop,
         )
-        return await _await_owner_future(future)
+        return await self._await_command(future)
 
     def reset(self) -> None:
         with self._state_lock:
@@ -515,8 +515,16 @@ class ContinuousRolloutOwner:
                     loop.create_task, self._shutdown_runtime(runtime, loop, future)
                 )
                 self._shutdown_future = future
-        await _await_owner_future(future)
+        await self._await_command(future)
         await self._wait_until_stopped()
+
+    @staticmethod
+    async def _await_command[T](future: concurrent.futures.Future[T]) -> T:
+        """Wait without cancelling an owner command when its trainer waiter exits."""
+
+        # Preserve owner state transitions and terminal cleanup independently
+        # of trainer-side cancellation; wrap_future alone propagates cancellation.
+        return await asyncio.shield(asyncio.wrap_future(future))
 
     async def _shutdown_runtime(
         self,
@@ -604,13 +612,6 @@ class ContinuousRolloutOwner:
                     )
                 loop.close()
             self._stopped.set()
-
-
-async def _await_owner_future[T](future: concurrent.futures.Future[T]) -> T:
-    # asyncio.wrap_future normally propagates waiter cancellation into the
-    # concurrent future.  Shielding preserves owner state transitions and
-    # terminal cleanup when the trainer-side waiter is cancelled.
-    return await asyncio.shield(asyncio.wrap_future(future))
 
 
 __all__ = ["ContinuousRolloutOwner"]

@@ -3911,3 +3911,20 @@ this combined regression is compatibility evidence, not architectural completion
   All 57 denoise tests passed; touched-file Ruff checks passed after formatting
   the updated probe import. No real-GPU benchmark was run. This slice does not
   complete the repository-wide audit.
+
+## Continuous owner command wait belongs to the thread facade
+
+- Move the private free `_await_owner_future` into `ContinuousRolloutOwner` as
+  `_await_command`. All three production callers belong to this facade. Retain
+  a named method because it expresses the cross-thread cancellation boundary:
+  trainer waiter cancellation must not cancel an already submitted owner command.
+- Update the test-only owner snapshot adapter to use the same owner method.
+  The first regression run exposed its old private import; after migrating the
+  adapter, all 209 continuous orchestration tests passed. Touched-file Ruff lint
+  and formatting checks pass. No compatibility forwarding helper remains.
+- Preserve shutdown, command ordering and cancellation behavior. Do not unify
+  this with reward-request cancellation: the two owners deliberately differ in
+  whether waiter cancellation should stop the submitted work. Retain the named
+  owner lifecycle timeout values and byte conversion constant; these describe
+  waiting limits and units, not an algorithm vocabulary table.
+- This ownership cleanup does not complete the repository-wide audit.
