@@ -54,17 +54,14 @@ def _flow_terminal_mean(
     t_grid = torch.linspace(0.0, 1.0, num_steps + 1, device=x.device, dtype=x.dtype)
     dt = 1.0 / num_steps
 
-    def _guided_velocity(xk: torch.Tensor, tk: torch.Tensor) -> torch.Tensor:
-        v_cond = image_head.net(xk, tk, cond)
+    for step_idx in range(num_steps):
+        timestep = t_grid[step_idx].expand(B)
+        velocity = image_head.net(x, timestep, cond)
         if cfg_uncond is not None and guidance_scale > 1.0:
-            v_uncond = image_head.net(xk, tk, cfg_uncond)
-            return v_uncond + guidance_scale * (v_cond - v_uncond)
-        return v_cond
-
-    # K-1 deterministic Euler steps, then the final step's mean.
-    for k in range(num_steps - 1):
-        x = x + dt * _guided_velocity(x, t_grid[k].expand(B))
-    return x + dt * _guided_velocity(x, t_grid[num_steps - 1].expand(B))
+            uncond_velocity = image_head.net(x, timestep, cfg_uncond)
+            velocity = uncond_velocity + guidance_scale * (velocity - uncond_velocity)
+        x = x + dt * velocity
+    return x
 
 
 def _flow_noise_std(noise_level: float, num_steps: int) -> float:

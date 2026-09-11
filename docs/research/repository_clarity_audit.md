@@ -6775,3 +6775,16 @@ The broader repository audit remains incomplete.
 - Keep the existing CSV owner and atomic replacement; no custom line parser or
   additional column-name taxonomy. Touched-file Ruff and diff checks pass.
   Repository-wide audit remains incomplete.
+
+## NextStep terminal flow mean uses one Euler loop
+
+- _flow_terminal_mean now performs all num_steps identical Euler updates in
+  one loop. Previously the last update was written separately and both sites
+  called a nested _guided_velocity closure. Inline the conditional/unconditional
+  velocity combination in the loop, preserving call order and arithmetic.
+- Keep _flow_terminal_mean as the shared sampling/replay mathematical boundary;
+  keep Gaussian scoring and noise-scale helpers shared between those paths.
+  No scheduler policy, time grid, random sampling or log-prob formula change.
+- Token flow math and NextStep family suites: 70 passed, two dependency
+  warnings, including CFG scale behavior and sample/replay agreement.
+  Touched-file Ruff and diff checks pass. Broader repository audit remains open.
