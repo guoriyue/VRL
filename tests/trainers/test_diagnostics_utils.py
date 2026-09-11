@@ -12,7 +12,16 @@ import torch
 import torch.multiprocessing as mp
 from torch import nn
 
-from vrl.trainers.diagnostics import trainable_state_digest
+from vrl.trainers.diagnostics import parameter_state_summary, trainable_state_digest
+
+
+def test_parameter_summary_without_parameter_api_matches_empty_module() -> None:
+    summary = parameter_state_summary(object())
+    assert summary == parameter_state_summary(nn.Module())
+    assert summary["trainable_parameter_count"] == 0
+    assert summary["trainable_numel"] == 0
+    assert summary["trainable_dtypes"] == {}
+    assert summary["trainable_devices"] == {}
 
 
 def test_trainable_state_digest_preserves_plain_tensor_digest() -> None:

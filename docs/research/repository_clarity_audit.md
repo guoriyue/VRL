@@ -5956,3 +5956,18 @@ The broader repository audit remains incomplete.
   A standard AdamW constructor check and a clearly isolated fake 8-bit constructor
   check verified non-default hyperparameter forwarding. Touched-file Ruff and
   diff checks pass. Broader repository audit remains incomplete.
+
+## Parameter diagnostics use one result schema for empty inputs
+
+- Remove parameter_state_summary's shortened early-return payload. Missing a
+  callable named_parameters now selects an empty iterator and uses the normal
+  eight-field result construction, including all four trainable statistics.
+  This preserves existing empty-count behavior without requiring readers to
+  infer whether omitted trainable fields mean zero or a different schema.
+- Keep the diagnostic free functions as shared observation/serialization APIs.
+  Keep _requires_fp32_master_weights: both optimizer initialization and checkpoint
+  restore use the same predicate, so inlining it would duplicate a correctness
+  decision. No new diagnostics class or cached parameter collection is introduced.
+- Empty-input regression failed before the fix. Diagnostic utility and online
+  diagnostics suites: 21 passed, including real local Gloo/DTensor digest checks.
+  Touched-file Ruff and diff checks pass. Whole-repository completion unproven.

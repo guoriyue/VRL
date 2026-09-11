@@ -128,8 +128,7 @@ def parameter_state_summary(module: Any) -> dict[str, Any]:
     import torch
 
     named_parameters = getattr(module, "named_parameters", None)
-    if not callable(named_parameters):
-        return {"parameter_count": 0, "numel": 0, "dtypes": {}, "devices": {}}
+    parameters = named_parameters() if callable(named_parameters) else ()
 
     dtype_counts: dict[str, int] = {}
     device_counts: dict[str, int] = {}
@@ -140,7 +139,7 @@ def parameter_state_summary(module: Any) -> dict[str, Any]:
     numel = 0
     trainable_numel = 0
 
-    for _, parameter in named_parameters():
+    for _, parameter in parameters:
         if not isinstance(parameter, torch.Tensor):
             continue
         dtype = str(parameter.dtype)
