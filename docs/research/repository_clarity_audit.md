@@ -5926,3 +5926,17 @@ The broader repository audit remains incomplete.
 - Existing prompt parsing, data setup, dataset provenance and VideoPhy I2V suites:
   63 passed. Touched-file Ruff and diff checks pass. Projection defaults and list
   return semantics remain unchanged. Broader repository audit remains incomplete.
+
+## EMA swap ownership rejects overwriting an unrestored snapshot
+
+- copy_ema_to now rejects a second swap while temp_stored_parameters exists.
+  Previously the second call overwrote the original training weights with a copy
+  of already-installed EMA weights, so copy_temp_to could no longer restore them.
+  Reuse the existing snapshot as the authoritative state; add no duplicate flag.
+- Keep the swap/restore methods and checkpoint rank agreement. They own actual
+  reversible weight mutation and distributed failure coordination. Preserve normal
+  swapping and rollback after a failed copy; no optimizer or EMA formula change.
+- Regression failed before the fix and now verifies snapshot identity plus exact
+  original-value restoration after a rejected second swap. EMA/checkpoint suites:
+  124 passed with 14 dependency warnings. Touched-file Ruff and diff checks pass.
+  No new distributed training campaign; broader repository audit remains open.

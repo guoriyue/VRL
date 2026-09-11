@@ -105,3 +105,19 @@ def test_copy_temp_to_rejects_missing_snapshot() -> None:
 
     with pytest.raises(RuntimeError, match="snapshot is not available"):
         ema.copy_temp_to([param])
+
+
+def test_repeated_ema_swap_preserves_original_snapshot() -> None:
+    param = _single_param(10.0)
+    ema = EMAModuleWrapper([param])
+    ema.ema_parameters[0].fill_(3.0)
+    ema.copy_ema_to([param])
+    snapshot = ema.temp_stored_parameters
+
+    with pytest.raises(RuntimeError, match="restore original parameters"):
+        ema.copy_ema_to([param])
+
+    assert ema.temp_stored_parameters is snapshot
+    assert param.item() == pytest.approx(3.0)
+    ema.copy_temp_to([param])
+    assert param.item() == pytest.approx(10.0)

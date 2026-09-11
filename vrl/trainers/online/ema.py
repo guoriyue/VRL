@@ -102,6 +102,8 @@ class EMAModuleWrapper:
         checkpoint path can therefore coordinate a rank-local failure before any
         peer enters its next collective without leaving this rank half-swapped.
         """
+        if self.temp_stored_parameters is not None:
+            raise RuntimeError("restore original parameters before another EMA swap")
         parameters = list(parameters)
         # copy=True is required: plain .cpu() is a no-op when params already
         # live on CPU, so detach() would share storage and the in-place copy_
