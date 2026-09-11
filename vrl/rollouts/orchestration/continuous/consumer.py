@@ -271,8 +271,7 @@ class ContinuousRolloutConsumer:
                 "continuous.stale_policy_versions": float(0 if staleness is None else staleness),
                 "continuous.item_age_s": float(item_age_s),
                 "continuous.ready_groups_at_demand": float(ready_groups_at_demand),
-                # display/provenance-only in this sprint: identity in the
-                # metric row (selection consumes batch_id from Sprint 2 on).
+                # Report the same batch identity used to select this iteration.
                 "continuous.batch_id": float(items[0].batch_id),
                 # >1 means this update contains retried work (provenance for
                 # correlating reward/gradient anomalies with retries).

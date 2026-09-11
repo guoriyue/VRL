@@ -42,6 +42,7 @@ from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.stats import RolloutStats
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 from vrl.trajectory import trajectory_tensor_bytes
+from vrl.utils.config import require_exact_int
 
 _CPU = torch.device("cpu")
 _OBSERVABILITY_LOG_INTERVAL_S = 30.0
@@ -73,7 +74,7 @@ class _ActivePromptBatch:
     # Monotonic stamp of when each pending slot last became admissible (batch
     # install or retry re-queue). _submit() turns it into the slot's admission
     # wait and hands it to the collect task, so each item carries its own
-    # timing instead of a shared mutable accumulator (sprint invariant §3.2).
+    # timing instead of a shared mutable accumulator.
     pending_since: dict[int, float] = field(default_factory=dict)
     failure: BaseException | None = None
 
@@ -82,8 +83,7 @@ class _ActivePromptBatch:
         # per-call inputs validate where they are born, not in the mechanism.
         if not self.prompts:
             raise ValueError("continuous prompt batch requires a non-empty prompt list")
-        if int(self.group_size) < 1:
-            raise ValueError("continuous prompt batch group_size must be >= 1")
+        require_exact_int(self.group_size, path="continuous prompt batch.group_size", minimum=1)
 
 
 class ContinuousRolloutProducer:
@@ -256,7 +256,7 @@ class ContinuousRolloutProducer:
             batch_id=self._next_batch_id,
             policy_version=self.lifecycle.current_policy_version(),
             prompts=prompt_batch,
-            group_size=int(group_size),
+            group_size=group_size,
             runtime_debug=bool(runtime_debug),
             pending_slots=deque(range(len(prompt_batch))),
             pending_since={slot: installed_at for slot in range(len(prompt_batch))},
@@ -750,7 +750,7 @@ class ContinuousRolloutProducer:
             )
         stored = move_training_batch_to_device(batches[0], _CPU)
         # Per-item stage views with gauge (max-on-merge) reduction: summing
-        # concurrent per-slot walls would overstate wall-clock (sprint §6), so
+        # concurrent per-slot walls would overstate wall-clock, so
         # the iteration reports the worst per-item interval. The summed phase
         # twins (collect.generation_wall / collect.reward_wall) remain the
         # busy-total view for duty-ratio analysis.

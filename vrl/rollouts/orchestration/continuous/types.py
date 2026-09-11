@@ -61,17 +61,13 @@ class ContinuousRolloutItem:
     """
 
     # Producer-assigned monotonic identity, unique per owner lifetime. The
-    # consumer selects the demanded head by this key even if preview is ready.
+    # consumer selects the demanded head by this key even if the prefetched batch is ready.
     batch_id: int
     group_slot: int
     rollout_policy_version: int | None
-    # 1-based attempt that produced this item. A retry of the same logical
-    # work increments it without changing sample seeds or group mapping.
-    # display/provenance-only in this sprint: the item is the only carrier
-    # (producer failure_counts reset when the next batch installs), exported
-    # as the iteration's continuous.max_attempt gauge so retried work is
-    # attributable per update. The reward pump's retry identity consumes it
-    # behaviorally from Sprint 1 on.
+    # 1-based collection attempt from this batch slot's failure count. Retries
+    # keep the same batch_id/group_slot. The consumer exports the maximum as
+    # continuous.max_attempt; this receipt field does not drive reward retries.
     attempt: int
     batch: RolloutBatch
     # display/provenance-only: receipt time on this process's monotonic clock

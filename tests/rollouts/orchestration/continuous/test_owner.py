@@ -789,3 +789,23 @@ async def test_checkpointed_sampler_replays_preview_prompt_order_in_a_new_owner(
         await original.shutdown()
         if restored is not None:
             await restored.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("group_size", [True, 2.5, "2", 0, -1])
+async def test_owner_rejects_invalid_group_size_before_weight_push(group_size) -> None:
+    collector = _OwnerCollector()
+    lifecycle = _OwnerLifecycle(collector)
+    owner = _owner(lifecycle)
+    try:
+        with pytest.raises(ValueError, match="group_size"):
+            await owner.next_iteration(
+                ["p0"],
+                group_size=group_size,
+                runtime_debug=False,
+                initial_weights={"w": 0},
+            )
+        assert lifecycle.push_threads == []
+        assert collector.collect_threads == []
+    finally:
+        await owner.shutdown()

@@ -25,6 +25,7 @@ from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSetting
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.rollouts.stats import RolloutStats
+from vrl.utils.config import require_exact_int
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ class _ContinuousOwnerRuntime:
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
         async def operation() -> RolloutIteration:
+            require_exact_int(group_size, path="continuous prompt batch.group_size", minimum=1)
             if not prompts:
                 raise ValueError("continuous rollout requires at least one prompt")
             # Load-bearing local: pipeline startup pushes the initial weights
@@ -126,7 +128,7 @@ class _ContinuousOwnerRuntime:
                     "continuous prefetch prompt batch does not match the next prompts "
                     "presented by the trainer",
                 )
-            elif self._installed_prompt_batch.group_size != int(group_size):
+            elif self._installed_prompt_batch.group_size != group_size:
                 raise RuntimeError(
                     "continuous prefetch group size does not match the batch "
                     "presented by the trainer: "
@@ -149,7 +151,7 @@ class _ContinuousOwnerRuntime:
                 assert self.queue is not None
                 self.queue.set_item_limit(len(prompts) + len(next_prompts))
                 self._prefetched_prompt_batch = _InstalledPromptBatch(
-                    tuple(next_prompts), int(group_size)
+                    tuple(next_prompts), group_size
                 )
                 self.producer.admit_now()
 
@@ -211,7 +213,7 @@ class _ContinuousOwnerRuntime:
         self.queue.set_item_limit(len(prompts))
         self._installed_prompt_batch = _InstalledPromptBatch(
             prompts=tuple(prompts),
-            group_size=int(group_size),
+            group_size=group_size,
         )
         self.producer.admit_now()
 
@@ -388,7 +390,7 @@ class _ContinuousOwnerRuntime:
         )
         self._installed_prompt_batch = _InstalledPromptBatch(
             prompts=tuple(prompts),
-            group_size=int(group_size),
+            group_size=group_size,
         )
         await self.producer.start()
         self.producer.admit_now()

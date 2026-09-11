@@ -1568,3 +1568,24 @@ is not a repository-wide completion claim or a mandate to inline short functions
   component mean assertion in test_advantage_and_metrics. Touched-file Ruff
   lint/format checks passed. Continuous-owner findings are source review, not
   a new runtime validation claim. Repository-wide review remains incomplete.
+
+## Continuous prompt group-size ownership and current-state comments
+
+- Traced group_size from schedule/owner commands into producer batch installation.
+  Removed repeated int coercion in owner comparisons, identity snapshots and
+  producer construction. The owner now rejects invalid input before initial
+  weight publication; _ActivePromptBatch validates direct producer inputs with
+  the same shared exact-integer validator. Positive integer inputs are unchanged.
+- Kept the batch state objects, command failure/cleanup policy and prefetch
+  matching method. They own real lifecycle/identity constraints. No new wrapper,
+  configuration knob or helper was introduced. Unit conversion and owner timeout
+  constants were not changed by this input-validation slice.
+- Replaced outdated Sprint 1/2 commentary on receipt attempts and batch IDs with
+  current behavior: collection failure counts produce the attempt gauge, and
+  batch identity already selects the demanded iteration. Removed historical
+  sprint references from per-item timing comments while retaining their rationale.
+- Validation: 190 continuous orchestration tests passed. Ten new cases reject
+  bool, fractional/string, zero and negative group sizes through owner and
+  producer boundaries, with no weight publication or collection. Touched-file
+  Ruff lint/format and git diff --check passed. These tests do not prove the
+  remaining repository-wide architecture review complete.

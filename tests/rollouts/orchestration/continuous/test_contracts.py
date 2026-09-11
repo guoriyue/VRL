@@ -1538,3 +1538,13 @@ async def test_consumer_rejects_invalid_wait_settings(field, value):
             current_policy_version=1,
             **settings,
         )
+
+
+@pytest.mark.parametrize("group_size", [True, 2.5, "2", 0, -1])
+def test_producer_rejects_invalid_group_size_before_collection(group_size) -> None:
+    collector = _FiniteCollector()
+    queue = ContinuousRolloutQueue(max_items=4)
+    with pytest.raises(ValueError, match="group_size"):
+        _producer(collector, queue, group_size=group_size)
+    assert collector.calls == []
+    assert queue.size() == 0
