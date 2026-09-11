@@ -1069,6 +1069,47 @@ async def test_owner_cancellation_before_execution_still_acknowledges_completion
         await owner.close()
 
 
+@pytest.mark.asyncio
+async def test_owner_repeated_cancellation_waits_for_runtime_exit(tmp_path):
+    from vrl.rewards.service.owner import RewardScorerOwner
+
+    started = threading.Event()
+    release = threading.Event()
+    exited = threading.Event()
+
+    class Runtime:
+        async def score_batch(self, request):
+            started.set()
+            try:
+                release.wait(timeout=5)
+                return []
+            finally:
+                exited.set()
+
+        async def shutdown(self):
+            pass
+
+    artifact = tmp_path / "artifact.pt"
+    artifact.write_bytes(b"test")
+    owner = RewardScorerOwner(Runtime())
+    task = asyncio.create_task(owner.score_batch(_request(str(artifact))))
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        for _ in range(3):
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done(), "cancellation released a still-running score"
+        assert not exited.is_set()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(task), timeout=1)
+        assert exited.is_set()
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        await owner.close()
+
+
 @pytest.mark.parametrize("timeout_s", [0, -1, float("nan"), float("inf"), -float("inf")])
 @pytest.mark.parametrize("entry", ["config", "client"])
 def test_reward_timeout_contract_is_shared(timeout_s, entry) -> None:

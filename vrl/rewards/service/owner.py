@@ -84,7 +84,15 @@ class RewardScorerOwner:
             # Do not cancel the submission before execute() starts: its finally
             # must run to acknowledge completion even for a queued request.
             self._loop.call_soon_threadsafe(cancel_execution)
-            await asyncio.shield(asyncio.to_thread(completed.wait))
+            completion = asyncio.create_task(asyncio.to_thread(completed.wait))
+            # Repeated DELETEs or shutdown may cancel this caller again. Keep
+            # its admission slot until execution exits, using the same waiter.
+            while not completion.done():
+                try:
+                    await asyncio.shield(completion)
+                except asyncio.CancelledError:
+                    continue
+            completion.result()
             raise
 
     async def close(self) -> None:

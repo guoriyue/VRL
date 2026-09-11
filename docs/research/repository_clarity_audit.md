@@ -3875,3 +3875,22 @@ this combined regression is compatibility evidence, not architectural completion
   slices; it does not certify a real-GPU training run or review uninspected files.
 - No implementation changed in this slice. The audit remains in progress; joint
   green tests are not proof that whole-repository clarity work is complete.
+
+## Reward owner repeated cancellation retains execution ownership
+
+- Reviewed `RewardScorerOwner.score_batch` alongside the service cancellation,
+  admission and shutdown callers. Keep the dedicated loop, pre-start cancellation
+  flag and execution-completion acknowledgement: these are thread/lifecycle
+  boundaries, not redundant free helpers. No additional wrapper class is needed.
+- Found that shielding the completion waiter once does not prevent a second
+  caller cancellation from escaping the wait. Repeated DELETE requests or a
+  concurrent shutdown can consequently release service admission while the
+  synchronous runtime call is still executing.
+- Retain one completion task and shield it through repeated cancellations before
+  propagating cancellation. Runtime cancellation is still requested once; this
+  does not preempt synchronous GPU work or change the shutdown timeout policy.
+- Added a regression that blocks a fake synchronous scorer, cancels its caller
+  three times and requires the caller to remain pending until execution exits.
+  It failed on the previous implementation. All 64 reward service tests now pass;
+  touched-file Ruff lint and formatting checks pass. No real GPU execution is
+  claimed. The repository-wide clarity audit remains in progress.
