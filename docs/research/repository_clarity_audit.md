@@ -4380,6 +4380,19 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## AR prefill validates the token budget before block reservation
+
+- Use require_exact_int for ARAttentionPrefillInput.max_new_tokens, minimum one.
+  A positivity comparison previously admitted floats and booleans, or emitted
+  an unscoped comparison TypeError for strings. Three regression cases failed
+  before the fix; nonpositive rejection remains covered.
+- Keep validation in the existing input dataclass. Keep _require_embed_mask_batch
+  shared between prefill and step inputs: neither payload should own the other's
+  shape rules. Do not add an inheritance layer solely to remove that function.
+- Input contract, decoder contract and native attention suites: 13 passed.
+  Touched-file Ruff checks pass. These checks establish the input boundary, not
+  real paged-kernel correctness; the wider repository audit remains incomplete.
+
 ## FP8 scalar and row scaling belongs to Fp8Linear
 
 - Move _amax_scale into Fp8Linear as a private static method. Its only callers

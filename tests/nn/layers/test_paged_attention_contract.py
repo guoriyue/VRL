@@ -36,14 +36,15 @@ def test_paged_attention_prefill_validates_batch_shape() -> None:
         )
 
 
-def test_paged_attention_prefill_requires_positive_token_budget() -> None:
-    """A zero token budget cannot reserve blocks, so it is refused up front."""
+@pytest.mark.parametrize("budget", [0, -1, 1.9, "2", True])
+def test_paged_attention_prefill_requires_positive_token_budget(budget) -> None:
+    """KV block reservation requires an exact positive token budget."""
     with pytest.raises(ValueError, match="max_new_tokens"):
         ARAttentionPrefillInput(
             inputs_embeds=torch.zeros(1, 3, 4),
             attention_mask=torch.ones(1, 3),
             branch="cond",
-            max_new_tokens=0,
+            max_new_tokens=budget,
         )
 
 

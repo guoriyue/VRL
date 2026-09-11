@@ -11,6 +11,8 @@ from typing import Any
 
 import torch
 
+from vrl.utils.config import require_exact_int
+
 
 class ARAttentionUnavailable(RuntimeError):
     """Raised when the vLLM paged-attention pieces cannot be initialized."""
@@ -42,8 +44,9 @@ class ARAttentionPrefillInput:
 
     def __post_init__(self) -> None:
         _require_embed_mask_batch(self.inputs_embeds, self.attention_mask)
-        if self.max_new_tokens < 1:
-            raise ValueError("ARAttentionPrefillInput.max_new_tokens must be >= 1")
+        require_exact_int(
+            self.max_new_tokens, path="ARAttentionPrefillInput.max_new_tokens", minimum=1
+        )
 
 
 @dataclass(frozen=True, slots=True)
