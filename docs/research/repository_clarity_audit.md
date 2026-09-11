@@ -6595,3 +6595,20 @@ The broader repository audit remains incomplete.
   IMAGE_SUFFIXES is an isolated extension taxonomy; neither is workflow policy.
 - Comparison suite: 31 passed; touched-file Ruff and diff checks pass. No report
   format or digest algorithm change. Broader repository audit remains open.
+
+## Danbooru CLI passes its download dependency directly
+
+- A module-level imported-name alias scan found _http_download in the Danbooru
+  package. Its only repository test consumer patched it before setup.main;
+  register/main then wrapped the alias in a forwarding lambda despite the CLI
+  already accepting an explicit fetch callable.
+- Remove the alias and both lambdas. The setup test patches http_download before
+  composition; registered commands retain the supplied callable directly.
+  Post-registration replacement of a package global is no longer an implicit
+  way to change an existing parser's dependency; no repository caller used it.
+- Keep package main/register as CLI composition boundaries and retain explicit
+  fetch injection for offline use. Keep BatchPayload = Any, the other imported
+  module-level assignment found by the scan, as the documented family-owned
+  payload type boundary. No broad removal of semantic aliases or protocol APIs.
+- Setup and Danbooru tests: 25 passed, using offline download fixtures.
+  Touched-file Ruff and diff checks pass. Repository-wide audit remains open.

@@ -17,16 +17,13 @@ from vrl.scripts.data.danbooru.cli import main as _main
 from vrl.scripts.data.danbooru.cli import manifest_setup_hints
 from vrl.scripts.data.danbooru.cli import register as _register
 
-# Compatibility injection seam used by setup CLI tests and offline callers.
-_http_download = http_download
-
 
 def register(subparsers: Any) -> None:
     """Register the Danbooru commands on a setup CLI parser."""
 
     _register(
         subparsers,
-        fetch=lambda url, target: _http_download(url, target),
+        fetch=http_download,
     )
 
 
@@ -35,7 +32,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     _main(
         argv,
-        fetch=lambda url, target: _http_download(url, target),
+        fetch=http_download,
     )
 
 

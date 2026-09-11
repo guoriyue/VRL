@@ -307,7 +307,7 @@ def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path
 @pytest.mark.real_cover(
     None,
     why=(
-        "the patched _http_download stands in for an HTTP GET against danbooru.donmai.us; a "
+        "the patched http_download stands in for an HTTP GET against danbooru.donmai.us; a "
         "test that reaches the live site is neither reproducible nor free, and what is "
         "asserted here is the setup.main CLI wiring above it"
     ),
@@ -343,7 +343,7 @@ def test_anime_positives_prepares_both_manifests_end_to_end(monkeypatch, tmp_pat
     def fake_fetch(url: str, target: Path) -> None:
         target.write_bytes(b"fake-image-bytes")
 
-    monkeypatch.setattr(danbooru, "_http_download", fake_fetch)
+    monkeypatch.setattr(danbooru, "http_download", fake_fetch)
 
     setup.main(
         [
