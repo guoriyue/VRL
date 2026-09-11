@@ -101,8 +101,10 @@ class RolloutRuntimeCoordinator:
         """Capture an immutable CPU policy snapshot on the caller's thread.
 
         Strategy export may execute DDP/FSDP collectives and must never be moved
-        into a background rollout-owner loop.  The returned snapshot contains no
-        live/GPU tensor aliases; ``push_prepared_weights`` performs no trainer read.
+        into a background rollout-owner loop. The getter owns copying live state;
+        this boundary checks that tensor leaves are detached and on CPU, not
+        whether their storage is aliased. ``push_prepared_weights`` performs no
+        trainer read.
         """
 
         if self.weight_syncer is None:
@@ -112,7 +114,19 @@ class RolloutRuntimeCoordinator:
         prepared = self.sync_state_getter()
         if not isinstance(prepared, dict):
             raise TypeError("rollout weight sync getter must return a dict snapshot")
-        _validate_prepared_weight_snapshot(prepared)
+        pending: list[Any] = [prepared]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, torch.Tensor):
+                if value.device.type != "cpu" or value.requires_grad:
+                    raise ValueError(
+                        "prepared rollout weights must be detached CPU tensors; "
+                        f"got device={value.device}, requires_grad={value.requires_grad}",
+                    )
+            elif isinstance(value, Mapping):
+                pending.extend(reversed(list(value.values())))
+            elif isinstance(value, (list, tuple)):
+                pending.extend(reversed(value))
         return prepared
 
     def prepare_initial_weight_sync_state(self) -> dict[str, Any] | None:
@@ -260,23 +274,6 @@ class RolloutRuntimeCoordinator:
 
     def requires_generation_offload_before_reward(self) -> bool:
         return bool(self.collector.requires_generation_offload_before_reward)
-
-
-def _validate_prepared_weight_snapshot(value: Any) -> None:
-    if isinstance(value, torch.Tensor):
-        if value.device.type != "cpu" or value.requires_grad:
-            raise ValueError(
-                "prepared rollout weights must be detached CPU tensors; "
-                f"got device={value.device}, requires_grad={value.requires_grad}",
-            )
-        return
-    if isinstance(value, Mapping):
-        for child in value.values():
-            _validate_prepared_weight_snapshot(child)
-        return
-    if isinstance(value, (list, tuple)):
-        for child in value:
-            _validate_prepared_weight_snapshot(child)
 
 
 __all__ = [

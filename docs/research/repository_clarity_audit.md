@@ -3000,3 +3000,20 @@ this combined regression is compatibility evidence, not architectural completion
   composite rollout policy preservation. Touched-file Ruff and diff checks
   passed. This supersedes the previous decision to retain _precision_label;
   the repository-wide review remains incomplete.
+
+## Keep prepared-weight checks at their only consuming boundary
+
+- Move _validate_prepared_weight_snapshot into
+  RolloutRuntimeCoordinator.prepare_weight_sync_state, using an explicit stack
+  in the same traversal order. Remove the single-caller recursive helper.
+  Detached CPU checks and accepted mapping/list/tuple nesting remain unchanged.
+- Clarify ownership: the strategy getter copies live state (both strategy
+  exporters call to_cpu_snapshot); this check cannot establish storage
+  independence. Preparing stays on the trainer thread for DDP/FSDP collectives;
+  pushing still does not call the live getter.
+- Keep pipeline's stream-scoped tensor copier and continuous owner's future
+  adapter: they centralize CUDA lifetime and cross-loop cancellation semantics.
+  This is not a move of all module functions into classes, and no vocabulary
+  constants or runtime interfaces change.
+- Validation: 262 orchestration and weight-sync tests passed; touched-file Ruff
+  and diff checks passed. The broader generation/scheduling audit remains open.
