@@ -16,21 +16,26 @@ from vrl.nn.layers.attention.paged import (
 )
 
 
-def test_vllm_paged_attention_kernels_report_abi_failure() -> None:
+@pytest.mark.parametrize(
+    "error", [ImportError("bad abi"), ModuleNotFoundError("No module named 'uvloop'")]
+)
+def test_vllm_paged_attention_kernels_report_import_failure(error) -> None:
     """A vLLM whose internal ``block_table`` module fails to import is reported as
     ``ARAttentionUnavailable`` naming that module.
     """
 
     def import_module(name: str) -> object:
         if name == "vllm.v1.worker.block_table":
-            raise ImportError("bad abi")
+            raise error
         return SimpleNamespace(__version__="test")
 
-    with pytest.raises(ARAttentionUnavailable, match="block_table"):
+    with pytest.raises(ARAttentionUnavailable, match="block_table") as caught:
         VllmPagedAttentionKernels(
             VllmPagedAttentionConfig(family="janus_pro"),
             import_module=import_module,
         )
+    assert f"{type(error).__name__}: {error}" in str(caught.value)
+    assert caught.value.__cause__ is error
 
 
 @pytest.mark.parametrize("kernel_block_size", [None, 8, 0])

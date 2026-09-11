@@ -4380,6 +4380,21 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Paged-kernel import diagnostics report evidence instead of an ABI guess
+
+- Joint tests/nn regression produced 170 passes and one failure: installed vLLM
+  could not import vllm.v1.worker.block_table because uvloop was absent. The
+  adapter's message guessed a Torch/CUDA ABI mismatch despite the actual cause.
+- Include the originating exception type and message in ARAttentionUnavailable,
+  retaining exception chaining and the framework adapter boundary. No dependency
+  changes, new helper, fallback backend or test-skip rule is introduced.
+- Import-gate tests: 5 passed, covering both ABI-style ImportError and missing
+  module diagnostics. Touched-file Ruff checks pass. Isolated real-kernel rerun
+  still fails, now reporting ModuleNotFoundError: No module named 'uvloop'.
+  Logs: /tmp/vrl-nn-clarity-regression.log and
+  /tmp/vrl-paged-kernel-import-failure.log. Full NN regression is not green and
+  real-kernel validation remains outstanding; the repository audit continues.
+
 ## AR cache splitting diagnoses scalar tensors at the row boundary
 
 - Reject scalar tensors explicitly before indexing shape[0], reporting the

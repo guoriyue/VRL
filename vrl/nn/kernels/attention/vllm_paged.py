@@ -47,9 +47,7 @@ class VllmPagedAttentionKernels:
             except Exception as exc:
                 raise ARAttentionUnavailable(
                     "vLLM paged-attention initialization failed while importing "
-                    f"{module_name!r}. This is a real internal API import, so a "
-                    "failure usually means the installed vLLM wheel does not match "
-                    "the active PyTorch/CUDA ABI.",
+                    f"{module_name!r}: {type(exc).__name__}: {exc}",
                 ) from exc
 
     @property
