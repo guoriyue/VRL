@@ -19,15 +19,13 @@ from vrl.models.interfaces.generation_memory import (
 def configure_vae_decode_memory(
     target: Any,
     mem: VaeDecodeMemory,
-    *,
-    owner: str,
 ) -> None:
     """Apply resolved VAE decode switches; fail on unsupported requests."""
 
     if mem.tiling:
-        _call_required(target, "enable_tiling", owner=owner)
+        target.enable_tiling()
     if mem.slicing:
-        _call_required(target, "enable_slicing", owner=owner)
+        target.enable_slicing()
 
 
 def apply_generation_memory_policy(
@@ -60,13 +58,7 @@ def apply_generation_memory_policy(
     configure_vae_decode_memory(
         targets["vae_decode"],
         vae_decode,
-        owner=f"{owner}:vae_decode",
     )
-
-
-def _call_required(target: Any, method_name: str, *, owner: str) -> None:
-    del owner
-    getattr(target, method_name)()
 
 
 __all__ = [

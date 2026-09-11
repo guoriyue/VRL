@@ -32,7 +32,7 @@ def test_configure_vae_decode_memory_flips_the_real_vae_state() -> None:
     vae = build_tiny_autoencoder_kl()
     assert (vae.use_tiling, vae.use_slicing) == (False, False)
 
-    configure_vae_decode_memory(vae, VaeDecodeMemory(tiling=True, slicing=True), owner="test VAE")
+    configure_vae_decode_memory(vae, VaeDecodeMemory(tiling=True, slicing=True))
 
     assert (vae.use_tiling, vae.use_slicing) == (True, True)
 
@@ -47,7 +47,7 @@ def test_configure_vae_decode_memory_leaves_unrequested_knobs_alone() -> None:
 
     vae = build_tiny_autoencoder_kl()
 
-    configure_vae_decode_memory(vae, VaeDecodeMemory(tiling=False, slicing=True), owner="test VAE")
+    configure_vae_decode_memory(vae, VaeDecodeMemory(tiling=False, slicing=True))
 
     assert (vae.use_tiling, vae.use_slicing) == (False, True)
 
