@@ -3265,3 +3265,25 @@ this combined regression is compatibility evidence, not architectural completion
   even when a single-rank engine precedes an unsupported engine, and direct
   rejection before CUDA queries. Existing real fleet auto-probe tests pass.
   Touched-file Ruff/diff checks passed. Full clarity review remains incomplete.
+
+## Open defect: generation error payloads disappear in rank aggregation
+
+- EngineCallRef awaits every rank but, without combine, returns results[0].
+  Generation execution uses that default. Worker execute_batch returns some
+  failures as GenerationBatchResult.error/stale_slot; the pipelined entry
+  returns CUDA OOM as PipelinedRequestOutOfMemory. Neither is a raised exception.
+- Reproduced with completed awaitables: rank0 batch success plus rank1
+  error='decode failed' yields rank0 with error=None. Rank0 successful value
+  plus rank1 PipelinedRequestOutOfMemory yields rank0 success.
+- Correct the engine module's stale single-rank-only description and clarify
+  that generic aggregation only checks raised exceptions. Runtime behavior is
+  unchanged in this evidence commit.
+- Follow-up must define generation-specific aggregation: preserve non-primary
+  error identity, prioritize terminal errors over retryable OOM, preserve stale
+  discard semantics, and retain primary output only after all ranks succeed.
+  Cover normal batch dispatch, flexible scheduling, OOM child retries and
+  pipelined requests; weight-version echo already uses an explicit uniform
+  combiner and should retain that separate protocol. Do not solve this with a
+  global method-name vocabulary table.
+- Validation: executed both controlled reproductions; touched-file Ruff/diff
+  checks passed. Full repository review remains incomplete.

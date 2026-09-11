@@ -2,10 +2,8 @@
 
 An engine is the data-parallel unit the driver talks to — the dispatch target,
 weight-sync target, and health-verdict unit. A rank is one per-GPU worker actor
-inside it (``RayGenerationWorker``). Today every engine owns exactly one rank
-(``ROLLOUT_GPUS_PER_ENGINE = 1``); the fan-out/aggregate semantics here are
-generic over the rank count so a multi-GPU engine backend only changes the
-rank program, never the driver chain.
+inside it (``RayGenerationWorker``). Engines may own multiple ranks; calls
+fan out to their rank actors and aggregate before returning to the dispatcher.
 
 Lifecycle stays rank-level on purpose: launching, killing, and liveness-probing
 operate on rank actors (``RayActorGroup`` / the health monitor); the engine
@@ -26,8 +24,10 @@ from vrl.ray.operation_deadline import cancel_ray_refs
 class EngineCallRef:
     """Awaitable aggregate over one engine call's per-rank Ray refs.
 
-    All ranks must succeed. The combined result is ``combine(results)``
-    (default: rank 0's result). Any rank failure cancels the sibling refs and
+    All rank awaitables must finish without raising. The combined result is
+    ``combine(results)`` (default: rank 0's result). Error payloads returned as
+    ordinary values need an explicit combiner; the default does not inspect them.
+    Any raised rank failure cancels the sibling refs and
     re-raises immediately — waiting only on rank 0 would turn a crashed
     non-zero rank into a hang once ranks run collectives, not into an error.
 
@@ -88,9 +88,8 @@ class RayGenerationEngine:
 
     The dispatcher, executor, weight sync, and session speak to this object;
     it fans control-plane calls out to every rank and aggregates. The
-    single-rank case returns raw rank refs so today's behavior is unchanged
-    byte-for-byte; the aggregate path is exercised by multi-rank unit tests
-    until a multi-GPU engine backend lands.
+    single-rank case returns raw rank refs; multi-rank calls wait for all rank
+    refs before applying their result-combination policy.
     """
 
     __slots__ = ("engine_id", "ranks")
