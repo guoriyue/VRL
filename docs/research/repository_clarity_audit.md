@@ -3812,3 +3812,19 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 93 data tests passed; after adding positive list/tuple coverage,
   all 15 focused manifest tests passed. Touched-file Ruff/diff checks passed.
   Full repository review remains incomplete.
+
+## Image-caption manifest errors identify their source
+
+- ImageCaptionPromptDataset decoded each line without adding manifest context.
+  JSONDecodeError therefore reported a location inside the isolated line rather
+  than the actual file/row. Add the manifest path and existing zero-based physical
+  row index while retaining the decoder exception as cause.
+- Keep the short Dataset __len__/__getitem__ methods as framework adapters;
+  creating another base class merely to share those lines adds no useful owner.
+  Keep load_prompt_image_manifest as the shared list-returning entry for config
+  loading and provenance. PreferenceBatch.collate already owns construction.
+- No accepted-row, blank-line, metadata or task-type behavior changes. No new
+  helper/class/schema constants.
+- Validation: 132 prompt/data tests passed, including a malformed third physical
+  line after a blank line and preserved JSONDecodeError cause. Touched-file
+  Ruff/diff checks passed. Full repository review remains incomplete.

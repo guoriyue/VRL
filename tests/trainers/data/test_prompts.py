@@ -89,3 +89,12 @@ def test_image_caption_manifest_rejects_nonobject_fields(tmp_path, field, value)
     path.write_text(json.dumps({"image": "image.png", "caption": "p", field: value}))
     with pytest.raises(ValueError, match=f"row 0 {field!r} must be an object"):
         ImageCaptionPromptDataset(path)
+
+
+def test_image_caption_json_error_identifies_manifest_and_physical_row(tmp_path):
+    path = tmp_path / "captions.jsonl"
+    path.write_text('{"image":"a.png","caption":"first"}\n\n{broken\n')
+    with pytest.raises(ValueError, match="row 2: invalid JSON") as caught:
+        ImageCaptionPromptDataset(path)
+    assert str(path) in str(caught.value)
+    assert isinstance(caught.value.__cause__, json.JSONDecodeError)

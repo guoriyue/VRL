@@ -282,7 +282,10 @@ class ImageCaptionPromptDataset(Dataset):
                 line = line.strip()
                 if not line:
                     continue
-                obj = json.loads(line)
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError as error:
+                    raise ValueError(f"{manifest_path}: row {row_index}: invalid JSON") from error
                 if not isinstance(obj, dict):
                     raise ValueError(f"{manifest_path}: row {row_index} must be an object")
                 for field_name in (image_field, caption_field):
