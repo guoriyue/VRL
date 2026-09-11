@@ -767,3 +767,21 @@ contained guesses. Removed both:
   separate from the corrected version and key semantics.
 - Validation: 16 shard, script-loading and torch-free config-import tests passed.
   Touched-file Ruff lint/format and diff whitespace checks pass.
+
+## Continuous policy-version comparison semantics
+
+- Removed integer coercion of policy versions in StalenessPolicy. Known versions
+  must be non-negative integers; absent versions retain the existing None result.
+  Fractional or string versions cannot silently become a different policy identity.
+- The stale-version window is validated as an integer at configuration and direct
+  settings construction. Schedule and owner forward it unchanged, so those adapters
+  cannot truncate an invalid value before the policy sees it. The isolated policy
+  still supports a zero window; production continuous settings require at least one.
+- Retained StalenessPolicy and its small predicates: producer receipt checks and
+  consumer admission share this rule, and their names express different decisions.
+  No new helper/class or taxonomy constant is introduced. Other continuous capacity
+  and timing settings are not covered by this version-specific change.
+- Validation: 197 continuous orchestration, schedule and experiment-config tests
+  passed, including malformed window rejection through the schedule factory and
+  malformed version rejection through freshness predicates. Touched-file Ruff and
+  diff whitespace checks pass.

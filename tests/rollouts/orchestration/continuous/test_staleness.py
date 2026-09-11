@@ -27,3 +27,27 @@ def test_too_stale_and_future() -> None:
 def test_negative_bound_rejected() -> None:
     with pytest.raises(ValueError, match="max_stale_policy_versions"):
         StalenessPolicy(max_stale_policy_versions=-1)
+
+
+@pytest.mark.parametrize("value", [-0.5, 1.5, "1", True])
+def test_window_is_not_coerced(value) -> None:
+    with pytest.raises(ValueError, match="max_stale_policy_versions"):
+        StalenessPolicy(max_stale_policy_versions=value)
+
+
+@pytest.mark.parametrize("value", [-1, 3.5, "3", True])
+@pytest.mark.parametrize("other", [None, 3])
+def test_versions_are_not_coerced(value, other) -> None:
+    policy = StalenessPolicy(max_stale_policy_versions=1)
+    with pytest.raises(ValueError, match="item_policy_version"):
+        policy.too_stale(value, other)
+    with pytest.raises(ValueError, match="current_policy_version"):
+        policy.is_future(other, value)
+
+
+@pytest.mark.parametrize("window", [1.5, "1", True])
+def test_continuous_config_does_not_coerce_policy_window(window) -> None:
+    from vrl.trainers.core.types import ContinuousRolloutConfig
+
+    with pytest.raises(ValueError, match=r"continuous\.max_stale_policy_versions"):
+        ContinuousRolloutConfig(max_stale_policy_versions=window)

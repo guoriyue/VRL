@@ -13,6 +13,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+from vrl.utils.config import require_exact_int
+
 
 @dataclass(slots=True)
 class OptimConfig:
@@ -140,8 +142,11 @@ class ContinuousRolloutConfig:
                 "continuous.max_generated_group_bytes_mb must be positive and fit "
                 "continuous.max_unscored_bytes_mb",
             )
-        if int(self.max_stale_policy_versions) < 1:
-            raise ValueError("continuous.max_stale_policy_versions must be >= 1")
+        require_exact_int(
+            self.max_stale_policy_versions,
+            path="continuous.max_stale_policy_versions",
+            minimum=1,
+        )
         if float(self.wait_timeout_s) <= 0:
             raise ValueError("continuous.wait_timeout_s must be > 0")
         if float(self.queue_poll_interval_s) <= 0:

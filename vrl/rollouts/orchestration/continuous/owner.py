@@ -74,7 +74,7 @@ class _ContinuousOwnerRuntime:
         self.settings = settings
         self.max_ready_bytes = int(settings.max_ready_bytes_mb) * _MB
         self.staleness = StalenessPolicy(
-            max_stale_policy_versions=int(settings.max_stale_policy_versions),
+            max_stale_policy_versions=settings.max_stale_policy_versions,
         )
 
         self.queue: ContinuousRolloutQueue | None = None

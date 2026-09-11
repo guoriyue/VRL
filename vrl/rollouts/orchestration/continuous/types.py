@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.stats import RolloutStats
+from vrl.utils.config import require_exact_int
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +42,8 @@ class ContinuousRolloutSettings:
     fail_fast_errors: int
 
     def __post_init__(self) -> None:
-        if int(self.max_stale_policy_versions) < 1:
+        require_exact_int(self.max_stale_policy_versions, path="max_stale_policy_versions")
+        if self.max_stale_policy_versions < 1:
             raise ValueError(
                 "continuous rollout requires max_stale_policy_versions >= 1; "
                 "use strict_on_policy for a zero-staleness serial run",

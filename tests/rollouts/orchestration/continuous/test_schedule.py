@@ -930,3 +930,14 @@ async def test_prefetch_fails_closed_when_prompt_equality_is_non_scalar() -> Non
             await schedule.next_iteration([presented], group_size=1)
     finally:
         await schedule.shutdown()
+
+
+@pytest.mark.parametrize("window", [1.5, "1", True])
+def test_continuous_schedule_does_not_coerce_policy_window(window) -> None:
+    runtime = _Runtime()
+    with pytest.raises(ValueError, match="max_stale_policy_versions"):
+        _build(
+            _continuous_config(max_stale_policy_versions=window),
+            _Collector(runtime),
+            _Syncer(runtime),
+        )
