@@ -34,9 +34,6 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.token.build import token_model_config_base
 from vrl.trajectory import build_ar_multisegment_trajectory
 from vrl.utils.cuda_memory import cuda_peak_allocated_mb
-from vrl.utils.logging import init_logger
-
-logger = init_logger(__name__)
 
 
 def janus_config_from_build(build: ModelBuild) -> dict[str, Any]:
@@ -365,8 +362,13 @@ class JanusProR1GenerationBatchGatherer:
         batches: Sequence[JanusProR1BatchPayload],
     ) -> dict[str, dict[str, Any]]:
         names = tuple(batches[0].segments)
-        if set(names) != set(JANUS_R1_SEGMENTS):
-            logger.warning("Unexpected Janus-Pro-R1 segment names: %s", names)
+        expected_names = set(JANUS_R1_SEGMENTS)
+        for index, batch in enumerate(batches):
+            if set(batch.segments) != expected_names:
+                raise ValueError(
+                    f"Janus-R1 batch at ordered index {index} has invalid segment names: "
+                    f"expected {JANUS_R1_SEGMENTS}, got {tuple(batch.segments)}",
+                )
 
         out: dict[str, dict[str, Any]] = {}
         for name in names:

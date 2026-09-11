@@ -3671,3 +3671,20 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: six added dtype cases failed before the fix; all 80 Janus family,
   R1 wiring and batch-gatherer tests passed afterwards. Touched-file Ruff/diff
   checks passed. Full repository review remains incomplete.
+
+## Janus-R1 validates the segment set of every batch
+
+- First-batch names previously selected which segments survived gathering; only
+  that batch's schema generated a warning. Missing first-batch or extra later
+  segments could be silently omitted, while other mismatches surfaced as an
+  incidental KeyError. Four public gatherer cases reproduced these gaps.
+- Check each batch against the existing JANUS_R1_SEGMENTS schema before any
+  concatenation and report its ordered index and actual/expected names. Remove
+  the warning-and-continue path and now-unused module logger. This supersedes
+  earlier ownership-only entries that deliberately retained the warning.
+- Preserve valid first-batch ordering, tensor concatenation and metadata checks.
+  Keep the shared schema constant; no duplicate field taxonomy, new helper, or
+  wrapper class. Tensor row-count validation remains a separate concern.
+- Validation: all 39 Janus family and R1 wiring tests passed, including four
+  schema regressions that failed before the fix. Touched-file Ruff/diff checks
+  passed. Full repository review remains incomplete.
