@@ -64,7 +64,7 @@ class TrajectoryStoragePolicy:
 
     def apply_to_trajectory_(self, batch: TrajectoryBatch) -> TrajectoryBatch:
         """Replace trajectory tensor leaves in place and return the same batch."""
-        if self == TrajectoryStoragePolicy():
+        if self.device == "preserve" and self.dtype == "preserve":
             return batch
         for segment in batch.segments.values():
             for tensor in segment.tensors.values():
@@ -77,7 +77,7 @@ class TrajectoryStoragePolicy:
         Generation applies this before worker-to-driver transfer to reduce wire
         bytes. Only floating tensors are cast; integer ids retain their dtype.
         """
-        if self == TrajectoryStoragePolicy():
+        if self.device == "preserve" and self.dtype == "preserve":
             return value
 
         from torch import Tensor

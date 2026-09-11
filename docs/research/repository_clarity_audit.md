@@ -4380,6 +4380,18 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Storage policy checks its no-op fields without constructing another policy
+
+- Replace comparisons against a fresh TrajectoryStoragePolicy() with direct
+  device/dtype preserve checks in both application methods. The common no-op
+  path no longer creates and validates a temporary default policy per call.
+- Keep the two explicit conditions instead of adding a thin property solely for
+  this predicate. Keep trajectory_tensor_bytes as a shared payload estimate and
+  derived allowed-value constants as configuration schema boundaries.
+- Storage policy suite: 4 passed, including object/tensor identity and placement
+  and dtype behavior. Touched-file Ruff checks pass. No storage conversion rule
+  or byte accounting is changed; repository-wide completion remains unproven.
+
 ## Joint math and NN regression after input-boundary cleanup
 
 - Ran tests/math, tests/nn, NextStep family and CausVid family suites together
