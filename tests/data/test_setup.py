@@ -436,3 +436,32 @@ def test_for_experiment_resolves_real_wan_experiment(capsys) -> None:
     assert out["ready"] is True
     assert all(step["present"] and step["complete"] and step["get"] == "" for step in out["steps"])
     assert any(step["path"] == data.manifest for step in out["steps"])
+
+
+@pytest.mark.parametrize("source_fps", [0, -1, float("nan"), float("inf")])
+def test_video_world_rejects_invalid_source_fps_before_media_write(tmp_path, source_fps):
+    references = tmp_path / "references"
+    targets = tmp_path / "targets"
+
+    def unexpected_writer(path, frames, fps):
+        pytest.fail("invalid FPS must fail before writing video")
+
+    with pytest.raises(ValueError, match="FPS must be finite and > 0"):
+        video_world.build_target_video_world_rows(
+            [
+                {
+                    "prompt": "move",
+                    "episode_id": "1",
+                    "frames": [Image.new("RGB", (2, 2))],
+                    "metadata": {"source_fps": source_fps},
+                }
+            ],
+            reference_dir=references,
+            target_dir=targets,
+            data_root=tmp_path,
+            source="unit",
+            fps=24.0,
+            video_writer=unexpected_writer,
+        )
+    assert list(references.iterdir()) == []
+    assert list(targets.iterdir()) == []

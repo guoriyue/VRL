@@ -7,6 +7,7 @@ knowing how an episode was fetched.
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
@@ -80,7 +81,10 @@ def build_target_video_world_rows(
         if not prompt or not episode_id or not frames:
             continue
         metadata_raw = dict(episode.get("metadata") or {})
-        clip_fps = float(metadata_raw.get("source_fps") or fps)
+        source_fps = metadata_raw.get("source_fps")
+        clip_fps = float(fps if source_fps is None else source_fps)
+        if not math.isfinite(clip_fps) or clip_fps <= 0:
+            raise ValueError(f"episode {episode_id!r} FPS must be finite and > 0")
         ref_path = reference_dir / f"{source}_{episode_id}_first.png"
         target_path = target_dir / f"{source}_{episode_id}_target.mp4"
         write_png(frames[0], ref_path)

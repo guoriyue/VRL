@@ -6916,3 +6916,16 @@ The broader repository audit remains incomplete.
   This includes real tiny pipeline wiring and family scheduler sample/replay
   parity. No production edits in this verification slice, no full pretrained
   training benchmark, and no repository-wide completion claim.
+
+## Video-world target FPS distinguishes missing from invalid source values
+
+- Replace source_fps-or-default selection with an explicit None check. A source
+  FPS of zero previously selected the CLI default while persisting zero in
+  provenance. Reject nonpositive and nonfinite effective FPS before writing
+  reference images or target video, with the episode identity in the error.
+- Keep _manifest_metadata as the format boundary shared by reference-only and
+  target manifests, and keep the injected media writer for offline tests.
+  No new config wrapper, metadata schema or default FPS value.
+- Four regression cases with valid image fixtures reached the writer before
+  the fix; they now reject before either media artifact exists. Setup suite:
+  19 passed. Touched-file Ruff and diff checks pass. Audit remains incomplete.
