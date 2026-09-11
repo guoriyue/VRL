@@ -39,24 +39,18 @@ class CosmosBatchExecutor(ReferenceConditionedBatches, DiffusionBatchExecutorBas
     ) -> dict[str, Any]:
         """Repeat Cosmos text embeds and pass reference image through unchanged."""
 
-        del video_request, params
-        chunk_g = batch.sample_count
+        batch_encoded = super().build_batch_encoded(
+            encoded={
+                "prompt_embeds": encoded["prompt_embeds"],
+                "negative_prompt_embeds": encoded.get("negative_prompt_embeds"),
+            },
+            generation_request=generation_request,
+            video_request=video_request,
+            params=params,
+            batch=batch,
+        )
         reference_image = self._reference_image_for_chunk(generation_request, batch)
-        batch_encoded: dict[str, Any] = {
-            "prompt_embeds": self.layout.repeat_batch(
-                encoded["prompt_embeds"],
-                chunk_g,
-            ),
-            "reference_image": encoded.get("reference_image", reference_image),
-        }
-        neg = encoded.get("negative_prompt_embeds")
-        if neg is not None:
-            batch_encoded["negative_prompt_embeds"] = self.layout.repeat_batch(
-                neg,
-                chunk_g,
-            )
-        else:
-            batch_encoded["negative_prompt_embeds"] = None
+        batch_encoded["reference_image"] = encoded.get("reference_image", reference_image)
         return batch_encoded
 
 

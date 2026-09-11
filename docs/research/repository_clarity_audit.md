@@ -3087,3 +3087,19 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 188 binding and batch-gatherer tests passed, two skipped; touched
   Ruff/diff checks passed and the removed method has no remaining code/test
   references. The full repository review remains incomplete.
+
+## Own encoded tensor expansion in the executor
+
+- Remove DiffusionRequestLayout.repeat_batch and its torch import. The existing
+  DiffusionBatchExecutorBase.build_batch_encoded now expands singleton tensor
+  rows directly, preserves already-sized tensors, scalar/non-tensor values and
+  declared batch_passthrough_keys, and names a mismatched encoded field in errors.
+- Cosmos Predict2 also called the old method. It now delegates text embedding
+  preparation to the base executor and retains its reference-image selection.
+  Keep family passthrough declarations: FLUX text IDs do not have a sample axis.
+- Keep SDE window selection in request parsing, shared by every sample batch.
+  No replacement repeat helper/class or vocabulary table is introduced.
+- Validation: 366 binding/execution/Cosmos Predict2 tests passed, two skipped;
+  after adding explicit Cosmos positive/negative embedding checks, all 93 layout
+  tests passed. Touched-file Ruff/diff checks passed; no repeat_batch references
+  remain in code/tests. Full repository review remains open.

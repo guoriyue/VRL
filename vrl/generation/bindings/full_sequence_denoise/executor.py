@@ -505,7 +505,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
     # ``text_ids`` is ``[seq, 3]``), the generic repeat would corrupt the shape,
     # so the family lists them here instead of overriding the whole method.
     # Non-tensor values (PIL reference images, python lists) already pass
-    # through ``repeat_batch`` untouched and need no listing.
+    # through input preparation untouched and need no listing.
     batch_passthrough_keys: tuple[str, ...] = ()
 
     def build_batch_encoded(
@@ -521,14 +521,19 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
 
         del generation_request, video_request, params
         passthrough = set(self.batch_passthrough_keys)
-        return {
-            key: (
-                value
-                if key in passthrough
-                else self.layout.repeat_batch(value, batch.sample_count)
-            )
-            for key, value in encoded.items()
-        }
+        batch_encoded: dict[str, Any] = {}
+        for key, value in encoded.items():
+            if key not in passthrough and isinstance(value, torch.Tensor) and value.ndim > 0:
+                rows = value.shape[0]
+                if rows != batch.sample_count:
+                    if rows != 1:
+                        raise ValueError(
+                            f"cannot repeat tensor batch={rows} to batch sample count "
+                            f"{batch.sample_count} for encoded field {key!r}",
+                        )
+                    value = value.repeat((batch.sample_count,) + (1,) * (value.ndim - 1))
+            batch_encoded[key] = value
+        return batch_encoded
 
     def build_prepare_kwargs(
         self,

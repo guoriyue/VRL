@@ -1,4 +1,4 @@
-"""Request parsing and input layout for full-sequence denoise executors."""
+"""Request sampling parameters for full-sequence denoise executors."""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ import dataclasses
 import random
 from dataclasses import dataclass
 from typing import Any
-
-import torch
 
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions, DenoiseSDEParams
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig
@@ -127,25 +125,6 @@ class DiffusionRequestLayout:
         # Resolve the stochastic window HERE, once per request, so every sample
         # batch built from these params shares it (see select_sde_window).
         return dataclasses.replace(params, sde_window=self.select_sde_window(params))
-
-    def repeat_batch(self, value: Any, count: int) -> Any:
-        """Repeat a singleton tensor batch or accept an already-sized batch."""
-
-        if count < 1:
-            raise ValueError("count must be >= 1")
-        if not isinstance(value, torch.Tensor):
-            return value
-        if value.ndim == 0:
-            return value
-        batch = int(value.shape[0])
-        if batch == count:
-            return value
-        if batch != 1:
-            raise ValueError(
-                f"cannot repeat tensor batch={batch} to batch sample count {count}",
-            )
-        repeat_shape = (count,) + (1,) * (value.ndim - 1)
-        return value.repeat(*repeat_shape)
 
     def select_sde_window(
         self,

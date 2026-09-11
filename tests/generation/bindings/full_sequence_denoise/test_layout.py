@@ -76,20 +76,38 @@ def test_denoise_options_reject_unknown_denoise_mode() -> None:
         DenoiseRequestOptions(denoise_mode="custom")  # type: ignore[arg-type]
 
 
-def test_diffusion_layout_repeat_batch_rejects_unexpected_batch_size() -> None:
-    """``repeat_batch`` broadcasts a batch-1 tensor to the sample count, returns an already-sized
-    tensor as the same object, and refuses any other batch size.
-    """
-    layout = _layout()
+def test_diffusion_encoded_batch_preserves_shared_values_and_expands_samples() -> None:
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
 
-    repeated = layout.repeat_batch(torch.ones(1, 2), 3)
-    assert repeated.shape == (3, 2)
-
+    executor = GenericDiffusionBatchExecutor(SimpleNamespace(), family="test", task="t2i")
+    executor.batch_passthrough_keys = ("text_ids",)
     already_sized = torch.ones(3, 2)
-    assert layout.repeat_batch(already_sized, 3) is already_sized
-
+    shared_ids = torch.ones(5, 3)
+    scalar = torch.tensor(2)
+    metadata = ["shared"]
+    arguments = dict(
+        generation_request=_request(),
+        video_request=None,
+        params=None,
+        batch=GenerationSampleBatch(0, 0, 3),
+    )
+    result = executor.build_batch_encoded(
+        encoded=dict(
+            single=torch.ones(1, 2),
+            sized=already_sized,
+            text_ids=shared_ids,
+            scalar=scalar,
+            metadata=metadata,
+        ),
+        **arguments,
+    )
+    assert torch.equal(result["single"], torch.ones(3, 2))
+    assert result["sized"] is already_sized
+    assert result["text_ids"] is shared_ids
+    assert result["scalar"] is scalar
+    assert result["metadata"] is metadata
     with pytest.raises(ValueError, match="cannot repeat tensor batch=2"):
-        layout.repeat_batch(torch.ones(2, 2), 3)
+        executor.build_batch_encoded(encoded={"single": torch.ones(2, 2)}, **arguments)
 
 
 @pytest.mark.parametrize(
@@ -233,3 +251,26 @@ def test_generic_executor_preserves_invalid_defaults_for_request_validation(fiel
     request.sampling.pop(field, None)
     with pytest.raises(ValueError, match="frame_count" if field == "num_frames" else field):
         executor.parse_sampling_params(request)
+
+
+@pytest.mark.parametrize("negative", [None, torch.ones(1, 2)])
+def test_cosmos_encoded_batch_reuses_text_expansion(negative):
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
+    from vrl.models.families.cosmos.predict2.runtime import CosmosBatchExecutor
+
+    executor = object.__new__(CosmosBatchExecutor)
+    reference = object()
+    executor._reference_image_for_chunk = lambda request, batch: reference
+    result = executor.build_batch_encoded(
+        encoded={"prompt_embeds": torch.ones(1, 2), "negative_prompt_embeds": negative},
+        generation_request=_request(),
+        video_request=None,
+        params=None,
+        batch=GenerationSampleBatch(0, 0, 3),
+    )
+    assert torch.equal(result["prompt_embeds"], torch.ones(3, 2))
+    assert result["reference_image"] is reference
+    if negative is None:
+        assert result["negative_prompt_embeds"] is None
+    else:
+        assert torch.equal(result["negative_prompt_embeds"], torch.ones(3, 2))
