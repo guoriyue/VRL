@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     )
     from vrl.trainers.data.preferences import PreferenceBatch as PreferenceBatch
     from vrl.trainers.data.preferences import collate_preference as collate_preference
-    from vrl.trainers.data.preferences import load_pickapic as load_pickapic
     from vrl.trainers.data.prompt_sampler import PromptBatchSampler as PromptBatchSampler
     from vrl.trainers.data.prompt_sampler import PromptSamplingStrategy as PromptSamplingStrategy
     from vrl.trainers.data.prompts import ImageCaptionPromptDataset as ImageCaptionPromptDataset
@@ -48,7 +47,6 @@ _PUBLIC_EXPORTS = {
     "PromptSamplingStrategy": ("vrl.trainers.data.prompt_sampler", "PromptSamplingStrategy"),
     "ResolvedArtifact": ("vrl.trainers.data.artifacts", "ResolvedArtifact"),
     "collate_preference": ("vrl.trainers.data.preferences", "collate_preference"),
-    "load_pickapic": ("vrl.trainers.data.preferences", "load_pickapic"),
     "load_prompt_examples_from_config": (
         "vrl.trainers.data.prompts",
         "load_prompt_examples_from_config",

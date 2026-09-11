@@ -15,6 +15,7 @@ import vrl.trainers.checkpointing as checkpointing
 import vrl.trainers.data as trainer_data
 import vrl.trainers.offline as offline
 from vrl.config.loading import load_config
+from vrl.config.schema import parse_config
 from vrl.scripts.families.wan_2_1.train_dpo import train_wan_2_1_dpo
 
 
@@ -104,6 +105,7 @@ def test_matching_identity_gates_model_and_threads_restore_and_saves(
                 grad_norm=0.0,
             )
 
+    parse_config(cfg)
     _install_pre_model_fakes(
         monkeypatch,
         entry=_Entry(),
@@ -158,8 +160,8 @@ def test_matching_identity_gates_model_and_threads_restore_and_saves(
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        trainer_data,
-        "load_pickapic",
+        trainer_data.PickAPicPreferenceDataset,
+        "from_hub",
         lambda **_kwargs: events.append("load_dataset") or ["sample"],
     )
     monkeypatch.setattr(torch.utils.data, "DataLoader", lambda *_args, **_kwargs: ["batch"])
@@ -206,6 +208,7 @@ def test_identity_mismatch_stops_before_model_and_dataset(
             events.append("build_model")
             raise AssertionError("model construction must not run after identity mismatch")
 
+    parse_config(cfg)
     _install_pre_model_fakes(
         monkeypatch,
         entry=_Entry(),
@@ -238,8 +241,8 @@ def test_identity_mismatch_stops_before_model_and_dataset(
     )
     monkeypatch.setattr(checkpointing, "validate_checkpoint_compatibility", _reject)
     monkeypatch.setattr(
-        trainer_data,
-        "load_pickapic",
+        trainer_data.PickAPicPreferenceDataset,
+        "from_hub",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("dataset loading must not run after identity mismatch"),
         ),
@@ -273,6 +276,7 @@ def test_source_change_during_model_load_stops_before_dataset(
             events.append("build_model")
             return object()
 
+    parse_config(cfg)
     _install_pre_model_fakes(
         monkeypatch,
         entry=_Entry(),
@@ -295,8 +299,8 @@ def test_source_change_during_model_load_stops_before_dataset(
     )
     monkeypatch.setattr(checkpointing, "validate_checkpoint_compatibility", _validate)
     monkeypatch.setattr(
-        trainer_data,
-        "load_pickapic",
+        trainer_data.PickAPicPreferenceDataset,
+        "from_hub",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("dataset loading must not run after checkpoint source changes"),
         ),

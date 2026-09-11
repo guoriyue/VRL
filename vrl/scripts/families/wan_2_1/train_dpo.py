@@ -142,7 +142,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         save_training_checkpoint,
         validate_checkpoint_compatibility,
     )
-    from vrl.trainers.data import collate_preference, load_pickapic
+    from vrl.trainers.data import PickAPicPreferenceDataset, collate_preference
     from vrl.trainers.metrics_io import MetricsCSV
     from vrl.trainers.offline import OfflineDPOTrainer
 
@@ -211,7 +211,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         data_cfg.dataset_name,
         data_cfg.split,
     )
-    ds = load_pickapic(
+    ds = PickAPicPreferenceDataset.from_hub(
         split=str(data_cfg.split),
         cache_dir=str(data_cfg.cache_dir) or None,
         max_samples=data_cfg.max_train_samples,

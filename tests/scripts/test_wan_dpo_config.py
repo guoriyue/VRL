@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from vrl.config.loading import load_config
+from vrl.config.schema import RootConfig
 from vrl.scripts.families.wan_2_1.train_dpo import train_wan_2_1_dpo
 
 
@@ -28,7 +29,7 @@ def test_offline_dpo_builds_its_full_model_through_the_family_registry(
 
         def resolve_model_build(
             self,
-            root: object,
+            root: RootConfig,
             device: object,
             *,
             precision: object,
