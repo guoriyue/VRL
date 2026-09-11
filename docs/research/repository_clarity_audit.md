@@ -5010,3 +5010,18 @@ this combined regression is compatibility evidence, not architectural completion
   backpressure, timeout behavior and metric values. Existing continuous suites:
   209 passed. Touched-file Ruff and git diff --check pass; no removed method name
   remains in production or tests. The broader repository audit is incomplete.
+
+## Completed receipts keep queue identity and charged size stable
+
+- Freeze ContinuousRolloutItem fields. Queue admission charges nbytes and removal
+  reads the same field; consumer selection likewise relies on stable batch and
+  policy identity. Production constructs each receipt once and does not reassign
+  its fields. Document that referenced batch and stats objects remain mutable.
+- Keep queue operations and capacity accounting separate: the former retains
+  ready payloads, the latter tracks in-flight reservations. No new wrapper or
+  custom assignment guard is introduced. Payload immutability, recalculating
+  byte estimates and changing group-ID remapping are outside this change.
+- Three public admission regressions showed that byte count, batch identity and
+  policy version could be reassigned before this change. They now reject writes
+  and verify removal restores zero charged bytes. Full orchestration suite:
+  275 passed. Touched-file Ruff and git diff --check pass. Wider audit remains open.

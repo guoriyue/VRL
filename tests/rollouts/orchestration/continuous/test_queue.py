@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 import torch
 
@@ -34,6 +36,19 @@ def _item(
         batch=batch,
         nbytes=nbytes,
     )
+
+
+@pytest.mark.parametrize(
+    "field, replacement", [("nbytes", 100), ("batch_id", 5), ("rollout_policy_version", 9)]
+)
+def test_ready_receipt_fields_cannot_change_after_admission(field, replacement) -> None:
+    queue = ContinuousRolloutQueue(max_items=1)
+    item = _item(group_slot=0, version=1, nbytes=4)
+    queue.put(item)
+    with pytest.raises(FrozenInstanceError):
+        setattr(item, field, replacement)
+    queue.remove([item])
+    assert queue.stats()["ready_bytes"] == 0
 
 
 def test_rejects_negative_byte_limit() -> None:

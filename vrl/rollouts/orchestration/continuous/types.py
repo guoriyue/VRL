@@ -48,7 +48,7 @@ class ContinuousRolloutSettings:
             )
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class ContinuousRolloutItem:
     """One completed prompt group waiting in the ready queue.
 
@@ -56,6 +56,8 @@ class ContinuousRolloutItem:
     the prompt's slot index in the batch's stable prompt list (not the prompt
     string) so that a prompt batch with duplicate strings still yields
     ``len(prompts)`` distinct groups per iteration.
+    Receipt fields are fixed at completion so queue identity and charged bytes
+    stay stable. The referenced batch and stats remain mutable payload objects.
     """
 
     # Producer-assigned monotonic identity, unique per owner lifetime. The
