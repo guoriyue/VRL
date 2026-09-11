@@ -24,8 +24,6 @@ from vrl.trajectory import (
     RewardView,
     TrajectorySegment,
     TrajectoryStoragePolicy,
-    named_tensor,
-    role_tensor,
 )
 
 
@@ -131,8 +129,8 @@ class TrajectoryRolloutBatchBuilder:
         segment: TrajectorySegment,
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
-        observations = role_tensor(segment, "observation").value
-        kl_tensor = named_tensor(segment, "kl").value
+        observations = segment.role_tensor("observation").value
+        kl_tensor = segment.named_tensor("kl").value
         device = observations.device
 
         if self.context.kl_reward_coef > 0:
@@ -164,7 +162,7 @@ class TrajectoryRolloutBatchBuilder:
         # Single-segment AR passes the trainable segment; the multisegment path
         # passes its primary segment. Both carry an action-role tensor co-located
         # on the batch device, so the fallback device source is identical.
-        device = self.context.device or role_tensor(segment, "action").value.device
+        device = self.context.device or segment.role_tensor("action").value.device
 
         return RolloutBatch(
             rewards=rewards_raw.to(device),

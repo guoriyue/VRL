@@ -64,7 +64,6 @@ from vrl.models.steps.token.base import (
 )
 from vrl.models.steps.token.lora import install_token_lora_adapter
 from vrl.models.steps.token.vocab_head import VocabHeadSplit
-from vrl.trajectory import role_tensor
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -448,7 +447,7 @@ class JanusProModel(ARModelBase):
         segment = trajectory.segments[segment_name]
         payload: dict[str, Any] = {
             "name": segment.name,
-            "token_ids": role_tensor(segment, "action").value,
+            "token_ids": segment.role_tensor("action").value,
             "visual": bool(segment.metadata.get("visual", segment.modality == "image")),
             "modality": segment.modality,
         }

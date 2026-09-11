@@ -14,7 +14,7 @@ from typing import Any
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
-from vrl.trajectory import TrajectoryBatch, role_tensor
+from vrl.trajectory import TrajectoryBatch
 from vrl.trajectory.device import move_value_to_device
 
 
@@ -155,7 +155,7 @@ class TrajectorySignalBuilder:
         log_prob: Any,
         timestep_idx: int | None,
     ) -> Any:
-        value = role_tensor(segment, "old_log_prob").value
+        value = segment.role_tensor("old_log_prob").value
         return self._select_loss_value_if_needed(
             value,
             log_prob,
@@ -174,7 +174,7 @@ class TrajectorySignalBuilder:
         value = (
             tensor.value
             if tensor is not None and tensor.role == "mask"
-            else role_tensor(segment, "mask").value
+            else segment.role_tensor("mask").value
         )
         value = self._select_loss_value_if_needed(
             value,

@@ -18,7 +18,6 @@ from vrl.rollouts.evaluators.base import ReplayEvaluatorBase
 from vrl.rollouts.evaluators.token.ref_pass import ref_forward
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SegmentSignal, SignalRequest, TrajectorySignalBatch
-from vrl.trajectory import role_tensor
 
 
 class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase):
@@ -133,9 +132,9 @@ class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase):
     def _trajectory_segment_payload(segment: Any) -> dict[str, Any]:
         return {
             "name": segment.name,
-            "token_ids": role_tensor(segment, "action").value,
-            "token_log_probs": role_tensor(segment, "old_log_prob").value,
-            "token_mask": role_tensor(segment, "mask").value,
+            "token_ids": segment.role_tensor("action").value,
+            "token_log_probs": segment.role_tensor("old_log_prob").value,
+            "token_mask": segment.role_tensor("mask").value,
         }
 
     @staticmethod

@@ -45,8 +45,6 @@ if TYPE_CHECKING:
     from vrl.trajectory.validation import TrajectoryValidator as TrajectoryValidator
     from vrl.trajectory.validation import tensor_ref as tensor_ref
     from vrl.trajectory.views import RewardView as RewardView
-    from vrl.trajectory.views import named_tensor as named_tensor
-    from vrl.trajectory.views import role_tensor as role_tensor
 
 _PUBLIC_EXPORTS = {
     "AxisKind": ("vrl.trajectory.types", "AxisKind"),
@@ -82,8 +80,6 @@ _PUBLIC_EXPORTS = {
         "build_chunk_autoregressive_generation_trajectory",
     ),
     "build_diffusion_trajectory": ("vrl.trajectory.builders", "build_diffusion_trajectory"),
-    "named_tensor": ("vrl.trajectory.views", "named_tensor"),
-    "role_tensor": ("vrl.trajectory.views", "role_tensor"),
     "tensor_ref": ("vrl.trajectory.validation", "tensor_ref"),
     "trajectory_tensor_bytes": ("vrl.trajectory.storage", "trajectory_tensor_bytes"),
 }

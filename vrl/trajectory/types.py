@@ -122,6 +122,24 @@ class TrajectorySegment:
         if self.reward_view is not None and not self.reward_view:
             raise ValueError("TrajectorySegment.reward_view must be non-empty when set")
 
+    def role_tensor(self, role: str) -> TrajectoryTensor:
+        matches = [tensor for tensor in self.tensors.values() if tensor.role == role]
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"segment {self.name!r} requires exactly one role {role!r}, found {len(matches)}",
+            )
+        return matches[0]
+
+    def named_tensor(self, name: str) -> TrajectoryTensor:
+        """Read one named tensor from a segment or fail with the missing name."""
+
+        try:
+            return self.tensors[name]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"segment {self.name!r} is missing tensor {name!r}",
+            ) from exc
+
 
 @dataclass(slots=True)
 class TrajectoryBatch:

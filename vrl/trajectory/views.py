@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from vrl.trajectory.types import TrajectorySegment, TrajectoryTensor, validate_string_tuple
+from vrl.trajectory.types import validate_string_tuple
 
 RewardValueRange = Literal["unit", "tanh"]
 
@@ -32,29 +32,7 @@ class RewardView:
         validate_string_tuple("RewardView.tensor_refs", self.tensor_refs)
 
 
-def role_tensor(segment: TrajectorySegment, role: str) -> TrajectoryTensor:
-    matches = [tensor for tensor in segment.tensors.values() if tensor.role == role]
-    if len(matches) != 1:
-        raise RuntimeError(
-            f"segment {segment.name!r} requires exactly one role {role!r}, found {len(matches)}",
-        )
-    return matches[0]
-
-
-def named_tensor(segment: TrajectorySegment, name: str) -> TrajectoryTensor:
-    """Read one named tensor from a segment or fail with the missing name."""
-
-    try:
-        return segment.tensors[name]
-    except KeyError as exc:
-        raise RuntimeError(
-            f"segment {segment.name!r} is missing tensor {name!r}",
-        ) from exc
-
-
 __all__ = [
     "RewardValueRange",
     "RewardView",
-    "named_tensor",
-    "role_tensor",
 ]
