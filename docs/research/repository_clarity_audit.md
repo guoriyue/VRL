@@ -6236,3 +6236,17 @@ The broader repository audit remains incomplete.
   production class, constant or alternate statistics calculation is introduced.
 - Collector, orchestration and trainer reward-update suites: 329 passed.
   Touched-file Ruff and diff checks pass. Broader repository audit incomplete.
+
+## Reward timing consumers use the normalized output contract
+
+- Remove repeated str/float conversions when MultiReward sums RewardOutput
+  timings and when the collector forwards extra timing fields into RolloutStats.
+  RewardOutput.__post_init__ already normalizes names and values and rejects
+  nonfinite/negative timings. Remove the intermediate timing dict copy before
+  update; the destination still owns an independent mapping.
+- Keep RewardOutput normalization, standard timing-key selection and first-group
+  accounting. These are type/schema and call-level ownership boundaries. Empty
+  unscored input still exits before indexing; no new helper or class is needed.
+- MultiReward, collector and prompt collection suites: 80 passed, including
+  child timing aggregation and per-call timing ownership. Touched-file Ruff and
+  diff checks pass. Broader repository audit remains incomplete.

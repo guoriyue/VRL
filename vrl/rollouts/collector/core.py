@@ -329,9 +329,7 @@ class RolloutCollector:
                 samples,
                 require_memory_release=require_reward_release,
             )
-        reward_timing_ms = dict(score_result.timing_ms)
-        if reward_timing_ms:
-            unscored[0].reward_timing_ms.update(reward_timing_ms)
+        unscored[0].reward_timing_ms.update(score_result.timing_ms)
         reward_score_s = time.perf_counter() - phase_t if phase_t is not None else None
 
         build_t = time.perf_counter() if profile else None
@@ -666,9 +664,9 @@ class RolloutCollector:
                     queue_wait_ms=reward_timing_ms.get("queue_wait_ms"),
                     inference_ms=reward_timing_ms.get("inference_ms"),
                     extra_ms={
-                        str(name): float(value)
+                        name: value
                         for name, value in reward_timing_ms.items()
-                        if name not in standard_keys and str(name).endswith("_ms")
+                        if name not in standard_keys and name.endswith("_ms")
                     },
                 )
 

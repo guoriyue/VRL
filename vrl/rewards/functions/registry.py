@@ -293,7 +293,7 @@ class MultiReward(RewardFunction):
                 )
             components[name] = output.scores
             for key, value in output.timing_ms.items():
-                timing_ms[str(key)] = timing_ms.get(str(key), 0.0) + float(value)
+                timing_ms[key] = timing_ms.get(key, 0.0) + value
             for index, score in enumerate(output.scores):
                 totals[index] += weight * score
         return RewardOutput(
