@@ -3017,3 +3017,21 @@ this combined regression is compatibility evidence, not architectural completion
   constants or runtime interfaces change.
 - Validation: 262 orchestration and weight-sync tests passed; touched-file Ruff
   and diff checks passed. The broader generation/scheduling audit remains open.
+
+## Scope generation counter formatting to its metric owner
+
+- Move the single-caller _debug_metric_value into GenerationWorkerCore's
+  _batch_metrics as a local recursive counter_value converter; remove the
+  redundant outer dict copy. Debug-disabled calls still return before reading
+  output properties. Counter values, nesting, scalar extraction and repr
+  fallback remain unchanged.
+- Do not combine this with trainers.diagnostics._json_safe: trainer tensor
+  diagnostics produce statistics, while generation counters retain scalar
+  values. Nor does ordinary JSON file IO own tensor interpretation. Keeping
+  these distinct avoids changing diagnostic semantics for cosmetic reuse.
+- The recursive local function remains useful for nested mappings/sequences;
+  no class, shared serializer, or constants are added. The existing item-error
+  fallback is preserved, not claimed to be a strict serialization contract.
+- Validation: 179 generation execution tests passed, including nested scalar
+  counter conversion and disabled-debug property isolation; touched-file Ruff
+  and diff checks passed. Full repository review remains incomplete.

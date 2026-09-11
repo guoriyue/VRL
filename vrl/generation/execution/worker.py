@@ -701,6 +701,22 @@ class GenerationWorkerCore:
     ) -> dict[str, Any]:
         if not runtime_debug or batch_output is None:
             return {}
+
+        def counter_value(value: Any) -> Any:
+            if value is None or isinstance(value, (str, int, float, bool)):
+                return value
+            if isinstance(value, Mapping):
+                return {str(key): counter_value(item) for key, item in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [counter_value(item) for item in value]
+            item = getattr(value, "item", None)
+            if callable(item):
+                try:
+                    return item()
+                except Exception:
+                    pass
+            return repr(value)
+
         metrics: dict[str, Any] = {}
 
         stage_durations = getattr(batch_output, "stage_durations", None)
@@ -711,7 +727,7 @@ class GenerationWorkerCore:
 
         engine_counters = getattr(batch_output, "engine_counters", None)
         if isinstance(engine_counters, Mapping):
-            metrics["engine_counters"] = _debug_metric_value(dict(engine_counters))
+            metrics["engine_counters"] = counter_value(engine_counters)
 
         peak_memory_mb = getattr(batch_output, "peak_memory_mb", None)
         if peak_memory_mb is not None:
@@ -907,22 +923,6 @@ class GenerationWorkerCore:
 
             torch.cuda.synchronize()
         return copied
-
-
-def _debug_metric_value(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, Mapping):
-        return {str(key): _debug_metric_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_debug_metric_value(item) for item in value]
-    item = getattr(value, "item", None)
-    if callable(item):
-        try:
-            return item()
-        except Exception:
-            pass
-    return repr(value)
 
 
 __all__ = ["GenerationWorkerCore"]
