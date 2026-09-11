@@ -85,30 +85,25 @@ class DiffusionRequestLayout:
 
         sampling = request.sampling
         options = request.denoise if request.denoise is not None else DenoiseRequestOptions()
-        fps_value = sampling.get("fps", self.default_fps)
         max_sequence_length = sampling.get(
             "max_sequence_length",
             self.default_max_sequence_length,
         )
-        seed = sampling.get("seed")
-        model_request_kwargs: dict[str, Any] = {
-            "num_steps": sampling["num_steps"],
-            "guidance_scale": float(sampling["guidance_scale"]),
-            "height": sampling["height"],
-            "width": sampling["width"],
-            "frame_count": sampling.get(
+        negative_prompt = sampling.get("negative_prompt")
+        model_request = DenoiseRequest(
+            num_steps=sampling["num_steps"],
+            guidance_scale=float(sampling["guidance_scale"]),
+            height=sampling["height"],
+            width=sampling["width"],
+            frame_count=sampling.get(
                 "num_frames", sampling.get("frame_count", self.default_num_frames)
             ),
-        }
-        if fps_value is not None:
-            model_request_kwargs["fps"] = fps_value
-        if sampling.get("negative_prompt") is not None:
-            model_request_kwargs["negative_prompt"] = sampling["negative_prompt"]
-        if seed is not None:
-            model_request_kwargs["seed"] = seed
+            fps=sampling.get("fps", self.default_fps),
+            negative_prompt="" if negative_prompt is None else negative_prompt,
+            seed=sampling.get("seed"),
+        )
         # The typed options carry the rollout-owned knobs; only the two values
         # that depend on the executor or the schedule resolve here.
-        model_request = DenoiseRequest(**model_request_kwargs)
         sde_window_range = options.resolve_sde_window_range(model_request.num_steps)
         sde = DenoiseSDEParams(
             noise_level=options.noise_level,

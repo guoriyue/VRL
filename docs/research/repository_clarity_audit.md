@@ -1498,3 +1498,14 @@ close that architectural scope.
   The entire script suite then passed (559 tests). Counts overlap and are not an
   additive total. All generation/model-family tests preceding scripts had passed.
   Added 25 direct-constructor geometry cases; touched-file Ruff/diff checks pass.
+
+## Direct diffusion request construction
+
+- Replaced the fixed-key model_request_kwargs dictionary plus conditional writes
+  with one explicit DenoiseRequest construction. Field mapping is visible where
+  the request is created, with no new constructor helper or intermediate type.
+- Preserved absent/null negative-prompt normalization, optional fps/seed and
+  frame-count precedence. Kept the SDE parameter owner and family parse override
+  surface; this changes neither numerical behavior nor configuration defaults.
+- Validation: 109 full-sequence binding and Echo flow-policy tests passed.
+  Touched-file Ruff and git diff --check pass.
