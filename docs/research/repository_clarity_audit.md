@@ -3960,3 +3960,20 @@ this combined regression is compatibility evidence, not architectural completion
   first attempted test command referenced a nonexistent launcher test filename;
   the corrected file was run successfully. Touched-file Ruff checks pass.
   These tests do not establish real-GPU throughput. The overall audit continues.
+
+## MiniMax-H3 owns replay batch expansion
+
+- Move the module-level `_expand_batch` into `MiniMaxH3Model` as
+  `_expand_replay_batch`, next to replay export. Both production calls belong to
+  that exporter (prompt embeddings and per-step audio rows). The method name
+  now states its scope; no new owner class or forwarding alias is introduced.
+- Keep one method for the common rule: preserve an already matching batch,
+  broadcast a singleton, reject every other batch-size mismatch. Replay tensor
+  values, contiguous layout and error behavior are unchanged.
+- Keep family loader adapters and model architecture constants outside this
+  change. Cross-family shape consistency and framework boundaries matter more
+  than minimizing function counts.
+- All 18 MiniMax-H3 tests passed, including replay parity and model loading;
+  dependency/test warnings were emitted. Touched-file Ruff checks pass after
+  formatting. This does not claim a full pretrained GPU training validation or
+  completion of the repository-wide audit.
