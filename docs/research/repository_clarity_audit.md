@@ -4145,3 +4145,16 @@ this combined regression is compatibility evidence, not architectural completion
 - Four invalid-index regressions failed before the fix. All 22 precision guard
   tests now pass; touched-file Ruff checks pass. This does not establish real-GPU
   drift behavior or complete the repository-wide audit.
+
+## Strategy assembly states its FSDP compile restriction directly
+
+- Inline `_assert_fsdp_config_supported` into the FSDP branch of `build_strategy`.
+  Its sole check concerns replay compilation; the generic helper name and old
+  sprint-gate history obscured that narrow responsibility. Preserve the lazy
+  role-compile import, check order, exception type and diagnostic text.
+- Retain CPU coordination barrier and all-rank success helpers as shared
+  communication boundaries. Do not introduce a strategy validator class or move
+  process-group behavior into configuration objects.
+- Strategy and FSDP suites passed: 72 passed, two skipped, dependency warnings.
+  Touched-file Ruff checks passed. No new compile support or multi-GPU validation
+  is claimed; the overall repository audit remains incomplete.

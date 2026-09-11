@@ -1040,8 +1040,7 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
 
     The single dispatch point from config/context to a concrete strategy.
     ``fsdp`` reads its FSDP2 knobs from ``distributed.training.fsdp`` and runs the
-    §10 readiness gates (combinations that need DTensor-aware state handling not
-    yet built) before constructing ``FSDPStrategy``.
+    replay-compile compatibility check before constructing ``FSDPStrategy``.
     """
 
     from vrl.config.schema import TrainingSection
@@ -1061,7 +1060,17 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
     if configured_strategy == "single_process":
         return SingleProcessStrategy(context)
     if configured_strategy == "fsdp":
-        _assert_fsdp_config_supported(config)
+        from vrl.models.interfaces.runtime import torch_compile_for_role
+
+        compile_block = config.model.torch_compile if config.model is not None else None
+        if torch_compile_for_role(compile_block, "replay"):
+            raise NotImplementedError(
+                "distributed.training.strategy=fsdp cannot compile the replay policy: "
+                "torch.compile (inductor graph capture) is unsound with FSDP2 "
+                "fully_shard's reshard-after-forward all-gathers. Set "
+                "model.torch_compile.enable=false, or model.torch_compile.scope=rollout "
+                "to keep the FSDP2 replay policy eager while the rollout policy compiles.",
+            )
         if training.fsdp is None:
             raise AssertionError("typed fsdp config was not resolved")
         fsdp = training.fsdp
@@ -1082,30 +1091,6 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
     raise AssertionError(
         f"typed config admitted unknown training strategy {configured_strategy!r}"
     )
-
-
-def _assert_fsdp_config_supported(config: RootConfig) -> None:
-    """Fail-fast on fsdp + a feature whose DTensor handling is not implemented yet.
-
-    Two of the original ``SPRINT_multi_gpu_training.md`` §10 gates are now
-    lifted: EMA shadows update through DTensor local-shard views and
-    gather/re-shard at checkpoint boundaries (EMAModuleWrapper), and optimizer
-    resume goes through the strategy's full-state export/load
-    (gather_full_optimizer_state_dict / load_full_optimizer_state_dict).
-    torch.compile remains gated.
-    """
-
-    from vrl.models.interfaces.runtime import torch_compile_for_role
-
-    compile_block = config.model.torch_compile if config.model is not None else None
-    if torch_compile_for_role(compile_block, "replay"):
-        raise NotImplementedError(
-            "distributed.training.strategy=fsdp cannot compile the replay policy: "
-            "torch.compile (inductor graph capture) is unsound with FSDP2 "
-            "fully_shard's reshard-after-forward all-gathers. Set "
-            "model.torch_compile.enable=false, or model.torch_compile.scope=rollout "
-            "to keep the FSDP2 replay policy eager while the rollout policy compiles.",
-        )
 
 
 def _cpu_coordination_barrier() -> None:
