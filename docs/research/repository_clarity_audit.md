@@ -222,6 +222,22 @@ Profiling ownership review:
   arbitrary consumer classes. Logging names/format strings are output protocol
   data rather than model-specific workflow vocabularies.
 
+Dataset and evaluation helper review:
+
+- `PickAPicPreferenceDataset.from_hub` replaces `load_pickapic`; the dataset
+  owns its remote construction and existing preprocessing. Migrated the DPO
+  entrypoint and removed the lazy export. Dataset loading semantics are unchanged.
+- DPO identity/config tests: 10 passed. Isolated execution exposed existing fake
+  registry import-order dependence; tests now bind/parse the real schema before
+  replacing model-construction registry calls. No production dataset download
+  or full DPO training was run.
+- `collate_preference` remains the DataLoader adapter. Prompt manifest parsing,
+  mixture sampling, and clean-latent shard I/O operate on collections or storage
+  contracts, so they do not belong to an individual prompt instance.
+- Evaluation `seed_for` is pure checkpoint-independent sample indexing; image
+  and video generation adapters remain shared evaluator/model boundaries.
+  Sampling/runtime identity types already own record parsing/serialization.
+
 ## Remaining review
 
 These are inspection candidates, not approved mechanical transformations.
