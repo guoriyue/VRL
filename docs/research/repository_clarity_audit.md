@@ -152,6 +152,24 @@ Reward runtime and asset review:
 - Further image-QA output parsing/schema helpers and other reward model loaders
   still require review; the prompt extraction does not complete the reward audit.
 
+Checkpoint identity and trajectory review:
+
+- `LocalCheckpointContent.from_path` replaces the external content constructor.
+  Trace sealing/verification and the injectable identity resolver use the class
+  entry. Identity and trace tests: 63 passed, covering relocated trees, symlinks,
+  rejected special files/cycles, mutation detection, and trace content checks.
+- Hash traversal and stat-signature checks remain shared integrity algorithms.
+  Identity metadata helpers remain dataclass/schema adapters; `_IDENTITY_KINDS`
+  is derived from the public Literal, not a second business vocabulary.
+- Removed `_reward_modality_for_task`, a pure pass-through to the already
+  imported `task_modality`. Trajectory/binding tests: 59 passed, 2 skipped.
+- Trajectory builders remain explicit adapters from different family payloads
+  to the neutral trajectory schema. Do not put every regime's tensors into
+  constructors on `TrajectoryBatch` merely to eliminate module functions.
+- Follow-up found in `trajectory/storage.py`: policy parsing and application
+  are external despite an existing `TrajectoryStoragePolicy` owner. Review
+  both raw-tree and trajectory mutation callers together before consolidating.
+
 ## Remaining review
 
 These are inspection candidates, not approved mechanical transformations.
