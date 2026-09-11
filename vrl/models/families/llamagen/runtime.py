@@ -23,6 +23,7 @@ from vrl.models.families.llamagen.config import (
 from vrl.models.families.llamagen.runner import LlamaGenARModelRunner
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.token.build import token_model_config_base
+from vrl.utils.config import require_exact_int
 
 
 def llamagen_config_from_build(build: ModelBuild) -> dict[str, Any]:
@@ -34,9 +35,7 @@ def llamagen_config_from_build(build: ModelBuild) -> dict[str, Any]:
         if key in sampling_config:
             config[key] = sampling_config[key]
 
-    image_token_num = int(
-        model_config.get("image_token_num", LLAMAGEN_IMAGE_TOKEN_NUM),
-    )
+    image_token_num = model_config.get("image_token_num", LLAMAGEN_IMAGE_TOKEN_NUM)
     llamagen_image_grid_side(image_token_num)
     for name, expected, owner in (
         (
@@ -56,9 +55,12 @@ def llamagen_config_from_build(build: ModelBuild) -> dict[str, Any]:
         ),
     ):
         requested = sampling_config.get(name)
-        if requested is not None and int(requested) != expected:
+        if requested is None:
+            continue
+        require_exact_int(requested, path=f"sampling.{name}")
+        if requested != expected:
             raise ValueError(
-                f"sampling.{name}={int(requested)} must equal {owner} ({expected})",
+                f"sampling.{name}={requested} must equal {owner} ({expected})",
             )
     config["image_token_num"] = image_token_num
 

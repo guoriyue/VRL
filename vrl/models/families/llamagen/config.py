@@ -10,6 +10,7 @@ from pydantic import Field, field_validator
 
 from vrl.config.model_schema import ModelSection
 from vrl.models.checkpoint_identity import checkpoint_identity_metadata
+from vrl.utils.config import require_exact_int
 
 # Defaults for the released t2i_XL_stage1_256 checkpoint.
 LLAMAGEN_IMAGE_TOKEN_NUM = 256  # 16 x 16 latent grid per 256 px image
@@ -25,7 +26,7 @@ LLAMAGEN_T5_PATH = "google/flan-t5-xl"
 def llamagen_image_grid_side(image_token_num: int) -> int:
     """Return the square grid side required by LlamaGen's precomputed 2D RoPE."""
 
-    token_num = int(image_token_num)
+    token_num = require_exact_int(image_token_num, path="LlamaGen image_token_num")
     if token_num < 1:
         raise ValueError("LlamaGen image_token_num must be positive")
     side = isqrt(token_num)
@@ -39,7 +40,7 @@ def llamagen_image_grid_side(image_token_num: int) -> int:
 def llamagen_image_size(image_token_num: int, downsample_size: int) -> int:
     """Derive decoded pixels from the fixed GPT token grid and VQ stride."""
 
-    stride = int(downsample_size)
+    stride = require_exact_int(downsample_size, path="LlamaGen downsample_size")
     if stride < 1:
         raise ValueError("LlamaGen downsample_size must be positive")
     return llamagen_image_grid_side(image_token_num) * stride

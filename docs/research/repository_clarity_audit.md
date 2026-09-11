@@ -1846,3 +1846,17 @@ is not a repository-wide completion claim or a mandate to inline short functions
   conversion, potentially hiding fractional overrides. Requires focused caller/
   schema review before changing it; this keep decision is about function shape,
   not proof that every value conversion is correct.
+
+## LlamaGen geometry projection preserves exact dimensions
+
+- Followed the prior projection-review candidate into the shared square-grid and
+  decoded-size helpers. They now require integer token counts/strides rather
+  than truncating. Projection passes model token count unchanged and checks
+  sampling dimension types before comparing them with checkpoint geometry.
+- Keep the shared geometry helpers, architecture constants and dictionary
+  projection interface. Positive/square-grid and mismatch rules remain; no new
+  helper/class or alternate geometry inference was introduced.
+- Validation: 64 LlamaGen and shared token-LoRA tests passed. Nine new cases
+  reject fractional/string/bool geometry through projection and shared helpers.
+  Touched-file Ruff and diff checks passed. Model/config fields elsewhere that
+  are already validated were not mechanically stripped of all conversions.

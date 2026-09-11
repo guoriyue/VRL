@@ -592,3 +592,29 @@ def test_executor_rejects_caption_length_different_from_model_topology() -> None
                 sample_count=1,
             ),
         )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("image_token_num", 256.5),
+        ("image_size", 256.5),
+        ("max_text_length", 120.5),
+        ("image_token_num", "256"),
+        ("max_text_length", True),
+    ],
+)
+def test_config_projection_rejects_coerced_sampling_geometry(field, value):
+    root = parse_config(_cfg())
+    build = get_model_family_entry("llamagen").resolve_model_build(
+        root, device="cpu", precision=PrecisionPolicy.from_section(root.precision)
+    )
+    build.sampling_config[field] = value
+    with pytest.raises(ValueError, match="must be an integer"):
+        llamagen_config_from_build(build)
+
+
+@pytest.mark.parametrize("tokens,stride", [(256.5, 16), ("256", 16), (True, 16), (256, 16.5)])
+def test_geometry_helpers_reject_noninteger_dimensions(tokens, stride):
+    with pytest.raises(ValueError, match="must be an integer"):
+        llamagen_image_size(tokens, stride)
