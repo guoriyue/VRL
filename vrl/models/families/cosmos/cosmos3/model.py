@@ -207,8 +207,8 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             condition_frame_indexes=cond_frames,
         )
 
-        cond_static = _assemble_packed_static(cond_text, cond_vision)
-        uncond_static = _assemble_packed_static(uncond_text, uncond_vision)
+        cond_static = self._assemble_packed_static(cond_text, cond_vision)
+        uncond_static = self._assemble_packed_static(uncond_text, uncond_vision)
 
         return Cosmos3SamplingState(
             latents=latents,
@@ -320,6 +320,30 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             ),
         }
 
+    @staticmethod
+    def _single_sample_input_ids(value: Any, *, name: str) -> list[int]:
+        """Unwrap one ragged replay row at Cosmos3's enforced batch-one boundary."""
+
+        if not isinstance(value, (list, tuple)) or len(value) != 1:
+            raise ValueError(f"Cosmos3 replay {name} must contain exactly one sample row")
+        row = value[0]
+        if not isinstance(row, (list, tuple)):
+            raise TypeError(f"Cosmos3 replay {name} row must be a token-id sequence")
+        return [int(token_id) for token_id in row]
+
+    @staticmethod
+    def _assemble_packed_static(text: dict[str, Any], vision: dict[str, Any]) -> dict[str, Any]:
+        """Merge text+vision segments into the transformer-facing packed_static, MINUS
+        the step-varying ``vision_tokens`` / ``vision_timesteps`` (spliced per step).
+        Mirrors the inline assembly in ``Cosmos3OmniPipeline.__call__``."""
+        position_ids = torch.cat([text["text_mrope_ids"], vision["vision_mrope_ids"]], dim=1)
+        return {
+            **text,
+            **vision,
+            "position_ids": position_ids,
+            "sequence_length": text["und_len"] + vision["num_vision_tokens"],
+        }
+
     def restore_eval_state(
         self,
         replay_tensors: dict[str, Any],
@@ -332,11 +356,11 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
         device = self.device
         fps = int(batch_context.get("fps", _DEFAULT_FPS))
         vision_condition_mask = replay_tensors["vision_condition_mask"]
-        cond_input_ids = _single_sample_input_ids(
+        cond_input_ids = self._single_sample_input_ids(
             replay_tensors["cond_input_ids"],
             name="cond_input_ids",
         )
-        uncond_input_ids = _single_sample_input_ids(
+        uncond_input_ids = self._single_sample_input_ids(
             replay_tensors["uncond_input_ids"],
             name="uncond_input_ids",
         )
@@ -368,8 +392,8 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             latents=latents,
             timesteps=pipe.scheduler.timesteps,
             scheduler=pipe.scheduler,
-            cond_packed_static=_assemble_packed_static(cond_text, cond_vision),
-            uncond_packed_static=_assemble_packed_static(uncond_text, uncond_vision),
+            cond_packed_static=self._assemble_packed_static(cond_text, cond_vision),
+            uncond_packed_static=self._assemble_packed_static(uncond_text, uncond_vision),
             vision_condition_mask=vision_condition_mask,
             num_noisy_vision_tokens=int(cond_vision["num_noisy_vision_tokens"]),
             guidance_scale=float(batch_context["guidance_scale"]),
@@ -381,17 +405,6 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             cond_input_ids=cond_input_ids,
             uncond_input_ids=uncond_input_ids,
         )
-
-
-def _single_sample_input_ids(value: Any, *, name: str) -> list[int]:
-    """Unwrap one ragged replay row at Cosmos3's enforced batch-one boundary."""
-
-    if not isinstance(value, (list, tuple)) or len(value) != 1:
-        raise ValueError(f"Cosmos3 replay {name} must contain exactly one sample row")
-    row = value[0]
-    if not isinstance(row, (list, tuple)):
-        raise TypeError(f"Cosmos3 replay {name} row must be a token-id sequence")
-    return [int(token_id) for token_id in row]
 
 
 class Cosmos3ReplayModel(ReplayRolloutStubs, Cosmos3Model):
@@ -410,19 +423,6 @@ class Cosmos3ReplayModel(ReplayRolloutStubs, Cosmos3Model):
     @property
     def scheduler(self) -> Any:
         return self._scheduler
-
-
-def _assemble_packed_static(text: dict[str, Any], vision: dict[str, Any]) -> dict[str, Any]:
-    """Merge text+vision segments into the transformer-facing packed_static, MINUS
-    the step-varying ``vision_tokens`` / ``vision_timesteps`` (spliced per step).
-    Mirrors the inline assembly in ``Cosmos3OmniPipeline.__call__``."""
-    position_ids = torch.cat([text["text_mrope_ids"], vision["vision_mrope_ids"]], dim=1)
-    return {
-        **text,
-        **vision,
-        "position_ids": position_ids,
-        "sequence_length": text["und_len"] + vision["num_vision_tokens"],
-    }
 
 
 __all__ = ["Cosmos3Model", "Cosmos3ReplayModel", "Cosmos3SamplingState"]

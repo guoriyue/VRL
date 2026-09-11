@@ -4004,3 +4004,16 @@ this combined regression is compatibility evidence, not architectural completion
 - All 22 GLM-Image tests passed, with two dependency warnings. Touched-file Ruff
   checks pass. No full pretrained image-generation benchmark is claimed, and
   the repository-wide clarity audit remains incomplete.
+
+## Cosmos3 owns packed input assembly and replay row extraction
+
+- Move `_single_sample_input_ids` and `_assemble_packed_static` onto
+  `Cosmos3Model`. Their six production calls all belong to sampling preparation
+  or replay restoration on that model; the replay subclass inherits the same
+  behavior. Remove the module-level definitions without compatibility wrappers.
+- Retain separate named methods for the batch-one replay boundary and static
+  text/vision assembly. No generic utility class, layout schema change, token
+  coercion change or default-value change is included in this ownership slice.
+- Five Cosmos3 family tests and 87 shared gatherer/family-MRO tests passed, with
+  dependency warnings. Touched-file Ruff checks pass. These checks do not prove
+  full pretrained GPU training parity. The repository-wide audit continues.
