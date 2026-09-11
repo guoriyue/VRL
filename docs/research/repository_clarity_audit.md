@@ -4868,3 +4868,20 @@ this combined regression is compatibility evidence, not architectural completion
 - Existing trajectory, online reward/update-flow and deferred replay suites:
   102 passed. Touched-file Ruff checks and git diff --check pass. No old helper
   references remain in production or tests. The repository audit is ongoing.
+
+## Replay reference parsing stays with its sole consumer
+
+- Inline reference qualification and splitting in replay_tensor_dict, removing
+  _canonical_tensor_ref and the module-level _split_ref. The latter accepted a
+  kind argument that was always "tensor". Reuse the qualified reference in axis
+  slicing instead of reconstructing it after parsing.
+- Keep tensor_ref as the shared reference-format boundary used by construction
+  and validation. Keep axis slicing and cross-segment rejection unchanged;
+  they express independent replay constraints. No new reference class or file
+  is needed for this local string operation.
+- Preserve local and qualified references, first-dot splitting, malformed-name
+  errors and exception chaining. Schema format changes and merging validation
+  with runtime slicing are non-goals; those boundaries remain useful.
+- Existing trajectory and rollout replay suites: 140 passed. Touched-file Ruff
+  checks and git diff --check pass. Neither removed helper has remaining
+  production or trajectory-test references. The wider audit remains ongoing.

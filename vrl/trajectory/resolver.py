@@ -111,10 +111,12 @@ class TrajectoryResolver:
             )
         out: dict[str, Any] = {}
         for ref in replay.tensor_refs:
-            segment_ref, tensor_name = _split_ref(
-                self._canonical_tensor_ref(name, ref),
-                "tensor",
-            )
+            canonical_ref = ref if "." in ref else tensor_ref(name, ref)
+            segment_ref, tensor_name = canonical_ref.split(".", 1)
+            if not segment_ref or not tensor_name:
+                raise TrajectoryResolverError(
+                    f"tensor ref {canonical_ref!r} must be 'segment.name'",
+                )
             if segment_ref != name:
                 raise TrajectoryResolverError(
                     f"replay input {name}.{replay_input_name} crosses segment boundary "
@@ -125,17 +127,12 @@ class TrajectoryResolver:
             if axis is not None and axis_index is not None and axis in tensor.axes:
                 value = self._slice_axis(
                     value,
-                    tensor_ref(segment_ref, tensor_name),
+                    canonical_ref,
                     tensor.axes.index(axis),
                     axis_index,
                 )
             out[tensor_name] = move_value_to_device(value, device)
         return out
-
-    def _canonical_tensor_ref(self, segment_name: str, ref: str) -> str:
-        if "." in ref:
-            return ref
-        return tensor_ref(segment_name, ref)
 
     @classmethod
     def _slice_axis(cls, value: Any, ref: str, axis_dim: int, axis_index: int) -> Any:
@@ -169,15 +166,6 @@ class TrajectoryResolver:
             return value[tuple(key)]
         except Exception as exc:
             raise TrajectoryResolverError(f"failed to slice tensor {ref!r}: {exc}") from exc
-
-
-def _split_ref(ref: str, kind: str) -> tuple[str, str]:
-    if "." not in ref:
-        raise TrajectoryResolverError(f"{kind} ref {ref!r} must be 'segment.name'")
-    segment_name, name = ref.split(".", 1)
-    if not segment_name or not name:
-        raise TrajectoryResolverError(f"{kind} ref {ref!r} must be 'segment.name'")
-    return segment_name, name
 
 
 __all__ = [
