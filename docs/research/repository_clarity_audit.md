@@ -2441,3 +2441,20 @@ this combined regression is compatibility evidence, not architectural completion
   two optional tests skipped. A two-expert regression leaves both registered
   modules untouched by this hook while moving the unregistered VAE. Touched-file
   Ruff/diff checks passed. Full repository review remains active.
+
+## Pipeline load dtype audit identifies premature precision reduction
+
+- Inspected diffusers_pipeline_dtypes and both production consumers: shared
+  DiffusersPipelineModelBase.from_build and MiniMaxH3Model.from_build. Keep the
+  helper as a cross-family load projection, not a single-owner constructor.
+- Confirmed an unresolved precision issue: model_dtype != float32 emits one
+  scalar torch_dtype for the whole pipeline. Subsequent VAE.to(float32) cannot
+  recover precision discarded while loading FP32 source weights into BF16/FP16.
+  A prompt encoder override differing from model_dtype is also applied only
+  after that initial scalar load on this branch.
+- A coherent fix must project component-owned load dtypes, covering dual
+  transformers and MiniMax audio_vae as well as the ordinary VAE. Adding only
+  a hardcoded vae exception would leave the other component owners incomplete.
+  Existing model dtype/provenance propagation and Hub revision kwargs must stay.
+- No runtime change or new test run in this inspection. This is a concrete open
+  issue, not a claim of preserved FP32 source precision. Full review is active.
