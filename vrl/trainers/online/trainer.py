@@ -404,7 +404,10 @@ class _ReplaySampleBatch:
         advantages: torch.Tensor,
         samples_per_replay_batch: int,
     ) -> list[_ReplaySampleBatch]:
-        """Split one prompt group for replay without changing full-group loss math."""
+        """Split a prompt group using the validated plan; zero keeps it whole.
+
+        Slice weights preserve the original full-group loss contribution.
+        """
 
         batch_size = int(batch.rewards.shape[0])
         if batch_size != int(advantages.shape[0]):
@@ -414,7 +417,7 @@ class _ReplaySampleBatch:
             )
         if batch_size <= 0:
             return []
-        slice_size = int(samples_per_replay_batch)
+        slice_size = samples_per_replay_batch
         if slice_size <= 0 or slice_size >= batch_size:
             return [cls(batch=batch, advantages=advantages, loss_weight=1.0)]
 

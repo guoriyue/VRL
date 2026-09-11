@@ -4307,3 +4307,16 @@ this combined regression is compatibility evidence, not architectural completion
   dummy-slot behavior. No alias, new type hierarchy or scheduling change.
 - The 30 advantage/metrics, distributed skip-backward and diagnostic tests passed;
   touched-file Ruff checks pass. Repository-wide completion remains unproven.
+
+## Replay slicing consumes the validated batch-plan value
+
+- Remove the redundant int conversion of samples_per_replay_batch in the private
+  replay-slice constructor. Every production caller passes the OnlineBatchPlan
+  field, whose constructor already enforces a non-negative integer. Document
+  that zero preserves the whole group; no duplicate validator is introduced.
+- Preserve selection and loss-weight calculations for valid plans. Direct private
+  callers must honor the annotated integer contract rather than rely on coercion.
+  Keep OnlineBatchPlan as the validation owner and distributed balancing separate.
+- Advantage/metrics, reward update flow and trajectory granularity tests passed:
+  27 tests, including existing zero-width whole-group paths. Touched-file Ruff
+  checks pass. The repository-wide audit remains incomplete.
