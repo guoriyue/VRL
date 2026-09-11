@@ -5270,3 +5270,17 @@ this combined regression is compatibility evidence, not architectural completion
   covered for both CPU/CUDA-labelled synthetic reports. GEMM and Nsight report
   tests: 34 passed. Touched-file Ruff and git diff --check pass. Synthetic CUDA
   labels are not evidence of GPU execution. Wider repository audit remains open.
+
+## Projection profiling validates execution counts before warmup
+
+- Reject noninteger/negative warmup and noninteger/nonpositive active counts
+  before any forward executes. Replace max-based clamping with direct ranges
+  after shared require_exact_int validation. Invalid active values no longer
+  execute warmup before failing or silently become one measured iteration.
+- Keep the profiler function and instrumentation context as model execution
+  boundaries. No configuration class or new helper is introduced; valid default
+  counts, measurement attribution and device synchronization stay unchanged.
+- Seven invalid-count regressions failed before the fix. A real tiny CPU Linear
+  profile verifies zero warmup and exactly two active calls. GEMM/Nsight suites:
+  42 passed. Touched-file Ruff and git diff --check pass. This does not establish
+  GPU profiling accuracy or complete the wider repository audit.
