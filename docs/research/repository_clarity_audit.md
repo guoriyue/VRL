@@ -1860,3 +1860,24 @@ is not a repository-wide completion claim or a mandate to inline short functions
   reject fractional/string/bool geometry through projection and shared helpers.
   Touched-file Ruff and diff checks passed. Model/config fields elsewhere that
   are already validated were not mechanically stripped of all conversions.
+
+## Combined regression after configuration and ownership cleanup
+
+At 69db06136, ran together:
+
+`tests/rollouts tests/trainers tests/generation/execution tests/generation/bindings
+ tests/generation/steps tests/config tests/utils tests/trajectory`
+
+Result: 1703 passed, nine skipped, 16 warnings in 63.96 seconds. Skips include
+unavailable bitsandbytes, opt-in distributed FSDP tests, and two vLLM internal
+paged-attention imports unavailable in the installed environment. Do not count
+those paths as verified by this run. Earlier isolated paged-attention results do
+not override these current combined-run limitations.
+
+The run checks compatibility across recently changed config conversion, generation
+geometry/metrics, continuous scheduling, and common utility boundaries. It is not
+proof that all repository helpers or architecture ownership have been reviewed.
+Revisited scripts/common/factory.py alongside AlgorithmConfigContract: the existing
+factory structural review above remains relevant. Do not turn its dispatch branches
+into config facts merely to remove a local set; changing dispatch ownership requires
+tracing algorithm construction and evaluator selection together.
