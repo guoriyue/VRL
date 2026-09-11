@@ -4332,3 +4332,15 @@ this combined regression is compatibility evidence, not architectural completion
   Update the adjacent next_prompts docstring to use next-batch prefetch wording.
 - Advantage/metrics and reward update flow tests passed: 18 tests. Touched-file
   Ruff checks pass. The repository-wide clarity audit remains incomplete.
+
+## Online trainer owns GradScaler construction
+
+- Move `_create_grad_scaler` onto `OnlineTrainer` as a static factory, next to
+  initialization, and update the precision-matrix test to call it through the
+  existing public trainer import. Keep explicit device/model inputs for testing.
+- Preserve CUDA-only creation and the FP16 autocast/native-gradient criteria.
+  Keep master-weight detection shared between optimizer creation and restore;
+  no precision policy or new wrapper class is introduced.
+- GradScaler and state-restore suites passed: 32 tests. Touched-file Ruff checks
+  pass after removing a duplicate trainer import introduced during the move.
+  The repository-wide clarity audit remains incomplete.

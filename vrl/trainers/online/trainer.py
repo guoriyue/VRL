@@ -166,28 +166,6 @@ class PhaseTimer:
 # ---------------------------------------------------------------------------
 
 
-def _create_grad_scaler(
-    device: torch.device,
-    model: Any,
-) -> torch.amp.GradScaler | None:
-    """Build the CUDA scaler for either FP16 compute or native FP16 grads."""
-
-    if device.type != "cuda":
-        return None
-    precision = model_precision(model)
-    uses_fp16_autocast = precision.outer_autocast and precision.dtype == "fp16"
-    has_native_fp16_gradients = bool(
-        model is not None
-        and any(
-            parameter.requires_grad and parameter.dtype == torch.float16
-            for parameter in model.parameters()
-        )
-    )
-    if not (uses_fp16_autocast or has_native_fp16_gradients):
-        return None
-    return torch.amp.GradScaler("cuda")
-
-
 def _requires_fp32_master_weights(model: Any) -> bool:
     """Return whether the optimizer must preserve sub-ULP update residuals."""
 
@@ -582,6 +560,28 @@ class OnlineTrainer:
     Pipeline: collect -> evaluate -> advantage -> loss -> backward -> step.
     """
 
+    @staticmethod
+    def _create_grad_scaler(
+        device: torch.device,
+        model: Any,
+    ) -> torch.amp.GradScaler | None:
+        """Build the CUDA scaler for either FP16 compute or native FP16 grads."""
+
+        if device.type != "cuda":
+            return None
+        precision = model_precision(model)
+        uses_fp16_autocast = precision.outer_autocast and precision.dtype == "fp16"
+        has_native_fp16_gradients = bool(
+            model is not None
+            and any(
+                parameter.requires_grad and parameter.dtype == torch.float16
+                for parameter in model.parameters()
+            )
+        )
+        if not (uses_fp16_autocast or has_native_fp16_gradients):
+            return None
+        return torch.amp.GradScaler("cuda")
+
     def __init__(
         self,
         algorithm: Algorithm,
@@ -657,7 +657,7 @@ class OnlineTrainer:
             LoggingStatsSink(logger),
             JsonlStatsSink(f"{self.config.output_dir}/rollout_stats.jsonl"),
         )
-        self._grad_scaler = _create_grad_scaler(
+        self._grad_scaler = self._create_grad_scaler(
             self.device,
             self.model,
         )

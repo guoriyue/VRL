@@ -29,7 +29,6 @@ from vrl.rollouts.evaluators.base import Evaluator
 from vrl.trainers.core.types import EMAConfig, OptimConfig
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-from vrl.trainers.online.trainer import _create_grad_scaler
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer
 from vrl.trainers.strategy import SingleProcessStrategy
 
@@ -70,7 +69,7 @@ def test_create_grad_scaler_matrix(
     sentinel = object()
     monkeypatch.setattr(torch.amp, "GradScaler", lambda _device: sentinel)
 
-    scaler = _create_grad_scaler(torch.device(device), model=model)
+    scaler = OnlineTrainer._create_grad_scaler(torch.device(device), model=model)
 
     assert (scaler is sentinel) is expected
     assert (scaler is None) is (not expected)
