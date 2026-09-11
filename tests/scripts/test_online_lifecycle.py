@@ -420,7 +420,7 @@ def _install_common_fakes(
             resume=SimpleNamespace(checkpoint_path=None, strict=True),
         ),
     )
-    monkeypatch.setattr(online, "load_training_checkpoint_for_resume", lambda resume: None)
+    monkeypatch.setattr(online.TrainingCheckpoint, "load_for_resume", lambda resume: None)
     model_identity = {"schema": "test"}
 
     def _resolve_model_identity(build: Any) -> dict[str, str]:
@@ -572,8 +572,8 @@ async def test_checkpoint_identity_preflight_runs_before_prompt_or_model_build(
     _install_common_fakes(monkeypatch, tmp_path, state)
     checkpoint = object()
     monkeypatch.setattr(
-        online,
-        "load_training_checkpoint_for_resume",
+        online.TrainingCheckpoint,
+        "load_for_resume",
         lambda _resume: checkpoint,
     )
 
@@ -606,8 +606,8 @@ async def test_checkpoint_identity_mismatch_stops_before_prompt_model_or_ray(
     _install_common_fakes(monkeypatch, tmp_path, state)
     checkpoint = object()
     monkeypatch.setattr(
-        online,
-        "load_training_checkpoint_for_resume",
+        online.TrainingCheckpoint,
+        "load_for_resume",
         lambda _resume: checkpoint,
     )
 
@@ -750,7 +750,7 @@ async def test_resume_releases_full_checkpoint_payload_before_training(
         rng_state={},
     )
     _install_common_fakes(monkeypatch, tmp_path, state)
-    monkeypatch.setattr(online, "load_training_checkpoint_for_resume", lambda resume: checkpoint)
+    monkeypatch.setattr(online.TrainingCheckpoint, "load_for_resume", lambda resume: checkpoint)
     monkeypatch.setattr(online, "restore_training_checkpoint", lambda *args, **kwargs: None)
     monkeypatch.setattr(online, "restore_rng_state", lambda *args, **kwargs: None)
     collect_calls: list[bool] = []

@@ -90,8 +90,8 @@ def test_offline_dpo_rejects_non_t2v_wan_family_before_runtime_side_effects(
         raise AssertionError("checkpoint loading must not run before the Wan DPO family guard")
 
     monkeypatch.setattr(
-        checkpointing,
-        "load_training_checkpoint_for_resume",
+        checkpointing.TrainingCheckpoint,
+        "load_for_resume",
         unexpected_checkpoint,
     )
 

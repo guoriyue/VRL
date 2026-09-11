@@ -146,9 +146,9 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from vrl.ray.resources import format_distributed_resource_plan
     from vrl.trainers.activation_checkpointing import enable_transformer_gradient_checkpointing
     from vrl.trainers.checkpointing import (
+        TrainingCheckpoint,
         build_adapter_exports,
         capture_rng_state,
-        load_training_checkpoint_for_resume,
         restore_rng_state,
         restore_training_checkpoint,
         save_resolved_config,
@@ -178,7 +178,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     assert built.root.actor is not None  # the builder required actor.train_batch_size
     train_batch_size = int(built.root.actor.train_batch_size)
     resume_config = built.resume
-    resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
+    resume_checkpoint = TrainingCheckpoint.load_for_resume(resume_config)
     logger.info(format_distributed_resource_plan(resources))
     weight_dtype = resolve_torch_dtype(precision.training.dtype)
 

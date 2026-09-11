@@ -102,6 +102,14 @@ class TrainingCheckpoint:
     meta: dict[str, Any]
 
     @classmethod
+    def load_for_resume(cls, resume: TrainingResumeConfig) -> TrainingCheckpoint | None:
+        """Load the checkpoint selected by one resolved resume policy."""
+
+        if resume.checkpoint_path is None:
+            return None
+        return cls.load(resume.checkpoint_path)
+
+    @classmethod
     def load(cls, path: str | Path) -> TrainingCheckpoint:
         """Load ``checkpoint.pt`` from a checkpoint directory or direct file path."""
 
@@ -800,16 +808,6 @@ def _publish_checkpoint_dir(staging: Path, final_path: Path) -> None:
         os.fsync(directory_fd)
     finally:
         os.close(directory_fd)
-
-
-def load_training_checkpoint_for_resume(
-    resume: TrainingResumeConfig,
-) -> TrainingCheckpoint | None:
-    """Load the checkpoint selected by one resolved resume policy."""
-
-    if resume.checkpoint_path is None:
-        return None
-    return TrainingCheckpoint.load(resume.checkpoint_path)
 
 
 def prepare_model_config_for_training_resume(
@@ -1723,7 +1721,6 @@ __all__ = [
     "load_checkpoint_state",
     "load_full_checkpoint_state",
     "load_resolved_run_config",
-    "load_training_checkpoint_for_resume",
     "prepare_model_config_for_training_resume",
     "read_checkpoint_meta",
     "restore_model_checkpoint",

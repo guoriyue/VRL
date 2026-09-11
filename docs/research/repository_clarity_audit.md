@@ -2953,3 +2953,16 @@ this combined regression is compatibility evidence, not architectural completion
   empty column are rejected before health evaluation, including a NaN followed
   by a healthy-looking duplicate value. Touched-file Ruff/diff checks passed.
   Full repository review remains active.
+
+## Resume checkpoint loading belongs to TrainingCheckpoint
+
+- Move load_training_checkpoint_for_resume into TrainingCheckpoint.load_for_resume,
+  reusing cls.load when the resolved policy selects a checkpoint and preserving
+  None for a fresh run. Remove the old free-function export and update both online
+  and Wan DPO recipe entry points, their test seams and the run-module ownership note.
+- Keep checkpoint I/O in the checkpoint module rather than config resolution.
+  Keep cross-type resume/model guards and shared checkpoint discovery separate;
+  they do more than construct a single record. No new class or forwarding layer.
+- Validation: 147 checkpointing, online lifecycle, Wan DPO identity and DPO config
+  tests passed. Repository search finds no old callable references. Touched-file
+  Ruff/diff checks passed. Full repository review remains active.

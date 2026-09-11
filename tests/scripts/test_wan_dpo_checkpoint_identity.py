@@ -33,8 +33,8 @@ def _install_pre_model_fakes(
     )
     monkeypatch.setattr(ray_resources, "format_distributed_resource_plan", lambda _plan: "")
     monkeypatch.setattr(
-        checkpointing,
-        "load_training_checkpoint_for_resume",
+        checkpointing.TrainingCheckpoint,
+        "load_for_resume",
         lambda _resume: checkpoint,
     )
 

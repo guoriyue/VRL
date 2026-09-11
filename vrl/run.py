@@ -29,7 +29,7 @@ importing the bare names. Attribute lookup happens at call time, so tests that
 stub a seam at its owning module (the established pattern in the recipe test
 suites) reach the composer without patching this module too.
 
-Deliberately NOT absorbed here: ``load_training_checkpoint_for_resume`` does
+Deliberately NOT absorbed here: ``TrainingCheckpoint.load_for_resume`` does
 checkpoint file I/O, not config resolution -- it stays in the recipes.
 """
 

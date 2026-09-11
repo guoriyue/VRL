@@ -45,9 +45,9 @@ from vrl.trainers.activation_checkpointing import (
 )
 from vrl.trainers.checkpointing import (
     AdapterExport,
+    TrainingCheckpoint,
     build_adapter_exports,
     capture_rng_state,
-    load_training_checkpoint_for_resume,
     restore_rng_state,
     restore_training_checkpoint,
     save_resolved_config,
@@ -738,7 +738,7 @@ async def run_online_recipe(
     # checkpoint-identity preflight below consumes it directly; the epoch/step/dir
     # fields are derived after the preflight, next to the trainer that reads them.
     resume_config = built.resume
-    resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
+    resume_checkpoint = TrainingCheckpoint.load_for_resume(resume_config)
     validate_rollout_schedule_topology(trainer_config.rollout_orchestration, resources)
     validate_reward_memory_parking(resources=resources, built=built)
     family_entry.validate_gpus_per_engine(resources.rollout_gpus_per_engine)
