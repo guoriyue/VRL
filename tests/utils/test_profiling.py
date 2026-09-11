@@ -15,8 +15,8 @@ import torch
 
 from vrl.scripts.perf.profile_smoke import run_smoke
 from vrl.utils.profiling import (
+    ResolvedActivities,
     TorchProfilerConfig,
-    _resolve_activities,
     _safe_label,
     _safe_worker_name,
     capture_torch_trace,
@@ -125,12 +125,12 @@ def test_safe_worker_name_includes_step() -> None:
 def test_resolve_unknown_activity_fails_fast() -> None:
     cfg = TorchProfilerConfig(activities=("cpu", "gpu"))
     with pytest.raises(ValueError, match="Unknown torch profiler activities"):
-        _resolve_activities(cfg, supported={CPU, CUDA})
+        ResolvedActivities.from_config(cfg, supported={CPU, CUDA})
 
 
 def test_resolve_cpu_only_reports_missing_cuda() -> None:
     cfg = TorchProfilerConfig(activities=("cpu", "cuda"))
-    resolved = _resolve_activities(cfg, supported={CPU})
+    resolved = ResolvedActivities.from_config(cfg, supported={CPU})
     assert resolved.requested == ("cpu", "cuda")
     assert resolved.effective == ("cpu",)
     assert resolved.missing == ("cuda",)
@@ -139,14 +139,14 @@ def test_resolve_cpu_only_reports_missing_cuda() -> None:
 
 def test_resolve_all_supported() -> None:
     cfg = TorchProfilerConfig(activities=("cpu", "cuda"))
-    resolved = _resolve_activities(cfg, supported={CPU, CUDA})
+    resolved = ResolvedActivities.from_config(cfg, supported={CPU, CUDA})
     assert resolved.missing == ()
     assert resolved.effective == ("cpu", "cuda")
 
 
 def test_resolve_deduplicates_requested() -> None:
     cfg = TorchProfilerConfig(activities=("cpu", "cpu", "cuda"))
-    resolved = _resolve_activities(cfg, supported={CPU, CUDA})
+    resolved = ResolvedActivities.from_config(cfg, supported={CPU, CUDA})
     assert resolved.requested == ("cpu", "cuda")
 
 
@@ -212,3 +212,18 @@ def test_manifest_is_json_with_required_fields(tmp_path: Path) -> None:
         "hostname",
     }
     assert required <= set(manifest)
+
+
+@pytest.mark.parametrize(
+    ("enabled", "skip_first", "max_steps", "expected"),
+    [
+        (False, 0, 1, []),
+        (True, 0, 1, [0]),
+        (True, 2, 2, [2, 3]),
+        (True, 2, 0, [2, 3, 4]),
+        (True, 2, -1, [2, 3, 4]),
+    ],
+)
+def test_config_selects_capture_window(enabled, skip_first, max_steps, expected) -> None:
+    config = TorchProfilerConfig(enabled=enabled, skip_first=skip_first, max_steps=max_steps)
+    assert [step for step in range(5) if config.should_capture(step)] == expected

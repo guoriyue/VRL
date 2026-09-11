@@ -51,7 +51,7 @@ class TorchProfilerConfig:
     with_flops: bool = field(default=False)
     # skip_first/max_steps select WHICH outer step indices get a trace; each
     # qualifying step opens its own single-step profiler (not a torch schedule
-    # window). See _should_profile_step and capture_torch_trace.
+    # window). See should_capture and capture_torch_trace.
     skip_first: int = field(default=0)
     max_steps: int = field(default=1)
 
@@ -65,6 +65,15 @@ class TorchProfilerConfig:
         self.with_flops = bool(self.with_flops)
         self.skip_first = max(0, int(self.skip_first))
         self.max_steps = int(self.max_steps)
+
+    def should_capture(self, step: int) -> bool:
+        if not self.enabled:
+            return False
+        skip_first = max(0, int(self.skip_first))
+        if step < skip_first:
+            return False
+        max_steps = int(self.max_steps)
+        return max_steps <= 0 or step < skip_first + max_steps
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +91,53 @@ class ResolvedActivities:
     effective: tuple[str, ...]
     missing: tuple[str, ...]
     torch_activities: tuple[Any, ...]
+
+    @classmethod
+    def from_config(
+        cls,
+        config: TorchProfilerConfig,
+        *,
+        supported: Any = None,
+    ) -> ResolvedActivities:
+        """Resolve requested activities against this machine's real capability.
+
+        Unknown names fail fast (a typo'd activity is a config bug, not something to
+        silently drop). ``supported`` defaults to ``supported_activities()`` and is
+        injectable so CPU-only behaviour can be unit-tested on a CUDA box.
+        """
+
+        import torch
+
+        by_name = _activity_enum_by_name()
+        requested_names = tuple(dict.fromkeys(str(a).lower() for a in config.activities))
+
+        unknown = [name for name in requested_names if name not in by_name]
+        if unknown:
+            raise ValueError(
+                f"Unknown torch profiler activities {unknown}; valid names are {sorted(by_name)}",
+            )
+
+        if supported is None:
+            supported = torch.profiler.supported_activities()
+        supported_enums = set(supported)
+
+        effective: list[str] = []
+        missing: list[str] = []
+        torch_activities: list[Any] = []
+        for name in requested_names:
+            member = by_name[name]
+            if member in supported_enums:
+                effective.append(name)
+                torch_activities.append(member)
+            else:
+                missing.append(name)
+
+        return cls(
+            requested=requested_names,
+            effective=tuple(effective),
+            missing=tuple(missing),
+            torch_activities=tuple(torch_activities),
+        )
 
 
 def nvtx_enabled() -> bool:
@@ -146,17 +202,17 @@ def capture_torch_trace(
     """Capture one step into a TensorBoard trace + summary + manifest.
 
     Single-step semantics: when ``step`` qualifies (see
-    :func:`_should_profile_step`) this opens a fresh profiler, captures exactly
+    :meth:`TorchProfilerConfig.should_capture`) this opens a fresh profiler, captures exactly
     the wrapped block, and exports. Steps that do not qualify run untouched.
     """
 
-    if not _should_profile_step(config, step):
+    if not config.should_capture(step):
         yield
         return
 
     import torch
 
-    resolved = _resolve_activities(config)
+    resolved = ResolvedActivities.from_config(config)
     if resolved.missing:
         raise RuntimeError(
             "Torch profiler requested unsupported activities "
@@ -219,16 +275,6 @@ def capture_torch_trace(
     logger.info("Finished torch profiler for step=%d", step)
 
 
-def _should_profile_step(config: TorchProfilerConfig, step: int) -> bool:
-    if not config.enabled:
-        return False
-    skip_first = max(0, int(config.skip_first))
-    if step < skip_first:
-        return False
-    max_steps = int(config.max_steps)
-    return max_steps <= 0 or step < skip_first + max_steps
-
-
 def _activity_enum_by_name() -> dict[str, Any]:
     """Map activity name -> ``ProfilerActivity``, derived from the enum itself.
 
@@ -243,52 +289,6 @@ def _activity_enum_by_name() -> dict[str, Any]:
         name.lower(): member
         for name, member in torch.profiler.ProfilerActivity.__members__.items()
     }
-
-
-def _resolve_activities(
-    config: TorchProfilerConfig,
-    *,
-    supported: Any = None,
-) -> ResolvedActivities:
-    """Resolve requested activities against this machine's real capability.
-
-    Unknown names fail fast (a typo'd activity is a config bug, not something to
-    silently drop). ``supported`` defaults to ``supported_activities()`` and is
-    injectable so CPU-only behaviour can be unit-tested on a CUDA box.
-    """
-
-    import torch
-
-    by_name = _activity_enum_by_name()
-    requested_names = tuple(dict.fromkeys(str(a).lower() for a in config.activities))
-
-    unknown = [name for name in requested_names if name not in by_name]
-    if unknown:
-        raise ValueError(
-            f"Unknown torch profiler activities {unknown}; valid names are {sorted(by_name)}",
-        )
-
-    if supported is None:
-        supported = torch.profiler.supported_activities()
-    supported_enums = set(supported)
-
-    effective: list[str] = []
-    missing: list[str] = []
-    torch_activities: list[Any] = []
-    for name in requested_names:
-        member = by_name[name]
-        if member in supported_enums:
-            effective.append(name)
-            torch_activities.append(member)
-        else:
-            missing.append(name)
-
-    return ResolvedActivities(
-        requested=requested_names,
-        effective=tuple(effective),
-        missing=tuple(missing),
-        torch_activities=tuple(torch_activities),
-    )
 
 
 def _trace_dir(config: TorchProfilerConfig, output_dir: str, *, trace_subdir: str) -> Path:
