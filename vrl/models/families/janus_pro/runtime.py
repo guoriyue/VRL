@@ -321,7 +321,7 @@ class JanusProR1BatchExecutor(JanusProBatchExecutor):
             **kwargs: Any,
         ) -> tuple[torch.Tensor, torch.Tensor]:
             return TokenAutoregressiveLoop(
-                runner=self._ar_runner(request),
+                runner=self._build_ar_runner(request),
                 scheduler_batch_size=scheduler_batch_size,
                 init_args=(cond_embeds, uncond_embeds, cond_mask, uncond_mask),
                 init_kwargs=kwargs,

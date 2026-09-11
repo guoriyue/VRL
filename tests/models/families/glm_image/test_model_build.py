@@ -116,7 +116,7 @@ def test_executor_rejects_explicit_attention_backend() -> None:
         sampling={"attention_backend": "vllm_paged"},
     )
     with pytest.raises(ValueError, match="attention_backend"):
-        executor._ar_runner(request)
+        executor._build_ar_runner(request)
 
     request_native = GenerationRequest(
         request_id="req",
@@ -126,7 +126,7 @@ def test_executor_rejects_explicit_attention_backend() -> None:
         samples_per_prompt=1,
         sampling={},
     )
-    runner = executor._ar_runner(request_native)
+    runner = executor._build_ar_runner(request_native)
     assert isinstance(runner, GlmImageTokenRunner)
 
 

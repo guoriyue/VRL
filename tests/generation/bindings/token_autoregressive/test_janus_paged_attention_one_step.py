@@ -215,7 +215,7 @@ def test_janus_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> None
         }
     )
 
-    runner = JanusProBatchExecutor(model)._ar_runner(request)
+    runner = JanusProBatchExecutor(model)._build_ar_runner(request)
 
     assert isinstance(runner, JanusProARModelRunner)
     assert runner.attention_backend is backend

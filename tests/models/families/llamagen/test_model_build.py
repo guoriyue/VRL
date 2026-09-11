@@ -377,7 +377,7 @@ def test_executor_rejects_shared_attention_backend_selection() -> None:
         sampling={"attention_backend": "vllm_paged"},
     )
     with pytest.raises(ValueError, match="attention_backend"):
-        LlamaGenBatchExecutor(model=_executor_model())._ar_runner(request)
+        LlamaGenBatchExecutor(model=_executor_model())._build_ar_runner(request)
 
 
 @pytest.mark.parametrize(

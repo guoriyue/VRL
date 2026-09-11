@@ -116,7 +116,7 @@ def test_nextstep_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> N
         },
     )
 
-    runner = NextStep1BatchExecutor(model)._ar_runner(request)
+    runner = NextStep1BatchExecutor(model)._build_ar_runner(request)
 
     assert isinstance(runner, NextStep1ARModelRunner)
     assert runner.attention_backend is backend

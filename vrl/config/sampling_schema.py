@@ -135,7 +135,7 @@ class SharedAttentionARSamplingSection(TextEncodedARSamplingSection):
     """AR sampling for families using the shared selectable attention adapter."""
 
     attention_backend: Literal["vllm_paged", "torch_native"] | None = None
-    # vllm_paged knobs; readers: token_autoregressive/executor.py _ar_runner.
+    # vllm_paged knobs; readers: token_autoregressive/executor.py _build_ar_runner.
     ar_paged_block_size: StrictInt | None = None
     ar_paged_cache_dtype: str | None = None
 

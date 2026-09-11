@@ -158,7 +158,7 @@ class NextStep1BatchExecutor(ARBatchExecutorBase):
             sample_kwargs["generator"] = generator
 
         tokens, saved_noise, old_logprobs = TokenAutoregressiveLoop(
-            runner=self._ar_runner(request),
+            runner=self._build_ar_runner(request),
             scheduler_batch_size=scheduler_batch_size,
             init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
             init_kwargs=sample_kwargs,

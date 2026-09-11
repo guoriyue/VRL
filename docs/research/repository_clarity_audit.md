@@ -6298,3 +6298,16 @@ The broader repository audit remains incomplete.
 - Chunk binding and shared gatherer suites: 69 passed, including trajectory-axis,
   replay-axis and dtype rejection cases. Touched-file Ruff and diff checks pass.
   Broader repository audit remains incomplete.
+
+## AR runner construction is explicit in the shared hook name
+
+- Rename _ar_runner to _build_ar_runner across the shared token executor,
+  Janus/NextStep consumers, test overrides and sampling-schema reader comment.
+  The hook constructs a new runner with a selected attention backend; it does
+  not retrieve a cached runner. No compatibility alias or lifetime change.
+- Keep shared embedding and tokenizer-padding adapters for cross-family
+  consistency. Keep native-runner backend rejection and family declarations;
+  backend configuration validation is not changed by this naming slice.
+- Token binding and NextStep/GLM/LlamaGen model-construction/parsing suites:
+  84 passed with 16 dependency deprecation warnings. Touched-file Ruff and
+  diff checks pass. Broader repository audit remains incomplete.

@@ -35,7 +35,7 @@ class _Executor(ARDiscreteBatchExecutorBase):
         self.model = _Model()
         self.prepare_calls = 0
 
-    def _ar_runner(self, request: GenerationRequest) -> object:
+    def _build_ar_runner(self, request: GenerationRequest) -> object:
         del request
         return object()
 

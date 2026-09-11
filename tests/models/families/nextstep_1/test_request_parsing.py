@@ -300,7 +300,7 @@ def test_batch_context_keeps_only_flow_replay_parameters(
         lambda prompts, *, max_text_length: (ids, mask),
     )
     monkeypatch.setattr(executor, "_embed", lambda token_ids: token_ids.unsqueeze(-1).float())
-    monkeypatch.setattr(executor, "_ar_runner", lambda request: object())
+    monkeypatch.setattr(executor, "_build_ar_runner", lambda request: object())
     monkeypatch.setattr(nextstep_runtime, "TokenAutoregressiveLoop", _FakeLoop)
     request = GenerationRequest(
         request_id="req",

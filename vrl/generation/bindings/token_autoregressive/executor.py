@@ -87,7 +87,7 @@ class ARBatchExecutorBase(BatchExecutorBase):
 
     # -- request-level plumbing (shared; families own the batch step) ----
 
-    def _ar_runner(self, request: GenerationRequest) -> Any:
+    def _build_ar_runner(self, request: GenerationRequest) -> Any:
         """Build the family AR runner with the attention backend wired."""
 
         if self._runner_cls is None:
@@ -255,7 +255,7 @@ class ARDiscreteBatchExecutorBase(ARBatchExecutorBase):
             profile_range("engine.cache_write"),
         ):
             token_ids, token_log_probs = TokenAutoregressiveLoop(
-                runner=self._ar_runner(request),
+                runner=self._build_ar_runner(request),
                 scheduler_batch_size=scheduler_batch_size,
                 init_args=inputs.init_args,
                 init_kwargs=inputs.init_kwargs,
