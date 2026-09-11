@@ -6902,3 +6902,17 @@ The broader repository audit remains incomplete.
 - Six family suites: 60 passed, 23 dependency/test warnings. Touched-file Ruff
   and diff checks pass. No added tests for these redundant-cast removals and
   no full-model training claim; broader repository audit remains open.
+
+## Full model-suite verification of scheduler-count boundary changes
+
+- Traced all remaining build.num_steps consumers, including Echo and the shared
+  denoise bundle builder. They already pass the property directly. Preserve
+  separate initialization paths: dynamic resolution-dependent schedules and
+  family-specific replay conversions have different construction requirements.
+- Keep the move_to_device callback in the shared builder: the optimization pass
+  layer invokes it at a defined point between module replacement and compile.
+  It is an ordering boundary, not an incidental single-use wrapper.
+- Ran all tests/models: 884 passed, one skipped, 61 warnings in 12.56 seconds.
+  This includes real tiny pipeline wiring and family scheduler sample/replay
+  parity. No production edits in this verification slice, no full pretrained
+  training benchmark, and no repository-wide completion claim.
