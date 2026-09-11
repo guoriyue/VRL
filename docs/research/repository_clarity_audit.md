@@ -2718,3 +2718,23 @@ this combined regression is compatibility evidence, not architectural completion
   Review the device helpers together because they implement one discovery boundary;
   do not introduce a second device parser or flatten the cycle-safe module walk
   merely to reduce function count. This finding is reproduced but not fixed here.
+
+## Ray driver device discovery reports failures instead of guessing GPU zero
+
+- Fix the reproduced RayGenerationConfig discovery gap: _get_device now returns
+  the optional device directly, preserving RuntimeError and other failures.
+  For AttributeError, inspect the static declaration to distinguish a failing
+  property from a genuinely absent attribute before falling back to modules.
+  Remove the redundant (has_device, device) return pair from both consumers.
+- The existing CUDA parser now requires cuda or cuda:<nonnegative decimal index>
+  for CUDA strings. Typed CUDA indices use require_exact_int instead of int
+  coercion. Invalid ordinals no longer silently become zero.
+- Keep non-CUDA handling, the existing bare-cuda default, no-device trainable
+  module fallback, cycle-safe module traversal and cross-node ordinal isolation.
+  The helpers remain one torch-free discovery boundary; no new parser module,
+  wrapper class or ALL_CAPS vocabulary. Bare cuda still means zero here; this
+  slice does not claim to resolve an implicit current-device ordinal.
+- Validation: 382 Ray runtime-config and config tests passed. Regressions check
+  original RuntimeError/AttributeError identity, malformed CUDA text and module
+  fallback without requiring GPU allocation. Touched-file Ruff/diff checks pass.
+  This addresses the preceding reproduced finding; repository review stays active.

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
 import math
 import os
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -15,7 +17,7 @@ from vrl.generation.execution.types import BatchPlacementStrategy
 from vrl.ray.resources import (
     ResolvedDistributedResources,
 )
-from vrl.utils.config import to_builtin_deep
+from vrl.utils.config import require_exact_int, to_builtin_deep
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
 
@@ -203,8 +205,8 @@ class RayGenerationConfig:
 
 
 def _driver_cuda_devices(driver_bundle: Any) -> set[int]:
-    has_policy_device, device = _get_device(getattr(driver_bundle, "model", None))
-    if has_policy_device:
+    device = _get_device(getattr(driver_bundle, "model", None))
+    if device is not None:
         parsed = _cuda_device_index(device)
         return set() if parsed is None else {parsed}
 
@@ -218,16 +220,18 @@ def _driver_cuda_devices(driver_bundle: Any) -> set[int]:
     return devices
 
 
-def _get_device(obj: Any) -> tuple[bool, Any]:
+def _get_device(obj: Any) -> Any | None:
+    """Read an optional device without hiding errors from a declared property."""
     if obj is None:
-        return False, None
+        return None
     try:
-        device = obj.device
-    except Exception:
-        return False, None
-    if device is None:
-        return False, None
-    return True, device
+        return obj.device
+    except AttributeError:
+        # A property may itself raise AttributeError. Only an absent declaration
+        # permits discovery through the trainable modules instead.
+        if inspect.getattr_static(obj, "device", None) is not None:
+            raise
+        return None
 
 
 def _iter_parameter_devices(obj: Any, seen: set[int] | None = None) -> Iterable[Any]:
@@ -245,8 +249,8 @@ def _iter_parameter_devices(obj: Any, seen: set[int] | None = None) -> Iterable[
             yield from _iter_parameter_devices(value, seen)
         return
 
-    has_device, device = _get_device(obj)
-    if has_device:
+    device = _get_device(obj)
+    if device is not None:
         yield device
         return
 
@@ -269,18 +273,17 @@ def _cuda_device_index(device: Any) -> int | None:
         if str(device_type).lower() != "cuda":
             return None
         index = getattr(device, "index", None)
-        return 0 if index is None else int(index)
+        return (
+            0 if index is None else require_exact_int(index, path="CUDA device index", minimum=0)
+        )
 
     text = str(device).lower()
     if not text.startswith("cuda"):
         return None
-    if ":" not in text:
-        return 0
-    _, raw_index = text.split(":", 1)
-    try:
-        return int(raw_index)
-    except ValueError:
-        return 0
+    match = re.fullmatch(r"cuda(?::([0-9]+))?", text)
+    if match is None:
+        raise ValueError(f"invalid CUDA device {device!r}; expected 'cuda' or 'cuda:<index>'")
+    return 0 if match.group(1) is None else int(match.group(1))
 
 
 __all__ = [

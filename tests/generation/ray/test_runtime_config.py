@@ -1340,3 +1340,39 @@ def test_launch_contract_preserves_policy_version(policy_version) -> None:
     )
     assert contract.policy_version == policy_version
     assert type(contract.policy_version) is type(policy_version)
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, AttributeError])
+def test_driver_ownership_preserves_device_property_failure(error_type) -> None:
+    failure = error_type("policy device lookup failed")
+
+    class BrokenPolicy:
+        @property
+        def device(self):
+            raise failure
+
+    config = _ray_config(_resource_cfg(trainer_devices=[1], rollout_devices=[0]))
+    with pytest.raises(error_type, match="policy device lookup failed") as caught:
+        config.validate_driver_state(
+            driver_bundle=_Bundle(model=BrokenPolicy(), trainable_modules={})
+        )
+    assert caught.value is failure
+
+
+@pytest.mark.parametrize("device", ["cuda:broken", "cuda:-1", "cuda:1.5", "cuda:", "cudafoo"])
+def test_driver_ownership_rejects_malformed_cuda_device(device) -> None:
+    config = _ray_config(_resource_cfg(trainer_devices=[0], rollout_devices=[1]))
+    with pytest.raises(ValueError, match="invalid CUDA device"):
+        config.validate_driver_state(
+            driver_bundle=_Bundle(model=SimpleNamespace(device=device), trainable_modules={})
+        )
+
+
+def test_driver_ownership_discovers_modules_when_policy_device_is_absent() -> None:
+    config = _ray_config(_resource_cfg(trainer_devices=[1], rollout_devices=[0]))
+    with pytest.raises(ValueError, match="Trainer device cuda:0 overlaps"):
+        config.validate_driver_state(
+            driver_bundle=_Bundle(
+                model=object(), trainable_modules={"transformer": SimpleNamespace(device="cuda:0")}
+            )
+        )
