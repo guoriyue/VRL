@@ -6958,3 +6958,21 @@ The broader repository audit remains incomplete.
   or MP4 is left behind. Setup and JRDB import suites: 31 passed. Touched-file
   Ruff and diff checks pass. No new wrapper class or provenance field list;
   the broader repository audit remains incomplete.
+
+## DDIM keeps zero-variance selection in tensor math
+
+- Remove the batch-wide Python bool of zero_var.all() from stochastic log-prob
+  evaluation. The existing safe standard deviation and elementwise torch.where
+  already select the terminal negative-squared-error score. This removes one
+  device-to-host decision without changing the zero-variance convention.
+- Convert terminal alpha directly with the requested device and computation
+  dtype, retaining the explicit None fallback to one. Avoid constructing a
+  default CPU tensor followed by a separate conversion.
+- Keep the shared DDIM function and its dispatch interface: rollout and replay
+  require the same transition math. No kernel class, new constants, or generic
+  conversion helper; cross-family interface consistency remains valuable.
+- Added four checks for uniform terminal and mixed stochastic/terminal batches,
+  exact and displaced actions, and finite model-output gradients. DDIM and
+  PixArt-Sigma suites: 17 passed, two dependency warnings. Touched-file Ruff and
+  diff checks pass. No GPU throughput measurement or claim that every host
+  synchronization has been removed; the broader audit remains open.

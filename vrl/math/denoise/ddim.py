@@ -71,9 +71,11 @@ def ddim_step_with_logprob(
 
     alphas_cumprod = scheduler.alphas_cumprod.to(sample.device, computation_dtype)
     final_alpha_cumprod = getattr(scheduler, "final_alpha_cumprod", None)
-    if final_alpha_cumprod is None:
-        final_alpha_cumprod = torch.ones((), dtype=computation_dtype)
-    final_alpha_cumprod = torch.as_tensor(final_alpha_cumprod).to(sample.device, computation_dtype)
+    final_alpha_cumprod = torch.as_tensor(
+        1.0 if final_alpha_cumprod is None else final_alpha_cumprod,
+        device=sample.device,
+        dtype=computation_dtype,
+    )
 
     ndim = sample.ndim
     view_shape = (-1,) + (1,) * (ndim - 1)
@@ -143,7 +145,7 @@ def ddim_step_with_logprob(
     # log-prob there mirrors the cps convention (negative squared error) so
     # those steps stay finite instead of producing log(0).
     zero_var = std_dev_t == 0
-    if eta > 0.0 and not bool(zero_var.all()):
+    if eta > 0.0:
         safe_std = torch.where(zero_var, torch.ones_like(std_dev_t), std_dev_t)
         gaussian = (
             -err_sq / (2 * safe_std**2)

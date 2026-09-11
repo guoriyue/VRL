@@ -141,3 +141,36 @@ def test_ddim_final_step_uses_terminal_alpha() -> None:
     )[0]
     torch.testing.assert_close(result.prev_sample_mean, ref, atol=1e-5, rtol=1e-5)
     assert torch.isfinite(result.log_prob).all()
+
+
+@pytest.mark.parametrize("step_indices", [[9, 9], [3, 9]])
+@pytest.mark.parametrize("residual", [0.0, 0.2])
+def test_ddim_zero_variance_scores_and_gradients(step_indices, residual) -> None:
+    """Terminal transitions retain their score in uniform and mixed batches."""
+    scheduler = _scheduler("epsilon")
+    sample = torch.zeros(_SHAPE)
+    model_output = torch.zeros(_SHAPE, requires_grad=True)
+    action = torch.full(_SHAPE, residual)
+    result = sde_step_with_logprob(
+        scheduler,
+        model_output,
+        scheduler.timesteps[step_indices],
+        sample,
+        prev_sample=action,
+        noise_level=1.0,
+        sde_type="ddim",
+        step_index=step_indices,
+    )
+    expected = []
+    for index, step_index in enumerate(step_indices):
+        if step_index == 9:
+            expected.append(-action[index].square().mean())
+        else:
+            distribution = torch.distributions.Normal(
+                result.prev_sample_mean[index], result.std_dev_t[index]
+            )
+            expected.append(distribution.log_prob(action[index]).mean())
+    torch.testing.assert_close(result.log_prob, torch.stack(expected))
+    result.log_prob.sum().backward()
+    assert model_output.grad is not None
+    assert torch.isfinite(model_output.grad).all()
