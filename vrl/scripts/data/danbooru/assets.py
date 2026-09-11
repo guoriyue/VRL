@@ -18,6 +18,7 @@ from vrl.scripts.data.danbooru.metadata import (
     record_id,
     record_score,
 )
+from vrl.utils.config import require_exact_int
 from vrl.utils.json_files import write_jsonl
 
 
@@ -100,6 +101,8 @@ def download_danbooru_images(
     """Download selected Danbooru images into their positive target paths."""
 
     remaining: dict[str, Path] = {str(post_id): Path(path) for post_id, path in targets.items()}
+    if not remaining:
+        return 0, 0, 0
     downloaded = skipped = failed = 0
     for row in iter_metadata(metadata_path):
         post_id = str(record_id(row))
@@ -150,6 +153,10 @@ def positive_image_rows(
     limit: int | None = None,
     source: str = "danbooru",
 ) -> list[dict[str, Any]]:
+    if limit is not None:
+        require_exact_int(limit, path="limit", minimum=0)
+        if limit == 0:
+            return []
     out: list[dict[str, Any]] = []
     for row in iter_metadata(metadata_path):
         tags = normalize_tags(row)

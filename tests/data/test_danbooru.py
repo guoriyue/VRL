@@ -323,6 +323,27 @@ def test_positive_download_uses_manifest_fractional_score_threshold(tmp_path: Pa
     assert report["fetched"]["downloaded"] == report["positives_written"] == 1
 
 
+@pytest.mark.parametrize("limit", [-1, True, 1.5, "1"])
+def test_positive_image_rows_rejects_invalid_limit_before_reading(tmp_path: Path, limit) -> None:
+    with pytest.raises(ValueError, match="limit"):
+        positive_image_rows(tmp_path / "absent.jsonl", limit=limit)
+
+
+def test_positive_image_rows_zero_limit_needs_no_metadata(tmp_path: Path) -> None:
+    assert positive_image_rows(tmp_path / "absent.jsonl", limit=0) == []
+
+
+def test_empty_download_targets_need_no_metadata(tmp_path: Path) -> None:
+    def unexpected_fetch(url: str, target: Path) -> None:
+        pytest.fail("empty targets must not download")
+
+    assert download_danbooru_images(
+        tmp_path / "absent.jsonl",
+        {},
+        fetch=unexpected_fetch,
+    ) == (0, 0, 0)
+
+
 def test_positive_and_hand_crop_rows(tmp_path: Path) -> None:
     """Checks positive image rows and hand crop rows."""
     metadata = tmp_path / "posts.jsonl"

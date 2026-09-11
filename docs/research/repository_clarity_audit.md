@@ -6627,3 +6627,17 @@ The broader repository audit remains incomplete.
   verifies the accepted file exists, rejected file does not, and counts agree.
   Danbooru/setup suites: 26 passed; touched-file Ruff and diff checks pass.
   No live network download was needed. Broader repository audit remains open.
+
+## Danbooru positive selection defines zero and invalid limits before I/O
+
+- positive_image_rows previously appended before checking its limit, so zero
+  and negative limits could still select a row. Validate optional limits with
+  the shared exact-integer validator and return no rows for zero. None still
+  means unlimited; positive integer selection is unchanged.
+- Empty download targets now return zero counts without opening metadata.
+  Keep selection and download as separate interfaces: the former projects
+  records, the latter owns network work. No new helper or configuration class.
+- Six regression cases initially reached metadata I/O instead of rejecting
+  invalid limits or returning empty results. They now pass, along with existing
+  positive-selection and setup coverage: 32 tests passed. Touched-file Ruff
+  and diff checks pass. The broader repository audit remains incomplete.
