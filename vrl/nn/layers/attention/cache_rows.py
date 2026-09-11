@@ -100,7 +100,7 @@ class ARCacheRows:
 
 
 def ar_concat_rows(values: Sequence[Any]) -> Any:
-    """Concatenate one-row AR cache/value objects along batch dim 0."""
+    """Concatenate one-row AR caches along dim 0 without dtype promotion."""
 
     if not values:
         raise ValueError("values must be non-empty")
@@ -143,6 +143,13 @@ def _split_plain_rows(value: Any, batch_size: int) -> list[Any]:
 def _concat_plain_rows(values: Sequence[Any]) -> Any:
     first = values[0]
     if isinstance(first, torch.Tensor):
+        for index, value in enumerate(values[1:], start=1):
+            if not isinstance(value, torch.Tensor):
+                raise TypeError("cannot concatenate mixed tensor and non-tensor AR rows")
+            if value.dtype != first.dtype:
+                raise ValueError(
+                    f"AR cache row {index} has dtype {value.dtype}, expected {first.dtype}"
+                )
         return torch.cat(list(values), dim=0)
     if isinstance(first, Mapping):
         if any(not isinstance(value, Mapping) or value.keys() != first.keys() for value in values):
@@ -214,8 +221,8 @@ def _concat_hf_cache_rows(values: Sequence[Any]) -> Any:
     return _cache_from_kv_pairs(
         [
             (
-                torch.cat([row[layer_idx][0] for row in kv_rows], dim=0),
-                torch.cat([row[layer_idx][1] for row in kv_rows], dim=0),
+                ar_concat_rows([row[layer_idx][0] for row in kv_rows]),
+                ar_concat_rows([row[layer_idx][1] for row in kv_rows]),
             )
             for layer_idx in range(layer_count)
         ],

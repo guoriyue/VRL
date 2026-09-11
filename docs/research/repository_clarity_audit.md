@@ -5442,3 +5442,21 @@ this combined regression is compatibility evidence, not architectural completion
   suites: 86 passed. No new rename-only tests were added. Touched-file Ruff and
   git diff --check pass; source/tests have no old-name references. This does not
   establish all model backends or the whole repository as fully audited.
+
+## AR cache concatenation makes dtype preservation explicit
+
+- Reject tensor rows with different dtypes instead of allowing torch.cat to
+  promote them silently. Report the offending row and expected dtype at the
+  cache assembly boundary. Mixed tensor/non-tensor rows also receive an explicit
+  type error before concatenation.
+- Route HF DynamicCache key/value merging through ar_concat_rows, sharing the
+  plain tensor check instead of bypassing it with separate torch.cat calls.
+- Keep the free split/concat operations: GLM, attention backends and the token
+  scheduler share them. Keep HF conversion adapters as a framework boundary.
+  Do not import generation helpers into the lower-level NN package or introduce
+  a new class solely to share a dtype check. Valid homogeneous cache assembly
+  and row ordering remain unchanged.
+- Three regressions failed before the fix (tensor, nested mapping and HF cache).
+  Cache/token scheduling/runner suites: 84 passed. Direct attention backend
+  suites: 6 passed. Touched-file Ruff and git diff --check pass. These checks do
+  not establish production model performance or complete the repository audit.

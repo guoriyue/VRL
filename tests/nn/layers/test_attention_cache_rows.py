@@ -203,3 +203,19 @@ def test_dynamic_cache_split_validates_every_layer_tensor(invalid_part) -> None:
 
     with pytest.raises(ValueError, match="cannot split tensor with batch=1 into 2 rows"):
         ar_split_rows(cache, 2)
+
+
+@pytest.mark.parametrize("container", ["tensor", "mapping", "hf_cache"])
+def test_concat_rejects_implicit_cache_dtype_promotion(container) -> None:
+    rows = [torch.ones(1, 2, 3, 4, dtype=dtype) for dtype in (torch.float16, torch.float32)]
+    if container == "mapping":
+        rows = [{"past": ((row, row),)} for row in rows]
+    elif container == "hf_cache":
+        caches = []
+        for row in rows:
+            cache = DynamicCache()
+            cache.update(row, row, 0)
+            caches.append(cache)
+        rows = caches
+    with pytest.raises(ValueError, match="dtype"):
+        ar_concat_rows(rows)
