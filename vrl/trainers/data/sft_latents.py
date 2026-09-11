@@ -47,11 +47,15 @@ class CleanTargetRef:
             if isinstance(source, Mapping)
             else (("target_image", source.target_image), ("target_video", source.target_video))
         )
-        targets = [
-            cls(field=field, key=str(value).strip())
-            for field, value in candidates
-            if value is not None and str(value).strip()
-        ]
+        targets: list[CleanTargetRef] = []
+        for field, value in candidates:
+            if value is None:
+                continue
+            if not isinstance(value, str):
+                raise ValueError(f"clean target {field} must be a string")
+            key = value.strip()
+            if key:
+                targets.append(cls(field=field, key=key))
         if len(targets) != 1:
             present = [target.field for target in targets]
             raise ValueError(

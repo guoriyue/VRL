@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from vrl.trainers.data.sft_latents import (
+    CleanTargetRef,
     load_sft_latents,
     save_sft_latents,
 )
@@ -129,3 +130,23 @@ def test_shard_preserves_target_key_type_instead_of_stringifying(tmp_path, key):
     torch.save({"schema_version": 2, "latents": latents}, path)
     with pytest.raises(ValueError, match="target keys must be non-empty strings"):
         load_sft_latents(path)
+
+
+@pytest.mark.parametrize("value", [123, True, ["target.mp4"], {"path": "target.mp4"}])
+@pytest.mark.parametrize("as_example", [False, True])
+def test_clean_target_identity_rejects_non_string(value, as_example):
+    from vrl.trainers.data.prompts import PromptExample
+
+    source = (
+        PromptExample(prompt="p", target_video=value) if as_example else {"target_video": value}
+    )
+    with pytest.raises(ValueError, match="target_video must be a string"):
+        CleanTargetRef.from_source(source)
+
+
+def test_clean_target_identity_keeps_existing_empty_and_whitespace_semantics():
+    assert CleanTargetRef.from_source(
+        {"target_image": " ", "target_video": " targets/a.mp4 "}
+    ) == CleanTargetRef(field="target_video", key="targets/a.mp4")
+    with pytest.raises(ValueError, match="exactly one clean target"):
+        CleanTargetRef.from_source({"target_image": "a.png", "target_video": "b.mp4"})

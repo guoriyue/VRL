@@ -1017,3 +1017,17 @@ contained guesses. Removed both:
   tests passed. Reference selection now uses actual files instead of mocking the
   deleted helper and covers both path representations. Touched-file Ruff and
   diff whitespace checks pass.
+
+## Clean-target source identity
+
+- CleanTargetRef.from_source now requires target values to be strings instead of
+  stringifying arbitrary metadata. Both encoder PromptExample input and trainer
+  reward metadata use this constructor, so invalid target types fail at the same
+  identity boundary rather than later as missing files or shard keys.
+- Retained existing whitespace trimming, absent/empty-field handling and exactly
+  one target requirement. Retained the constructor on the identity dataclass;
+  no extra validation function or class introduced. This complements the earlier
+  strict shard-key save/load checks without changing valid target naming.
+- Validation: 40 shard, encode-target, script-loader and trainer regularizer tests
+  passed. Regressions exercise both source representations and retained empty /
+  whitespace behavior. Touched-file Ruff and diff whitespace checks pass.
