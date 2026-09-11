@@ -37,6 +37,7 @@ from vrl.ray.operation_deadline import (
     RayCallDeadline,
     cancel_ray_refs,
 )
+from vrl.utils.cuda_memory import is_cuda_out_of_memory
 from vrl.utils.deadline import require_timeout
 
 logger = logging.getLogger(__name__)
@@ -617,7 +618,7 @@ class RayGenerationExecutor:
                     final.append(result)
                     continue
                 batch = result.batch
-                if not _is_oom_error(result.error) or batch.sample_count <= 1:
+                if not is_cuda_out_of_memory(result.error) or batch.sample_count <= 1:
                     raise RuntimeError(
                         "distributed rollout batch failed "
                         f"(rank={result.worker_id}, batch={batch}): "
@@ -709,12 +710,6 @@ def _require_correlated_result(
             f"expected={expected_request_id!r}, actual={result.request_id!r})",
         )
     return envelope
-
-
-def _is_oom_error(message: str) -> bool:
-    """Match CUDA/HIP allocator failures flattened to text by a rank."""
-
-    return "out of memory" in message.lower()
 
 
 __all__ = ["RayGenerationExecutor"]

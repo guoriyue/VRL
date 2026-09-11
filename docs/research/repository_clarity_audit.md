@@ -2794,3 +2794,23 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 53 dependency, cross-node preflight, placement and rollout launcher
   tests passed, including original driver lookup error identity. Touched-file Ruff
   and diff checks passed. Full repository review remains active.
+
+## Local and distributed OOM retry use one classifier
+
+- Reproduced divergent retry decisions: the driver's text matcher accepted CPU,
+  CUDA and HIP 'out of memory' messages; the worker's shared classifier accepted
+  only CUDA text (plus Torch's typed OOM). Transport changed the retry decision.
+- Extend existing is_cuda_out_of_memory to accept remote text and recognize HIP
+  alongside CUDA. Remove the driver-only _is_oom_error and route batch splitting
+  through the shared classifier. Plain CPU allocation errors no longer trigger
+  GPU batch splitting; typed Torch OOM behavior is retained.
+- Keep the shared classifier as a local/remote error boundary, and preserve the
+  separate result-correlation guard because it compares returned results with
+  submitted envelopes. No new error class, tag taxonomy or forwarding function.
+  This unifies current fallback recognition; it does not claim all remote errors
+  retain their original exception type or traceback.
+- Validation: 753 generation, utility and Ray batch-dispatch tests passed, two
+  optional backend tests skipped; process exited successfully after teardown.
+  Added local-exception/remote-text parity cases for CUDA, HIP, CPU and non-memory
+  errors. Existing allocator-message and split-retry tests pass. Touched-file
+  Ruff/diff checks passed; repository-wide review remains active.

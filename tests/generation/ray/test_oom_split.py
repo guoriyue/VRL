@@ -22,11 +22,12 @@ from vrl.generation.execution.types import (
     StaleSlotDiscard,
 )
 from vrl.generation.ray.engine import RayGenerationEngine
-from vrl.generation.ray.executor import RayGenerationExecutor, _is_oom_error
+from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.trajectory import TrajectoryBatch
+from vrl.utils.cuda_memory import is_cuda_out_of_memory
 
 # torch's allocator wire format, pinned against the real allocator by
 # test_oom_matcher_accepts_the_real_torch_allocator_message below.
@@ -186,8 +187,8 @@ def test_oom_matcher_accepts_the_real_torch_allocator_message() -> None:
     assert real.startswith(_OOM_PREFIX), real
     # The production matcher is a substring test on "out of memory"; assert it
     # against the real message, not only against our own fixture.
-    assert _is_oom_error(real) is True
-    assert _is_oom_error(_OOM_MESSAGE) is True
+    assert is_cuda_out_of_memory(real) is True
+    assert is_cuda_out_of_memory(_OOM_MESSAGE) is True
 
 
 @_OOM_WIRE_FORMAT
@@ -350,9 +351,9 @@ def test_stale_slot_discard_is_not_runtime_error() -> None:
 
 
 def test_is_oom_error_classifier() -> None:
-    assert _is_oom_error(_OOM_MESSAGE)
-    assert _is_oom_error("torch.OutOfMemoryError: HIP out of memory")
-    assert not _is_oom_error("ValueError: shape mismatch")
+    assert is_cuda_out_of_memory(_OOM_MESSAGE)
+    assert is_cuda_out_of_memory("torch.OutOfMemoryError: HIP out of memory")
+    assert not is_cuda_out_of_memory("ValueError: shape mismatch")
 
 
 @dataclass
@@ -600,3 +601,17 @@ async def test_executor_logs_measured_batch_memory(with_reading, caplog, monkeyp
         if with_reading
         else []
     )
+
+
+@pytest.mark.parametrize(
+    "message, expected",
+    [
+        ("CUDA out of memory", True),
+        ("HIP out of memory", True),
+        ("CPU out of memory", False),
+        ("shape mismatch", False),
+    ],
+)
+def test_local_and_remote_oom_classification_agree(message, expected):
+    assert is_cuda_out_of_memory(message) is expected
+    assert is_cuda_out_of_memory(RuntimeError(message)) is expected

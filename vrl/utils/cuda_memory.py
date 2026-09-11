@@ -170,8 +170,8 @@ class CumemPool:
         gc.collect()
 
 
-def is_cuda_out_of_memory(exc: BaseException) -> bool:
-    """Return whether an exception looks like a CUDA OOM failure."""
+def is_cuda_out_of_memory(exc: BaseException | str) -> bool:
+    """Recognize CUDA/HIP allocator failures from local exceptions or remote text."""
 
     try:
         import torch
@@ -181,7 +181,7 @@ def is_cuda_out_of_memory(exc: BaseException) -> bool:
     except (ImportError, AttributeError):
         pass
     message = str(exc).lower()
-    return "cuda" in message and "out of memory" in message
+    return "out of memory" in message and ("cuda" in message or "hip" in message)
 
 
 def empty_cuda_cache() -> None:
