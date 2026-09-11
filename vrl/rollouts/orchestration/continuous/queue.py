@@ -66,8 +66,8 @@ class ContinuousRolloutQueue:
     def put(self, item: ContinuousRolloutItem) -> None:
         """Append one item, failing before mutation when a hard cap is exceeded.
 
-        Every ready item belongs to the current finite prompt batch. Evicting an
-        older item would make that batch impossible to complete exactly once, so
+        Every ready item belongs to the installed current/prefetched batch window.
+        Evicting an older item would prevent its batch completing exactly once, so
         overflow is a terminal capacity error rather than a replacement policy.
         """
 
@@ -105,7 +105,9 @@ class ContinuousRolloutQueue:
                 kept.append(item)
         self._items = kept
 
-    def close(self) -> None:
+    def clear(self) -> None:
+        """Discard every ready item and reset occupancy; the container stays usable."""
+
         self._items.clear()
         self._bytes = 0
 

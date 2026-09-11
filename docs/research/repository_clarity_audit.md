@@ -3398,3 +3398,17 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 37 stats/prompt-collection tests passed. The new regression
   checks all five collisions leave the full accumulator unchanged and retain
   its computed P95. Touched-file Ruff/diff checks passed. Full review stays open.
+
+## Name ready-queue clearing according to its actual lifecycle
+
+- Rename ContinuousRolloutQueue.close to clear and update its sole owner call.
+  The method empties receipts and byte accounting; it never closes admission
+  or makes the container unusable. This distinguishes it from generated
+  capacity.close, which does enforce terminal state. No compatibility alias.
+- Correct the queue put docstring to cover the installed current/prefetched
+  batch window. Preserve FIFO/capacity rules, identity removal and consumer-owned
+  staleness decisions. The queue remains a meaningful storage owner; no new
+  class or constant is introduced.
+- Validation: 200 continuous orchestration tests passed; touched-file Ruff/diff
+  checks passed and no rollout queue.close callers remain. Full review remains
+  incomplete.

@@ -406,7 +406,7 @@ class _ContinuousOwnerRuntime:
         if producer is not None:
             await producer.stop(wait_timeout_s=_OWNER_STOP_TIMEOUT_S)
         if queue is not None:
-            queue.close()
+            queue.clear()
 
     def _attach_producer_metrics(self, iteration: RolloutIteration) -> None:
         if self.producer is None:
