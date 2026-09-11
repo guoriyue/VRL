@@ -58,8 +58,10 @@ class RewardServiceInfo:
     max_pending_requests: int
 
     def __post_init__(self) -> None:
-        if not self.model_name:
-            raise ValueError("reward service model_name is required")
+        if not isinstance(self.model_name, str) or not self.model_name:
+            raise ValueError("reward service model_name must be a non-empty string")
+        if not isinstance(self.model_version, str):
+            raise ValueError("reward service model_version must be a string")
         if not isinstance(self.generation_overlap_safe, bool):
             # bool("false") is True; a stringly wire value must fail, not flip.
             raise ValueError("reward service generation_overlap_safe must be a boolean")

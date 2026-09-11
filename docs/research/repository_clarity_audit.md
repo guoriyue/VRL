@@ -5744,3 +5744,18 @@ The broader repository audit remains incomplete.
 - Existing collector, orchestration and trajectory operation suites: 333 passed.
   Touched-file Ruff and git diff --check pass. No speedup is claimed for the
   deduplication cleanup. The whole-repository audit remains incomplete.
+
+## Reward service identity validation belongs to its existing protocol type
+
+- RewardServiceInfo now rejects non-string model_name and model_version at
+  construction. Previously truthy numbers, booleans and containers could pass
+  info_from_wire and reach client identity comparisons as supposedly typed data.
+  Model names remain non-empty; an empty string remains a valid model version.
+- Keep wire encode/decode functions as a shared client/server protocol boundary.
+  Their matching shapes make the envelope contract easy to locate. Keep the
+  common envelope/object/unknown-field checks, WIRE_VERSION and derived artifact
+  schema fields. Moving HTTP envelopes into inference dataclasses or adding a
+  state-free codec class would add coupling without simplifying this boundary.
+- Ten malformed identity cases cover both fields; nine failed before the fix.
+  All 74 reward service tests pass, as do touched-file Ruff and diff checks.
+  No GPU throughput claim is made. The broader repository audit remains open.

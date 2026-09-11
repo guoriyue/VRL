@@ -1147,6 +1147,23 @@ def test_service_info_rejects_noninteger_capacity(field, value) -> None:
         info_from_wire({"version": WIRE_VERSION, "info": info})
 
 
+@pytest.mark.parametrize("field", ["model_name", "model_version"])
+@pytest.mark.parametrize("value", [True, 42, None, ["model"], {"name": "model"}])
+def test_service_info_rejects_nonstring_identity(field, value) -> None:
+    from vrl.rewards.service.wire import info_from_wire
+
+    info = {
+        "model_name": "test",
+        "model_version": "",
+        "generation_overlap_safe": False,
+        "max_concurrency": 1,
+        "max_pending_requests": 8,
+    }
+    info[field] = value
+    with pytest.raises(RewardServiceProtocolError, match=field):
+        info_from_wire({"version": WIRE_VERSION, "info": info})
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fallback", [False, True])
 async def test_cli_restores_signal_handlers_when_shutdown_fails(monkeypatch, fallback):
