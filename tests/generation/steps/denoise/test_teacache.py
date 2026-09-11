@@ -8,7 +8,7 @@ import torch
 from vrl.generation.steps.denoise.teacache import (
     TeaCacheConfig,
     TeaCacheState,
-    rel_l1,
+    relative_l1_change,
 )
 
 
@@ -91,7 +91,7 @@ def test_skip_ratio_and_counters():
 def test_relative_l1_avoids_half_precision_overflow(previous, current, expected):
     previous_signal = torch.full((1024,), previous, dtype=torch.float16)
     current_signal = torch.full((1024,), current, dtype=torch.float16)
-    assert rel_l1(current_signal, previous_signal) == pytest.approx(expected)
+    assert relative_l1_change(current_signal, previous_signal) == pytest.approx(expected)
 
 
 def test_half_precision_change_above_threshold_runs_forward():

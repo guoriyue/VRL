@@ -39,7 +39,7 @@ from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
-from vrl.generation.steps.denoise.teacache import TeaCacheConfig, TeaCacheState, rel_l1
+from vrl.generation.steps.denoise.teacache import TeaCacheConfig, TeaCacheState, relative_l1_change
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.scripts.perf.common.diffusion_runtime import (
     build_runtime,
@@ -159,7 +159,7 @@ def _diagnose(model, root, device, dtype):
     with torch.no_grad(), torch.amp.autocast("cuda", dtype=dtype):
         for step_idx in range(num_steps):
             if prev_lat is not None:
-                lat_rel.append(rel_l1(state.latents, prev_lat))
+                lat_rel.append(relative_l1_change(state.latents, prev_lat))
             else:
                 lat_rel.append(float("nan"))
             prev_lat = state.latents.clone()
@@ -177,7 +177,9 @@ def _diagnose(model, root, device, dtype):
                 step_index=step_idx,
             )
             state.latents = sde.prev_sample
-    np_rel = [float("nan")] + [rel_l1(preds[t], preds[t - 1]) for t in range(1, num_steps)]
+    np_rel = [float("nan")] + [
+        relative_l1_change(preds[t], preds[t - 1]) for t in range(1, num_steps)
+    ]
 
     print(f"\n{'step':>4} | {'latent relL1':>12} | {'noise_pred relL1 vs prev':>24}")
     print("-" * 50)

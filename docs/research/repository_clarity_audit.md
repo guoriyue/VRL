@@ -3894,3 +3894,20 @@ this combined regression is compatibility evidence, not architectural completion
   It failed on the previous implementation. All 64 reward service tests now pass;
   touched-file Ruff lint and formatting checks pass. No real GPU execution is
   claimed. The repository-wide clarity audit remains in progress.
+
+## Shared denoise metric naming and pipeline helper review
+
+- Rename `rel_l1` to `relative_l1_change` in the TeaCache implementation, its
+  export, drift probe and tests. The name now describes the measured quantity.
+  Keep it as a shared free function: runtime skip decisions and offline drift
+  analysis must use the same fp32 reduction. No compatibility alias or new class
+  is introduced; external imports of the old name must update. Historical sprint
+  notes remain historical rather than being rewritten as current implementation.
+- Retain `_move_tree_to_cpu_async` in generation execution: it owns pinned-host
+  allocation, stream-scoped copies and source `record_stream` lifetime tracking.
+  The pipeline calls it for both intermediate and final batches. Folding that
+  logic into both branches would duplicate a CUDA synchronization boundary.
+- No cache thresholds, skip decisions or pipeline synchronization changed.
+  All 57 denoise tests passed; touched-file Ruff checks passed after formatting
+  the updated probe import. No real-GPU benchmark was run. This slice does not
+  complete the repository-wide audit.

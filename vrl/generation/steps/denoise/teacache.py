@@ -36,7 +36,7 @@ import torch
 from vrl.utils.config import require_exact_int
 
 
-def rel_l1(cur: torch.Tensor, prev: torch.Tensor) -> float:
+def relative_l1_change(cur: torch.Tensor, prev: torch.Tensor) -> float:
     """Relative-L1 change between consecutive denoise signals.
 
     THE TeaCache skip metric. Offline analysis tools must call this rather than
@@ -143,7 +143,7 @@ class TeaCacheState:
         if forced:
             run = True
         else:
-            self._acc += rel_l1(signal, self._prev_signal)
+            self._acc += relative_l1_change(signal, self._prev_signal)
             run = self._acc >= cfg.threshold
             if run:
                 self._acc = 0.0
@@ -179,4 +179,4 @@ class TeaCacheState:
         }
 
 
-__all__ = ["TeaCacheConfig", "TeaCacheState", "rel_l1"]
+__all__ = ["TeaCacheConfig", "TeaCacheState", "relative_l1_change"]
