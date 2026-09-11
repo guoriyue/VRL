@@ -4380,6 +4380,19 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Native attention uses the trunk's cache vocabulary directly
+
+- Rename local kv/past and the private forward parameter to past_key_values,
+  matching the HF trunk argument and output attribute. Pass sequence_states
+  directly to ar_concat_rows, which already accepts a Sequence, without an
+  unnecessary list conversion.
+- Keep _forward shared by prefill/step and _last_token_hidden as the adapter for
+  the two supported output formats. Preserve split/concat behavior, missing-cache
+  errors and the cross-backend payload interface; no new cache class is needed.
+- Native attention, Janus KV decode and Emu3 structural schedule suites: 11
+  passed, 2 dependency warnings. Touched-file Ruff checks pass. The repository
+  clarity audit remains ongoing.
+
 ## Decoder dimensions read fallback config only when needed
 
 - Replace eagerly evaluated getattr defaults in the three head-count/dimension

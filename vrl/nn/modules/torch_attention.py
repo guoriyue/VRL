@@ -48,51 +48,51 @@ class TorchNativeDecoderAttentionBackend(ARAttentionBackend):
 
     @torch.no_grad()
     def prefill(self, request: ARAttentionPrefillInput) -> ARAttentionPrefillOutput:
-        last_hidden, kv = self._forward(request.inputs_embeds, request.attention_mask)
+        last_hidden, past_key_values = self._forward(request.inputs_embeds, request.attention_mask)
         return ARAttentionPrefillOutput(
             last_hidden=last_hidden,
-            sequence_states=tuple(ar_split_rows(kv, request.inputs_embeds.shape[0])),
+            sequence_states=tuple(ar_split_rows(past_key_values, request.inputs_embeds.shape[0])),
         )
 
     @torch.no_grad()
     def step(self, request: ARAttentionStepInput) -> ARAttentionStepOutput:
         batch = request.input_embeds.shape[0]
-        last_hidden, kv = self._forward(
+        last_hidden, past_key_values = self._forward(
             request.input_embeds,
             request.attention_mask,
-            ar_concat_rows(list(request.sequence_states)),
+            ar_concat_rows(request.sequence_states),
         )
         return ARAttentionStepOutput(
             last_hidden=last_hidden,
-            sequence_states=tuple(ar_split_rows(kv, batch)),
+            sequence_states=tuple(ar_split_rows(past_key_values, batch)),
         )
 
     def _forward(
         self,
         embeds: torch.Tensor,
         mask: torch.Tensor,
-        kv: Any = None,
+        past_key_values: Any = None,
     ) -> tuple[torch.Tensor, Any]:
         """One trunk forward -> (last-token hidden ``[B, H]``, batched KV).
 
-        Prefill and step differ only in ``kv``; ``past_key_values=None`` is the
+        Prefill and step differ only in ``past_key_values``; ``past_key_values=None`` is the
         HF default the prefill used to rely on implicitly.
         """
 
         outputs = self.trunk(
             inputs_embeds=embeds,
             attention_mask=mask,
-            past_key_values=kv,
+            past_key_values=past_key_values,
             use_cache=True,
             output_hidden_states=True,
         )
-        past = getattr(outputs, "past_key_values", None)
-        if past is None:
+        past_key_values = getattr(outputs, "past_key_values", None)
+        if past_key_values is None:
             raise RuntimeError(
                 f"{self.backend_label} trunk forward returned no past_key_values; "
                 "use_cache must be enabled",
             )
-        return self._last_token_hidden(outputs), past
+        return self._last_token_hidden(outputs), past_key_values
 
     @staticmethod
     def _last_token_hidden(outputs: Any) -> torch.Tensor:
