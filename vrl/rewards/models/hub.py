@@ -71,6 +71,5 @@ def resolve_model_root(
 
 __all__ = [
     "HuggingFaceRepoRevision",
-    "HuggingFaceRepoRevision",
     "resolve_model_root",
 ]
