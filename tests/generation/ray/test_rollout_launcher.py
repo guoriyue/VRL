@@ -66,6 +66,20 @@ def _launch_inputs() -> RayGenerationLaunchInputs:
     )
 
 
+@pytest.mark.parametrize("section", [False, 0, "", []])
+def test_worker_section_does_not_treat_invalid_values_as_absent(section) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        RolloutWorkerConfig.from_public_section(section)
+
+
+def test_worker_section_defaults_only_for_absent_or_empty_mapping() -> None:
+    assert RolloutWorkerConfig.from_public_section(
+        None
+    ) == RolloutWorkerConfig.from_public_section({})
+
+
 def _worker_config(**overrides: Any) -> RolloutWorkerConfig:
     values = {
         "cpus_per_worker": 0.5,

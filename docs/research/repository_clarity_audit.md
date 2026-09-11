@@ -6399,3 +6399,16 @@ The broader repository audit remains incomplete.
   The affected token-protocol file then passed all 12 tests. Touched-file Ruff
   and diff checks pass. The complete generation suite was not rerun after this
   test-only correction; this does not prove full-repository completion.
+
+## Worker config defaults distinguish absence from malformed input
+
+- Replace section or {} in RolloutWorkerConfig.from_public_section with an
+  explicit None case. False, zero, empty strings and empty lists now reach the
+  existing public schema and are rejected rather than silently enabling defaults.
+  None and empty mappings retain identical default projections.
+- Keep the classmethod as the public-to-runtime construction boundary and the
+  schema as validation owner. No new validator, config class or fallback alias.
+- Four malformed-input cases failed before the change; the default-equivalence
+  case passed. Launcher and weight-transfer suites: 33 passed with one Ray
+  dependency warning, including embedded-Ray launch. Touched-file Ruff and diff
+  checks pass. Broader repository audit remains incomplete.

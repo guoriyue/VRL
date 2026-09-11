@@ -81,7 +81,9 @@ class RolloutWorkerConfig:
         from vrl.config.schema import RolloutRuntimeSection
 
         if not isinstance(section, RolloutRuntimeSection):
-            section = RolloutRuntimeSection.model_validate(to_builtin_deep(section or {}))
+            section = RolloutRuntimeSection.model_validate(
+                {} if section is None else to_builtin_deep(section)
+            )
         return cls(**section.model_dump())
 
 
