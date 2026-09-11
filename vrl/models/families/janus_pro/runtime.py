@@ -19,6 +19,7 @@ from vrl.generation.composition.token_autoregressive.token_loop import (
 )
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
+    ordered_covering_batches,
     require_matching_batch_context,
 )
 from vrl.generation.types import (
@@ -353,7 +354,7 @@ class JanusProR1GenerationBatchGatherer:
         batches: Sequence[JanusProR1BatchPayload],
     ) -> GenerationOutput:
         fields = ("initial_image", "final_image", "selfcheck")
-        ordered = self.layout.ordered_batches(
+        ordered = ordered_covering_batches(
             request,
             sample_rows,
             batches,

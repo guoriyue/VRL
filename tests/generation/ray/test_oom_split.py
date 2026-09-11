@@ -120,7 +120,7 @@ class _StaticPlanner:
 
 
 class _CoverageGatherer:
-    """Assert sample coverage by batch metadata, mirroring layout.ordered_batches."""
+    """Assert sample coverage by batch metadata, using the shared coverage validator."""
 
     def gather_batches(
         self,

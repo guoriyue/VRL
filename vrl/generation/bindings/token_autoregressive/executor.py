@@ -12,6 +12,7 @@ from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout
 from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
+    ordered_covering_batches,
     require_matching_batch_context,
 )
 from vrl.generation.protocols import GenerationBatchGatherer
@@ -310,7 +311,7 @@ class ARDiscreteBatchGatherer:
             "uncond_input_ids",
             "uncond_attention_mask",
         )
-        ordered_ar_chunks = layout.ordered_batches(
+        ordered_ar_chunks = ordered_covering_batches(
             request,
             sample_rows,
             batches,

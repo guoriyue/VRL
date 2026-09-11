@@ -8,7 +8,6 @@ from vrl.generation.bindings.token_autoregressive.executor import (
     ARDiscreteBatchResult,
 )
 from vrl.generation.bindings.token_autoregressive.layout import (
-    ARBatchPayload,
     ARRequestLayout,
     ARSamplingParams,
 )
@@ -16,7 +15,6 @@ from vrl.generation.bindings.token_autoregressive.layout import (
 __all__ = [
     "ARBatchExecutorBase",
     "ARBatchInputs",
-    "ARBatchPayload",
     "ARDiscreteBatchExecutorBase",
     "ARDiscreteBatchGatherer",
     "ARDiscreteBatchResult",

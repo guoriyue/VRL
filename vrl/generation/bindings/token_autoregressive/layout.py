@@ -4,26 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeVar
+from typing import Any
 
 import torch
 
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
-    ordered_covering_batches,
 )
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
+from vrl.generation.types import GenerationRequest
 from vrl.utils.config import require_exact_int
-
-
-class ARBatchPayload(Protocol):
-    """Common metadata every prompt-major AR batch result carries."""
-
-    batch: GenerationSampleBatch
-    peak_memory_mb: float | None
-
-
-TBatch = TypeVar("TBatch", bound=ARBatchPayload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,23 +93,6 @@ class ARRequestLayout:
             sample_count=batch.sample_count,
         )
 
-    def ordered_batches(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        batches: Sequence[TBatch],
-        *,
-        row_fields: Sequence[str] = (),
-    ) -> list[TBatch]:
-        """Sort AR batches and ensure they exactly cover prompt-major samples."""
-
-        return ordered_covering_batches(
-            request,
-            sample_rows,
-            batches,
-            row_fields=row_fields,
-        )
-
     def chunk_seed_offset(self, request: GenerationRequest, batch: GenerationSampleBatch) -> int:
         """Return the prompt-major sample offset for deterministic batch seeding."""
 
@@ -134,7 +106,7 @@ class ARRequestLayout:
         """Concatenate ordered batch payload tensors along the batch dim.
 
         The gatherers' cat step is pure data (a field-name list over already
-        ``ordered_batches``-validated payloads), so it lives here once instead
+        coverage-validated payloads), so it lives here once instead
         of each family writing one ``torch.cat`` block per field.
         """
 
@@ -208,4 +180,4 @@ class ARRequestLayout:
         )
 
 
-__all__ = ["ARBatchPayload", "ARRequestLayout", "ARSamplingParams"]
+__all__ = ["ARRequestLayout", "ARSamplingParams"]

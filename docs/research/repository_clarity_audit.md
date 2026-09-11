@@ -3573,3 +3573,18 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 12 token-binding tests passed with two skips; 145 Janus, NextStep,
   LlamaGen, Emu3 and Janus-R1 wiring tests passed. Touched-file Ruff/diff checks
   passed. Full repository review remains incomplete.
+
+## AR gatherers call the shared coverage boundary directly
+
+- Remove ARRequestLayout.ordered_batches, which forwarded all arguments without
+  adding behavior. The discrete AR, Janus-R1, and NextStep gatherers now call
+  ordered_covering_batches directly, matching the diffusion gatherer.
+- Remove ARBatchPayload and its TypeVar/export: their only consumer was that
+  forwarding method. The shared BatchResultWithIdentity protocol still defines
+  the actual coverage boundary. Update the OOM test's stale helper reference.
+- Preserve layout.cat_batch_fields, shared by three gatherers, and all family
+  trajectory assembly. Preserve row-field schemas, sorting, range checks and
+  exact sample coverage; no new class, field vocabulary, or compatibility shim.
+- Validation: 319 binding, sample-batch, AR-family and Janus-R1 wiring tests
+  passed with two skips. Touched-file Ruff/diff checks passed; no removed
+  protocol or layout forwarding callers remain. Full review is incomplete.
