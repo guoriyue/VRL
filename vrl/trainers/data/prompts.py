@@ -134,7 +134,15 @@ def load_prompt_examples_from_jsonl_bytes(
             raise ValueError(f"{context}:{line_number}: JSONL rows must be objects")
         extra_metadata = {key: value for key, value in obj.items() if key not in known_fields}
         prompt_fields = {key: value for key, value in obj.items() if key in known_fields}
-        metadata = dict(prompt_fields.get("metadata") or {})
+        if not isinstance(prompt_fields.get("prompt"), str):
+            raise ValueError(f"{context}:{line_number}: prompt must be a string")
+        for name in ("metadata", "request_overrides"):
+            value = prompt_fields.get(name)
+            if value is None:
+                prompt_fields[name] = {}
+            elif not isinstance(value, dict):
+                raise ValueError(f"{context}:{line_number}: {name} must be an object")
+        metadata = dict(prompt_fields["metadata"])
         metadata.update(extra_metadata)
         prompt_fields["metadata"] = metadata
         examples.append(PromptExample(**prompt_fields))

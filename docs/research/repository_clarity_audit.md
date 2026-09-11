@@ -689,3 +689,21 @@ Torch-free import checks. Touched-file Ruff and diff whitespace checks pass.
   passed. Added invalid sequential epoch coverage for both sample and preview,
   asserting the rejection leaves RNG state unchanged. Ruff and whitespace checks
   pass on touched files.
+
+## Native prompt JSONL boundary
+
+- Native JSONL parsing now requires a string prompt and object-valued metadata /
+  request_overrides, with errors identifying source and physical line number.
+  Removed the truthiness fallback that silently accepted false, zero, empty
+  strings/lists, and dict-convertible pair lists as metadata.
+- Missing/null optional object fields normalize explicitly to empty objects.
+  Empty string prompts remain legal for unconditional tasks. Unknown row fields
+  still merge into metadata with their established precedence.
+- Kept path loading and immutable-byte parsing as distinct entrypoints: callers
+  with authenticated snapshots must not reopen potentially changed files.
+  Retained dataset adapters and PromptExample projections; no parser utility
+  class or new schema-key table is introduced. Image-caption-specific parsing
+  remains a separate source-review slice.
+- Validation: 109 trainer-data, dataset/provenance and prompt-config tests passed,
+  including malformed field diagnostics and preserved empty-prompt/null-mapping
+  behavior. Touched-file Ruff and diff whitespace checks pass.
