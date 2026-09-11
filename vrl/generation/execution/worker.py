@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import traceback
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from vrl.generation.execution.memory_parking import WorkerMemoryParking
@@ -495,6 +495,20 @@ class GenerationWorkerCore:
             )
 
         trials: list[BatchSizeProbeTrial] = []
+
+        def bisect_capacity(low_good: int, high_bad: int) -> int:
+            """Find the largest fitting count between known good/bad trials."""
+
+            while high_bad - low_good > 1:
+                mid = (low_good + high_bad) // 2
+                trial = run_trial(mid, timed_label="bisect")
+                trials.append(trial)
+                if trial.oom:
+                    high_bad = mid
+                else:
+                    low_good = mid
+            return low_good
+
         # Warmup at n=1 (cudnn autotune, lazy init) so trial timings compare
         # warm-vs-warm; its memory verdict still counts: OOM at n=1 is terminal.
         warmup = run_trial(1, timed_label="warmup")
@@ -516,7 +530,7 @@ class GenerationWorkerCore:
             if high.oom:
                 # The fit anchor itself OOMed: bisect between the known-good 1
                 # and n_high for the largest fitting n.
-                final = self._bisect_batch_probe(run_trial, trials, 1, n_high)
+                final = bisect_capacity(1, n_high)
             else:
                 assert high.non_torch_bytes is not None
                 assert high.peak_bytes is not None
@@ -539,12 +553,7 @@ class GenerationWorkerCore:
                     confirm = run_trial(candidate, timed_label="confirm")
                     trials.append(confirm)
                     if confirm.oom:
-                        final = self._bisect_batch_probe(
-                            run_trial,
-                            trials,
-                            n_high,
-                            candidate,
-                        )
+                        final = bisect_capacity(n_high, candidate)
                     else:
                         final = candidate
                         # Knee rule: growing past n_high must still buy
@@ -559,25 +568,6 @@ class GenerationWorkerCore:
             budget_bytes=budget_bytes,
             trials=tuple(trials),
         )
-
-    @staticmethod
-    def _bisect_batch_probe(
-        run_trial: Callable[..., BatchSizeProbeTrial],
-        trials: list[BatchSizeProbeTrial],
-        low_good: int,
-        high_bad: int,
-    ) -> int:
-        """Largest fitting n in (low_good, high_bad): each trial is seconds."""
-
-        while high_bad - low_good > 1:
-            mid = (low_good + high_bad) // 2
-            trial = run_trial(mid, timed_label="bisect")
-            trials.append(trial)
-            if trial.oom:
-                high_bad = mid
-            else:
-                low_good = mid
-        return low_good
 
     def execute_request_pipelined(
         self,

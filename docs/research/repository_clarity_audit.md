@@ -3227,3 +3227,23 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 220 execution/launcher tests passed; touched-file Ruff/diff
   checks passed. This verifies gloo RNG coherence, not NCCL GPU pipelining
   performance or a full model run. Repository review remains incomplete.
+
+## Keep batch-probe search state inside the probe call
+
+- Replace GenerationWorkerCore._bisect_batch_probe with a local bisect_capacity
+  inside probe_batch_size. Its trial function and accumulated trial list belong
+  to that invocation; the two search sites now pass only their good/bad bounds.
+  Remove the unused Callable import. Search order and returned capacity remain
+  unchanged, with no new abstraction or copied implementation.
+- Keep probe tuning constants: they are a deliberately fixed, isolated policy
+  used by both probing branches and test fixtures, not an algorithm vocabulary.
+- Validation: 212 execution tests passed, including probe OOM/bisection paths;
+  touched-file Ruff/diff checks passed and no old helper references remain.
+- Open multi-rank issue from source review: RayGenerationExecutor fans a whole
+  probe call to all engine ranks. Each worker independently chooses fit, confirm
+  and bisection trials from local memory/timing/OOM results. No coordinated
+  trial decision is present, so differing measurements can produce different
+  collective shapes/control flow. This is source evidence, not a reproduced
+  GPU deadlock. Adding RNG sync alone cannot establish collective safety; the
+  probe needs coordinated decisions or an explicit supported-topology boundary.
+  Full repository review remains incomplete.
