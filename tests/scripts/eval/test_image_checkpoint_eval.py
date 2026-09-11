@@ -379,7 +379,7 @@ def test_completed_report_is_immutable_and_integrity_checked(generation):
 def completed_training_evaluation(generation, tmp_path, monkeypatch):
     import shutil
 
-    from vrl.scripts.train import write_run_verdict
+    from vrl.run_verdict import RunVerdictWriter
     from vrl.trainers import trace
 
     archive, rows = generation
@@ -412,7 +412,7 @@ def completed_training_evaluation(generation, tmp_path, monkeypatch):
         resumed=False,
     ).launch_path
     seal = trace.TrainingRunTrace.load(launch).seal_artifacts()
-    write_run_verdict(str(training), environ={})
+    RunVerdictWriter(str(training), environ={}).write()
     verdict_path = training / "run_verdict.json"
     verdict = json.loads(verdict_path.read_text())
     # This is fixture data for association validation, not a real trainer run.

@@ -496,7 +496,7 @@ async def test_active_health_failure_escapes_as_the_first_failure_identity() -> 
     assert caught.value.__cause__ is probe_timeout
     assert runtime.lifecycle.failure is health_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    # write_run_verdict uses this exact selector for its error_class.
+    # RunVerdictWriter uses this exact selector for its error_class.
     assert root_failure_cause(caught.value) is health_failure
 
 

@@ -346,7 +346,7 @@ class ResolvedDistributedResources:
 
         Rank-local torchrun launches keep the resource plan in Ray's physical
         ordinal space but narrow the process to CUDA_VISIBLE_DEVICES=<physical>
-        (see train.py ``_narrow_rank_local_cuda_visibility``), so torch
+        (see launch_environment.py ``narrow_rank_local_cuda_visibility``), so torch
         enumerates exactly ``visible_devices`` in order and the torch ordinal
         is the id's *position*, not its value — returning the raw physical id
         raised "CUDA error: invalid device ordinal" on every non-zero rank of

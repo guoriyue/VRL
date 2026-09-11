@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
     from vrl.trainers.core.types import ReplayParityConfig, RolloutOrchestrationConfig
 
-from vrl.scripts.train import RUN_VERDICT_NAME, rank_run_verdict_name
+from vrl.run_verdict import RUN_VERDICT_NAME, RunVerdictWriter
 
 logger = logging.getLogger(__name__)
 
@@ -594,7 +594,7 @@ class RunSupervisor:
         missing_ranks: list[int] = []
         for rank in range(self.expected_world_size):
             verdict = self._read_verdict(
-                self.output_dir / rank_run_verdict_name(rank),
+                self.output_dir / RunVerdictWriter.rank_file_name(rank),
             )
             if (
                 verdict is None

@@ -238,8 +238,8 @@ def test_incomplete_or_redirected_receipt_is_rejected(completed_loop, change):
 
 @pytest.mark.parametrize("world_size", [1, 2])
 def test_completion_requires_every_successful_rank(completed_loop, tmp_path, world_size):
+    from vrl.run_verdict import RunVerdictWriter
     from vrl.scripts.supervise import RunSupervisor
-    from vrl.scripts.train import write_run_verdict
 
     launch = json.loads(completed_loop.read_text())
     launch["runtime"]["environment"] = {"WORLD_SIZE": str(world_size)}
@@ -247,13 +247,13 @@ def test_completion_requires_every_successful_rank(completed_loop, tmp_path, wor
     seal = trace.TrainingRunTrace.load(completed_loop).seal_artifacts()
     supervisor = RunSupervisor(command=[], output_dir=tmp_path, expected_world_size=world_size)
     for rank in range(world_size):
-        write_run_verdict(
+        RunVerdictWriter(
             str(tmp_path),
             environ={
                 "RANK": str(rank),
                 "WORLD_SIZE": str(world_size),
             },
-        )
+        ).write()
     supervisor._collect_attempt_verdict(exit_code=0)
     verdict_path = tmp_path / "run_verdict.json"
     verdict = trace.TrainingRunTrace.load(seal).verify_completion(verdict_path)

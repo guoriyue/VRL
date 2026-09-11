@@ -14,12 +14,14 @@ import inspect
 import logging
 import os
 import signal
-from collections.abc import Awaitable, MutableMapping
+from collections.abc import Awaitable
 from types import FrameType
 from typing import TYPE_CHECKING, Any
 
 from omegaconf import DictConfig
 
+from vrl.run_verdict import RunVerdictWriter
+from vrl.scripts.common.launch_environment import narrow_rank_local_cuda_visibility
 from vrl.utils.config import import_from_path
 
 if TYPE_CHECKING:
@@ -52,97 +54,6 @@ def run_config(cfg: DictConfig) -> Any:
 
     trainer = import_from_path(resolve_train_target(parse_config(cfg)))
     return trainer(cfg)
-
-
-def _narrow_rank_local_cuda_visibility(
-    root: RootConfig,
-    *,
-    environ: MutableMapping[str, str] | None = None,
-) -> str | None:
-    """Give each symmetric-colocated torchrun rank one logical CUDA device.
-
-    Every rank owns a separate local Ray cluster. If all ranks retain the host's
-    full CUDA view, Ray may place a rank's single GPU bundle on another rank's
-    card. Narrow before importing the trainer so Torch, NCCL, and Ray all agree
-    that this rank's physical card is logical ``cuda:0``.
-    """
-
-    distributed = root.distributed
-    training = None if distributed is None else distributed.training
-    resources = None if distributed is None else distributed.resources
-    strategy = "single_process" if training is None else str(training.strategy)
-    rollout_pool = "auto" if resources is None else str(resources.rollout.gpu_pool)
-    if strategy not in {"ddp", "fsdp"} or rollout_pool != "trainer":
-        return None
-
-    environment = os.environ if environ is None else environ
-    local_rank_raw = environment.get("LOCAL_RANK")
-    world_size_raw = environment.get("WORLD_SIZE")
-    if local_rank_raw is None or world_size_raw is None:
-        # DistributedTrainingContext.from_root owns the complete missing torchrun-env error.
-        return None
-    try:
-        local_rank = int(local_rank_raw)
-        world_size = int(world_size_raw)
-        configured_local_world_size = 1 if training is None else int(training.gpus_per_node)
-        local_world_size = int(
-            environment.get("LOCAL_WORLD_SIZE", str(configured_local_world_size)),
-        )
-    except ValueError as exc:
-        raise ValueError(
-            "torchrun rank sizes must be integers before rank-local CUDA selection: "
-            f"LOCAL_RANK={local_rank_raw!r}, WORLD_SIZE={world_size_raw!r}, "
-            f"LOCAL_WORLD_SIZE={environment.get('LOCAL_WORLD_SIZE')!r}",
-        ) from exc
-    if (
-        local_rank < 0
-        or local_world_size <= 0
-        or world_size < local_world_size
-        or local_rank >= local_world_size
-    ):
-        raise ValueError(
-            "invalid torchrun rank identity before rank-local CUDA selection: "
-            f"LOCAL_RANK={local_rank}, LOCAL_WORLD_SIZE={local_world_size}, "
-            f"WORLD_SIZE={world_size}",
-        )
-    if local_world_size != configured_local_world_size:
-        raise ValueError(
-            "LOCAL_WORLD_SIZE must match distributed.training.gpus_per_node before "
-            f"rank-local CUDA selection: LOCAL_WORLD_SIZE={local_world_size}, "
-            f"gpus_per_node={configured_local_world_size}",
-        )
-
-    if "CUDA_VISIBLE_DEVICES" not in environment:
-        selected = str(local_rank)
-    else:
-        raw_visible = environment["CUDA_VISIBLE_DEVICES"].strip()
-        if not raw_visible:
-            raise ValueError(
-                "CUDA_VISIBLE_DEVICES is empty for a GPU-distributed rank-local launch",
-            )
-        devices = [token.strip() for token in raw_visible.split(",") if token.strip()]
-        if len(set(devices)) != len(devices):
-            raise ValueError(
-                "CUDA_VISIBLE_DEVICES contains duplicate devices before rank-local "
-                f"launch: {raw_visible!r}",
-            )
-        if len(devices) < local_world_size:
-            raise ValueError(
-                "CUDA_VISIBLE_DEVICES cannot supply every local torchrun rank: "
-                f"LOCAL_WORLD_SIZE={local_world_size}, "
-                f"CUDA_VISIBLE_DEVICES={raw_visible!r}",
-            )
-        selected = devices[local_rank]
-
-    try:
-        physical_device = int(selected)
-    except ValueError as exc:
-        raise ValueError(
-            "symmetric-colocated rank-local Ray placement currently requires integer "
-            f"CUDA device ordinals, got {selected!r}",
-        ) from exc
-    environment["CUDA_VISIBLE_DEVICES"] = selected
-    return str(physical_device)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -207,9 +118,9 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     cfg = load_config(args.config, overrides=args.overrides)
     root = parse_config(cfg)
-    verdict_dir = _verdict_dir(root)
+    verdict = RunVerdictWriter.from_root(root)
     try:
-        selected_cuda = _narrow_rank_local_cuda_visibility(root)
+        selected_cuda = narrow_rank_local_cuda_visibility(root)
         if selected_cuda is not None:
             logging.getLogger(__name__).info(
                 "Rank-local CUDA visibility: LOCAL_RANK=%s physical_device=%s logical_device=0",
@@ -232,107 +143,12 @@ def main(argv: list[str] | None = None) -> None:
         if inspect.isawaitable(result):
             received_signal = asyncio.run(_run_async_trainer(result))
     except BaseException as exc:
-        write_run_verdict(verdict_dir, error=exc)
+        verdict.write(error=exc)
         raise
     if received_signal is not None:
-        write_run_verdict(verdict_dir, received_signal=received_signal)
+        verdict.write(received_signal=received_signal)
         raise SystemExit(128 + int(received_signal))
-    write_run_verdict(verdict_dir)
-
-
-def _verdict_dir(root: RootConfig) -> str | None:
-    output_dir = str((root.trainer.output_dir if root.trainer is not None else None) or "").strip()
-    return output_dir or None
-
-
-RUN_VERDICT_NAME = "run_verdict.json"
-
-
-def rank_run_verdict_name(rank: int) -> str:
-    """Return the per-rank verdict file name owned by one torchrun worker."""
-
-    if rank < 0:
-        raise ValueError(f"rank must be non-negative, got {rank}")
-    return f"run_verdict.rank-{rank}.json"
-
-
-def _resolve_verdict_file(
-    environ: MutableMapping[str, str],
-) -> tuple[str, int | None, int | None]:
-    """Pick this process's verdict file name: per-rank under torchrun, else the aggregate.
-
-    Malformed ``RANK``/``WORLD_SIZE`` fall back to the single-process name rather
-    than raising, so a broken environment never masks the trainer's own failure.
-    """
-
-    rank_raw = environ.get("RANK")
-    world_size_raw = environ.get("WORLD_SIZE")
-    try:
-        rank = int(rank_raw) if rank_raw is not None else None
-        world_size = int(world_size_raw) if world_size_raw is not None else None
-    except ValueError:
-        return RUN_VERDICT_NAME, None, None
-    if rank is None or world_size is None or world_size <= 1 or rank < 0 or rank >= world_size:
-        return RUN_VERDICT_NAME, None, None
-    return rank_run_verdict_name(rank), rank, world_size
-
-
-def write_run_verdict(
-    output_dir: str | None,
-    *,
-    error: BaseException | None = None,
-    received_signal: signal.Signals | None = None,
-    environ: MutableMapping[str, str] | None = None,
-) -> None:
-    """Publish this run's outcome as an explicit machine-readable contract.
-
-    A supervisor must never guess the failure cause from the exit code alone:
-    the verdict names the error class so restart policy ("same class twice ->
-    stop") is decided on facts. A missing verdict file (SIGKILL, OOM-killed
-    interpreter) is itself informative: the run died without unwinding. Every
-    multi-rank worker owns a separate file; the supervisor publishes the aggregate
-    only after torchrun has joined all workers.
-    """
-
-    if output_dir is None:
-        return
-    from pathlib import Path
-
-    from vrl.utils.json_files import write_json
-
-    if error is not None:
-        from vrl.runtime_errors import root_failure_cause
-
-        root_error = root_failure_cause(error)
-        verdict = {
-            "verdict": "failed",
-            # Cleanup wrappers keep the complete outer message, while restart
-            # policy keys on the stable operation root that actually failed.
-            "error_class": type(root_error).__name__,
-            "error_message": str(error)[:2000],
-        }
-    elif received_signal is not None:
-        verdict = {
-            "verdict": "terminated",
-            "signal": int(received_signal),
-            "signal_name": received_signal.name,
-        }
-    else:
-        verdict = {"verdict": "success"}
-    environment = os.environ if environ is None else environ
-    file_name, rank, world_size = _resolve_verdict_file(environment)
-    verdict["schema_version"] = 1
-    if rank is not None and world_size is not None:
-        verdict["rank"] = rank
-        verdict["world_size"] = world_size
-    try:
-        write_json(Path(output_dir) / file_name, verdict)
-    except OSError:
-        logging.getLogger(__name__).warning(
-            "failed to write run verdict to %s",
-            output_dir,
-            exc_info=True,
-        )
+    verdict.write()
 
 
 if __name__ == "__main__":

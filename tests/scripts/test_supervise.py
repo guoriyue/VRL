@@ -18,6 +18,7 @@ from omegaconf import OmegaConf
 
 from vrl.algorithms.types import InitialReplayStats, TrainStepMetrics
 from vrl.config.schema import parse_config
+from vrl.run_verdict import RUN_VERDICT_NAME, RunVerdictWriter
 from vrl.scripts.supervise import (
     HEALTH_VERDICT_NAME,
     ContinuousHealthPolicy,
@@ -235,7 +236,7 @@ def test_torchrun_failure_restarts_all_ranks_from_complete_checkpoint(tmp_path) 
     worker = tmp_path / "restart_worker.py"
     worker.write_text(
         "import json, os, pathlib, sys, time\n"
-        "from vrl.scripts.train import write_run_verdict\n"
+        "from vrl.run_verdict import RunVerdictWriter\n"
         f"out = pathlib.Path({str(out)!r})\n"
         "rank = int(os.environ['RANK'])\n"
         "resume = next((arg for arg in sys.argv[1:] "
@@ -249,16 +250,16 @@ def test_torchrun_failure_restarts_all_ranks_from_complete_checkpoint(tmp_path) 
         "        meta = {'schema_version': 1, 'checkpoint_file_bytes': len(payload), "
         "'global_step': 4, 'next_epoch': 4}\n"
         "        (checkpoint / 'checkpoint_meta.json').write_text(json.dumps(meta))\n"
-        "        write_run_verdict(str(out))\n"
+        "        RunVerdictWriter(str(out)).write()\n"
         "        raise SystemExit(0)\n"
         "    for _ in range(100):\n"
         "        if (checkpoint / 'checkpoint_meta.json').exists():\n"
         "            break\n"
         "        time.sleep(0.02)\n"
-        "    write_run_verdict(str(out), error=ValueError('transient rank failure'))\n"
+        "    RunVerdictWriter(str(out)).write(error=ValueError('transient rank failure'))\n"
         "    raise SystemExit(1)\n"
         "(out / f'resume-rank-{rank}.txt').write_text('\\n'.join(sys.argv[1:]))\n"
-        "write_run_verdict(str(out))\n",
+        "RunVerdictWriter(str(out)).write()\n",
     )
     supervisor = RunSupervisor(
         command=[*_torchrun_command(worker), str(out)],
@@ -369,9 +370,9 @@ def test_stop_kills_torchrun_workers(tmp_path) -> None:
 
 def test_verdict_file_contract_matches_train_cli() -> None:
     """The supervisor reads the same file name vrl-train writes."""
-    from vrl.scripts import supervise, train
+    from vrl.scripts import supervise
 
-    assert supervise.RUN_VERDICT_NAME == train.RUN_VERDICT_NAME
+    assert supervise.RUN_VERDICT_NAME == RUN_VERDICT_NAME
 
 
 def test_build_train_launch_keeps_single_process_direct() -> None:
@@ -466,27 +467,16 @@ def test_supervisor_rejects_nested_torchrun_owners() -> None:
 
 
 def test_train_writes_atomic_rank_verdicts_and_failure_wins_aggregation(tmp_path) -> None:
-    from vrl.scripts import train
 
     out = tmp_path / "run"
-    train.write_run_verdict(
-        str(out),
-        environ={"RANK": "0", "WORLD_SIZE": "4"},
+    RunVerdictWriter(str(out), environ={"RANK": "0", "WORLD_SIZE": "4"}).write()
+    RunVerdictWriter(str(out), environ={"RANK": "1", "WORLD_SIZE": "4"}).write(
+        received_signal=signal.SIGTERM
     )
-    train.write_run_verdict(
-        str(out),
-        received_signal=signal.SIGTERM,
-        environ={"RANK": "1", "WORLD_SIZE": "4"},
+    RunVerdictWriter(str(out), environ={"RANK": "2", "WORLD_SIZE": "4"}).write(
+        error=ValueError("rank 2 root cause")
     )
-    train.write_run_verdict(
-        str(out),
-        error=ValueError("rank 2 root cause"),
-        environ={"RANK": "2", "WORLD_SIZE": "4"},
-    )
-    train.write_run_verdict(
-        str(out),
-        environ={"RANK": "3", "WORLD_SIZE": "4"},
-    )
+    RunVerdictWriter(str(out), environ={"RANK": "3", "WORLD_SIZE": "4"}).write()
     assert not (out / "run_verdict.json").exists()
 
     supervisor = RunSupervisor(
@@ -505,10 +495,9 @@ def test_train_writes_atomic_rank_verdicts_and_failure_wins_aggregation(tmp_path
 
 
 def test_train_keeps_single_process_verdict_name(tmp_path) -> None:
-    from vrl.scripts import train
 
     out = tmp_path / "run"
-    train.write_run_verdict(str(out), environ={})
+    RunVerdictWriter(str(out), environ={}).write()
 
     assert json.loads((out / "run_verdict.json").read_text())["verdict"] == "success"
     assert not list(out.glob("run_verdict.rank-*.json"))
@@ -520,7 +509,6 @@ def test_train_verdict_uses_cleanup_wrapper_root_class(tmp_path) -> None:
         PromptCollectionCleanupError,
     )
     from vrl.rollouts.orchestration.rollout_runtime import RolloutPhaseCleanupError
-    from vrl.scripts import train
 
     root = RayOperationTimeout("rollout.generation.batch", 1.0)
     collection = PromptCollectionCleanupError(
@@ -533,7 +521,7 @@ def test_train_verdict_uses_cleanup_wrapper_root_class(tmp_path) -> None:
     )
     out = tmp_path / "run"
 
-    train.write_run_verdict(str(out), error=wrapped, environ={})
+    RunVerdictWriter(str(out), environ={}).write(error=wrapped)
 
     verdict = json.loads((out / "run_verdict.json").read_text())
     assert verdict["error_class"] == "RayOperationTimeout"
@@ -543,26 +531,21 @@ def test_train_verdict_uses_cleanup_wrapper_root_class(tmp_path) -> None:
 
 def test_train_verdict_keeps_terminal_identity_before_dependency_cause(tmp_path) -> None:
     from vrl.ray.operation_deadline import RayOperationTimeout
-    from vrl.scripts import train
 
     timeout = RayOperationTimeout("rollout.startup.load_policy", 1.0)
     timeout.__cause__ = TimeoutError("dependency-owned timeout")
     out = tmp_path / "run"
 
-    train.write_run_verdict(str(out), error=timeout, environ={})
+    RunVerdictWriter(str(out), environ={}).write(error=timeout)
 
     verdict = json.loads((out / "run_verdict.json").read_text())
     assert verdict["error_class"] == "RayOperationTimeout"
 
 
 def test_distributed_success_requires_every_rank_verdict(tmp_path) -> None:
-    from vrl.scripts import train
 
     out = tmp_path / "run"
-    train.write_run_verdict(
-        str(out),
-        environ={"RANK": "0", "WORLD_SIZE": "2"},
-    )
+    RunVerdictWriter(str(out), environ={"RANK": "0", "WORLD_SIZE": "2"}).write()
     supervisor = RunSupervisor(
         command=[],
         output_dir=out,
@@ -575,10 +558,7 @@ def test_distributed_success_requires_every_rank_verdict(tmp_path) -> None:
     assert incomplete["error_class"] == "MissingRankVerdict"
     assert incomplete["missing_ranks"] == [1]
 
-    train.write_run_verdict(
-        str(out),
-        environ={"RANK": "1", "WORLD_SIZE": "2"},
-    )
+    RunVerdictWriter(str(out), environ={"RANK": "1", "WORLD_SIZE": "2"}).write()
     complete = supervisor._collect_attempt_verdict()
     assert complete is not None
     assert complete["verdict"] == "success"
@@ -1204,7 +1184,7 @@ def test_supervised_verdict_does_not_include_attempt_identity(tmp_path):
     out = tmp_path / "run"
     command = _child_script(
         tmp_path,
-        f"from vrl.scripts.train import write_run_verdict\nwrite_run_verdict({str(out)!r})\n",
+        f"from vrl.run_verdict import RunVerdictWriter\nRunVerdictWriter({str(out)!r}).write()\n",
     )
     outcome = RunSupervisor(command=command, output_dir=out)._run_attempt([])
     assert outcome.verdict["verdict"] == "success"
@@ -1215,8 +1195,8 @@ def test_supervisor_records_nonzero_exit_even_after_child_wrote_success(tmp_path
     out = tmp_path / "run"
     command = _child_script(
         tmp_path,
-        "from vrl.scripts.train import write_run_verdict\n"
-        f"write_run_verdict({str(out)!r})\n"
+        "from vrl.run_verdict import RunVerdictWriter\n"
+        f"RunVerdictWriter({str(out)!r}).write()\n"
         "raise SystemExit(3)\n",
     )
     outcome = RunSupervisor(command=command, output_dir=out)._run_attempt([])

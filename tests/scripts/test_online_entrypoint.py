@@ -11,6 +11,7 @@ from omegaconf import OmegaConf
 import vrl.scripts.train as train
 from vrl.config.schema import parse_config
 from vrl.ray.resources import ResolvedDistributedResources
+from vrl.scripts.common.launch_environment import narrow_rank_local_cuda_visibility
 
 
 def _cfg(family: str, algorithm_kind: str) -> Any:
@@ -85,7 +86,7 @@ def test_same_host_fsdp_selects_one_physical_gpu_per_rank(
     }
     cfg = _distributed_cfg()
 
-    selected = train._narrow_rank_local_cuda_visibility(
+    selected = narrow_rank_local_cuda_visibility(
         parse_config(cfg),
         environ=environ,
     )
@@ -105,7 +106,7 @@ def test_same_host_fsdp_selects_one_physical_gpu_per_rank(
 def test_same_host_ddp_selects_local_rank_when_visibility_is_unset() -> None:
     environ = {"LOCAL_RANK": "1", "LOCAL_WORLD_SIZE": "2", "WORLD_SIZE": "2"}
 
-    selected = train._narrow_rank_local_cuda_visibility(
+    selected = narrow_rank_local_cuda_visibility(
         parse_config(_distributed_cfg(strategy="ddp", gpus_per_node=2)),
         environ=environ,
     )
@@ -122,7 +123,7 @@ def test_one_rank_per_node_preserves_an_existing_single_device_view() -> None:
         "CUDA_VISIBLE_DEVICES": "7",
     }
 
-    selected = train._narrow_rank_local_cuda_visibility(
+    selected = narrow_rank_local_cuda_visibility(
         parse_config(_distributed_cfg(gpus_per_node=1)),
         environ=environ,
     )
@@ -139,7 +140,7 @@ def test_disjoint_rollout_does_not_change_cuda_visibility() -> None:
         "CUDA_VISIBLE_DEVICES": "0,1,2,3",
     }
 
-    selected = train._narrow_rank_local_cuda_visibility(
+    selected = narrow_rank_local_cuda_visibility(
         parse_config(_distributed_cfg(gpu_pool="dedicated")),
         environ=environ,
     )
@@ -157,7 +158,7 @@ def test_rank_local_cuda_selection_rejects_partial_device_masks() -> None:
     }
 
     with pytest.raises(ValueError, match="cannot supply every local torchrun rank"):
-        train._narrow_rank_local_cuda_visibility(
+        narrow_rank_local_cuda_visibility(
             parse_config(_distributed_cfg()),
             environ=environ,
         )
@@ -172,7 +173,7 @@ def test_rank_local_cuda_selection_rejects_duplicate_devices() -> None:
     }
 
     with pytest.raises(ValueError, match="duplicate devices"):
-        train._narrow_rank_local_cuda_visibility(
+        narrow_rank_local_cuda_visibility(
             parse_config(_distributed_cfg(gpus_per_node=2)),
             environ=environ,
         )
