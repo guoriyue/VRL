@@ -6351,3 +6351,18 @@ The broader repository audit remains incomplete.
 - Decoder contract and Janus/NextStep paged backend suites: eight passed with
   16 dependency warnings. Touched-file Ruff and diff checks pass. No throughput
   claim; broader repository audit remains incomplete.
+
+## Attention implementation construction resolves each layer's dimensions once
+
+- Replace the nested attention-implementation comprehension with an explicit
+  loop using local attention, num_heads and head_dim. Construction previously
+  repeated model dimension lookups, including inside an eagerly evaluated
+  getattr scaling default. Each implementation now receives the same values
+  through a straightforward sequence.
+- Build a local list and publish it only after every layer succeeds, preserving
+  the original all-or-nothing assignment. Keep model compatibility accessors,
+  scale fallback, sliding-window adapter and rotary helpers; these are model
+  interface and mathematical boundaries. No additional class or helper.
+- Decoder contract and Janus/NextStep paged backend suites: eight passed with
+  16 dependency warnings. Touched-file Ruff and diff checks pass. No throughput
+  claim; broader repository audit remains incomplete.

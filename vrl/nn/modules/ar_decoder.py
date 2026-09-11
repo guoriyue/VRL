@@ -419,30 +419,22 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
             dtype=dtype,
         )
         if not self._attention_impls:
-            self._attention_impls = [
-                self.kernels.make_flash_attention_impl(
-                    num_heads=self._num_attention_heads(layer.self_attn),
-                    head_size=self._head_dim(
-                        layer.self_attn,
-                        self._num_attention_heads(layer.self_attn),
+            attention_impls: list[Any] = []
+            for layer in layers:
+                attention = layer.self_attn
+                num_heads = self._num_attention_heads(attention)
+                head_dim = self._head_dim(attention, num_heads)
+                attention_impls.append(
+                    self.kernels.make_flash_attention_impl(
+                        num_heads=num_heads,
+                        head_size=head_dim,
+                        scale=float(getattr(attention, "scaling", head_dim ** -0.5)),
+                        num_kv_heads=self._num_key_value_heads(attention),
+                        sliding_window=self._sliding_window_for_layer(layer),
+                        kv_cache_dtype=self.config.cache_dtype,
                     ),
-                    scale=float(
-                        getattr(
-                            layer.self_attn,
-                            "scaling",
-                            self._head_dim(
-                                layer.self_attn,
-                                self._num_attention_heads(layer.self_attn),
-                            )
-                            ** -0.5,
-                        )
-                    ),
-                    num_kv_heads=self._num_key_value_heads(layer.self_attn),
-                    sliding_window=self._sliding_window_for_layer(layer),
-                    kv_cache_dtype=self.config.cache_dtype,
                 )
-                for layer in layers
-            ]
+            self._attention_impls = attention_impls
 
     def _ensure_kv_caches(
         self,
