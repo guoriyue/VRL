@@ -11,7 +11,7 @@ from vrl.config.schema import parse_config
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
-from vrl.utils.memory import HostMemorySnapshot, format_host_memory
+from vrl.utils.memory import HostMemorySnapshot
 
 
 def _ray_config(*, colocated: bool) -> RayGenerationConfig:
@@ -47,12 +47,12 @@ def _ray_config(*, colocated: bool) -> RayGenerationConfig:
 
 
 def test_format_host_memory_omits_unknown_fields() -> None:
-    """``format_host_memory`` prints only the fields the snapshot knows: ``rss`` alone when
+    """``str(snapshot)`` prints only the fields the snapshot knows: ``rss`` alone when
     available/total are unknown.
     """
     snapshot = HostMemorySnapshot(rss_mb=10.0, available_mb=None, total_mb=None)
 
-    assert format_host_memory(snapshot) == "rss=10.0MiB"
+    assert str(snapshot) == "rss=10.0MiB"
 
 
 def test_cuda_oom_detection_prefers_the_typed_exception() -> None:

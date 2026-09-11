@@ -67,7 +67,7 @@ from vrl.trainers.online.config import OnlineBatchPlan
 from vrl.trainers.strategy import Strategy, build_strategy
 from vrl.trainers.trace import TrainingRunTrace
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
-from vrl.utils.memory import capture_host_memory, format_host_memory, log_host_memory
+from vrl.utils.memory import HostMemorySnapshot, log_host_memory
 from vrl.utils.profiling import profile_range
 
 logger = logging.getLogger(__name__)
@@ -511,10 +511,11 @@ def _check_host_memory_budget(
     first microbatch, a larger ``microbatch_size`` (or simply more
     epochs) would only OOM later in the run. Raising now — with the measured
     snapshot — turns a delayed mid-run OOM into an immediate, actionable error.
-    Real RSS is measured (``capture_host_memory`` reads /proc), not estimated
-    from tensor byte counts, because the Ray OOM monitor kills on RSS.
+    The guard uses system MemAvailable / MemTotal from /proc, so other processes
+    also contribute to the measured pressure. Process RSS is included in the
+    diagnostic snapshot but does not determine this threshold.
     """
-    snapshot = capture_host_memory()
+    snapshot = HostMemorySnapshot.capture()
     used = snapshot.used_fraction
     if used is None or used <= budget_fraction:
         return
@@ -522,7 +523,7 @@ def _check_host_memory_budget(
         f"Host RAM is at used={used:.1%} after collecting one streamed microbatch "
         f"({microbatch_prompts} prompt group(s) x {n_samples_per_prompt} samples), "
         f"above actor.host_memory_budget_fraction={budget_fraction:.1%} "
-        f"({format_host_memory(snapshot)}). One microbatch already does not fit the "
+        f"({snapshot}). One microbatch already does not fit the "
         "host-RAM budget; reduce actor.microbatch_size to stream smaller "
         "slices, or lower rollout.n_samples_per_prompt / sample resolution if it is "
         "already 1.",

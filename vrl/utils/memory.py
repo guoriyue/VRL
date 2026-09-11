@@ -18,6 +18,31 @@ class HostMemorySnapshot:
     available_mb: float | None
     total_mb: float | None
 
+    @classmethod
+    def capture(cls) -> HostMemorySnapshot:
+        """Capture Linux host memory without adding a psutil dependency."""
+
+        return cls(
+            rss_mb=_read_proc_field_mb("/proc/self/status", "VmRSS"),
+            available_mb=_read_proc_field_mb("/proc/meminfo", "MemAvailable"),
+            total_mb=_read_proc_field_mb("/proc/meminfo", "MemTotal"),
+        )
+
+    def __str__(self) -> str:
+        """Format host-memory values with unknown fields omitted."""
+
+        parts: list[str] = []
+        if self.rss_mb is not None:
+            parts.append(f"rss={self.rss_mb:.1f}MiB")
+        if self.available_mb is not None:
+            parts.append(f"available={self.available_mb:.1f}MiB")
+        if self.total_mb is not None:
+            parts.append(f"total={self.total_mb:.1f}MiB")
+        used = self.used_fraction
+        if used is not None:
+            parts.append(f"used={used:.3f}")
+        return " ".join(parts) if parts else "unavailable"
+
     @property
     def used_fraction(self) -> float | None:
         if self.available_mb is None or self.total_mb in (None, 0):
@@ -25,39 +50,13 @@ class HostMemorySnapshot:
         return 1.0 - (self.available_mb / self.total_mb)
 
 
-def capture_host_memory() -> HostMemorySnapshot:
-    """Capture Linux host memory without adding a psutil dependency."""
-
-    return HostMemorySnapshot(
-        rss_mb=_read_proc_field_mb("/proc/self/status", "VmRSS"),
-        available_mb=_read_proc_field_mb("/proc/meminfo", "MemAvailable"),
-        total_mb=_read_proc_field_mb("/proc/meminfo", "MemTotal"),
-    )
-
-
 def log_host_memory(label: str, *, log: logging.Logger | None = None) -> HostMemorySnapshot:
     """Log a compact host-memory snapshot and return it for tests/hooks."""
 
-    snapshot = capture_host_memory()
+    snapshot = HostMemorySnapshot.capture()
     target = log or logger
-    target.info("host_memory[%s]: %s", label, format_host_memory(snapshot))
+    target.info("host_memory[%s]: %s", label, snapshot)
     return snapshot
-
-
-def format_host_memory(snapshot: HostMemorySnapshot) -> str:
-    """Format host-memory values with unknown fields omitted."""
-
-    parts: list[str] = []
-    if snapshot.rss_mb is not None:
-        parts.append(f"rss={snapshot.rss_mb:.1f}MiB")
-    if snapshot.available_mb is not None:
-        parts.append(f"available={snapshot.available_mb:.1f}MiB")
-    if snapshot.total_mb is not None:
-        parts.append(f"total={snapshot.total_mb:.1f}MiB")
-    used = snapshot.used_fraction
-    if used is not None:
-        parts.append(f"used={used:.3f}")
-    return " ".join(parts) if parts else "unavailable"
 
 
 def _read_proc_field_mb(path: str, field: str) -> float | None:
@@ -78,7 +77,5 @@ def _read_proc_field_mb(path: str, field: str) -> float | None:
 
 __all__ = [
     "HostMemorySnapshot",
-    "capture_host_memory",
-    "format_host_memory",
     "log_host_memory",
 ]
