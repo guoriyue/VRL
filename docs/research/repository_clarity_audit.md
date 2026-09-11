@@ -2698,3 +2698,23 @@ this combined regression is compatibility evidence, not architectural completion
   optional backend tests skipped. CPU absence and original exceptions from all
   three CUDA queries are covered with mocked CUDA APIs; this is not a real-GPU
   fault-injection run. Touched-file Ruff and diff checks passed. Review is active.
+
+## Combined regression and remaining Ray device-discovery ambiguity
+
+- At e87f9fea8, ran tests/ray, tests/trainers, tests/generation,
+  tests/trajectory and tests/config together: 1739 passed, 9 skipped, 16 warnings
+  in 99.28 seconds. This covers the recent cleanup across those suites, including
+  Ray placement tests, but does not prove full repository review or real multi-GPU
+  training completion. No runtime code changed during the run.
+- Independent source inspection found remaining ambiguity in generation/ray/config:
+  _get_device catches every exception, while _cuda_device_index substitutes zero
+  for an invalid textual ordinal. Direct reproduction confirmed cuda:broken -> 0
+  and a policy.device RuntimeError -> an empty driver device set. The latter
+  reaches _validate_driver_cuda_ownership's early return without checking overlap.
+- Next change must distinguish a genuinely absent optional device from a broken
+  property, and reject malformed CUDA ordinals instead of selecting GPU zero.
+  Keep torch-free import behavior, explicit CPU handling, trainable-module fallback
+  for policies without a device, and the cross-node ordinal-space exception.
+  Review the device helpers together because they implement one discovery boundary;
+  do not introduce a second device parser or flatten the cycle-safe module walk
+  merely to reduce function count. This finding is reproduced but not fixed here.
