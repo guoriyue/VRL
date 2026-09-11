@@ -2477,3 +2477,20 @@ this combined regression is compatibility evidence, not architectural completion
   Encoder override projection and MiniMax audio/image VAE mappings are covered.
   Initial new fixture omitted required revision; corrected before the final
   passing run. Touched-file Ruff and diff checks passed. Full review is active.
+
+## Wan custom constructors use component precision at initial load
+
+- Follow-up caller inspection found that Wan T2V/I2V override from_build and
+  bypass diffusers_pipeline_dtypes. The preceding shared-helper change therefore
+  did not fix these entry points; running Wan tests alone had not proven that.
+- Both constructors now reuse their existing eager_module_dtypes mapping for
+  from_pretrained and subsequent placement. The load default remains model dtype
+  for both transformers, while VAE loads directly in FP32. Existing Wan encoder
+  dtype behavior and CPU-offload staging are preserved.
+- Keep family-owned construction/offload and component schema keys; no global
+  component taxonomy or new helper/class. This corrects the earlier coverage
+  implication rather than treating it as already complete.
+- Validation: 53 Wan, loader and tiny-pipeline wiring tests passed. I2V offload
+  assertions and a T2V constructor regression inspect the actual load mapping;
+  the shared local FP32 preservation regression also passes. Touched-file Ruff
+  and diff checks passed. Full repository review remains active.

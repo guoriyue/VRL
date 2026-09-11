@@ -117,7 +117,12 @@ def _assert_frozen_and_loaded(pipeline: _FakePipeline, calls: list[dict[str, Any
     assert calls == [
         {
             "model_name_or_path": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-            "torch_dtype": torch.bfloat16,
+            "torch_dtype": {
+                "default": torch.bfloat16,
+                "vae": torch.float32,
+                "text_encoder": torch.bfloat16,
+                "image_encoder": torch.bfloat16,
+            },
         },
     ]
     assert pipeline.progress_bar_disabled is True
@@ -811,3 +816,26 @@ def test_wan_rollout_rejects_source_change_after_build_normalization(
         match=r"pipeline boundary_ratio disagrees.*pipeline=0\.5.*build=0\.9",
     ):
         WanI2VDiffusersModel.from_build(build)
+
+
+def test_wan_t2v_loads_vae_in_fp32_before_offload_staging(monkeypatch) -> None:
+    from diffusers import WanPipeline
+
+    from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
+
+    pipeline = _FakePipeline()
+    calls = []
+
+    def load(path, **kwargs):
+        calls.append(kwargs)
+        return pipeline
+
+    monkeypatch.setattr(WanPipeline, "from_pretrained", staticmethod(load))
+    build = _i2v_build()
+    WanT2VDiffusersModel.from_build(build)
+    assert calls[0]["torch_dtype"] == {
+        "default": torch.bfloat16,
+        "vae": torch.float32,
+        "text_encoder": torch.bfloat16,
+    }
+    assert pipeline.vae.to_calls == [(build.device, torch.float32)]

@@ -181,9 +181,13 @@ class WanT2VDiffusersModel(
         boundary_ratio, trainable_transformers = wan_topology_from_build(build)
         from diffusers import WanPipeline
 
+        eager_module_dtypes = {
+            "vae": torch.float32,
+            "text_encoder": build.parameter_dtype,
+        }
         pipeline = WanPipeline.from_pretrained(
             build.model_name_or_path,
-            torch_dtype=build.parameter_dtype,
+            torch_dtype={"default": build.parameter_dtype, **eager_module_dtypes},
             **build.pretrained_kwargs,
         )
         _validate_wan_pipeline(
@@ -198,10 +202,7 @@ class WanT2VDiffusersModel(
             pipeline,
             build,
             offload_mode=offload_mode,
-            eager_module_dtypes={
-                "vae": torch.float32,
-                "text_encoder": build.parameter_dtype,
-            },
+            eager_module_dtypes=eager_module_dtypes,
         )
         return cls(
             pipeline=pipeline,
@@ -967,9 +968,14 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         boundary_ratio, trainable_transformers = wan_topology_from_build(build)
         from diffusers import WanImageToVideoPipeline
 
+        eager_module_dtypes = {
+            "vae": torch.float32,
+            "text_encoder": build.parameter_dtype,
+            "image_encoder": build.parameter_dtype,
+        }
         pipeline = WanImageToVideoPipeline.from_pretrained(
             build.model_name_or_path,
-            torch_dtype=build.parameter_dtype,
+            torch_dtype={"default": build.parameter_dtype, **eager_module_dtypes},
             **build.pretrained_kwargs,
         )
         _validate_wan_pipeline(
@@ -989,11 +995,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             pipeline,
             build,
             offload_mode=offload_mode,
-            eager_module_dtypes={
-                "vae": torch.float32,
-                "text_encoder": build.parameter_dtype,
-                "image_encoder": build.parameter_dtype,
-            },
+            eager_module_dtypes=eager_module_dtypes,
         )
         return cls(
             pipeline=pipeline,
