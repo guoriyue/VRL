@@ -143,9 +143,17 @@ def _concat_plain_rows(values: Sequence[Any]) -> Any:
     if isinstance(first, torch.Tensor):
         return torch.cat(list(values), dim=0)
     if isinstance(first, Mapping):
+        if any(not isinstance(value, Mapping) or value.keys() != first.keys() for value in values):
+            raise ValueError("cannot concatenate AR mappings with different keys or row types")
         return type(first)(
             (key, ar_concat_rows([value[key] for value in values])) for key in first
         )
+    if isinstance(first, (tuple, list)):
+        container_type = tuple if isinstance(first, tuple) else list
+        if any(
+            not isinstance(value, container_type) or len(value) != len(first) for value in values
+        ):
+            raise ValueError("cannot concatenate AR sequences with different lengths or row types")
     if isinstance(first, tuple):
         return tuple(
             ar_concat_rows([value[index] for value in values]) for index in range(len(first))

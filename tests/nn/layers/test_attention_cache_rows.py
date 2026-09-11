@@ -132,3 +132,33 @@ def test_cache_rows_reject_non_integer_indices_without_mutation(index, operation
         else:
             rows.scatter_rows([0, index], [torch.zeros(1, 1), torch.zeros(1, 1)])
     assert torch.equal(rows.gather([0, 1]), original)
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [{"a": 1}, {"a": 1, "b": 2}],
+        [{"a": 1, "b": 2}, {"a": 1}],
+        [[], [1]],
+        [[1], []],
+        [(), (1,)],
+        [(1,), ()],
+        [[1], (1,)],
+        [(1,), [1]],
+        [{}, []],
+    ],
+)
+def test_concat_rejects_different_row_structures(rows) -> None:
+    with pytest.raises(ValueError, match="cannot concatenate AR"):
+        ar_concat_rows(rows)
+
+
+def test_concat_mapping_order_does_not_change_key_alignment() -> None:
+    rows = [
+        {"key": torch.tensor([[1]]), "value": torch.tensor([[2]])},
+        {"value": torch.tensor([[4]]), "key": torch.tensor([[3]])},
+    ]
+    merged = ar_concat_rows(rows)
+    assert list(merged) == ["key", "value"]
+    torch.testing.assert_close(merged["key"], torch.tensor([[1], [3]]))
+    torch.testing.assert_close(merged["value"], torch.tensor([[2], [4]]))

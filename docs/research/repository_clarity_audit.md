@@ -2161,3 +2161,19 @@ tracing algorithm construction and evaluator selection together.
   dependency tests skipped. New cases place the unknown lane before and after
   a valid update and verify that original cache row identity and value survive.
   Touched-file Ruff and diff checks passed. Full repository review continues.
+
+## AR row merging rejects structure loss
+
+- Plain cache concatenation previously traversed only the first row's mapping
+  keys or sequence length. Extra fields/elements in later rows were silently
+  discarded. Require equal mapping key sets and matching list/tuple structure
+  and lengths before recursively merging that level. Dictionary insertion
+  order may differ; output retains the first row's order with key alignment.
+- Keep ar_split_rows/ar_concat_rows and their plain/HF adapters: they serve
+  ARCacheRows, torch attention and GLM generation, not a single incidental
+  caller. No new owning class, helper function or ALL_CAPS taxonomy is needed.
+  Existing tensor concatenation and DynamicCache handling remain unchanged.
+- Validation: 64 cache-row, token composition and GLM-family tests passed.
+  New cases reject missing/extra fields, unequal sequence lengths and mixed
+  containers; reversed mapping insertion order preserves tensor alignment.
+  Touched-file Ruff and diff checks passed. Full repository review continues.
