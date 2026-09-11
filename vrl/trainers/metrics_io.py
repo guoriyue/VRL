@@ -75,6 +75,8 @@ class OnlineMetricRow:
     )
     continuous_queue_wait_s: float = _csv_field(".4f", phase_key="continuous.queue_wait_s")
     continuous_item_age_s: float = _csv_field(".4f", phase_key="continuous.item_age_s")
+    # Persisted legacy column name for next-batch prefetch. Keep it aligned with
+    # existing logs: MetricsCSV rejects header changes during checkpoint resume.
     continuous_lookahead_requested: float = _csv_field(
         ".1f", phase_key="continuous.lookahead_requested"
     )

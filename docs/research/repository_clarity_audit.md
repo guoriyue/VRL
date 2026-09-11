@@ -3729,3 +3729,24 @@ this combined regression is compatibility evidence, not architectural completion
   not prove exhaustive config validation or whole-repository completion. It
   confirms these ownership boundaries through source/call-site inspection; no
   executable behavior changed and no tests were rerun for this documentation.
+
+## Metrics and training trace ownership review
+
+- Confirmed MetricsCSV owns initialization, resume alignment and append IO;
+  OnlineMetricsCSV owns the online schema and its two precision outputs. Keep
+  _csv_field as a dataclass field-declaration adapter so formatting and phase
+  mappings have one source. No additional wrapper class is justified.
+- Confirmed TrainingRunTrace owns capture, loading, artifact sealing and
+  verification. Its constants are persisted schema identities or explicit
+  environment keys, and its local git function scopes subprocess mechanics to
+  one snapshot. Retain those boundaries.
+- The remaining continuous_lookahead_requested spelling is a deliberate
+  persisted metrics contract, not the scheduling API. Owner code already uses
+  prefetch_next_batch names and explicitly preserves the metric key. Add the
+  same explanation beside the CSV declaration: renaming it without a migration
+  would break MetricsCSV's resume header check. Preserve schema compatibility
+  instead of performing an isolated cosmetic rename.
+- Evidence: inspected the owner emission, CSV initialization/header comparison,
+  continuous-field mapping test and schema-change resume rejection test. This
+  comment/documentation change passed touched-file Ruff/diff checks; execution
+  tests were not rerun. Full repository review remains incomplete.
