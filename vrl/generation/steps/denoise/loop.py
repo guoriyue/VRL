@@ -10,7 +10,7 @@ import torch
 from vrl.generation.execution.batch_memory import cuda_occupancy_snapshot
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
 from vrl.generation.steps.denoise.teacache import TeaCacheState
-from vrl.math.denoise.flow_matching import sde_step_with_logprob
+from vrl.math.denoise.flow_matching import SDEStepResult, sde_step_with_logprob
 from vrl.trajectory.storage import trajectory_tensor_bytes
 from vrl.utils.cuda_memory import (
     cuda_peak_allocated_bytes,
@@ -53,64 +53,137 @@ class DenoiseTrajectoryBuffers:
     prev_sample_means: torch.Tensor | None = None
     ref_noise_preds: torch.Tensor | None = None
 
+    @classmethod
+    def allocate(
+        cls,
+        *,
+        state: Any,
+        config: DenoiseLoopConfig,
+    ) -> DenoiseTrajectoryBuffers:
+        """Allocate final replay tensors before entering the denoise loop."""
 
-def preallocate_denoise_buffers(
-    *,
-    state: Any,
-    config: DenoiseLoopConfig,
-) -> DenoiseTrajectoryBuffers:
-    """Allocate final replay tensors before entering the denoise loop."""
+        latents = state.latents
+        if not isinstance(latents, torch.Tensor):
+            raise TypeError("denoise state.latents must be a torch.Tensor")
+        batch_rows = int(latents.shape[0])
+        if batch_rows != int(config.sample_count):
+            raise ValueError(
+                f"denoise batch produced {batch_rows} rows, expected {config.sample_count}",
+            )
+        num_steps = len(state.timesteps)
+        latent_shape = tuple(latents.shape[1:])
+        device = latents.device
+        timestep_dtype = cls._timestep_dtype(state.timesteps)
 
-    latents = state.latents
-    if not isinstance(latents, torch.Tensor):
-        raise TypeError("denoise state.latents must be a torch.Tensor")
-    batch_rows = int(latents.shape[0])
-    if batch_rows != int(config.sample_count):
-        raise ValueError(
-            f"denoise batch produced {batch_rows} rows, expected {config.sample_count}",
+        return cls(
+            observations=torch.empty(
+                (batch_rows, num_steps, *latent_shape),
+                dtype=latents.dtype,
+                device=device,
+            ),
+            actions=torch.empty(
+                (batch_rows, num_steps, *latent_shape),
+                dtype=latents.dtype,
+                device=device,
+            ),
+            log_probs=torch.empty((batch_rows, num_steps), dtype=torch.float32, device=device),
+            timesteps=torch.empty(
+                (batch_rows, num_steps),
+                dtype=timestep_dtype,
+                device=device,
+            ),
+            kl=torch.empty((batch_rows, num_steps), dtype=torch.float32, device=device),
+            prev_sample_means=(
+                torch.empty(
+                    (batch_rows, num_steps, *latent_shape),
+                    dtype=latents.dtype,
+                    device=device,
+                )
+                if config.sde.return_prev_sample_mean
+                else None
+            ),
+            ref_noise_preds=(
+                torch.empty(
+                    (batch_rows, num_steps, *latent_shape),
+                    dtype=latents.dtype,
+                    device=device,
+                )
+                if config.sde.cache_ref_noise_pred
+                else None
+            ),
         )
-    num_steps = len(state.timesteps)
-    latent_shape = tuple(latents.shape[1:])
-    device = latents.device
-    timestep_dtype = _timestep_dtype(state.timesteps)
 
-    return DenoiseTrajectoryBuffers(
-        observations=torch.empty(
-            (batch_rows, num_steps, *latent_shape),
-            dtype=latents.dtype,
-            device=device,
-        ),
-        actions=torch.empty(
-            (batch_rows, num_steps, *latent_shape),
-            dtype=latents.dtype,
-            device=device,
-        ),
-        log_probs=torch.empty((batch_rows, num_steps), dtype=torch.float32, device=device),
-        timesteps=torch.empty(
-            (batch_rows, num_steps),
-            dtype=timestep_dtype,
-            device=device,
-        ),
-        kl=torch.empty((batch_rows, num_steps), dtype=torch.float32, device=device),
-        prev_sample_means=(
-            torch.empty(
-                (batch_rows, num_steps, *latent_shape),
-                dtype=latents.dtype,
-                device=device,
+    def record_step(
+        self,
+        step_idx: int,
+        *,
+        observation: torch.Tensor,
+        action: torch.Tensor,
+        timestep: torch.Tensor,
+        sde_result: SDEStepResult,
+        return_kl: bool,
+        ref_noise_pred: torch.Tensor | None = None,
+    ) -> None:
+        """Write one transition into the preallocated replay tensors."""
+        self.observations[:, step_idx].copy_(observation.detach())
+        self.actions[:, step_idx].copy_(
+            action.detach().to(dtype=self.actions.dtype),
+        )
+        self.log_probs[:, step_idx].copy_(
+            sde_result.log_prob.detach().to(dtype=self.log_probs.dtype),
+        )
+        self.timesteps[:, step_idx].copy_(
+            self._expand_timestep(timestep.detach()),
+        )
+        if return_kl:
+            self.kl[:, step_idx].copy_(
+                sde_result.log_prob.detach().abs().to(dtype=self.kl.dtype),
             )
-            if config.sde.return_prev_sample_mean
-            else None
-        ),
-        ref_noise_preds=(
-            torch.empty(
-                (batch_rows, num_steps, *latent_shape),
-                dtype=latents.dtype,
-                device=device,
+        else:
+            self.kl[:, step_idx].zero_()
+        if self.prev_sample_means is not None:
+            self.prev_sample_means[:, step_idx].copy_(
+                sde_result.prev_sample_mean.detach().to(
+                    dtype=self.prev_sample_means.dtype,
+                ),
             )
-            if config.sde.cache_ref_noise_pred
-            else None
-        ),
-    )
+        if self.ref_noise_preds is not None:
+            self.ref_noise_preds[:, step_idx].copy_(
+                ref_noise_pred.detach().to(dtype=self.ref_noise_preds.dtype),
+            )
+
+    @staticmethod
+    def _timestep_dtype(timesteps: Any) -> torch.dtype:
+        if isinstance(timesteps, torch.Tensor):
+            return timesteps.dtype
+        try:
+            first = timesteps[0]
+        except Exception:
+            return torch.float32
+        if isinstance(first, torch.Tensor):
+            return first.dtype
+        return torch.float32
+
+    def _expand_timestep(self, timestep: Any) -> torch.Tensor:
+        batch_rows = self.timesteps.shape[0]
+        dtype = self.timesteps.dtype
+        device = self.timesteps.device
+        if not isinstance(timestep, torch.Tensor):
+            timestep = torch.as_tensor(timestep)
+        timestep = timestep.to(device=device, dtype=dtype)
+        if timestep.ndim == 0:
+            return timestep.expand(batch_rows)
+        if tuple(timestep.shape) == (batch_rows,):
+            return timestep
+        if timestep.numel() == 1:
+            return timestep.reshape(()).expand(batch_rows)
+        try:
+            return timestep.reshape(batch_rows)
+        except RuntimeError as exc:
+            raise ValueError(
+                "denoise timestep cannot be expanded to batch "
+                f"{batch_rows}: shape={tuple(timestep.shape)}",
+            ) from exc
 
 
 def run_denoise_loop(
@@ -131,7 +204,7 @@ def run_denoise_loop(
     else:
         generator = None
 
-    buffers = preallocate_denoise_buffers(state=state, config=config)
+    buffers = DenoiseTrajectoryBuffers.allocate(state=state, config=config)
     teacache = (
         TeaCacheState(config.teacache, len(state.timesteps))
         if config.teacache is not None
@@ -210,37 +283,15 @@ def run_denoise_loop(
                     state.latents = prev_latents
 
             with profile_range("generation.trajectory_buffer_write"):
-                buffers.observations[:, step_idx].copy_(latents_ori.detach())
-                buffers.actions[:, step_idx].copy_(
-                    prev_latents.detach().to(dtype=buffers.actions.dtype),
+                buffers.record_step(
+                    step_idx,
+                    observation=latents_ori,
+                    action=prev_latents,
+                    timestep=timestep,
+                    sde_result=sde_result,
+                    return_kl=config.sde.return_kl,
+                    ref_noise_pred=ref_noise_pred,
                 )
-                buffers.log_probs[:, step_idx].copy_(
-                    sde_result.log_prob.detach().to(dtype=buffers.log_probs.dtype),
-                )
-                buffers.timesteps[:, step_idx].copy_(
-                    _expand_timestep_for_buffer(
-                        timestep.detach(),
-                        batch_rows=batch_rows,
-                        dtype=buffers.timesteps.dtype,
-                        device=device,
-                    ),
-                )
-                if config.sde.return_kl:
-                    buffers.kl[:, step_idx].copy_(
-                        sde_result.log_prob.detach().abs().to(dtype=buffers.kl.dtype),
-                    )
-                else:
-                    buffers.kl[:, step_idx].zero_()
-                if buffers.prev_sample_means is not None:
-                    buffers.prev_sample_means[:, step_idx].copy_(
-                        sde_result.prev_sample_mean.detach().to(
-                            dtype=buffers.prev_sample_means.dtype,
-                        ),
-                    )
-                if buffers.ref_noise_preds is not None:
-                    buffers.ref_noise_preds[:, step_idx].copy_(
-                        ref_noise_pred.detach().to(dtype=buffers.ref_noise_preds.dtype),
-                    )
 
     denoise_peak_bytes = cuda_peak_allocated_bytes()
     peak_memory_mb = cuda_peak_allocated_mb()
@@ -282,46 +333,8 @@ def run_denoise_loop(
     )
 
 
-def _timestep_dtype(timesteps: Any) -> torch.dtype:
-    if isinstance(timesteps, torch.Tensor):
-        return timesteps.dtype
-    try:
-        first = timesteps[0]
-    except Exception:
-        return torch.float32
-    if isinstance(first, torch.Tensor):
-        return first.dtype
-    return torch.float32
-
-
-def _expand_timestep_for_buffer(
-    timestep: Any,
-    *,
-    batch_rows: int,
-    dtype: torch.dtype,
-    device: torch.device,
-) -> torch.Tensor:
-    if not isinstance(timestep, torch.Tensor):
-        timestep = torch.as_tensor(timestep)
-    timestep = timestep.to(device=device, dtype=dtype)
-    if timestep.ndim == 0:
-        return timestep.expand(batch_rows)
-    if tuple(timestep.shape) == (batch_rows,):
-        return timestep
-    if timestep.numel() == 1:
-        return timestep.reshape(()).expand(batch_rows)
-    try:
-        return timestep.reshape(batch_rows)
-    except RuntimeError as exc:
-        raise ValueError(
-            "denoise timestep cannot be expanded to batch batch "
-            f"{batch_rows}: shape={tuple(timestep.shape)}",
-        ) from exc
-
-
 __all__ = [
     "DenoiseLoopResult",
     "DenoiseTrajectoryBuffers",
-    "preallocate_denoise_buffers",
     "run_denoise_loop",
 ]

@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import torch
 
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
-from vrl.generation.steps.denoise.loop import preallocate_denoise_buffers
+from vrl.generation.steps.denoise.loop import DenoiseTrajectoryBuffers
 
 
 def _config(*, return_prev_sample_mean: bool) -> DenoiseLoopConfig:
@@ -37,7 +37,7 @@ def _state() -> SimpleNamespace:
 
 
 def test_buffer_allocated_with_step_and_latent_shape_when_opted_in() -> None:
-    buffers = preallocate_denoise_buffers(
+    buffers = DenoiseTrajectoryBuffers.allocate(
         state=_state(), config=_config(return_prev_sample_mean=True)
     )
     assert buffers.prev_sample_means is not None
@@ -47,7 +47,7 @@ def test_buffer_allocated_with_step_and_latent_shape_when_opted_in() -> None:
 
 
 def test_buffer_is_none_by_default() -> None:
-    buffers = preallocate_denoise_buffers(
+    buffers = DenoiseTrajectoryBuffers.allocate(
         state=_state(), config=_config(return_prev_sample_mean=False)
     )
     assert buffers.prev_sample_means is None

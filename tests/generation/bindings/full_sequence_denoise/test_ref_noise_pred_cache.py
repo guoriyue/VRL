@@ -24,7 +24,7 @@ from vrl.generation.steps.denoise.config import (
     DenoiseRequestOptions,
     DenoiseSDEParams,
 )
-from vrl.generation.steps.denoise.loop import preallocate_denoise_buffers
+from vrl.generation.steps.denoise.loop import DenoiseTrajectoryBuffers
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.models.steps.denoise import DiffusionModelBase
 from vrl.rollouts.batch import RolloutBatch
@@ -62,7 +62,7 @@ def _state() -> SimpleNamespace:
 
 
 def test_ref_buffer_allocated_with_step_and_latent_shape_when_opted_in() -> None:
-    buffers = preallocate_denoise_buffers(
+    buffers = DenoiseTrajectoryBuffers.allocate(
         state=_state(), config=_config(cache_ref_noise_pred=True)
     )
     assert buffers.ref_noise_preds is not None
@@ -72,7 +72,7 @@ def test_ref_buffer_allocated_with_step_and_latent_shape_when_opted_in() -> None
 
 
 def test_ref_buffer_is_none_by_default() -> None:
-    buffers = preallocate_denoise_buffers(
+    buffers = DenoiseTrajectoryBuffers.allocate(
         state=_state(), config=_config(cache_ref_noise_pred=False)
     )
     assert buffers.ref_noise_preds is None

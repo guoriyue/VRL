@@ -11,7 +11,7 @@ import torch
 from vrl.generation.bindings.full_sequence_denoise import DiffusionBatchExecutorBase
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
-from vrl.generation.steps.denoise.loop import preallocate_denoise_buffers
+from vrl.generation.steps.denoise.loop import DenoiseTrajectoryBuffers
 from vrl.generation.types import GenerationRequest
 from vrl.trajectory import TrajectoryStoragePolicy
 
@@ -22,7 +22,7 @@ def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> 
     """
     state = _state(batch=2, steps=3, latent_shape=(4, 5), dtype=torch.float16)
 
-    buffers = preallocate_denoise_buffers(state=state, config=_config(sample_count=2))
+    buffers = DenoiseTrajectoryBuffers.allocate(state=state, config=_config(sample_count=2))
 
     assert buffers.observations.shape == (2, 3, 4, 5)
     assert buffers.actions.shape == (2, 3, 4, 5)
@@ -39,7 +39,7 @@ def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> 
 
 def test_preallocate_denoise_buffers_rejects_sample_count_mismatch() -> None:
     with pytest.raises(ValueError, match="expected 3"):
-        preallocate_denoise_buffers(
+        DenoiseTrajectoryBuffers.allocate(
             state=_state(batch=2, steps=1),
             config=_config(sample_count=3),
         )
