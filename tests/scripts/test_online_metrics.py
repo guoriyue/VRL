@@ -58,6 +58,7 @@ def test_online_checkpoint_threads_required_model_identity(
     assert calls[0]["progress"] == {
         "completed_epoch": 3,
         "next_epoch": 3,
+        "next_step": 7,
         "global_step": 7,
     }
 
