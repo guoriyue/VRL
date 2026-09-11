@@ -196,11 +196,11 @@ class OfflineDPOTrainer:
       * Build the frozen ``ref_model`` (or pass ``None`` and rely on
         LoRA adapter-disable inside ``forward_fn``).
       * Provide ``encode_pixels`` — turns ``[2B, 3, H, W]`` pixels into
-        latents in the shape the model expects (handles VAE + temporal
+        latents preserving the 2B samples (handles VAE + temporal
         replication for video models).
       * Provide ``encode_text`` — turns a list of captions into the
-        ``encoder_hidden_states`` tensor shaped ``[2B, ..., D]``
-        (winner-then-loser convention).
+        ``encoder_hidden_states`` tensor shaped ``[B, ..., D]``. The trainer
+        duplicates this batch in winner-then-loser order.
       * Provide ``forward_fn`` — the model-family-specific forward; it lives
         with the family recipe, not in this module.
       * Provide ``noise_scheduler`` for sampling timesteps + injecting
@@ -311,23 +311,28 @@ class OfflineDPOTrainer:
         cfg = self.config
         self.model.train()
 
+        bsz_pair = batch.pixel_values.shape[0]
+        if len(batch.captions) != bsz_pair:
+            raise ValueError("preference batch requires one caption per image pair")
+
         # 1. Stack winner-then-loser → [2B, 3, H, W]
         pixels = batch.stacked_winner_then_loser().to(self.device)
 
         # 2. Pixels → latents (caller handles VAE + temporal replication)
         with torch.no_grad():
             latents = self.encode_pixels(pixels)
-            # 3. Text encoding — duplicated to match 2B layout
+            if latents.shape[0] != 2 * bsz_pair:
+                raise ValueError("encode_pixels must preserve the image batch size")
+            # 3. Match the winner block, then the loser block: [A, B, A, B].
             encoder_hidden_states = self.encode_text(batch.captions)
-            if encoder_hidden_states.shape[0] != latents.shape[0]:
-                # caller may return [B, ...] — repeat to [2B, ...]
-                encoder_hidden_states = encoder_hidden_states.repeat_interleave(
-                    latents.shape[0] // encoder_hidden_states.shape[0],
-                    dim=0,
-                )
+            if encoder_hidden_states.shape[0] != bsz_pair:
+                raise ValueError("encode_text must return one embedding per caption")
+            encoder_hidden_states = torch.cat(
+                [encoder_hidden_states, encoder_hidden_states],
+                dim=0,
+            )
 
         # 4. Sample shared noise + timestep across each pair
-        bsz_pair = latents.shape[0] // 2
         noise = torch.randn(
             (bsz_pair, *tuple(latents.shape[1:])),
             device=latents.device,

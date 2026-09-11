@@ -264,3 +264,54 @@ def _adam_exp_avg_values(optimizer) -> list[float]:
         if exp_avg is not None:
             values.extend(float(v) for v in exp_avg.reshape(-1).detach().cpu().tolist())
     return values
+
+
+@pytest.mark.parametrize("invalid", [None, "captions", "pixels", "text"])
+def test_step_preserves_caption_pairing(invalid) -> None:
+    model = torch.nn.Linear(1, 1)
+    model.precision = PRECISION
+    seen = []
+
+    def forward(model, noisy, timesteps, encoder):
+        del timesteps
+        seen.append((noisy.flatten().tolist(), encoder.flatten().tolist()))
+        return model(noisy.flatten(1)).reshape_as(noisy)
+
+    trainer = OfflineDPOTrainer(
+        model=model,
+        ref_model=torch.nn.Linear(1, 1),
+        forward_fn=forward,
+        noise_scheduler=SimpleNamespace(
+            timesteps=torch.arange(20),
+            add_noise=lambda latents, noise, timesteps: latents,
+        ),
+        encode_pixels=lambda pixels: pixels[:1, :1] if invalid == "pixels" else pixels[:, :1],
+        encode_text=lambda captions: torch.tensor(
+            [[10.0], [20.0]] if invalid != "text" else [[10.0]] * 4,
+        ),
+        config=OfflineDPOTrainerConfig(prediction_type="epsilon", lr=0.0),
+        device="cpu",
+    )
+    batch = PreferenceBatch(
+        pixel_values=torch.tensor(
+            [
+                [1.0, 1.0, 1.0, 3.0, 3.0, 3.0],
+                [2.0, 2.0, 2.0, 4.0, 4.0, 4.0],
+            ]
+        ).reshape(2, 6, 1, 1),
+        captions=["A"] if invalid == "captions" else ["A", "B"],
+    )
+    if invalid:
+        message = {
+            "captions": "one caption per image pair",
+            "pixels": "encode_pixels must preserve",
+            "text": "encode_text must return one embedding",
+        }[invalid]
+        with pytest.raises(ValueError, match=message):
+            trainer.step(batch)
+        assert not seen
+        assert trainer.global_step == 0
+    else:
+        trainer.step(batch)
+        assert seen == [([1.0, 2.0, 3.0, 4.0], [10.0, 20.0, 10.0, 20.0])] * 2
+        assert trainer.global_step == 1

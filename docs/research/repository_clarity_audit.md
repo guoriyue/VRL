@@ -1131,3 +1131,20 @@ contained guesses. Removed both:
   use an explicit module-boundary fake for download/materialization and exercise
   the real preference wrapper. No network dataset load was performed. Touched-file
   Ruff and diff whitespace checks pass.
+
+## Offline DPO caption alignment
+
+- Replaced output-length-based text repetition in OfflineDPOTrainer.step with
+  explicit winner-block/loser-block duplication. Previously two captions became
+  [A, A, B, B] while images were [winner A, winner B, loser A, loser B].
+- Require one caption per pair, pixel encoding to preserve 2B samples, and text
+  encoding to return B embeddings. Updated the encoder contract documentation;
+  the production Wan adapter already returns one embedding per input caption.
+- Retained PreferenceBatch stacking methods and family encoder adapters: they own
+  the layout and model-specific conversion respectively. No new helper, class,
+  configuration vocabulary, or changes to loss/noise scheduling are needed.
+- Validation: 20 trainer, preference-loading and Wan entrypoint tests passed.
+  The new two-pair regression checks both policy and reference forward inputs,
+  and rejects three count mismatches before forward or optimizer progress.
+  CPU tests use an identity noise adapter to expose the image ordering directly;
+  no full Wan GPU training was run. Touched-file Ruff checks pass.
