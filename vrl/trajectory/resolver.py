@@ -91,6 +91,7 @@ class TrajectoryResolver:
 
         Axis and index must be provided together. Tensors without that axis
         retain their full value, such as static prompt embeddings during replay.
+        Only ``segment_name=None`` selects the primary trainable segment.
         """
 
         if (axis is None) != (axis_index is None):
@@ -100,7 +101,7 @@ class TrajectoryResolver:
                 raise TrajectoryResolverError(f"unknown replay axis {axis!r}")
             axis_index = require_exact_int(axis_index, path="replay.axis_index", minimum=0)
 
-        name = segment_name or self.primary_trainable_segment_name()
+        name = self.primary_trainable_segment_name() if segment_name is None else segment_name
         segment = self.trajectory.segments.get(name)
         if segment is None:
             raise TrajectoryResolverError(f"unknown trajectory segment {name!r}")

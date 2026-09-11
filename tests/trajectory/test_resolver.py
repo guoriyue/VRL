@@ -30,6 +30,19 @@ def resolver() -> TrajectoryResolver:
     return TrajectoryResolver(trajectory)
 
 
+@pytest.mark.parametrize("segment_name", ["", "missing"])
+def test_replay_rejects_unknown_explicit_segment(resolver, segment_name) -> None:
+    with pytest.raises(ValueError, match="unknown trajectory segment"):
+        resolver.replay_tensor_dict(segment_name)
+
+
+def test_replay_defaults_to_primary_segment_only_when_omitted(resolver) -> None:
+    explicit = resolver.replay_tensor_dict("denoise")
+    for selected in (resolver.replay_tensor_dict(), resolver.replay_tensor_dict(None)):
+        assert selected.keys() == explicit.keys()
+        assert all(selected[name] is value for name, value in explicit.items())
+
+
 @pytest.mark.parametrize(
     "selection, message",
     [

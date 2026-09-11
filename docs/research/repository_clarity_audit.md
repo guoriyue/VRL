@@ -4885,3 +4885,18 @@ this combined regression is compatibility evidence, not architectural completion
 - Existing trajectory and rollout replay suites: 140 passed. Touched-file Ruff
   checks and git diff --check pass. Neither removed helper has remaining
   production or trajectory-test references. The wider audit remains ongoing.
+
+## Replay segment defaults distinguish omission from an explicit empty name
+
+- Replace truthiness fallback in replay_tensor_dict with an explicit None check.
+  An empty segment name previously selected the primary segment silently; it
+  now raises the same unknown-segment error as any other absent name. Document
+  the omission rule at the public method.
+- Keep primary_trainable_segment_name as the shared checked accessor, and keep
+  explicit production segment names and omitted-name algorithm calls unchanged.
+  No validator class, helper function or constant is introduced. Axis behavior,
+  reference parsing and cross-family replay interfaces are outside this fix.
+- Added a public-boundary regression that failed before the change for the
+  empty name, plus checks for unknown names and omitted/None equivalence.
+  Trajectory, rollout replay and chunk-autoregressive binding suites: 167 passed.
+  Touched-file Ruff checks and git diff --check pass. Wider audit remains open.
