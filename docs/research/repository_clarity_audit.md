@@ -1083,3 +1083,19 @@ contained guesses. Removed both:
 - Validation: 152 continuous orchestration tests passed. Regressions assert failed
   admission/reporting preserve occupancy and allow normal reservation release.
   Touched-file Ruff and diff whitespace checks pass.
+
+## Continuous capacity config projection
+
+- ContinuousRolloutConfig validates integer capacity/count fields without int
+  coercion, including the unscored byte budget and fail-fast count. The previous
+  checks tested converted values while storing the original values, allowing
+  later projection to silently change the declared limits.
+- Schedule projection and owner ready-byte calculation no longer cast those
+  fields. MB-to-byte multiplication remains the actual unit conversion; the
+  generated-group ceiling must still fit the total unscored budget.
+- Retained config ownership and independent container admission checks. No new
+  field/default taxonomy or additional settings class; timeout semantics are
+  unchanged by this count-specific follow-up.
+- Validation: 506 continuous orchestration and config tests passed, including
+  malformed count tests across all six affected fields. Touched-file Ruff and
+  diff whitespace checks pass.

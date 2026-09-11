@@ -72,7 +72,7 @@ class _ContinuousOwnerRuntime:
         self.lifecycle = lifecycle
         # The validated carrier travels whole; only derived values are unpacked.
         self.settings = settings
-        self.max_ready_bytes = int(settings.max_ready_bytes_mb) * _MB
+        self.max_ready_bytes = settings.max_ready_bytes_mb * _MB
         self.staleness = StalenessPolicy(
             max_stale_policy_versions=settings.max_stale_policy_versions,
         )

@@ -128,16 +128,24 @@ class ContinuousRolloutConfig:
     fail_fast_errors: int = field(default=3)
 
     def __post_init__(self) -> None:
-        # Single user-boundary validator (vLLM's SchedulerConfig shape): every
-        # range theorem is proven once here with config-key error messages;
-        # the rollout mechanisms trust the carried values and do not re-check.
-        if int(self.max_inflight_groups) < 1:
-            raise ValueError("continuous.max_inflight_groups must be >= 1")
-        if int(self.max_ready_bytes_mb) < 0:
-            raise ValueError("continuous.max_ready_bytes_mb must be >= 0")
-        if int(self.max_unscored_groups) < 1:
-            raise ValueError("continuous.max_unscored_groups must be >= 1")
-        if not 0 < int(self.max_generated_group_bytes_mb) <= int(self.max_unscored_bytes_mb):
+        # Validate declared settings before projection. Containers additionally
+        # check their own admission invariants when called independently.
+        require_exact_int(
+            self.max_inflight_groups, path="continuous.max_inflight_groups", minimum=1
+        )
+        require_exact_int(self.max_ready_bytes_mb, path="continuous.max_ready_bytes_mb", minimum=0)
+        require_exact_int(
+            self.max_unscored_groups, path="continuous.max_unscored_groups", minimum=1
+        )
+        require_exact_int(
+            self.max_unscored_bytes_mb, path="continuous.max_unscored_bytes_mb", minimum=1
+        )
+        require_exact_int(
+            self.max_generated_group_bytes_mb,
+            path="continuous.max_generated_group_bytes_mb",
+            minimum=1,
+        )
+        if self.max_generated_group_bytes_mb > self.max_unscored_bytes_mb:
             raise ValueError(
                 "continuous.max_generated_group_bytes_mb must be positive and fit "
                 "continuous.max_unscored_bytes_mb",
@@ -151,8 +159,7 @@ class ContinuousRolloutConfig:
             raise ValueError("continuous.wait_timeout_s must be > 0")
         if float(self.queue_poll_interval_s) <= 0:
             raise ValueError("continuous.queue_poll_interval_s must be > 0")
-        if int(self.fail_fast_errors) < 0:
-            raise ValueError("continuous.fail_fast_errors must be >= 0")
+        require_exact_int(self.fail_fast_errors, path="continuous.fail_fast_errors", minimum=0)
 
 
 @dataclass(slots=True)

@@ -65,16 +65,16 @@ class ContinuousRolloutSchedule:
         # __post_init__), so the fail-fast on an unsound zero-window config happens
         # here without a second copy of the check.
         settings = ContinuousRolloutSettings(
-            max_inflight_groups=int(cont.max_inflight_groups),
-            max_ready_bytes_mb=int(cont.max_ready_bytes_mb),
+            max_inflight_groups=cont.max_inflight_groups,
+            max_ready_bytes_mb=cont.max_ready_bytes_mb,
             split_generation_reward=bool(cont.split_generation_reward),
-            max_unscored_groups=int(cont.max_unscored_groups),
-            max_unscored_bytes_mb=int(cont.max_unscored_bytes_mb),
-            max_generated_group_bytes_mb=int(cont.max_generated_group_bytes_mb),
+            max_unscored_groups=cont.max_unscored_groups,
+            max_unscored_bytes_mb=cont.max_unscored_bytes_mb,
+            max_generated_group_bytes_mb=cont.max_generated_group_bytes_mb,
             max_stale_policy_versions=cont.max_stale_policy_versions,
             wait_timeout_s=float(cont.wait_timeout_s),
             queue_poll_interval_s=float(cont.queue_poll_interval_s),
-            fail_fast_errors=int(cont.fail_fast_errors),
+            fail_fast_errors=cont.fail_fast_errors,
         )
 
         # A likelihood-free algorithm has no way to reweight off-policy samples, so

@@ -121,3 +121,22 @@ def test_invalid_byte_counts_leave_reservation_unchanged(nbytes) -> None:
     assert capacity.stats()["unscored_items"] == 0
     capacity.release((0, 0))
     assert capacity.stats()["reserved_bytes"] == 0
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "max_inflight_groups",
+        "max_ready_bytes_mb",
+        "max_unscored_groups",
+        "max_unscored_bytes_mb",
+        "max_generated_group_bytes_mb",
+        "fail_fast_errors",
+    ],
+)
+@pytest.mark.parametrize("value", [1.5, True, "2"])
+def test_capacity_configuration_does_not_coerce_counts(name, value) -> None:
+    from vrl.trainers.core.types import ContinuousRolloutConfig
+
+    with pytest.raises(ValueError, match=name):
+        ContinuousRolloutConfig(**{name: value})
