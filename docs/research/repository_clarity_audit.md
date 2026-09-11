@@ -5821,3 +5821,18 @@ The broader repository audit remains incomplete.
 - Unknown-option regression failed before the fix. Denoise-step tests: 80 passed;
   config drift guards and diffusion layout: 117 passed. Touched-file Ruff and diff
   checks pass. No real-model drift-probe run or speedup claim. Broader audit open.
+
+## Execution progress and probe counts use the shared integer boundary
+
+- BatchProduceFence.completed_batches, BatchSizeProbeTrial.n and the probe
+  result's sample count/budget now use require_exact_int. Their former lower-bound
+  comparisons accepted True, fractional counts and NaN; the existing owner types
+  now reject those values before progress tracking or planning can consume them.
+- Keep the fence's query method as the nonblocking device-completion boundary,
+  and keep probe records separate from worker/runtime implementations because
+  they cross that interface. Preserve probe fitting, confirmation and event-query
+  behavior. No new validation wrapper, taxonomy or class is introduced.
+- Twelve invalid-count regressions failed before the fix. Memory probe, pipelined
+  execution/progress and runtime-config suites: 122 passed with three dependency
+  warnings. Touched-file Ruff and diff checks pass. Production probe performance
+  was not measured; broader repository audit remains incomplete.

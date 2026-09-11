@@ -24,7 +24,9 @@ from vrl.generation.execution.batch_memory import (
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
     BatchMemoryReading,
+    BatchProduceFence,
     BatchSizeProbeResult,
+    BatchSizeProbeTrial,
     GenerationBatchEnvelope,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
@@ -37,6 +39,23 @@ from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
 
 GB = 1024**3
+
+
+@pytest.mark.parametrize("value", [True, 1.5, float("nan")])
+@pytest.mark.parametrize(
+    "field", ["completed_batches", "n", "samples_per_generation_batch", "budget_bytes"]
+)
+def test_execution_counts_reject_nonintegers(field, value):
+    with pytest.raises(ValueError, match=field):
+        if field == "completed_batches":
+            BatchProduceFence(completed_batches=value, event=None)
+        elif field == "n":
+            BatchSizeProbeTrial(n=value, oom=True, label="probe")
+        else:
+            kwargs = {"samples_per_generation_batch": 1, "budget_bytes": 0, "trials": ()}
+            kwargs[field] = value
+            BatchSizeProbeResult(**kwargs)
+
 
 # Carried by every `fake_cuda` consumer: they assert exact byte arithmetic, and
 # real hardware cannot pin the inputs to it (see the fixture's docstring below).

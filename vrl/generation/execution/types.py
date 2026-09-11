@@ -21,6 +21,7 @@ from typing import Any, Literal, Protocol, TypeAlias, get_args
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.protocols import BatchPayload
 from vrl.generation.types import GenerationRequest
+from vrl.utils.config import require_exact_int
 from vrl.utils.cuda_memory import validate_parking_residual
 
 
@@ -59,8 +60,9 @@ class BatchProduceFence:
     event: QueryableCompletion | None
 
     def __post_init__(self) -> None:
-        if self.completed_batches < 1:
-            raise ValueError("batch produce fence completed_batches must be >= 1")
+        require_exact_int(
+            self.completed_batches, path="batch produce fence completed_batches", minimum=1
+        )
 
     def query(self) -> bool:
         """Return without synchronizing the device."""
@@ -175,8 +177,7 @@ class BatchSizeProbeTrial:
     wall_s: float | None = None
 
     def __post_init__(self) -> None:
-        if self.n < 1:
-            raise ValueError("batch-size probe trial n must be >= 1")
+        require_exact_int(self.n, path="batch-size probe trial n", minimum=1)
         if not self.label:
             raise ValueError("batch-size probe trial label must be non-empty")
         measurements = (self.peak_bytes, self.non_torch_bytes, self.wall_s)
@@ -211,10 +212,12 @@ class BatchSizeProbeResult:
     trials: tuple[BatchSizeProbeTrial, ...]
 
     def __post_init__(self) -> None:
-        if self.samples_per_generation_batch < 1:
-            raise ValueError("probed samples_per_generation_batch must be >= 1")
-        if self.budget_bytes < 0:
-            raise ValueError("batch-size probe budget_bytes must be >= 0")
+        require_exact_int(
+            self.samples_per_generation_batch,
+            path="probed samples_per_generation_batch",
+            minimum=1,
+        )
+        require_exact_int(self.budget_bytes, path="batch-size probe budget_bytes", minimum=0)
         trials = tuple(self.trials)
         if any(not isinstance(trial, BatchSizeProbeTrial) for trial in trials):
             raise TypeError("batch-size probe trials must contain BatchSizeProbeTrial")
