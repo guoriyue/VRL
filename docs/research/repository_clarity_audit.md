@@ -3385,3 +3385,16 @@ this combined regression is compatibility evidence, not architectural completion
   untyped mapping adapter solely to shorten the collector call.
 - Validation: 36 stats/prompt-collection tests passed; touched-file Ruff/diff
   checks passed and no old helper references remain. Full review remains open.
+
+## Protect standard reward timing columns from extension overwrite
+
+- extra_ms names previously needed only an _ms suffix. Values named latency_ms,
+  queue_wait_ms, inference_ms or latency_p50_ms/latency_p95_ms overwrote the
+  standard flattened reward timings, including computed percentiles. Reject
+  those collisions during fold_reward_timing validation before any mutation.
+- The five names are the actual fixed timing output schema, not a business
+  vocabulary; keep this explicit boundary local to the existing stats owner.
+  Custom phase names and output names remain unchanged. No new helper/class.
+- Validation: 37 stats/prompt-collection tests passed. The new regression
+  checks all five collisions leave the full accumulator unchanged and retain
+  its computed P95. Touched-file Ruff/diff checks passed. Full review stays open.

@@ -176,3 +176,24 @@ def test_multi_stats_sink_fans_out_in_order() -> None:
     MultiStatsSink(_Recorder("a"), _Recorder("b")).record(7, RolloutStats())
 
     assert seen == [("a", 7), ("b", 7)]
+
+
+def test_extra_reward_timings_cannot_overwrite_standard_metrics():
+    from copy import deepcopy
+
+    import pytest
+
+    stats = RolloutStats()
+    stats.fold_reward_timing(latency_ms=10.0, queue_wait_ms=2.0, inference_ms=8.0)
+    before = deepcopy(stats)
+    for name in (
+        "latency_ms",
+        "queue_wait_ms",
+        "inference_ms",
+        "latency_p50_ms",
+        "latency_p95_ms",
+    ):
+        with pytest.raises(ValueError, match="collides with a standard timing"):
+            stats.fold_reward_timing(latency_ms=30.0, extra_ms={name: 999.0})
+        assert stats == before
+        assert stats.as_phase_dict()["reward.latency_p95_s"] == 0.01

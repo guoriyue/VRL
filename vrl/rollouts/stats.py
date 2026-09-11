@@ -194,6 +194,16 @@ class RolloutStats:
         for name, milliseconds in dict(extra_ms or {}).items():
             if not name or not name.endswith("_ms"):
                 raise ValueError("extra reward timing names must end with '_ms'")
+            # These names belong to the standard timing/percentile schema;
+            # extra phases must not overwrite their flattened output columns.
+            if name in {
+                "latency_ms",
+                "queue_wait_ms",
+                "inference_ms",
+                "latency_p50_ms",
+                "latency_p95_ms",
+            }:
+                raise ValueError(f"extra reward timing {name!r} collides with a standard timing")
             value = timing_value(name, milliseconds)
             assert value is not None
             normalized_extra[name] = value
