@@ -4380,6 +4380,21 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Joint math and NN regression after input-boundary cleanup
+
+- Ran tests/math, tests/nn, NextStep family and CausVid family suites together
+  after the recent scale, step-count, shape and ownership changes: 300 passed,
+  16 dependency warnings in 6.81 seconds. Log:
+  /tmp/vrl-math-nn-clarity-regression.log.
+- Inspected coverage for unchanged-policy sample/replay parity, fp64 autograd
+  gradcheck and empty-batch gradients; the combined run also includes the real
+  CUDA paged KV-cache write test now enabled by the restored uvloop dependency.
+- Keep diffusion_pretraining_pair as a scheduler-contract adapter shared with
+  training, and keep categorical-temperature validation as a common policy
+  boundary. No additional classes or function moves are justified in this slice.
+- This verifies these combined tested paths, not all training workloads or
+  repository-wide clarity completion. The full audit remains in progress.
+
 ## Token Gaussian noise scale rejects invalid densities explicitly
 
 - Require finite positive noise_level in the existing shared _flow_noise_std.
