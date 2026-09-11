@@ -950,3 +950,20 @@ def test_continuous_config_requires_finite_positive_waits(name, value) -> None:
 
     with pytest.raises(ValueError, match=name):
         ContinuousRolloutConfig(**{name: value})
+
+
+@pytest.mark.parametrize("value", ["false", "true", "", 0, 1, None])
+def test_continuous_config_rejects_non_boolean_split_reward(value) -> None:
+    from vrl.trainers.core.types import ContinuousRolloutConfig
+
+    with pytest.raises(ValueError, match=r"continuous.split_generation_reward must be a bool"):
+        ContinuousRolloutConfig(split_generation_reward=value)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_continuous_config_preserves_explicit_split_reward(enabled) -> None:
+    from vrl.trainers.core.types import ContinuousRolloutConfig
+
+    assert (
+        ContinuousRolloutConfig(split_generation_reward=enabled).split_generation_reward is enabled
+    )

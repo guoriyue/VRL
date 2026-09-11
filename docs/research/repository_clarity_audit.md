@@ -2590,3 +2590,19 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 579 orchestration and config tests passed; touched-file Ruff and
   diff checks passed. This is an ownership/interface clarification, not a claim
   of throughput improvement or completed repository review.
+
+## Continuous split-reward flag is validated at its config owner
+
+- Follow-up inspection of the direct config constructor found that the bool
+  annotation alone allowed split_generation_reward="false". Producer and owner
+  control flow then treated the non-empty string as enabled. Removing a bool()
+  projection does not by itself establish a valid boolean boundary.
+- ContinuousRolloutConfig.__post_init__ now requires an actual bool. Keep direct
+  field projection and downstream reads; do not spread conversions or duplicate
+  guards through the scheduler/producer. No helper, wrapper, or constant added.
+- Scope: direct dataclass construction; YAML/Pydantic parsing may normalize input
+  before this constructor, and this change does not claim strict raw-YAML bool
+  parsing. Existing True/False values and defaults remain unchanged.
+- Validation: 536 continuous orchestration and config tests passed, including
+  rejection of string/integer/None flags and preservation of both boolean values.
+  Touched-file Ruff and diff checks passed. Repository-wide review remains active.

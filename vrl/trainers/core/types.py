@@ -129,6 +129,8 @@ class ContinuousRolloutConfig:
     fail_fast_errors: int = field(default=3)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.split_generation_reward, bool):
+            raise ValueError("continuous.split_generation_reward must be a bool")
         # Validate declared settings before projection. Containers additionally
         # check their own admission invariants when called independently.
         require_exact_int(
