@@ -158,17 +158,22 @@ def main(argv=None):
         text=True,
     )
 
-    t0 = time.time()
-    with torch.profiler.profile(
-        activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-        record_shapes=True,
-    ) as prof:
-        for i in range(args.steps):
-            step_fn(i)
-        torch.cuda.synchronize(device)
-    wall = time.time() - t0
-    peak_mb = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
-    dmon_out, _ = dmon.communicate(timeout=30)
+    try:
+        t0 = time.time()
+        with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+            record_shapes=True,
+        ) as prof:
+            for i in range(args.steps):
+                step_fn(i)
+            torch.cuda.synchronize(device)
+        wall = time.time() - t0
+        peak_mb = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
+        dmon_out, _ = dmon.communicate(timeout=30)
+    except BaseException:
+        dmon.kill()
+        dmon.communicate()
+        raise
 
     # Per-kernel device self time, bucketed. Count ONLY raw device kernels: skip the
     # CPU-side ``aten::`` dispatcher wrappers and ``cuda*`` runtime calls, which carry

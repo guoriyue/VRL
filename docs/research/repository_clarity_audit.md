@@ -5327,3 +5327,17 @@ this combined regression is compatibility evidence, not architectural completion
 - Three early-boundary regressions failed before the fix. Bottleneck argument
   and shared diffusion runtime suites: 7 passed. Touched-file Ruff and git diff
   --check pass. No actual GPU profile was run; wider audit remains incomplete.
+
+## Bottleneck profiling reaps its monitor on failure
+
+- Enclose profiling and monitor collection in one exception-cleanup scope.
+  Forward errors, profiler setup failures and communicate timeouts now kill and
+  reap the CLI-owned dmon process before rethrowing the failure.
+- Keep lifecycle handling inline with its single Popen owner; no monitor class
+  or forwarding context manager is added. The monitoring command, profiling
+  window, device counters and report schema stay unchanged.
+- Three regression scenarios failed before the fix and now verify cleanup plus
+  original error identity. Bottleneck and shared diffusion runtime suites:
+  10 passed. Touched-file Ruff and git diff --check pass. Subprocess and GPU
+  operations are mocked in these tests; real profiling was not performed.
+  Wider repository audit remains incomplete.
