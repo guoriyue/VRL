@@ -3358,3 +3358,17 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 793 rollout/config tests passed; touched-file Ruff/diff checks
   passed and no removed helper references remain in code/tests. Full repository
   review remains incomplete.
+
+## Give collection timing reduction to RolloutStats
+
+- Move generation/reward duration and overlap reduction into existing
+  RolloutStats.add_collection_timing. The collector supplies measured intervals
+  and total wall time; the stats owner records the same four collect.* phases.
+  Remove the single-caller external _interval_overlap_seconds function.
+- Keep per-call interval measurement and scheduling in the collector, and keep
+  the ordered non-overlapping timeline assumption (one generation/one scoring
+  task). Metric names and additive aggregation remain unchanged. No new stats
+  wrapper class or metric-key vocabulary table is introduced.
+- Validation: 457 rollout tests passed, including serial-zero-overlap, streaming
+  overlap and stats accumulation cases. Touched-file Ruff/diff checks passed;
+  no removed helper references remain. Full review remains incomplete.

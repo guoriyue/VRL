@@ -57,6 +57,38 @@ class RolloutStats:
         repr=False,
     )
 
+    def add_collection_timing(
+        self,
+        *,
+        wall_s: float,
+        generation_intervals: list[tuple[float, float]],
+        reward_intervals: list[tuple[float, float]],
+    ) -> None:
+        """Accumulate collection timing; intervals within each timeline do not overlap."""
+
+        generation = sorted(generation_intervals)
+        reward = sorted(reward_intervals)
+        generation_index = reward_index = 0
+        overlap_s = 0.0
+        while generation_index < len(generation) and reward_index < len(reward):
+            generation_start, generation_end = generation[generation_index]
+            reward_start, reward_end = reward[reward_index]
+            overlap_s += max(
+                0.0, min(generation_end, reward_end) - max(generation_start, reward_start)
+            )
+            if generation_end <= reward_end:
+                generation_index += 1
+            else:
+                reward_index += 1
+        self.add_phases(
+            {
+                "collect.wall": wall_s,
+                "collect.generation_wall": sum(end - start for start, end in generation),
+                "collect.reward_wall": sum(end - start for start, end in reward),
+                "collect.generation_reward_overlap": overlap_s,
+            },
+        )
+
     def add_phase(self, name: str, seconds: float) -> None:
         """Accumulate ``seconds`` under phase ``name`` (sums on repeat)."""
 

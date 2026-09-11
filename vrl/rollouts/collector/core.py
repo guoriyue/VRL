@@ -636,17 +636,10 @@ class RolloutCollector:
             raise
 
         all_batches = self.finish_scored_prompt_groups(unscored_groups, batches, stats)
-        collection_wall_s = time.perf_counter() - collection_started
-        generation_wall_s = sum(end - start for start, end in generation_intervals)
-        reward_wall_s = sum(end - start for start, end in reward_intervals)
-        overlap_s = _interval_overlap_seconds(generation_intervals, reward_intervals)
-        stats.add_phases(
-            {
-                "collect.wall": collection_wall_s,
-                "collect.generation_wall": generation_wall_s,
-                "collect.reward_wall": reward_wall_s,
-                "collect.generation_reward_overlap": overlap_s,
-            },
+        stats.add_collection_timing(
+            wall_s=time.perf_counter() - collection_started,
+            generation_intervals=generation_intervals,
+            reward_intervals=reward_intervals,
         )
         stats.add_counter("collect.group_count", len(all_batches))
         stats.add_counter(
@@ -688,28 +681,6 @@ class RolloutCollector:
             remap_group_ids_(batch, global_prompt_indices)
             all_batches.extend(split_batch_by_group(batch))
         return all_batches
-
-
-def _interval_overlap_seconds(
-    left: list[tuple[float, float]],
-    right: list[tuple[float, float]],
-) -> float:
-    """Return the wall time covered by both ordered, non-overlapping timelines."""
-
-    left_intervals = sorted(left)
-    right_intervals = sorted(right)
-    left_index = 0
-    right_index = 0
-    overlap = 0.0
-    while left_index < len(left_intervals) and right_index < len(right_intervals):
-        left_start, left_end = left_intervals[left_index]
-        right_start, right_end = right_intervals[right_index]
-        overlap += max(0.0, min(left_end, right_end) - max(left_start, right_start))
-        if left_end <= right_end:
-            left_index += 1
-        else:
-            right_index += 1
-    return overlap
 
 
 __all__ = [
