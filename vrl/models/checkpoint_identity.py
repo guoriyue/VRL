@@ -49,6 +49,38 @@ class LocalCheckpointContent:
     bytes: int
     files: int
 
+    @classmethod
+    def from_path(cls, path: str | Path) -> LocalCheckpointContent:
+        """Describe one local file/tree without embedding its absolute root path.
+
+        Symlinks are followed as content aliases. Broken links, cycles, special
+        files, and sources that mutate during the read fail closed.
+        """
+
+        source = Path(path).expanduser()
+        try:
+            source.lstat()
+        except OSError as exc:
+            raise RuntimeError(f"local checkpoint source does not exist: {source}") from exc
+        try:
+            mode = source.stat().st_mode
+        except OSError as exc:
+            raise RuntimeError(f"cannot resolve local checkpoint source {source}: {exc}") from exc
+        if stat.S_ISREG(mode):
+            kind: Literal["file", "tree"] = "file"
+        elif stat.S_ISDIR(mode):
+            kind = "tree"
+        else:
+            raise RuntimeError(f"local checkpoint source is an unsupported special file: {source}")
+        digest = hashlib.sha256()
+        total_bytes, total_files = _hash_local_node(digest, source, "", set())
+        return cls(
+            kind=kind,
+            sha256=digest.hexdigest(),
+            bytes=total_bytes,
+            files=total_files,
+        )
+
 
 def checkpoint_identity_metadata(
     kind: IdentityKind,
@@ -349,38 +381,6 @@ def _hash_local_node(
     return total_bytes, total_files
 
 
-def local_checkpoint_content(path: str | Path) -> LocalCheckpointContent:
-    """Describe one local file/tree without embedding its absolute root path.
-
-    Symlinks are followed as content aliases. Broken links, cycles, special
-    files, and sources that mutate during the read fail closed.
-    """
-
-    source = Path(path).expanduser()
-    try:
-        source.lstat()
-    except OSError as exc:
-        raise RuntimeError(f"local checkpoint source does not exist: {source}") from exc
-    try:
-        mode = source.stat().st_mode
-    except OSError as exc:
-        raise RuntimeError(f"cannot resolve local checkpoint source {source}: {exc}") from exc
-    if stat.S_ISREG(mode):
-        kind: Literal["file", "tree"] = "file"
-    elif stat.S_ISDIR(mode):
-        kind = "tree"
-    else:
-        raise RuntimeError(f"local checkpoint source is an unsupported special file: {source}")
-    digest = hashlib.sha256()
-    total_bytes, total_files = _hash_local_node(digest, source, "", set())
-    return LocalCheckpointContent(
-        kind=kind,
-        sha256=digest.hexdigest(),
-        bytes=total_bytes,
-        files=total_files,
-    )
-
-
 def _normalize_identity_value(value: Any, *, field_name: str) -> Any:
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -639,7 +639,7 @@ def _resolve_token_lora_values(
 def resolve_checkpoint_model_identity(
     build: ModelBuild,
     *,
-    local_resolver: Callable[[Path], LocalCheckpointContent] = local_checkpoint_content,
+    local_resolver: Callable[[Path], LocalCheckpointContent] = LocalCheckpointContent.from_path,
 ) -> dict[str, Any]:
     """Resolve one path-independent identity from a validated ``ModelBuild``."""
 
@@ -818,7 +818,6 @@ __all__ = [
     "MODEL_IDENTITY_SCHEMA",
     "LocalCheckpointContent",
     "checkpoint_identity_metadata",
-    "local_checkpoint_content",
     "require_checkpoint_source_member",
     "require_remote_checkpoint_source_pin",
     "resolve_checkpoint_model_identity",

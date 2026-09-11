@@ -13,7 +13,6 @@ from vrl.config.precision import RolePrecision
 from vrl.models.checkpoint_identity import (
     MODEL_IDENTITY_SCHEMA,
     LocalCheckpointContent,
-    local_checkpoint_content,
     resolve_checkpoint_model_identity,
     validate_checkpoint_identity_schema,
 )
@@ -86,8 +85,8 @@ def test_local_file_identity_is_path_independent_and_counts_content(tmp_path: Pa
     left.write_bytes(b"checkpoint-bytes")
     right.write_bytes(b"checkpoint-bytes")
 
-    left_identity = local_checkpoint_content(left)
-    right_identity = local_checkpoint_content(right)
+    left_identity = LocalCheckpointContent.from_path(left)
+    right_identity = LocalCheckpointContent.from_path(right)
 
     assert left_identity == right_identity
     assert left_identity == LocalCheckpointContent(
@@ -98,7 +97,7 @@ def test_local_file_identity_is_path_independent_and_counts_content(tmp_path: Pa
     )
 
     right.write_bytes(b"different")
-    assert local_checkpoint_content(right) != left_identity
+    assert LocalCheckpointContent.from_path(right) != left_identity
 
 
 def test_local_tree_identity_is_path_independent_and_follows_symlinks(
@@ -114,8 +113,8 @@ def test_local_tree_identity_is_path_independent_and_follows_symlinks(
     (external / "model.bin").write_bytes(b"model")
     (linked / "weights").symlink_to(external, target_is_directory=True)
 
-    plain_identity = local_checkpoint_content(plain)
-    linked_identity = local_checkpoint_content(linked)
+    plain_identity = LocalCheckpointContent.from_path(plain)
+    linked_identity = LocalCheckpointContent.from_path(linked)
 
     assert plain_identity == linked_identity
     assert plain_identity.kind == "tree"
@@ -128,19 +127,19 @@ def test_local_source_rejects_broken_link_cycle_and_special_file(tmp_path: Path)
     broken.mkdir()
     (broken / "weights").symlink_to(tmp_path / "missing")
     with pytest.raises(RuntimeError, match="cannot resolve"):
-        local_checkpoint_content(broken)
+        LocalCheckpointContent.from_path(broken)
 
     cycle = tmp_path / "cycle-root"
     cycle.mkdir()
     (cycle / "loop").symlink_to(cycle, target_is_directory=True)
     with pytest.raises(RuntimeError, match="symlink cycle"):
-        local_checkpoint_content(cycle)
+        LocalCheckpointContent.from_path(cycle)
 
     special = tmp_path / "special-root"
     special.mkdir()
     os.mkfifo(special / "weights.pipe")
     with pytest.raises(RuntimeError, match="special file"):
-        local_checkpoint_content(special)
+        LocalCheckpointContent.from_path(special)
 
 
 def test_local_source_rejects_file_mutation_during_hash(
@@ -172,7 +171,7 @@ def test_local_source_rejects_file_mutation_during_hash(
     monkeypatch.setattr(identity_module.os, "fstat", changing_fstat)
 
     with pytest.raises(RuntimeError, match="changed while hashing"):
-        local_checkpoint_content(checkpoint)
+        LocalCheckpointContent.from_path(checkpoint)
 
 
 def test_local_source_rejects_root_symlink_retarget_during_resolution(
@@ -188,7 +187,7 @@ def test_local_source_rejects_root_symlink_retarget_during_resolution(
     alias.symlink_to(first, target_is_directory=True)
 
     def retargeting_resolver(path: Path) -> LocalCheckpointContent:
-        content = local_checkpoint_content(path)
+        content = LocalCheckpointContent.from_path(path)
         alias.unlink()
         alias.symlink_to(second, target_is_directory=True)
         return content
@@ -258,7 +257,7 @@ def test_local_identity_omits_root_path_and_caches_duplicate_source(
 
     def resolver(path: Path) -> LocalCheckpointContent:
         calls.append(path)
-        return local_checkpoint_content(path)
+        return LocalCheckpointContent.from_path(path)
 
     identity = resolve_checkpoint_model_identity(
         _build(

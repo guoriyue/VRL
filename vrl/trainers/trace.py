@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 from omegaconf import OmegaConf
 
-from vrl.models.checkpoint_identity import local_checkpoint_content
+from vrl.models.checkpoint_identity import LocalCheckpointContent
 from vrl.models.precision import float32_precision_state
 from vrl.utils.json_files import write_json
 
@@ -146,7 +146,7 @@ class TrainingRunTrace:
         artifacts = {
             role: {
                 "path": path.relative_to(output_dir).as_posix(),
-                "content": asdict(local_checkpoint_content(path)),
+                "content": asdict(LocalCheckpointContent.from_path(path)),
             }
             for role, path in paths.items()
         }
@@ -198,7 +198,7 @@ class TrainingRunTrace:
             artifact = artifacts[role]
             if not isinstance(artifact, dict) or artifact.get("path") != relative:
                 raise ValueError(f"unexpected {role} artifact path")
-            observed = asdict(local_checkpoint_content(self.output_dir / relative))
+            observed = asdict(LocalCheckpointContent.from_path(self.output_dir / relative))
             if observed != artifact.get("content"):
                 raise ValueError(f"{role} artifact content mismatch")
         return record
@@ -282,7 +282,7 @@ class TrainingRunTrace:
             "checkpoint_sha256": digest,
             "checkpoint_labels": labels,
             "evaluation_protocol_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
-            "evaluation_content": asdict(local_checkpoint_content(archive.directory)),
+            "evaluation_content": asdict(LocalCheckpointContent.from_path(archive.directory)),
         }
 
     @staticmethod
