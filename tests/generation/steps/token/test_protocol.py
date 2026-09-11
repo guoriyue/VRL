@@ -10,8 +10,8 @@ from vrl.generation.steps.token import TokenLoopInit, TokenStepBatch
 @pytest.mark.parametrize(
     ("row_count", "step_count", "message"),
     [
-        (0, 1, "row_count must be a positive integer"),
-        (1, 0, "step_count must be a positive integer"),
+        (0, 1, r"TokenLoopInit\.row_count must be >= 1"),
+        (1, 0, r"TokenLoopInit\.step_count must be >= 1"),
     ],
 )
 def test_token_loop_init_rejects_invalid_shape(
@@ -51,7 +51,7 @@ def test_token_step_batch_rejects_invalid_row_indices(
 
 
 def test_token_step_batch_rejects_negative_position() -> None:
-    with pytest.raises(ValueError, match="position must be non-negative"):
+    with pytest.raises(ValueError, match=r"TokenStepBatch\.position must be >= 0"):
         TokenStepBatch(
             row_indices=[0],
             position=-1,

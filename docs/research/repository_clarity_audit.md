@@ -6383,3 +6383,19 @@ The broader repository audit remains incomplete.
   scheduler-batching tests: 59 passed, covering reordering, partial writes,
   malformed payloads, cache round trips and scheduler row bounds. This is
   component evidence; broader repository audit remains incomplete.
+
+## Weight-transfer ownership review and generation-wide verification
+
+- Keep sender manifest/chunk/bucket functions separate from StagedWeightTransfer:
+  the sender validates and packs wire payloads, while the receiver owns offsets,
+  buffers and transfer identity. Worker commit installs only a complete mapping;
+  per-bucket acknowledgements bound wire-object lifetime, not receiver RAM.
+  These are protocol and ownership boundaries, not needless utility classes.
+- Ran the entire tests/generation suite after recent slices: 793 passed and three
+  failed (17 dependency warnings). All failures were stale token-protocol error
+  regexes after adoption of require_exact_int: zero row/step counts and negative
+  positions were correctly rejected with the shared validator's field/bound text.
+- Update those three expected messages to retain explicit field and bound checks.
+  The affected token-protocol file then passed all 12 tests. Touched-file Ruff
+  and diff checks pass. The complete generation suite was not rerun after this
+  test-only correction; this does not prove full-repository completion.
