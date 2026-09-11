@@ -4380,6 +4380,18 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Denoise loop local names follow execution order
+
+- Rename latents_ori to latents_before_step and prev_latents to next_latents in
+  the shared loop. The latter is the produced action and next state, despite
+  the scheduler/SDE API calling that output prev_sample in diffusion time.
+- Preserve external prev_sample/prev_sample_mean names and all sampling math,
+  cache inputs, state assignment and trajectory writes. Keep run_denoise_loop
+  as the shared execution entry and DenoiseTrajectoryBuffers as the storage
+  owner; no new class or helper is needed for these local temporal names.
+- Denoise-step and full-sequence binding suites: 170 passed. Touched-file Ruff
+  checks pass. This is a local readability change; the full audit is ongoing.
+
 ## Weight manifest shape parsing rejects accidental scalar shapes
 
 - Require list/tuple shapes with nonnegative exact integer dimensions in the

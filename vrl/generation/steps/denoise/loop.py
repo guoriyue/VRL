@@ -206,11 +206,11 @@ def run_denoise_loop(
         for step_idx in range(num_steps_to_run):
             with profile_range("generation.denoise_step"):
                 with profile_range("generation.latent_snapshot"):
-                    latents_ori = state.latents.clone()
+                    latents_before_step = state.latents.clone()
                     timestep = state.timesteps[step_idx]
 
                 if teacache is not None and not teacache.should_run(
-                    latents_ori,
+                    latents_before_step,
                     step_idx,
                 ):
                     noise_pred = teacache.cached_noise_pred
@@ -232,7 +232,7 @@ def run_denoise_loop(
 
                 if config.denoise_mode == "native":
                     with profile_range("generation.scheduler_step"):
-                        prev_latents = state.scheduler.step(
+                        next_latents = state.scheduler.step(
                             noise_pred,
                             timestep,
                             state.latents,
@@ -243,7 +243,7 @@ def run_denoise_loop(
                         noise_pred.float(),
                         timestep.unsqueeze(0),
                         state.latents.float(),
-                        prev_sample=prev_latents.float(),
+                        prev_sample=next_latents.float(),
                         return_dt=config.sde.return_kl,
                         noise_level=config.sde.noise_level,
                         sde_type=config.sde.sde_type,
@@ -266,15 +266,15 @@ def run_denoise_loop(
                             sde_type=config.sde.sde_type,
                             step_index=step_idx,
                         )
-                    prev_latents = sde_result.prev_sample
+                    next_latents = sde_result.prev_sample
                 with profile_range("generation.latent_write"):
-                    state.latents = prev_latents
+                    state.latents = next_latents
 
             with profile_range("generation.trajectory_buffer_write"):
                 buffers.record_step(
                     step_idx,
-                    observation=latents_ori,
-                    action=prev_latents,
+                    observation=latents_before_step,
+                    action=next_latents,
                     timestep=timestep,
                     sde_result=sde_result,
                     return_kl=config.sde.return_kl,
