@@ -199,3 +199,17 @@ def test_build_trainable_state_sync_getter_reads_bundle_trainable_modules() -> N
 
     assert set(state) == {"adapter.weight"}
     assert state["adapter.weight"].shape == (1, 2)
+
+
+@pytest.mark.parametrize("source", ["explicit", "runtime"])
+@pytest.mark.parametrize("version", [True, 1.5, "2", -1])
+def test_weight_syncer_rejects_invalid_initial_policy_identity(source, version) -> None:
+    runtime = _RuntimeWithSync()
+    kwargs = {}
+    if source == "explicit":
+        kwargs["initial_policy_version"] = version
+    else:
+        runtime.current_policy_version = version
+    with pytest.raises(ValueError, match="initial_policy_version"):
+        RayRuntimeWeightSyncer(runtime, **kwargs)
+    assert runtime.calls == []

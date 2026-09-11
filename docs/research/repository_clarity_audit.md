@@ -5573,3 +5573,18 @@ this combined regression is compatibility evidence, not architectural completion
   Source/tests contain no old-name references. Touched-file Ruff and
   git diff --check pass. The real-checkpoint test received only a comment change
   and was not executed. Repository-wide completion remains unproven.
+
+## Weight-sync initialization preserves policy identity
+
+- Replace int(current) with the existing exact-integer validator before
+  allocating the next version. Explicit resume versions and runtime-provided
+  versions must be non-negative integers; bool, fractional and string values
+  must not silently become different policy identities.
+- Preserve explicit-version precedence, absent-version initialization, CPU
+  snapshot ownership, push locking and version publication. Keep shared state
+  selection and snapshot helpers as cross-strategy/transport boundaries; no new
+  validator class or helper is introduced.
+- Eight invalid-source regressions failed before the fix. Weight-sync, rollout
+  protocol and Ray lease/runtime suites: 88 passed, 15 dependency/profiler
+  warnings. Touched-file Ruff and git diff --check pass. No production cluster
+  performance claim is made; the repository-wide audit remains incomplete.
