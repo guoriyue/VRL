@@ -8,6 +8,7 @@ training work cannot starve rollout admission or completion harvesting.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from vrl.rollouts.orchestration.continuous.owner import (
@@ -17,6 +18,8 @@ from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSetting
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.rollouts.stats import RolloutStats
+
+logger = logging.getLogger(__name__)
 
 
 class ContinuousRolloutSchedule:
@@ -34,6 +37,65 @@ class ContinuousRolloutSchedule:
         self.lifecycle = lifecycle
         self._validate_runtime_isolation()
         self._owner = ContinuousRolloutOwner(lifecycle=lifecycle, settings=settings)
+
+    @classmethod
+    def from_config(
+        cls,
+        config: Any,
+        *,
+        lifecycle: RolloutRuntimeCoordinator,
+        algorithm_tolerates_off_policy_staleness: bool,
+    ) -> ContinuousRolloutSchedule:
+        """Translate ``rollout_orchestration.continuous`` config into the schedule.
+
+        Copies resolved fields without importing the trainer-owned config type.
+        """
+
+        # ContinuousRolloutConfig (vrl.trainers.core.types) is the single source of
+        # these defaults. The rollout layer receives its already-resolved fields so it
+        # needs no vrl.trainers import and keeps no second copy of the defaults.
+        cont = getattr(config, "continuous", None)
+        if cont is None:
+            raise RuntimeError(
+                "rollout_orchestration.schedule_mode='continuous' requires a continuous config "
+                "block (ContinuousRolloutConfig); none was provided",
+            )
+
+        # Constructing the settings enforces max_stale_policy_versions >= 1 (its
+        # __post_init__), so the fail-fast on an unsound zero-window config happens
+        # here without a second copy of the check.
+        settings = ContinuousRolloutSettings(
+            max_inflight_groups=int(cont.max_inflight_groups),
+            max_ready_bytes_mb=int(cont.max_ready_bytes_mb),
+            split_generation_reward=bool(cont.split_generation_reward),
+            max_unscored_groups=int(cont.max_unscored_groups),
+            max_unscored_bytes_mb=int(cont.max_unscored_bytes_mb),
+            max_generated_group_bytes_mb=int(cont.max_generated_group_bytes_mb),
+            max_stale_policy_versions=int(cont.max_stale_policy_versions),
+            wait_timeout_s=float(cont.wait_timeout_s),
+            queue_poll_interval_s=float(cont.queue_poll_interval_s),
+            fail_fast_errors=int(cont.fail_fast_errors),
+        )
+
+        # A likelihood-free algorithm has no way to reweight off-policy samples, so
+        # production continuous execution is unsound for it. Zero staleness is not a
+        # continuous submode: that behavior belongs to strict_on_policy.
+        if not algorithm_tolerates_off_policy_staleness:
+            raise ValueError(
+                "rollout_orchestration.continuous.max_stale_policy_versions="
+                f"{settings.max_stale_policy_versions} is unsound for this algorithm: it is "
+                "likelihood-free (no importance-sampling correction), so it can only "
+                "train on strictly on-policy rollouts. Use schedule_mode='strict_on_policy', "
+                "or use a GRPO-family algorithm for continuous off-policy prefetch.",
+            )
+
+        logger.info(
+            "continuous async prefetch ENABLED: max_stale_policy_versions=%d, max_inflight_groups=%d",
+            settings.max_stale_policy_versions,
+            settings.max_inflight_groups,
+        )
+
+        return cls(lifecycle=lifecycle, settings=settings)
 
     async def next_iteration(
         self,
