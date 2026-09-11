@@ -7149,3 +7149,16 @@ The broader repository audit remains incomplete.
 - Keep A/B/C arm definitions, acceptance thresholds and statistical aggregation
   as the benchmark protocol. No new parser class or tolerant-mode flag on the
   shared reader. Broader repository clarity audit remains incomplete.
+
+## Supervisor reads CSV physical lines consistently with the writer
+
+- Replace Unicode-aware splitlines with StringIO.readlines in the health gate.
+  A valid component-column name containing U+2028 previously became a bogus
+  metrics row and could trigger termination of an otherwise healthy run.
+- Added healthy and nonfinite-loss cases with that column: the healthy case
+  reproduced a false trip before the fix; both now report the intended result.
+  Complete supervisor suite: 65 passed. Touched-file Ruff and diff checks pass.
+- Preserve incomplete-last-line handling, row signatures, thresholds and gate
+  ownership. Other remaining splitlines uses for CLI help and command output
+  are not JSONL/CSV readers and are not mechanically changed. No added wrapper
+  or schema vocabulary; broader repository audit remains incomplete.

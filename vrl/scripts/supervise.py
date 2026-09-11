@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+import io
 import json
 import logging
 import math
@@ -392,7 +393,7 @@ class MetricsHealthGate:
             return [], []
         if not text.endswith("\n"):
             text = text.rpartition("\n")[0]
-        lines = text.splitlines()
+        lines = io.StringIO(text).readlines()
         if len(lines) < 2:
             return [], []
         reader = csv.DictReader(lines)

@@ -1249,3 +1249,12 @@ def test_health_gate_rejects_ambiguous_header_before_judging_values(tmp_path, ex
     gate = MetricsHealthGate(HealthGateConfig(failure_limit=1), tmp_path)
     with pytest.raises(ValueError, match="unique non-empty column names"):
         gate.judge_new_rows()
+
+
+@pytest.mark.parametrize("loss, expected_trip", [("1.0", False), ("nan", True)])
+def test_health_gate_preserves_unicode_component_column(tmp_path, loss, expected_trip):
+    header = _METRICS_HEADER.rstrip("\n") + ",r_text\u2028score\n"
+    row = _metric_row(0, loss=loss).rstrip("\n") + ",0.5\n"
+    (tmp_path / "metrics.csv").write_text(header + row, encoding="utf-8")
+    gate = MetricsHealthGate(HealthGateConfig(failure_limit=1), tmp_path)
+    assert gate.judge_new_rows() is expected_trip
