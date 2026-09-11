@@ -132,10 +132,10 @@ def run_e2e(runtime: RuntimeBundle, root, device):
     times = []
     for _ in range(iters):
         torch.cuda.synchronize(device)
-        t0 = time.time()
+        started_at = time.perf_counter()
         _e2e_once(runtime, root)
         torch.cuda.synchronize(device)
-        times.append((time.time() - t0) * 1000.0)
+        times.append((time.perf_counter() - started_at) * 1000.0)
     times.sort()
     peak = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
     print(

@@ -5341,3 +5341,16 @@ this combined regression is compatibility evidence, not architectural completion
   10 passed. Touched-file Ruff and git diff --check pass. Subprocess and GPU
   operations are mocked in these tests; real profiling was not performed.
   Wider repository audit remains incomplete.
+
+## Diffusion performance measurements use an elapsed-time clock
+
+- Replace time.time with time.perf_counter for full-generation latency and the
+  bottleneck profile window. Rename t0 to started_at. Adjustable wall-clock
+  changes no longer affect these elapsed durations.
+- Keep shared execution functions, warmup counts, CUDA synchronization positions
+  and median reporting unchanged. No timing class or helper is introduced; the
+  measured scopes remain the same.
+- An end-to-end timing regression failed before the fix and now verifies the
+  performance clock, five total calls and median reporting from controlled
+  ticks. Shared runtime and bottleneck suites: 11 passed. GPU operations are
+  mocked. Touched-file Ruff and git diff --check pass. Wider audit remains open.

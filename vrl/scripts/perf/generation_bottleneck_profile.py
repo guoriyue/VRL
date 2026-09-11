@@ -159,7 +159,7 @@ def main(argv=None):
     )
 
     try:
-        t0 = time.time()
+        started_at = time.perf_counter()
         with torch.profiler.profile(
             activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
             record_shapes=True,
@@ -167,7 +167,7 @@ def main(argv=None):
             for i in range(args.steps):
                 step_fn(i)
             torch.cuda.synchronize(device)
-        wall = time.time() - t0
+        wall = time.perf_counter() - started_at
         peak_mb = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
         dmon_out, _ = dmon.communicate(timeout=30)
     except BaseException:

@@ -129,3 +129,23 @@ def test_prepare_sampling_state_uses_only_real_sequence_length_sources(
         assert "max_sequence_length" not in model.encode_kwargs
     else:
         assert model.encode_kwargs["max_sequence_length"] == expected
+
+
+def test_e2e_duration_uses_monotonic_performance_clock(monkeypatch, capsys):
+    from vrl.scripts.perf.common import diffusion_runtime
+
+    ticks = iter([10.0, 10.1, 20.0, 20.2, 30.0, 30.3])
+    calls = []
+
+    def wall_clock():
+        pytest.fail("elapsed latency must not use the adjustable wall clock")
+
+    monkeypatch.setattr(diffusion_runtime.time, "time", wall_clock)
+    monkeypatch.setattr(diffusion_runtime.time, "perf_counter", lambda: next(ticks))
+    monkeypatch.setattr(diffusion_runtime, "_e2e_once", lambda *a: calls.append(None))
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda *a: None)
+    monkeypatch.setattr(torch.cuda, "reset_peak_memory_stats", lambda *a: None)
+    monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda *a: 0)
+    diffusion_runtime.run_e2e(None, SimpleNamespace(sampling=SimpleNamespace(num_steps=2)), "cuda")
+    assert len(calls) == 5
+    assert "200 ms/img (median of 3)" in capsys.readouterr().out
