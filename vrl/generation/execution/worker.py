@@ -409,6 +409,12 @@ class GenerationWorkerCore:
         Probe outputs are discarded; trainable state / policy_version untouched.
         """
 
+        if self.rank_group is not None:
+            raise ValueError(
+                "automatic batch-size probing requires a single-rank engine; "
+                "set an explicit samples_per_generation_batch because multi-rank "
+                "probe trials do not yet coordinate memory/OOM decisions",
+            )
         self._memory_parking.require_active(
             "probe_batch_size",
             executor=self.executor,

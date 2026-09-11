@@ -3247,3 +3247,21 @@ this combined regression is compatibility evidence, not architectural completion
   GPU deadlock. Adding RNG sync alone cannot establish collective safety; the
   probe needs coordinated decisions or an explicit supported-topology boundary.
   Full repository review remains incomplete.
+
+## Declare the supported automatic-probe topology before dispatch
+
+- Automatic probing now rejects multi-rank engines instead of running
+  independently chosen collective trial shapes. RayGenerationExecutor checks
+  the complete fleet before dispatching anything; GenerationWorkerCore rejects
+  direct multi-rank probe calls before CUDA/model work. These are the driver
+  dispatch and direct worker API boundaries, not duplicate policy classes.
+- Preserve multi-engine probing when each engine has one rank. Multi-rank
+  generation with an explicit samples_per_generation_batch is unchanged.
+  No fallback batch size is guessed and no new config switch is introduced.
+- This contains the unsafe unsupported path; it does not implement coordinated
+  multi-rank probing. That feature needs shared trial decisions plus rank-failure
+  handling and remains a distinct unimplemented capability.
+- Validation: 476 execution/Ray tests passed. New cases verify zero dispatch
+  even when a single-rank engine precedes an unsupported engine, and direct
+  rejection before CUDA queries. Existing real fleet auto-probe tests pass.
+  Touched-file Ruff/diff checks passed. Full clarity review remains incomplete.

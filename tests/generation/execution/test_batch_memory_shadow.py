@@ -494,3 +494,35 @@ def test_probe_releases_failed_trial_tensors_before_cache_cleanup(
     result = _probe_core(FailingProbe()).probe_batch_size(_request(), max_samples=10)
     assert retained
     assert result.samples_per_generation_batch == 6
+
+
+def test_multirank_probe_rejected_before_any_engine_dispatch():
+    calls = []
+    first = _probe_worker("single", 4, calls)
+    rank0 = _probe_worker("rank0", 4, calls).primary
+    rank1 = _probe_worker("rank1", 6, calls).primary
+    multi = RayGenerationEngine("multi", [rank0, rank1])
+    executor = RayGenerationExecutor(
+        SimpleNamespace(),
+        [first, multi],
+        SimpleNamespace(),
+        actor_dispatcher=RayActorDispatcher(("single", "multi")),
+        generation_stall_timeout_s=30.0,
+    )
+    with pytest.raises(ValueError, match="single-rank engines"):
+        asyncio.run(executor.probe_batch_sizes(_request(), max_samples=8))
+    assert calls == []
+
+
+def test_direct_multirank_probe_rejected_before_cuda_or_model_work(monkeypatch):
+    from vrl.generation.execution.rank_group import RankGroupSpec
+
+    core = _probe_core(_ProbeExecutor())
+    core.rank_group = RankGroupSpec("127.0.0.1", 29500, 0, 2)
+
+    def unexpected():
+        raise AssertionError("unsupported probe must not inspect CUDA")
+
+    monkeypatch.setattr(torch.cuda, "is_available", unexpected)
+    with pytest.raises(ValueError, match="single-rank engine"):
+        core.probe_batch_size(_request(), max_samples=8)

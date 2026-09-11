@@ -132,6 +132,14 @@ class RayGenerationExecutor:
         *,
         max_samples: int,
     ) -> list[BatchSizeProbeResult]:
+        for engine in self.engines:
+            if len(engine.ranks) != 1:
+                raise ValueError(
+                    "automatic batch-size probing requires single-rank engines; "
+                    f"engine {engine.engine_id!r} has {len(engine.ranks)} ranks. "
+                    "Set an explicit samples_per_generation_batch: multi-rank "
+                    "probe trials do not yet coordinate memory/OOM decisions.",
+                )
         result_pairs: list[tuple[int, Any]] = []
         remote_jobs: list[RayActorJob] = []
         for job_index, engine in enumerate(self.engines):
