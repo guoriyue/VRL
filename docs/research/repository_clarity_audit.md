@@ -632,3 +632,22 @@ Torch-free import checks. Touched-file Ruff and diff whitespace checks pass.
   queued-before-start cancellation test using an actual blocked owner thread,
   and existing non-cooperative cancellation coverage. Touched-file Ruff and
   whitespace checks pass.
+
+## Reward service construction ownership
+
+- Replaced private free constructor `_load_service` with public
+  `RewardService.from_yaml`. YAML loading, launch-policy validation, relative
+  artifact-root resolution and runtime assembly now belong to the constructed
+  service. Path expansion/resolution is owned by this entry, not its CLI caller.
+- Migrated both consumers: the service CLI and CountGD installer's generated
+  health-check script. The latter previously imported the private helper across
+  modules. No forwarding alias or new loader class remains.
+- Retained `_run_cli` as the signal/event-loop adapter and HTTP handler methods
+  as framework boundaries. Kept fresh request execution separate from cached
+  response revalidation: both settle admission but only one runs the model.
+  Shared try/finally shape alone does not justify a generic executor abstraction.
+- This constructor preserves standalone-service parking rejection, CPU overlap
+  semantics and launch defaults. No new ALL_CAPS data introduced.
+- Validation: 40 reward service tests and eight CountGD installer tests passed;
+  source search finds no remaining Python `_load_service` references. Ruff on
+  touched files and diff whitespace checks pass.

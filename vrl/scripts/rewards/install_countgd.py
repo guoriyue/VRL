@@ -820,7 +820,7 @@ import yaml
 from PIL import Image
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.service.server import _load_service
+from vrl.rewards.service.server import RewardService
 from vrl.rewards.service.wire import request_to_wire, score_response_from_wire
 
 source_dir = Path({str(source_dir)!r})
@@ -851,7 +851,7 @@ async def run() -> None:
             ),
             encoding="utf-8",
         )
-        service = _load_service(config_path)
+        service = RewardService.from_yaml(config_path)
         try:
             await service.start()
             host, port = service.address

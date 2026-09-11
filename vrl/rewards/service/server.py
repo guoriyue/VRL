@@ -3,7 +3,7 @@
 The server half of the HTTP ``RewardScorer`` transport (client half:
 service/client.py). It runs as an operator-owned process that keeps one model
 identity and its device for its whole lifetime — the opposite deal from the
-colocated in-process scorer, which is why ``_load_service`` rejects
+colocated in-process scorer, which is why ``RewardService.from_yaml`` rejects
 ``sleep_offload``. ``RewardService`` owns HTTP-side policy only — admission
 limits, request-id idempotency, cancellation, and artifact path/integrity
 validation against the configured roots — while the model runs on
@@ -90,7 +90,7 @@ class RewardServiceConfig(ConfigBase):
     max_cached_requests: StrictInt = 1024
     max_request_bytes: StrictInt = 16 * 1024 * 1024
     # Operator attestation for GPU services. CPU services are inferred safe by
-    # _load_service because they execute no accelerator work beside generation.
+    # RewardService.from_yaml because they execute no accelerator work beside generation.
     generation_overlap_safe: StrictBool = False
 
     @field_validator("artifact_roots", mode="before")
@@ -118,6 +118,46 @@ class RewardServiceConfig(ConfigBase):
 
 class RewardService:
     """Async HTTP owner for one runtime and one model identity."""
+
+    @classmethod
+    def from_yaml(cls, config_path: str | Path) -> RewardService:
+        """Construct a service from YAML; resolve artifact roots beside that file."""
+
+        config_path = Path(config_path).expanduser().resolve(strict=True)
+
+        from omegaconf import OmegaConf
+
+        from vrl.rewards.runtime import InProcessRewardScorer
+
+        raw = OmegaConf.to_container(OmegaConf.load(config_path), resolve=True)
+        if not isinstance(raw, Mapping):
+            raise TypeError("reward service config must be a mapping")
+        cfg = RewardServiceConfig.from_mapping(raw)
+        launch = RewardRuntimeLaunchContract.from_component_config(cfg.worker_config)
+        if launch.sleep_offload:
+            raise ValueError(
+                "reward service owns its device for its whole lifetime; drop "
+                "worker_config.sleep_offload because parking is colocated-only",
+            )
+        roots = [
+            path if Path(path).is_absolute() else config_path.parent / path
+            for path in cfg.artifact_roots
+        ]
+        configured_device = launch.device.strip().lower()
+        runs_on_cpu = configured_device == "cpu" or configured_device.startswith("cpu:")
+        return cls(
+            InProcessRewardScorer(launch.component_config),
+            artifact_roots=roots,
+            host=str(cfg.host),
+            port=int(cfg.port),
+            model_name=str(cfg.model_name or launch.reward_model_name or launch.model_factory),
+            model_version=str(cfg.model_version or launch.reward_model_version),
+            max_concurrency=int(cfg.max_concurrency),
+            max_pending_requests=int(cfg.max_pending_requests),
+            max_cached_requests=int(cfg.max_cached_requests),
+            max_request_bytes=int(cfg.max_request_bytes),
+            generation_overlap_safe=bool(cfg.generation_overlap_safe or runs_on_cpu),
+        )
 
     def __init__(
         self,
@@ -669,42 +709,6 @@ class RewardService:
         return self._json_response(error.status_code, error_to_wire(error), headers=headers)
 
 
-def _load_service(config_path: Path) -> RewardService:
-    from omegaconf import OmegaConf
-
-    from vrl.rewards.runtime import InProcessRewardScorer
-
-    raw = OmegaConf.to_container(OmegaConf.load(config_path), resolve=True)
-    if not isinstance(raw, Mapping):
-        raise TypeError("reward service config must be a mapping")
-    cfg = RewardServiceConfig.from_mapping(raw)
-    launch = RewardRuntimeLaunchContract.from_component_config(cfg.worker_config)
-    if launch.sleep_offload:
-        raise ValueError(
-            "reward service owns its device for its whole lifetime; drop "
-            "worker_config.sleep_offload because parking is colocated-only",
-        )
-    roots = [
-        path if Path(path).is_absolute() else config_path.parent / path
-        for path in cfg.artifact_roots
-    ]
-    configured_device = launch.device.strip().lower()
-    runs_on_cpu = configured_device == "cpu" or configured_device.startswith("cpu:")
-    return RewardService(
-        InProcessRewardScorer(launch.component_config),
-        artifact_roots=roots,
-        host=str(cfg.host),
-        port=int(cfg.port),
-        model_name=str(cfg.model_name or launch.reward_model_name or launch.model_factory),
-        model_version=str(cfg.model_version or launch.reward_model_version),
-        max_concurrency=int(cfg.max_concurrency),
-        max_pending_requests=int(cfg.max_pending_requests),
-        max_cached_requests=int(cfg.max_cached_requests),
-        max_request_bytes=int(cfg.max_request_bytes),
-        generation_overlap_safe=bool(cfg.generation_overlap_safe or runs_on_cpu),
-    )
-
-
 async def _run_cli(service: RewardService) -> None:
     loop = asyncio.get_running_loop()
     stop_requested = asyncio.Event()
@@ -739,8 +743,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="VRL standalone reward service")
     parser.add_argument("--config", required=True, help="service YAML config path")
     args = parser.parse_args(argv)
-    config_path = Path(args.config).expanduser().resolve(strict=True)
-    service = _load_service(config_path)
+    service = RewardService.from_yaml(args.config)
     asyncio.run(_run_cli(service))
 
 
