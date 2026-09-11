@@ -3328,3 +3328,18 @@ this combined regression is compatibility evidence, not architectural completion
   touched-file Ruff/diff checks passed. Actors use CPU scripted capacity, so
   this verifies transport/admission/aggregation/retry, not CUDA collective
   recovery after a real rank OOM. Full repository review remains incomplete.
+
+## Validate published policy versions without truncation
+
+- RolloutRuntimeCoordinator.current_policy_version used int(value), turning
+  fractional/bool/string provider values into apparently valid request versions
+  before request and staleness checks could reject them. Reuse require_exact_int
+  with minimum zero and preserve the provider's integer value.
+- Keep runtime-then-syncer resolution: the syncer can publish before the
+  collector attaches its runtime. None means no version published; an invalid
+  version raises instead of falling through to another provider. This existing
+  lifecycle method is the shared owner, requiring no extra validator class.
+- Validation: 411 orchestration/online trainer tests passed. New tests exercise
+  both provider paths and reject malformed versions even when a valid fallback
+  exists; existing attach/versionless cases preserve their semantics.
+  Touched-file Ruff/diff checks passed. Full review remains incomplete.

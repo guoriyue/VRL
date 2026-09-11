@@ -535,3 +535,26 @@ def test_coordinator_does_not_hide_runtime_provider_errors():
         lifecycle.current_policy_version()
     with pytest.raises(RuntimeError, match="provider failed"):
         lifecycle.requires_driver_model_offload()
+
+
+@pytest.mark.parametrize("source", ["runtime", "syncer"])
+@pytest.mark.parametrize("version", [True, 1.9, "1", -1, float("nan"), float("inf")])
+def test_coordinator_rejects_invalid_published_versions(source, version):
+    from types import SimpleNamespace
+
+    from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
+
+    provider = SimpleNamespace(current_policy_version=version)
+    lifecycle = RolloutRuntimeCoordinator(
+        collector=SimpleNamespace(generation_runtime=provider if source == "runtime" else None),
+        strategy=None,
+        training_state_getter=lambda: None,
+        weight_syncer=provider
+        if source == "syncer"
+        else SimpleNamespace(current_policy_version=1),
+        sync_state_getter=None,
+        weights_initialized=lambda: True,
+        set_weights_initialized=lambda value: None,
+    )
+    with pytest.raises(ValueError, match="current_policy_version"):
+        lifecycle.current_policy_version()
