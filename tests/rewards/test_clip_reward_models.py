@@ -190,7 +190,7 @@ def test_pickscore_matches_an_independent_cosine_oracle(pickscore_clip_repo: Pat
 def test_pickscore_score_media_dispatches_tensors_and_rejects_non_media(
     pickscore_clip_repo: Path,
 ) -> None:
-    """An image scores itself, a [C,T,H,W] video its middle frame; non-media is 0.0."""
+    """An image scores itself, a video its middle frame; invalid media raises."""
 
     from vrl.rewards.models.pickscore import PickScoreRewardModel
 
@@ -210,7 +210,8 @@ def test_pickscore_score_media_dispatches_tensors_and_rejects_non_media(
 
     assert image_score == {"pickscore": pytest.approx(reference)}
     assert video_score == {"pickscore": pytest.approx(reference)}
-    assert model.score_media(media="not-media", prompt="a square") == {"pickscore": 0.0}
+    with pytest.raises(TypeError, match="reward media must be"):
+        model.score_media(media="not-media", prompt="a square")
 
 
 def test_pickscore_score_media_scores_the_middle_frame_of_each_video(

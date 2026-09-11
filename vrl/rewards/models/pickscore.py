@@ -54,10 +54,7 @@ class PickScoreRewardModel(TorchRewardModel):
         )
 
     def score_media(self, *, media: Any, prompt: str) -> Mapping[str, float]:
-        try:
-            samples = pil_frames_from_media(media)
-        except TypeError:
-            return {"pickscore": 0.0}
+        samples = pil_frames_from_media(media)
         # One image per sample: a video is scored on its middle frame.
         images = [frames[len(frames) // 2] for frames in samples]
         score = self._score(prompt, images)

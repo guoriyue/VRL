@@ -1440,3 +1440,16 @@ close that architectural scope.
 - Validation: 13 encoder, genuine tiny-Wan forward, config and checkpoint-entry
   tests passed. An isolated Python import confirmed the recipe still leaves
   torch absent from sys.modules. Touched-file Ruff and diff checks pass.
+
+## PickScore invalid media is not a reward value
+
+- Removed PickScoreRewardModel.score_media's TypeError-to-zero fallback. Shared
+  media parsing errors now propagate, matching the error behavior of the other
+  consumers instead of manufacturing a successful low reward for malformed input.
+- Kept valid-image scoring, middle-frame video selection and normalization;
+  retained the shared media converter and registry binding as real boundaries.
+  No error wrapper, new score key or changes to model inference arithmetic.
+- Validation: 36 CLIP/media/AnimeReward/in-process runtime tests passed, one
+  skipped. Existing tiny real-CLIP tests still compare valid scores with an
+  independent oracle; the invalid-media assertion now requires the parser error.
+  Touched-file Ruff and git diff --check pass.
