@@ -10,6 +10,7 @@ import torch
 
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
+    concatenate_sample_values,
 )
 from vrl.generation.types import GenerationRequest
 from vrl.utils.config import require_exact_int
@@ -103,7 +104,7 @@ class ARRequestLayout:
         batches: Sequence[Any],
         fields: Sequence[str],
     ) -> dict[str, torch.Tensor]:
-        """Concatenate ordered batch payload tensors along the batch dim.
+        """Concatenate ordered payload fields without implicit dtype conversion.
 
         The gatherers' cat step is pure data (a field-name list over already
         coverage-validated payloads), so it lives here once instead
@@ -111,7 +112,9 @@ class ARRequestLayout:
         """
 
         return {
-            field: torch.cat([getattr(batch, field) for batch in batches], dim=0)
+            field: concatenate_sample_values(
+                [getattr(batch, field) for batch in batches], name=field
+            )
             for field in fields
         }
 

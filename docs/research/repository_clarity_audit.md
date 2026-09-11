@@ -3639,3 +3639,19 @@ this combined regression is compatibility evidence, not architectural completion
   No new wrapper class or changes to capacity/admission policy.
 - Validation: 125 trajectory, generated-capacity, and ready-queue tests passed;
   touched-file Ruff/diff checks passed. Full repository review remains incomplete.
+
+## AR field concatenation uses the shared dtype boundary
+
+- ARRequestLayout.cat_batch_fields used torch.cat directly, unlike diffusion's
+  concatenate_sample_values. A regression with int64 and float64 token fields
+  reproduced silent dtype promotion; the integer 2**53+1 cannot survive that
+  conversion exactly. Route AR fields through the existing shared concatenation
+  function, retaining field-specific error names and valid tensor behavior.
+- Keep the AR field-list adapter because multiple family gatherers consume it.
+  Keep ChunkAutoregressiveDenoiseGatherer._ordered_batches: beyond shared sample
+  coverage it validates temporal chunk count, trainability, replay axes and
+  transition count. It is not a redundant forwarding method. No new helper,
+  class or dtype table; cross-family consistency is the purpose of this change.
+- Validation: the new dtype-mismatch case failed before the fix; 342 gatherer,
+  binding, AR-family and R1 wiring tests passed afterwards with two skips.
+  Touched-file Ruff/diff checks passed. Full repository review remains incomplete.
