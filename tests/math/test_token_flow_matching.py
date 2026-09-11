@@ -8,6 +8,7 @@ reaches for ``image_head(...)`` instead of ``.net`` fails loudly here.
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from vrl.math.token.flow_matching import (
@@ -141,3 +142,18 @@ def test_sample_and_replay_go_through_net_and_agree() -> None:
     assert replay_log_prob.shape == (b,)
     assert torch.isfinite(replay_log_prob).all()
     assert torch.allclose(log_prob, replay_log_prob, atol=1e-5)
+
+
+@pytest.mark.parametrize("num_steps", [0, -1, True, 1.5, "2"])
+@pytest.mark.parametrize("replay", [False, True])
+def test_token_flow_rejects_invalid_step_count(num_steps, replay):
+    head = _RecordingHead()
+    head.input_dim = 2
+    cond = torch.zeros(1, 2)
+    prior = torch.zeros_like(cond)
+    with pytest.raises(ValueError, match="num_steps"):
+        if replay:
+            flow_logprob_at(head, cond, prior, saved_noise=prior, num_steps=num_steps)
+        else:
+            flow_sample_with_logprob(head, cond, initial_noise=prior, num_steps=num_steps)
+    assert head.calls == []

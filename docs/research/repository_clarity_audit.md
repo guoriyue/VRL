@@ -4380,6 +4380,18 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Token-flow Euler step count has one exact integer boundary
+
+- Validate num_steps with require_exact_int, minimum one, in the shared terminal
+  mean calculation before creating the time grid or calling the velocity head.
+  Both direct sampling and replay now reject malformed step counts consistently.
+- Keep shared mathematical helpers and valid Euler/noise calculations unchanged.
+  No new wrapper is added. This check precedes velocity execution but does not
+  promise to precede sampling's initial-prior allocation when none was supplied.
+- Ten diagnostic regressions failed before the fix and also assert no velocity
+  call on rejection. Token math and NextStep family suites: 62 passed, two
+  dependency warnings. Touched-file Ruff checks pass. The full audit continues.
+
 ## Token-flow documentation states the actual conditional density
 
 - Correct the sampling formula to use delta=token-mean when dividing by std²,
