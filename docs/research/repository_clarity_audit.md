@@ -297,3 +297,37 @@ These are inspection candidates, not approved mechanical transformations.
 Completion requires inspecting the remaining areas, recording justified keeps,
 fixing confirmed ownership problems, and running checks appropriate to each
 change. Passing the tests above only verifies the listed changes.
+
+## Explicit progress and concrete ownership follow-up
+
+- `TrainingCheckpoint.load` owns payload construction; all Python callers and
+  evaluator test patches use that API. Resume positions now require the exact
+  `progress.next_epoch` / `progress.next_step` integer fields. Trainer counters,
+  metadata and directory names are no longer fallback sources. Online saves now
+  write `next_step` explicitly; offline DPO already does. Older checkpoints
+  without the required progress fields cannot resume via these properties;
+  model-only loading remains available. Invalid floats, strings and booleans
+  are rejected rather than coerced. The shared private position reader owns
+  the identical validation for both fields.
+- `PreferenceBatch.collate` is passed directly to DataLoader. The framework
+  callback remains, but its independent function and lazy export are removed.
+- `TrajectorySegment.named_tensor` is removed: the sole caller reads the tensor
+  dictionary directly. `role_tensor` stays because a semantic role must identify
+  exactly one tensor; ordinary dictionary access cannot enforce that invariant.
+- `ProfilerActivitySelection` replaces the vague `ResolvedActivities` name.
+  Requested/effective activity tracking and unsupported-device failures stay.
+- Trajectory storage directly checks `torch.Tensor` and uses the canonical dtype
+  parser once per conversion, removing two forwarding helpers. Runtime imports
+  stay lazy so parsing configuration does not import Torch. Storage placement,
+  integer tensor preservation and byte accounting remain distinct operations;
+  no generic utility class is introduced. The shared tree walker and recursive
+  byte estimator retain real traversal/deduplication responsibilities.
+- Storage's `_VALID_DEVICES` / `_VALID_DTYPES` stay as schema validation sets
+  derived from Literal definitions; they contain no independent business facts.
+  Checkpoint filename/schema constants likewise remain real format boundaries.
+
+Validation for this follow-up: 752 tests passed across checkpointing, FSDP,
+DPO timestep handling, trajectory, profiler, online lifecycle, evaluation,
+rollouts, storage adoption and the Torch-free config parsing check. Touched
+Python files pass Ruff; `git diff --check` passes. This validates the changes
+above, not completion of the outstanding repository-wide audit.
