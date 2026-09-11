@@ -1607,3 +1607,23 @@ is not a repository-wide completion claim or a mandate to inline short functions
   then successfully generate the next batch with the next contiguous ID. Initial
   tests used a nonexistent queue method; corrected to the actual snapshot/remove
   API before the successful full run. Touched-file Ruff and diff checks passed.
+
+## TeaCache shared metric honors its documented precision
+
+- Reviewed rel_l1 with its runtime and teacache_drift_probe callers. Keep it as
+  the shared mathematical definition: inlining would let analysis disagree
+  with runtime skip decisions. Keep the asynchronous D2H helper in pipeline.py
+  as well; pinned copies and source record_stream manage a real stream boundary.
+- Found rel_l1 documenting FP32 reduction while subtracting and summing in the
+  input dtype. Convert both signals to FP32 before subtraction/reduction. No
+  new abstraction, constants, threshold changes or cache policy changes.
+- Reproduced with 1024 FP16 values: 100 -> 101 previously yielded zero rather
+  than 0.01; -40000 -> 40000 yielded NaN rather than 2.0. Both now match those
+  expected ratios. A decision-level regression ensures 1% change exceeds a
+  0.5% threshold instead of incorrectly skipping the forward.
+- Validation: 141 denoise-step/full-sequence binding tests passed; three new
+  numerical/decision regressions. Touched-file Ruff and diff checks passed.
+  CPU numerical checks do not establish a GPU speedup or model-quality result.
+- Follow-up candidate discovered, not changed here: TeaCacheConfig.from_sampling
+  coerces enabled/warmup values and threshold validation does not reject NaN.
+  Review configuration consumers before consolidating that validation.

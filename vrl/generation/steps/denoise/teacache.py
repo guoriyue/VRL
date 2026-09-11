@@ -45,6 +45,8 @@ def rel_l1(cur: torch.Tensor, prev: torch.Tensor) -> float:
     per-family on-device accumulator is a follow-up).
     """
 
+    cur = cur.float()
+    prev = prev.float()
     denom = prev.abs().sum()
     if float(denom) <= 0.0:
         return float("inf")  # degenerate prev -> never skip
