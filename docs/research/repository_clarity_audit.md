@@ -6464,3 +6464,19 @@ The broader repository audit remains incomplete.
   justify removing field() where other schemas actually use its options.
 - Report suite: 31 passed. Touched-file Ruff and diff checks pass. Broader
   repository audit remains incomplete.
+
+## CountGD installation boundaries reviewed without adding a coordinator class
+
+- No remaining empty field() declarations were found under vrl/scripts. Reviewed
+  install_countgd's pinned artifact/patch declarations, command adapter and
+  staging/publication flow against its tests. Keep _PatchSpec.apply_to_text as
+  existing patch ownership and subprocess/download/archive helpers as external
+  operation boundaries. An Installer class would not remove shared state here.
+- Keep fixed revisions, hashes and qualified file paths as the reproducible
+  installation contract, and the environment lock in its existing dedicated
+  module. They are not algorithm names embedded in generic scheduling logic.
+  No new installation, download, environment change or source edit was needed.
+- Installer suite: eight passed, including patch drift, existing-target refusal,
+  staged/published verification and cleanup after final-verification failure.
+  These fixture-level tests do not prove a fresh real CountGD installation.
+  Broader repository audit remains incomplete.
