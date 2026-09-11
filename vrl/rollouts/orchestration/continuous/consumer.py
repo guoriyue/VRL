@@ -85,16 +85,14 @@ class ContinuousRolloutConsumer:
                 start_completed=start_completed,
                 start_errors=start_errors,
             )
-            selected = self._select_iteration(
+            items = self._take_ready_groups(
                 prompt_batch_id=prompt_batch_id,
                 expected_group_count=expected_group_count,
                 current_policy_version=current_policy_version,
             )
-            if selected is not None:
-                version, items = selected
+            if items is not None:
                 wait_s = time.perf_counter() - wait_start
                 return self._build_iteration(
-                    version=version,
                     items=items,
                     current_policy_version=current_policy_version,
                     queue_wait_s=wait_s,
@@ -191,13 +189,13 @@ class ContinuousRolloutConsumer:
                     f"(item={version}, trainer={current_policy_version})",
                 )
 
-    def _select_iteration(
+    def _take_ready_groups(
         self,
         *,
         prompt_batch_id: int,
         expected_group_count: int,
         current_policy_version: int | None,
-    ) -> tuple[int | None, list[ContinuousRolloutItem]] | None:
+    ) -> list[ContinuousRolloutItem] | None:
         """Pop one complete, distinct-group, homogeneous-version batch."""
 
         # expected_group_count == len(prompts); the owner already rejected empty prompt
@@ -232,12 +230,11 @@ class ContinuousRolloutConsumer:
             raise RuntimeError("continuous ready prompt batch has invalid group slots")
         items.sort(key=lambda item: item.group_slot)
         self.queue.remove(items)
-        return items[0].rollout_policy_version, items
+        return items
 
     def _build_iteration(
         self,
         *,
-        version: int | None,
         items: list[ContinuousRolloutItem],
         current_policy_version: int | None,
         queue_wait_s: float,
@@ -251,6 +248,7 @@ class ContinuousRolloutConsumer:
             item.batch.group_ids = torch.full_like(item.batch.group_ids, int(index))
             batches.append(item.batch)
 
+        version = items[0].rollout_policy_version
         staleness = self.staleness.staleness(version, current_policy_version)
         item_age_s = max((item.age_s for item in items), default=0.0)
         max_attempt = max(item.attempt for item in items)

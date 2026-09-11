@@ -4996,3 +4996,17 @@ this combined regression is compatibility evidence, not architectural completion
 - Existing continuous orchestration suite: 209 passed. Touched-file Ruff and git
   diff --check pass. This validates the inspected subsystem, not completion of
   the repository-wide clarity audit.
+
+## Continuous consumption derives version from selected receipts
+
+- Rename _select_iteration to _take_ready_groups to expose its queue-removal
+  side effect. Return only the selected receipts, removing the duplicate version
+  tuple member and _build_iteration version argument. The builder reads the
+  version from the first receipt after homogeneous-version validation.
+- Keep ready-version validation, distinct-slot checks, prompt ordering and
+  iteration construction as consumer-owned methods. The selected group set is
+  the source of truth; no new selection wrapper or dataclass is introduced.
+- Preserve queue ownership transfer, public collect_iteration arguments,
+  backpressure, timeout behavior and metric values. Existing continuous suites:
+  209 passed. Touched-file Ruff and git diff --check pass; no removed method name
+  remains in production or tests. The broader repository audit is incomplete.
