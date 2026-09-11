@@ -76,10 +76,8 @@ class QuantizedLinear(nn.Module):
         # Resolved before the traversal on purpose: an invalid profile must raise
         # with the model untouched. It cannot be a signature default either --
         # ``cls`` does not exist while the ``def`` is evaluated.
-        profile = (
-            cls.default_target_profile
-            if target_profile is None
-            else LinearTargetProfile(target_profile)
+        profile = LinearTargetProfile(
+            cls.default_target_profile if target_profile is None else target_profile
         )
         swapped: list[str] = []
         # Replaced in place as we go: collecting every target first would keep all

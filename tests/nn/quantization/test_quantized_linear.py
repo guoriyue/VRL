@@ -64,9 +64,15 @@ def test_drop_quantized_masters_walks_the_tree(scheme: str) -> None:
 
 
 @_SCHEMES
-def test_invalid_target_profile_raises_before_mutation(scheme: str) -> None:
+@pytest.mark.parametrize("use_default", [False, True])
+def test_invalid_target_profile_raises_before_mutation(
+    scheme: str, use_default, monkeypatch
+) -> None:
     root = nn.Sequential(nn.Linear(1024, 1024))
+    linear_class = QUANTIZATION_SCHEMES[scheme]
+    if use_default:
+        monkeypatch.setattr(linear_class, "default_target_profile", "bogus")
 
     with pytest.raises(ValueError, match="bogus"):
-        QUANTIZATION_SCHEMES[scheme].swap_linears(root, target_profile="bogus")
+        linear_class.swap_linears(root, target_profile=None if use_default else "bogus")
     assert isinstance(root[0], nn.Linear) and type(root[0]) is nn.Linear

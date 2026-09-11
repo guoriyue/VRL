@@ -4380,6 +4380,18 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Quantization defaults and explicit targets share one profile conversion
+
+- Convert the selected default-or-explicit target through LinearTargetProfile
+  before traversal. An invalid class declaration previously bypassed conversion
+  and failed later with a missing matches attribute instead of the profile error.
+- Extend the existing no-mutation regression across both selection paths and
+  both quantization schemes. The two default cases failed before this change.
+  Keep the enum, scheme registry and common traversal; no new validator or
+  fallback value is introduced, and valid target scopes remain unchanged.
+- Quantization and tiny-model targeting suites: 65 passed, 16 dependency warnings.
+  Touched-file Ruff checks pass and formatting is applied. The full audit continues.
+
 ## Linear target profiles own their path predicate
 
 - Replace matches_linear_target(path, profile) with LinearTargetProfile.matches
