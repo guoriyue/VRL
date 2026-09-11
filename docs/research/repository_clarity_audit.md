@@ -3444,3 +3444,18 @@ this combined regression is compatibility evidence, not architectural completion
   proving invalid stop/drain budgets leave active generation running and able
   to finish scoring. Touched-file Ruff and diff checks passed. The full repository
   clarity review remains incomplete.
+
+## Executor-owned result identity validation
+
+- Move the module-level _require_correlated_result into RayGenerationExecutor
+  as _validate_result_identity. Only its initial dispatch and OOM retry paths
+  use this check. Remove the unused envelope return and type the retry envelope
+  map as GenerationBatchEnvelope instead of Any. Keep one implementation for
+  both paths, with the same validation order and error messages.
+- Preserve rel_l1 as a shared numerical API used by TeaCacheState and the offline
+  drift probe. Preserve the pipelined D2H helper, whose recursive tensor mapping
+  and stream lifetime handling remove real complexity. Do not change retry,
+  dispatch, copy behavior, or move shared helpers merely to reduce line count.
+- Validation: all 272 generation/Ray tests passed, including result request-id
+  rejection and OOM retry coverage; touched-file Ruff and diff checks passed.
+  No old helper references remain in source or tests. Full review is incomplete.

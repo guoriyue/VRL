@@ -328,7 +328,7 @@ class RayGenerationExecutor:
             assignment.envelope.batch_key: assignment.envelope for assignment in assignments
         }
         for result in results:
-            _require_correlated_result(result, envelope_by_batch_key)
+            self._validate_result_identity(result, envelope_by_batch_key)
 
         # A stale-slot result is a typed graceful discard, not a failure: the
         # request's policy version was evicted from its worker's slot window under
@@ -652,7 +652,7 @@ class RayGenerationExecutor:
         self,
         results: list[GenerationBatchResult],
         *,
-        envelope_by_batch_key: dict[str, Any],
+        envelope_by_batch_key: dict[str, GenerationBatchEnvelope],
     ) -> tuple[list[GenerationBatchResult], list[dict[str, Any]]]:
         """Split OOM batches in half and re-run until success or single sample.
 
@@ -732,8 +732,29 @@ class RayGenerationExecutor:
                 pending.extend(result for _, result in pairs)
             pending.extend(call(envelope) for call, envelope in local_calls)
             for result in pending:
-                _require_correlated_result(result, envelope_by_batch_key)
+                self._validate_result_identity(result, envelope_by_batch_key)
         return final, splits
+
+    @staticmethod
+    def _validate_result_identity(
+        result: GenerationBatchResult,
+        envelope_by_batch_key: dict[str, GenerationBatchEnvelope],
+    ) -> None:
+        """Require a rank result to match a submitted request and batch."""
+
+        envelope = envelope_by_batch_key.get(result.batch.batch_key)
+        if envelope is None:
+            raise RuntimeError(
+                "distributed rollout returned an unknown batch "
+                f"(rank={result.worker_id}, batch={result.batch.batch_key})",
+            )
+        expected_request_id = envelope.request.request_id
+        if result.request_id != expected_request_id:
+            raise RuntimeError(
+                "distributed rollout request_id mismatch "
+                f"(rank={result.worker_id}, batch={result.batch.batch_key}, "
+                f"expected={expected_request_id!r}, actual={result.request_id!r})",
+            )
 
     def _remote_engine_methods(self) -> dict[str, Any]:
         """Collect per-engine execute_batch submitters for pull-based dispatch."""
@@ -750,28 +771,6 @@ class RayGenerationExecutor:
                 "execute_batch", combine=self._combine_batch_results
             )
         return methods
-
-
-def _require_correlated_result(
-    result: GenerationBatchResult,
-    envelope_by_batch_key: dict[str, GenerationBatchEnvelope],
-) -> GenerationBatchEnvelope:
-    """Require a rank result to match a submitted request and batch."""
-
-    envelope = envelope_by_batch_key.get(result.batch.batch_key)
-    if envelope is None:
-        raise RuntimeError(
-            "distributed rollout returned an unknown batch "
-            f"(rank={result.worker_id}, batch={result.batch.batch_key})",
-        )
-    expected_request_id = envelope.request.request_id
-    if result.request_id != expected_request_id:
-        raise RuntimeError(
-            "distributed rollout request_id mismatch "
-            f"(rank={result.worker_id}, batch={result.batch.batch_key}, "
-            f"expected={expected_request_id!r}, actual={result.request_id!r})",
-        )
-    return envelope
 
 
 __all__ = ["RayGenerationExecutor"]
