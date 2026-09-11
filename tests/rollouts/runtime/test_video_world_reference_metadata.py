@@ -9,7 +9,7 @@ from vrl.trainers.data import load_prompt_manifest
 from vrl.trainers.data.artifacts import (
     resolve_prompt_example_artifacts,
     resolve_prompt_example_references,
-    validate_reference_images,
+    resolve_required_reference_images_,
 )
 
 
@@ -59,12 +59,12 @@ def test_cosmos_per_sample_reference_uses_vrl_data_root(monkeypatch, tmp_path: P
     manifest = _write_reference_manifest(tmp_path)
     monkeypatch.setenv("VRL_DATA_ROOT", str(tmp_path))
     # Production sequence: run_online_recipe resolves reference paths at load
-    # time, then the family hook only validates.
+    # time, then required-image resolution fills defaults and checks existence.
     examples = [
         resolve_prompt_example_references(example, allow_absolute=True)
         for example in load_prompt_manifest(manifest)
     ]
-    validate_reference_images(
+    resolve_required_reference_images_(
         examples,
         manifest_path=manifest,
     )
@@ -86,7 +86,7 @@ def test_cosmos_per_sample_reference_uses_artifact_data_root(tmp_path: Path) -> 
         )
         for example in load_prompt_manifest(manifest)
     ]
-    validate_reference_images(
+    resolve_required_reference_images_(
         examples,
         manifest_path=manifest,
     )

@@ -365,13 +365,13 @@ def resolve_prompt_example_references(
     )
 
 
-def validate_reference_images(
+def resolve_required_reference_images_(
     examples: Sequence[PromptExample],
     *,
     manifest_path: str | Path,
     default_reference_image: str | None = None,
 ) -> None:
-    """Normalize one optional dataset default into required per-row inputs."""
+    """Fill missing reference images and resolve paths in place, requiring existence."""
 
     manifest = Path(manifest_path)
     default_text = str(default_reference_image or "").strip()
@@ -404,5 +404,5 @@ __all__ = [
     "ResolvedArtifact",
     "resolve_prompt_example_artifacts",
     "resolve_prompt_example_references",
-    "validate_reference_images",
+    "resolve_required_reference_images_",
 ]

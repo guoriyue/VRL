@@ -5558,3 +5558,18 @@ this combined regression is compatibility evidence, not architectural completion
 - Existing artifact and video-world manifest suites: 22 passed, including train/
   eval overlap reporting. Touched-file Ruff and git diff --check pass. The wider
   repository clarity audit remains incomplete.
+
+## Required reference-image resolution names its mutation
+
+- Rename validate_reference_images to resolve_required_reference_images_ and
+  update its recipe caller, tests and checkpoint-test comment. The operation
+  fills missing references from the dataset default, expands/resolves paths and
+  writes them into PromptExample; its old validation-only name hid those effects.
+- Keep it as a dataset-level function rather than adding a manager class or
+  attaching collection/default-path responsibilities to one example. Keep path
+  existence checks and in-place behavior unchanged. Remove the old exported name
+  without a forwarding alias; correct the test comment claiming validation only.
+- Existing data setup and video-world reference metadata suites: 18 passed.
+  Source/tests contain no old-name references. Touched-file Ruff and
+  git diff --check pass. The real-checkpoint test received only a comment change
+  and was not executed. Repository-wide completion remains unproven.
