@@ -76,6 +76,8 @@ def normalize_precision(value: Any, *, default: str = "fp32") -> str:
 
 
 def _normalize_plain_dtype(value: Any, *, path: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{path} must be an explicit non-empty dtype")
     token = normalize_precision(value)
     if token not in _PLAIN_DTYPES:
         raise ValueError(

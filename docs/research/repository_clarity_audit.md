@@ -543,3 +543,29 @@ remain outside that closure.
 Validation: 324 config tests passed, including four malformed-default regression
 cases and all bundled experiment/resource composition checks. Touched-file Ruff
 and diff whitespace checks pass.
+
+## Precision policy and dtype review closure
+
+Reviewed `vrl/config/precision.py` and `vrl/models/dtypes.py` with their callers
+and precision tests. Required policy dtype values now reject null or blank input
+instead of inheriting the tool helper's fp32 default. Rollout's optional null
+remains the declared inheritance signal; an empty string is no longer an
+accidental fp32 override of bf16 training.
+
+Retained the two parsing boundaries: `normalize_precision` supplies defaults for
+optional tool arguments, while policy fields require an explicit plain token.
+Torch dtype parsing accepts checkpoint aliases and materializes actual Torch
+types lazily; wire naming deliberately preserves unknown future tokens. These
+are different contracts, not duplicate implementations to merge.
+
+Retained `_QUANTIZATION_FORMAT_RULES` as the isolated format/recipe vocabulary,
+`_PLAIN_DTYPES` as public schema tokens, and the derived Torch alias lookup.
+Quantization constructors already own validation and construction. Plain dtype
+and float32-policy helpers are shared by the schema validators and immutable
+runtime policies. A utility class or a second alias/config registry would add
+indirection without removing complexity. This closes this two-module source
+review; schema and model runtime precision execution remain separate slices.
+
+Validation: 336 config tests passed, including null/blank policy dtype rejection,
+optional rollout inheritance, all bundled experiment parsing, quantization and
+Torch-free import checks. Touched-file Ruff and diff whitespace checks pass.

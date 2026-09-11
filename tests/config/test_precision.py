@@ -393,3 +393,40 @@ def test_shipped_online_recipes_keep_training_and_rollout_precision_aligned():
         )
         assert policy.training == policy.rollout, name
         assert policy.diffusion_math == "fp32", name
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+@pytest.mark.parametrize("section", ["training", "diffusion_math", "prompt_encoders"])
+def test_required_precision_dtype_does_not_default_empty_values(section, value):
+    block = {"float32_precision": "ieee", "training": {"dtype": "bf16"}}
+    if section == "prompt_encoders":
+        block["rollout"] = {"prompt_encoders": {"dtype": value}}
+    else:
+        block[section] = {"dtype": value}
+    with pytest.raises(ValueError, match="explicit non-empty dtype"):
+        _section(block)
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_rollout_blank_dtype_is_not_silently_fp32(value):
+    with pytest.raises(ValueError, match="explicit non-empty dtype"):
+        _section(
+            {
+                "float32_precision": "ieee",
+                "training": {"dtype": "bf16"},
+                "rollout": {"dtype": value},
+            }
+        )
+
+
+def test_rollout_null_dtype_explicitly_inherits_training():
+    policy = PrecisionPolicy.from_section(
+        _section(
+            {
+                "float32_precision": "ieee",
+                "training": {"dtype": "bf16"},
+                "rollout": {"dtype": None},
+            }
+        )
+    )
+    assert policy.rollout.dtype == "bf16"
