@@ -55,16 +55,17 @@ def test_sd3_fp32_runtime_loads_frozen_components_without_fp32_peak(monkeypatch)
     model = SD3_5Model.from_build(build)
 
     assert model.pipeline is pipeline
-    assert calls == [
-        {
-            "model_name_or_path": "stabilityai/stable-diffusion-3.5-medium",
-            "torch_dtype": {
-                "transformer": torch.float32,
-                "vae": torch.float32,
-                "default": torch.float16,
-            },
-        },
-    ]
+    assert len(calls) == 1
+    assert calls[0]["model_name_or_path"] == build.model_name_or_path
+    component_dtypes = calls[0]["torch_dtype"]
+    for name, expected in (
+        ("transformer", torch.float32),
+        ("vae", torch.float32),
+        ("text_encoder", torch.float16),
+        ("text_encoder_2", torch.float16),
+        ("text_encoder_3", torch.float16),
+    ):
+        assert component_dtypes.get(name, component_dtypes["default"]) == expected, name
     for encoder in (
         pipeline.text_encoder,
         pipeline.text_encoder_2,

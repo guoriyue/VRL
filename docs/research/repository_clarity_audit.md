@@ -4074,3 +4074,21 @@ this combined regression is compatibility evidence, not architectural completion
 - All 37 MAGI tests passed; touched-file Ruff lint/format checks pass. No new tests
   were added for this redundant conversion removal. Remaining loading helpers
   still require individual ownership review; the repository audit is incomplete.
+
+## Joint model regression and semantic dtype assertions
+
+- Ran all model tests after the preceding family ownership changes. The first
+  run reported 868 passed, one skipped and one SD3 loading assertion failure;
+  isolated execution reproduced it. The test expected an older spelling of the
+  component dtype mapping, while the loader explicitly names all three frozen
+  encoders and uses the model dtype as its default.
+- Update that test to assert the effective dtype for transformer, VAE and each
+  encoder, retaining freeze/device checks and the single-load/source assertion.
+  Do not change production loading to match an obsolete dictionary shape. This
+  fake-loader test verifies requested policy, not an actual GPU memory peak.
+- The full model rerun passed: 869 passed, one skipped, 61 warnings in 10.01s,
+  process exit zero. Touched-test Ruff checks passed.
+- Retain shared diffusers loading functions as lazy cross-family framework
+  adapters. Retain Anima rotary helpers as recognizable model math beside the
+  adapter architecture; no new wrapper is justified solely by function counts.
+  Full-repository clarity completion remains unproven.
