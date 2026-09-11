@@ -4119,3 +4119,16 @@ this combined regression is compatibility evidence, not architectural completion
   implementation because it did not raise. All 12 distributed-context tests now
   pass; touched-file Ruff checks pass. No multi-GPU execution is claimed. The
   full repository clarity audit remains in progress.
+
+## Trainable state selection contains its parameter-name check
+
+- Inline the sole-use `_trainable_parameter_names` into `select_trainable_state`.
+  The shared operation now reads in one place: identify trainable names, reject
+  empty/missing entries, and return the prefixed policy payload. Name the local
+  comprehension variable `parameter_name` to distinguish it from the module name.
+- Retain `select_trainable_state` as the shared single-process/FSDP policy-facing
+  selection boundary, and retain `to_cpu_snapshot` for independent storage during
+  asynchronous synchronization. No new utility class or filtering changes.
+- Weight sync, strategy and FSDP tests: 83 passed, two skipped, dependency/profiler
+  warnings. Touched-file Ruff checks pass. No multi-GPU training claim is made;
+  the repository-wide clarity audit remains in progress.

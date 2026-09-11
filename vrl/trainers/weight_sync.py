@@ -158,7 +158,19 @@ def select_trainable_state(module: Any, name: str, module_state: Any) -> dict[st
         raise ValueError("trainable module names must be non-empty")
     if not isinstance(module_state, Mapping):
         raise TypeError(f"trainable module {name!r} state_dict() must return a mapping")
-    trainable_names = _trainable_parameter_names(module, name)
+    named_parameters = getattr(module, "named_parameters", None)
+    if not callable(named_parameters):
+        raise TypeError(
+            f"trainable module {name!r} must expose named_parameters() "
+            "for trainable-only rollout sync",
+        )
+    trainable_names = {
+        str(parameter_name)
+        for parameter_name, parameter in named_parameters()
+        if bool(getattr(parameter, "requires_grad", False))
+    }
+    if not trainable_names:
+        raise ValueError(f"trainable module {name!r} has no trainable parameters")
     missing = sorted(trainable_names - set(module_state))
     if missing:
         preview = ", ".join(missing[:5])
@@ -172,23 +184,6 @@ def select_trainable_state(module: Any, name: str, module_state: Any) -> dict[st
         for key, value in module_state.items()
         if str(key) in trainable_names
     }
-
-
-def _trainable_parameter_names(module: Any, module_name: str) -> set[str]:
-    named_parameters = getattr(module, "named_parameters", None)
-    if not callable(named_parameters):
-        raise TypeError(
-            f"trainable module {module_name!r} must expose named_parameters() "
-            "for trainable-only rollout sync",
-        )
-    names = {
-        str(name)
-        for name, parameter in named_parameters()
-        if bool(getattr(parameter, "requires_grad", False))
-    }
-    if not names:
-        raise ValueError(f"trainable module {module_name!r} has no trainable parameters")
-    return names
 
 
 def to_cpu_snapshot(value: Any) -> Any:
