@@ -1406,3 +1406,24 @@ contained guesses. Removed both:
 - Validation: 24 shared-layout and Aesthetic/PickScore/AnimeReward tests passed,
   including pixel/frame-order checks at 1, 3, 4 and 10 frames and rejection of
   unambiguous TCHW input. Touched-file Ruff and git diff --check pass.
+
+## Combined validation after media and trajectory cleanup
+
+Validated the current worktree at 7ea80b2b0 across affected producers/consumers,
+not merely the files edited in individual slices:
+
+- `.venv/bin/pytest -q tests/rewards tests/trajectory tests/generation/bindings tests/generation/composition tests/generation/steps`
+  completed: 527 passed, 7 skipped (4.99s).
+- `.venv/bin/pytest -q tests/rollouts tests/trainers tests/generation/execution tests/config -ra`
+  completed: 1,392 passed, 7 skipped (61.81s). Four skips require bitsandbytes;
+  three require explicit distributed-test enablement.
+
+Total: 1,919 passed, 14 skipped. This supports compatibility of the checked
+reward/trajectory changes with scheduling, worker execution, trainer consumption
+and configuration. It does not establish full-model quality, all optional
+backends, multi-node training or repository-wide architectural completion.
+No implementation changes were needed in this validation pass. The earlier
+recorded keeps remain intentional protocol/framework/shared-algorithm boundaries,
+not a mandate to eliminate every free function. Remaining model-family and script
+ownership coverage still needs source-level review; passing tests alone cannot
+close that architectural scope.
