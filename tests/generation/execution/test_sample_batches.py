@@ -72,3 +72,34 @@ def test_engine_plan_rejects_invalid_explicit_width(width):
     )
     with pytest.raises(ValueError, match="max_samples_per_batch must be a positive integer"):
         EnginePlan.from_request(request, max_samples_per_batch=width)
+
+
+@pytest.mark.parametrize("field", ["prompt_index", "sample_start", "sample_count"])
+@pytest.mark.parametrize("value", [0.5, True, "1"])
+def test_batch_identity_rejects_noninteger_values(field, value):
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
+    from vrl.generation.types import GenerationRequest
+
+    values = {"prompt_index": 0, "sample_start": 0, "sample_count": 1}
+    values[field] = value
+    with pytest.raises(ValueError, match=f"{field} must be an integer"):
+        GenerationSampleBatch(**values)
+    request = GenerationRequest(
+        request_id="identity",
+        family="test",
+        task="t2i",
+        inputs=["p"],
+        samples_per_prompt=2,
+    )
+    with pytest.raises(ValueError, match=f"{field} must be an integer"):
+        request.validate_batch_range(**values)
+
+
+@pytest.mark.parametrize("field", ["samples_per_prompt", "samples_per_generation_batch"])
+@pytest.mark.parametrize("value", [1.5, True, "2"])
+def test_request_rejects_noninteger_sample_counts(field, value):
+    from vrl.generation.types import GenerationRequest
+
+    values = {"samples_per_prompt": 2, field: value}
+    with pytest.raises(ValueError, match=field):
+        GenerationRequest(request_id="counts", family="test", task="t2i", inputs=["p"], **values)

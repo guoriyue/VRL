@@ -417,3 +417,24 @@ above, not completion of the outstanding repository-wide audit.
   passed; two binding tests skipped. Regression cases reject mismatched per-batch
   tensor rows even when their total matches, scalar replay tensors, and invalid
   explicit widths. Touched-file Ruff and diff whitespace checks pass.
+
+## Exact sample identity at generation boundaries
+
+- `GenerationSampleBatch` now rejects non-integer prompt indices, sample starts
+  and counts at construction. Previously fractional values passed range checks,
+  and `ordered_covering_batches` silently truncated them with `int()`.
+- Removed those ordering/coverage casts. Gatherers now consume the identity
+  established by the batch rather than manufacturing a corrected identity.
+- `GenerationRequest` enforces integer sample counts/widths and its standalone
+  batch-range validator rejects non-integer arguments. These are distinct public
+  boundaries: token and chunked-denoise execution call the range validator
+  directly, while planned work carries a GenerationSampleBatch.
+- Kept the existing request/plan/batch types, per-family layout interfaces,
+  coverage checks and OOM split algorithm. No integer utility class, new module
+  or workflow constant is introduced. Malformed numeric inputs now fail rather
+  than changing which sample they identify.
+- Validation: complete `tests/generation` and `tests/rollouts` selection passed
+  (778 passed, two skipped), including live Ray timeout/cleanup coverage. Added
+  cases reject fractional, boolean and string sample identity/count inputs at
+  both construction and direct range-validation boundaries. Touched-file Ruff
+  and whitespace checks pass.

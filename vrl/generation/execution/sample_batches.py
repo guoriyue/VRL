@@ -199,17 +199,17 @@ def ordered_covering_batches[TBatch: BatchResultWithIdentity](
     ordered = sorted(
         batches,
         key=lambda result: (
-            int(result.batch.prompt_index),
-            int(result.batch.sample_start),
+            result.batch.prompt_index,
+            result.batch.sample_start,
         ),
     )
     expected = [(row.prompt_index, row.sample_index) for row in sample_rows]
     actual: list[tuple[int, int]] = []
     for result in ordered:
         batch = result.batch
-        prompt_index = int(batch.prompt_index)
-        sample_start = int(batch.sample_start)
-        sample_count = int(batch.sample_count)
+        prompt_index = batch.prompt_index
+        sample_start = batch.sample_start
+        sample_count = batch.sample_count
         request.validate_batch_range(
             prompt_index=prompt_index,
             sample_start=sample_start,
@@ -237,12 +237,12 @@ class GenerationSampleBatch:
     sample_count: int
 
     def __post_init__(self) -> None:
-        if self.prompt_index < 0:
-            raise ValueError("prompt_index must be >= 0")
-        if self.sample_start < 0:
-            raise ValueError("sample_start must be >= 0")
-        if self.sample_count < 1:
-            raise ValueError("sample_count must be >= 1")
+        if type(self.prompt_index) is not int or self.prompt_index < 0:
+            raise ValueError("prompt_index must be an integer >= 0")
+        if type(self.sample_start) is not int or self.sample_start < 0:
+            raise ValueError("sample_start must be an integer >= 0")
+        if type(self.sample_count) is not int or self.sample_count < 1:
+            raise ValueError("sample_count must be an integer >= 1")
 
     @property
     def sample_end(self) -> int:

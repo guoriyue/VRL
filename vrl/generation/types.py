@@ -143,10 +143,10 @@ class GenerationRequest:
             raise ValueError("GenerationRequest.task must be non-empty")
         if not self.inputs:
             raise ValueError("GenerationRequest.inputs must be non-empty")
-        if self.samples_per_prompt < 1:
-            raise ValueError("GenerationRequest.samples_per_prompt must be >= 1")
+        if type(self.samples_per_prompt) is not int or self.samples_per_prompt < 1:
+            raise ValueError("GenerationRequest.samples_per_prompt must be an integer >= 1")
         width = self.samples_per_generation_batch
-        if width is not None and width != "auto" and width < 1:
+        if width is not None and width != "auto" and (type(width) is not int or width < 1):
             raise ValueError(
                 "GenerationRequest.samples_per_generation_batch must be >= 1 or 'auto'",
             )
@@ -192,6 +192,13 @@ class GenerationRequest:
     ) -> None:
         """Validate a batch's prompt/sample range against its source request."""
 
+        for name, value in (
+            ("prompt_index", prompt_index),
+            ("sample_start", sample_start),
+            ("sample_count", sample_count),
+        ):
+            if type(value) is not int:
+                raise ValueError(f"batch.{name} must be an integer, got {value!r}")
         if prompt_index < 0 or prompt_index >= len(self.prompts):
             raise ValueError(f"batch.prompt_index={prompt_index} is out of range")
         sample_end = sample_start + sample_count
