@@ -105,3 +105,15 @@ def test_protocol_guard_rejects_noncallable_members(protocol, guard, bad_method)
 def test_protocol_guard_returns_callable_implementation(protocol, guard):
     model = SimpleNamespace(**{name: lambda: None for name in protocol.__protocol_attrs__})
     assert guard(model) is model
+
+
+def test_replay_request_owns_immutable_segment_selection():
+    names = ["image"]
+    request = ReplayRequest(segment_names=names)
+    names.append("text")
+    assert request.segment_names == ("image",)
+
+
+def test_replay_request_materializes_iterable_before_validation():
+    request = ReplayRequest(segment_names=iter(["image", "text"]))
+    assert request.segment_names == ("image", "text")

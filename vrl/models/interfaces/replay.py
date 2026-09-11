@@ -21,9 +21,11 @@ class ReplayRequest:
             return
         if isinstance(self.segment_names, (str, bytes)):
             raise ValueError("ReplayRequest.segment_names must be a sequence of names")
-        for name in self.segment_names:
+        segment_names = tuple(self.segment_names)
+        for name in segment_names:
             if not isinstance(name, str) or not name:
                 raise ValueError("ReplayRequest.segment_names must contain non-empty strings")
+        object.__setattr__(self, "segment_names", segment_names)
 
 
 @dataclass(slots=True)

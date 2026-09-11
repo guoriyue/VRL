@@ -7294,3 +7294,15 @@ The broader repository audit remains incomplete.
   warnings. Touched-file Ruff and diff checks pass, and no old symbol remains in
   vrl/tests. External users of the removed export must use the class method.
   No new mirrored tests; broader repository clarity audit remains incomplete.
+
+## ReplayRequest materializes its frozen segment selection
+
+- Convert supplied segment-name iterables to a tuple before validating and
+  storing them. A frozen request previously retained a mutable caller list or
+  an iterator consumed by validation, allowing selection to change afterward.
+- Two regressions reproduced those cases before the fix. Model-interface and
+  rollout replay suites: 170 passed, two dependency warnings. Touched-file Ruff
+  and diff checks pass. No new request wrapper or changes to None/empty-selection
+  semantics; family support checks remain at the model boundary.
+- Completed verification after an intentional turn interruption. The broader
+  repository clarity audit remains incomplete.
