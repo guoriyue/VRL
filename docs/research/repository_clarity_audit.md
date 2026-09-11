@@ -2646,3 +2646,21 @@ this combined regression is compatibility evidence, not architectural completion
   cover same-count permutations and subsets with a nonleading sample axis for
   tensors, lists and tuples. Touched-file Ruff and diff checks passed. Full
   repository review remains active.
+
+## Sequence replay payloads validate their declared dimensions
+
+- TrajectoryValidator previously checked dimensions only through .shape, leaving
+  list/tuple replay values unchecked although the resolver supports them. Wrong
+  sample counts, ragged declared step dimensions and scalar rows could therefore
+  pass validation and fail later while selecting replay steps.
+- Extend the existing axis-validation method to walk sequence containers only
+  as far as the declared axes. Compare each declared length against that level;
+  scalar values before a remaining axis fail. Undeclared trailing dimensions
+  remain free to be ragged, such as sample-aligned prompt token lists.
+- Keep the existing validator owner, schema-axis lookups and runtime-state
+  rejection. No new helper/class/taxonomy. Nested tensors inside sequences still
+  follow the prior serialization rejection; an initial new test expected a later
+  shape error and was corrected to assert that existing earlier boundary.
+- Validation: 804 trajectory, generation binding, rollout and online trainer
+  tests passed, two optional backend tests skipped. Touched-file Ruff and diff
+  checks passed. Full repository review remains active.

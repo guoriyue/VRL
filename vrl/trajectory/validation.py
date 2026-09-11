@@ -206,24 +206,42 @@ class TrajectoryValidator:
                 self._fail(f"tensor {segment_name}.{tensor.name} repeats axis {axis_name!r}")
             seen.add(axis_name)
 
-        shape = getattr(tensor.value, "shape", None)
-        if shape is None:
-            return
-        if len(shape) < len(tensor.axes):
-            self._fail(
-                f"tensor {segment_name}.{tensor.name} rank {len(shape)} is smaller than "
-                f"declared axes {tensor.axes!r}",
-            )
-        for dim, axis_name in enumerate(tensor.axes):
-            expected = self.batch.axes[axis_name].length
-            if expected is None:
+        pending = [(tensor.value, 0)]
+        while pending:
+            value, axis_offset = pending.pop()
+            axes = tensor.axes[axis_offset:]
+            if not axes:
                 continue
-            actual = int(shape[dim])
-            if actual != expected:
-                self._fail(
-                    f"tensor {segment_name}.{tensor.name} axis {axis_name!r} has "
-                    f"shape {actual}, expected {expected}",
-                )
+            if isinstance(value, (list, tuple)):
+                shape = (len(value),)
+                checked_axes = axes[:1]
+                if len(axes) > 1:
+                    pending.extend((inner, axis_offset + 1) for inner in value)
+            else:
+                shape = getattr(value, "shape", None)
+                if shape is None:
+                    if axis_offset:
+                        self._fail(
+                            f"tensor {segment_name}.{tensor.name} has a scalar before "
+                            f"declared axis {axes[0]!r}",
+                        )
+                    continue
+                if len(shape) < len(axes):
+                    self._fail(
+                        f"tensor {segment_name}.{tensor.name} rank {len(shape)} is smaller than "
+                        f"declared axes {axes!r}",
+                    )
+                checked_axes = axes
+            for dim, axis_name in enumerate(checked_axes):
+                expected = self.batch.axes[axis_name].length
+                if expected is None:
+                    continue
+                actual = int(shape[dim])
+                if actual != expected:
+                    self._fail(
+                        f"tensor {segment_name}.{tensor.name} axis {axis_name!r} has "
+                        f"shape {actual}, expected {expected}",
+                    )
 
     def _ensure_tensor_refs(self) -> dict[str, TrajectoryTensor]:
         if not self.tensor_refs:

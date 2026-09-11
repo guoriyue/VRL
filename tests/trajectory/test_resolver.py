@@ -87,3 +87,27 @@ def test_replay_preserves_tensor_index_failure_without_sequence_retry(resolver) 
     with pytest.raises(ValueError, match="backend indexing failed") as caught:
         resolver.replay_tensor_dict("denoise", axis="denoise", axis_index=1)
     assert caught.value.__cause__ is failure
+
+
+@pytest.mark.parametrize("container", [list, tuple])
+@pytest.mark.parametrize(
+    "values, message",
+    [
+        ([[1, 2, 3]], "axis 'sample' has shape 1, expected 2"),
+        ([[1, 2, 3], [4, 5]], "axis 'denoise' has shape 2, expected 3"),
+        ([1, 2], "scalar before declared axis 'denoise'"),
+        ([torch.ones(3, 2), torch.ones(2, 2)], "contains runtime-only state: Tensor"),
+    ],
+)
+def test_replay_validates_declared_axes_of_sequence_payloads(resolver, container, values, message):
+    resolver.tensor("denoise", "observations").value = container(values)
+    with pytest.raises(ValueError, match=message):
+        TrajectoryResolver(resolver.trajectory)
+
+
+def test_replay_allows_ragged_dimensions_without_declared_axes(resolver):
+    # Only sample is declared for prompt embeddings; inner lengths need not match.
+    payload = ([1, 2], [3, 4, 5])
+    resolver.tensor("denoise", "prompt_embeds").value = payload
+    checked = TrajectoryResolver(resolver.trajectory)
+    assert checked.replay_tensor_dict("denoise")["prompt_embeds"] is payload
