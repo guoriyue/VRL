@@ -13,6 +13,7 @@ def test_chunks_are_independent_bounded_storage_and_reassemble_exactly():
         "weight": torch.arange(12, dtype=torch.float32).reshape(3, 4).t(),
         "bias": torch.tensor([float("nan"), -0.0], dtype=torch.bfloat16),
         "empty": torch.empty(0),
+        "scalar": torch.tensor(3.0),
     }
     staged = StagedWeightTransfer("one", 2, weight_manifest(state))
     chunks = list(iter_weight_chunks(state, 9))
@@ -40,6 +41,12 @@ def test_worker_rejects_nonstring_transfer_id_before_staging(transfer_id):
     assert core._weight_transfer is None
     assert core._policy_version == 1
     assert torch.all(core.executor.model.module.weight == -99)
+
+
+@pytest.mark.parametrize("shape", ["", {}, iter([2]), None, 2])
+def test_receiver_rejects_nonsequence_manifest_shape(shape):
+    with pytest.raises(ValueError, match=r"weight.*shape"):
+        StagedWeightTransfer("one", 2, {"weight": {"shape": shape, "dtype": "torch.float32"}})
 
 
 def test_partial_duplicate_and_foreign_chunks_do_not_finish():

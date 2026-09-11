@@ -66,13 +66,15 @@ class StagedWeightTransfer:
         self._offsets = {}
         self._buffers: dict[str, torch.Tensor] = {}
         for name, spec in manifest.items():
+            if not isinstance(name, str) or not name:
+                raise ValueError("invalid weight transfer manifest key")
             shape = spec["shape"]
-            if (
-                not isinstance(name, str)
-                or not name
-                or any(type(n) is not int or n < 0 for n in shape)
+            if not isinstance(shape, (list, tuple)) or any(
+                type(n) is not int or n < 0 for n in shape
             ):
-                raise ValueError("invalid weight transfer manifest")
+                raise ValueError(
+                    f"weight {name!r} shape must be a list or tuple of non-negative integers"
+                )
             self._specs[name] = (
                 tuple(shape),
                 resolve_torch_dtype(spec["dtype"]),

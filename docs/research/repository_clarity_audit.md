@@ -4380,6 +4380,20 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Weight manifest shape parsing rejects accidental scalar shapes
+
+- Require list/tuple shapes with nonnegative exact integer dimensions in the
+  receiver constructor. Previously an iterator was exhausted during validation
+  and stored as a scalar shape; empty strings and mappings also became scalars.
+  Report the weight name and shape field instead of an unscoped iteration error.
+- Keep the existing staging owner and sender manifest function. Preserve empty
+  list scalar shapes and zero-sized dimensions; add a scalar to the existing
+  exact round-trip test. No new parser class or validation helper is introduced.
+- Five malformed-shape regressions failed before the fix. Transfer and worker
+  versioned-slot suites now pass: 31 tests. Touched-file Ruff checks pass. This
+  checks shape representation, not every possible malformed manifest structure;
+  the broader repository audit remains incomplete.
+
 ## Weight staging enforces its declared transfer identifier type
 
 - Replace transfer-ID truthiness with an explicit nonempty-string check in
