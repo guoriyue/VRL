@@ -3372,3 +3372,16 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 457 rollout tests passed, including serial-zero-overlap, streaming
   overlap and stats accumulation cases. Touched-file Ruff/diff checks passed;
   no removed helper references remain. Full review remains incomplete.
+
+## Scope reward timing validation to its accumulation operation
+
+- Move the single-owner _timing_value function into fold_reward_timing as
+  a local validator. Preserve normalization and complete validation before
+  mutating counters, latency samples or accumulated timing values. No public
+  interface change or new class.
+- Keep _sum_optional shared between fold_reward_timing and merge: both need
+  identical None-aware accumulation. The primitive keyword interface avoids
+  coupling stats to reward runtime types; do not replace it with a permissive
+  untyped mapping adapter solely to shorten the collector call.
+- Validation: 36 stats/prompt-collection tests passed; touched-file Ruff/diff
+  checks passed and no old helper references remain. Full review remains open.

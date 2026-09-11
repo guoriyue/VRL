@@ -179,14 +179,22 @@ class RolloutStats:
     ) -> None:
         """Accumulate one reward call's timings (primitives, no reward import)."""
 
-        latency = _timing_value("latency_ms", latency_ms)
-        queue_wait = _timing_value("queue_wait_ms", queue_wait_ms)
-        inference = _timing_value("inference_ms", inference_ms)
+        def timing_value(name: str, value: float | None) -> float | None:
+            if value is None:
+                return None
+            normalized = float(value)
+            if not math.isfinite(normalized) or normalized < 0:
+                raise ValueError(f"reward timing {name!r} must be finite and non-negative")
+            return normalized
+
+        latency = timing_value("latency_ms", latency_ms)
+        queue_wait = timing_value("queue_wait_ms", queue_wait_ms)
+        inference = timing_value("inference_ms", inference_ms)
         normalized_extra: dict[str, float] = {}
         for name, milliseconds in dict(extra_ms or {}).items():
             if not name or not name.endswith("_ms"):
                 raise ValueError("extra reward timing names must end with '_ms'")
-            value = _timing_value(name, milliseconds)
+            value = timing_value(name, milliseconds)
             assert value is not None
             normalized_extra[name] = value
 
@@ -240,15 +248,6 @@ def _sum_optional(left: float | None, right: float | None) -> float | None:
     if right is None:
         return left
     return float(right) if left is None else float(left) + float(right)
-
-
-def _timing_value(name: str, value: float | None) -> float | None:
-    if value is None:
-        return None
-    normalized = float(value)
-    if not math.isfinite(normalized) or normalized < 0:
-        raise ValueError(f"reward timing {name!r} must be finite and non-negative")
-    return normalized
 
 
 class StatsSink(Protocol):
