@@ -736,9 +736,9 @@ class ContinuousRolloutProducer:
         # was in flight. A finite batch cannot silently drop one completed slot:
         # no replacement can preserve its fixed policy version, and the consumer
         # would otherwise wait for a batch that can never become complete.
-        # too_stale() returns False for absent versions (no gating) and for
-        # future items (staleness < 0, a bug), so those still flow to the
-        # consumer, which fails fast on them. A zero window is retained only for
+        # too_stale() returns False for absent versions (no gating). Future
+        # items also pass this gate; the consumer rejects their negative
+        # staleness as a version-barrier violation. A zero window is retained only for
         # isolated mechanism tests; production continuous config requires >= 1.
         current_version = self.lifecycle.current_policy_version()
         if self.staleness.too_stale(

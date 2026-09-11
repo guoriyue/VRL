@@ -5025,3 +5025,19 @@ this combined regression is compatibility evidence, not architectural completion
   policy version could be reassigned before this change. They now reject writes
   and verify removal restores zero charged bytes. Full orchestration suite:
   275 passed. Touched-file Ruff and git diff --check pass. Wider audit remains open.
+
+## Generation and rollout integration after receipt and planning cleanup
+
+- Correct the producer freshness comment: absent versions bypass version-gap
+  gating; future versions pass the producer's too-stale check but are rejected
+  by consumer validation. Do not claim both cases fail downstream.
+- Keep production handoff and ready-queue admission separate from generated
+  capacity accounting: their payload ownership and lifetimes differ. Retain
+  the CPU placement target and shared retry backoff limit as concrete execution
+  policy, without adding another configuration or wrapper object.
+- Revalidated recent planning, denoise recording, rank-group, resolver and
+  continuous-receipt changes together. Full tests/generation and tests/rollouts:
+  1260 passed, 18 warnings in 49.63 seconds, process exit zero. Full output is in
+  /tmp/vrl-generation-rollouts-clarity-followup.log. Touched-file Ruff and git
+  diff --check pass. This is cross-layer regression evidence, not a complete
+  repository audit or an end-to-end training throughput measurement.
