@@ -251,7 +251,7 @@ class JanusProR1BatchExecutor(JanusProBatchExecutor):
     ) -> JanusProR1BatchPayload:
         from vrl.utils.profiling import profile_range
 
-        self.layout.validate_chunk(request, batch)
+        self.layout.validate_batch(request, batch)
         scheduler_batch_size = self.resolve_scheduler_batch_size(
             request,
             row_count=batch.sample_count,
@@ -260,7 +260,7 @@ class JanusProR1BatchExecutor(JanusProBatchExecutor):
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
         if params.seed is not None:
-            torch.manual_seed(params.seed + self.layout.chunk_seed_offset(request, batch))
+            torch.manual_seed(params.seed + self.layout.batch_seed_offset(request, batch))
 
         with profile_range("engine.prefill"):
             repeated_prompts = [request.inputs[batch.prompt_index].prompt] * batch.sample_count

@@ -236,7 +236,7 @@ class ARDiscreteBatchExecutorBase(ARBatchExecutorBase):
         )
         from vrl.utils.profiling import profile_range
 
-        self.layout.validate_chunk(request, batch)
+        self.layout.validate_batch(request, batch)
         scheduler_batch_size = self.resolve_scheduler_batch_size(
             request,
             row_count=batch.sample_count,
@@ -244,7 +244,7 @@ class ARDiscreteBatchExecutorBase(ARBatchExecutorBase):
 
         seed = request.sampling.get("seed")
         if seed is not None:
-            torch.manual_seed(int(seed) + self.layout.chunk_seed_offset(request, batch))
+            torch.manual_seed(int(seed) + self.layout.batch_seed_offset(request, batch))
 
         with profile_range("engine.prefill"):
             inputs = self.prepare_batch_inputs(request, batch)

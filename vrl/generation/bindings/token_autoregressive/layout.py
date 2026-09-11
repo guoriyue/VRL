@@ -85,7 +85,7 @@ class ARRequestLayout:
             )
         return value
 
-    def validate_chunk(self, request: GenerationRequest, batch: GenerationSampleBatch) -> None:
+    def validate_batch(self, request: GenerationRequest, batch: GenerationSampleBatch) -> None:
         """Validate one prompt/sample AR batch against its request."""
 
         request.validate_batch_range(
@@ -94,7 +94,7 @@ class ARRequestLayout:
             sample_count=batch.sample_count,
         )
 
-    def chunk_seed_offset(self, request: GenerationRequest, batch: GenerationSampleBatch) -> int:
+    def batch_seed_offset(self, request: GenerationRequest, batch: GenerationSampleBatch) -> int:
         """Return the prompt-major sample offset for deterministic batch seeding."""
 
         return batch.prompt_index * request.samples_per_prompt + batch.sample_start

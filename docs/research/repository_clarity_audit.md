@@ -5426,3 +5426,19 @@ this combined regression is compatibility evidence, not architectural completion
   Existing tests also cover CPU completion callbacks and failure cleanup.
   Touched-file Ruff and git diff --check pass. Throughput was not measured;
   repository-wide completion remains unproven.
+
+## AR request layout names sample batches consistently
+
+- Rename validate_chunk to validate_batch and chunk_seed_offset to
+  batch_seed_offset, updating the shared token executor, Janus R1 and NextStep
+  execution paths. These methods consume GenerationSampleBatch, not a temporal
+  chunk; the old names blurred sample batching with chunk-autoregressive video.
+- Keep both methods on ARRequestLayout: three execution paths share the same
+  request range check and prompt-major seed-offset formula. No forwarding alias,
+  extra class or per-family copy is added. Shared gather helpers and driver-only
+  gatherer modules also remain necessary for cross-family coverage consistency
+  and model-free result assembly; reducing their count is not a goal.
+- Existing AR scheduler/composition, NextStep request/runner and Janus R1 wiring
+  suites: 86 passed. No new rename-only tests were added. Touched-file Ruff and
+  git diff --check pass; source/tests have no old-name references. This does not
+  establish all model backends or the whole repository as fully audited.

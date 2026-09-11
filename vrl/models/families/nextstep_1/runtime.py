@@ -108,7 +108,7 @@ class NextStep1BatchExecutor(ARBatchExecutorBase):
     ) -> NextStep1ARBatchResult:
         """Run one prompt-major AR batch through the black-box sampling path."""
 
-        self.layout.validate_chunk(request, batch)
+        self.layout.validate_batch(request, batch)
         scheduler_batch_size = self.resolve_scheduler_batch_size(
             request,
             row_count=batch.sample_count,
@@ -145,7 +145,7 @@ class NextStep1BatchExecutor(ARBatchExecutorBase):
         if params.seed is not None:
             generator = torch.Generator(device=self.model.device)
             generator.manual_seed(
-                params.seed + self.layout.chunk_seed_offset(request, batch),
+                params.seed + self.layout.batch_seed_offset(request, batch),
             )
 
         sample_kwargs: dict[str, Any] = {
