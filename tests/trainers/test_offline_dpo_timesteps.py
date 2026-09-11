@@ -405,3 +405,46 @@ def test_step_uses_schedule_values_and_exact_sigma_indices(
     for noisy, timesteps in observed:
         torch.testing.assert_close(timesteps, torch.tensor([450.0, 450.0]))
         torch.testing.assert_close(noisy, torch.full_like(noisy, 0.45))
+
+
+@pytest.mark.parametrize("kind", ["epsilon", "v_prediction", "flow_euler", "flow_unipc"])
+def test_real_scheduler_noise_uses_sampled_table_position(kind):
+    from diffusers import DDPMScheduler, FlowMatchEulerDiscreteScheduler, UniPCMultistepScheduler
+
+    if kind == "flow_euler":
+        scheduler = FlowMatchEulerDiscreteScheduler()
+    elif kind == "flow_unipc":
+        scheduler = UniPCMultistepScheduler(
+            prediction_type="flow_prediction", use_flow_sigmas=True
+        )
+    else:
+        scheduler = DDPMScheduler(prediction_type=kind)
+    scheduler.set_timesteps(4)
+    trainer = _make_trainer(scheduler.timesteps)
+    trainer.noise_scheduler = scheduler
+    trainer.config.prediction_type = "flow_matching" if kind.startswith("flow_") else kind
+    indices = torch.tensor([1, 2])
+    timesteps = scheduler.timesteps[indices]
+    assert not torch.equal(timesteps, indices)
+    latents = torch.tensor([1.0, 2.0]).reshape(2, 1, 1, 1)
+    noise = torch.tensor([-0.5, 0.25]).reshape_as(latents)
+
+    noisy, target = trainer._inject_noise(
+        latents,
+        noise,
+        timesteps,
+        timestep_indices=indices,
+    )
+
+    if kind.startswith("flow_"):
+        sigma = scheduler.sigmas[indices].reshape(2, 1, 1, 1)
+        expected_noisy = (1 - sigma) * latents + sigma * noise
+        expected_target = noise - latents
+    else:
+        alpha = scheduler.alphas_cumprod[timesteps].reshape(2, 1, 1, 1)
+        expected_noisy = alpha.sqrt() * latents + (1 - alpha).sqrt() * noise
+        expected_target = (
+            noise if kind == "epsilon" else alpha.sqrt() * noise - (1 - alpha).sqrt() * latents
+        )
+    torch.testing.assert_close(noisy, expected_noisy)
+    torch.testing.assert_close(target, expected_target)

@@ -6821,3 +6821,18 @@ The broader repository audit remains incomplete.
   suites: 37 passed, two dependency warnings. Touched-file Ruff and diff checks
   pass. This intentionally changes training on nonidentity tables and may alter
   seeded trajectories; no full model training benchmark was run. Audit remains open.
+
+## Offline DPO timestep correction verified with real schedulers
+
+- Added four CPU tests using installed diffusers DDPMScheduler (epsilon and
+  v_prediction), FlowMatchEulerDiscreteScheduler and flow-configured
+  UniPCMultistepScheduler. Each selects two actual table positions from a
+  nonidentity four-step schedule and checks noisy latents and targets against
+  the corresponding alpha/sigma equations.
+- These supplement the full-step fake tests: the latter verify value propagation
+  through model/reference forwards; the new tests verify real scheduler
+  semantics for both scale_noise and direct-sigma branches. No downloaded
+  checkpoint or network access is needed, and no production changes were made.
+- Offline timestep suite: 32 passed, two dependency warnings. Touched-file Ruff
+  and diff checks pass. This is scheduler integration evidence, not completed
+  model training or completion of the repository-wide clarity audit.
