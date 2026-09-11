@@ -5893,3 +5893,22 @@ The broader repository audit remains incomplete.
   is covered explicitly. Preference data and offline DPO tests: 31 passed with
   two dependency warnings. Touched-file Ruff and diff checks pass. No real dataset
   download or production training run; broader repository audit remains open.
+
+## Prompt sampler and manifest adapters: retain their actual boundaries
+
+- Reviewed PromptBatchSampler sample/preview/_sample_with. Keep the common draw
+  implementation: preview clones RNG state while sample advances the authoritative
+  generator, and every rank slices an identical global draw. Existing tests verify
+  preview purity, distributed slices and restoration from checkpointed RNG state.
+- Keep path loading and JSONL bytes parsing separate: both file loading and the
+  JSONL Dataset use the same parser, with UTF-8/row diagnostics and metadata rules.
+  The bytes API can accept an authenticated snapshot, but current production call
+  sites inspected here read files; this review does not prove authenticated-snapshot
+  use throughout training. Keep image-manifest loading as a public API facade.
+- Keep the small Dataset __len__/__getitem__ implementations. A new inheritance
+  layer solely to remove those repeated framework methods would obscure ownership.
+  No implementation change was justified in these two reviewed files.
+- Prompt parser and sampler suites: 61 passed. Further inspection found duplicated
+  image-loader config projection in DatasetProvenanceSpec.load_manifest and
+  load_prompt_examples_from_config; review their distinct single-manifest versus
+  mixture semantics before consolidating. The broader audit remains incomplete.
