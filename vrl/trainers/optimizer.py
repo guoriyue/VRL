@@ -26,43 +26,35 @@ from typing import Any
 import torch
 from torch import nn
 
-from vrl.trainers.online.config import TrainerConfig
+from vrl.trainers.core.types import OptimConfig
 
 OptimizerFactory = Callable[[Iterable[nn.Parameter]], torch.optim.Optimizer]
 
 
-def build_optimizer(parameters: Any, config: TrainerConfig) -> torch.optim.Optimizer:
-    """Create the AdamW optimizer a training step runs on."""
+def build_optimizer(
+    parameters: Iterable[nn.Parameter], config: OptimConfig
+) -> torch.optim.Optimizer:
+    """Create the selected AdamW backend from optimizer-owned configuration."""
 
-    optim = config.optim
     parameters = list(parameters)
-    # fused=True collapses the per-parameter optimizer step into a handful of
-    # kernels (the loop variant launched ~1.7k/step on LoRA models). It is
-    # only valid for CUDA float params; anything else falls back to default.
-    use_fused = bool(parameters) and all(
-        isinstance(p, torch.Tensor) and p.is_cuda and p.is_floating_point() for p in parameters
-    )
-    if getattr(optim, "optim_8bit", False):
-        # int8 Adam state -> full-parameter 2B+ DiT fits on one 32GB card. Quantizes the
-        # optimizer state only (not the forward), so rollout/replay logprobs are unchanged
-        # — safe on the RL policy path. Requires bitsandbytes (CUDA, incl. Blackwell sm_120).
+    kwargs: dict[str, Any] = {
+        "lr": config.lr,
+        "betas": (config.adam_beta1, config.adam_beta2),
+        "weight_decay": config.weight_decay,
+        "eps": config.eps,
+    }
+    if config.optim_8bit:
         import bitsandbytes as bnb
 
-        return bnb.optim.AdamW8bit(
-            parameters,
-            lr=optim.lr,
-            betas=(optim.adam_beta1, optim.adam_beta2),
-            weight_decay=optim.weight_decay,
-            eps=optim.eps,
+        optimizer_type = bnb.optim.AdamW8bit
+    else:
+        optimizer_type = torch.optim.AdamW
+        # Fuse CUDA floating-point updates; retain the default on other devices.
+        use_fused = bool(parameters) and all(
+            isinstance(p, torch.Tensor) and p.is_cuda and p.is_floating_point() for p in parameters
         )
-    return torch.optim.AdamW(
-        parameters,
-        lr=optim.lr,
-        betas=(optim.adam_beta1, optim.adam_beta2),
-        weight_decay=optim.weight_decay,
-        eps=optim.eps,
-        fused=use_fused or None,
-    )
+        kwargs["fused"] = use_fused or None
+    return optimizer_type(parameters, **kwargs)
 
 
 class FP32MasterWeightOptimizer(torch.optim.Optimizer):

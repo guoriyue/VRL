@@ -735,10 +735,10 @@ class OnlineTrainer:
             if self._requires_fp32_master_weights():
                 self._optimizer = FP32MasterWeightOptimizer(
                     trainable,
-                    lambda masters: build_optimizer(masters, self.config),
+                    lambda masters: build_optimizer(masters, self.config.optim),
                 )
             else:
-                self._optimizer = build_optimizer(trainable, self.config)
+                self._optimizer = build_optimizer(trainable, self.config.optim)
         return self._optimizer
 
     def _ensure_ema(self) -> EMAModuleWrapper | None:

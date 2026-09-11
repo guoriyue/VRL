@@ -5940,3 +5940,19 @@ The broader repository audit remains incomplete.
   original-value restoration after a rejected second swap. EMA/checkpoint suites:
   124 passed with 14 dependency warnings. Touched-file Ruff and diff checks pass.
   No new distributed training campaign; broader repository audit remains open.
+
+## Optimizer construction depends only on optimizer configuration
+
+- build_optimizer accepts OptimConfig instead of TrainerConfig; both online
+  trainer call sites now pass config.optim. Read the declared optim_8bit field
+  directly and share AdamW hyperparameter construction across both backends.
+  Compute fused eligibility only for standard torch AdamW.
+- Keep the free factory as backend-selection/lazy-import boundary and retain
+  FP32MasterWeightOptimizer's source/master ownership. No optimizer class, bucket
+  mechanism or wrapper compatibility path is added; parameter identity/order and
+  backend-specific fused handling are preserved.
+- Optimizer and online state restoration tests: 41 passed, two skipped. This
+  environment has no bitsandbytes, so actual 8-bit validation was unavailable.
+  A standard AdamW constructor check and a clearly isolated fake 8-bit constructor
+  check verified non-default hyperparameter forwarding. Touched-file Ruff and
+  diff checks pass. Broader repository audit remains incomplete.
