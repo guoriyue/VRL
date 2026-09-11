@@ -39,7 +39,7 @@ import sqlite3
 import subprocess
 import tempfile
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from vrl.utils.config import require_exact_int
@@ -120,11 +120,11 @@ def overlap_length(start: int, end: int, lo: int, hi: int) -> int:
 class DeviceBusy:
     """Kernel-union GPU-busy for one device over the window."""
 
-    device_id: int = field()
-    name: str = field()
-    kernel_count: int = field()
-    busy_ns: int = field()
-    wall_ns: int = field()
+    device_id: int
+    name: str
+    kernel_count: int
+    busy_ns: int
+    wall_ns: int
 
     @property
     def busy_fraction(self) -> float:
@@ -141,9 +141,9 @@ class ApiSpan:
     union, and may exceed the window wall.
     """
 
-    name: str = field()
-    count: int = field()
-    total_ns: int = field()
+    name: str
+    count: int
+    total_ns: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,11 +156,11 @@ class IdleGap:
     host Python).
     """
 
-    start: int = field()
-    end: int = field()
-    api_breakdown: tuple[ApiSpan, ...] = field()
-    memcpy_ns: int = field()
-    memcpy_bytes: int = field()
+    start: int
+    end: int
+    api_breakdown: tuple[ApiSpan, ...]
+    memcpy_ns: int
+    memcpy_bytes: int
 
     @property
     def duration_ns(self) -> int:
@@ -177,10 +177,10 @@ class NvtxBusy:
     here", and treat ``summed_wall_ns`` only as this name's own footprint.
     """
 
-    name: str = field()
-    occurrences: int = field()
-    summed_wall_ns: int = field()
-    union_busy_ns: int = field()
+    name: str
+    occurrences: int
+    summed_wall_ns: int
+    union_busy_ns: int
 
     @property
     def busy_fraction(self) -> float:
@@ -196,25 +196,25 @@ class ReportProvenance:
     percentage that could come from an empty or truncated capture.
     """
 
-    source_path: str = field()
-    sqlite_path: str = field()
-    nsys_version: str = field()
-    total_kernels: int = field()
-    devices: tuple[tuple[int, str], ...] = field()
-    window_source: str = field()
+    source_path: str
+    sqlite_path: str
+    nsys_version: str
+    total_kernels: int
+    devices: tuple[tuple[int, str], ...]
+    window_source: str
 
 
 @dataclass(frozen=True, slots=True)
 class GpuBusyReport:
     """The trustworthy GPU-busy attribution for one capture window."""
 
-    window: Interval = field()
-    wall_ns: int = field()
-    per_device: tuple[DeviceBusy, ...] = field()
-    gap_device: int = field()
-    idle_gaps: tuple[IdleGap, ...] = field()
-    nvtx: tuple[NvtxBusy, ...] = field()
-    provenance: ReportProvenance = field()
+    window: Interval
+    wall_ns: int
+    per_device: tuple[DeviceBusy, ...]
+    gap_device: int
+    idle_gaps: tuple[IdleGap, ...]
+    nvtx: tuple[NvtxBusy, ...]
+    provenance: ReportProvenance
 
     @classmethod
     def from_capture(

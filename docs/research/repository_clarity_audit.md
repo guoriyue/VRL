@@ -6452,3 +6452,15 @@ The broader repository audit remains incomplete.
 - Window-clipped denominator and outside-window regressions both failed before
   the fix. Report suite: 31 passed. Touched-file Ruff and diff checks pass.
   Verification uses SQLite fixtures, not a new nsys capture; broader audit open.
+
+## Report data fields use plain required annotations
+
+- Remove 30 empty field() declarations from the six nsys report dataclasses,
+  along with the unused import. No declaration supplied a default, factory,
+  metadata or special comparison/serialization behavior; annotations express
+  these required constructor fields directly.
+- Keep the data classes and their derived properties as named report concepts.
+  Preserve frozen/slots settings, field order and output formats. This does not
+  justify removing field() where other schemas actually use its options.
+- Report suite: 31 passed. Touched-file Ruff and diff checks pass. Broader
+  repository audit remains incomplete.
