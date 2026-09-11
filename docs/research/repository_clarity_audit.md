@@ -5,6 +5,43 @@ core generation, scheduling, and external helpers. Function counts identify
 inspection candidates; they do not establish that a function needs relocation.
 No repository-wide completion claim is supported yet.
 
+## Current scope inventory (source snapshot a64a33ac1)
+
+This AST inventory counts direct module-level definitions in `vrl/**/*.py`.
+It excludes methods, nested functions, tests and files outside the package.
+Counts locate review work; they do not measure defects or prove coverage.
+Historical sections below record individual slices, not directory completion.
+
+| Area | Python files | Module functions | Module classes |
+| --- | ---: | ---: | ---: |
+| (root) | 4 | 8 | 7 |
+| algorithms | 14 | 15 | 30 |
+| config | 16 | 38 | 56 |
+| generation | 49 | 19 | 85 |
+| math | 8 | 13 | 2 |
+| models | 128 | 223 | 214 |
+| nn | 22 | 35 | 25 |
+| ray | 7 | 31 | 22 |
+| rewards | 70 | 115 | 109 |
+| rollouts | 36 | 11 | 48 |
+| scripts | 98 | 542 | 56 |
+| trainers | 27 | 114 | 59 |
+| trajectory | 9 | 25 | 11 |
+| utils | 11 | 49 | 11 |
+
+The next inspection focus moves beyond recently rechecked generation and rollout
+paths to scripts and their model/reward consumers. Candidate files include
+`vrl/scripts/perf/nsys_report.py` (interval math versus report ownership),
+`vrl/scripts/rewards/install_countgd.py` (installation state and subprocess
+boundaries), and `vrl/scripts/eval/sana_aesthetic_report.py` (report construction
+versus protocol validation). These are inspection candidates, not approved
+relocations: read callers and tests before choosing any change.
+
+Retain CLI adapters, numerical helpers, protocol/schema constants and genuinely
+shared utilities when they explain a boundary. Do not introduce classes merely
+to reduce this table's function counts. Whole-repository completion still needs
+current source review beyond these local regressions and beyond the `vrl` package.
+
 ## Criteria
 
 - Put construction and state-dependent operations on their existing owner.
