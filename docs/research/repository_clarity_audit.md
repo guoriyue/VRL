@@ -6929,3 +6929,17 @@ The broader repository audit remains incomplete.
 - Four regression cases with valid image fixtures reached the writer before
   the fix; they now reject before either media artifact exists. Setup suite:
   19 passed. Touched-file Ruff and diff checks pass. Audit remains incomplete.
+
+## Video-world validates manifest metadata before media publication
+
+- Both row builders now construct their metadata before writing reference or
+  target media, then reuse that result in the row. The shared metadata owner
+  explicitly accepts mappings or None rather than converting arbitrary/falsy
+  containers to dictionaries. Target FPS lookup no longer copies the mapping.
+- Keep _manifest_metadata as the shared schema boundary and _write_mp4 as the
+  PIL/NumPy frame-sequence adapter: the general media writer takes a tensor,
+  so merging them would erase a real input distinction.
+- Eight new cases cover malformed metadata in both builders and verify no PNG
+  or MP4 is left behind. Setup and JRDB import suites: 31 passed. Touched-file
+  Ruff and diff checks pass. No new wrapper class or provenance field list;
+  the broader repository audit remains incomplete.

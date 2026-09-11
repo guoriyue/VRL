@@ -39,6 +39,12 @@ def build_video_world_rows(
         image = episode.get("image")
         if not prompt or not episode_id or image is None:
             continue
+        metadata = _manifest_metadata(
+            episode,
+            source=source,
+            episode_id=episode_id,
+            conditioning=conditioning,
+        )
         ref_path = reference_dir / f"{source}_{episode_id}_first.png"
         write_png(image, ref_path)
         rows.append(
@@ -46,12 +52,7 @@ def build_video_world_rows(
                 "prompt": prompt,
                 "reference_image": os.path.relpath(ref_path, data_root),
                 "task_type": "video2world",
-                "metadata": _manifest_metadata(
-                    episode,
-                    source=source,
-                    episode_id=episode_id,
-                    conditioning=conditioning,
-                ),
+                "metadata": metadata,
             },
         )
     return rows
@@ -80,7 +81,13 @@ def build_target_video_world_rows(
         frames = list(episode.get("frames") or [])
         if not prompt or not episode_id or not frames:
             continue
-        metadata_raw = dict(episode.get("metadata") or {})
+        metadata = _manifest_metadata(
+            episode,
+            source=source,
+            episode_id=episode_id,
+            conditioning=conditioning,
+        )
+        metadata_raw = episode.get("metadata") or {}
         source_fps = metadata_raw.get("source_fps")
         clip_fps = float(fps if source_fps is None else source_fps)
         if not math.isfinite(clip_fps) or clip_fps <= 0:
@@ -95,12 +102,7 @@ def build_target_video_world_rows(
                 "reference_image": os.path.relpath(ref_path, data_root),
                 "target_video": os.path.relpath(target_path, data_root),
                 "task_type": "video2world",
-                "metadata": _manifest_metadata(
-                    episode,
-                    source=source,
-                    episode_id=episode_id,
-                    conditioning=conditioning,
-                ),
+                "metadata": metadata,
             },
         )
     return rows
@@ -113,9 +115,12 @@ def _manifest_metadata(
     episode_id: str,
     conditioning: str,
 ) -> dict[str, Any]:
+    metadata = episode.get("metadata")
+    if metadata is not None and not isinstance(metadata, Mapping):
+        raise TypeError(f"episode {episode_id!r} metadata must be a mapping or None")
     source_metadata = {
         key: value
-        for key, value in dict(episode.get("metadata") or {}).items()
+        for key, value in ({} if metadata is None else metadata).items()
         if value is not None and str(value).strip()
     }
     return {

@@ -465,3 +465,31 @@ def test_video_world_rejects_invalid_source_fps_before_media_write(tmp_path, sou
         )
     assert list(references.iterdir()) == []
     assert list(targets.iterdir()) == []
+
+
+@pytest.mark.parametrize("metadata", [False, 0, "", []])
+@pytest.mark.parametrize("target_video", [False, True])
+def test_video_world_rejects_metadata_before_media_write(tmp_path, metadata, target_video):
+    image = Image.new("RGB", (2, 2))
+    episodes = [
+        {
+            "prompt": "move",
+            "episode_id": "1",
+            "image": image,
+            "frames": [image],
+            "metadata": metadata,
+        }
+    ]
+    kwargs = dict(reference_dir=tmp_path / "references", data_root=tmp_path, source="unit")
+    with pytest.raises(TypeError, match="metadata must be a mapping"):
+        if target_video:
+            video_world.build_target_video_world_rows(
+                episodes,
+                **kwargs,
+                target_dir=tmp_path / "targets",
+                fps=24,
+            )
+        else:
+            video_world.build_video_world_rows(episodes, **kwargs)
+    assert not list(tmp_path.rglob("*.png"))
+    assert not list(tmp_path.rglob("*.mp4"))
