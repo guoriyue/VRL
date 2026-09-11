@@ -29,8 +29,8 @@ from vrl.trainers.data.artifacts import (
     ArtifactManifestReport,
 )
 from vrl.trainers.data.prompts import (
+    ImageCaptionPromptDataset,
     PromptExample,
-    load_prompt_image_manifest,
     load_prompt_manifest,
 )
 
@@ -123,15 +123,7 @@ class DatasetProvenanceSpec:
         """Load one manifest the way the parsed ``data`` section declares."""
 
         if data.loader == "prompt_image_manifest":
-            preprocessing = data.preprocessing
-            return load_prompt_image_manifest(
-                path,
-                image_field=str((preprocessing.image_field if preprocessing else None) or "image"),
-                caption_field=str(
-                    (preprocessing.caption_field if preprocessing else None) or "caption"
-                ),
-                default_task_type=str(data.task_type or "image_to_video"),
-            )
+            return list(ImageCaptionPromptDataset.from_config(data, path=path).examples)
         if data.loader == "prompt_manifest":
             return load_prompt_manifest(path)
         raise ValueError(f"dataset provenance has no loader for data.loader={data.loader!r}")

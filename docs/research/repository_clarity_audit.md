@@ -5912,3 +5912,17 @@ The broader repository audit remains incomplete.
   image-loader config projection in DatasetProvenanceSpec.load_manifest and
   load_prompt_examples_from_config; review their distinct single-manifest versus
   mixture semantics before consolidating. The broader audit remains incomplete.
+
+## Image-caption Dataset owns config-based construction
+
+- Add ImageCaptionPromptDataset.from_config(data, path=...) and route training
+  and provenance single-manifest loading through it. The existing Dataset now
+  owns the formerly duplicated image/caption/default-task option projection.
+  Require an explicit path so provenance can load evaluation data without
+  accidentally selecting the training manifest from config.
+- Preserve mixture sampling in the training entrypoint and separate train/eval
+  loading in provenance. Keep load_prompt_image_manifest as the explicit-options
+  public facade for callers without DataConfig. No new loader class or registry.
+- Existing prompt parsing, data setup, dataset provenance and VideoPhy I2V suites:
+  63 passed. Touched-file Ruff and diff checks pass. Projection defaults and list
+  return semantics remain unchanged. Broader repository audit remains incomplete.

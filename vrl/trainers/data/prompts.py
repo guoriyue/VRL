@@ -213,8 +213,6 @@ def load_prompt_examples_from_config(data: DataConfig) -> list[PromptExample]:
     manifest = data.manifest
     if not manifest:
         raise ValueError("config missing required field: data.manifest")
-    preprocessing = data.preprocessing
-
     if data.loader == "prompt_manifest":
         sources = manifest_sources(manifest)
         if len(sources) == 1 and next(iter(sources.values())) is None:
@@ -224,14 +222,7 @@ def load_prompt_examples_from_config(data: DataConfig) -> list[PromptExample]:
         return load_prompt_mixture(sources, seed=int(data.mix_seed))
 
     if data.loader == "prompt_image_manifest":
-        image_field = str((preprocessing.image_field if preprocessing else None) or "image")
-        caption_field = str((preprocessing.caption_field if preprocessing else None) or "caption")
-        return load_prompt_image_manifest(
-            manifest,
-            image_field=image_field,
-            caption_field=caption_field,
-            default_task_type=str(data.task_type or "image_to_video"),
-        )
+        return list(ImageCaptionPromptDataset.from_config(data, path=manifest).examples)
 
     raise ValueError(f"unknown data.loader={data.loader!r}")
 
@@ -333,6 +324,20 @@ class ImageCaptionPromptDataset(Dataset):
                         metadata=metadata,
                     ),
                 )
+
+    @classmethod
+    def from_config(cls, data: DataConfig, *, path: str | Path) -> ImageCaptionPromptDataset:
+        """Load one explicit manifest using the configured image-caption fields."""
+
+        preprocessing = data.preprocessing
+        return cls(
+            path,
+            image_field=str((preprocessing.image_field if preprocessing else None) or "image"),
+            caption_field=str(
+                (preprocessing.caption_field if preprocessing else None) or "caption"
+            ),
+            default_task_type=str(data.task_type or "image_to_video"),
+        )
 
     def __len__(self) -> int:
         return len(self.examples)
