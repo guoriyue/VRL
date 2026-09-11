@@ -2213,3 +2213,19 @@ and model-family/script ownership coverage is not established by this test run.
 Historical entries above describe their respective slices and may name helpers
 removed by later entries; they are not an inventory of current symbols. Passing
 this combined regression is compatibility evidence, not architectural completion.
+
+## Denoise replay does not conceal device lookup failures
+
+- Removed the broad exception fallback around self.device in the shared denoise
+  replay input method. A failed device property previously became device=None,
+  silently disabling movement and deferring the error to later computation.
+  Read the declared model device directly before resolving any replay payload.
+- Keep the shared replay method, lazy trajectory import and step-before-device
+  selection. No new class, helper or constant; this is an existing model-owned
+  responsibility. An explicitly returned None retains its existing semantics.
+- Validation: 272 replay, model-interface and full-sequence-binding tests passed.
+  New cases verify no slicing/movement after RuntimeError or AttributeError in
+  device lookup. The initial test overclaimed AttributeError identity: nn.Module
+  replaces property AttributeError during attribute lookup. Corrected that
+  assertion; RuntimeError identity is retained, both error types propagate.
+  Touched-file Ruff and diff checks passed. Full review remains open.

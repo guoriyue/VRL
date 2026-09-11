@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import nullcontext
 from typing import Any
 
+import pytest
 import torch
 
 from vrl.config.precision import RolePrecision
@@ -207,3 +208,24 @@ class _ReplayModel(DiffusionModelBase):
                 ),
             },
         )
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, AttributeError])
+def test_replay_propagates_model_device_failure(error_type) -> None:
+    failure = error_type("model device is unavailable")
+
+    class BrokenDeviceModel(_ReplayModel):
+        @property
+        def device(self):
+            raise failure
+
+    batch, sentinels = _batch_with_sentinel_timestep_tensors()
+    with pytest.raises(error_type, match="device") as caught:
+        BrokenDeviceModel().replay_forward(batch, timestep_idx=1)
+
+    # nn.Module attribute lookup replaces a property AttributeError with its
+    # missing-attribute error; other failures retain their original identity.
+    if error_type is RuntimeError:
+        assert caught.value is failure
+    assert all(sentinel.slice_count == 0 for sentinel in sentinels)
+    assert all(sentinel.full_to_calls == 0 for sentinel in sentinels)

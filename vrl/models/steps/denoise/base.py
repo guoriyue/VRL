@@ -263,10 +263,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
 
         from vrl.trajectory import TrajectoryResolver
 
-        try:
-            device = self.device
-        except Exception:
-            device = None
+        device = self.device
         resolver = TrajectoryResolver.from_batch(batch)
         replay_tensors = resolver.replay_tensor_dict(
             "denoise",
