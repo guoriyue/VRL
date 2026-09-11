@@ -53,14 +53,12 @@ class TokenAutoregressiveEnvelope:
         )
 
     def apply_step_output(self, batch: TokenStepBatch, output: TokenStepOutput) -> None:
+        # Reject an invalid output schema before changing any scheduled row.
+        for name in output.updated_row_lanes:
+            if name not in self.row_lanes:
+                raise KeyError(f"unknown AR row lane: {name!r}")
         for name, value in output.updated_row_lanes.items():
-            self._require_row_lane(name).scatter(batch.row_indices, value)
-
-    def _require_row_lane(self, name: str) -> ARCacheRows:
-        try:
-            return self.row_lanes[name]
-        except KeyError as exc:
-            raise KeyError(f"unknown AR row lane: {name!r}") from exc
+            self.row_lanes[name].scatter(batch.row_indices, value)
 
 
 class TokenAutoregressiveLoop:

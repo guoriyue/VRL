@@ -2146,3 +2146,18 @@ tracing algorithm construction and evaluator selection together.
   tests passed. Ten new cases verify early probe rejection without encoding
   and rejection of invalid directly constructed loop configs. Touched-file
   Ruff and diff checks passed. Repository review remains ongoing.
+
+## Token output lane names are checked before updates
+
+- TokenAutoregressiveEnvelope.apply_step_output previously mutated known lanes
+  before discovering an unknown name later in the output dictionary. Validate
+  all names first, then scatter. Removed the single-use _require_row_lane lookup
+  method; the error still names the unknown lane.
+- Keep ARCacheRows as the shared batching/cache boundary and preserve scheduling
+  order, subset updates and scatter semantics. This is not a transaction or a
+  rollback guarantee for backend scatter failures; no transaction wrapper,
+  schema table or additional runtime class is introduced.
+- Validation: 30 token composition/binding tests passed, with two vLLM internal
+  dependency tests skipped. New cases place the unknown lane before and after
+  a valid update and verify that original cache row identity and value survive.
+  Touched-file Ruff and diff checks passed. Full repository review continues.

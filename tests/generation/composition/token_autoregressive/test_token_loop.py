@@ -191,3 +191,21 @@ def test_loop_rejects_unrecognized_init_argument_before_generation() -> None:
     with pytest.raises(TypeError, match="unsupported_init_kwarg"):
         TokenAutoregressiveLoop(runner=runner, init_kwargs={"unsupported_init_kwarg": True}).run()
     assert runner.state["step_calls"] == 0
+
+
+@pytest.mark.parametrize("unknown_first", [False, True])
+def test_invalid_output_lane_does_not_apply_known_updates(unknown_first: bool) -> None:
+    envelope = TokenAutoregressiveEnvelope.from_init(_DeterministicRunner().init_token())
+    batch = envelope.build_step_batch([0], position=0)
+    original_row = envelope.row_lanes["hidden"][0]
+    updates = {"hidden": torch.full((1, 1), 99.0), "unknown": torch.zeros(1, 1)}
+    if unknown_first:
+        updates = dict(reversed(list(updates.items())))
+
+    with pytest.raises(KeyError, match="unknown AR row lane"):
+        envelope.apply_step_output(batch, TokenStepOutput(updated_row_lanes=updates))
+
+    assert envelope.row_lanes["hidden"][0] is original_row
+    torch.testing.assert_close(
+        envelope.build_step_batch([0], position=0).row_lanes["hidden"], torch.tensor([[10.0]])
+    )
