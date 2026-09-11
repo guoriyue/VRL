@@ -41,6 +41,18 @@ Additional execution/capacity changes:
   storage and allocator/RSS measurements. Continuous/collector tests: 149 passed;
   torch-free config parsing: 1 passed.
 
+Further owner consolidation:
+
+- Removed `_batch_output_debug_metrics`: its only production caller was the
+  worker's `_batch_metrics` wrapper. Debug gating and output assembly now live
+  in that existing method. Retained `_debug_metric_value` as pure recursive
+  serialization and `_require_chunked_executor` as the construction-time
+  protocol check. Execution tests: 121 passed, including disabled-debug access.
+- Removed `infer_next_epoch`: its only production caller was the owning
+  `TrainingCheckpoint.next_epoch` property. The fallback now lives there with
+  unchanged payload/meta/trainer-step/directory precedence. Checkpoint tests:
+  94 passed; publication and restore collectives were not reorganized.
+
 ## Inspected boundaries retained
 
 - `run_denoise_loop`: shared numerical execution entry across model bindings;
@@ -77,6 +89,25 @@ Further inspected execution boundaries:
 - Ready queue, generated capacity, and staleness policy: separate state and
   invariants (ready payload ownership, pre-reward reservations, version bounds).
   Do not merge them solely because they are used by one scheduling subsystem.
+
+Binding inspection notes:
+
+- Full-sequence and chunk-denoise gatherers deliberately remain separate from
+  executors: they operate driver-side and implement the shared gather protocol.
+  Shared replay concatenation and context checks remain in `sample_batches`.
+- Chunk gather helpers validate consistency across several results and perform
+  optional-field concatenation. They are cohesive with the gather module; moving
+  all of them to static methods alone would not remove state plumbing or a
+  redundant forwarding layer. No new layout/helper class is warranted by this
+  inspection. Result-local shape validation merits further review alongside the
+  executor payload contract before changing validation timing.
+- `call_with_supported_kwargs` serves the token loop and Janus runtime as a
+  signature compatibility adapter. Retain pending a separate audit of supported
+  hook signatures; deleting it merely as a free function could change accepted
+  family hooks.
+- Checkpoint schema/version/file constants are persistence protocol boundaries;
+  retain them. `DEFAULT_CHECKPOINT_STRICT` is the explicit restore protocol
+  default. No business vocabulary relocation is indicated for these constants.
 
 ## Remaining review
 
