@@ -2246,3 +2246,18 @@ this combined regression is compatibility evidence, not architectural completion
   interface tests passed. A valid first parameter followed by a shape/dtype
   impostor is rejected without changing either live parameter. Touched-file
   Ruff and diff checks passed. Repository review remains ongoing.
+
+## Policy slots preserve exact version identity
+
+- TrainableStateSlots now requires an exact positive retention count and exact
+  nonnegative versions for install/has/get, using require_exact_int. Removed
+  int conversions that allowed booleans, strings and fractional versions to
+  alias an existing policy. Denoise activation and acceptance readback validate
+  before active-version comparisons, including the idempotent fast path.
+- Keep the existing version container, numeric-version eviction, None-payload
+  aliasing and shared integer validator. No new version wrapper/helper/table;
+  version identity is an existing scheduling boundary, not a parsing heuristic.
+- Validation: 205 weight-container, replay, versioned-worker and model-interface
+  tests passed. New cases verify invalid install/read operations preserve stored
+  state and invalid activation cannot bypass validation through the current-slot
+  fast path. Touched-file Ruff and diff checks passed. Full review remains open.

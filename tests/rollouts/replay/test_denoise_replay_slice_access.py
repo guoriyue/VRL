@@ -229,3 +229,12 @@ def test_replay_propagates_model_device_failure(error_type) -> None:
         assert caught.value is failure
     assert all(sentinel.slice_count == 0 for sentinel in sentinels)
     assert all(sentinel.full_to_calls == 0 for sentinel in sentinels)
+
+
+@pytest.mark.parametrize("version", [True, 1.9, "1", -1])
+def test_active_slot_fast_path_rejects_ambiguous_version(version) -> None:
+    model = _ReplayModel()
+    model._active_slot_version = 1
+    with pytest.raises(ValueError, match="policy version"):
+        model.activate_trainable_state(version)
+    assert model._active_slot_version == 1

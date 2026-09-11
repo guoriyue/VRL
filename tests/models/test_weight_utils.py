@@ -127,3 +127,23 @@ def test_tensor_impostor_is_rejected_before_any_weight_copy() -> None:
 
     for name, value in module.state_dict().items():
         torch.testing.assert_close(value, original[name])
+
+
+@pytest.mark.parametrize("version", [True, 1.9, "1", -1])
+@pytest.mark.parametrize("operation", ["install", "has", "get"])
+def test_state_slots_reject_ambiguous_versions_without_replacing_state(version, operation):
+    slots = TrainableStateSlots()
+    original = _state("original")
+    slots.install(1, original)
+    with pytest.raises(ValueError, match="policy version"):
+        if operation == "install":
+            slots.install(version, _state("replacement"))
+        else:
+            getattr(slots, operation)(version)
+    assert slots.get(1) is original
+
+
+@pytest.mark.parametrize("limit", [True, 1.9, "1"])
+def test_state_slots_require_exact_retention_limit(limit):
+    with pytest.raises(ValueError, match="max_retained"):
+        TrainableStateSlots(max_retained=limit)

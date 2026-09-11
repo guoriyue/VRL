@@ -18,6 +18,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from vrl.utils.config import require_exact_int
+
 
 def unwrap_compile_and_ddp(module: Any) -> Any:
     """Peel torch.compile (``_orig_mod``) and DDP / FSDP1 (``.module``) wrappers.
@@ -196,9 +198,7 @@ class TrainableStateSlots:
     """
 
     def __init__(self, *, max_retained: int = 8) -> None:
-        if int(max_retained) < 1:
-            raise ValueError("max_retained must be >= 1")
-        self.max_retained = int(max_retained)
+        self.max_retained = require_exact_int(max_retained, path="max_retained", minimum=1)
         self._slots: dict[int, Mapping[str, Any]] = {}
 
     def install(self, version: int, state: Mapping[str, Any] | None) -> None:
@@ -209,7 +209,7 @@ class TrainableStateSlots:
         we alias the most recent slot rather than create an empty one.
         """
 
-        version = int(version)
+        version = require_exact_int(version, path="policy version", minimum=0)
         if state is None:
             if not self._slots:
                 return
@@ -218,10 +218,10 @@ class TrainableStateSlots:
         self._evict()
 
     def has(self, version: int) -> bool:
-        return int(version) in self._slots
+        return require_exact_int(version, path="policy version", minimum=0) in self._slots
 
     def get(self, version: int) -> Mapping[str, Any]:
-        return self._slots[int(version)]
+        return self._slots[require_exact_int(version, path="policy version", minimum=0)]
 
     def _evict(self) -> None:
         # Keep the most recent ``max_retained`` versions. A request older than the

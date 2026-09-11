@@ -35,6 +35,7 @@ from vrl.models.weight_utils import (
     verify_trainable_modules,
 )
 from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE
+from vrl.utils.config import require_exact_int
 
 
 @dataclass
@@ -373,10 +374,11 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         batches share one version pays the copy at most once.
         """
 
-        if getattr(self, "_active_slot_version", None) == int(version):
+        version = require_exact_int(version, path="policy version", minimum=0)
+        if getattr(self, "_active_slot_version", None) == version:
             return
         self.load_trainable_state(self._versioned_state_slots().get(version))
-        self._active_slot_version = int(version)
+        self._active_slot_version = version
 
     def verify_active_trainable_state(
         self, version: int, expected_state: Mapping[str, Any]
@@ -387,8 +389,9 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         not repair it by installing the desired version before comparing.
         """
 
+        version = require_exact_int(version, path="policy version", minimum=0)
         active = getattr(self, "_active_slot_version", None)
-        if active != int(version):
+        if active != version:
             raise RuntimeError(
                 f"active trainable slot mismatch: expected={version}, actual={active}"
             )
