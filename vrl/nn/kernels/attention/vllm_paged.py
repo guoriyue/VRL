@@ -98,7 +98,9 @@ class VllmPagedAttentionKernels:
             max_num_batched_tokens=max_num_batched_tokens,
             pin_memory=pin_memory,
             device=device,
-            kernel_block_size=kernel_block_size or self.config.block_size,
+            kernel_block_size=(
+                self.config.block_size if kernel_block_size is None else kernel_block_size
+            ),
             cp_kv_cache_interleave_size=cp_kv_cache_interleave_size,
         )
 

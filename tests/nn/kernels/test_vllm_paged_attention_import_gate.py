@@ -33,7 +33,8 @@ def test_vllm_paged_attention_kernels_report_abi_failure() -> None:
         )
 
 
-def test_vllm_paged_attention_kernels_call_real_internal_api_boundary() -> None:
+@pytest.mark.parametrize("kernel_block_size", [None, 8, 0])
+def test_vllm_paged_attention_kernels_call_real_internal_api_boundary(kernel_block_size) -> None:
     """The kernels touch exactly the internal API boundary (block table, attention backend enum,
     flash-attn backend / impl / metadata), with the KV-cache shape and block size derived from
     the config.
@@ -69,8 +70,13 @@ def test_vllm_paged_attention_kernels_call_real_internal_api_boundary() -> None:
         max_num_blocks_per_req=3,
         max_num_batched_tokens=4,
         device=torch.device("cpu"),
+        kernel_block_size=kernel_block_size,
     )
     assert block_table.kwargs["block_size"] == 16
+    # This fake records forwarding only; validity is the backend's responsibility.
+    assert block_table.kwargs["kernel_block_size"] == (
+        16 if kernel_block_size is None else kernel_block_size
+    )
 
     key = torch.zeros(1, 2, 8)
     value = torch.ones(1, 2, 8)

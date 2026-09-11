@@ -4380,6 +4380,19 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Paged-attention adapter defaults only absent kernel block sizes
+
+- Replace truthiness fallback for kernel_block_size with an explicit None check.
+  An explicit zero previously became the configured block size before reaching
+  the backend. Keep explicit values intact; backend validity is not established
+  by the forwarding fake. The zero-forwarding regression failed before the fix.
+- Keep VllmPagedAttentionKernels' thin methods as the external framework adapter
+  and _REQUIRED_MODULES as its internal API dependency boundary. Do not move them
+  into family code or duplicate backend validation in a new configuration class.
+- Import-gate and Janus/NextStep binding suites: 5 passed, 2 skipped, 2 dependency
+  warnings. Touched-file Ruff checks pass. This verifies argument forwarding,
+  not a full real-kernel acceptance run; the repository clarity audit continues.
+
 ## Direct denoise configuration rejects unknown execution modes
 
 - Use the existing DenoiseMode literal for DenoiseLoopConfig and validate it
