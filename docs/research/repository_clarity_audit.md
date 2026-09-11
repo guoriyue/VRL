@@ -6723,3 +6723,17 @@ The broader repository audit remains incomplete.
 - Ten regression cases across direct runtime and factory construction initially
   failed to raise; all now pass. Reward inference and service suites: 136 passed,
   one skipped. Touched-file Ruff and diff checks pass. Broader audit remains open.
+
+## Reward result validation stays with the result type
+
+- Remove the duplicate raw-score Mapping check immediately before constructing
+  RewardInferenceResult. Its constructor already enforces that invariant and
+  normalizes scores/timings; malformed model output now uses its field-specific
+  diagnostic instead of a second runtime-owned message.
+- Per-artifact timing divides by the verified result count directly: the public
+  scorer returns early for empty requests and the batch branch rejects unequal
+  counts before division. No hidden zero-count fallback is needed here.
+- Keep the local build_result closure shared by batch and per-artifact models;
+  keep model Any because factory plugins have two supported execution shapes.
+  Reward inference/service suites: 136 passed, one skipped. Touched-file Ruff
+  and diff checks pass. The repository-wide audit remains incomplete.

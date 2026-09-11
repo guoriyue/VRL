@@ -413,8 +413,6 @@ class InProcessRewardScorer:
             raw_scores: Mapping[str, Any],
             inference_ms: float,
         ) -> RewardInferenceResult:
-            if not isinstance(raw_scores, Mapping):
-                raise TypeError("reward model must return a mapping of scores")
             return RewardInferenceResult(
                 artifact_id=artifact.artifact_id,
                 scores=raw_scores,
@@ -431,7 +429,7 @@ class InProcessRewardScorer:
                     "RewardModel.score_batch returned wrong number of score maps: "
                     f"got {len(score_maps)}, expected {len(request.artifacts)}",
                 )
-            per_artifact_ms = (time.perf_counter() - started) * 1000.0 / max(1, len(score_maps))
+            per_artifact_ms = (time.perf_counter() - started) * 1000.0 / len(score_maps)
             return [
                 build_result(artifact, raw_scores, inference_ms=per_artifact_ms)
                 for artifact, raw_scores in zip(request.artifacts, score_maps, strict=True)
