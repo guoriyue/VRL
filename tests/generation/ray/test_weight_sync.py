@@ -743,11 +743,9 @@ async def test_real_ray_weight_sync_attributes_a_wrong_ack_by_submission_order(
     """A bad ACK is blamed on the worker that sent it, not the one that answered
     last.
 
-    Production pairs ACKs back to workers with ``zip(remote_workers,
-    installed_versions, strict=True)``, which is only correct because
-    ``asyncio.gather`` preserves submission order. rollout-0 is made to finish
-    LAST here, so an implementation that switched to ``asyncio.as_completed``
-    would name rollout-0 in the error and redden this test.
+    Production pairs ACKs back to engines with zip because RayActorDispatcher
+    returns results sorted by job_index. rollout-0 is made to finish LAST here;
+    returning completion order would attribute rollout-1's bad ACK to rollout-0.
     """
 
     # rollout-0 stalls half a second, so it is the LAST to complete; rollout-1

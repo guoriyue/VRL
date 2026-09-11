@@ -1,4 +1,4 @@
-"""Synchronous weight-version coordination for Ray generation engines."""
+"""Awaited weight-version coordination for Ray generation engines."""
 
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ class RayGenerationWeightSync:
             else:
                 # Local test double: call the single rank directly.
                 installed = update_weights(state_ref, policy_version, **verification)
-                _require_installed_policy_version(engine, installed, policy_version)
+                self._require_installed_policy_version(engine, installed, policy_version)
 
         if not remote_engines:
             return
@@ -118,7 +118,25 @@ class RayGenerationWeightSync:
             installed_pairs,
             strict=True,
         ):
-            _require_installed_policy_version(engine, installed, policy_version)
+            self._require_installed_policy_version(engine, installed, policy_version)
+
+    @staticmethod
+    def _require_installed_policy_version(
+        engine: RayGenerationEngine,
+        installed: Any,
+        expected: int,
+    ) -> None:
+        """Validate one untyped engine ACK at the Ray weight-sync boundary."""
+
+        if isinstance(installed, bool) or not isinstance(installed, int) or installed < 0:
+            raise RuntimeError(
+                f"engine {engine.engine_id!r} returned invalid installed policy version {installed!r}",
+            )
+        if installed != expected:
+            raise RuntimeError(
+                f"engine {engine.engine_id!r} installed policy version {installed}, "
+                f"expected {expected}",
+            )
 
     async def _push_bucketed(self, state: Any, policy_version: int) -> None:
         from vrl.generation.weight_transfer import iter_weight_buckets, weight_manifest
@@ -146,7 +164,7 @@ class RayGenerationWeightSync:
                 call_timeout_s=self.worker_rpc_timeout_s,
             )
             for engine, (_, version) in zip(self.engines, installed, strict=True):
-                _require_installed_policy_version(engine, version, policy_version)
+                self._require_installed_policy_version(engine, version, policy_version)
 
         try:
             await broadcast(
@@ -182,24 +200,6 @@ class RayGenerationWeightSync:
             except BaseException as cleanup_error:
                 error.add_note(f"weight transfer abort failed: {cleanup_error}")
             raise
-
-
-def _require_installed_policy_version(
-    engine: RayGenerationEngine,
-    installed: Any,
-    expected: int,
-) -> None:
-    """Validate one untyped engine ACK at the Ray weight-sync boundary."""
-
-    if isinstance(installed, bool) or not isinstance(installed, int) or installed < 0:
-        raise RuntimeError(
-            f"engine {engine.engine_id!r} returned invalid installed policy version {installed!r}",
-        )
-    if installed != expected:
-        raise RuntimeError(
-            f"engine {engine.engine_id!r} installed policy version {installed}, "
-            f"expected {expected}",
-        )
 
 
 __all__ = [

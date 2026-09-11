@@ -3501,3 +3501,21 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: 66 runtime-config, rollout-launcher, and operation-deadline tests
   passed, including capability failures and cleanup. Touched-file Ruff/diff
   checks passed. Full repository review remains incomplete.
+
+## Weight-sync owner contains its ACK validation
+
+- Move _require_installed_policy_version into RayGenerationWeightSync. Its three
+  consumers are the owner's local, remote whole-state, and bucket-broadcast
+  paths. Preserve one validation implementation, strict ACK rejection, and
+  engine-specific diagnostics; no compatibility wrapper or new class.
+- Correct the module's synchronous description and the ACK ordering test's
+  outdated gather explanation. RayActorDispatcher sorts result pairs by
+  job_index; that contract supports pairing ACKs with engines even when
+  completion order differs.
+- Keep weight_manifest and chunk/bucket iterators as sender wire-format APIs,
+  and StagedWeightTransfer as the receiver's buffer/integrity owner. They do
+  not require a shared wrapper class. No wire-format, bucket-size, retry,
+  admission, or cancellation behavior changes.
+- Validation: 47 weight-sync and weight-transfer tests passed, including real
+  Ray wrong-ACK attribution, bucket transfer, and abort coverage. Touched-file
+  Ruff/diff checks passed. Full repository review remains incomplete.
