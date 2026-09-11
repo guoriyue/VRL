@@ -4380,6 +4380,24 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Generation and rollout joint regression after worker cleanup
+
+- Reviewed sample_batches helpers against diffusion, token AR and chunk AR
+  gatherer call sites. Keep the shared coverage ordering, row validation, replay
+  merge and context comparison functions: these enforce cross-family batch
+  semantics and prevent each binding from implementing different rules.
+- Keep ContinuousRolloutSchedule's thin facade methods. Policy export occurs on
+  the trainer thread; async admission and collection belong to the owner loop.
+  Their small bodies express a thread boundary, not unnecessary indirection.
+- Existing gatherer tests cover reordered batches, per-batch replay alignment,
+  static/ragged value distinctions, dtype mismatch and context mismatch. No
+  wrapper class or production change is justified by function count alone.
+- Joint tests/generation and tests/rollouts regression: 1220 passed, 2 skipped,
+  4 warnings in 46.17 seconds. Log:
+  /tmp/vrl-generation-rollouts-clarity-regression.log. This verifies the combined
+  tested paths after recent edits; it does not prove repository-wide clarity
+  completion or an end-to-end training throughput improvement.
+
 ## Worker default device discovery preserves failures
 
 - Remove the broad exception-to-CPU fallback in _executor_device. Torch import
