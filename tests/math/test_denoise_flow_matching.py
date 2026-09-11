@@ -234,3 +234,25 @@ def test_pretraining_pair_rejects_unknown_prediction_type() -> None:
 
     with pytest.raises(ValueError, match="prediction_type"):
         diffusion_pretraining_pair(_Sched(), torch.zeros(1), torch.zeros(1), torch.zeros(1))
+
+
+def test_flow_float64_density_matches_normal() -> None:
+    scheduler = _FakeScheduler(torch.tensor([0.9, 0.6, 0.3, 0.0], dtype=torch.float64))
+    sample = torch.zeros((2, 3, 4), dtype=torch.float64)
+    action = torch.full_like(sample, 0.1)
+    result = sde_step_with_logprob(
+        scheduler,
+        torch.zeros_like(sample),
+        scheduler.timesteps[1].expand(2),
+        sample,
+        prev_sample=action,
+        step_index=1,
+        math_dtype=torch.float64,
+        return_dt=True,
+    )
+    expected = (
+        torch.distributions.Normal(result.prev_sample_mean, result.std_dev_t * result.sqrt_neg_dt)
+        .log_prob(action)
+        .mean(dim=(1, 2))
+    )
+    torch.testing.assert_close(result.log_prob, expected, atol=1e-12, rtol=1e-12)

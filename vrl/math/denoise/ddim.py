@@ -147,11 +147,7 @@ def ddim_step_with_logprob(
     zero_var = std_dev_t == 0
     if eta > 0.0:
         safe_std = torch.where(zero_var, torch.ones_like(std_dev_t), std_dev_t)
-        gaussian = (
-            -err_sq / (2 * safe_std**2)
-            - torch.log(safe_std)
-            - torch.log(torch.sqrt(2 * torch.as_tensor(math.pi)))
-        )
+        gaussian = -err_sq / (2 * safe_std**2) - torch.log(safe_std) - 0.5 * math.log(2 * math.pi)
         log_prob = torch.where(zero_var.expand_as(gaussian), -err_sq, gaussian)
     else:
         log_prob = -err_sq

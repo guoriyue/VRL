@@ -207,7 +207,7 @@ def sde_step_with_logprob(
         log_prob = (
             -((prev_sample.detach() - prev_sample_mean) ** 2) / (2 * noise_scale**2)
             - torch.log(noise_scale)
-            - torch.log(torch.sqrt(2 * torch.as_tensor(math.pi)))
+            - 0.5 * math.log(2 * math.pi)
         )
         log_prob = log_prob.mean(dim=tuple(range(1, log_prob.ndim)))
 

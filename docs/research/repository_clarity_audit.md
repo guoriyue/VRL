@@ -6976,3 +6976,17 @@ The broader repository audit remains incomplete.
   PixArt-Sigma suites: 17 passed, two dependency warnings. Touched-file Ruff and
   diff checks pass. No GPU throughput measurement or claim that every host
   synchronization has been removed; the broader audit remains open.
+
+## Denoise Gaussian normalization does not depend on default tensor dtype
+
+- DDIM and flow Gaussian log densities now use 0.5 * math.log(2 * math.pi),
+  matching the re-noise kernel. Previously the constant was computed through
+  a default-dtype tensor even when math_dtype explicitly requested float64.
+- Two float64 comparisons against torch.distributions.Normal failed before the
+  fix with approximately 1.56e-8 absolute error, then passed at 1e-12 tolerance.
+  All tests/math: 61 passed. Touched-file Ruff and diff checks pass.
+- Preserve each kernel's distribution, reduction, replay detach, and terminal
+  conventions. A scalar expression needs neither an ALL_CAPS table nor a new
+  helper abstraction; the existing shared rollout/replay entry points remain.
+- This corrects a small normalization offset; no throughput or training-quality
+  improvement is claimed. The broader repository clarity audit remains open.

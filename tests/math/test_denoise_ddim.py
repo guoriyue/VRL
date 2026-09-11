@@ -174,3 +174,25 @@ def test_ddim_zero_variance_scores_and_gradients(step_indices, residual) -> None
     result.log_prob.sum().backward()
     assert model_output.grad is not None
     assert torch.isfinite(model_output.grad).all()
+
+
+def test_ddim_float64_density_matches_normal() -> None:
+    scheduler = _scheduler("epsilon")
+    sample = torch.zeros(_SHAPE, dtype=torch.float64)
+    action = torch.full_like(sample, 0.1)
+    result = sde_step_with_logprob(
+        scheduler,
+        torch.zeros_like(sample),
+        scheduler.timesteps[3].expand(_SHAPE[0]),
+        sample,
+        prev_sample=action,
+        sde_type="ddim",
+        step_index=3,
+        math_dtype=torch.float64,
+    )
+    expected = (
+        torch.distributions.Normal(result.prev_sample_mean, result.std_dev_t)
+        .log_prob(action)
+        .mean(dim=(1, 2, 3))
+    )
+    torch.testing.assert_close(result.log_prob, expected, atol=1e-12, rtol=1e-12)
