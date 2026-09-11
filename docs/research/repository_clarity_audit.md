@@ -2312,3 +2312,18 @@ this combined regression is compatibility evidence, not architectural completion
   skipped. New tests preserve ordinary named children and never call an
   unrelated get_base_model method. Touched-file Ruff and diff checks passed.
   Repository-wide review is still incomplete.
+
+## FSDP rejects ineffective block declarations
+
+- iter_blocks rejects malformed class-name declarations and raises when no
+  module matches. Previously a string became a set of characters and a typo
+  silently yielded nothing, letting apply_fsdp shard only the root despite its
+  per-block contract. The unmatched case now fails before fully_shard is called.
+- Keep the model-owned _no_split_modules declaration and shared discovery
+  function. No per-family table or wrapper class added. A declaration may name
+  optional classes absent from one model variant as long as some blocks match;
+  requiring every declared class would unnecessarily narrow that contract.
+- Validation: 69 FSDP/strategy tests passed, two optional tests skipped. New
+  malformed-declaration and unmatched-block tests verify no sharding begins on
+  these invalid inputs. Touched-file Ruff and diff checks passed. Full repository
+  review remains active.

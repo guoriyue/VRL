@@ -129,10 +129,21 @@ def iter_blocks(base: nn.Module) -> Iterator[nn.Module]:
             "transformer block boundaries to shard per layer. Set them on the model "
             "or extend the applier with an explicit block list for this family.",
         )
+    if isinstance(no_split, (str, bytes)) or any(
+        not isinstance(name, str) or not name for name in no_split
+    ):
+        raise ValueError("_no_split_modules must contain non-empty block class names")
     block_names = set(no_split)
+    matched = False
     for submodule in base.modules():
         if type(submodule).__name__ in block_names:
+            matched = True
             yield submodule
+    if not matched:
+        raise ValueError(
+            f"{type(base).__name__}: no modules match declared FSDP block classes "
+            f"{sorted(block_names)}",
+        )
 
 
 def apply_fsdp(

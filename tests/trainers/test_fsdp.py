@@ -1154,3 +1154,23 @@ def test_ema_over_dtensor_params_updates_swaps_and_round_trips(cpu_process_group
     for got, expected in zip(restored.ema_parameters, after, strict=True):
         torch.testing.assert_close(got.full_tensor(), expected)
     assert restored.num_updates == ema.num_updates
+
+
+@pytest.mark.parametrize("declaration", ["ToyBlock", b"ToyBlock", [1], [""]])
+def test_iter_blocks_rejects_malformed_declaration(declaration) -> None:
+    model = ToyTransformer()
+    model._no_split_modules = declaration
+    with pytest.raises(ValueError, match="block class names"):
+        list(iter_blocks(model))
+
+
+def test_apply_fsdp_rejects_unmatched_blocks_before_sharding(monkeypatch) -> None:
+    import torch.distributed.fsdp as torch_fsdp
+
+    model = ToyTransformer()
+    model._no_split_modules = ["MisspelledBlock"]
+    calls = []
+    monkeypatch.setattr(torch_fsdp, "fully_shard", lambda *args, **kwargs: calls.append(args))
+    with pytest.raises(ValueError, match="no modules match declared FSDP block classes"):
+        apply_fsdp(model, mesh=None, mp_policy=mixed_precision_policy("none"))
+    assert calls == []
