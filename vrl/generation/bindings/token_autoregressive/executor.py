@@ -117,7 +117,7 @@ class ARBatchExecutorBase(BatchExecutorBase):
                 self._runner_attention_family,
                 attention_backend_name(sampling),
                 self.model,
-                block_size=int(sampling.get("ar_paged_block_size", 16)),
+                block_size=sampling.get("ar_paged_block_size", 16),
                 cache_dtype=str(sampling.get("ar_paged_cache_dtype", "auto")),
             ),
         )

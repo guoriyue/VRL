@@ -32,6 +32,9 @@ class VllmPagedAttentionConfig(ARAttentionConfig):
     block_size: int = 16
     cache_dtype: str = "auto"
 
+    def __post_init__(self) -> None:
+        require_exact_int(self.block_size, path="VllmPagedAttentionConfig.block_size", minimum=1)
+
 
 @dataclass(frozen=True, slots=True)
 class ARAttentionPrefillInput:

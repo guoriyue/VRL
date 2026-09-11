@@ -13,6 +13,7 @@ import torch
 from vrl.nn.layers.attention.paged import (
     ARAttentionPrefillInput,
     ARAttentionStepInput,
+    VllmPagedAttentionConfig,
 )
 
 pytestmark = pytest.mark.real_cover(
@@ -24,6 +25,12 @@ pytestmark = pytest.mark.real_cover(
         "CUDA plus vLLM's worker internals; the gpu-lane test drives the real ops"
     ),
 )
+
+
+@pytest.mark.parametrize("block_size", [True, 32.5, "32", 0, -1])
+def test_paged_attention_config_requires_positive_integer_block_size(block_size) -> None:
+    with pytest.raises(ValueError, match="block_size"):
+        VllmPagedAttentionConfig(family="janus_pro", block_size=block_size)
 
 
 def test_paged_attention_prefill_validates_batch_shape() -> None:

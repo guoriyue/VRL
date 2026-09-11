@@ -6311,3 +6311,17 @@ The broader repository audit remains incomplete.
 - Token binding and NextStep/GLM/LlamaGen model-construction/parsing suites:
   84 passed with 16 dependency deprecation warnings. Touched-file Ruff and
   diff checks pass. Broader repository audit remains incomplete.
+
+## Paged block width is validated by the backend config
+
+- Add positive exact-integer validation to VllmPagedAttentionConfig.block_size,
+  and remove the executor's int conversion of ar_paged_block_size. Fractional
+  values must not become a different allocation width before validation; direct
+  config construction now follows the same rule. Defaults remain unchanged.
+- Keep backend construction adapters and the supported-backend name table as
+  model/protocol boundaries. No new config class or validation helper; reuse
+  require_exact_int. This checks basic width validity, not every backend-specific
+  kernel constraint, and does not alter cache dtype handling.
+- Paged-contract and token-binding suites: 26 passed with 16 dependency warnings,
+  including five invalid block-width cases. Touched-file Ruff and diff checks
+  pass. Broader repository audit remains incomplete.
