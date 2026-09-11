@@ -70,10 +70,12 @@ class DenoiseTrajectoryBuffers:
             raise ValueError(
                 f"denoise batch produced {batch_rows} rows, expected {config.sample_count}",
             )
-        num_steps = len(state.timesteps)
         latent_shape = tuple(latents.shape[1:])
         device = latents.device
-        timestep_dtype = cls._timestep_dtype(state.timesteps)
+        if not isinstance(state.timesteps, torch.Tensor):
+            raise TypeError("denoise state.timesteps must be a torch.Tensor")
+        num_steps = len(state.timesteps)
+        timestep_dtype = state.timesteps.dtype
 
         return cls(
             observations=torch.empty(
@@ -152,24 +154,10 @@ class DenoiseTrajectoryBuffers:
                 ref_noise_pred.detach().to(dtype=self.ref_noise_preds.dtype),
             )
 
-    @staticmethod
-    def _timestep_dtype(timesteps: Any) -> torch.dtype:
-        if isinstance(timesteps, torch.Tensor):
-            return timesteps.dtype
-        try:
-            first = timesteps[0]
-        except Exception:
-            return torch.float32
-        if isinstance(first, torch.Tensor):
-            return first.dtype
-        return torch.float32
-
-    def _expand_timestep(self, timestep: Any) -> torch.Tensor:
+    def _expand_timestep(self, timestep: torch.Tensor) -> torch.Tensor:
         batch_rows = self.timesteps.shape[0]
         dtype = self.timesteps.dtype
         device = self.timesteps.device
-        if not isinstance(timestep, torch.Tensor):
-            timestep = torch.as_tensor(timestep)
         timestep = timestep.to(device=device, dtype=dtype)
         if timestep.ndim == 0:
             return timestep.expand(batch_rows)

@@ -33,7 +33,9 @@ def _config(*, return_prev_sample_mean: bool) -> DenoiseLoopConfig:
 
 def _state() -> SimpleNamespace:
     # 2 samples, 3 denoise steps, latent shape (4, 8, 8).
-    return SimpleNamespace(latents=torch.zeros(2, 4, 8, 8), timesteps=[0.9, 0.5, 0.1])
+    return SimpleNamespace(
+        latents=torch.zeros(2, 4, 8, 8), timesteps=torch.tensor([0.9, 0.5, 0.1])
+    )
 
 
 def test_buffer_allocated_with_step_and_latent_shape_when_opted_in() -> None:

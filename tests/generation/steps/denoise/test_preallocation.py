@@ -410,3 +410,11 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
     before = chunk2.observations
     untouched = executor.apply_wire_storage_policy(plain_request, chunk2)
     assert untouched.observations is before
+
+
+@pytest.mark.parametrize("timesteps", [[0.9, 0.5], [torch.tensor(0.9)], None])
+def test_preallocation_requires_tensor_timestep_schedule(timesteps: object) -> None:
+    state = _state(batch=2, steps=2)
+    state.timesteps = timesteps
+    with pytest.raises(TypeError, match=r"state\.timesteps must be a torch\.Tensor"):
+        DenoiseTrajectoryBuffers.allocate(state=state, config=_config(sample_count=2))

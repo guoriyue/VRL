@@ -877,3 +877,22 @@ contained guesses. Removed both:
   extra/missing bounds and malformed integer values; direct schema checks confirm
   fractional/string/bool bounds fail before projection. Touched-file Ruff and
   diff whitespace checks pass.
+
+## Denoise timestep storage contract
+
+- Removed DenoiseTrajectoryBuffers._timestep_dtype, which inspected the first
+  element and defaulted to float32 on errors. DiffusionSamplingStateBase declares
+  timesteps as a Tensor, and the execution loop already calls Tensor-only methods.
+  Allocation now checks that contract explicitly and reads the actual dtype.
+- Removed the unreachable non-Tensor conversion in _expand_timestep: record_step
+  already calls detach before passing the timestep. Retained batch broadcasting
+  and shape diagnostics, which perform necessary replay-layout work.
+- Updated two allocation-only fixtures from Python lists to Tensor schedules.
+  Added invalid-schedule regressions instead of preserving a partial compatibility
+  path that could never execute the denoise loop successfully.
+- Retained the loop entrypoint and buffer owner: numerical step composition and
+  replay tensor allocation/writes have separate responsibilities. Probe execution
+  still allocates full trajectory capacity while executing bounded steps; this
+  change does not alter its memory sizing or claim unexecuted entries are replay.
+- Validation: 81 denoise, full-sequence binding, memory-probe and tiny real-component
+  pipeline tests passed. Touched-file Ruff and diff whitespace checks pass.
