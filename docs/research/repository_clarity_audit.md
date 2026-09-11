@@ -516,3 +516,30 @@ should be read with these explicit module closures to avoid repeated cleanup.
 Validation: all 320 `tests/config` tests passed against the current worktree,
 including all experiment parsing, declared algorithm facts, launch tiers,
 precision and Torch-free parsing. No production code changed in this review.
+
+## Config loading review closure
+
+Reviewed `vrl/config/loading.py` and its resource/composition tests. Replaced
+private-attribute probing (`hasattr(entry, '_content')`) with the public
+`OmegaConf.is_config` check. Defaults entries now reject numeric, boolean, null
+and list values before path resolution, naming the source file and entry index;
+previously these values could become incidental filenames or opaque errors.
+The existing single-key mapping check and valid string/mapping semantics remain.
+
+Retained the module's free functions: package-resource traversal, path joining,
+default selection and recursive YAML composition are stateless operations.
+`compose_config` deliberately preserves mandatory values for inspection, while
+`load_config` resolves and validates them for execution. `_SELF_` is a YAML
+composition marker and `_BUNDLED_CONFIGS` is the package-resource boundary;
+neither is an unexplained business vocabulary. Cycle detection tracks the
+active recursion ancestry rather than globally rejecting reused presets.
+Additive layers remain independent of base default replacements, and scalar
+values apply last. No ConfigLoader class or generic parser framework is added.
+
+This closes the loading module's current clarity review alongside the already
+closed rule/algorithm-dispatch/gate modules; precision and schema source review
+remain outside that closure.
+
+Validation: 324 config tests passed, including four malformed-default regression
+cases and all bundled experiment/resource composition checks. Touched-file Ruff
+and diff whitespace checks pass.

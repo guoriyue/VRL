@@ -119,8 +119,13 @@ def _load_one(
         if not isinstance(defaults, (list, ListConfig)):
             raise TypeError(f"{path}: 'defaults' must be a list")
         self_seen = False
-        for entry in defaults:
-            entry_val = entry if not hasattr(entry, "_content") else OmegaConf.to_container(entry)
+        for index, entry in enumerate(defaults):
+            entry_val = OmegaConf.to_container(entry) if OmegaConf.is_config(entry) else entry
+            if not isinstance(entry_val, (str, dict)):
+                raise TypeError(
+                    f"{path}: defaults[{index}] must be a config name or single-entry mapping, "
+                    f"got {entry_val!r}",
+                )
             if entry_val == _SELF_:
                 merged = OmegaConf.merge(merged, raw)
                 self_seen = True
