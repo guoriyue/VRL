@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING, cast
 
 from vrl.generation.execution.sample_batches import (
     concatenate_sample_values,
+    gather_batch_context,
     gather_replay_tensors,
     ordered_covering_batches,
-    require_matching_batch_context,
 )
 from vrl.generation.protocols import BatchPayload
 from vrl.generation.types import (
@@ -64,7 +64,7 @@ class DiffusionBatchGatherer:
             [batch.replay_tensors for batch in ordered_batches],
             sample_counts=[batch.batch.sample_count for batch in ordered_batches],
         )
-        rollout_context = require_matching_batch_context(
+        rollout_context = gather_batch_context(
             [batch.context for batch in ordered_batches],
         )
         if not rollout_context:

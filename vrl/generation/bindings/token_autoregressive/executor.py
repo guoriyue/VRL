@@ -12,8 +12,8 @@ from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout
 from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
+    gather_batch_context,
     ordered_covering_batches,
-    require_matching_batch_context,
 )
 from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.types import (
@@ -318,7 +318,7 @@ class ARDiscreteBatchGatherer:
             row_fields=fields,
         )
         cat = layout.cat_batch_fields(ordered_ar_chunks, fields)
-        batch_context = require_matching_batch_context(
+        batch_context = gather_batch_context(
             [batch.context for batch in ordered_ar_chunks],
         )
         trajectory = build_ar_discrete_trajectory(

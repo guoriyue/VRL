@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 from vrl.generation.execution.sample_batches import (
     concatenate_sample_values,
+    gather_batch_context,
     gather_replay_tensors,
     ordered_covering_batches,
-    require_matching_batch_context,
 )
 from vrl.generation.protocols import BatchPayload
 from vrl.generation.types import (
@@ -44,7 +44,7 @@ class ChunkAutoregressiveDenoiseGatherer:
         )
         output = concatenate_sample_values([batch.output for batch in ordered], name="output")
         rows = list(sample_rows)
-        context = require_matching_batch_context([batch.context for batch in ordered])
+        context = gather_batch_context([batch.context for batch in ordered])
 
         if ordered[0].has_trainable_trajectory:
             trajectory = build_chunk_autoregressive_denoise_trajectory(

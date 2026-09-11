@@ -20,8 +20,8 @@ from vrl.generation.composition.token_autoregressive.token_loop import (
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
     concatenate_sample_values,
+    gather_batch_context,
     ordered_covering_batches,
-    require_matching_batch_context,
     require_sample_rows,
 )
 from vrl.generation.types import (
@@ -393,7 +393,7 @@ class JanusProR1GenerationBatchGatherer:
         for name in names:
             first = batches[0].segments[name]
             try:
-                require_matching_batch_context(
+                gather_batch_context(
                     [
                         {
                             "visual": batch.segments[name]["visual"],
@@ -447,7 +447,7 @@ class JanusProR1GenerationBatchGatherer:
             sample_rows=list(sample_rows),
             segments=segments,
             primary_segment="final_image",
-            context=require_matching_batch_context([batch.context for batch in ordered]),
+            context=gather_batch_context([batch.context for batch in ordered]),
         )
         return GenerationOutput(
             output=cat["final_image"],

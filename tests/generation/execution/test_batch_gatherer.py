@@ -18,8 +18,8 @@ from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
     SampleAlignedValues,
+    gather_batch_context,
     gather_replay_tensors,
-    require_matching_batch_context,
 )
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
@@ -206,7 +206,7 @@ def test_cosmos3_keeps_prompt_ids_out_of_shared_batch_context() -> None:
     contexts = [Cosmos3Model.export_batch_context(object(), value) for value in states]
     replay = [Cosmos3Model.export_replay_tensors(object(), value) for value in states]
 
-    assert require_matching_batch_context(contexts) == contexts[0]
+    assert gather_batch_context(contexts) == contexts[0]
     gathered = gather_replay_tensors(replay, sample_counts=[1, 1])
     assert gathered["cond_input_ids"] == ([1, 2], [3, 4, 5])
 

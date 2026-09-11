@@ -5759,3 +5759,19 @@ The broader repository audit remains incomplete.
 - Ten malformed identity cases cover both fields; nine failed before the fix.
   All 74 reward service tests pass, as do touched-file Ruff and diff checks.
   No GPU throughput claim is made. The broader repository audit remains open.
+
+## Name shared batch-context gathering for its returned value
+
+- Rename require_matching_batch_context to gather_batch_context across diffusion,
+  chunk denoise, token AR, Janus and NextStep gatherers and the existing tests.
+  The operation validates nested values and returns the shared context mapping;
+  its name now expresses that result, consistent with gather_replay_tensors.
+  Remove the old export without introducing a forwarding alias.
+- Keep the shared free functions: recursive tensor-safe comparison and replay
+  gathering remove real cross-family complexity. Keep family gatherer files as
+  driver/model boundaries and preserve their uniform gather_batches interface.
+  Class proliferation and line-count reduction are not goals of this change.
+- Generation suite: 781 passed with 17 dependency warnings. NextStep runner and
+  Janus rollout wiring: 25 passed. Touched-file Ruff and diff checks pass; no old
+  code/test references remain. This is a naming change, with no scheduling,
+  memory-admission or merge-semantics change. Repository-wide audit remains open.

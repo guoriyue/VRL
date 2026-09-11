@@ -138,7 +138,7 @@ def gather_replay_tensors(
     return gathered
 
 
-def require_matching_batch_context(
+def gather_batch_context(
     contexts: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     """Return shared batch context after checking every value matches."""
@@ -348,9 +348,9 @@ __all__ = [
     "GenerationSampleBatch",
     "SampleAlignedValues",
     "concatenate_sample_values",
+    "gather_batch_context",
     "gather_replay_tensors",
     "ordered_covering_batches",
-    "require_matching_batch_context",
     "require_sample_rows",
     "run_sample_batches_with_oom_retry",
 ]

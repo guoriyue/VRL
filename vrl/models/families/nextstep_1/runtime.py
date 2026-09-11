@@ -16,8 +16,8 @@ from vrl.generation.bindings.token_autoregressive import (
 from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
+    gather_batch_context,
     ordered_covering_batches,
-    require_matching_batch_context,
 )
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.generation.types import (
@@ -249,7 +249,7 @@ class NextStep1GenerationBatchGatherer:
             row_fields=fields,
         )
         cat = self.layout.cat_batch_fields(ordered_ar_chunks, fields)
-        trajectory_context = require_matching_batch_context(
+        trajectory_context = gather_batch_context(
             [batch.context for batch in ordered_ar_chunks],
         )
         trajectory = build_ar_continuous_trajectory(
