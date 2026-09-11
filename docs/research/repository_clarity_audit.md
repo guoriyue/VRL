@@ -3799,3 +3799,16 @@ this combined regression is compatibility evidence, not architectural completion
 - Validation: all 89 data tests passed, covering manifest validation, provenance
   and dataset behavior. Touched-file Ruff/diff checks passed; removed free-helper
   callers are gone. Full repository review remains incomplete.
+
+## Artifact path fields reject coercion from unrelated values
+
+- _artifact_values treated any Iterable as paths, including mapping keys and
+  byte integers, and converted numeric/None list items to file names. Four
+  regressions reproduced misleading missing-file errors instead of type errors.
+- Accept strings and list/tuple containers of strings explicitly, preserving
+  empty-entry filtering. Keep the implementation inside ArtifactManifestReport;
+  no new parser/helper or schema constants. Generator/dict/bytes path containers
+  are no longer accepted implicitly. Shared path resolution remains unchanged.
+- Validation: 93 data tests passed; after adding positive list/tuple coverage,
+  all 15 focused manifest tests passed. Touched-file Ruff/diff checks passed.
+  Full repository review remains incomplete.

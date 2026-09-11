@@ -211,3 +211,32 @@ def test_artifact_symlink_within_root_and_explicit_absolute_path_remain_supporte
     assert resolve_artifact_path("alias.ppm", data_root=root) == reference
     outside = tmp_path / "outside.ppm"
     assert resolve_artifact_path(outside, data_root=root, allow_absolute=True) == outside
+
+
+@pytest.mark.parametrize("value", [{"ref.ppm": 1}, [1], [None], b"ref.ppm"])
+def test_artifact_field_rejects_non_path_values(tmp_path, value):
+    example = PromptExample(prompt="test", metadata={"attachments": value})
+    with pytest.raises(ArtifactManifestError, match=r"attachments.*string or.*strings"):
+        ArtifactManifestReport.from_examples(
+            [example],
+            manifest_path=tmp_path / "manifest.jsonl",
+            data_root=tmp_path,
+            artifact_fields=("attachments",),
+        )
+
+
+@pytest.mark.parametrize("container", [list, tuple])
+def test_artifact_field_preserves_path_sequences(tmp_path, container):
+    _write_ppm(tmp_path / "ref.ppm")
+    example = PromptExample(
+        prompt="test",
+        metadata={"attachments": container(["", "ref.ppm", "  "])},
+    )
+    report = ArtifactManifestReport.from_examples(
+        [example],
+        manifest_path=tmp_path / "manifest.jsonl",
+        data_root=tmp_path,
+        artifact_fields=("attachments",),
+    )
+    assert report.artifact_count == 1
+    assert report.resolved_artifacts[0].raw_path == "ref.ppm"

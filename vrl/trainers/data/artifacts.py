@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
@@ -66,13 +66,15 @@ class ArtifactManifestReport:
         value = getattr(example, field_name, None)
         if value is None:
             value = example.metadata.get(field_name)
-        if value is None or value == "":
+        if value is None:
             return ()
         if isinstance(value, str):
-            return (value,)
-        if isinstance(value, Iterable):
-            return tuple(str(item) for item in value if str(item).strip())
-        raise ArtifactManifestError(f"artifact field {field_name!r} must be a string or list")
+            return (value,) if value else ()
+        if isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
+            return tuple(item for item in value if item.strip())
+        raise ArtifactManifestError(
+            f"artifact field {field_name!r} must be a string or a list/tuple of strings"
+        )
 
     @staticmethod
     def _assert_readable(path: Path, *, manifest_path: Path, row_index: int) -> None:
