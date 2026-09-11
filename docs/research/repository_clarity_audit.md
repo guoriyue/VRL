@@ -5971,3 +5971,19 @@ The broader repository audit remains incomplete.
 - Empty-input regression failed before the fix. Diagnostic utility and online
   diagnostics suites: 21 passed, including real local Gloo/DTensor digest checks.
   Touched-file Ruff and diff checks pass. Whole-repository completion unproven.
+
+## Express rollout phase success through control flow, not duplicate state
+
+- Replace rollout_memory_released with try/except/else: restore trainer state
+  only in the successful offload branch and only when it was parked. Preserve
+  root/cleanup exception precedence and the rule that failed offload leaves
+  trainer state parked for terminal cleanup.
+- Remove the strict schedule's None initialization and post-collection assertion;
+  its phase manager propagates errors, so successful exit guarantees batch
+  assignment. No alternate missing-batch state exists on that path.
+- Keep coordinator phase methods, cleanup-error wrapper and cross-layer cause
+  inspection. They own GPU handoff sequencing and restart-policy semantics, not
+  redundant forwarding. Do not replace them with another state-machine class.
+- Strict failure, orchestration and frozen-driver-offload tests: 34 passed. Tests
+  cover collection failure, offload failure, no-parking and restoration failure.
+  Touched-file Ruff and diff checks pass. Broader audit remains incomplete.

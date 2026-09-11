@@ -50,7 +50,6 @@ class StrictOnPolicyRolloutSchedule:
         # The schedule only announces the phase; who parks, activates,
         # releases, and restores (and in which order, under which failures)
         # is owned by the coordinator's phase manager.
-        batches: list[Any] | None = None
         async with self.lifecycle.rollout_phase(stats):
             with stats.phase("rollout.collect_s"):
                 batches = await self.lifecycle.collector.collect_prompt_groups(
@@ -61,7 +60,6 @@ class StrictOnPolicyRolloutSchedule:
                     stats=stats,
                     reward_mode=self.reward_mode,
                 )
-        assert batches is not None
 
         return RolloutIteration(
             batches=batches,

@@ -228,17 +228,16 @@ class RolloutRuntimeCoordinator:
             phase_error = error
 
         cleanup_error: BaseException | None = None
-        rollout_memory_released = False
         try:
             await self.offload_rollout_runtime_memory(stats)
-            rollout_memory_released = True
         except BaseException as error:
             cleanup_error = error
-        if parked and rollout_memory_released:
-            try:
-                self.restore_training_state_after_rollout(stats)
-            except BaseException as error:
-                cleanup_error = error
+        else:
+            if parked:
+                try:
+                    self.restore_training_state_after_rollout(stats)
+                except BaseException as error:
+                    cleanup_error = error
 
         if phase_error is not None:
             if cleanup_error is not None:
