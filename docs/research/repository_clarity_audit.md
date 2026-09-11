@@ -1825,3 +1825,24 @@ is not a repository-wide completion claim or a mandate to inline short functions
   tests call a class-owned factory, preserve missing-attribute errors, retain
   direct class lookup and reject missing module/attribute separators. Touched-file
   Ruff and diff checks passed. Repository-wide review remains incomplete.
+
+## Token configuration projections remain a uniform adapter boundary
+
+- Reviewed registry TokenFamilyBuild.config_builder declarations, the shared
+  build_token_family_bundle consumer, and Janus/NextStep/Emu3/GLM/LlamaGen
+  projections. These produce dictionaries; the shared builder subsequently
+  constructs config_cls and model_cls. They are not simple object factories.
+- Keep these named family projection functions and token_model_config_base.
+  They preserve family-specific fields while leaving absent LoRA defaults with
+  config dataclasses. Keep _validate_token_lora_path shared by projection and
+  assembly so direct assembly fails before model construction.
+- Non-goal: migrate every registry entry to classmethods merely because dynamic
+  imports now support them. Preserve the common cross-family adapter shape;
+  no runtime code or registry constants changed in this review.
+- Validation: token LoRA/default and training-capability tests were run together
+  (30 passed). Their assertions exercise both
+  projection and configuration construction; no actual pretrained model loaded.
+- Remaining candidate: LlamaGen projection compares fixed geometry after int()
+  conversion, potentially hiding fractional overrides. Requires focused caller/
+  schema review before changing it; this keep decision is about function shape,
+  not proof that every value conversion is correct.
