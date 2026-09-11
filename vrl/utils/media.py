@@ -42,12 +42,12 @@ def image_to_uint8_hwc(image: Any) -> np.ndarray:
     min is negative; ``uint8``/integer inputs are passed through with clipping.
     """
 
-    if isinstance(image, torch.Tensor):
-        array = image.detach().cpu()
-        if array.ndim == 4:
-            if array.shape[0] != 1:
-                raise ValueError(f"expected one image, got batch shape {tuple(array.shape)}")
-            array = array[0]
+    array = image.detach().cpu() if isinstance(image, torch.Tensor) else np.asarray(image)
+    if array.ndim == 4:
+        if array.shape[0] != 1:
+            raise ValueError(f"expected one image, got batch shape {tuple(array.shape)}")
+        array = array[0]
+    if isinstance(array, torch.Tensor):
         if array.ndim == 3 and array.shape[0] in {1, 3, 4}:
             array = array[:3].permute(1, 2, 0)
         if torch.is_floating_point(array):
@@ -56,7 +56,7 @@ def image_to_uint8_hwc(image: Any) -> np.ndarray:
             array = array.float()
         array_np = array.numpy()
     else:
-        array_np = np.asarray(image)
+        array_np = array
 
     if array_np.ndim != 3:
         raise ValueError(f"expected an image with 3 dimensions, got shape {array_np.shape}")

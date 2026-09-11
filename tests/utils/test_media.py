@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import torch
 
 from vrl.utils.media import image_to_uint8_hwc, video_tensor_to_uint8_frames
@@ -72,3 +73,18 @@ def test_video_tensor_to_uint8_frames_scales_unit_float_values() -> None:
 
     expected = np.array([[[[0, 128, 1], [255, 64, 254]]]], dtype=np.uint8)
     np.testing.assert_array_equal(converted, expected)
+
+
+@pytest.mark.parametrize("layout", ["chw", "hwc"])
+def test_numpy_single_image_batch_preserves_pixels(layout: str) -> None:
+    image = np.arange(5 * 6 * 3, dtype=np.uint8).reshape(5, 6, 3)
+    source = image.transpose(2, 0, 1) if layout == "chw" else image
+    np.testing.assert_array_equal(image_to_uint8_hwc(source[None]), image)
+
+
+@pytest.mark.parametrize("as_tensor", [False, True])
+def test_image_conversion_rejects_multiple_images(as_tensor: bool) -> None:
+    images = np.zeros((2, 3, 5, 6), dtype=np.uint8)
+    source = torch.from_numpy(images) if as_tensor else images
+    with pytest.raises(ValueError, match="expected one image"):
+        image_to_uint8_hwc(source)

@@ -984,3 +984,18 @@ contained guesses. Removed both:
 - Validation: 15 JSON, logger and Ray deadline tests passed. No production edits;
   diff whitespace check passes. Artifact/config helpers were also rechecked for
   cross-domain callers, with no additional structural change selected here.
+
+## Media singleton-batch normalization
+
+- Moved optional leading singleton-batch handling before the Tensor/NumPy branch
+  in image_to_uint8_hwc. The documented NumPy [1,...] input previously failed
+  despite identical Tensor inputs being supported. Both now share the same
+  one-image check; multiple-image batches fail explicitly.
+- Retained tensor-specific dtype/device conversion and existing channel/range
+  conventions. Retained free media converters as cross-domain numerical/file
+  boundaries; no ImageConverter class or new helper introduced. Resolving all
+  ambiguous CHW/HWC layouts or replacing automatic value-range handling is outside
+  this correction and remains a separate API-contract question.
+- Validation: 348 media/reward tests passed, 5 skipped. Added pixel-exact NumPy
+  CHW/HWC singleton regressions and consistent multi-image rejection checks.
+  Touched-file Ruff and diff whitespace checks pass.
