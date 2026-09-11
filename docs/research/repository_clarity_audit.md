@@ -4380,6 +4380,20 @@ this combined regression is compatibility evidence, not architectural completion
   suites passed: 33 tests. Touched-file Ruff checks pass. Repository-wide clarity
   completion remains unproven.
 
+## Denoise configuration owns exact sample identity validation
+
+- Validate sample_start as a nonnegative exact integer and sample_count as a
+  positive exact integer in DenoiseLoopConfig using require_exact_int. Remove
+  the downstream int(config.sample_count) coercion in buffer allocation.
+- Eight malformed direct-construction cases failed before the change; also
+  cover zero sample_count rejection. Normal executor construction already gets
+  valid identity from GenerationSampleBatch, but direct loop configuration now
+  enforces the same semantics rather than coercing or failing during sampling.
+- Keep existing config/buffer owners and the probe's partial execution with full
+  allocation. No extra helper or wrapper class is introduced. Denoise and full
+  sequence binding suites: 179 passed. Touched-file Ruff checks pass. The full
+  repository audit remains incomplete.
+
 ## Denoise loop local names follow execution order
 
 - Rename latents_ori to latents_before_step and prev_latents to next_latents in

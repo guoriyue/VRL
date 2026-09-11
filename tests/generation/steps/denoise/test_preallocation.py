@@ -180,6 +180,18 @@ def test_forward_probe_batch_uses_canonical_flow_with_truncated_steps() -> None:
     assert executor.calls == ["encode", "prepare", "denoise:1", "decode"]
 
 
+@pytest.mark.parametrize("field", ["sample_start", "sample_count"])
+@pytest.mark.parametrize("value", [1.9, "2", True, -1])
+def test_denoise_config_rejects_invalid_sample_identity(field, value) -> None:
+    with pytest.raises(ValueError, match=field):
+        replace(_config(), **{field: value})
+
+
+def test_denoise_config_rejects_empty_sample_batch() -> None:
+    with pytest.raises(ValueError, match="sample_count"):
+        replace(_config(), sample_count=0)
+
+
 def _config(*, sample_count: int = 2, return_kl: bool = False) -> DenoiseLoopConfig:
     return DenoiseLoopConfig(
         sample_start=0,

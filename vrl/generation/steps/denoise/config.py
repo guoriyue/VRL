@@ -154,6 +154,8 @@ class DenoiseLoopConfig:
     execute_steps: int | None = None
 
     def __post_init__(self) -> None:
+        require_exact_int(self.sample_start, path="sample_start", minimum=0)
+        require_exact_int(self.sample_count, path="sample_count", minimum=1)
         if self.execute_steps is not None:
             require_exact_int(self.execute_steps, path="execute_steps", minimum=1)
 

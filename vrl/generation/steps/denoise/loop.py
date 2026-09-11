@@ -66,7 +66,7 @@ class DenoiseTrajectoryBuffers:
         if not isinstance(latents, torch.Tensor):
             raise TypeError("denoise state.latents must be a torch.Tensor")
         batch_rows = int(latents.shape[0])
-        if batch_rows != int(config.sample_count):
+        if batch_rows != config.sample_count:
             raise ValueError(
                 f"denoise batch produced {batch_rows} rows, expected {config.sample_count}",
             )
