@@ -5494,3 +5494,20 @@ this combined regression is compatibility evidence, not architectural completion
 - Three regressions failed before the fix and now verify rejection before any
   generation request is submitted. Collector and orchestration suites: 314
   passed. Touched-file Ruff and git diff --check pass. Wider audit remains open.
+
+## Reward artifact selection stays within one builder operation
+
+- Consolidate _reward_view, _reward_output and _tensor_value_from_ref into their
+  sole public consumer, TrajectoryRolloutBatchBuilder.reward_outputs. The method
+  now reads in order: require one scoring view, resolve its artifact, normalize
+  its declared range. Remove the three private method hops and unused type import.
+- Preserve error messages, tensor-ref precedence, uint8 reconstruction and tanh
+  conversion. Keep training pack methods, shared group-ID construction and primary
+  trainable-segment validation separate from this reward-only operation. Keep the
+  collector-owned reward group metadata key as a genuine schema constant. No new
+  class, alias or generic resolver is introduced to replace the removed helpers.
+- Existing collector and trajectory suites: 122 passed. These cover ambiguous
+  views, unsupported output references, replay-storage independence and uint8
+  reconstruction. Touched-file Ruff and git diff --check pass; removed helpers
+  have no remaining collector/test references. Whole-repository completion is
+  still unproven.
