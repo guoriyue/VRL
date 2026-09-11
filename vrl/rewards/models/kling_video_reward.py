@@ -47,6 +47,59 @@ class _DataConfig:
     prompt_template_type: str = "none"
     sample_type: str = "uniform"
 
+    def build_chat_payload(
+        self,
+        video_paths: list[str],
+        prompts: list[str],
+        *,
+        max_pixels: int | None,
+        min_pixels: int | None,
+    ) -> list[list[dict[str, Any]]]:
+        """The qwen-vl chat payload for one scoring batch, before any decoding.
+
+        Pure dictionary assembly: the checkpoint's frame budget is the ``max_pixels``
+        fallback, ``min_pixels`` is only written when set, and ``nframes`` and ``fps``
+        are mutually exclusive (a fixed frame count wins over the sampling rate).
+        These decide whether the reward scores in-distribution, so they are kept
+        apart from the decode/chat-template step that needs the ``[reward]`` extra.
+        """
+
+        if self.sample_type != "uniform":
+            raise ValueError(
+                "Kling VideoReward repo-owned inference currently supports only "
+                f"uniform video sampling, got {self.sample_type!r}",
+            )
+        max_pixels = self.max_frame_pixels if max_pixels is None else max_pixels
+        return [
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "video",
+                            "video": f"file://{video_path}",
+                            "max_pixels": max_pixels,
+                            **({"min_pixels": min_pixels} if min_pixels is not None else {}),
+                            **(
+                                {"nframes": self.num_frames}
+                                if self.num_frames is not None
+                                else {"fps": self.fps}
+                            ),
+                        },
+                        {
+                            "type": "text",
+                            "text": build_kling_video_reward_prompt(
+                                prompt,
+                                self.eval_dim,
+                                self.prompt_template_type,
+                            ),
+                        },
+                    ],
+                },
+            ]
+            for video_path, prompt in zip(video_paths, prompts, strict=True)
+        ]
+
 
 @dataclass
 class _ModelConfig:
@@ -187,10 +240,9 @@ class KlingVideoRewardModel:
     ) -> Mapping[str, Any]:
         from qwen_vl_utils import process_vision_info
 
-        chat_data = _build_chat_payload(
+        chat_data = self.data_config.build_chat_payload(
             video_paths,
             prompts,
-            data_config=self.data_config,
             max_pixels=max_pixels,
             min_pixels=min_pixels,
         )
@@ -359,60 +411,6 @@ class KlingQwen2VLRewardModel(Qwen2VLForConditionalGeneration):
         else:
             raise ValueError("Invalid reward_token")
         return {"logits": pooled_logits}
-
-
-def _build_chat_payload(
-    video_paths: list[str],
-    prompts: list[str],
-    *,
-    data_config: _DataConfig,
-    max_pixels: int | None,
-    min_pixels: int | None,
-) -> list[list[dict[str, Any]]]:
-    """The qwen-vl chat payload for one scoring batch, before any decoding.
-
-    Pure dictionary assembly: the checkpoint's frame budget is the ``max_pixels``
-    fallback, ``min_pixels`` is only written when set, and ``nframes`` and ``fps``
-    are mutually exclusive (a fixed frame count wins over the sampling rate).
-    These decide whether the reward scores in-distribution, so they are kept
-    apart from the decode/chat-template step that needs the ``[reward]`` extra.
-    """
-
-    if data_config.sample_type != "uniform":
-        raise ValueError(
-            "Kling VideoReward repo-owned inference currently supports only "
-            f"uniform video sampling, got {data_config.sample_type!r}",
-        )
-    max_pixels = data_config.max_frame_pixels if max_pixels is None else max_pixels
-    return [
-        [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "video",
-                        "video": f"file://{video_path}",
-                        "max_pixels": max_pixels,
-                        **({"min_pixels": min_pixels} if min_pixels is not None else {}),
-                        **(
-                            {"nframes": data_config.num_frames}
-                            if data_config.num_frames is not None
-                            else {"fps": data_config.fps}
-                        ),
-                    },
-                    {
-                        "type": "text",
-                        "text": build_kling_video_reward_prompt(
-                            prompt,
-                            data_config.eval_dim,
-                            data_config.prompt_template_type,
-                        ),
-                    },
-                ],
-            },
-        ]
-        for video_path, prompt in zip(video_paths, prompts, strict=True)
-    ]
 
 
 def preflight_kling_video_reward_backend() -> None:

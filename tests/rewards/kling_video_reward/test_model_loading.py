@@ -461,11 +461,11 @@ def test_chat_payload_applies_the_checkpoint_frame_budget_and_frame_policy() -> 
     """``max_pixels`` falls back to the checkpoint budget, ``min_pixels`` is written
     only when set, and ``nframes`` displaces ``fps``: these decide whether the
     reward scores in-distribution."""
-    from vrl.rewards.models.kling_video_reward import _build_chat_payload, _DataConfig
+    from vrl.rewards.models.kling_video_reward import _DataConfig
 
     by_fps = _DataConfig(max_frame_pixels=200704, fps=2.0, eval_dim=["VQ", "MQ", "TA"])
-    (conversation,) = _build_chat_payload(
-        ["/tmp/clip.mp4"], ["a robot arm"], data_config=by_fps, max_pixels=None, min_pixels=None
+    (conversation,) = by_fps.build_chat_payload(
+        ["/tmp/clip.mp4"], ["a robot arm"], max_pixels=None, min_pixels=None
     )
     (turn,) = conversation
     video, text = turn["content"]
@@ -480,8 +480,8 @@ def test_chat_payload_applies_the_checkpoint_frame_budget_and_frame_policy() -> 
     assert "a robot arm" in text["text"]
 
     by_frames = _DataConfig(max_frame_pixels=200704, num_frames=8, fps=2.0)
-    (conversation,) = _build_chat_payload(
-        ["/tmp/clip.mp4"], ["p"], data_config=by_frames, max_pixels=1024, min_pixels=256
+    (conversation,) = by_frames.build_chat_payload(
+        ["/tmp/clip.mp4"], ["p"], max_pixels=1024, min_pixels=256
     )
     video = conversation[0]["content"][0]
     assert video["max_pixels"] == 1024
@@ -490,10 +490,9 @@ def test_chat_payload_applies_the_checkpoint_frame_budget_and_frame_policy() -> 
     assert "fps" not in video
 
     with pytest.raises(ValueError, match="uniform"):
-        _build_chat_payload(
+        _DataConfig(sample_type="random").build_chat_payload(
             ["/tmp/clip.mp4"],
             ["p"],
-            data_config=_DataConfig(sample_type="random"),
             max_pixels=None,
             min_pixels=None,
         )
