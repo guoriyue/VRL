@@ -315,9 +315,9 @@ async def test_reset_reuses_committed_runtime_weights_without_version_bump() -> 
 
 
 def test_continuous_rejects_stale_window_for_intolerant_algorithm() -> None:
-    """A likelihood-free algorithm + max_stale>0 must fail fast as unsound."""
+    """Reject a stale window based on capability, without inferring the objective."""
     runtime = _Runtime()
-    with pytest.raises(ValueError, match="likelihood-free"):
+    with pytest.raises(ValueError, match="tolerates_off_policy_staleness=False"):
         _build(
             _continuous_config(max_stale_policy_versions=1),
             _Collector(runtime),

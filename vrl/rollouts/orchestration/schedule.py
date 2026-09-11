@@ -57,12 +57,11 @@ def build_rollout_schedule(
 
     ``algorithm_tolerates_off_policy_staleness`` is the algorithm's soundness
     capability (a plain bool, not the algorithm object, so the rollout layer
-    stays free of any ``vrl.algorithms`` import): GRPO-family algorithms carry an
-    importance-sampling correction and tolerate a bounded version lag, while
-    likelihood-free objectives (DiffusionNFT) must use ``strict_on_policy``. The
-    staleness *mechanism* is algorithm-agnostic; only this soundness bound is
-    per-algorithm, so it is validated here rather than special-cased in the
-    producer/consumer.
+    stays free of any ``vrl.algorithms`` import). The algorithm declares whether
+    its objective supports bounded policy-version lag. Its name or use of an
+    importance-sampling ratio alone cannot establish that capability. The
+    continuous schedule checks this declaration; the producer/consumer implement
+    the algorithm-independent staleness mechanism.
     """
 
     mode = RolloutScheduleMode(config.schedule_mode)

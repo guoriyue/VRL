@@ -70,16 +70,15 @@ class ContinuousRolloutSchedule:
             fail_fast_errors=config.fail_fast_errors,
         )
 
-        # A likelihood-free algorithm has no way to reweight off-policy samples, so
-        # production continuous execution is unsound for it. Zero staleness is not a
-        # continuous submode: that behavior belongs to strict_on_policy.
+        # The algorithm owns the reason it cannot consume stale samples; this
+        # boundary checks only its declared capability. Zero staleness belongs
+        # to strict_on_policy rather than a continuous submode.
         if not algorithm_tolerates_off_policy_staleness:
             raise ValueError(
                 "rollout_orchestration.continuous.max_stale_policy_versions="
-                f"{settings.max_stale_policy_versions} is unsound for this algorithm: it is "
-                "likelihood-free (no importance-sampling correction), so it can only "
-                "train on strictly on-policy rollouts. Use schedule_mode='strict_on_policy', "
-                "or use a GRPO-family algorithm for continuous off-policy prefetch.",
+                f"{settings.max_stale_policy_versions} is unsupported by this algorithm: "
+                "it declares tolerates_off_policy_staleness=False. "
+                "Use schedule_mode='strict_on_policy'.",
             )
 
         logger.info(

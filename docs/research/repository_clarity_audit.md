@@ -3538,3 +3538,22 @@ this combined regression is compatibility evidence, not architectural completion
   skipped; touched-file Ruff/diff checks passed. Coverage includes real Ray
   dereferencing and deferred-install lifecycle behavior. Full review remains
   incomplete.
+
+## Continuous rejection reports capability instead of inventing algorithm facts
+
+- ContinuousRolloutSchedule.from_config interpreted every false staleness
+  capability as a likelihood-free objective without importance correction, and
+  recommended a GRPO-family algorithm. VGRPO explicitly rejects stale samples
+  because its refreshed behavior adapter does not identify the generating
+  policy; its ratio is not sufficient to establish stale-sample support.
+- Report tolerates_off_policy_staleness=False and the actionable strict_on_policy
+  setting. Remove family-wide claims from the factory documentation and the
+  algorithm-specific reason from the generic schedule. Admission behavior stays
+  unchanged; the algorithm continues to own its capability and explanation.
+- Keep build_rollout_schedule as the protocol implementation factory and
+  validate_rollout_schedule_topology as a cross-type guard. Their independent
+  function form serves real boundaries; do not introduce wrapper classes or
+  per-algorithm tables into orchestration.
+- Validation: all 272 orchestration tests passed, including the false-capability
+  rejection with its updated diagnostic. Touched-file Ruff/diff checks passed.
+  Full repository review remains incomplete.
