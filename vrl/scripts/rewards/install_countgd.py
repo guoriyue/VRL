@@ -145,6 +145,20 @@ class _PatchSpec:
     replacements: tuple[_Replacement, ...]
     sha256: str
 
+    def apply_to_text(self, text: str) -> str:
+        """Apply ordered replacements, rejecting upstream drift before publication."""
+
+        for replacement in self.replacements:
+            actual_count = text.count(replacement.old)
+            if actual_count != replacement.expected_count:
+                raise ValueError(
+                    f"CountGD patch input drift for {self.path}: expected "
+                    f"{replacement.expected_count} occurrences of {replacement.old!r}, "
+                    f"found {actual_count}",
+                )
+            text = text.replace(replacement.old, replacement.new)
+        return "\n".join(text.splitlines()).rstrip("\n") + "\n"
+
 
 _COMPATIBILITY_PATCHES = (
     _PatchSpec(
@@ -549,27 +563,9 @@ def _apply_compatibility_patches(source_dir: Path) -> None:
     for patch in _COMPATIBILITY_PATCHES:
         path = source_dir / patch.path
         text = path.read_text(encoding="utf-8")
-        text = _replace_text_exact(text, patch.replacements, context=patch.path)
+        text = patch.apply_to_text(text)
         path.write_text(text, encoding="utf-8")
         _require_sha256(path, patch.sha256, what=f"patched CountGD source {patch.path}")
-
-
-def _replace_text_exact(
-    text: str,
-    replacements: Sequence[_Replacement],
-    *,
-    context: str,
-) -> str:
-    for replacement in replacements:
-        actual_count = text.count(replacement.old)
-        if actual_count != replacement.expected_count:
-            raise ValueError(
-                f"CountGD patch input drift for {context}: expected "
-                f"{replacement.expected_count} occurrences of {replacement.old!r}, "
-                f"found {actual_count}",
-            )
-        text = text.replace(replacement.old, replacement.new)
-    return "\n".join(text.splitlines()).rstrip("\n") + "\n"
 
 
 def _restore_qualified_build_layout(source_dir: Path) -> None:

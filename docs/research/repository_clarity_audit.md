@@ -5157,3 +5157,18 @@ this combined regression is compatibility evidence, not architectural completion
   30 passed. A valid zero-threshold CLI call against the synthetic SQLite capture
   completed with text and JSON output. Touched-file Ruff and git diff --check
   pass. This is not real capture validation; the wider audit remains open.
+
+## CountGD patch specifications own text replacement
+
+- Move _replace_text_exact onto the existing _PatchSpec as apply_to_text. The
+  patch already owns path and ordered replacements; callers now supply only
+  source text. Remove the free helper and update its production caller and test.
+- Preserve replacement-count drift checks, newline normalization, subsequent
+  file hashing and patch order. Keep download/subprocess/file boundaries as
+  functions; retain revision, digest and compatibility tables as reproducible
+  installation inputs. No installer superclass or new configuration is added.
+- Existing installer tests: 8 passed, including drift rejection and staged
+  publication checks. Touched-file Ruff and git diff --check pass, and the old
+  helper name is absent from production/tests. These tests use isolated fixtures;
+  no dependency installation, download or real model smoke was run. The broader
+  script and repository audits remain incomplete.

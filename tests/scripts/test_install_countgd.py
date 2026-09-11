@@ -20,20 +20,10 @@ from vrl.scripts.rewards.countgd_environment_lock import (
 def test_patch_replacement_rejects_upstream_drift() -> None:
     replacement = installer._Replacement("old", "new", 2)
 
-    assert (
-        installer._replace_text_exact(
-            "old\r\nold\r\n",
-            (replacement,),
-            context="example.cc",
-        )
-        == "new\nnew\n"
-    )
+    patch = installer._PatchSpec("example.cc", (replacement,), "unused")
+    assert patch.apply_to_text("old\r\nold\r\n") == "new\nnew\n"
     with pytest.raises(ValueError, match="patch input drift"):
-        installer._replace_text_exact(
-            "old\n",
-            (replacement,),
-            context="example.cc",
-        )
+        patch.apply_to_text("old\n")
 
 
 def test_install_refuses_to_overwrite_existing_target(tmp_path: Path) -> None:
