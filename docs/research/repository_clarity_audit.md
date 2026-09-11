@@ -6366,3 +6366,20 @@ The broader repository audit remains incomplete.
 - Decoder contract and Janus/NextStep paged backend suites: eight passed with
   16 dependency warnings. Touched-file Ruff and diff checks pass. No throughput
   claim; broader repository audit remains incomplete.
+
+## Token scheduling and cache row adapters retain separate ownership
+
+- Re-read TokenAutoregressiveLoop/Envelope, the one-step token payloads and
+  ARCacheRows plus its tensor/container/HF cache helpers. Keep the loop responsible
+  for step position and row admission, the envelope for named lane routing, and
+  ARCacheRows for selected-row read/write. Combining them would couple scheduling
+  to concrete cache representations rather than remove duplicated ownership.
+- Keep split/concat free functions as cross-family representation operations,
+  with HF conversion helpers isolated from plain tensor/container handling.
+  Keep selected-row and batched-value APIs distinct; validation precedes writes,
+  and unknown output lane names are rejected before any lane is changed.
+  No claim of atomic rollback across arbitrary failing lane writes is made.
+- No production change or new wrapper is proposed. Cache rows, token-loop and
+  scheduler-batching tests: 59 passed, covering reordering, partial writes,
+  malformed payloads, cache round trips and scheduler row bounds. This is
+  component evidence; broader repository audit remains incomplete.
