@@ -395,7 +395,11 @@ class MetricsHealthGate:
         lines = text.splitlines()
         if len(lines) < 2:
             return [], []
-        rows = list(csv.DictReader(lines))
+        reader = csv.DictReader(lines)
+        columns = reader.fieldnames or []
+        if not columns or any(not name for name in columns) or len(columns) != len(set(columns)):
+            raise ValueError("metrics CSV header must contain unique non-empty column names")
+        rows = list(reader)
         signatures = [tuple(row.items()) for row in rows]
         return rows, signatures
 

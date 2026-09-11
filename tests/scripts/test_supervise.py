@@ -1239,3 +1239,13 @@ def test_health_gate_distinguishes_missing_metrics_from_unreadable_path(tmp_path
     (tmp_path / "metrics.csv").mkdir()
     with pytest.raises(IsADirectoryError):
         gate.judge_new_rows()
+
+
+@pytest.mark.parametrize("extra_name", ["loss", ""])
+def test_health_gate_rejects_ambiguous_header_before_judging_values(tmp_path, extra_name):
+    header = _METRICS_HEADER.rstrip("\n") + f",{extra_name}\n"
+    row = _metric_row(0, loss="nan").rstrip("\n") + ",0.0\n"
+    (tmp_path / "metrics.csv").write_text(header + row)
+    gate = MetricsHealthGate(HealthGateConfig(failure_limit=1), tmp_path)
+    with pytest.raises(ValueError, match="unique non-empty column names"):
+        gate.judge_new_rows()

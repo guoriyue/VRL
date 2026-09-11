@@ -2939,3 +2939,17 @@ this combined regression is compatibility evidence, not architectural completion
   and reaped when the health check raises PermissionError, preserving the same
   exception; a missing metrics file remains normal while a directory at that path
   raises. Touched-file Ruff/diff checks passed. Full review remains active.
+
+## Health CSV reader rejects ambiguous column identity
+
+- csv.DictReader silently overwrites earlier values under duplicate header names.
+  A later loss column could therefore mask NaN in the first loss column before
+  MetricsHealthGate evaluates the row.
+- Validate non-empty, unique parsed column names in the existing complete-row
+  reader before constructing row dictionaries. Keep dynamic reward columns and
+  numerical health checks; no hardcoded schema copy or new reader wrapper.
+  Reader failures use the preceding supervisor-owned child cleanup path.
+- Validation: 99 supervisor and metrics-IO tests passed. Duplicate loss and an
+  empty column are rejected before health evaluation, including a NaN followed
+  by a healthy-looking duplicate value. Touched-file Ruff/diff checks passed.
+  Full repository review remains active.
