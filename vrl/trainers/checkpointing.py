@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import shutil
 import tempfile
 from collections.abc import Mapping
@@ -773,8 +772,7 @@ def _write_checkpoint_artifacts_and_publish(
         family=family,
         model_identity=model_identity,
         trainer_state=trainer_state,
-        completed_epoch=int(progress.get("completed_epoch", progress.get("next_epoch", 0))),
-        next_epoch=int(progress.get("next_epoch", progress.get("next_step", 0))),
+        progress=progress,
         uses_lora=any(
             name == LORA_WEIGHTS_NAME or name.startswith(f"{LORA_WEIGHTS_NAME}/")
             for name in adapter_exports
@@ -1614,8 +1612,7 @@ def write_checkpoint_meta(
     family: str,
     model_identity: dict[str, Any],
     trainer_state: dict[str, Any],
-    completed_epoch: int,
-    next_epoch: int,
+    progress: dict[str, Any],
     uses_lora: bool,
     checkpoint_file_bytes: int | None = None,
 ) -> dict[str, Any]:
@@ -1638,12 +1635,17 @@ def write_checkpoint_meta(
         "checkpoint_file_bytes": (
             int(checkpoint_file_bytes) if checkpoint_file_bytes is not None else None
         ),
-        "trainer_step": int(trainer_state.get("step", 0)),
-        "global_step": int(trainer_state.get("global_step", 0)),
-        "completed_epoch": int(completed_epoch),
-        "next_epoch": int(next_epoch),
         "uses_lora": bool(uses_lora),
     }
+    # Mirror explicit progress without converting optimizer steps into epochs.
+    for name in ("completed_epoch", "next_epoch", "completed_step", "next_step", "global_step"):
+        if name in progress:
+            value = progress[name]
+            if type(value) is not int or value < 0:
+                raise ValueError(f"progress.{name} must be a non-negative integer, got {value!r}")
+            meta[name] = value
+    if "step" in trainer_state:
+        meta["trainer_step"] = trainer_state["step"]
     path = Path(checkpoint_dir)
     path.mkdir(parents=True, exist_ok=True)
     (path / CHECKPOINT_META_NAME).write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
@@ -1677,28 +1679,29 @@ def is_complete_checkpoint(checkpoint_dir: str | Path) -> bool:
 
 
 def find_latest_complete_checkpoint(output_dir: str | Path) -> Path | None:
-    """Latest fully published ``checkpoint-*`` directory under ``output_dir``.
+    """Find the published checkpoint with the highest explicit global_step.
 
-    Ordered by meta ``global_step`` (falling back to the numeric directory
-    suffix); incomplete/staging directories are skipped entirely. Returns
-    ``None`` when no trustworthy checkpoint exists — the caller starts fresh.
+    Directory suffixes never supply progress. Missing/invalid metadata progress
+    fails instead of silently choosing a checkpoint or starting training fresh.
+    Equal-step copies use stable path order; neither represents a later step.
     """
 
     root = Path(output_dir)
     if not root.is_dir():
         return None
-    best: tuple[int, int, Path] | None = None
-    for candidate in root.glob("checkpoint-*"):
+    best: tuple[int, Path] | None = None
+    for candidate in sorted(root.glob("checkpoint-*")):
         if not candidate.is_dir() or not is_complete_checkpoint(candidate):
             continue
-        match = re.fullmatch(r"checkpoint-(\d+)", candidate.name)
-        suffix = int(match.group(1)) if match else -1
         meta = read_checkpoint_meta(candidate)
-        global_step = int(meta.get("global_step", 0) or 0)
-        key = (global_step, suffix, candidate)
-        if best is None or key[:2] > best[:2]:
-            best = key
-    return best[2] if best else None
+        global_step = meta.get("global_step")
+        if type(global_step) is not int or global_step < 0:
+            raise ValueError(
+                f"{candidate}: checkpoint metadata requires a non-negative integer global_step"
+            )
+        if best is None or global_step > best[0]:
+            best = (global_step, candidate)
+    return best[1] if best else None
 
 
 __all__ = [

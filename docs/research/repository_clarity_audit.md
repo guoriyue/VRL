@@ -725,3 +725,30 @@ Torch-free import checks. Touched-file Ruff and diff whitespace checks pass.
 - Validation: 127 trainer-data, dataset and prompt-config tests passed, including
   malformed string/object field regressions. Touched-file Ruff and diff
   whitespace checks pass.
+
+## User-requested removal of remaining checkpoint progress guesses
+
+Follow-up to a9a2c4726: next_epoch/next_step loading properties already require
+explicit progress fields, but publication and latest-checkpoint selection still
+contained guesses. Removed both:
+
+- Metadata mirrors only provided progress fields, retaining step/epoch units.
+  next_step no longer populates next_epoch, next_epoch no longer supplies
+  completed_epoch, and absent counters no longer become zero. Explicit fields
+  are checked as non-negative integers. Offline checkpoints retain their actual
+  completed_step/next_step fields.
+- Latest-checkpoint discovery orders by the recorded global_step only. It no
+  longer parses a numeric directory suffix or supplies zero for missing steps.
+  Complete checkpoints without valid global_step fail explicitly instead of
+  silently selecting an inferred position or restarting fresh. Equal-step copies
+  use stable path order without claiming either represents a later step.
+- Retained strict next_epoch/next_step accessors and their shared private reader:
+  these read exactly one named field and validate it; they do not infer progress.
+  Retained completeness/publication boundaries and checkpoint schema/file names.
+- Validation: 303 checkpoint, evaluation, online lifecycle and DPO identity tests
+  passed. Regression tests cover metadata field absence and discovery without
+  explicit global_step. Existing older checkpoints that relied on missing
+  progress fields no longer qualify for automatic resume by directory name.
+- Supervisor regression suite also passed (59 tests). Touched-file Ruff and
+  diff whitespace checks pass. SFT latent shard review remains pending after
+  this user-steered checkpoint follow-up.

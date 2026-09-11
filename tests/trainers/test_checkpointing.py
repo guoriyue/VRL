@@ -2361,3 +2361,40 @@ def test_resume_position_rejects_invalid_values(tmp_path, field, value):
     )
     with pytest.raises(ValueError, match="non-negative integer"):
         getattr(checkpoint, field)
+
+
+@pytest.mark.parametrize("progress", [{"next_epoch": 7}, {"completed_step": 7, "next_step": 7}])
+def test_checkpoint_metadata_does_not_infer_progress_fields(tmp_path, progress):
+    from vrl.trainers.checkpointing import read_checkpoint_meta
+
+    target = tmp_path / "checkpoint-999"
+    save_training_checkpoint(
+        target,
+        trainer=_Trainer(),
+        bundle=_Bundle(),
+        family="unit",
+        model_identity=UNIT_IDENTITY,
+        progress=progress,
+        rng_state={},
+    )
+    meta = read_checkpoint_meta(target)
+    for field in ("completed_epoch", "next_epoch", "completed_step", "next_step", "global_step"):
+        assert (field in meta) == (field in progress)
+        if field in progress:
+            assert meta[field] == progress[field]
+
+
+def test_latest_checkpoint_does_not_guess_missing_step_from_name(tmp_path):
+    from vrl.trainers.checkpointing import find_latest_complete_checkpoint
+
+    save_training_checkpoint(
+        tmp_path / "checkpoint-999",
+        trainer=_Trainer(),
+        bundle=_Bundle(),
+        family="unit",
+        model_identity=UNIT_IDENTITY,
+        progress={"next_epoch": 7},
+        rng_state={},
+    )
+    with pytest.raises(ValueError, match="requires a non-negative integer global_step"):
+        find_latest_complete_checkpoint(tmp_path)
