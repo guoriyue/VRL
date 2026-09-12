@@ -155,8 +155,8 @@ this preparation task.
 - N=1 self-repeat (`n1_rep`) is bit-exact against `n1_retry`, so that gap is
   not run-to-run noise.
 - One-forward probe (`sequence_parallel_forward_probe`, real SD3.5 weights,
-  2 ranks): float32 rel_l2 2.5e-7, bfloat16 rel_l2 3.4e-3. Verdict: the
-  the small FP32 forward difference supports precision amplification as the
+  2 ranks): float32 rel_l2 2.5e-7, bfloat16 rel_l2 3.4e-3. The
+  small FP32 forward difference supports precision amplification as the
   cause of the image gap. This is a one-forward observation, not a completed
   FP32 denoise/image comparison. The original BF16 pixel gate remains FAILED
   at atol 0.02 with zero permitted mismatches; no replacement tolerance has
@@ -171,3 +171,36 @@ this preparation task.
 - Online 2x1 vs 1x2: first 2x1 launch died from driver/worker import skew
   during a concurrent Codex edit to vrl/generation (not a repo bug); relaunched
   on the consistent tree at 00:18 PDT.
+
+## Wan 2.1 I2V preparation ownership
+
+This Codex session owns CPU/network preparation of the pinned Wan 2.1 I2V
+checkpoint. The old root-disk snapshot contains only `model_index.json`, not
+the weights. Repository metadata for revision
+`b184e23a8a16b20f108f727c902e769e873ffc73` lists 46 files totaling
+90,104,322,037 bytes. Download destination is the existing NVMe HF cache;
+log: `outputs/perf/wan21_i2v_model_download.log`. Do not duplicate the download.
+The GPU queue remains with vrl-74. Driver 86070 was confirmed live inside
+trainer backward while its first epoch metrics had not yet been written.
+
+The download completed. All 46 files totaling 90,104,322,037 bytes passed
+size and repository-digest verification; transformer index has 14 shards,
+text encoder index five. Receipt: `outputs/perf/wan21_i2v_cache_verification.json`.
+
+Dataset readiness is not complete. The old local manifests contain only 7/2
+rows and lack `report.json`; current split files require 309/35 rows. All 344
+prompts match the official CSV (3,360 candidate rows). A full importer run into
+`/mnt/nvme/data/external` decoded the first training reference, then exited 1
+with HTTP 403 for the selected second video's Luma CDN URL (CSV row 2673,
+caption `Hand flipping open book cover.`). Log:
+`outputs/perf/videophy_i2v_setup.log`. There is no completed new manifest/report.
+The official CSV contains alternative videos for this same caption on S3;
+availability-aware selection must retain the actual chosen source identity
+and avoid relabeling cached frames when retrying. Do not substitute synthetic
+images or silently use the old partial manifests.
+
+The 2x1 online driver 86070 has now exited. Its log ends before the first
+optimizer update with replay parity `max_abs_diff=0.0148427`, limit `0.01`;
+`metrics.csv` has only its header. This is a failed numerical gate, not a
+completed five-epoch run. Preserve that limit and coordinate the next diagnosis
+with the GPU queue owner.
