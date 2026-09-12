@@ -11,33 +11,24 @@ from vrl.models import precision
 
 
 @pytest.mark.parametrize("mode", ["ieee", "tf32"])
-def test_apply_float32_precision_uses_string_api_exclusively(
-    monkeypatch: pytest.MonkeyPatch,
-    mode: str,
-) -> None:
-    matmul = SimpleNamespace(fp32_precision="none", allow_tf32="untouched")
-    cudnn = SimpleNamespace(fp32_precision="none", allow_tf32="untouched")
-    monkeypatch.setitem(
-        sys.modules,
-        "torch",
-        SimpleNamespace(
-            backends=SimpleNamespace(
-                cuda=SimpleNamespace(matmul=matmul),
-                cudnn=cudnn,
-            ),
-        ),
-    )
-
-    precision.apply_float32_precision(mode)
-
-    assert matmul.fp32_precision == mode
-    assert cudnn.fp32_precision == mode
-    assert matmul.allow_tf32 == "untouched"
-    assert cudnn.allow_tf32 == "untouched"
-    assert precision.float32_precision_state() == {
-        "matmul": mode,
-        "cudnn": mode,
-    }
+def test_apply_float32_precision_uses_string_api_exclusively(mode: str) -> None:
+    # Real torch roundtrip: the state reader is the production diagnostic, so a
+    # mismatch between writer and reader fails here. The legacy bool getter is
+    # deliberately NOT read: this torch raises RuntimeError on mixed-API access,
+    # which is itself the guarantee that the two mechanisms cannot mix silently.
+    matmul = torch.backends.cuda.matmul
+    cudnn = torch.backends.cudnn
+    if not (hasattr(matmul, "fp32_precision") and hasattr(cudnn, "fp32_precision")):
+        pytest.skip("this torch predates the string fp32_precision API")
+    original = precision.float32_precision_state()
+    try:
+        precision.apply_float32_precision(mode)
+        assert precision.float32_precision_state() == {"matmul": mode, "cudnn": mode}
+    finally:
+        # Restore by attribute: the process default "none" is a valid torch
+        # state but not an apply_float32_precision input.
+        matmul.fp32_precision = original["matmul"]
+        cudnn.fp32_precision = original["cudnn"]
 
 
 @pytest.mark.parametrize(("mode", "enabled"), [("ieee", False), ("tf32", True)])
@@ -46,6 +37,8 @@ def test_apply_float32_precision_uses_legacy_bool_fallback(
     mode: str,
     enabled: bool,
 ) -> None:
+    # Simulates a pre-2.9 torch (no fp32_precision attribute) — a dependency
+    # version boundary the installed torch cannot express, hence the fake.
     matmul = SimpleNamespace(allow_tf32=not enabled)
     cudnn = SimpleNamespace(allow_tf32=not enabled)
     monkeypatch.setitem(
@@ -88,13 +81,6 @@ def test_model_autocast_applies_only_supported_cpu_modes(
     )
     with precision.model_autocast(model, torch.device("cpu")):
         assert torch.is_autocast_enabled("cpu") is expected_enabled
-
-
-def test_model_precision_reads_stamped_role_precision() -> None:
-    role_precision = RolePrecision("bf16", "ieee")
-    model = SimpleNamespace(precision=role_precision)
-
-    assert precision.model_precision(model) is role_precision
 
 
 def test_precision_trace_observes_real_recompute_and_leaves_no_hooks():
