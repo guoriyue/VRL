@@ -172,13 +172,16 @@ class ContinuousRolloutConsumer:
             return
         for item in self.queue.snapshot():
             version = item.rollout_policy_version
-            if self.staleness.is_future(version, current_policy_version):
+            version_lag = self.staleness.staleness(version, current_policy_version)
+            if version_lag is None:
+                continue
+            if version_lag < 0:
                 raise RuntimeError(
                     "continuous queue item is newer than the trainer policy "
                     f"(item={version}, trainer={current_policy_version}); weight-sync "
                     "barrier invariant violated",
                 )
-            if self.staleness.too_stale(version, current_policy_version):
+            if version_lag > self.staleness.max_stale_policy_versions:
                 raise RuntimeError(
                     "continuous ready prompt batch is older than the policy window "
                     f"(item={version}, trainer={current_policy_version})",
