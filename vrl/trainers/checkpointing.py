@@ -410,9 +410,10 @@ class TrainingCheckpoint:
         return rng
 
     def _resume_position(self, name: str) -> int:
-        if name not in self.progress:
+        progress = self.progress
+        if name not in progress:
             raise ValueError(f"checkpoint is missing required progress.{name}")
-        value = self.progress[name]
+        value = progress[name]
         if type(value) is not int or value < 0:
             raise ValueError(f"progress.{name} must be a non-negative integer, got {value!r}")
         return value
@@ -424,7 +425,7 @@ class TrainingCheckpoint:
 
     @property
     def next_step(self) -> int:
-        """Read the explicit optimizer resume position saved by the trainer."""
+        """Read the saved loop step; its unit is defined by the training entrypoint."""
         return self._resume_position("next_step")
 
     def restore_training(
