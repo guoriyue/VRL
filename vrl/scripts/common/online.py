@@ -6,6 +6,7 @@ import gc
 import inspect
 import logging
 import os
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +26,8 @@ from vrl.ray.resources import (
     format_distributed_resource_plan,
 )
 from vrl.rewards import RewardRuntime
+from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.batch.ops import nonzero_advantage_mask
 from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.orchestration import (
     RolloutSchedule,
@@ -60,7 +63,7 @@ from vrl.trainers.data.prompts import PromptExample, load_prompt_examples_from_c
 from vrl.trainers.distributed import DistributedTrainingContext, run_on_primary_rank
 from vrl.trainers.metrics_io import OnlineMetricsCSV
 from vrl.trainers.online.config import OnlineBatchPlan
-from vrl.trainers.online.trainer import OnlineTrainer
+from vrl.trainers.online.trainer import OnlineTrainer, _compute_rollout_advantages, _global_reward_stats
 from vrl.trainers.strategy import Strategy, build_strategy
 from vrl.trainers.trace import TrainingRunTrace
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
@@ -432,48 +435,19 @@ def _log_rollout_memory_plan(
         )
 
 
-def _warn_global_std_streaming_divergence(
+def _log_global_std_streaming_scope(
     batch_plan: OnlineBatchPlan,
     *,
     global_std: bool,
 ) -> None:
-    """Warn when global_std advantage normalization is silently per-collection batch.
-
-    GRPO ``global_std=true`` normalizes advantages by the std across ALL prompt
-    groups in the optimizer-target batch. Streaming accumulation computes
-    advantages per collection batch (collect_training_batch runs once per slice), so
-    with >1 group per collection batch the std is taken over the collection batch's groups
-    only -- not the full batch -- and the gradient diverges from the full-batch
-    global-std intent. ``prompts_per_collection=1`` is exempt: one group per collection batch
-    makes per-group and "global" std identical. Surfaced, not blocked, because
-    keeping global_std is an experiment-owner decision.
-
-    Same signature shape as ``_log_rollout_memory_plan``: the batch plan the
-    diagnostic reasons about, plus its one value from another owner as a keyword.
-    ``global_std`` belongs to the algorithm config, so the caller passes the
-    typed field rather than re-reading a YAML path whose default would silently
-    win if the key ever moved.
-    """
-    collection_count = batch_plan.collections_per_update
-    if not batch_plan.streaming:
+    """Make update-wide normalization and its temporary disk requirement visible."""
+    if not batch_plan.streaming or not global_std:
         return
-    if not global_std:
-        return
-    rbs = batch_plan.prompts_per_batch
-    groups_per_collection = batch_plan.prompts_per_collection
-    if groups_per_collection <= 1:
-        return
-    logger.warning(
-        "algorithm.global_std=true with streaming accumulation "
-        "(collections_per_update=%d, %d prompt groups per collection_batch): the "
-        "global-std advantage normalization is computed per collection_batch, not over "
-        "the full %d-group batch, so the gradient differs from the full-batch "
-        "global-std intent. Set algorithm.global_std=false (per-group std, which "
-        "is streaming-equivalent), actor.prompts_per_collection=1 (one group per "
-        "collection_batch), or drop streaming to keep the full-batch global std.",
-        collection_count,
-        groups_per_collection,
-        rbs,
+    logger.info(
+        "global_std streaming: normalize all %d prompt groups before clipping/filtering; "
+        "temporarily spool trajectories under trainer.output_dir and replay %d groups at a time",
+        batch_plan.prompts_per_batch,
+        batch_plan.prompts_per_collection,
     )
 
 
@@ -538,12 +512,111 @@ def _check_host_memory_budget(
     )
 
 
+async def _run_global_std_streaming_update(
+    trainer: OnlineTrainer,
+    example_batch: list[Any],
+    *,
+    batch_plan: OnlineBatchPlan,
+    next_example_batch: list[Any] | None,
+) -> Any:
+    """Compute update-wide advantages before replay, keeping trajectories on disk."""
+    micro = batch_plan.prompts_per_collection
+    microbatches = [example_batch[k : k + micro] for k in range(0, len(example_batch), micro)]
+    output = Path(trainer.config.output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".advantage-spool-", dir=output) as spool:
+        spool_stats = RolloutStats()
+        metadata = []
+        sizes = []
+        paths = []
+        group_offset = 0
+        for index, prompts in enumerate(microbatches):
+            lookahead = (
+                microbatches[index + 1]
+                if index + 1 < len(microbatches)
+                else next_example_batch[:micro]
+                if next_example_batch
+                else None
+            )
+            iteration = await trainer.rollout_schedule.next_iteration(
+                prompts,
+                group_size=batch_plan.n_samples_per_prompt,
+                runtime_debug=bool(trainer.config.debug.first_step and trainer.state.step == 0),
+                next_prompts=lookahead,
+            )
+            if batch_plan.host_memory_budget_fraction > 0:
+                _check_host_memory_budget(
+                    batch_plan.host_memory_budget_fraction,
+                    collection_prompts=len(prompts),
+                    n_samples_per_prompt=batch_plan.n_samples_per_prompt,
+                )
+            # Prompt indices restart in each collect call; disjoint optimizer
+            # groups must not accidentally share a centering mean across slices.
+            groups = torch.cat([batch.group_ids.detach().cpu() for batch in iteration.batches])
+            unique, inverse = torch.unique(groups, return_inverse=True)
+            offset = 0
+            for batch in iteration.batches:
+                count = batch.rewards.numel()
+                metadata.append(
+                    RolloutBatch(
+                        rewards=batch.rewards.detach().cpu().clone(),
+                        group_ids=inverse[offset : offset + count] + group_offset,
+                        extras={"reward_components": batch.extras.get("reward_components", {})},
+                    )
+                )
+                offset += count
+            sizes.append(offset)
+            group_offset += unique.numel()
+            path = Path(spool) / f"{index}.pt"
+            with spool_stats.phase("advantage.spool_write"):
+                torch.save(iteration, path)
+            spool_stats.add_counter("advantage.spool_bytes", path.stat().st_size)
+            paths.append(path)
+            del batch, iteration
+
+        with spool_stats.phase("advantage.global_normalization"):
+            advantages = _compute_rollout_advantages(trainer.algorithm, metadata)
+            reward_stats = _global_reward_stats(torch.cat([batch.rewards for batch in metadata]))
+        slices = torch.split(advantages, sizes)
+        group_advantages = torch.split(advantages, [batch.rewards.numel() for batch in metadata])
+        effective_groups = sum(
+            not trainer.config.drop_zero_advantage or bool(nonzero_advantage_mask(values).any())
+            for values in group_advantages
+        )
+        del metadata
+
+        def prepared():
+            for index, (path, values) in enumerate(zip(paths, slices, strict=True)):
+                # Only deserialize files created in this private temporary
+                # directory by this process, never an external checkpoint.
+                read_stats = RolloutStats()
+                with read_stats.phase("advantage.spool_read"):
+                    iteration = torch.load(path, map_location="cpu", weights_only=False)
+                iteration.stats.merge(read_stats)
+                if index == 0:
+                    iteration.stats.merge(spool_stats)
+                yield iteration, values, reward_stats
+                del iteration
+                path.unlink()
+
+        return await _run_streaming_optimizer_update(
+            trainer,
+            example_batch,
+            batch_plan=batch_plan,
+            next_example_batch=next_example_batch,
+            _prepared=prepared(),
+            _total_groups=effective_groups,
+        )
+
+
 async def _run_streaming_optimizer_update(
     trainer: OnlineTrainer,
     example_batch: list[Any],
     *,
     batch_plan: OnlineBatchPlan,
     next_example_batch: list[Any] | None = None,
+    _prepared: Any | None = None,
+    _total_groups: int | None = None,
 ) -> Any:
     """One optimizer update streamed over ``collections_per_update`` collection batches.
 
@@ -566,7 +639,12 @@ async def _run_streaming_optimizer_update(
         example_batch[k : k + collection_size]
         for k in range(0, len(example_batch), collection_size)
     ]
-    total_groups = batch_plan.prompts_per_batch
+    total_groups = batch_plan.prompts_per_batch if _total_groups is None else _total_groups
+
+    if _prepared is None and bool(getattr(trainer.algorithm.config, "global_std", False)):
+        return await _run_global_std_streaming_update(
+            trainer, example_batch, batch_plan=batch_plan, next_example_batch=next_example_batch
+        )
 
     trainer.begin_optimizer_update()
 
@@ -583,10 +661,17 @@ async def _run_streaming_optimizer_update(
             next_prompts = next_example_batch[:collection_size]
         else:
             next_prompts = None
-        batch = await trainer.collect_training_batch(
-            collection_batch,
-            next_prompts=next_prompts,
-        )
+        if _prepared is None:
+            batch = await trainer.collect_training_batch(collection_batch, next_prompts=next_prompts)
+        else:
+            iteration, advantages, reward_stats = next(_prepared)
+            batch = await trainer.collect_training_batch(
+                collection_batch,
+                _iteration=iteration,
+                _advantages=advantages,
+                _reward_stats=reward_stats,
+            )
+            del iteration, advantages
         try:
             # Host-RAM fail-fast on the first collection batch: one slice is the host
             # peak under streaming, so if it is already over budget, stop now.
@@ -737,10 +822,7 @@ async def run_online_recipe(
             else None
         ),
     )
-    _warn_global_std_streaming_divergence(
-        batch_plan,
-        global_std=built.algorithm.global_std,
-    )
+    _log_global_std_streaming_scope(batch_plan, global_std=built.algorithm.global_std)
     if trainer_config.profile:
         os.environ["VRL_PROFILE"] = "1"
 

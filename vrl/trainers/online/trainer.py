@@ -299,6 +299,18 @@ class _ReplayMetrics:
         )
 
 
+def _compute_rollout_advantages(algorithm: Algorithm, batches: list[RolloutBatch]) -> torch.Tensor:
+    rewards = torch.cat([batch.rewards for batch in batches])
+    groups = torch.cat([batch.group_ids for batch in batches])
+    if isinstance(algorithm, ComponentAdvantageAlgorithm):
+        components = {
+            name: torch.as_tensor(values, dtype=rewards.dtype, device=rewards.device)
+            for name, values in OnlineTrainer.merge_reward_scores(batches).items()
+        }
+        return algorithm.compute_advantages_from_components(rewards, components, groups)
+    return algorithm.compute_advantages_from_tensors(rewards, groups)
+
+
 @dataclass(frozen=True, slots=True)
 class _TrainingMicrobatch:
     """One training microbatch: existing rollout data, advantages, and loss weight.
@@ -900,6 +912,9 @@ class OnlineTrainer:
         prompts: list[Any],
         *,
         next_prompts: list[Any] | None = None,
+        _iteration: Any | None = None,
+        _advantages: torch.Tensor | None = None,
+        _reward_stats: tuple[float, float] | None = None,
     ) -> TrainingBatch:
         """Collect rollouts and compute + filter advantages — the data half.
 
@@ -921,12 +936,14 @@ class OnlineTrainer:
         runtime_debug_collect = bool(cfg.debug.first_step and self.state.step == 0)
 
         # 1. The rollout schedule owns collect/offload/release/sync timing.
-        iteration = await self.rollout_schedule.next_iteration(
-            prompts,
-            group_size=cfg.batch_plan.n_samples_per_prompt,
-            runtime_debug=runtime_debug_collect,
-            next_prompts=next_prompts,
-        )
+        iteration = _iteration
+        if iteration is None:
+            iteration = await self.rollout_schedule.next_iteration(
+                prompts,
+                group_size=cfg.batch_plan.n_samples_per_prompt,
+                runtime_debug=runtime_debug_collect,
+                next_prompts=next_prompts,
+            )
         all_batches: list[RolloutBatch] = iteration.batches
         reward_components = self.merge_reward_scores(all_batches)
 
@@ -937,25 +954,12 @@ class OnlineTrainer:
         with timer.time("advantage"):
             all_rewards = torch.cat([b.rewards for b in all_batches])
             all_group_ids = torch.cat([b.group_ids for b in all_batches])
-            if isinstance(self.algorithm, ComponentAdvantageAlgorithm):
-                component_tensors = {
-                    name: torch.as_tensor(
-                        values,
-                        dtype=all_rewards.dtype,
-                        device=all_rewards.device,
-                    )
-                    for name, values in reward_components.items()
-                }
-                advantages_all = self.algorithm.compute_advantages_from_components(
-                    all_rewards,
-                    component_tensors,
-                    all_group_ids,
-                )
+            if _advantages is not None:
+                if _advantages.shape != all_rewards.shape:
+                    raise ValueError("prepared advantages must match collected rewards")
+                advantages_all = _advantages.to(all_rewards.device)
             else:
-                advantages_all = self.algorithm.compute_advantages_from_tensors(
-                    all_rewards,
-                    all_group_ids,
-                )
+                advantages_all = _compute_rollout_advantages(self.algorithm, all_batches)
             # Per-prompt grouping stats for logging (mean group size + unique prompts).
             _unique_groups, _group_counts = torch.unique(all_group_ids, return_counts=True)
             group_size = (
@@ -976,7 +980,9 @@ class OnlineTrainer:
 
         # Cross-rank so the logged curve is the full 32-prompt objective, not
         # rank0's local 16-prompt slice (see _global_reward_stats).
-        pre_filter_reward_mean, pre_filter_reward_std = _global_reward_stats(all_rewards)
+        pre_filter_reward_mean, pre_filter_reward_std = (
+            _global_reward_stats(all_rewards) if _reward_stats is None else _reward_stats
+        )
         pre_filter_adv_mean = advantages_all.mean().item()
 
         # Split advantages back per-batch for the gradient-accumulation loop.

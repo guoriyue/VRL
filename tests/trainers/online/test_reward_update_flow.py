@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
@@ -405,6 +407,8 @@ class TestRewardUpdateFlow:
                 self.group_size = 2
 
         class _Trainer:
+            algorithm = SimpleNamespace(config=SimpleNamespace(global_std=False))
+
             def __init__(self) -> None:
                 self.batch_refs = []
 
@@ -465,6 +469,8 @@ class TestRewardUpdateFlow:
                 self.group_size = 2
 
         class _Trainer:
+            algorithm = SimpleNamespace(config=SimpleNamespace(global_std=False))
+
             def __init__(self) -> None:
                 self.stats_index = 0
 
@@ -532,6 +538,8 @@ class TestRewardUpdateFlow:
                 self.group_size = 2
 
         class _Trainer:
+            algorithm = SimpleNamespace(config=SimpleNamespace(global_std=False))
+
             def __init__(self) -> None:
                 self.requests: list[tuple[list[str], list[str] | None]] = []
 
@@ -1010,11 +1018,11 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     assert any(record.levelno == logging.WARNING for record in caplog.records)
 
 
-def test_global_std_streaming_divergence_warning(caplog) -> None:
-    """global_std=true + streaming with >1 group/microbatch warns; exempt cases don't."""
+def test_global_std_streaming_scope_logging(caplog) -> None:
+    """Both one- and multi-group slices require update-wide normalization."""
     import logging
 
-    from vrl.scripts.common.online import _warn_global_std_streaming_divergence
+    from vrl.scripts.common.online import _log_global_std_streaming_scope
 
     def _plan(rbs: int, gas: int) -> OnlineBatchPlan:
         return OnlineBatchPlan(
@@ -1027,14 +1035,12 @@ def test_global_std_streaming_divergence_warning(caplog) -> None:
 
     def _warns(plan, *, global_std: bool) -> bool:
         caplog.clear()
-        with caplog.at_level(logging.WARNING, logger=logger_name):
-            _warn_global_std_streaming_divergence(plan, global_std=global_std)
-        return any("global_std=true with streaming" in r.getMessage() for r in caplog.records)
+        with caplog.at_level(logging.INFO, logger=logger_name):
+            _log_global_std_streaming_scope(plan, global_std=global_std)
+        return any("global_std streaming:" in r.getMessage() for r in caplog.records)
 
-    # global_std=true + 2 groups/microbatch (rbs=8, gas=4) -> warn (the sd3 case).
     assert _warns(_plan(8, 4), global_std=True)
-    # Exempt: prompts_per_collection=1 (gas=8 -> 1 group/microbatch; per-group == global).
-    assert not _warns(_plan(8, 8), global_std=True)
+    assert _warns(_plan(8, 8), global_std=True)
     # Exempt: global_std=false (per-group std is streaming-equivalent).
     assert not _warns(_plan(8, 4), global_std=False)
     # Exempt: legacy full-batch (gas=0, no streaming).
