@@ -64,8 +64,8 @@ class PreferenceBatch:
 class PickAPicPreferenceDataset(Dataset):
     """Wraps a HuggingFace ``datasets.Dataset`` of Pick-a-Pic samples.
 
-    Filters out 0.5/0.5 split decisions on construction.
-    Resizes + center-crops to ``resolution`` (square).
+    Keeps decisive labels (0 or 1) on construction. Resizes and applies the
+    configured center/random crop and horizontal flip at item access.
     """
 
     def __init__(
@@ -112,11 +112,12 @@ class PickAPicPreferenceDataset(Dataset):
     ) -> PickAPicPreferenceDataset:
         """Load an indexable preference dataset for a shuffled DataLoader.
 
-        Requires ``datasets`` and ``torchvision``. The full train split is
-        ~190 GB across ~387 parquet shards, so pass ``max_samples`` for a bounded
-        subset — it streams only the leading shard(s) instead of downloading every
-        shard. ``split`` must be a plain name (e.g. ``"train"``) in that path, not a
-        ``"train[:N]"`` slice (streaming does not accept slice syntax).
+        Requires ``datasets`` and ``torchvision``. With ``max_samples``, stream
+        a bounded prefix into an indexable Dataset; the limit applies before
+        filtering indecisive labels. Without it, load the split directly as an
+        indexable Dataset. Both paths support the same shuffled DataLoader.
+        The streaming path needs a plain split name such as ``"train"`` rather
+        than slice syntax such as ``"train[:N]"``.
         """
         import itertools
 
