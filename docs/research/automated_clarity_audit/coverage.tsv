@@ -66,7 +66,7 @@ vrl/generation/ray/health_monitor.py	74e2dbcbbf429de3a4e44675aaff09b54aa98c21	re
 vrl/generation/ray/launch_inputs.py	68452738b8dc5db96f41619cde73f852e9e9c85c	reviewed	launch_config.md
 vrl/generation/ray/launcher.py	23916b0a9815b01872e236020a366db4d21bf4d5	reviewed	launcher_ownership.md
 vrl/generation/ray/pipeline_protocol.py	3968cb77ec1115b8f39c68f260337af39c0dae21	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
-vrl/generation/ray/runtime.py	9efba6e0fdc7dc65a1344cbc50baf3e3e05e0e47	pending	-
+vrl/generation/ray/runtime.py	9efba6e0fdc7dc65a1344cbc50baf3e3e05e0e47	reviewed	generation_runtime.md
 vrl/generation/ray/session.py	bffaa8f3a6272f89859ceb4c1fb060d1545a6add	reviewed	session_cleanup.md
 vrl/generation/ray/weight_sync.py	5f026ce350f3e20131e279945cfb5111d85f9b51	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
 vrl/generation/ray/worker.py	7761931de4851bf7bf4718f80b24120b19fc5442	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md

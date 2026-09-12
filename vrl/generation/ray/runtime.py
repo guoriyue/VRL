@@ -134,17 +134,18 @@ class RayGenerationRuntime:
         session = self._session
         if session is None or self._session_parked:
             return
-        refs = []
-        for rank in session.rank_handles:
-            refs.append(rank.actor.health.remote())
-        if not refs:
-            return
+        ranks = session.rank_handles
         deadline = OperationDeadline(
             "generation.preflight",
             self._health_check_timeout_s,
-            context=f"workers={len(refs)}",
+            context=f"workers={len(ranks)}",
         )
         try:
+            refs = []
+            for rank in ranks:
+                refs.append(rank.actor.health.remote())
+            if not refs:
+                return
             await asyncio.wait_for(
                 asyncio.gather(*refs),
                 timeout=deadline.remaining_s(),
@@ -275,10 +276,9 @@ class RayGenerationRuntime:
             if self._probed_samples_per_generation_batch is not None:
                 return self._probed_samples_per_generation_batch
             self.lifecycle.require_running("probe generation batch size")
-            max_samples = max(1, int(request.samples_per_prompt))
             local_results = await session.executor.probe_batch_sizes(
                 request,
-                max_samples=max_samples,
+                max_samples=request.samples_per_prompt,
             )
             if not local_results:
                 raise RuntimeError(

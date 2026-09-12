@@ -56,6 +56,23 @@ def test_resident_runtime_tracks_only_worker_ownership() -> None:
     assert runtime._owned_ranks == []
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [RuntimeError, TimeoutError])
+async def test_preflight_submission_failure_closes_admission(error_type) -> None:
+    failure = error_type("health submission failed")
+
+    def submit():
+        raise failure
+
+    actor = SimpleNamespace(health=SimpleNamespace(remote=submit))
+    runtime = _runtime(owned_workers=[_engine("w0", actor)])
+    with pytest.raises(error_type) as caught:
+        await runtime.preflight()
+    assert caught.value is failure
+    assert runtime.lifecycle.failure is failure
+    assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
+
+
 async def _wait_for_shutdown_idle(runtime: RayGenerationRuntime) -> None:
     async def _poll() -> None:
         while runtime._shutdown_task is not None:
