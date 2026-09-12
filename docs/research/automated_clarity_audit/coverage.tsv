@@ -10,7 +10,7 @@ vrl/algorithms/grpo/__init__.py	ab65d014b7cfe0533650015c14c7463d15f08ea8	reviewe
 vrl/algorithms/grpo/continuous.py	ac52eddcc804d4b8ec68c79d7f06659c326b64a6	reviewed	algorithm_losses.md
 vrl/algorithms/grpo/multisegment.py	39f3d4437f4f1cbb47ca089bf491452c6bbe8702	reviewed	forward_objectives.md
 vrl/algorithms/grpo/token.py	f30c8852f20646a16343646d21654447b4ffb5cc	reviewed	algorithm_losses.md
-vrl/algorithms/logprob_mismatch.py	736471b555c7b44b782dec30225d7cdcccf0172a	pending	-
+vrl/algorithms/logprob_mismatch.py	736471b555c7b44b782dec30225d7cdcccf0172a	reviewed	logprob_correction.md
 vrl/algorithms/trajectory.py	29b26d52d214c7e8ee56920622d2153e5c2cc3e1	reviewed	algorithm_losses.md
 vrl/algorithms/types.py	a3697e1b34c0e4fa6bc1b7c0433d6dd2bab018f5	reviewed	forward_objectives.md
 vrl/algorithms/v_grpo.py	bc1c30d9083565039db573f8f4c10744c47c5661	reviewed	forward_objectives.md

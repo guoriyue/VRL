@@ -20,7 +20,7 @@ toolkit for that drift:
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 # Torch is a call-time dependency, not an import-time one: the two dataclasses
@@ -164,24 +164,25 @@ class PrecisionCorrectionConfig:
     bounded: run the drift guard (``auto``/``fail``, which checks parity before
     the first step) together with RS (``seq_mean_k1``), so the guard fail-stops
     on a catastrophic precision split while RS keeps out-of-band trajectories out
-    of the per-step gradient. Both read the same ``LogprobMismatchStats``
-    so their drift judgement cannot diverge. TIS and RS are orthogonal and may be
+    of the per-step gradient. The guard evaluates reduced ``LogprobMismatchStats``;
+    RS evaluates the per-sample or per-sequence log-ratio inside the loss. Their
+    thresholds and reductions serve different decisions. TIS and RS may be
     enabled together.
     """
 
-    tis_mode: str = field(default="off")  # "off" | "truncate" | "clip" | "mask"
-    tis_imp_weight_cap: float = field(default=2.0)  # upper bound C on the weight
-    tis_clip_low: float = field(default=0.0)  # lower bound (clip/mask modes)
+    tis_mode: str = "off"  # "off" | "truncate" | "clip" | "mask"
+    tis_imp_weight_cap: float = 2.0  # upper bound C on the weight
+    tis_clip_low: float = 0.0  # lower bound (clip/mask modes)
     # RS axis (orthogonal to TIS). Whole-sequence rejection on the log-ratio.
-    rs_mode: str = field(default="off")  # "off" | "seq_mean_k1" | "seq_max_k1"
+    rs_mode: str = "off"  # "off" | "seq_mean_k1" | "seq_max_k1"
     # Log-ratio acceptance band [low, high]. Stored as log-ratio numbers (not the
     # verl-omni "low_high" string), defaulting to ln(0.5)/ln(2.0) ~= [-0.69, 0.69]
     # to match verl-omni's recommended LLM preset.
-    rs_log_ratio_low: float = field(default=math.log(0.5))
-    rs_log_ratio_high: float = field(default=math.log(2.0))
+    rs_log_ratio_low: float = math.log(0.5)
+    rs_log_ratio_high: float = math.log(2.0)
     # Bypass (off, the only implemented path) vs a reserved decoupled-recompute
     # interface (on, unimplemented — raises on construction, never a no-op knob).
-    recompute_old_logprob: str = field(default="off")  # "off" | "on"
+    recompute_old_logprob: str = "off"  # "off" | "on"
 
     def __post_init__(self) -> None:
         if self.tis_mode not in ("off", "truncate", "clip", "mask"):
