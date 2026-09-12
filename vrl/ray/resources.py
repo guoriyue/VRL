@@ -15,6 +15,7 @@ schedule GPU handoffs.
 from __future__ import annotations
 
 import ast
+import os
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -297,7 +298,7 @@ class ResolvedDistributedResources:
         devices = tuple(self.trainer_devices)
         if not devices:
             return "cpu"
-        return f"cuda:{int(devices[0])}"
+        return f"cuda:{self._local_torch_ordinal(int(devices[0]))}"
 
     def reward_torch_device(self, *, trainer_device: Any | None = None) -> str:
         """Device for the local, in-process reward runtime.
@@ -980,7 +981,22 @@ def _auto_visible_cuda_devices() -> tuple[int, ...]:
         return ()
     if not torch.cuda.is_available():
         return ()
-    return tuple(range(torch.cuda.device_count()))
+    count = int(torch.cuda.device_count())
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible is None:
+        return tuple(range(count))
+    tokens = [token.strip() for token in visible.split(",")]
+    if any(not token.isascii() or not token.isdecimal() for token in tokens):
+        raise ValueError("VRL resource placement requires integer CUDA_VISIBLE_DEVICES IDs")
+    devices = tuple(int(token) for token in tokens)
+    if len(devices) != count or len(set(devices)) != len(devices):
+        raise ValueError(
+            "CUDA_VISIBLE_DEVICES must name exactly the distinct CUDA devices visible to Torch: "
+            f"mask={visible!r}, device_count={count}",
+        )
+    # Ray reports the IDs in the node's original mask, while Torch renumbers
+    # them locally. Keep the plan in Ray's space; _local_torch_ordinal inverts it.
+    return devices
 
 
 def _is_auto(value: Any) -> bool:
