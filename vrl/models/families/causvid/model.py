@@ -793,6 +793,7 @@ def _load_official_backend(build: ModelBuild, *, generation: bool) -> _OfficialC
     transformer.num_frame_per_block = OFFICIAL_CAUSVID_GEOMETRY.frames_per_chunk
     generator_state = _load_generator_state_dict(artifacts.checkpoint_file)
     transformer.load_state_dict(generator_state, strict=True)
+    del generator_state
     transformer.eval().to(build.device, dtype=build.parameter_dtype)
 
     text_encoder = None
@@ -821,6 +822,7 @@ def _load_official_backend(build: ModelBuild, *, generation: bool) -> _OfficialC
             weights_only=True,
         )
         text_encoder.load_state_dict(text_state, strict=True)
+        del text_state
         text_encoder.to(build.device, dtype=prompt_dtype)
         tokenizer = HuggingfaceTokenizer(
             name=str(base / "google" / "umt5-xxl"),
@@ -967,10 +969,7 @@ def _load_generator_state_dict(checkpoint: Path) -> dict[str, Any]:
             "CausVid generator keys must all use the official single 'model.' prefix; "
             f"invalid examples: {preview}",
         )
-    stripped = {str(key)[len("model.") :]: value for key, value in generator.items()}
-    if len(stripped) != len(generator):
-        raise ValueError("CausVid generator key normalization produced duplicate keys")
-    return stripped
+    return {key.removeprefix("model."): value for key, value in generator.items()}
 
 
 def _resolve_configured_path(value: str) -> Path:
