@@ -1,5 +1,5 @@
 path	baseline_blob	status	evidence
-vrl/__init__.py	b49f26da8677274678bce3d51fea5c89e5792935	pending	-
+vrl/__init__.py	b49f26da8677274678bce3d51fea5c89e5792935	reviewed	package_roots.md
 vrl/algorithms/__init__.py	4d92be97dbc791411c5c99e7edc4bec479303ab7	reviewed	advantage_normalization.md
 vrl/algorithms/advantages.py	24ac727234be70af57dbe7616bbb4cb55910d863	reviewed	advantage_normalization.md
 vrl/algorithms/base.py	322dc0096f9aa739ae4c86a2f099b04f680d13a7	reviewed	algorithm_losses.md
@@ -23,9 +23,9 @@ vrl/config/lint.py	3e462c82395cc8767cb2b0ed972f1a63b0035dbd	reviewed	config_lint
 vrl/config/loading.py	221c3b4032f74319e8f7c111cd88b22c56dcff2a	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
 vrl/config/model_schema.py	83969d5d1573d0385215ce9d07280824153080a4	reviewed	model_sampling_boundaries.md
 vrl/config/precision.py	10245a48eb8b20681d4b02ed049aa325e7742b39	reviewed	config_policies.md
-vrl/config/presets/__init__.py	84da826a3687342a68eb25faf4a20cb39d81c30a	pending	-
+vrl/config/presets/__init__.py	84da826a3687342a68eb25faf4a20cb39d81c30a	reviewed	package_roots.md
 vrl/config/reward_inference.py	b8d8f0269561ffa91ba0f716ad199a37ba2b888a	reviewed	config_policies.md
-vrl/config/reward_service/__init__.py	e69de29bb2d1d6434b8b29ae775ad8c2e48c5391	pending	-
+vrl/config/reward_service/__init__.py	e69de29bb2d1d6434b8b29ae775ad8c2e48c5391	reviewed	package_roots.md
 vrl/config/rules.py	16a9f43862124487ae91ae3a89ca0c290d315fda	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
 vrl/config/sampling_schema.py	b26e0041ec9613932a55c5312cfb07c630c34898	reviewed	model_sampling_boundaries.md
 vrl/config/schema.py	27ec681d956ab66fe82e0c25722aef165e1ad3a2	pending	-
@@ -42,7 +42,7 @@ vrl/generation/bindings/full_sequence_denoise/layout.py	e70cb41dbddde0e65baa05aa
 vrl/generation/bindings/token_autoregressive/__init__.py	91f3e2246dc2ec2a60f125065b10f347601d5f5f	reviewed	ar_generation_binding.md
 vrl/generation/bindings/token_autoregressive/executor.py	5d759291589be542f040a27bc76469e3b3e9d0f8	reviewed	ar_generation_binding.md
 vrl/generation/bindings/token_autoregressive/layout.py	8f3084c34293e95b5b205d7089306e4a8c462dc9	reviewed	ar_generation_binding.md
-vrl/generation/composition/__init__.py	093fbf82bc8748510d2b732221668e180f301845	pending	-
+vrl/generation/composition/__init__.py	093fbf82bc8748510d2b732221668e180f301845	reviewed	package_roots.md
 vrl/generation/composition/token_autoregressive/__init__.py	90572d1353c5111185f84f59335d650ec627e1ab	reviewed	token_step_scheduling.md
 vrl/generation/composition/token_autoregressive/token_loop.py	5f564fbc1eca34f84a9447f452abfeaa47c94ef0	reviewed	token_step_scheduling.md
 vrl/generation/execution/__init__.py	6428df9582d2f5852c5d3bafdd86f2883f28f4f2	reviewed	placement_rank_probe.md
@@ -58,7 +58,7 @@ vrl/generation/execution/types.py	bfe6dd74a444aeaa64a84164792ce00c844c0fb8	revie
 vrl/generation/execution/worker.py	373f2ae9c8b32dddb0061d140ee0a19227c4a104	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
 vrl/generation/launch_contract.py	9e6459395d36be8d343a66525b9f07d26ab40713	reviewed	launch_config.md
 vrl/generation/protocols.py	9b820fc3c3ae74bce1b76967fc6bc9353cea21fb	reviewed	generation_payloads.md
-vrl/generation/ray/__init__.py	4dbcac310188b85480f8eae0ef9c757b216f7fb2	pending	-
+vrl/generation/ray/__init__.py	4dbcac310188b85480f8eae0ef9c757b216f7fb2	reviewed	package_roots.md
 vrl/generation/ray/config.py	219c6bd550d1aed0af34c527e6e1561e89c01b53	reviewed	launch_config.md
 vrl/generation/ray/engine.py	1b8292a72602846a13f17ee8d2721cf3ff555d3f	reviewed	engine_submission.md
 vrl/generation/ray/executor.py	5e6ab1dedb66ea4c6d3ebcd3a367bc0cb5bd7ff4	reviewed	generation_executor.md
@@ -70,7 +70,7 @@ vrl/generation/ray/runtime.py	9efba6e0fdc7dc65a1344cbc50baf3e3e05e0e47	reviewed	
 vrl/generation/ray/session.py	bffaa8f3a6272f89859ceb4c1fb060d1545a6add	reviewed	session_cleanup.md
 vrl/generation/ray/weight_sync.py	5f026ce350f3e20131e279945cfb5111d85f9b51	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
 vrl/generation/ray/worker.py	7761931de4851bf7bf4718f80b24120b19fc5442	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
-vrl/generation/steps/__init__.py	9e4d5502cfd16a059bdd49c5f18aad77ff6338fb	pending	-
+vrl/generation/steps/__init__.py	9e4d5502cfd16a059bdd49c5f18aad77ff6338fb	reviewed	package_roots.md
 vrl/generation/steps/denoise/__init__.py	9027ebd20aa65b0298dda296346eba354b04cfb8	reviewed	denoise_steps.md
 vrl/generation/steps/denoise/config.py	b1330007576e5f456f345b6b6b3aea9aff02524a	reviewed	denoise_steps.md
 vrl/generation/steps/denoise/loop.py	0e4bf141dccbcdd427e2dcabc8d9e7496bd0f381	reviewed	denoise_steps.md
@@ -87,10 +87,10 @@ vrl/math/denoise/renoise.py	3708e9f04207dd5b9bb6729accc908bd4e22cd2e	reviewed	de
 vrl/math/token/__init__.py	630af4658b867c9cfe39bae565983ae4b8e74a50	reviewed	token_math.md
 vrl/math/token/flow_matching.py	0ecc93e01d7a3db22a8a59b28094cf56236b780e	reviewed	token_math.md
 vrl/math/token/logprob.py	e0819ffa647504dcc2ca139378834b3fd478f9a2	reviewed	token_math.md
-vrl/models/__init__.py	69285acb49d1dc4f09c37778ba4cf59077e86cf0	pending	-
+vrl/models/__init__.py	69285acb49d1dc4f09c37778ba4cf59077e86cf0	reviewed	package_roots.md
 vrl/models/checkpoint_identity.py	8ff026646ab9599185520db301d31d145a114990	reviewed	model_identity.md
 vrl/models/dtypes.py	fd330edc987f707390d1d8564afac712cf14b388	reviewed	model_sampling_boundaries.md
-vrl/models/families/__init__.py	e469084a8f8b2173a5b3b269ca5a4e4fe9d9df9b	pending	-
+vrl/models/families/__init__.py	e469084a8f8b2173a5b3b269ca5a4e4fe9d9df9b	reviewed	package_roots.md
 vrl/models/families/causvid/__init__.py	097bba3fb1ee91fa5f4d3405ee7190dda49104c7	pending	-
 vrl/models/families/causvid/config.py	d328fdeae11569458d8b8db4de94b0a67d2762b2	pending	-
 vrl/models/families/causvid/model.py	738b999f2e2963f6a046fdcb96504be6f12f83fb	pending	-
