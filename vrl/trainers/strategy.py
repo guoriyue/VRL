@@ -80,7 +80,6 @@ class _TensorRestore:
 @dataclass(slots=True)
 class _ParkedTrainingState:
     state: TrainingMemoryState
-    key: tuple[int, int, int, int, int, str]
     modules: list[_ModuleRestore]
     tensors: list[_TensorRestore]
     ema_device: Any | None
@@ -227,9 +226,8 @@ class _TrainingStateParking:
         self.validate_training_state_parking()
         if not isinstance(state, TrainingMemoryState):
             raise TypeError("training state parking requires TrainingMemoryState")
-        key = state.identity_key
         if self._parked_training_state is not None:
-            if self._parked_training_state.key == key:
+            if self._parked_training_state.state.identity_key == state.identity_key:
                 return
             raise RuntimeError(
                 "cannot park different training state before restoring the current phase"
@@ -237,7 +235,6 @@ class _TrainingStateParking:
 
         parked = _ParkedTrainingState(
             state=state,
-            key=key,
             modules=[],
             tensors=[],
             ema_device=getattr(state.ema, "device", None),
@@ -319,7 +316,7 @@ class _TrainingStateParking:
         parked = self._parked_training_state
         if parked is None:
             return
-        same_state = parked.key == state.identity_key
+        same_state = parked.state.identity_key == state.identity_key
         self._restore_parked_training_state(parked)
         self._parked_training_state = None
         if not same_state:
