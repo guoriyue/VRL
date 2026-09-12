@@ -7,7 +7,8 @@ Ray actors, model modules, or scheduler objects.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from vrl.generation.types import GenerationSampleRow
@@ -165,6 +166,112 @@ class TrajectoryBatch:
             raise ValueError("TrajectoryBatch.family must be non-empty")
         if not self.task:
             raise ValueError("TrajectoryBatch.task must be non-empty")
+
+    def select_samples(self, selector: Any) -> TrajectoryBatch:
+        """Select TrajectoryBatch rows by boolean mask or integer indices."""
+
+        positions = self._sample_positions(selector)
+        count = len(positions)
+        return self._rebuild(
+            sample_rows=[self.sample_rows[i] for i in positions],
+            tensor_value_fn=lambda tensor: (
+                self._select_sample_values(tensor.value, positions, tensor.axes.index("sample"))
+                if "sample" in tensor.axes
+                else tensor.value
+            ),
+            axes_sample_length=count,
+            context=dict(self.context),
+        )
+
+    def to_device(self, device: Any) -> TrajectoryBatch:
+        """Move tensor leaves in a TrajectoryBatch to a target device."""
+
+        from vrl.trajectory.device import move_value_to_device
+
+        return self._rebuild(
+            sample_rows=list(self.sample_rows),
+            tensor_value_fn=lambda tensor: move_value_to_device(tensor.value, device),
+            axes_sample_length=self.axes["sample"].length,
+            context=move_value_to_device(self.context, device),
+        )
+
+    def _rebuild(
+        self,
+        *,
+        sample_rows: list[GenerationSampleRow],
+        tensor_value_fn: Callable[[TrajectoryTensor], Any],
+        axes_sample_length: int | None,
+        context: dict[str, Any],
+    ) -> TrajectoryBatch:
+        from vrl.trajectory.validation import TrajectoryValidator
+
+        axes = {
+            name: replace(axis, length=axes_sample_length) if name == "sample" else axis
+            for name, axis in self.axes.items()
+        }
+        segments = {
+            name: replace(
+                segment,
+                tensors={
+                    tensor_name: replace(tensor, value=tensor_value_fn(tensor))
+                    for tensor_name, tensor in segment.tensors.items()
+                },
+                replay_inputs=dict(segment.replay_inputs),
+                metadata=dict(segment.metadata),
+            )
+            for name, segment in self.segments.items()
+        }
+
+        out = replace(
+            self,
+            sample_rows=sample_rows,
+            axes=axes,
+            segments=segments,
+            reward_views=dict(self.reward_views),
+            context=context,
+        )
+        return TrajectoryValidator(out).validate_batch()
+
+    @classmethod
+    def _select_sample_values(cls, value: Any, positions: list[int], axis_dim: int) -> Any:
+        """Select the declared sample dimension, including nested Python payloads."""
+        if value is None:
+            return None
+        if isinstance(value, (list, tuple)):
+            selected = (
+                [value[i] for i in positions]
+                if axis_dim == 0
+                else [cls._select_sample_values(inner, positions, axis_dim - 1) for inner in value]
+            )
+            return tuple(selected) if isinstance(value, tuple) else selected
+        if isinstance(value, dict):
+            return {
+                key: cls._select_sample_values(inner, positions, axis_dim)
+                for key, inner in value.items()
+            }
+        key = [slice(None)] * (axis_dim + 1)
+        key[axis_dim] = positions
+        return value[tuple(key)]
+
+    def _sample_positions(self, selector: Any) -> list[int]:
+        """Normalize one-dimensional masks/indices once for every sample-aligned value."""
+        is_boolean_mask = False
+        if hasattr(selector, "detach"):
+            if selector.is_floating_point() or selector.is_complex():
+                raise ValueError("trajectory selector must contain only booleans or only integers")
+            is_boolean_mask = str(selector.dtype) == "torch.bool"
+            if selector.ndim != 1:
+                raise ValueError("trajectory selector must be one-dimensional")
+            values = selector.detach().cpu().tolist()
+        else:
+            values = list(selector)
+        if is_boolean_mask or (values and all(isinstance(value, bool) for value in values)):
+            if len(values) != len(self.sample_rows):
+                raise ValueError("trajectory boolean selector must match the sample count")
+            return [index for index, selected in enumerate(values) if selected]
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+            raise ValueError("trajectory selector must contain only booleans or only integers")
+        return values
 
 
 __all__ = [

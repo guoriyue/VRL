@@ -8,7 +8,6 @@ import torch
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.device import map_tensor_tree
-from vrl.trajectory.ops import move_trajectory_batch, select_trajectory_batch
 
 
 def select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
@@ -31,7 +30,9 @@ def select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
             is_leaf=lambda value: isinstance(value, torch.Tensor),
         ),
         context=batch.context,
-        trajectory=select_trajectory_batch(batch.trajectory, selector),
+        trajectory=batch.trajectory.select_samples(selector)
+        if batch.trajectory is not None
+        else None,
     )
 
 
@@ -96,8 +97,8 @@ def move_training_batch_to_device(
         if defer_replay_tensors
         else _move_tensor_tree(batch.context, device),
         trajectory=batch.trajectory
-        if defer_replay_tensors
-        else move_trajectory_batch(batch.trajectory, device),
+        if defer_replay_tensors or batch.trajectory is None
+        else batch.trajectory.to_device(device),
     )
 
 

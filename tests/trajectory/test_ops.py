@@ -7,7 +7,6 @@ import torch
 
 from vrl.generation.types import GenerationRequest
 from vrl.trajectory import TrajectoryBatch, build_ar_discrete_trajectory
-from vrl.trajectory.ops import move_trajectory_batch, select_trajectory_batch
 
 
 def _axis_lengths(trajectory: TrajectoryBatch) -> dict[str, int]:
@@ -17,7 +16,7 @@ def _axis_lengths(trajectory: TrajectoryBatch) -> dict[str, int]:
 def test_select_derives_sample_structure_from_selected_rows_and_axis() -> None:
     trajectory = _trajectory(samples=3)
 
-    selected = select_trajectory_batch(trajectory, torch.tensor([2, 0]))
+    selected = trajectory.select_samples(torch.tensor([2, 0]))
 
     assert len(selected.sample_rows) == 2
     assert _axis_lengths(selected) == {"sample": 2, "token": 2}
@@ -29,7 +28,7 @@ def test_select_derives_sample_structure_from_selected_rows_and_axis() -> None:
 def test_move_preserves_derived_structure_and_provenance() -> None:
     trajectory = _trajectory(samples=2)
 
-    moved = move_trajectory_batch(trajectory, torch.device("cpu"))
+    moved = trajectory.to_device(torch.device("cpu"))
 
     assert moved is not trajectory
     assert len(moved.sample_rows) == 2
@@ -84,7 +83,7 @@ def _trajectory(
 def test_select_keeps_tensor_rows_and_metadata_aligned(selector, positions) -> None:
     trajectory = _trajectory(samples=3)
     trajectory.context = {"geometry": [4, 8, 16], "schedule": (10, 20, 30)}
-    selected = select_trajectory_batch(trajectory, selector)
+    selected = trajectory.select_samples(selector)
     assert [row.sample_index for row in selected.sample_rows] == positions
     assert selected.context == trajectory.context
     assert selected.context is not trajectory.context
@@ -100,7 +99,7 @@ def test_select_keeps_tensor_rows_and_metadata_aligned(selector, positions) -> N
 )
 def test_select_rejects_ambiguous_selectors(selector) -> None:
     with pytest.raises(ValueError, match=r"trajectory .*selector"):
-        select_trajectory_batch(_trajectory(samples=3), selector)
+        _trajectory(samples=3).select_samples(selector)
 
 
 def test_sample_selection_preserves_minimax_exported_vae_geometry() -> None:
@@ -112,7 +111,7 @@ def test_sample_selection_preserves_minimax_exported_vae_geometry() -> None:
     state = SimpleNamespace(height=32, width=32, num_frames=4, fps=24, timesteps=torch.ones(2))
     trajectory = _trajectory(samples=3)
     trajectory.context = MiniMaxH3Model.export_batch_context(model, state)
-    selected = select_trajectory_batch(trajectory, [2, 0])
+    selected = trajectory.select_samples([2, 0])
     assert selected.context["vae_geometry"] == [4, 2, 8]
     assert len(selected.sample_rows) == 2
 
@@ -134,7 +133,7 @@ def test_selection_uses_declared_nonleading_sample_axis(positions, container) ->
         "token_sample_cache", payload, ("token", "sample"), "replay_input"
     )
     TrajectoryValidator(trajectory).validate_batch()
-    selected = select_trajectory_batch(trajectory, positions)
+    selected = trajectory.select_samples(positions)
     actual = selected.segments["image_tokens"].tensors["token_sample_cache"].value
     assert isinstance(actual, type(payload))
     assert torch.equal(torch.as_tensor(actual), values[:, positions])
