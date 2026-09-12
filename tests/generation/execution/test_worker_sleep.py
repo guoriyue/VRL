@@ -1299,21 +1299,24 @@ def test_worker_releases_only_its_own_rank_group(monkeypatch, already_initialize
 
     initialized = already_initialized
     destroyed = []
+    group_handle = object()
+    monkeypatch.setattr(dist, "group", SimpleNamespace(WORLD=group_handle))
 
     def initialize(**kwargs):
         nonlocal initialized
         initialized = True
 
-    def destroy():
+    def destroy(process_group):
         nonlocal initialized
-        destroyed.append(True)
+        assert process_group is group_handle
+        destroyed.append(process_group)
         initialized = False
 
     monkeypatch.setattr(dist, "is_initialized", lambda: initialized)
     monkeypatch.setattr(dist, "init_process_group", initialize)
     monkeypatch.setattr(dist, "destroy_process_group", destroy)
     core = _core(None)
-    core.rank_group = RankGroupSpec("127.0.0.1", 29500, 0, 2, backend="gloo")
+    core.rank_group_spec = RankGroupSpec("127.0.0.1", 29500, 0, 2, backend="gloo")
     monkeypatch.setattr(core._memory_parking, "release_scope", contextlib.nullcontext)
 
     def fail_build():
@@ -1323,6 +1326,7 @@ def test_worker_releases_only_its_own_rank_group(monkeypatch, already_initialize
     message = "already initialized" if already_initialized else "model build failed"
     with pytest.raises(RuntimeError, match=message):
         core.load_policy()
+    assert core._rank_process_group is None
     assert initialized is already_initialized
     assert len(destroyed) == (0 if already_initialized else 1)
 
@@ -1338,13 +1342,16 @@ def test_failed_cold_load_does_not_enter_rank_rng_collective(monkeypatch):
     from vrl.generation.execution.rank_group import RankGroupSpec
 
     core = _core(None)
-    core.rank_group = RankGroupSpec("127.0.0.1", 29500, 0, 2, backend="gloo")
+    core.rank_group_spec = RankGroupSpec("127.0.0.1", 29500, 0, 2, backend="gloo")
     calls = []
+    group_handle = object()
     monkeypatch.setattr(
-        worker_module, "init_rank_process_group", lambda spec: calls.append("init")
+        worker_module,
+        "init_rank_process_group",
+        lambda spec: (calls.append("init"), group_handle)[1],
     )
     monkeypatch.setattr(
-        worker_module, "destroy_rank_process_group", lambda: calls.append("destroy")
+        worker_module, "destroy_rank_process_group", lambda group: calls.append("destroy")
     )
     monkeypatch.setattr(core, "_synchronize_rank_rng", lambda: calls.append("rng"))
     monkeypatch.setattr(core._memory_parking, "release_scope", contextlib.nullcontext)
@@ -1357,3 +1364,27 @@ def test_failed_cold_load_does_not_enter_rank_rng_collective(monkeypatch):
     with pytest.raises(RuntimeError, match="cold model build failed"):
         core.execute_batch(None)
     assert calls == ["init", "build", "destroy"]
+
+
+def test_worker_retains_group_handle_until_release_succeeds(monkeypatch):
+    from unittest.mock import Mock
+
+    import vrl.generation.execution.worker as worker_module
+
+    core = _core(None)
+    group_handle = object()
+    core._rank_process_group = group_handle
+    destroy = Mock(side_effect=[RuntimeError("release failed"), None])
+    monkeypatch.setattr(worker_module, "destroy_rank_process_group", destroy)
+    monkeypatch.setattr(core._memory_parking, "release_scope", contextlib.nullcontext)
+
+    with pytest.raises(RuntimeError, match="release failed"):
+        core.release_policy()
+    assert core._rank_process_group is group_handle
+    destroy.assert_called_once_with(group_handle)
+
+    core.release_policy()
+    assert core._rank_process_group is None
+    core.release_policy()
+    assert destroy.call_count == 2
+    destroy.assert_called_with(group_handle)

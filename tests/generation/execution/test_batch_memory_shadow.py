@@ -546,7 +546,7 @@ def test_direct_multirank_probe_rejected_before_cuda_or_model_work(monkeypatch):
     from vrl.generation.execution.rank_group import RankGroupSpec
 
     core = _probe_core(_ProbeExecutor())
-    core.rank_group = RankGroupSpec("127.0.0.1", 29500, 0, 2)
+    core.rank_group_spec = RankGroupSpec("127.0.0.1", 29500, 0, 2)
 
     def unexpected():
         raise AssertionError("unsupported probe must not inspect CUDA")

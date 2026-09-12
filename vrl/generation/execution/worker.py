@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 import traceback
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from torch.distributed import ProcessGroup
 
 from vrl.generation.execution.memory_parking import WorkerMemoryParking
 from vrl.generation.execution.planner import EnginePlan
@@ -67,10 +70,8 @@ class GenerationWorkerCore:
             )
         # None for single-rank engines. A spec makes this rank join its
         # engine's process group around the model lifetime (load -> release).
-        self.rank_group = rank_group
-        # rank_group identifies this process's membership; this flag only owns
-        # cleanup of the communicator initialized here, not the Ray actor process.
-        self._owns_rank_process_group = False
+        self.rank_group_spec = rank_group
+        self._rank_process_group: ProcessGroup | None = None
         self.launch_contract = launch_contract
         self.gatherer = gatherer
         from vrl.models.families.registry import get_model_family_entry
@@ -106,9 +107,8 @@ class GenerationWorkerCore:
 
         host_memory.log(f"generation_worker:{self.worker_id}:before_load_policy")
         try:
-            if self.rank_group is not None:
-                init_rank_process_group(self.rank_group)
-                self._owns_rank_process_group = True
+            if self.rank_group_spec is not None:
+                self._rank_process_group = init_rank_process_group(self.rank_group_spec)
             self.executor = self._memory_parking.build(self._build_executor)
             if (
                 self.executor.family != self.family_entry.family
@@ -142,9 +142,9 @@ class GenerationWorkerCore:
         self._weight_transfer = None
         with self._memory_parking.release_scope():
             self.executor = None
-        if self._owns_rank_process_group:
-            destroy_rank_process_group()
-            self._owns_rank_process_group = False
+        if self._rank_process_group is not None:
+            destroy_rank_process_group(self._rank_process_group)
+            self._rank_process_group = None
 
     def sleep(self) -> WorkerMemoryParkingSnapshot:
         """Offload the loaded model to host RAM, freeing the GPU without discarding it.
@@ -414,7 +414,7 @@ class GenerationWorkerCore:
         Probe outputs are discarded; trainable state / policy_version untouched.
         """
 
-        if self.rank_group is not None:
+        if self.rank_group_spec is not None:
             raise ValueError(
                 "automatic batch-size probing requires a single-rank engine; "
                 "set an explicit samples_per_generation_batch because multi-rank "
@@ -809,7 +809,7 @@ class GenerationWorkerCore:
         then reseeds python and torch RNGs identically.
         """
 
-        if self.rank_group is None:
+        if self.rank_group_spec is None:
             return
         import random
 
@@ -866,7 +866,7 @@ class GenerationWorkerCore:
         # (``apply_rollout_optimizations``), which fails loud on a zero-match swap
         # and on a pass that misses a declared policy core. The forgotten-wiring
         # failure it guarded against is now structurally unreachable.
-        if self.rank_group is not None:
+        if self.rank_group_spec is not None:
             self._install_sequence_parallel(model)
         executor_kwargs = dict(launch_contract.executor_kwargs)
         executor_kwargs["gatherer"] = self.gatherer

@@ -13,6 +13,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from torch.distributed import ProcessGroup
 
 from vrl.utils.validation import require_int
 
@@ -55,8 +59,8 @@ class RankGroupSpec:
             raise ValueError(f"unsupported rank group backend: {self.backend!r}")
 
 
-def init_rank_process_group(spec: RankGroupSpec) -> None:
-    """Join this rank into its engine's process group (idempotence rejected).
+def init_rank_process_group(spec: RankGroupSpec) -> ProcessGroup:
+    """Initialize and return this engine's default process-group handle.
 
     Called by the rank program before model build so collectives are available
     for the whole model lifetime. Double init means two owners disagree about
@@ -85,14 +89,17 @@ def init_rank_process_group(spec: RankGroupSpec) -> None:
         spec.master_port,
     )
 
+    process_group = dist.group.WORLD
+    assert process_group is not None
+    return process_group
 
-def destroy_rank_process_group() -> None:
-    """Leave the engine's process group; safe to call when none exists."""
+
+def destroy_rank_process_group(process_group: ProcessGroup) -> None:
+    """Release the saved group handle, including subgroups when it is WORLD."""
 
     import torch.distributed as dist
 
-    if dist.is_initialized():
-        dist.destroy_process_group()
+    dist.destroy_process_group(process_group)
 
 
 __all__ = [

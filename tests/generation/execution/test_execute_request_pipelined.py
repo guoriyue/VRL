@@ -58,7 +58,7 @@ class _Executor:
 def _core(*, executor, uses_slots: bool, policy_version: int | None):
     core = GenerationWorkerCore.__new__(GenerationWorkerCore)
     core.executor = executor
-    core.rank_group = None
+    core.rank_group_spec = None
     core.worker_id = "w0"
     # Payload injection, not a double: these tests start from a worker that is
     # ALREADY in slot mode. How the flag is actually derived is asserted against a
