@@ -188,11 +188,14 @@ class RayGenerationSession:
             lambda rank: rank.actor,
         )
         surviving_actors = {id(rank.actor) for rank in surviving}
-        self.engines[:] = [
-            engine
-            for engine in self.engines
-            if any(id(rank.actor) in surviving_actors for rank in engine.ranks)
-        ]
+        remaining_engines: list[RayGenerationEngine] = []
+        for engine in self.engines:
+            remaining_ranks = [rank for rank in engine.ranks if id(rank.actor) in surviving_actors]
+            if remaining_ranks:
+                # This is a cleanup-only view. Do not mutate the original engine
+                # topology still referenced by the executor or health monitor.
+                remaining_engines.append(RayGenerationEngine(engine.engine_id, remaining_ranks))
+        self.engines[:] = remaining_engines
         if failures:
             raise RuntimeError(
                 "Ray generation session cleanup incomplete: "

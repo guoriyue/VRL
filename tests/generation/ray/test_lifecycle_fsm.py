@@ -837,6 +837,35 @@ async def test_actor_cleanup_failure_retains_owned_handle_for_retry(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_partial_engine_cleanup_retries_only_failed_rank(monkeypatch) -> None:
+    from vrl.generation.ray.engine import RayGenerationEngine
+
+    actors = [object(), object()]
+    calls = []
+
+    class RayApi:
+        @staticmethod
+        def kill(actor, *, no_restart):
+            calls.append(actor)
+            if actor is actors[1] and len(calls) == 2:
+                raise RuntimeError("second rank kill failed")
+
+    monkeypatch.setattr(session_module, "require_ray", lambda: RayApi)
+    ranks = [RayActorHandle(f"r{index}", actor) for index, actor in enumerate(actors)]
+    engine = RayGenerationEngine("engine", ranks)
+    runtime = _runtime(owned_workers=[engine])
+
+    with pytest.raises(RuntimeError, match="cleanup incomplete"):
+        await runtime.shutdown()
+    assert runtime._owned_ranks == [ranks[1]]
+    assert engine.ranks == tuple(ranks)
+
+    await runtime.shutdown()
+    assert runtime._owned_ranks == []
+    assert calls == [actors[0], actors[1], actors[1]]
+
+
+@pytest.mark.asyncio
 async def test_async_launcher_initializes_on_caller_then_loads_off_loop(monkeypatch) -> None:
     import vrl.generation.ray.launcher as launcher_module
 

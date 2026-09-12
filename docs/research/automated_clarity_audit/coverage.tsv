@@ -67,7 +67,7 @@ vrl/generation/ray/launch_inputs.py	68452738b8dc5db96f41619cde73f852e9e9c85c	rev
 vrl/generation/ray/launcher.py	23916b0a9815b01872e236020a366db4d21bf4d5	pending	-
 vrl/generation/ray/pipeline_protocol.py	3968cb77ec1115b8f39c68f260337af39c0dae21	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
 vrl/generation/ray/runtime.py	9efba6e0fdc7dc65a1344cbc50baf3e3e05e0e47	pending	-
-vrl/generation/ray/session.py	bffaa8f3a6272f89859ceb4c1fb060d1545a6add	pending	-
+vrl/generation/ray/session.py	bffaa8f3a6272f89859ceb4c1fb060d1545a6add	reviewed	session_cleanup.md
 vrl/generation/ray/weight_sync.py	5f026ce350f3e20131e279945cfb5111d85f9b51	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
 vrl/generation/ray/worker.py	7761931de4851bf7bf4718f80b24120b19fc5442	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
 vrl/generation/steps/__init__.py	9e4d5502cfd16a059bdd49c5f18aad77ff6338fb	pending	-
@@ -240,7 +240,7 @@ vrl/nn/quantization/targeting.py	0afd6d1b5dfc3c20cde01bb1a361a3733cc737c3	pendin
 vrl/ray/__init__.py	d5d7c6db71a92d5977cb71a0787114d599ef5cd4	pending	-
 vrl/ray/actor_group.py	fc280407590de76434ac0f456f40704407c07d06	pending	-
 vrl/ray/actor_pool.py	607ed88be8b9e6e87820fbfb80c2d249ba8d8e20	pending	-
-vrl/ray/dependencies.py	12a4d335d1c646d6b9834566657782a0554c394d	pending	-
+vrl/ray/dependencies.py	12a4d335d1c646d6b9834566657782a0554c394d	reviewed	session_cleanup.md
 vrl/ray/operation_deadline.py	c38b70d9e7342bbe2af6e2cf03f58bbda8379447	pending	-
 vrl/ray/placement.py	4cd1be7797a67b981150d9852b780eb6f6a2c007	pending	-
 vrl/ray/resources.py	1089a56c40d6074eaa8059d0a578d46f46f1074e	pending	-
