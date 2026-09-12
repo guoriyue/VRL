@@ -1049,3 +1049,39 @@ the queued I2V nonzero-moment strict resume, and all remaining source-sprint
 gates remain open. The other session's SD3.5 metrics now include epochs 0/1,
 both with zero pre-update logprob difference and nonzero gradient; the
 five-epoch job remains live, so its final verdict is still pending.
+
+### Physics reward caches verified (Codex)
+
+With SD3.5 PID 234733 still live on GPUs 0/1/2, inspected the original
+Wan2.2 I2V physics recipe and its actual reward loaders. Both required reward
+repositories were absent, as was Kling's separate Qwen2-VL-2B base model.
+Downloaded and verified every file against repository sizes and digests:
+
+| Repository | Resolved revision | Files | Bytes | Receipt under outputs/perf |
+| --- | --- | --- | --- | --- |
+| KlingTeam/VideoReward | `4f26600130683e6f1de9f5d463887f28e8ef995c` | 10 | 5,046,958,806 | `kling_cache_verification.json` |
+| videophysics/videocon_physics | `2b908dfc044350a1441efc785235c0dc110f14e1` | 8 | 14,306,168,127 | `videocon_cache_verification.json` |
+| Qwen/Qwen2-VL-2B-Instruct | `895c3a49bc3fa70a340399125c650a463535e71c` | 14 | 4,429,622,901 | `kling_base_cache_verification.json` |
+
+All snapshots reside in `/mnt/nvme/hf/huggingface/hub`. Source reward presets
+and Kling's own model_config.json use `main`; resolved those references via
+the Hub SDK and checked they match the verified revisions above. Preserve
+these identities in actual run artifacts, preferably use `repo@revision`
+for reward_model_name, and recheck Kling's base-model cache reference before
+launch. No production preset or downloaded model configuration was modified.
+Pinned download inputs, verifier and successful terminal logs are under
+`/mnt/nvme/outputs/wan22_i2v_cache/`.
+
+Both actual reward loader imports passed in the integration candidate.
+VideoCon's offline LlamaTokenizer and MplugOwlImageProcessor loaded; Yes/No
+token IDs are 3869/1939. Kling's actual root resolver and configuration loader
+plus Qwen2VLProcessor loaded offline; log: `kling_offline_preflight.log` in
+the same artifact directory. These checks did not instantiate full reward
+models or perform video inference. They do not establish reward calibration,
+GPU residency release, training quality or dual-expert acceptance. Preserve
+the original 832x480/81-frame physics recipe and 0.3/0.7 reward objective
+for its quality gate; a motion-only diagnostic cannot replace it.
+
+All download and preflight processes exited successfully. No new GPU job was
+launched and shared runtime files remain unchanged. The trained-moment I2V
+resume and integration merge still await the coordinated GPU window.

@@ -25,6 +25,15 @@ Downloader/verifier and its terminal successful log are under
 `/mnt/nvme/outputs/wan22_i2v_cache/`. This closes only the I2V download
 prerequisite, not its dual-expert training, resume or quality criteria.
 
+The original physics objective's reward prerequisites are now cached and
+digest-verified too: Kling VideoReward, its separate Qwen2-VL-2B-Instruct
+base model, and VideoCon-Physics. Exact revisions, file counts and receipts
+are recorded in `../SPRINT_four_l40s_execution.md` under "Physics reward
+caches verified". Offline processor/config checks passed without allocating
+GPU model weights. Reward inference, calibration, memory handoff and the
+original 0.3 motion-quality / 0.7 physical-commonsense training objective
+remain unverified; motion-only acceptance runs do not replace that objective.
+
 Execute after the GPU queue in `../SPRINT_four_l40s_execution.md` releases
 the required devices:
 
