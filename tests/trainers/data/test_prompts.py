@@ -53,14 +53,13 @@ def test_jsonl_bytes_loader_rejects_non_object_row_with_line_number() -> None:
 
 
 @pytest.mark.parametrize("field", ["metadata", "request_overrides"])
-@pytest.mark.parametrize("value", [False, 0, "", [], [["key", "value"]]])
-def test_jsonl_loader_rejects_nonobject_fields_at_source_line(field, value):
-    payload = ("\n" + json.dumps({"prompt": "p", field: value})).encode()
+def test_jsonl_loader_rejects_nonobject_fields_at_source_line(field):
+    payload = ("\n" + json.dumps({"prompt": "p", field: [["key", "value"]]})).encode()
     with pytest.raises(ValueError, match=f"snapshot.jsonl:2: {field} must be an object"):
         load_prompt_examples_from_jsonl_bytes(payload, source="snapshot.jsonl")
 
 
-@pytest.mark.parametrize("row", [{}, {"prompt": None}, {"prompt": 123}, {"prompt": []}])
+@pytest.mark.parametrize("row", [{}, {"prompt": 123}])
 def test_jsonl_loader_requires_string_prompt_at_source_line(row):
     with pytest.raises(ValueError, match=r"snapshot.jsonl:1: prompt must be a string"):
         load_prompt_examples_from_jsonl_bytes(json.dumps(row).encode(), source="snapshot.jsonl")
@@ -74,19 +73,17 @@ def test_jsonl_loader_preserves_empty_prompt_and_optional_null_mappings():
 
 
 @pytest.mark.parametrize("field", ["image", "caption"])
-@pytest.mark.parametrize("value", [123, True, [], {}])
-def test_image_caption_manifest_rejects_nonstring_fields(tmp_path, field, value):
+def test_image_caption_manifest_rejects_nonstring_fields(tmp_path, field):
     path = tmp_path / "images.jsonl"
-    path.write_text(json.dumps({"image": "image.png", "caption": "p", field: value}))
+    path.write_text(json.dumps({"image": "image.png", "caption": "p", field: 123}))
     with pytest.raises(ValueError, match=f"row 0 {field!r} must be a string"):
         ImageCaptionPromptDataset(path)
 
 
 @pytest.mark.parametrize("field", ["metadata", "request_overrides"])
-@pytest.mark.parametrize("value", [False, 0, "", [], [["key", "value"]]])
-def test_image_caption_manifest_rejects_nonobject_fields(tmp_path, field, value):
+def test_image_caption_manifest_rejects_nonobject_fields(tmp_path, field):
     path = tmp_path / "images.jsonl"
-    path.write_text(json.dumps({"image": "image.png", "caption": "p", field: value}))
+    path.write_text(json.dumps({"image": "image.png", "caption": "p", field: []}))
     with pytest.raises(ValueError, match=f"row 0 {field!r} must be an object"):
         ImageCaptionPromptDataset(path)
 

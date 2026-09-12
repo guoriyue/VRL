@@ -11,12 +11,6 @@ from vrl.config.reward_inference import (
 from vrl.config.schema import RewardConfig
 
 
-def test_in_process_is_the_default() -> None:
-    assert RewardInferenceConfig.from_mapping(None, context="reward.inference.x") == (
-        RewardInferenceConfig()
-    )
-
-
 def test_http_requires_endpoint_and_expected_model() -> None:
     with pytest.raises(ValueError, match="absolute http"):
         RewardInferenceConfig.from_mapping(

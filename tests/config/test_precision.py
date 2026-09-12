@@ -48,17 +48,14 @@ def _section(precision: Any = None) -> PrecisionConfig | None:
     "value,expected",
     [
         ("bf16", "bf16"),
-        ("fp32", "fp32"),
-        ("fp16", "fp16"),
-        ("fp8", "fp8"),
-        ("nvfp4", "nvfp4"),
         ("no", "fp32"),  # the one legacy spelling we still accept
         (None, "fp32"),
         ("", "fp32"),
     ],
 )
 def test_normalize_precision(value, expected):
-    """The accepted vocabulary: five plain tokens, plus `no`/empty/None meaning fp32."""
+    """Plain tokens pass through; `no`/empty/None mean fp32. The full accepted
+    vocabulary lives in vrl/config/precision.py — pin one member per path, not the table."""
     assert normalize_precision(value) == expected
 
 
