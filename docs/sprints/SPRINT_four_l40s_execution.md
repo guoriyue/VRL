@@ -378,3 +378,13 @@ loading/offload tests then passed. Touched-file Ruff and formatting passed.
 Codex claims GPUs 2/3 for the same canonical two-rank production proof after
 another separate preflight. Target: `outputs/wan_i2v_14b_l40s_proof/epoch1_hook_fix`,
 log `outputs/perf/wan_i2v_l40s_epoch1_hook_fix.log`. No completion is implied.
+
+The complete Wan family CPU regression passed 40 tests. The production
+`epoch1_hook_fix` run crossed hook removal and weight installation, then exited
+1 on `NameError: ftfy is not defined` in Diffusers' Wan prompt cleanup. The
+environment lacked an already-declared dependency; installed `ftfy==6.3.1`
+from the repository lock and verified the actual `prompt_clean` function in
+a fresh process. No source dependency or sampling configuration was changed.
+No training process or GPU allocation remained after cleanup. After a separate
+preflight, the claim continues for output `outputs/wan_i2v_14b_l40s_proof/epoch1_ftfy`
+and log `outputs/perf/wan_i2v_l40s_epoch1_ftfy.log`, on the same isolated commit.
