@@ -8,8 +8,8 @@ sharding without overriding the selected precision policy.
 
 Mesh construction, sharding and DTensor materialization require the relevant
 process group. Wrapper inspection, block discovery and policy construction are
-local operations. Non-primary ranks still participate in export collectives but
-release full tensors instead of retaining checkpoint copies.
+local operations. Exports with ``rank0_only=True`` still require non-primary
+ranks to participate in collectives, but they do not retain full CPU copies.
 
 Generation scheduling, trainer iteration control and checkpoint file publication
 belong to their respective owners. This module supplies the FSDP-specific
@@ -456,17 +456,17 @@ def gather_full_optimizer_state_dict(
     *,
     rank0_only: bool = False,
 ) -> dict[str, Any]:
-    """Gather a sharded model's optimizer state into a full CPU dict ON EVERY RANK.
+    """Gather full CPU optimizer state on every rank, or retain it only on rank0.
 
     FSDP2 optimizer state (Adam moments) lives as DTensor shards keyed by the
     optimizer's positional param ids; ``get_optimizer_state_dict`` re-keys by
     parameter FQN (checkpoint-stable across runs) and, with
     ``full_state_dict=True``, all-gathers each moment to a full tensor. The
-    every-rank ``cpu_offload=False`` rationale applies here too: with offload
-    DCP returns the state only on rank0 and empties elsewhere, which breaks
-    every-rank symmetric callers; we move to CPU ourselves. Checkpoint export
-    passes ``rank0_only=True`` so every rank joins the collectives while only
-    rank0 retains the full CPU tree needed by the sole file writer.
+    Default exports use ``cpu_offload=False`` and move to CPU here so symmetric
+    callers receive state on every rank. Checkpoint export passes
+    ``rank0_only=True``: ordinary optimizers use DCP's CPU offload to retain full
+    state only on rank0. FP32-master optimizers instead use the recursive gather
+    below, discarding each full tensor on non-primary ranks after its collective.
     """
 
     import torch.distributed as dist
