@@ -150,8 +150,8 @@ class DPOStepMetrics:
 # Forward adapters — caller plugs in a model-specific forward function.
 # ---------------------------------------------------------------------------
 
-# A ForwardFn takes ``(model, noisy_latents, timesteps, encoder_hidden_states,
-# extra_kwargs)`` and returns the prediction tensor. Concrete adapters live with
+# A ForwardFn takes ``(model, noisy_latents, timesteps, encoder_hidden_states)``
+# and returns the prediction tensor. Concrete adapters live with
 # the family recipe that selects them (e.g. ``wan_forward`` in
 # ``vrl/scripts/families/wan_2_1/train_dpo.py``), never here: this module must
 # stay family-neutral.
@@ -261,7 +261,7 @@ class OfflineDPOTrainer:
                 "before training."
             )
         lo, hi = 0, len(ts)
-        return torch.randint(lo, hi, (bsz,), device=self.device).long()
+        return torch.randint(lo, hi, (bsz,), device=self.device)
 
     def _inject_noise(
         self,
@@ -304,7 +304,7 @@ class OfflineDPOTrainer:
     # ------------------------------------------------------------------
 
     def step(self, batch: PreferenceBatch) -> DPOStepMetrics:
-        """Single optimizer step over one preference batch."""
+        """Train on one preference microbatch; update at the accumulation boundary."""
         cfg = self.config
         self.model.train()
 
@@ -388,7 +388,7 @@ class OfflineDPOTrainer:
         if self._mark_gradient_accumulation_step():
             if cfg.max_grad_norm > 0:
                 gn = nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
-                grad_norm = float(gn) if isinstance(gn, torch.Tensor) else gn
+                grad_norm = float(gn)
             self._optimizer.step()
             self._optimizer.zero_grad(set_to_none=True)
 

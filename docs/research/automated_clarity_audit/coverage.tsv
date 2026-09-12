@@ -451,7 +451,7 @@ vrl/scripts/rewards/preflight.py	d02bc13c9bc1dd41674579fbf2e32150f7eb2e44	pendin
 vrl/scripts/rewards/train_droid_idm.py	2f7ef15ba68b58d904bba9a5b900cdd048466f87	pending	-
 vrl/scripts/supervise.py	11c38c8a97d8199209285cf83818b17252ad8d84	pending	-
 vrl/scripts/train.py	ec8756531f53eac70c72580aa949cac17e30adaa	pending	-
-vrl/trainers/__init__.py	32bb2778cdde4e39d2dd20135ea006c4d53ac9b0	pending	-
+vrl/trainers/__init__.py	32bb2778cdde4e39d2dd20135ea006c4d53ac9b0	reviewed	offline_trainer.md
 vrl/trainers/activation_checkpointing.py	8b927b6aa92096b39b37e5e52ecc32f50669a2f8	reviewed	checkpoint_followup.md
 vrl/trainers/checkpointing.py	a00e90322a29005173e85fc406e2aa2b26435efa	pending	-
 vrl/trainers/core/__init__.py	41edc4be5f15d75531362935a83f14d9685a9356	reviewed	optimizer_state.md
@@ -467,9 +467,9 @@ vrl/trainers/diagnostics.py	909f1069a7ed49ab2caaba01b3e81f758ce6bd56	reviewed	tr
 vrl/trainers/distributed.py	78e868e22dabd7d9a1c2790a3e4571f9d6a44edf	reviewed	rank_launch_context.md
 vrl/trainers/fsdp.py	4953f817d2d34fac7a92a65c226a9ac8af8593e0	reviewed	fsdp_operations.md
 vrl/trainers/metrics_io.py	747f995cb560c6ee772b17bd593935c2e89c5276	reviewed	metrics_csv.md
-vrl/trainers/offline/__init__.py	6fef898238a387b1f0092780b24ed1bc2d66fa78	pending	-
-vrl/trainers/offline/dpo.py	a4cc3e58a089a794cf68e254a10b1489ba9442fa	pending	-
-vrl/trainers/online/__init__.py	fce9b169cf6cd342e0d3fa6ee5c57217938578fd	pending	-
+vrl/trainers/offline/__init__.py	6fef898238a387b1f0092780b24ed1bc2d66fa78	reviewed	offline_trainer.md
+vrl/trainers/offline/dpo.py	a4cc3e58a089a794cf68e254a10b1489ba9442fa	reviewed	offline_trainer.md
+vrl/trainers/online/__init__.py	fce9b169cf6cd342e0d3fa6ee5c57217938578fd	reviewed	offline_trainer.md
 vrl/trainers/online/config.py	a891b64232703e0426a015240d7e9e61b2fd9ee6	reviewed	online_config.md
 vrl/trainers/online/ema.py	71b02686a63a9e19cd8a83a7c6e4c1a53dac14f3	reviewed	ema_state.md
 vrl/trainers/online/precision_guard.py	98c961a131a6f12584e23030dec714d8f57feabb	reviewed	precision_guard.md
