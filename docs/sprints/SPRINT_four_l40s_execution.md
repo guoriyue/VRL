@@ -1178,3 +1178,38 @@ finite, nonzero gradient norms. The final driver is absent. This establishes
 the completed five-update 2x1 arm, not the unfinished 1x2 comparison or
 repeatable learning-quality acceptance. The new 1x2 driver was detected
 before the queued I2V launch, so no overlapping I2V run was started.
+
+### Reward regression identified dependency drift (Codex)
+
+The shared hardware environment currently reports Transformers 4.57.6,
+Hub 0.36.2, tokenizers 0.22.2 and Torch 2.12.0+cu130. This is NOT the
+project's supported reward dependency set: pyproject.toml requires
+transformers>=5.13.0,<6 and uv.lock selects 5.13.0. Do not infer supported
+environment acceptance from earlier hardware results. Preserve the old
+environment for the pending like-for-like I2V resume comparison, then
+revalidate the supported dependency combination separately.
+
+Candidate 92950604 rewards regression under the shared environment:
+392 passed, 5 skipped, 13 failed. Failures were Qwen rotary configuration and
+CLIP feature-return API differences. Log: `outputs/perf/mgpu_reward_regression.log`.
+No production Qwen/CLIP code was changed to accommodate the unsupported version.
+
+Created an isolated package overlay under
+`/mnt/nvme/venvs/transformers-5.13-overlay`, without modifying shared .venv:
+transformers=5.13.0, huggingface-hub=1.23.0, safetensors=0.8.0,
+click=8.4.2, hf-xet=1.5.1, all selected from uv.lock. Checked the installed
+requirements for those packages against inherited dependencies; none were
+unsatisfied. This is a diagnostic overlay, not a fully synchronized project
+environment. Launch with overlay then candidate in PYTHONPATH and the shared
+Python interpreter. All tests/rewards then passed: 405 passed, 5 skipped in
+7.33 s, CUDA hidden and Hub offline. Log:
+`outputs/perf/mgpu_reward_regression_transformers5.log`.
+
+The real optional VideoCon vendor import still FAILS under 5.13.0:
+find_pruneable_heads_and_indices was removed from transformers.pytorch_utils.
+Log: `outputs/perf/videocon_transformers5_import.log`. The earlier VideoCon
+model-loading success and slow CPU forward were on 4.57.6 only. The green
+suite's mocked VideoCon loader does not cover this external dependency.
+Port/validate the real vendor adapter on supported Transformers before claiming
+physics reward readiness; do not resolve this by weakening the project pin.
+All diagnostic sessions are terminal; SD3.5 1x2 PID 263970 was left untouched.

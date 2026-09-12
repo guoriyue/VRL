@@ -50,6 +50,17 @@ CPU performance issue or validate a coordinated reward-GPU topology before
 the full quality run. Do not substitute a reduced input/precision diagnostic
 for the original reward acceptance gate.
 
+Dependency audit correction: those VideoCon load/forward probes used the
+shared, unsupported Transformers 4.57.6 environment. Project requirements
+and uv.lock select 5.13.0. An isolated locked-version overlay passes the
+whole rewards suite (405 passed, 5 skipped), but the real VideoCon vendor
+cannot import find_pruneable_heads_and_indices from transformers.pytorch_utils
+on 5.13.0. Supported-version vendor integration is therefore a separate
+confirmed prerequisite, not covered by mocked loader tests. See the execution
+ledger's dependency-drift section for versions, commands and logs. Do not
+weaken the project dependency pin or treat old-environment evidence as a
+supported-version acceptance result.
+
 Execute after the GPU queue in `../SPRINT_four_l40s_execution.md` releases
 the required devices:
 
