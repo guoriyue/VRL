@@ -707,9 +707,13 @@ def test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus(local_ray)
 
 
 @pytest.mark.slow_test
-def test_owner_shares_one_bundle_for_rollout_and_reward_on_simulated_gpus(local_ray) -> None:
+@pytest.mark.parametrize("cpus_per_worker", [1.0, 0.0005])
+def test_owner_shares_one_bundle_for_rollout_and_reward_on_simulated_gpus(
+    local_ray, monkeypatch, cpus_per_worker
+) -> None:
     """Shared reward time-multiplexes the rollout GPU: one bundle, both roles."""
     ray = local_ray
+    monkeypatch.setattr("vrl.ray.placement._PLACEMENT_READY_TIMEOUT_S", 5.0)
     owner = GlobalRayPlacementOwner(
         _resolve(
             {
@@ -719,7 +723,7 @@ def test_owner_shares_one_bundle_for_rollout_and_reward_on_simulated_gpus(local_
                 "reward": {"device": "gpu", "gpu_pool": "rollout"},
             },
         ),
-        _worker(),
+        _worker(cpus_per_worker=cpus_per_worker),
     )
     try:
         owner.create()

@@ -587,7 +587,9 @@ class GlobalRayPlacementOwner:
         ]
         if not gpu_bundles:
             return {}
-        remote_probe = ray.remote(num_cpus=0.001, num_gpus=1.0)(_ProbeActor)
+        # This transient actor only reads Ray-assigned GPU IDs. It must fit
+        # bundles even when the rollout worker requests a tiny CPU fraction.
+        remote_probe = ray.remote(num_cpus=0, num_gpus=1.0)(_ProbeActor)
         actors: list[Any] = []
         try:
             for bundle_index in gpu_bundles:

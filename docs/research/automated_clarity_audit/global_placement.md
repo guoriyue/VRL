@@ -58,11 +58,14 @@ resource relation with an injected valid GPU permutation.
 
 ## Follow-up findings
 
-- Tiny positive cpus_per_worker values below 0.001 are accepted by the worker
-  config, but _ProbeActor requests 0.001 CPU. Such GPU bundles still cannot host
-  the probe. Resolve this with the CPU resource-domain review: either reserve
-  the probe minimum for GPU bundles or define the supported minimum at the
-  configuration boundary. Do not scatter another numeric validator here.
+- Closed in the follow-up after 2c00b24da: tiny positive cpus_per_worker values
+  below 0.001 were accepted by the worker config, but _ProbeActor requested
+  0.001 CPU. A real Ray test with logical GPU bundles and 0.0005 CPU reproduced
+  an immediate scheduling ValueError, rather than a hypothetical timeout.
+  The transient metadata-only probe now requests zero CPUs while retaining its
+  one-GPU reservation. This removes an unnecessary resource requirement without
+  narrowing the supported worker configuration or increasing bundle budgets.
+  No new numeric validator, resource knob or helper class was introduced.
 - create currently labels every readiness exception as inability to satisfy
   capacity after 600 seconds. The chained cause is retained, but immediate Ray
   failures may receive misleading text. Separate timeout diagnostics when
@@ -75,3 +78,12 @@ The extended GPU permutation regression failed before the production change.
 GPU test was deselected. Existing checks cover CPU-only capacity, cross-node
 mapping, shared GPU roles, cleanup retry and launcher CPU propagation. Ruff
 check and format check passed on the two changed Python files.
+
+Follow-up validation: parametrized the existing live Ray shared-bundle test
+with worker CPU values 1.0 and 0.0005. The latter failed before the probe change;
+all 26 placement tests passed afterward, including actual probe creation,
+metadata reads and cleanup on a CPU host with logical Ray GPU resources. These
+actors never execute CUDA kernels. The test uses a five-second readiness/probe
+budget so a regression cannot stall for the production 600 seconds. Shared
+cluster ownership is preserved: each owner removes only its placement group.
+Ruff check and format check passed for both changed Python files.
