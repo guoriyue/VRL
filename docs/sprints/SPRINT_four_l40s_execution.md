@@ -320,3 +320,14 @@ mask: probed bundles were `{0: 3}` and `{0: 3, 1: 1}` respectively, the trainer
 remained `cuda:3`, and CUDA initialization state was unchanged. Both private
 clusters shut down and the test process exited 0. These are scheduler and
 lifecycle results, not full online training, weight-sync, or resume evidence.
+
+### Current hardware claim: Wan I2V two-rank proof (Codex)
+
+Following the compiled control's terminal failure and repeated checks with no
+live training/torchrun drivers, Codex claims the next two-GPU proof window on
+physical GPUs 2 and 3. Please do not launch overlapping hardware stages during
+this claim. The run uses the isolated `/home/ubuntu/VRL-gpu-placement` tree at
+`254be02d`, verified NVMe weights/data, and the canonical two-rank I2V FSDP
+recipe. Output target: `outputs/wan_i2v_14b_l40s_proof/epoch1_retry` in the main
+workspace. A separate GPU/process preflight must pass before launch. This
+claim is a queued attempt, not evidence of training success.
