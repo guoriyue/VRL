@@ -212,7 +212,7 @@ vrl/models/steps/token/base.py	485811e36d6d5ef3ea92d5eb69e2f879686710ea	pending	
 vrl/models/steps/token/build.py	e463868893a6ab7f18d77c83416645abf91fb936	reviewed	token_build.md
 vrl/models/steps/token/loader.py	e8ab1051246137f9947698f8ec723508ba919f3d	reviewed	token_checkpoint_loader.md
 vrl/models/steps/token/lora.py	9d244eee3e7b91ed309dac280d1149dab7dfee01	reviewed	token_adapter_contracts.md
-vrl/models/steps/token/paged_attention_helpers.py	41e5413eb74e46c33f14b98fe44c6bf428ab8b02	pending	-
+vrl/models/steps/token/paged_attention_helpers.py	41e5413eb74e46c33f14b98fe44c6bf428ab8b02	reviewed	paged_cfg_runner.md
 vrl/models/steps/token/vocab_head.py	cadf0919946949969bd3f4e9dcaad06e6dc6857f	reviewed	token_adapter_contracts.md
 vrl/models/weight_utils.py	8c3fa3b0ac67d425a0ec19151a55db8957d64263	pending	-
 vrl/nn/__init__.py	f09ab18edfc08cb6d7419edd31160aa43f9bb1ef	pending	-
