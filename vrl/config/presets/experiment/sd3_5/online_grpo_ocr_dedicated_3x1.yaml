@@ -40,11 +40,19 @@ distributed:
       devices: [1, 2, 3]
 
 rollout:
-  # Eight prompt groups of 16 per update, one group per generation batch, so
-  # the dispatcher has eight units to place across three engines. Keeping the
-  # generation batch equal to the group keeps the SDE window iso-temporal
-  # within a group and the replay batch shape equal to the generation shape.
-  samples_per_generation_batch: 16
+  # ONE sample per generation batch, matching actor.samples_per_replay_batch
+  # below. Measured on this stack (2026-09-12, single L40S, first-replay
+  # max_abs_logprob_diff against the 0.01 replay-parity gate): generation
+  # batch 16 vs replay 1 -> 0.015-0.017 (fails in every topology, compile on
+  # or off), 4 vs 4 -> 0.0111 (still fails), 1 vs 1 -> exactly 0.0. The bf16
+  # rollout and replay forwards only take the same kernel path at batch 1.
+  # Cost: 18.4 s vs 13.1 s per 16-sample group (SD3.5 at 512px is
+  # launch-bound). It also gives the dispatcher 128 units per update to place
+  # across the three engines.
+  samples_per_generation_batch: 1
+
+actor:
+  samples_per_replay_batch: 1
 
 trainer:
   output_dir: outputs/sd3_5_ocr_dedicated_3x1/strict
