@@ -200,21 +200,17 @@ class _ReplayMetrics:
     ) -> None:
         """Record one replay evaluation with its objective-normalization weight."""
 
-        resolved_weight = float(weight)
-        if resolved_weight <= 0:
-            raise ValueError("real replay metric weight must be positive")
-
         self.losses.append(metrics.loss)
         self.policy_losses.append(metrics.policy_loss)
         self.kl_penalties.append(metrics.kl_penalty)
         self.weighted_kl_losses.append(metrics.weighted_kl_loss)
         self.updates.append(metrics.update)
         self.mismatches.append(metrics.logprob_mismatch)
-        self.weights.append(resolved_weight)
+        self.weights.append(weight)
         if capture_initial_replay:
             self.initial_updates.append(metrics.update)
             self.initial_mismatches.append(metrics.logprob_mismatch)
-            self.initial_weights.append(resolved_weight)
+            self.initial_weights.append(weight)
 
     def initial_replay_snapshot(self) -> tuple[InitialReplayStats, float]:
         """Build the local snapshot captured before the first optimizer boundary."""
@@ -268,8 +264,6 @@ class _ReplayMetrics:
         def weighted_mean(values: Sequence[float]) -> float:
             if not values or total_weight <= 0:
                 return 0.0
-            if len(values) != len(self.weights):
-                raise ValueError("replay metric values/weights length mismatch")
             return (
                 sum(
                     float(value) * weight
@@ -440,8 +434,7 @@ def _distributed_initial_replay_stats(
     clip_fraction = clip_total / total_weight if total_weight > 0 else 0.0
     active_clip_fraction = active_clip_total / total_weight if total_weight > 0 else 0.0
 
-    # A rank with nothing to measure is neutral, not a failure: dummy batches
-    # exist precisely so an all-filtered rank still runs matching collectives.
+    # A rank with no measurements contributes a neutral finiteness value.
     # Whether ANY rank measured something is the gate's decision (it skips a
     # globally empty first update), not a per-rank finiteness verdict.
     finite = strategy.collectives.all_true(local.finite or not has_local_measurements)
