@@ -33,13 +33,6 @@ class _RuntimeWithoutSync:
         del state_ref, policy_version
 
 
-class _Bundle:
-    def __init__(self) -> None:
-        self.trainable_modules = {
-            "adapter": torch.nn.Linear(2, 1, bias=False),
-        }
-
-
 def test_ray_runtime_weight_syncer_pushes_cpu_state_with_monotonic_versions() -> None:
     """The rollout side must receive CPU tensors and a version that only ever grows."""
     runtime = _RuntimeWithSync()

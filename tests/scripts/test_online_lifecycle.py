@@ -733,10 +733,8 @@ async def test_rollout_sync_getter_routes_through_strategy(
 ) -> None:
     """The recipe binds the rollout sync getter to the strategy, not the raw helper.
 
-    Locks sprint P3 ownership: the strategy seam -- not a direct
-    ``flatten_trainable_module_state(bundle.trainable_modules)`` call -- is what
-    produces rollout-facing weights, so the FSDP strategy controls what leaves
-    the trainer without the recipe changing.
+    The strategy produces rollout-facing weights, so FSDP controls its gathers
+    without requiring the recipe to select or flatten model parameters itself.
     """
     run = _RealRun(monkeypatch, tmp_path)
     state = _state()

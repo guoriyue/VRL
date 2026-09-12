@@ -477,7 +477,7 @@ vrl/trainers/online/trainer.py	5b3ebee4e571b20f35f9f3f4223471196488c9ef	pending	
 vrl/trainers/optimizer.py	d1c4eaa42d68c7849180ad05da784dcf63b68df5	reviewed	optimizer_state.md
 vrl/trainers/strategy.py	841fbfda73cae20399101fc3169bfa435d8a3ffa	reviewed	training_strategy.md
 vrl/trainers/trace.py	50e7e6645993f4973c8902d823ae8314059f2f7f	pending	-
-vrl/trainers/weight_sync.py	aafc78ba693681ce0c34455f7e88fd34ccc6683a	pending	-
+vrl/trainers/weight_sync.py	aafc78ba693681ce0c34455f7e88fd34ccc6683a	reviewed	trainer_weight_sync.md
 vrl/trajectory/__init__.py	8d98a2057416dce58df1966a3901d8fdf42fd6b0	reviewed	trajectory.md; open builder findings tracked separately
 vrl/trajectory/builders.py	ffb01fed68d3fe662ee06ed447c62e4d426eaac0	reviewed	trajectory.md; open builder findings tracked separately
 vrl/trajectory/device.py	e2c6fad050793931d0239a71146b76a585d803a8	reviewed	trajectory.md; open builder findings tracked separately

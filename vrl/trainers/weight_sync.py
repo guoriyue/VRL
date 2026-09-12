@@ -46,8 +46,8 @@ class RayRuntimeWeightSyncer(WeightSyncer):
     ) -> RayRuntimeWeightSyncer | None:
         """Wrap the runtime only when it declares weight-sync support.
 
-        The construction precondition is this class's own invariant: a syncer
-        must never exist around a runtime that cannot receive weights.
+        Optional recipe wiring requires both the method and an explicit
+        capability. Direct construction validates the method only.
         """
 
         if not callable(getattr(runtime, "update_weights", None)):
