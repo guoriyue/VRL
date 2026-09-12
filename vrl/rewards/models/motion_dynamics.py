@@ -61,7 +61,10 @@ class MotionDynamicsModel(LazyTorchModule):
     def _load_module(self) -> torch.nn.Module:
         from torchvision.models.optical_flow import Raft_Small_Weights, raft_small
 
-        model = raft_small(weights=Raft_Small_Weights.DEFAULT, progress=False)
+        # Torchvision initializes CPU weights before loading the pretrained state.
+        # Lazy construction after resume must not advance the trainer's RNG.
+        with torch.random.fork_rng(devices=[]):
+            model = raft_small(weights=Raft_Small_Weights.DEFAULT, progress=False)
         model.eval().to(self.device)
         for param in model.parameters():
             param.requires_grad_(False)
