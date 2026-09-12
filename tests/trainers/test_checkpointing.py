@@ -115,6 +115,11 @@ def test_rng_checkpoint_restores_python_numpy_and_named_generator_draws():
         restore_rng_state(state, prompt_generator=generator)
 
 
+class _RngGatherStub:
+    def gather_rng_states(self, state):
+        return [state] * self.context.world_size
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [(None, True), (True, True), (False, False)],
@@ -582,7 +587,7 @@ def test_save_training_checkpoint_non_primary_gathers_but_writes_nothing(tmp_pat
     checkpoint directory/files. The spy proves the export ran; the empty tmp_path
     proves nothing was written."""
 
-    class _SpyStrategy:
+    class _SpyStrategy(_RngGatherStub):
         def __init__(self) -> None:
             self.collectives = SimpleNamespace(succeeded=self._agree_success)
             self.calls: list[object] = []
@@ -623,7 +628,7 @@ def test_primary_checkpoint_publication_failure_reraises_after_rank_agreement(
         def save_pretrained(self, *_args, **_kwargs):
             raise RuntimeError("artifact write failed")
 
-    class _Strategy:
+    class _Strategy(_RngGatherStub):
         def __init__(self) -> None:
             self.collectives = SimpleNamespace(succeeded=self._agree_success)
             self.context = _context(world_size=2)
@@ -657,7 +662,7 @@ def test_primary_checkpoint_publication_failure_reraises_after_rank_agreement(
 
 
 def test_non_primary_receives_primary_checkpoint_publication_failure(tmp_path) -> None:
-    class _Strategy:
+    class _Strategy(_RngGatherStub):
         def __init__(self) -> None:
             self.collectives = SimpleNamespace(succeeded=self._agree_success)
             self.context = _context(rank=1, world_size=2)
@@ -1004,7 +1009,7 @@ def test_non_primary_joins_ema_artifact_gather_and_restores_raw_weights(tmp_path
         def save_pretrained(self, *_args, **_kwargs):
             raise AssertionError("non-primary rank must not write artifacts")
 
-    class _GatherStrategy:
+    class _GatherStrategy(_RngGatherStub):
         def __init__(self) -> None:
             self.collectives = SimpleNamespace(succeeded=self._agree_success)
             self.states = []

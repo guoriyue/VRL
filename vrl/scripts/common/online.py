@@ -1004,7 +1004,13 @@ async def run_online_recipe(
                 f"start_epoch={start_epoch}, total_epochs={run_config.total_epochs}",
             )
         if resume_checkpoint is not None:
-            restore_rng_state(resume_checkpoint.rng_state, prompt_generator=rng)
+            restore_rng_state(
+                resume_checkpoint.rng_state,
+                rank=training_context.rank,
+                world_size=training_context.world_size,
+                strict=resume_config.strict,
+                prompt_generator=rng,
+            )
             # A full-param checkpoint is ~20 GB. Each torchrun rank loads its own
             # CPU payload, so retaining these dicts while three colocated rollout
             # models park on CPU exceeds this host's Ray memory threshold. All

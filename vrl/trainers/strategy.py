@@ -24,6 +24,7 @@ from vrl.models.parking import ModelParking, TrainingMemoryState, TrainingStateP
 from vrl.trainers.distributed import (
     DistributedTrainingContext,
     TrainingCollectives,
+    cpu_coordination_group,
     init_training_process_group,
     shutdown_training_process_group,
 )
@@ -138,6 +139,10 @@ class Strategy(Protocol):
 
     collectives: TrainingCollectives
 
+    def gather_rng_states(self, state: dict[str, Any]) -> list[dict[str, Any]]:
+        """Collect checkpoint RNG trees in training-rank order."""
+        ...
+
     def shutdown(self, *, restore_parked: bool = True) -> None:
         """Release resources, restoring parked GPU state only when ownership is safe."""
         ...
@@ -225,6 +230,17 @@ class _ProcessGroupStrategy:
 
     context: DistributedTrainingContext
     collectives: TrainingCollectives
+
+    def gather_rng_states(self, state: dict[str, Any]) -> list[dict[str, Any]]:
+        import torch.distributed as dist
+
+        states = [None] * self.context.world_size
+        group = cpu_coordination_group()
+        if group is None:
+            raise RuntimeError("checkpoint RNG gather requires the CPU coordination group")
+        dist.all_gather_object(states, state, group=group)
+        return states
+
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         del restore_parked
@@ -365,6 +381,8 @@ class SingleProcessStrategy(_TrainingParkingStrategy, _UnshardedStateStrategy):
     ) -> float:
         return float(nn.utils.clip_grad_norm_(parameters, max_norm))
 
+    def gather_rng_states(self, state: dict[str, Any]) -> list[dict[str, Any]]:
+        return [state]
 
 def _release_training_cuda_memory() -> None:
     """Release trainer allocator pages; any CUDA failure invalidates the handoff."""
