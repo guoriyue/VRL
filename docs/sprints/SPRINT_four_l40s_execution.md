@@ -777,3 +777,60 @@ gate was not separately captured, so this does not prove equality of every
 runtime state at the matched boundary. Exact Wan equivalence remains open.
 The test process is terminal and GPU memory queries are clear. This claim
 is released; no expensive production rerun was launched unchanged.
+
+### Current claim: Wan-specific master resume isolation (Codex)
+
+Codex claims GPUs 2/3 for tiny real Wan I2V BF16 LoRA/FSDP tests, with FP32
+masters, CPU offload, parking/restoration and activation checkpointing off/on.
+After a zero-gradient first step, serialize/reload model and optimizer, check
+exact restored state, and compare predictions, nonzero gradients and final
+state for the second update. Runtime is unchanged from `26faff39`; only the
+existing Wan test is extended. Fresh preflight found all GPUs clear and no
+training/Ray/pytest processes. This is diagnostic, not the 14B acceptance gate.
+
+Both branches passed (2 tests, 19.00 s), isolated test commit `9a2b01d2`.
+Log: `outputs/perf/wan_bf16_master_resume_isolation.log`. Exact comparisons
+cover restored model/optimizer, second-step predictions and nonzero gradients,
+and final model/optimizer with checkpointing disabled/enabled. The production
+Wan forward checks gradient-enabled plus its checkpointing flag; the enabled
+branch exercises that path. The tiny model still cannot exclude scale-specific
+kernel behavior or full online lifecycle differences. Test process is terminal;
+post-exit preflight is clear. This diagnostic claim is released.
+
+### Current claim: independent I2V resume repeatability (Codex)
+
+Codex claims GPUs 2/3 for one independent strict resume from the same
+`control_seed7_rank_rng/checkpoint-1`, with the same seed and configuration
+as `resume_seed7_rank_rng`, output `resume_seed7_rank_rng_repeat` under the
+same NVMe root. Log: `outputs/perf/wan_i2v_l40s_resume_seed7_rank_rng_repeat.log`.
+Runtime source is unchanged; the intervening commits only add tests. This
+repeat has a specific diagnostic purpose: compare the two cold resumes to
+separate warm-vs-resumed state differences from production-scale numerical
+nonrepeatability before adding instrumentation or changing runtime behavior.
+No relaxed tolerance or zero-update result will count as exact equivalence.
+
+The independent resume completed with exit 0 and both rank verdicts success.
+Reward mean/std and pre-update max error match the first resume exactly, but
+gradient norm is 0.27371560909433384 versus 0.27392399005551543. The full
+comparison again differs in 395 model and 1,580 trainer leaves, while both
+rank RNG trees and progress are exact. Even the first replay-gate debug
+record, including the rank-local trainable fingerprint, is identical.
+Thus warm-vs-resumed state alone cannot explain the observed discrepancies:
+independent cold resumes from the same checkpoint also fail exact repeatability.
+This does not yet identify a particular kernel or exclude unrecorded state.
+
+Evidence: `resume_repeatability_comparison.json` and `.log` beside the prior
+comparison artifacts on NVMe. `compare_seeded_resume.py` now accepts explicit
+left/right/output arguments so the original control comparison is retained.
+The process is terminal, process query empty and GPUs clear; claim released.
+
+Source inspection found an existing strict deterministic training policy in
+`OnlineRunConfig.initialize_process_rng`: `trainer.deterministic=true` enables
+deterministic algorithms with warn_only=False and deterministic cuDNN settings.
+Set `CUBLAS_WORKSPACE_CONFIG=:4096:8` before launch because CUDA is initialized
+before the runner's second RNG initialization. Previous controls/resumes did
+not enable this option. Next test strict deterministic production repeatability
+with the existing option before adding new runtime mechanisms. Rollout/reward
+process determinism remains a separate consideration; this policy explicitly
+owns trainer processes only. Exact resume and all broader quality gates remain
+open, and no tolerance was relaxed.
