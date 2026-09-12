@@ -294,15 +294,15 @@ class ARDiscreteBatchGatherer:
             "uncond_input_ids",
             "uncond_attention_mask",
         )
-        ordered_ar_chunks = sort_and_validate_batch_coverage(
+        ordered_batches = sort_and_validate_batch_coverage(
             request,
             sample_rows,
             batches,
             row_fields=fields,
         )
-        cat = layout.cat_batch_fields(ordered_ar_chunks, fields)
+        cat = layout.cat_batch_fields(ordered_batches, fields)
         batch_context = gather_batch_context(
-            [batch.context for batch in ordered_ar_chunks],
+            [batch.context for batch in ordered_batches],
         )
         trajectory = build_ar_discrete_trajectory(
             request=request,
