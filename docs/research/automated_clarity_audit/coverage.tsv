@@ -463,7 +463,7 @@ vrl/trainers/data/prompt_sampler.py	b07a1aa117d8bc15b8167068416f993784210015	rev
 vrl/trainers/data/prompts.py	2cc8154bbe10ff1fa763c49c855a2bd4dc1a5c3a	pending	-
 vrl/trainers/data/provenance.py	be2b6eef34a114d1103f4c1dc76f32143dc6dfe7	reviewed	data_sampling_provenance.md
 vrl/trainers/data/sft_latents.py	43ffcdc153b599f8a255ead6eb0c3a07d6747512	reviewed	preference_latents.md
-vrl/trainers/diagnostics.py	909f1069a7ed49ab2caaba01b3e81f758ce6bd56	pending	-
+vrl/trainers/diagnostics.py	909f1069a7ed49ab2caaba01b3e81f758ce6bd56	reviewed	trainer_diagnostics.md
 vrl/trainers/distributed.py	78e868e22dabd7d9a1c2790a3e4571f9d6a44edf	reviewed	rank_launch_context.md
 vrl/trainers/fsdp.py	4953f817d2d34fac7a92a65c226a9ac8af8593e0	pending	-
 vrl/trainers/metrics_io.py	747f995cb560c6ee772b17bd593935c2e89c5276	reviewed	metrics_csv.md

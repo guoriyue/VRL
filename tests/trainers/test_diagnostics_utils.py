@@ -49,6 +49,17 @@ def test_trainable_state_digest_preserves_plain_tensor_digest() -> None:
     }
 
 
+def test_trainable_digest_does_not_fall_back_to_frozen_weights():
+    model = nn.Linear(3, 1, bias=False).requires_grad_(False)
+    before = trainable_state_digest(model)
+    with torch.no_grad():
+        model.weight.add_(1)
+    after = trainable_state_digest(model)
+    assert before == after
+    assert before["tensor_count"] == 0
+    assert before["numel"] == 0
+
+
 def _free_port() -> int:
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     probe.bind(("127.0.0.1", 0))

@@ -13,9 +13,11 @@ from typing import Any
 def trainable_state_digest(module: Any) -> dict[str, Any]:
     """Return a stable digest and basic stats for trainable tensors only.
 
-    The digest intentionally uses only tensors with ``requires_grad=True`` when
-    ``named_parameters`` is available. That keeps SD3 LoRA parity checks focused
+    The module must expose ``named_parameters``. Only parameters with
+    ``requires_grad=True`` are included. That keeps SD3 LoRA parity checks focused
     on adapter state instead of hashing the frozen base checkpoint.
+    Values are converted to FP32 for this diagnostic; this is not a byte-exact
+    checkpoint integrity hash for higher-precision tensors.
 
     FSDP2 parameters are DTensors. Hashing a full logical parameter would make
     this low-overhead first-step probe an all-gather on every rank, and turning a
@@ -29,29 +31,11 @@ def trainable_state_digest(module: Any) -> dict[str, Any]:
 
     import torch
 
-    tensors: list[tuple[str, Any]] = []
-    named_parameters = getattr(module, "named_parameters", None)
-    if callable(named_parameters):
-        tensors = [
-            (name, parameter)
-            for name, parameter in named_parameters()
-            if getattr(parameter, "requires_grad", False)
-        ]
-
-    if not tensors:
-        state_dict = getattr(module, "state_dict", None)
-        if callable(state_dict):
-            state = state_dict()
-            lora_items = [
-                (name, tensor)
-                for name, tensor in state.items()
-                if isinstance(tensor, torch.Tensor) and "lora_" in name
-            ]
-            tensors = lora_items or [
-                (name, tensor)
-                for name, tensor in state.items()
-                if isinstance(tensor, torch.Tensor)
-            ]
+    tensors = [
+        (name, parameter)
+        for name, parameter in module.named_parameters()
+        if parameter.requires_grad
+    ]
 
     digest = hashlib.sha256()
     dtype_counts: dict[str, int] = {}
