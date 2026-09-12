@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 from vrl.generation.execution.sample_batches import (
     concatenate_sample_values,
@@ -37,7 +37,7 @@ class ChunkAutoregressiveDenoiseGatherer:
         sample_rows: Sequence[GenerationSampleRow],
         batches: Sequence[BatchPayload],
     ) -> GenerationOutput:
-        ordered = self._ordered_batches(
+        ordered = self._order_and_validate_batches(
             request,
             sample_rows,
             cast("Sequence[ChunkAutoregressiveDenoiseResult]", batches),
@@ -47,18 +47,33 @@ class ChunkAutoregressiveDenoiseGatherer:
         context = gather_batch_context([batch.context for batch in ordered])
 
         if ordered[0].has_trainable_trajectory:
+            kl_values = [batch.kl for batch in ordered]
+            if all(value is None for value in kl_values):
+                kl = None
+            elif any(value is None for value in kl_values):
+                raise ValueError("optional batch field 'kl' must be present on all results")
+            else:
+                kl = concatenate_sample_values(kl_values, name="kl")
             trajectory = build_chunk_autoregressive_denoise_trajectory(
                 request=request,
                 sample_rows=rows,
-                observations=self._cat_field(ordered, "observations"),
-                actions=self._cat_field(ordered, "actions"),
-                old_log_prob=self._cat_field(ordered, "old_log_prob"),
-                mask=self._cat_field(ordered, "mask"),
-                timesteps=self._cat_field(ordered, "timesteps"),
-                kl=self._cat_optional_field(ordered, "kl"),
-                finalized_chunk_latents=self._cat_field(
-                    ordered,
-                    "finalized_chunk_latents",
+                observations=concatenate_sample_values(
+                    [batch.observations for batch in ordered], name="observations"
+                ),
+                actions=concatenate_sample_values(
+                    [batch.actions for batch in ordered], name="actions"
+                ),
+                old_log_prob=concatenate_sample_values(
+                    [batch.old_log_prob for batch in ordered], name="old_log_prob"
+                ),
+                mask=concatenate_sample_values([batch.mask for batch in ordered], name="mask"),
+                timesteps=concatenate_sample_values(
+                    [batch.timesteps for batch in ordered], name="timesteps"
+                ),
+                kl=kl,
+                finalized_chunk_latents=concatenate_sample_values(
+                    [batch.finalized_chunk_latents for batch in ordered],
+                    name="finalized_chunk_latents",
                 ),
                 replay_tensors=gather_replay_tensors(
                     [batch.replay_tensors for batch in ordered],
@@ -82,7 +97,7 @@ class ChunkAutoregressiveDenoiseGatherer:
         )
 
     @staticmethod
-    def _ordered_batches(
+    def _order_and_validate_batches(
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         batches: Sequence[ChunkAutoregressiveDenoiseResult],
@@ -110,22 +125,6 @@ class ChunkAutoregressiveDenoiseGatherer:
                     )
                 batch.validate_trainable_trajectory()
         return ordered
-
-    @staticmethod
-    def _cat_field(batches: Sequence[ChunkAutoregressiveDenoiseResult], field_name: str) -> Any:
-        values = [getattr(batch, field_name) for batch in batches]
-        return concatenate_sample_values(values, name=field_name)
-
-    @staticmethod
-    def _cat_optional_field(
-        batches: Sequence[ChunkAutoregressiveDenoiseResult], field_name: str
-    ) -> Any | None:
-        values = [getattr(batch, field_name) for batch in batches]
-        if all(value is None for value in values):
-            return None
-        if any(value is None for value in values):
-            raise ValueError(f"optional batch field {field_name!r} must be present on all results")
-        return concatenate_sample_values(values, name=field_name)
 
 
 __all__ = ["ChunkAutoregressiveDenoiseGatherer"]
