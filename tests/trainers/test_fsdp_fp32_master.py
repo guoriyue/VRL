@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import ClassVar
 
+import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -14,6 +15,22 @@ from tests.trainers._strategy_policies import free_port
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer
 from vrl.trainers.strategy import FSDPStrategy
+
+
+def _assert_state_equal(actual, expected) -> None:
+    assert type(actual) is type(expected)
+    if isinstance(actual, dict):
+        assert actual.keys() == expected.keys()
+        for key in actual:
+            _assert_state_equal(actual[key], expected[key])
+    elif isinstance(actual, (list, tuple)):
+        assert len(actual) == len(expected)
+        for left, right in zip(actual, expected, strict=True):
+            _assert_state_equal(left, right)
+    elif isinstance(actual, torch.Tensor):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    else:
+        assert actual == expected
 
 
 class _Block(nn.Module):
@@ -145,6 +162,9 @@ def _run_two_rank_master_round_trip(
     world_size: int,
     port: int,
     queue: mp.Queue,
+    cuda: bool = False,
+    cpu_offload: bool = False,
+    zero_first: bool = False,
 ) -> None:
     from vrl.trainers.fsdp import (
         apply_fsdp,
@@ -158,21 +178,25 @@ def _run_two_rank_master_round_trip(
 
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
-    dist.init_process_group("gloo", rank=rank, world_size=world_size)
+    device = torch.device("cuda", rank) if cuda else torch.device("cpu")
+    if cuda:
+        torch.cuda.set_device(device)
+    dist.init_process_group("nccl" if cuda else "gloo", rank=rank, world_size=world_size)
     context = DistributedTrainingContext(
         strategy="fsdp",
         rank=rank,
         world_size=world_size,
-        device=torch.device("cpu"),
+        device=device,
     )
 
     def build() -> tuple[_Transformer, FP32MasterWeightOptimizer]:
         torch.manual_seed(11)
-        model = _Transformer()
+        model = _Transformer().to(device)
         apply_fsdp(
             model,
             mesh=build_fsdp_mesh(context, ["dp_shard"]),
             mp_policy=mixed_precision_policy("none"),
+            cpu_offload=cpu_offload,
         )
         optimizer = FP32MasterWeightOptimizer(
             model.parameters(),
@@ -180,16 +204,20 @@ def _run_two_rank_master_round_trip(
         )
         return model, optimizer
 
-    def step(model: _Transformer, optimizer: FP32MasterWeightOptimizer) -> None:
+    def step(model: _Transformer, optimizer: FP32MasterWeightOptimizer, *, zero=False) -> None:
         optimizer.zero_grad(set_to_none=True)
-        inputs = torch.arange(8, dtype=torch.bfloat16).reshape(2, 4) / 8
-        model(inputs).float().square().mean().backward()
+        inputs = torch.arange(8, dtype=torch.bfloat16, device=device).reshape(2, 4) / 8
+        loss = model(inputs).float().square().mean()
+        (loss * 0 if zero else loss).backward()
         optimizer.prepare_gradients()
+        gradients = [parameter.grad.to_local() for parameter in optimizer.parameters()]
+        assert all(torch.isfinite(gradient).all() for gradient in gradients)
+        assert any(bool(gradient.count_nonzero()) for gradient in gradients) is not zero
         optimizer.step()
 
     try:
         model, optimizer = build()
-        step(model, optimizer)
+        step(model, optimizer, zero=zero_first)
         model_state = gather_trainable_state_dict(model)
         optimizer_state = gather_full_optimizer_state_dict(model, optimizer)
 
@@ -200,11 +228,22 @@ def _run_two_rank_master_round_trip(
             restored_optimizer,
             optimizer_state,
         )
+        torch.testing.assert_close(
+            gather_trainable_state_dict(restored_model), model_state, rtol=0, atol=0
+        )
+        _assert_state_equal(
+            gather_full_optimizer_state_dict(restored_model, restored_optimizer),
+            optimizer_state,
+        )
         step(model, optimizer)
         step(restored_model, restored_optimizer)
+        _assert_state_equal(
+            gather_full_optimizer_state_dict(restored_model, restored_optimizer),
+            gather_full_optimizer_state_dict(model, optimizer),
+        )
 
         masters_match = all(
-            torch.equal(actual.full_tensor(), expected.full_tensor())
+            torch.equal(actual.to_local(), expected.to_local())
             for actual, expected in zip(
                 restored_optimizer.parameters(),
                 optimizer.parameters(),
@@ -239,17 +278,26 @@ def test_two_rank_bf16_fp32_master_round_trip() -> None:
     context = mp.get_context("spawn")
     queue: mp.Queue = context.Queue()
     port = free_port()
-    processes = [
-        context.Process(
-            target=_run_two_rank_master_round_trip,
-            args=(rank, 2, port, queue),
-        )
-        for rank in range(2)
-    ]
-    for process in processes:
-        process.start()
-    results = {queue.get(timeout=60) for _ in range(2)}
-    for process in processes:
-        process.join(timeout=10)
-        assert process.exitcode == 0
+    mp.spawn(_run_two_rank_master_round_trip, args=(2, port, queue), nprocs=2, join=True)
+    results = {queue.get(timeout=10) for _ in range(2)}
     assert results == {(0, True, True, True), (1, True, True, True)}
+
+
+@pytest.mark.gpu
+@pytest.mark.distributed
+@pytest.mark.parametrize("cpu_offload", [False, True])
+def test_two_rank_cuda_zero_step_master_resume(cpu_offload: bool) -> None:
+    if torch.cuda.device_count() < 2:
+        pytest.skip("requires two CUDA devices")
+    context = mp.get_context("spawn")
+    queue = context.Queue()
+    mp.spawn(
+        _run_two_rank_master_round_trip,
+        args=(2, free_port(), queue, True, cpu_offload, True),
+        nprocs=2,
+        join=True,
+    )
+    assert {queue.get(timeout=10) for _ in range(2)} == {
+        (0, True, True, True),
+        (1, True, True, True),
+    }
