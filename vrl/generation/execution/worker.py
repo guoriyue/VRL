@@ -706,21 +706,6 @@ class GenerationWorkerCore:
         if not runtime_debug or batch_output is None:
             return {}
 
-        def counter_value(value: Any) -> Any:
-            if value is None or isinstance(value, (str, int, float, bool)):
-                return value
-            if isinstance(value, Mapping):
-                return {str(key): counter_value(item) for key, item in value.items()}
-            if isinstance(value, (list, tuple)):
-                return [counter_value(item) for item in value]
-            item = getattr(value, "item", None)
-            if callable(item):
-                try:
-                    return item()
-                except Exception:
-                    pass
-            return repr(value)
-
         metrics: dict[str, Any] = {}
 
         stage_durations = getattr(batch_output, "stage_durations", None)
@@ -731,7 +716,36 @@ class GenerationWorkerCore:
 
         engine_counters = getattr(batch_output, "engine_counters", None)
         if isinstance(engine_counters, Mapping):
-            metrics["engine_counters"] = counter_value(engine_counters)
+            pending_counter_values: list[tuple[Any, Any, Any]] = [
+                (engine_counters, metrics, "engine_counters")
+            ]
+            while pending_counter_values:
+                value, target, key = pending_counter_values.pop()
+                if value is None or isinstance(value, (str, int, float, bool)):
+                    target[key] = value
+                elif isinstance(value, Mapping):
+                    converted: dict[str, Any] = {}
+                    target[key] = converted
+                    pending_counter_values.extend(
+                        (item, converted, str(name))
+                        for name, item in reversed(list(value.items()))
+                    )
+                elif isinstance(value, (list, tuple)):
+                    converted_items: list[Any] = [None] * len(value)
+                    target[key] = converted_items
+                    pending_counter_values.extend(
+                        (item, converted_items, index)
+                        for index, item in reversed(list(enumerate(value)))
+                    )
+                else:
+                    item = getattr(value, "item", None)
+                    if callable(item):
+                        try:
+                            target[key] = item()
+                            continue
+                        except Exception:
+                            pass
+                    target[key] = repr(value)
 
         peak_memory_mb = getattr(batch_output, "peak_memory_mb", None)
         if peak_memory_mb is not None:

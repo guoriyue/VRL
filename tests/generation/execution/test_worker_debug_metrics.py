@@ -17,6 +17,8 @@ def test_batch_output_debug_metrics_includes_stage_memory_and_counters() -> None
         engine_counters={
             "diffusion_samples_per_generation_batch": 8,
             "nested": {"scalar": torch.tensor(3)},
+            "sequence": (None, {7: torch.tensor(4)}, [True, "ready"]),
+            "non_scalar": torch.tensor([1, 2]),
         },
         peak_memory_mb=1234.5,
     )
@@ -29,6 +31,8 @@ def test_batch_output_debug_metrics_includes_stage_memory_and_counters() -> None
         "engine_counters": {
             "diffusion_samples_per_generation_batch": 8,
             "nested": {"scalar": 3},
+            "sequence": [None, {"7": 4}, [True, "ready"]],
+            "non_scalar": "tensor([1, 2])",
         },
         "peak_memory_mb": 1234.5,
     }

@@ -121,6 +121,9 @@ class DiffusionRequestLayout:
                 seed = request.sde_window_seed
                 if seed is None:
                     raise ValueError("SDE window requires request-owned sde_window_seed")
+            # Fixed stream salt: vary with the request seed while keeping window
+            # selection separate from other uses of that seed. Preserve this
+            # value so existing seeded runs retain their window selection.
             rng = random.Random(seed ^ 0x5DE317D0)
             start = rng.randint(lo, hi - window_size)
             sde_window = (start, start + window_size)
