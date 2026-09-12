@@ -9,6 +9,7 @@ linear model.
 
 from __future__ import annotations
 
+import io
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -39,6 +40,99 @@ from vrl.models.families.wan_2_1.model import (
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.strategy import FSDPStrategy
+
+
+def _run_wan_master_resume(rank, port, checkpointing):
+    from tests.trainers.test_fsdp_fp32_master import _assert_state_equal
+    from vrl.trainers.optimizer import FP32MasterWeightOptimizer
+    from vrl.trainers.strategy import TrainingMemoryState
+
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    os.environ["MASTER_PORT"] = str(port)
+    device = torch.device("cuda", rank)
+    context = DistributedTrainingContext(strategy="fsdp", rank=rank, world_size=2, device=device)
+    strategy = _fsdp_strategy(context, precision_policy="none", cpu_offload=True)
+
+    def build():
+        torch.manual_seed(11)
+        policy = _build_policy()
+        # Preserve the complex rotary buffers while matching production parameter dtype.
+        for parameter in policy.parameters():
+            parameter.data = parameter.data.to(torch.bfloat16)
+        policy.precision = RolePrecision("bf16", "ieee", outer_autocast=True)
+        policy._device = device
+        if checkpointing:
+            policy.transformer.enable_gradient_checkpointing()
+        policy = strategy.prepare_model(policy)
+        optimizer = FP32MasterWeightOptimizer(
+            (parameter for parameter in policy.parameters() if parameter.requires_grad),
+            lambda parameters: torch.optim.AdamW(parameters, lr=5e-5, weight_decay=1e-4),
+        )
+        return policy, optimizer
+
+    def step(policy, optimizer, *, zero=False):
+        optimizer.zero_grad()
+        residency = {name: buffer.device for name, buffer in policy.named_buffers()}
+        memory = TrainingMemoryState(policy, None, optimizer, None, None, device)
+        strategy.park_training_state(memory)
+        strategy.restore_training_state(memory)
+        assert {name: buffer.device for name, buffer in policy.named_buffers()} == residency
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            prediction = policy.forward_step(_input_state(device=device, seed=7 + rank), 0)[
+                "noise_pred"
+            ]
+            loss = prediction.float().square().mean()
+        strategy.backward(loss * 0 if zero else loss)
+        optimizer.prepare_gradients()
+        gradients = [
+            parameter.grad.to_local().cpu().clone() for parameter in optimizer.parameters()
+        ]
+        assert all(torch.isfinite(gradient).all() for gradient in gradients)
+        assert any(bool(gradient.count_nonzero()) for gradient in gradients) is not zero
+        strategy.clip_grad_norm(optimizer.parameters(), max_norm=1.0)
+        optimizer.step()
+        return prediction.detach().cpu(), gradients
+
+    try:
+        policy, optimizer = build()
+        step(policy, optimizer, zero=True)
+        saved = {
+            "model": strategy.export_checkpoint_state(_bundle(policy)),
+            "optimizer": strategy.export_optimizer_state(policy, optimizer),
+        }
+        stream = io.BytesIO()
+        torch.save(saved, stream)
+        stream.seek(0)
+        loaded = torch.load(stream, map_location="cpu", weights_only=False)
+        restored, restored_optimizer = build()
+        strategy.load_checkpoint_state(_bundle(restored), loaded["model"], strict=True)
+        strategy.load_optimizer_state(restored, restored_optimizer, loaded["optimizer"])
+        _assert_state_equal(strategy.export_checkpoint_state(_bundle(restored)), saved["model"])
+        _assert_state_equal(
+            strategy.export_optimizer_state(restored, restored_optimizer), saved["optimizer"]
+        )
+        expected = step(policy, optimizer)
+        actual = step(restored, restored_optimizer)
+        _assert_state_equal(actual, expected)
+        _assert_state_equal(
+            strategy.export_checkpoint_state(_bundle(restored)),
+            strategy.export_checkpoint_state(_bundle(policy)),
+        )
+        _assert_state_equal(
+            strategy.export_optimizer_state(restored, restored_optimizer),
+            strategy.export_optimizer_state(policy, optimizer),
+        )
+    finally:
+        strategy.shutdown()
+
+
+@pytest.mark.gpu
+@pytest.mark.distributed
+@pytest.mark.parametrize("checkpointing", [False, True])
+def test_wan_bf16_master_resume_after_zero_step_and_parking(checkpointing):
+    if torch.cuda.device_count() < 2:
+        pytest.skip("requires two CUDA devices")
+    mp.spawn(_run_wan_master_resume, args=(free_port(), checkpointing), nprocs=2, join=True)
 
 
 def _fsdp_strategy(
