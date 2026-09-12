@@ -3,6 +3,19 @@
 ## Current execution state (2026-09-12 UTC)
 
 Status: **PLANNED: real update and strict resume passed; equivalence/quality open**.
+
+Latest controlled hardware audit (isolated runtime `5f3d0d50`): explicitly
+seeded two-update control and strict resume from its own checkpoint-1 both
+finished successfully on two L40S GPUs. Control step 1 has zero gradient;
+step 2 has nonzero gradient 0.2730526364 and changes 400 of 800 finite LoRA
+tensors. The resumed second update has the same rewards and pre-update
+replay error, and both ranks' complete RNG trees match exactly, but gradient
+norm is 0.2739239901. Exact checkpoint comparison differs in 395 model and
+1,580 trainer leaves. Equivalence therefore remains FAILED/open, not passed.
+Evidence under `/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/`:
+`control_seed7_rank_rng`, `resume_seed7_rank_rng`, and
+`seeded_resume_comparison.json`. See the four-L40S execution ledger for the
+seed/RNG fixes, CUDA round-trip tests, launch settings and next diagnostics.
 This update supersedes historical storage/data availability claims below.
 
 The L40S canonical two-rank FSDP proof completed one real update from isolated
