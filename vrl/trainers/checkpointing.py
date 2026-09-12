@@ -101,6 +101,171 @@ class TrainingCheckpoint:
     payload: dict[str, Any]
     meta: dict[str, Any]
 
+    @staticmethod
+    def _validate_family(value: Any, *, field: str) -> None:
+        """Require a non-empty trimmed family identifier without alias normalization."""
+
+        if not isinstance(value, str) or not value or value != value.strip():
+            raise ValueError(f"{field} must be a non-empty trimmed string")
+
+    @staticmethod
+    def _read_schema_version(
+        fields: Mapping[str, Any],
+        *,
+        source: str,
+    ) -> int:
+        """Read one mandatory exact-integer schema version without coercion."""
+
+        if "schema_version" not in fields:
+            raise ValueError(f"{source} is missing schema_version")
+        raw_version = fields["schema_version"]
+        if type(raw_version) is not int:
+            raise TypeError(f"{source} schema_version must be an integer")
+        if raw_version not in {_LEGACY_CHECKPOINT_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION}:
+            raise ValueError(
+                f"unsupported {source} schema_version={raw_version}; "
+                f"expected {_LEGACY_CHECKPOINT_SCHEMA_VERSION} or {CHECKPOINT_SCHEMA_VERSION}",
+            )
+        return raw_version
+
+    @staticmethod
+    def _validate_identity(
+        *,
+        source: str,
+        schema_version: int,
+        checkpoint_family: Any,
+        saved_identity: dict[str, Any] | None,
+        family: str,
+        expected_model_identity: dict[str, Any] | None,
+        strict: bool,
+    ) -> None:
+        """Apply one family/identity policy to payloads and metadata sidecars."""
+
+        if strict:
+            TrainingCheckpoint._validate_family(family, field="runtime family")
+        if schema_version == CHECKPOINT_SCHEMA_VERSION:
+            TrainingCheckpoint._validate_family(
+                checkpoint_family,
+                field=f"schema-v2 {source} family",
+            )
+        if strict and checkpoint_family and checkpoint_family != family:
+            raise ValueError(
+                f"{source} family mismatch: checkpoint={checkpoint_family!r}, runtime={family!r}",
+            )
+        if strict:
+            if schema_version == CHECKPOINT_SCHEMA_VERSION:
+                if expected_model_identity is None:
+                    raise ValueError(
+                        f"strict schema-v2 {source} validation requires runtime model identity",
+                    )
+                if saved_identity is None:
+                    raise ValueError(
+                        f"schema-v2 {source} is missing required model identity",
+                    )
+            if (
+                saved_identity is not None
+                and expected_model_identity is not None
+                and saved_identity != expected_model_identity
+            ):
+                raise ValueError(
+                    f"{source} model identity mismatch: "
+                    f"checkpoint={saved_identity!r}, runtime={expected_model_identity!r}",
+                )
+        else:
+            if checkpoint_family and checkpoint_family != family:
+                logger.warning(
+                    "Non-strict %s validation ignores family mismatch: checkpoint=%r, runtime=%r",
+                    source,
+                    checkpoint_family,
+                    family,
+                )
+            if saved_identity is None:
+                logger.warning("Non-strict %s validation has no saved model identity", source)
+            elif expected_model_identity is None:
+                logger.warning("Non-strict %s validation has no runtime model identity", source)
+            elif saved_identity != expected_model_identity:
+                logger.warning(
+                    "Non-strict %s validation ignores model identity mismatch: "
+                    "checkpoint=%r, runtime=%r",
+                    source,
+                    saved_identity,
+                    expected_model_identity,
+                )
+
+    @staticmethod
+    def _validate_meta_matches_payload(
+        meta: Mapping[str, Any],
+        *,
+        payload: Mapping[str, Any],
+        schema_version: int,
+    ) -> None:
+        """Reject a stale/tampered sidecar instead of trusting its cheap preflight."""
+
+        if not meta:
+            return
+        meta_schema = TrainingCheckpoint._read_schema_version(
+            meta,
+            source="checkpoint metadata",
+        )
+        if meta_schema != schema_version:
+            raise ValueError(
+                "checkpoint metadata schema_version disagrees with checkpoint.pt: "
+                f"meta={meta_schema}, payload={schema_version}",
+            )
+        meta_family = meta.get("family")
+        payload_family = payload.get("family")
+        if schema_version == CHECKPOINT_SCHEMA_VERSION:
+            TrainingCheckpoint._validate_family(
+                meta_family,
+                field="schema-v2 checkpoint metadata family",
+            )
+        if meta_family and payload_family and meta_family != payload_family:
+            raise ValueError(
+                "checkpoint metadata family disagrees with checkpoint.pt: "
+                f"meta={meta_family!r}, payload={payload_family!r}",
+            )
+        model = payload.get("model")
+        payload_identity = model.get("identity") if isinstance(model, Mapping) else None
+        meta_identity = meta.get("model_identity")
+        if meta_identity is not None and meta_identity != payload_identity:
+            raise ValueError("checkpoint metadata model_identity disagrees with checkpoint.pt")
+        if schema_version == CHECKPOINT_SCHEMA_VERSION and meta_identity is None:
+            raise ValueError("schema-v2 checkpoint metadata is missing model_identity")
+
+    @staticmethod
+    def _validate_payload(
+        payload: dict[str, Any],
+        *,
+        schema_version: int,
+    ) -> None:
+        """Validate schema-owned roots before exposing a loaded checkpoint."""
+
+        model = payload.get("model")
+        if not isinstance(model, dict):
+            raise TypeError("checkpoint payload missing dict field: model")
+        if schema_version == CHECKPOINT_SCHEMA_VERSION:
+            TrainingCheckpoint._validate_family(
+                payload.get("family"),
+                field="schema-v2 checkpoint payload family",
+            )
+            expected_model_keys = {"identity", "owned_state"}
+            if set(model) != expected_model_keys:
+                raise ValueError(
+                    "schema-v2 checkpoint model keys mismatch: "
+                    f"expected={sorted(expected_model_keys)}, actual={sorted(model)}",
+                )
+            identity = model["identity"]
+            if not isinstance(identity, dict) or not identity:
+                raise ValueError(
+                    "schema-v2 checkpoint model.identity must be a non-empty dict",
+                )
+            if not isinstance(model["owned_state"], dict):
+                raise TypeError("checkpoint payload field model.owned_state must be a dict")
+            return
+        state = model.get("trainable_modules")
+        if not isinstance(state, dict):
+            raise TypeError("schema-v1 checkpoint missing dict field: model.trainable_modules")
+
     @classmethod
     def load_for_resume(cls, resume: TrainingResumeConfig) -> TrainingCheckpoint | None:
         """Load the checkpoint selected by one resolved resume policy."""
@@ -121,13 +286,13 @@ class TrainingCheckpoint:
         payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         if not isinstance(payload, dict):
             raise TypeError(f"{checkpoint_path} must contain a dict payload")
-        schema_version = _require_checkpoint_schema_version(
+        schema_version = TrainingCheckpoint._read_schema_version(
             payload,
             source="checkpoint payload",
         )
-        _validate_checkpoint_payload(payload, schema_version=schema_version)
+        TrainingCheckpoint._validate_payload(payload, schema_version=schema_version)
         meta = read_checkpoint_meta(checkpoint_dir)
-        _validate_checkpoint_meta_matches_payload(
+        TrainingCheckpoint._validate_meta_matches_payload(
             meta,
             payload=payload,
             schema_version=schema_version,
@@ -148,7 +313,7 @@ class TrainingCheckpoint:
 
     @property
     def schema_version(self) -> int:
-        return _require_checkpoint_schema_version(
+        return TrainingCheckpoint._read_schema_version(
             self.payload,
             source="checkpoint payload",
         )
@@ -306,14 +471,86 @@ def build_adapter_exports(
 
 
 @dataclass(frozen=True, slots=True)
-class _ResolvedAdapterExport:
+class _AdapterCheckpointSource:
     """Adapter plus its derived location inside one checkpoint root."""
 
     export: AdapterExport
     root_name: str
     state_prefix: str
 
-    def select_state(
+    @classmethod
+    def from_exports(
+        cls,
+        bundle: Any,
+        exports: Mapping[str, AdapterExport] | None,
+    ) -> dict[str, _AdapterCheckpointSource]:
+        """Derive each export's unique checkpoint root and relative state prefix."""
+
+        if exports is None:
+            return {}
+        roots = require_trainable_modules(bundle)
+        sources: dict[str, _AdapterCheckpointSource] = {}
+        output_names: dict[PurePosixPath, str] = {}
+        effective_output_names: dict[PurePosixPath, str] = {}
+        for name, export in exports.items():
+            normalized_name = _safe_relative_output_path(
+                name,
+                field="adapter export name",
+                allow_nested=True,
+            )
+            effective_path = (
+                normalized_name
+                if export.adapter_name == "default"
+                else normalized_name / export.adapter_name
+            )
+            existing = effective_output_names.get(effective_path)
+            if existing is not None:
+                raise ValueError(
+                    f"adapter exports {existing!r} and {name!r} write the same PEFT output path",
+                )
+            for existing_path, existing_name in output_names.items():
+                if (
+                    existing_path == normalized_name
+                    or existing_path in normalized_name.parents
+                    or normalized_name in existing_path.parents
+                ):
+                    raise ValueError(
+                        f"adapter export paths {existing_name!r} and {name!r} overlap",
+                    )
+            output_names[normalized_name] = name
+            effective_output_names[effective_path] = name
+
+            target = unwrap_compile_and_ddp(export.module)
+            matches: list[tuple[str, str]] = []
+            for raw_root_name, wrapped_root in roots.items():
+                if not isinstance(raw_root_name, str) or not raw_root_name:
+                    raise ValueError("checkpoint root names must be non-empty strings")
+                root = unwrap_compile_and_ddp(wrapped_root)
+                if root is target or root is export.module:
+                    matches.append((raw_root_name, ""))
+                    continue
+                named_modules = getattr(root, "named_modules", None)
+                if not callable(named_modules):
+                    continue
+                matches.extend(
+                    (raw_root_name, prefix)
+                    for prefix, module in named_modules(remove_duplicate=False)
+                    if prefix and (module is target or module is export.module)
+                )
+            if len(matches) != 1:
+                raise ValueError(
+                    f"adapter export {name!r} must map to exactly one bundle checkpoint "
+                    f"root; found {matches}",
+                )
+            root_name, state_prefix = matches[0]
+            sources[name] = cls(
+                export=export,
+                root_name=root_name,
+                state_prefix=state_prefix,
+            )
+        return sources
+
+    def extract_adapter_state(
         self,
         root_state: Mapping[str, Any],
         *,
@@ -363,77 +600,6 @@ def _safe_relative_output_path(
     return PurePosixPath(*segments)
 
 
-def _resolve_adapter_exports(
-    bundle: Any,
-    exports: Mapping[str, AdapterExport] | None,
-) -> dict[str, _ResolvedAdapterExport]:
-    """Derive each export's unique checkpoint root and relative state prefix."""
-
-    if exports is None:
-        return {}
-    roots = require_trainable_modules(bundle)
-    resolved: dict[str, _ResolvedAdapterExport] = {}
-    output_names: dict[PurePosixPath, str] = {}
-    effective_output_names: dict[PurePosixPath, str] = {}
-    for name, export in exports.items():
-        normalized_name = _safe_relative_output_path(
-            name,
-            field="adapter export name",
-            allow_nested=True,
-        )
-        effective_path = (
-            normalized_name
-            if export.adapter_name == "default"
-            else normalized_name / export.adapter_name
-        )
-        existing = effective_output_names.get(effective_path)
-        if existing is not None:
-            raise ValueError(
-                f"adapter exports {existing!r} and {name!r} write the same PEFT output path",
-            )
-        for existing_path, existing_name in output_names.items():
-            if (
-                existing_path == normalized_name
-                or existing_path in normalized_name.parents
-                or normalized_name in existing_path.parents
-            ):
-                raise ValueError(
-                    f"adapter export paths {existing_name!r} and {name!r} overlap",
-                )
-        output_names[normalized_name] = name
-        effective_output_names[effective_path] = name
-
-        target = unwrap_compile_and_ddp(export.module)
-        matches: list[tuple[str, str]] = []
-        for raw_root_name, wrapped_root in roots.items():
-            if not isinstance(raw_root_name, str) or not raw_root_name:
-                raise ValueError("checkpoint root names must be non-empty strings")
-            root = unwrap_compile_and_ddp(wrapped_root)
-            if root is target or root is export.module:
-                matches.append((raw_root_name, ""))
-                continue
-            named_modules = getattr(root, "named_modules", None)
-            if not callable(named_modules):
-                continue
-            matches.extend(
-                (raw_root_name, prefix)
-                for prefix, module in named_modules(remove_duplicate=False)
-                if prefix and (module is target or module is export.module)
-            )
-        if len(matches) != 1:
-            raise ValueError(
-                f"adapter export {name!r} must map to exactly one bundle checkpoint "
-                f"root; found {matches}",
-            )
-        root_name, state_prefix = matches[0]
-        resolved[name] = _ResolvedAdapterExport(
-            export=export,
-            root_name=root_name,
-            state_prefix=state_prefix,
-        )
-    return resolved
-
-
 def _checkpoint_stage_agreement(strategy: Any | None, succeeded: bool) -> bool:
     """Agree on rank-local work before another checkpoint collective begins."""
 
@@ -479,6 +645,80 @@ def _checkpoint_trainable_parameters(bundle: Any) -> list[Any]:
     return ordered
 
 
+class _CheckpointSaveTransaction:
+    """Own staging files until a complete checkpoint is published."""
+
+    def __init__(self, final_path: Path) -> None:
+        self.final_path = final_path
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        self.staging = Path(
+            tempfile.mkdtemp(prefix=f"{final_path.name}.tmp-", dir=final_path.parent)
+        )
+
+    def __enter__(self) -> _CheckpointSaveTransaction:
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        if exc_type is not None:
+            shutil.rmtree(self.staging, ignore_errors=True)
+
+    def write(
+        self,
+        payload: dict[str, Any],
+        *,
+        artifact_state: Mapping[str, Any],
+        adapter_sources: Mapping[str, _AdapterCheckpointSource],
+    ) -> dict[str, Any]:
+        checkpoint_file = self.staging / TRAINING_CHECKPOINT_NAME
+        torch.save(payload, checkpoint_file)
+        with checkpoint_file.open("rb") as handle:
+            os.fsync(handle.fileno())
+        for name, source in adapter_sources.items():
+            root_state = artifact_state.get(source.root_name)
+            if not isinstance(root_state, Mapping):
+                raise ValueError(
+                    f"adapter export {name!r} checkpoint root "
+                    f"{source.root_name!r} has no gathered state"
+                )
+            source.export.module.save_pretrained(
+                self.staging / name,
+                state_dict=source.extract_adapter_state(root_state, artifact_name=name),
+                selected_adapters=[source.export.adapter_name],
+            )
+        meta = write_checkpoint_meta(
+            self.staging,
+            family=payload["family"],
+            model_identity=payload["model"]["identity"],
+            trainer_state=payload["trainer"],
+            progress=payload["progress"],
+            uses_lora=any(
+                name == LORA_WEIGHTS_NAME or name.startswith(f"{LORA_WEIGHTS_NAME}/")
+                for name in adapter_sources
+            ),
+            checkpoint_file_bytes=checkpoint_file.stat().st_size,
+        )
+        self._publish()
+        return meta
+
+    def _publish(self) -> None:
+        """Atomically rename the fully written staging directory into place.
+
+        Re-saving to an existing directory (crash-loop overwriting the same
+        ``checkpoint-N``) removes the stale directory first; the replaced window is
+        not atomic, but the staging directory is complete before it opens, and
+        discovery ignores ``*.tmp-*`` so no reader can observe a partial state.
+        """
+
+        if self.final_path.exists():
+            shutil.rmtree(self.final_path)
+        os.replace(self.staging, self.final_path)
+        directory_fd = os.open(self.final_path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+
 def save_training_checkpoint(
     checkpoint_dir: str | Path,
     *,
@@ -515,16 +755,16 @@ def save_training_checkpoint(
     so for them this is a no-op.
     """
 
-    _validate_checkpoint_family(family, field="family")
+    TrainingCheckpoint._validate_family(family, field="family")
     if not isinstance(model_identity, dict) or not model_identity:
         raise ValueError("model_identity must be a non-empty dict")
     is_primary = True if strategy is None else strategy.context.is_primary
-    resolved_exports: dict[str, _ResolvedAdapterExport] = {}
+    adapter_sources: dict[str, _AdapterCheckpointSource] = {}
     ema_has_updates = False
     setup_failure: BaseException | None = None
     try:
-        resolved_exports = _resolve_adapter_exports(bundle, adapter_exports)
-        if resolved_exports and export_ema is not None:
+        adapter_sources = _AdapterCheckpointSource.from_exports(bundle, adapter_exports)
+        if adapter_sources and export_ema is not None:
             ema_has_updates = export_ema.has_updates
     except BaseException as error:
         setup_failure = error
@@ -536,7 +776,7 @@ def save_training_checkpoint(
         raise setup_failure
     uses_ema_export = _checkpoint_ranks_agree_bool(
         strategy,
-        bool(resolved_exports and export_ema is not None),
+        bool(adapter_sources and export_ema is not None),
         field="EMA artifact export presence",
     )
     export_checkpoint = (
@@ -686,15 +926,6 @@ def save_training_checkpoint(
     publish_failure: BaseException | None = None
     if is_primary:
         try:
-            # Atomic publish: every artifact (checkpoint.pt, exports, meta) is
-            # written into a same-filesystem staging directory, fsynced, and then
-            # renamed into place in one os.replace. A crash leaves either the
-            # previous complete checkpoint or an ignorable *.tmp-* directory.
-            final_path = Path(checkpoint_dir)
-            final_path.parent.mkdir(parents=True, exist_ok=True)
-            path = Path(
-                tempfile.mkdtemp(prefix=f"{final_path.name}.tmp-", dir=final_path.parent),
-            )
             payload = {
                 "schema_version": CHECKPOINT_SCHEMA_VERSION,
                 "family": family,
@@ -706,25 +937,12 @@ def save_training_checkpoint(
                 "progress": dict(progress),
                 "rng": rng_state or capture_rng_state(),
             }
-            try:
-                checkpoint_file = path / TRAINING_CHECKPOINT_NAME
-                torch.save(payload, checkpoint_file)
-                with checkpoint_file.open("rb") as handle:
-                    os.fsync(handle.fileno())
-                published_meta = _write_checkpoint_artifacts_and_publish(
-                    staging=path,
-                    final_path=final_path,
-                    checkpoint_file=checkpoint_file,
-                    family=family,
-                    model_identity=model_identity,
-                    progress=progress,
-                    trainer_state=trainer_state,
+            with _CheckpointSaveTransaction(Path(checkpoint_dir)) as transaction:
+                published_meta = transaction.write(
+                    payload,
                     artifact_state=artifact_state,
-                    adapter_exports=resolved_exports,
+                    adapter_sources=adapter_sources,
                 )
-            except BaseException:
-                shutil.rmtree(path, ignore_errors=True)
-                raise
         except BaseException as error:
             publish_failure = error
 
@@ -738,72 +956,6 @@ def save_training_checkpoint(
     if publish_failure is not None:
         raise publish_failure
     return published_meta
-
-
-def _write_checkpoint_artifacts_and_publish(
-    *,
-    staging: Path,
-    final_path: Path,
-    checkpoint_file: Path,
-    family: str,
-    model_identity: dict[str, Any],
-    progress: dict[str, Any],
-    trainer_state: dict[str, Any],
-    artifact_state: dict[str, Any],
-    adapter_exports: Mapping[str, _ResolvedAdapterExport],
-) -> dict[str, Any]:
-    """Write exports + meta into ``staging``, then atomically rename into place."""
-
-    for name, resolved in adapter_exports.items():
-        root_state = artifact_state.get(resolved.root_name)
-        if not isinstance(root_state, Mapping):
-            raise ValueError(
-                f"adapter export {name!r} checkpoint root "
-                f"{resolved.root_name!r} has no gathered state",
-            )
-        adapter_state = resolved.select_state(
-            root_state,
-            artifact_name=name,
-        )
-        resolved.export.module.save_pretrained(
-            staging / name,
-            state_dict=adapter_state,
-            selected_adapters=[resolved.export.adapter_name],
-        )
-
-    meta = write_checkpoint_meta(
-        staging,
-        family=family,
-        model_identity=model_identity,
-        trainer_state=trainer_state,
-        progress=progress,
-        uses_lora=any(
-            name == LORA_WEIGHTS_NAME or name.startswith(f"{LORA_WEIGHTS_NAME}/")
-            for name in adapter_exports
-        ),
-        checkpoint_file_bytes=checkpoint_file.stat().st_size,
-    )
-    _publish_checkpoint_dir(staging, final_path)
-    return meta
-
-
-def _publish_checkpoint_dir(staging: Path, final_path: Path) -> None:
-    """Atomically rename the fully written staging directory into place.
-
-    Re-saving to an existing directory (crash-loop overwriting the same
-    ``checkpoint-N``) removes the stale directory first; the replaced window is
-    not atomic, but the staging directory is complete before it opens, and
-    discovery ignores ``*.tmp-*`` so no reader can observe a partial state.
-    """
-
-    if final_path.exists():
-        shutil.rmtree(final_path)
-    os.replace(staging, final_path)
-    directory_fd = os.open(final_path.parent, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
 
 
 def prepare_model_config_for_training_resume(
@@ -964,7 +1116,7 @@ def validate_checkpoint_compatibility(
 
     if checkpoint is None:
         return
-    _validate_checkpoint_identity_contract(
+    TrainingCheckpoint._validate_identity(
         source="checkpoint",
         schema_version=checkpoint.schema_version,
         checkpoint_family=checkpoint.payload.get("family"),
@@ -993,14 +1145,14 @@ def validate_checkpoint_meta_compatibility(
         raise TypeError("checkpoint metadata must be a mapping")
     if not meta:
         return
-    schema_version = _require_checkpoint_schema_version(
+    schema_version = TrainingCheckpoint._read_schema_version(
         meta,
         source="checkpoint metadata",
     )
     raw_identity = meta.get("model_identity")
     if raw_identity is not None and not isinstance(raw_identity, dict):
         raise TypeError("checkpoint metadata model_identity must be a dict")
-    _validate_checkpoint_identity_contract(
+    TrainingCheckpoint._validate_identity(
         source="checkpoint metadata",
         schema_version=schema_version,
         checkpoint_family=meta.get("family"),
@@ -1009,171 +1161,6 @@ def validate_checkpoint_meta_compatibility(
         expected_model_identity=expected_model_identity,
         strict=strict,
     )
-
-
-def _validate_checkpoint_family(value: Any, *, field: str) -> None:
-    """Require a non-empty trimmed family identifier without alias normalization."""
-
-    if not isinstance(value, str) or not value or value != value.strip():
-        raise ValueError(f"{field} must be a non-empty trimmed string")
-
-
-def _require_checkpoint_schema_version(
-    fields: Mapping[str, Any],
-    *,
-    source: str,
-) -> int:
-    """Read one mandatory exact-integer schema version without coercion."""
-
-    if "schema_version" not in fields:
-        raise ValueError(f"{source} is missing schema_version")
-    raw_version = fields["schema_version"]
-    if type(raw_version) is not int:
-        raise TypeError(f"{source} schema_version must be an integer")
-    if raw_version not in {_LEGACY_CHECKPOINT_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION}:
-        raise ValueError(
-            f"unsupported {source} schema_version={raw_version}; "
-            f"expected {_LEGACY_CHECKPOINT_SCHEMA_VERSION} or {CHECKPOINT_SCHEMA_VERSION}",
-        )
-    return raw_version
-
-
-def _validate_checkpoint_identity_contract(
-    *,
-    source: str,
-    schema_version: int,
-    checkpoint_family: Any,
-    saved_identity: dict[str, Any] | None,
-    family: str,
-    expected_model_identity: dict[str, Any] | None,
-    strict: bool,
-) -> None:
-    """Apply one family/identity policy to payloads and metadata sidecars."""
-
-    if strict:
-        _validate_checkpoint_family(family, field="runtime family")
-    if schema_version == CHECKPOINT_SCHEMA_VERSION:
-        _validate_checkpoint_family(
-            checkpoint_family,
-            field=f"schema-v2 {source} family",
-        )
-    if strict and checkpoint_family and checkpoint_family != family:
-        raise ValueError(
-            f"{source} family mismatch: checkpoint={checkpoint_family!r}, runtime={family!r}",
-        )
-    if strict:
-        if schema_version == CHECKPOINT_SCHEMA_VERSION:
-            if expected_model_identity is None:
-                raise ValueError(
-                    f"strict schema-v2 {source} validation requires runtime model identity",
-                )
-            if saved_identity is None:
-                raise ValueError(
-                    f"schema-v2 {source} is missing required model identity",
-                )
-        if (
-            saved_identity is not None
-            and expected_model_identity is not None
-            and saved_identity != expected_model_identity
-        ):
-            raise ValueError(
-                f"{source} model identity mismatch: "
-                f"checkpoint={saved_identity!r}, runtime={expected_model_identity!r}",
-            )
-    else:
-        if checkpoint_family and checkpoint_family != family:
-            logger.warning(
-                "Non-strict %s validation ignores family mismatch: checkpoint=%r, runtime=%r",
-                source,
-                checkpoint_family,
-                family,
-            )
-        if saved_identity is None:
-            logger.warning("Non-strict %s validation has no saved model identity", source)
-        elif expected_model_identity is None:
-            logger.warning("Non-strict %s validation has no runtime model identity", source)
-        elif saved_identity != expected_model_identity:
-            logger.warning(
-                "Non-strict %s validation ignores model identity mismatch: "
-                "checkpoint=%r, runtime=%r",
-                source,
-                saved_identity,
-                expected_model_identity,
-            )
-
-
-def _validate_checkpoint_meta_matches_payload(
-    meta: Mapping[str, Any],
-    *,
-    payload: Mapping[str, Any],
-    schema_version: int,
-) -> None:
-    """Reject a stale/tampered sidecar instead of trusting its cheap preflight."""
-
-    if not meta:
-        return
-    meta_schema = _require_checkpoint_schema_version(
-        meta,
-        source="checkpoint metadata",
-    )
-    if meta_schema != schema_version:
-        raise ValueError(
-            "checkpoint metadata schema_version disagrees with checkpoint.pt: "
-            f"meta={meta_schema}, payload={schema_version}",
-        )
-    meta_family = meta.get("family")
-    payload_family = payload.get("family")
-    if schema_version == CHECKPOINT_SCHEMA_VERSION:
-        _validate_checkpoint_family(
-            meta_family,
-            field="schema-v2 checkpoint metadata family",
-        )
-    if meta_family and payload_family and meta_family != payload_family:
-        raise ValueError(
-            "checkpoint metadata family disagrees with checkpoint.pt: "
-            f"meta={meta_family!r}, payload={payload_family!r}",
-        )
-    model = payload.get("model")
-    payload_identity = model.get("identity") if isinstance(model, Mapping) else None
-    meta_identity = meta.get("model_identity")
-    if meta_identity is not None and meta_identity != payload_identity:
-        raise ValueError("checkpoint metadata model_identity disagrees with checkpoint.pt")
-    if schema_version == CHECKPOINT_SCHEMA_VERSION and meta_identity is None:
-        raise ValueError("schema-v2 checkpoint metadata is missing model_identity")
-
-
-def _validate_checkpoint_payload(
-    payload: dict[str, Any],
-    *,
-    schema_version: int,
-) -> None:
-    """Validate schema-owned roots before exposing a loaded checkpoint."""
-
-    model = payload.get("model")
-    if not isinstance(model, dict):
-        raise TypeError("checkpoint payload missing dict field: model")
-    if schema_version == CHECKPOINT_SCHEMA_VERSION:
-        _validate_checkpoint_family(
-            payload.get("family"),
-            field="schema-v2 checkpoint payload family",
-        )
-        expected_model_keys = {"identity", "owned_state"}
-        if set(model) != expected_model_keys:
-            raise ValueError(
-                "schema-v2 checkpoint model keys mismatch: "
-                f"expected={sorted(expected_model_keys)}, actual={sorted(model)}",
-            )
-        identity = model["identity"]
-        if not isinstance(identity, dict) or not identity:
-            raise ValueError(
-                "schema-v2 checkpoint model.identity must be a non-empty dict",
-            )
-        if not isinstance(model["owned_state"], dict):
-            raise TypeError("checkpoint payload field model.owned_state must be a dict")
-        return
-    state = model.get("trainable_modules")
-    if not isinstance(state, dict):
-        raise TypeError("schema-v1 checkpoint missing dict field: model.trainable_modules")
 
 
 def _checkpoint_state_for_restore(
@@ -1617,7 +1604,7 @@ def write_checkpoint_meta(
     copy for cheap pre-model preflight; ``checkpoint.pt`` remains authoritative.
     """
 
-    _validate_checkpoint_family(family, field="family")
+    TrainingCheckpoint._validate_family(family, field="family")
     if not isinstance(model_identity, dict) or not model_identity:
         raise ValueError("model_identity must be a non-empty dict")
     meta = {
