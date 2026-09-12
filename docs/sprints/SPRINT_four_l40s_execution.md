@@ -331,3 +331,23 @@ this claim. The run uses the isolated `/home/ubuntu/VRL-gpu-placement` tree at
 recipe. Output target: `outputs/wan_i2v_14b_l40s_proof/epoch1_retry` in the main
 workspace. A separate GPU/process preflight must pass before launch. This
 claim is a queued attempt, not evidence of training success.
+
+The `epoch1_retry` attempt exited 1 before generation: both ranks initialized
+the real model and FSDP, then initial rollout weight export called
+`DTensor.full_tensor()` on CPU-offloaded shards belonging to a CUDA/NCCL mesh.
+The error was `No backend type associated with device type cpu`. This was not
+OOM or a placement failure, and no optimizer update occurred. Both rank
+processes and their GPU allocations were gone after terminal cleanup.
+
+Isolated commit `0235947e` stages one selected offloaded DTensor at a time on
+the current CUDA device for its full gather, retaining CPU snapshots without
+gathering the frozen base. The expanded real Wan dual-expert CPU-offload tests
+passed for one and two CUDA ranks (initial sync, nonzero expert gradients,
+checkpoint and optimizer export); 57 FSDP CPU/distributed tests also passed.
+Touched-file Ruff, format and diff checks passed.
+
+After a separate clean GPU/process preflight, the same canonical production
+I2V recipe restarted on GPUs 2/3 from `0235947e`. New output directory:
+`outputs/wan_i2v_14b_l40s_proof/epoch1_gather_fix`; log:
+`outputs/perf/wan_i2v_l40s_epoch1_gather_fix.log`. The claim remains active
+through this retry. Full production update/resume evidence is still pending.
