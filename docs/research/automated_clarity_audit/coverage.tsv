@@ -226,7 +226,7 @@ vrl/nn/layers/attention/cache_rows.py	da58c7d083be957f5fcdbe7624901c11500ec0d9	p
 vrl/nn/layers/attention/paged.py	9c7d14271b402efa4439c6dc76921806d4319047	reviewed	attention_backend_contract.md
 vrl/nn/modules/__init__.py	e28d8645c3aab3736da9f779c4ec602875a0d9c7	pending	-
 vrl/nn/modules/ar_attention_backends.py	eddd1c806d5c1c8e1ca6e6b789599ba79dd7ebbb	pending	-
-vrl/nn/modules/ar_decoder.py	703d92e72e542a29a7090ea6b28207f115ce5f7a	pending	-
+vrl/nn/modules/ar_decoder.py	703d92e72e542a29a7090ea6b28207f115ce5f7a	reviewed	vllm_decoder.md
 vrl/nn/modules/torch_attention.py	736cb764dbb29c277eacabc267fc892774a2a527	reviewed	attention_backend_contract.md
 vrl/nn/optimization/__init__.py	3c42480084cb5323ce87bd20634b45917080448a	reviewed	optimization_passes.md
 vrl/nn/optimization/passes.py	e6de15ea541e0e10fa3114c1b27ba13d20de3f39	reviewed	optimization_passes.md

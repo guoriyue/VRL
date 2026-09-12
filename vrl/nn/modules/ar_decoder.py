@@ -121,11 +121,11 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         torch.Tensor,
         torch.Tensor,
         torch.Tensor,
+        torch.Tensor,
         tuple[VllmDecoderPagedSequenceState, ...],
     ]:
         embeds = request.inputs_embeds
         mask = request.attention_mask
-        self._validate_runtime_tensor(embeds)
         mask_bool = mask.to(dtype=torch.bool)
         lengths = mask_bool.sum(dim=1).to(dtype=torch.long)
         if bool((lengths <= 0).any()):
@@ -192,12 +192,9 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         tuple[VllmDecoderPagedSequenceState, ...],
     ]:
         embeds = request.input_embeds
-        self._validate_runtime_tensor(embeds)
         if embeds.shape[1] != 1:
             raise ValueError(f"{self.backend_label} step expects one token per sequence")
         states = self._typed_states(request.sequence_states)
-        if len(states) != embeds.shape[0]:
-            raise ValueError(f"{self.backend_label} state count must match batch size")
         for state in states:
             if state.length >= len(state.block_ids) * self.config.block_size:
                 raise RuntimeError(
@@ -477,18 +474,12 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         self._next_block_id += blocks_needed
         return tuple(range(start, start + blocks_needed))
 
-    def _validate_runtime_tensor(self, tensor: torch.Tensor) -> None:
-        if tensor.ndim != 3:
-            raise ValueError(f"{self.backend_label} input embeddings must be [B, T, H]")
-
     def _contiguous_valid_token_span(
         self,
         mask: torch.Tensor,
         length: int,
     ) -> tuple[int, int]:
         valid_positions = torch.nonzero(mask, as_tuple=False).flatten()
-        if int(valid_positions.numel()) != int(length):
-            raise ValueError(f"{self.backend_label} prompt mask length mismatch")
         start = int(valid_positions[0].item())
         end = int(valid_positions[-1].item()) + 1
         if end - start != int(length):
