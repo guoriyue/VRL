@@ -9,7 +9,8 @@ preserved, and GPU inventory was empty before the corrected launch. The old
 dynamic stage must not restart automatically. The short-run claim is now
 released; no further long experiment is authorized by this acceptance.
 
-Corrected continuous and single-GPU strict completed from `/home/ubuntu/VRL-mgpu-integration` at
+Corrected continuous, four-GPU strict and single-GPU strict completed from
+`/home/ubuntu/VRL-mgpu-integration` at
 `e11c04bc`, using the unchanged shared Python environment. Output root:
 `/mnt/nvme/outputs/sd35_global_std_controlled`. Initial training arms are limited
 to two updates each, preserving 512px, 10 denoising steps, 128 samples/update,
