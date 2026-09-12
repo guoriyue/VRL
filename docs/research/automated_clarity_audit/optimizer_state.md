@@ -56,13 +56,10 @@ parameter-group reordering, or changing schema/version compatibility.
 
 ## Follow-up and limits
 
-PrecisionDriftGuardConfig's existing numeric validation casts temporary values
-without normalizing stored attributes, and its non-negative threshold checks
-permit NaN/infinity. The consumer compares measurements directly against these
-attributes; NaN thresholds cannot report an exceedance. Review the complete
-guard/config boundary and whether infinity is a supported intentional threshold
-before choosing its contract. Do not treat these checks as proof of finite
-thresholds or add repeated guards at every timestep.
+The PrecisionDriftGuardConfig finding is closed by the follow-up recorded in
+precision_guard.md: thresholds are normalized once, NaN is rejected, positive
+infinity remains supported, and check counts use the shared integer boundary.
+No repeated validation was added to the measurement loop.
 
 Master checkpoint state_dict returns detached tensors sharing master storage,
 like ordinary torch state dictionaries; it is not an immutable asynchronous

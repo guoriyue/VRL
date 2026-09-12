@@ -94,11 +94,17 @@ class PrecisionDriftGuardConfig:
     def __post_init__(self) -> None:
         if self.mode not in ("auto", "off", "warn", "fail"):
             raise ValueError("precision_drift_guard.mode must be auto/off/warn/fail")
-        if int(self.max_timestep_checks) < 0:
-            raise ValueError("precision_drift_guard.max_timestep_checks must be >= 0")
-        if float(self.max_abs_log_ratio) < 0:
+        require_int(
+            self.max_timestep_checks,
+            path="precision_drift_guard.max_timestep_checks",
+            minimum=0,
+        )
+        self.max_abs_log_ratio = float(self.max_abs_log_ratio)
+        self.max_ratio_abs_dev = float(self.max_ratio_abs_dev)
+        # Positive infinity remains an unbounded threshold; NaN is not a limit.
+        if not self.max_abs_log_ratio >= 0:
             raise ValueError("precision_drift_guard.max_abs_log_ratio must be >= 0")
-        if float(self.max_ratio_abs_dev) < 0:
+        if not self.max_ratio_abs_dev >= 0:
             raise ValueError("precision_drift_guard.max_ratio_abs_dev must be >= 0")
 
 

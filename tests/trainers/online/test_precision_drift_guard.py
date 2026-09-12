@@ -162,6 +162,37 @@ def test_precision_drift_guard_passes_when_within_threshold() -> None:
     assert record["violated"] is False
 
 
+@pytest.mark.parametrize("field", ["max_abs_log_ratio", "max_ratio_abs_dev"])
+def test_nan_threshold_is_rejected_before_it_can_disable_comparison(field) -> None:
+    with pytest.raises(ValueError, match=field):
+        PrecisionDriftGuardConfig(**{field: float("nan")})
+
+
+def test_converted_thresholds_are_used_by_measurement() -> None:
+    cfg = PrecisionDriftGuardConfig(
+        mode="fail",
+        max_abs_log_ratio="0.001",
+        max_ratio_abs_dev="0.001",
+    )
+    with pytest.raises(PrecisionDriftError):
+        _run(cfg, train="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.05))
+
+
+def test_infinite_thresholds_preserve_unbounded_finite_drift() -> None:
+    cfg = PrecisionDriftGuardConfig(
+        mode="fail",
+        max_abs_log_ratio=float("inf"),
+        max_ratio_abs_dev=float("inf"),
+    )
+    record = _run(cfg, train="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.05))
+    assert record["violated"] is False
+
+
+def test_fractional_check_count_fails_at_configuration_boundary() -> None:
+    with pytest.raises(ValueError, match="max_timestep_checks"):
+        PrecisionDriftGuardConfig(max_timestep_checks=1.5)
+
+
 def test_precision_drift_guard_checks_fp16_same_role_precision() -> None:
     cfg = PrecisionDriftGuardConfig(mode="fail")
     record = _run(

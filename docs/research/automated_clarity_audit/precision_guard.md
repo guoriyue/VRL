@@ -47,18 +47,32 @@ Non-goals: changing drift math, reordering collective participation across rank
 branches, merging exact replay parity with precision-corrected drift, creating a
 new validator hierarchy, or eliminating uniform public helper shapes for LOC.
 
-## Open configuration finding
+## Configuration finding closed in follow-up
 
-The threshold issue from optimizer_state.md remains actionable: temporary casts
-in PrecisionDriftGuardConfig do not normalize stored values, and NaN passes the
-existing negative-only tests. Positive infinity has historically been accepted;
-the ordering helper handles it as an unbounded positive limit. A focused config
-fix should preserve that existing infinity behavior while rejecting NaN and
-storing the converted threshold, rather than introduce a new finite-only policy
-or add per-timestep validation. The max_timestep_checks constructor similarly
-checks int(value) but retains the original value; review that count contract at
-the same config boundary. Presets inspected use ordinary integer counts and
-finite thresholds. These config fixes are not claimed by this collective edit.
+Follow-up to 03a849541 fixes the issue from optimizer_state.md at the config
+owner. PrecisionDriftGuardConfig now stores converted float thresholds instead
+of validating temporary casts and retaining incompatible strings. Its
+non-negative predicate rejects NaN while retaining positive infinity as an
+unbounded limit. The existing fail_on_nonfinite measurement behavior remains.
+max_timestep_checks uses the shared require_int boundary instead of testing a
+temporary int conversion and later passing the original fractional/string value
+to range. Zero still selects no timesteps. No per-timestep guards were added.
+
+Compatibility: negative thresholds remain rejected. Numeric threshold strings
+already accepted by the constructor now work during measurement. NaN thresholds
+and direct non-integer check counts now fail at construction. Public Pydantic
+conversion still precedes dataclass construction; this does not change that
+framework's own accepted input coercions. Existing integer-count presets and
+positive-infinite thresholds retain their behavior. Mutation of a config after
+construction is not revalidated by this change.
+
+The new focused regressions first produced four failures: both NaN threshold
+fields were accepted, a converted string threshold failed during measurement,
+and the fractional count was accepted. After the fix, 103 guard, online config,
+drift config and all-experiment loading tests passed. A positive-infinity case
+also confirms that unbounded finite drift remains allowed. Ruff passed for the
+two changed Python files. No generic validator class or new numeric policy table
+was introduced; existing named config fields own these constraints.
 
 ## Validation
 
