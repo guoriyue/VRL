@@ -12,7 +12,6 @@ ABC, just a pure functional loss. We therefore drive the synchronous
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,65 +25,66 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _build_encoders(
-    pipeline: Any,
-    num_frames: int,
-    device: torch.device | str,
-    dtype: torch.dtype,
-) -> tuple[
-    Callable[[torch.Tensor], torch.Tensor],
-    Callable[[list[str]], torch.Tensor],
-]:
-    """Return pixel and text encoders bound to the already-loaded Wan pipeline.
+class WanDPOEncoders:
+    """Pixel and text encoders sharing one loaded Wan pipeline.
 
-    Pixel encoding preserves the winner-then-loser 2B rows. Text encoding returns
-    one embedding for each of the B captions; OfflineDPOTrainer duplicates that
-    block to align it with the image pairs.
-
-    ``encode_pixels`` replicates each image to ``num_frames`` along the
-    temporal dim before VAE encoding — this lets image-only datasets
-    (Pick-a-Pic) train a video model with ``num_frames=1`` (image-style)
-    or ``num_frames>1`` (video-style).
+    Pixel encoding preserves winner-then-loser 2B rows; text encoding returns B
+    caption embeddings, which OfflineDPOTrainer duplicates for the image pairs.
+    Images are repeated along the temporal axis to satisfy the video VAE input
+    layout; repeating frames does not introduce motion supervision.
     """
-    import torch
 
-    vae = pipeline.vae
-    z_dim = vae.config.z_dim
-    latents_mean = (
-        torch.tensor(vae.config.latents_mean)
-        .view(1, z_dim, 1, 1, 1)
-        .to(device, dtype=torch.float32)
-    )
-    latents_std = (
-        torch.tensor(vae.config.latents_std)
-        .view(1, z_dim, 1, 1, 1)
-        .to(device, dtype=torch.float32)
-    )
+    def __init__(
+        self,
+        pipeline: Any,
+        num_frames: int,
+        device: torch.device | str,
+        dtype: torch.dtype,
+    ) -> None:
+        import torch
 
-    def encode_pixels(pixels_2bchw: torch.Tensor) -> torch.Tensor:
-        # Replicate to T frames along a new temporal dim.
-        x = pixels_2bchw.unsqueeze(2).expand(-1, -1, num_frames, -1, -1).contiguous()
-        x = x.to(device=device, dtype=vae.dtype)
-        latents = vae.encode(x).latent_dist.sample()
-        # Inverse of the Wan decode denormalization (raw = z * std + mean, see
-        # decode_latents in vrl/models/families/wan_2_1/model.py): the transformer
-        # consumes z = (raw - mean) / std.
-        latents = (latents.float() - latents_mean) / latents_std
-        return latents.to(dtype)
-
-    @torch.no_grad()
-    def encode_text(captions: list[str]) -> torch.Tensor:
-        prompt_embeds, _ = pipeline.encode_prompt(
-            prompt=captions,
-            negative_prompt=[""] * len(captions),
-            do_classifier_free_guidance=False,
-            num_videos_per_prompt=1,
-            max_sequence_length=512,
-            device=device,
+        self.pipeline = pipeline
+        self.num_frames = num_frames
+        self.device = device
+        self.dtype = dtype
+        self.vae = pipeline.vae
+        z_dim = self.vae.config.z_dim
+        self.latents_mean = (
+            torch.tensor(self.vae.config.latents_mean)
+            .view(1, z_dim, 1, 1, 1)
+            .to(device, dtype=torch.float32)
         )
-        return prompt_embeds.to(dtype)
+        self.latents_std = (
+            torch.tensor(self.vae.config.latents_std)
+            .view(1, z_dim, 1, 1, 1)
+            .to(device, dtype=torch.float32)
+        )
 
-    return encode_pixels, encode_text
+    def encode_pixels(self, pixels_2bchw: torch.Tensor) -> torch.Tensor:
+        """Encode image pairs into normalized Wan latents without reordering rows."""
+
+        x = pixels_2bchw.unsqueeze(2).expand(-1, -1, self.num_frames, -1, -1).contiguous()
+        x = x.to(device=self.device, dtype=self.vae.dtype)
+        latents = self.vae.encode(x).latent_dist.sample()
+        # Inverse of Wan decode denormalization: raw = z * std + mean.
+        latents = (latents.float() - self.latents_mean) / self.latents_std
+        return latents.to(self.dtype)
+
+    def encode_text(self, captions: list[str]) -> torch.Tensor:
+        """Encode one embedding per caption with gradients disabled."""
+
+        import torch
+
+        with torch.no_grad():
+            prompt_embeds, _ = self.pipeline.encode_prompt(
+                prompt=captions,
+                negative_prompt=[""] * len(captions),
+                do_classifier_free_guidance=False,
+                num_videos_per_prompt=1,
+                max_sequence_length=512,
+                device=self.device,
+            )
+            return prompt_embeds.to(self.dtype)
 
 
 def wan_forward(
@@ -208,7 +208,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     # 2. Encoders bound to the loaded pipeline
     num_frames = int(sampling.num_frames)
-    encode_pixels, encode_text = _build_encoders(
+    encoders = WanDPOEncoders(
         pipeline,
         num_frames=num_frames,
         device=device,
@@ -254,8 +254,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         ref_model=None,  # use LoRA disable_adapter for ref
         forward_fn=wan_forward,
         noise_scheduler=pipeline.scheduler,
-        encode_pixels=encode_pixels,
-        encode_text=encode_text,
+        encode_pixels=encoders.encode_pixels,
+        encode_text=encoders.encode_text,
         config=trainer_cfg,
         device=device,
     )

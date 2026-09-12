@@ -176,7 +176,7 @@ def test_offline_dpo_uses_shared_gradient_checkpointing_policy(
         raise _ReachedEncoderBoundary
 
     monkeypatch.setattr(
-        "vrl.scripts.families.wan_2_1.train_dpo._build_encoders",
+        "vrl.scripts.families.wan_2_1.train_dpo.WanDPOEncoders",
         _stop_at_encoder,
     )
 

@@ -167,8 +167,8 @@ def test_matching_identity_gates_model_and_threads_restore_and_saves(
     monkeypatch.setattr(torch.utils.data, "DataLoader", lambda *_args, **_kwargs: ["batch"])
     monkeypatch.setattr(offline, "OfflineDPOTrainer", lambda **_kwargs: _Trainer())
     monkeypatch.setattr(
-        "vrl.scripts.families.wan_2_1.train_dpo._build_encoders",
-        lambda *_args, **_kwargs: (object(), object()),
+        "vrl.scripts.families.wan_2_1.train_dpo.WanDPOEncoders",
+        lambda *_args, **_kwargs: SimpleNamespace(encode_pixels=object(), encode_text=object()),
     )
 
     train_wan_2_1_dpo(cfg)

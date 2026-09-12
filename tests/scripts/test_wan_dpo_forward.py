@@ -1,7 +1,7 @@
 """The Wan DPO forward adapter must call the backbone, not the policy wrapper.
 
 ``wan_forward`` is the one concrete ``ForwardFn`` this recipe hands to the
-family-neutral ``OfflineDPOTrainer``, so it lives beside ``_build_encoders`` in
+family-neutral ``OfflineDPOTrainer``, so it lives beside ``WanDPOEncoders`` in
 the recipe module. The policy object it receives is the Wan model wrapper, whose
 own ``forward`` is the per-step denoise API — calling it instead of the
 registered ``transformer`` would silently train against the wrong signature.
