@@ -29,7 +29,7 @@ not replace them or narrow their scope; add newly discovered hardware gates.
 5. Wan 2.1 I2V real distributed update and checkpoint/resume
    (`parked/SPRINT_wan_2_1_i2v_proof_run.md`).
 6. Wan 2.2 dual-expert update, lifecycle evidence, and resume
-   (`parked/SPRINT_wan_2_2_proof_run.md`). Its historical disk blocker must be
+   (`planned/SPRINT_wan_2_2_proof_run.md`). Its historical disk blocker must be
    rechecked against the already-mounted NVMe, without formatting any device.
 7. Video training context parallelism numerical and memory gates
    (`parked/SPRINT_video_context_parallel.md`).
@@ -128,3 +128,42 @@ not replace them or narrow their scope; add newly discovered hardware gates.
 - The queue owner is now running the real SD3.5 FP32 two-rank forward probe,
   confirmed by live driver PID 80505. Observe that process and its result before
   claiming additional GPUs; do not duplicate this diagnosis.
+
+## Wan 2.2 preparation ownership
+
+This Codex session owns downloading and validating the pinned Wan 2.2 T2V
+dual-expert model on NVMe. This is CPU/network preparation only; the GPU queue
+above is not claimed. Hugging Face metadata resolves revision
+`5be7df9619b54f4e2667b2755bc6a756675b5cd7` to itself and reports 126,200,628,126
+bytes for the repository. Cache destination: `/mnt/nvme/hf/huggingface/hub`.
+Download log: `outputs/perf/wan22_model_download.log`. Do not duplicate download.
+
+Download completed successfully. All 49 files passed size and digest checks
+(SHA-256 for LFS files, Git blob SHA-1 for ordinary repository files), totaling
+126,200,628,126 bytes. Each expert has 12 indexed shards and the text encoder
+has three. Verification receipt: `outputs/perf/wan22_cache_verification.json`.
+The storage/download blocker is resolved; the sprint moved to `planned/`.
+Two-rank config resolution passed, but actual loading, gradients, boundary
+parity, I2V proof and checkpoint/resume remain unverified. No GPU was used by
+this preparation task.
+
+### P6 results so far (vrl-74, 2026-09-12 00:20 PDT)
+
+- N=1 vs N=2 decoded images (seed 7, 4 prompts, 512px, 10 steps, native
+  sampler, bf16): PSNR 36.3 / 42.0 / 42.9 / 32.8 dB, mean abs diff 0.007,
+  diff on high-frequency edges only (`outputs/sp_acceptance/n1_vs_n2.png`).
+- N=1 self-repeat (`n1_rep`) is bit-exact against `n1_retry`, so that gap is
+  not run-to-run noise.
+- One-forward probe (`sequence_parallel_forward_probe`, real SD3.5 weights,
+  2 ranks): float32 rel_l2 2.5e-7, bfloat16 rel_l2 3.4e-3. Verdict: the
+  Ulysses exchange is exact; the image gap is bf16 amplification over the
+  schedule. P6 parity gate: PASS at fp32, bf16 within precision expectation.
+- Throughput/memory at this geometry (4 single-sample batches): N=1 generate
+  5.3 s, N=2 8.0 s; peak 16.8 GB per rank in both. Sequence parallel does not
+  pay off for 512px single-sample batches (all-gather overhead dominates);
+  the win, if any, needs long sequences (video) — recorded, not pursued here.
+- continuous x streaming (Gap 3) smoke: `online_grpo_ocr_continuous_4gpu_acceptance`
+  3 epochs, verdict success, prefetch engaged from step 1 (queue_wait 0 s).
+- Online 2x1 vs 1x2: first 2x1 launch died from driver/worker import skew
+  during a concurrent Codex edit to vrl/generation (not a repo bug); relaunched
+  on the consistent tree at 00:18 PDT.

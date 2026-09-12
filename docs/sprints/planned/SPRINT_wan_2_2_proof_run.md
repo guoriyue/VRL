@@ -1,5 +1,41 @@
 # SPRINT: Wan 2.2 A14B GRPO proof run（落地验证）
 
+## Current execution state (2026-09-12 UTC)
+
+Status: **PLANNED: model ready, awaiting the coordinated GPU queue**.
+This section supersedes the historical hardware/storage blockers below.
+
+The four-L40S host has 372 GiB RAM and a mounted NVMe volume. The pinned
+`Wan-AI/Wan2.2-T2V-A14B-Diffusers` revision
+`5be7df9619b54f4e2667b2755bc6a756675b5cd7` is downloaded under
+`/mnt/nvme/hf/huggingface/hub`. All 49 files (126,200,628,126 bytes) passed
+size and repository-digest verification. Each expert index references 12
+present shards; the text encoder index references three. Evidence:
+`outputs/perf/wan22_cache_verification.json`. No model forward or training
+acceptance is implied by cache verification.
+
+Execute after the GPU queue in `../SPRINT_four_l40s_execution.md` releases
+the required devices:
+
+1. Run `experiment/wan_2_2/online_grpo_dual_expert_proof` with the NVMe cache
+   (`HF_HOME=/mnt/nvme/hf/huggingface`), two torchrun ranks, and
+   `distributed.training.gpus_per_node=2`. Set
+   `distributed.rollout.worker_rpc_timeout_s=1800`. The configuration resolves
+   on this checkout; capacity and runtime behavior remain unverified.
+2. Retain lifecycle traces spanning both experts, per-step rollout/replay
+   comparisons, rank verdicts, peak memory and the first checkpoint. Require
+   nonzero finite gradients for both experts; a zero-reward/zero-gradient loop
+   is not a successful policy update even if its step counter advances.
+3. Resume that checkpoint strictly for a second update and compare against
+   an uninterrupted two-update baseline with identical seeds and inputs.
+   Retain optimizer/parameter comparisons and artifact receipts.
+4. Complete the original T2V/I2V, boundary, reward and Wan 2.1 regression
+   criteria below before archiving this sprint. The T2V checkpoint download
+   does not satisfy the separate I2V criterion or justify enabling compile.
+
+The historical one-rank recipe remains a fallback capacity diagnostic. It
+cannot substitute for the requested multi-GPU execution evidence.
+
 > **2026-07-20 dual-expert readiness update:** the original recipe could not
 > satisfy this sprint: it trained only `transformer_2`, used no rollout
 > offload, distributed strategies rejected every trainable root except
