@@ -133,7 +133,10 @@ class RayGenerationExecutor:
                 return result
         if any(result.policy_version != first.policy_version for result in results[1:]):
             raise RuntimeError("generation engine ranks returned different policy versions")
-        return first
+        return replace(
+            first,
+            rank_metrics={result.worker_id: result.metrics for result in results},
+        )
 
     @staticmethod
     def _select_request_rank_result(
@@ -391,17 +394,19 @@ class RayGenerationExecutor:
         if runtime_debug_on:
             rank_by_id = {rank.worker_id: rank for engine in self.engines for rank in engine.ranks}
             for result in results:
-                rank = rank_by_id[result.worker_id]
-                rank_debug_rows.append(
-                    {
-                        "worker_id": result.worker_id,
-                        "node_ip": rank.node_ip,
-                        "gpu_ids": list(rank.gpu_ids),
-                        "policy_version": result.policy_version,
-                        "batch_key": result.batch.batch_key,
-                        **result.metrics,
-                    },
-                )
+                metrics_by_rank = result.rank_metrics or {result.worker_id: result.metrics}
+                for worker_id, metrics in metrics_by_rank.items():
+                    rank = rank_by_id[worker_id]
+                    rank_debug_rows.append(
+                        {
+                            "worker_id": worker_id,
+                            "node_ip": rank.node_ip,
+                            "gpu_ids": list(rank.gpu_ids),
+                            "policy_version": result.policy_version,
+                            "batch_key": result.batch.batch_key,
+                            **metrics,
+                        },
+                    )
         debug_payload: dict[str, Any] = {}
         if rank_debug_rows:
             debug_payload["ray_chunks"] = rank_debug_rows

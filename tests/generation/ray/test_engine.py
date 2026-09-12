@@ -13,7 +13,8 @@ from typing import Any
 import pytest
 
 from tests.generation.ray._helpers import ResolvedRef
-from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
+from vrl.generation.execution.types import GenerationBatchResult, WorkerMemoryParkingSnapshot
 from vrl.generation.protocols import GenerationRankActor
 from vrl.generation.ray.engine import (
     EngineCallRef,
@@ -63,9 +64,10 @@ async def test_broadcast_submits_to_every_rank_in_order_and_returns_rank0() -> N
             "r1": ResolvedRef("rank1-result"),
             "r2": ResolvedRef("rank2-result"),
         },
+        method="health",
     )
 
-    ref = engine.remote("execute_batch")("payload", flag=True)
+    ref = engine.remote("health")("payload", flag=True)
     assert isinstance(ref, EngineCallRef)
     result = await ref
 
@@ -314,7 +316,51 @@ def test_generation_combiner_rejects_rank_identity_disagreement(field):
     other = replace(good, worker_id="r1", **{field: values[field]})
     with pytest.raises(RuntimeError, match="engine ranks returned different"):
         RayGenerationExecutor._select_batch_rank_result([good, other])
-    assert (
-        RayGenerationExecutor._select_batch_rank_result([good, replace(good, worker_id="r1")])
-        is good
+    other = replace(good, worker_id="r1", metrics={"peak_memory_mb": 20})
+    result = RayGenerationExecutor._select_batch_rank_result([good, other])
+    assert result.worker_id == good.worker_id
+    assert result.output is good.output
+    assert result.rank_metrics == {"r0": good.metrics, "r1": other.metrics}
+    assert good.rank_metrics == {}
+
+
+def _batch_result(worker_id: str, **kwargs: Any) -> GenerationBatchResult:
+    return GenerationBatchResult(
+        request_id="request",
+        worker_id=worker_id,
+        batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1),
+        output=None,
+        policy_version=7,
+        **kwargs,
     )
+
+
+@pytest.mark.asyncio
+async def test_batch_combines_metrics_from_every_rank_without_mutating_primary() -> None:
+    first = _batch_result("r0", metrics={"peak_memory_mb": 10})
+    second = _batch_result("r1", metrics={"peak_memory_mb": 20})
+    engine = _engine([], {"r0": ResolvedRef(first), "r1": ResolvedRef(second)})
+    result = await engine.remote("execute_batch")("payload")
+    assert result.rank_metrics == {"r0": first.metrics, "r1": second.metrics}
+    assert first.rank_metrics == {}
+    assert result.worker_id == "r0"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [{"error": "CUDA out of memory"}, {"stale_slot": True}])
+async def test_nonprimary_batch_failure_is_not_hidden(failure: dict) -> None:
+    first = _batch_result("r0")
+    second = _batch_result("r1", **failure)
+    engine = _engine([], {"r0": ResolvedRef(first), "r1": ResolvedRef(second)})
+    assert await engine.remote("execute_batch")("payload") is second
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [("request_id", "wrong"), ("policy_version", 8)])
+async def test_batch_rejects_inconsistent_rank_identity(field: str, value: Any) -> None:
+    first = _batch_result("r0")
+    second = _batch_result("r1")
+    setattr(second, field, value)
+    engine = _engine([], {"r0": ResolvedRef(first), "r1": ResolvedRef(second)})
+    with pytest.raises(RuntimeError, match="engine ranks returned different"):
+        await engine.remote("execute_batch")("payload")

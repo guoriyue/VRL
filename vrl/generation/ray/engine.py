@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from typing import Any
 
-from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
+from vrl.generation.execution.types import GenerationBatchResult, WorkerMemoryParkingSnapshot
 from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.operation_deadline import cancel_ray_refs
 from vrl.runtime_errors import TerminalRuntimeError
+from vrl.utils.cuda_memory import is_cuda_out_of_memory
 
 
 class EngineCallRef:
@@ -130,6 +132,9 @@ class RayGenerationEngine:
         if len(self.ranks) == 1:
             return getattr(self.ranks[0].actor, method_name).remote
 
+        if combine is None and method_name == "execute_batch":
+            combine = self._combine_batch_results
+
         def submit(*args: Any, **kwargs: Any) -> EngineCallRef:
             refs = self._submit_rank_calls(method_name, *args, **kwargs)
             return EngineCallRef(refs, combine=combine)
@@ -153,6 +158,33 @@ class RayGenerationEngine:
             cancel_ray_refs(None, refs, root_error=error)
             raise error from cause
         return refs
+
+    def _combine_batch_results(self, results: list[Any]) -> GenerationBatchResult:
+        first = results[0]
+        for rank, result in zip(self.ranks, results, strict=True):
+            if not isinstance(result, GenerationBatchResult):
+                raise TypeError(f"rank {rank.worker_id!r} returned an invalid batch result")
+            if result.worker_id != rank.worker_id:
+                raise RuntimeError(f"rank {rank.worker_id!r} returned another worker's result")
+            if result.request_id != first.request_id or result.batch != first.batch:
+                raise RuntimeError("engine ranks returned different request or batch identities")
+        # Workers return typed failures as well as raising RPC exceptions. Keep
+        # those failures visible to the executor's stale-slot and OOM handling.
+        for result in results:
+            if result.error and not result.stale_slot and not is_cuda_out_of_memory(result.error):
+                return result
+        for result in results:
+            if result.stale_slot:
+                return result
+        for result in results:
+            if result.error:
+                return result
+        if any(result.policy_version != first.policy_version for result in results):
+            raise RuntimeError("engine ranks returned different policy versions")
+        return replace(
+            first,
+            rank_metrics={result.worker_id: result.metrics for result in results},
+        )
 
     async def sleep(self) -> tuple[WorkerMemoryParkingSnapshot, ...]:
         """Park every rank and return its validated physical-memory evidence."""

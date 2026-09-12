@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -30,6 +31,8 @@ from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.trajectory.types import TrajectoryBatch
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
+
+from ._helpers import ResolvedRef
 
 # torch's allocator wire format, pinned against the real allocator by
 # test_oom_matcher_accepts_the_real_torch_allocator_message below.
@@ -200,6 +203,49 @@ def test_oom_matcher_accepts_the_real_torch_allocator_message() -> None:
     # against the real message, not only against our own fixture.
     assert is_cuda_out_of_memory(real) is True
     assert is_cuda_out_of_memory(_OOM_MESSAGE) is True
+
+
+@pytest.mark.asyncio
+async def test_nonprimary_oom_retries_whole_engine_and_reports_every_rank() -> None:
+    workers = [_CapacityWorker("r0", max_samples=4), _CapacityWorker("r1", max_samples=2)]
+
+    class RemoteBatch:
+        def __init__(self, worker: _CapacityWorker, peak: int) -> None:
+            self.worker = worker
+            self.peak = peak
+
+        def remote(self, envelope: GenerationBatchEnvelope) -> ResolvedRef:
+            result = self.worker.execute_batch(envelope)
+            result.metrics = {"peak_memory_mb": self.peak}
+            return ResolvedRef(result)
+
+    ranks = [
+        RayActorHandle(
+            worker_id=worker.worker_id,
+            actor=SimpleNamespace(execute_batch=RemoteBatch(worker, 10 + index)),
+            gpu_ids=(index,),
+        )
+        for index, worker in enumerate(workers)
+    ]
+    engine = RayGenerationEngine("engine", ranks)
+    executor = RayGenerationExecutor(
+        planner=_StaticPlanner(
+            [GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=4)]
+        ),
+        engines=[engine],
+        gatherer=_CoverageGatherer(),
+        actor_dispatcher=RayActorDispatcher(("engine",)),
+        generation_stall_timeout_s=30.0,
+    )
+    output = await executor.execute(_request(4, runtime_debug=True))
+    assert workers[0].executed == workers[1].executed == [_key(0, 4), _key(0, 2), _key(2, 2)]
+    assert sum(batch["samples"] for batch in output.output) == 4
+    rows = output.runtime_debug["ray_chunks"]
+    assert len(rows) == 4
+    assert {(row["worker_id"], tuple(row["gpu_ids"]), row["peak_memory_mb"]) for row in rows} == {
+        ("r0", (0,), 10),
+        ("r1", (1,), 11),
+    }
 
 
 @_OOM_WIRE_FORMAT

@@ -258,6 +258,8 @@ class GenerationBatchResult:
     # real generation failure so the caller counts it as a stale discard, not an
     # error — see SPRINT_shadow_model_weight_sync.md.
     stale_slot: bool = False
+    # Driver-side engine aggregation; worker-local metrics remain in `metrics`.
+    rank_metrics: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
