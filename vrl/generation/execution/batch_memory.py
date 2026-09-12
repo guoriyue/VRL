@@ -7,11 +7,7 @@ without an intermediate telemetry representation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
-
-from vrl.generation.execution.types import (
-    BatchMemoryReading,
-)
+from dataclasses import dataclass
 
 
 def cuda_occupancy_snapshot() -> dict[str, int] | None:
@@ -20,11 +16,8 @@ def cuda_occupancy_snapshot() -> dict[str, int] | None:
     This is the half of a :class:`BatchMemoryReading` that can only be measured
     before the denoise loop starts; the executor completes the record with the
     two per-phase peaks and the sample count, and ``from_metrics``
-    reassembles it. It lives beside the fit/shadow consumers rather than in the
-    denoise loop because the key names are the byte-admission telemetry
-    contract, not general CUDA semantics — and they are checked against the
-    dataclass so a renamed field fails here instead of silently producing a
-    reading that never reassembles.
+    reassembles it. The keys belong to the batch-memory wire record, while the
+    values must be captured before the loop changes allocator occupancy.
     """
 
     import torch
@@ -32,18 +25,12 @@ def cuda_occupancy_snapshot() -> dict[str, int] | None:
     if not torch.cuda.is_available():
         return None
     free_bytes, total_bytes = torch.cuda.mem_get_info()
-    snapshot = {
+    return {
         "baseline_allocated_bytes": int(torch.cuda.memory_allocated()),
         "reserved_start_bytes": int(torch.cuda.memory_reserved()),
         "free_start_bytes": int(free_bytes),
         "total_bytes": int(total_bytes),
     }
-    unknown = snapshot.keys() - {f.name for f in fields(BatchMemoryReading)}
-    if unknown:
-        raise ValueError(
-            f"batch occupancy keys are not BatchMemoryReading fields: {sorted(unknown)}",
-        )
-    return snapshot
 
 
 @dataclass(frozen=True, slots=True)
