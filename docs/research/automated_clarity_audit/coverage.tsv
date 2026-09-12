@@ -88,7 +88,7 @@ vrl/math/token/__init__.py	630af4658b867c9cfe39bae565983ae4b8e74a50	pending	-
 vrl/math/token/flow_matching.py	0ecc93e01d7a3db22a8a59b28094cf56236b780e	pending	-
 vrl/math/token/logprob.py	e0819ffa647504dcc2ca139378834b3fd478f9a2	pending	-
 vrl/models/__init__.py	69285acb49d1dc4f09c37778ba4cf59077e86cf0	pending	-
-vrl/models/checkpoint_identity.py	8ff026646ab9599185520db301d31d145a114990	pending	-
+vrl/models/checkpoint_identity.py	8ff026646ab9599185520db301d31d145a114990	reviewed	model_identity.md
 vrl/models/dtypes.py	fd330edc987f707390d1d8564afac712cf14b388	reviewed	model_sampling_boundaries.md
 vrl/models/families/__init__.py	e469084a8f8b2173a5b3b269ca5a4e4fe9d9df9b	pending	-
 vrl/models/families/causvid/__init__.py	097bba3fb1ee91fa5f4d3405ee7190dda49104c7	pending	-
