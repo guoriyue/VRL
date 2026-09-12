@@ -404,3 +404,12 @@ The torchrun tool session exited 1, no training driver remains, and all four
 GPUs reported 0 MiB after cleanup. The hardware claim is released during CPU
 diagnosis. The isolated hook fix remains at `195cfc14`; no shared runtime
 source was modified and no training acceptance gate is marked complete.
+
+### Current claim: I2V parking diagnostics (Codex)
+
+Codex claims GPUs 2/3 for one canonical two-rank rerun with failure-only
+allocator/component residency diagnostics in the isolated worktree. The
+parking threshold and workload are unchanged; 44 focused worker tests passed.
+Output: `outputs/wan_i2v_14b_l40s_proof/epoch1_parking_diag`, log:
+`outputs/perf/wan_i2v_l40s_epoch1_parking_diag.log`. Launch follows a separate
+process/GPU preflight; the claim does not establish update or resume success.
