@@ -9,7 +9,7 @@ from typing import Any
 
 @dataclass(slots=True)
 class SDEStepResult:
-    """Named outputs of one flow-matching SDE denoising step."""
+    """Named outputs shared by flow-matching and DDIM denoising steps."""
 
     prev_sample: Any
     log_prob: Any
@@ -140,6 +140,9 @@ def sde_step_with_logprob(
         sigma_min = sigma_min / (1 + sigma_min)
         dt = sigma_prev - sigma
 
+    if prev_sample is not None and generator is not None:
+        raise ValueError("Cannot pass both generator and prev_sample.")
+
     if sde_type == "cps":
         std_dev_t = sigma_prev * math.sin(noise_level * math.pi / 2)
         pred_original_sample = sample - sigma * model_output
@@ -147,9 +150,6 @@ def sde_step_with_logprob(
         prev_sample_mean = pred_original_sample * (1 - sigma_prev) + noise_estimate * torch.sqrt(
             sigma_prev**2 - std_dev_t**2
         )
-
-        if prev_sample is not None and generator is not None:
-            raise ValueError("Cannot pass both generator and prev_sample.")
 
         if prev_sample is None:
             variance_noise = randn_tensor(
@@ -188,9 +188,6 @@ def sde_step_with_logprob(
             sample * (1 + std_dev_t**2 / (2 * sigma) * dt)
             + model_output * (1 + std_dev_t**2 * (1 - sigma) / (2 * sigma)) * dt
         )
-
-        if prev_sample is not None and generator is not None:
-            raise ValueError("Cannot pass both generator and prev_sample.")
 
         if prev_sample is None:
             variance_noise = randn_tensor(
