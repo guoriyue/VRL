@@ -35,7 +35,7 @@ def _isolate_cuda_parking_probes(monkeypatch: pytest.MonkeyPatch) -> None:
     import vrl.generation.execution.memory_parking as parking_module
 
     monkeypatch.setattr(parking_module, "gpu_process_used_bytes", lambda: 0)
-    monkeypatch.setattr(parking_module, "release_cuda_memory_for_parking", lambda: None)
+    monkeypatch.setattr(parking_module, "release_cuda_memory_for_parking", lambda **_: None)
 
 
 class _SleepModel:
@@ -346,7 +346,7 @@ def test_failed_physical_proof_quarantines_already_moved_model(
     monkeypatch.setattr(
         parking_module,
         "release_cuda_memory_for_parking",
-        lambda: (_ for _ in ()).throw(RuntimeError("CUDA synchronize failed")),
+        lambda **_: (_ for _ in ()).throw(RuntimeError("CUDA synchronize failed")),
     )
 
     with pytest.raises(RuntimeError, match="CUDA synchronize failed"):

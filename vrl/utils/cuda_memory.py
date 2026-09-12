@@ -152,12 +152,16 @@ def gpu_process_used_bytes(device: str | None = None) -> int:
         pynvml.nvmlShutdown()
 
 
-def release_cuda_memory_for_parking(device: str | None = None) -> None:
+def release_cuda_memory_for_parking(
+    device: str | None = None, *, clear_blas_workspaces: bool = False
+) -> None:
     """Strict CUDA cleanup before publishing a memory-parking proof.
 
     Unlike :func:`release_cuda_memory` this path must not swallow failures:
     the caller is about to certify physical GPU release to a phase handoff,
     so any error here invalidates the handoff and propagates.
+    CPU-offload callers may clear idle BLAS workspaces that pin allocator
+    segments. Do not opt in when preserving device-resident graph/pool state.
     """
 
     gc.collect()
@@ -171,6 +175,8 @@ def release_cuda_memory_for_parking(device: str | None = None) -> None:
         return
     if device is None:
         torch.cuda.synchronize()
+        if clear_blas_workspaces:
+            torch._C._cuda_clearCublasWorkspaces()
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
         torch.cuda.synchronize()
@@ -178,6 +184,8 @@ def release_cuda_memory_for_parking(device: str | None = None) -> None:
     target = torch.device(device)
     with torch.cuda.device(target):
         torch.cuda.synchronize(target)
+        if clear_blas_workspaces:
+            torch._C._cuda_clearCublasWorkspaces()
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
         torch.cuda.synchronize(target)

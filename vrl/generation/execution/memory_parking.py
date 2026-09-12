@@ -327,7 +327,11 @@ class WorkerMemoryParking:
             )
 
         try:
-            release_cuda_memory_for_parking()
+            # An idle BLAS workspace can pin a multi-GiB allocator segment.
+            # CPU-offload invalidates device residency; CuMem keeps its pools.
+            release_cuda_memory_for_parking(
+                clear_blas_workspaces=snapshot_backend == "cpu_offload",
+            )
             residual_bytes = gpu_process_used_bytes()
             baseline_bytes = session.baseline_gpu_used_bytes
             if baseline_bytes is None:
