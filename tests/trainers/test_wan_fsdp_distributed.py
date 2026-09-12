@@ -528,6 +528,9 @@ def _run_dual_cuda_offload_rank(
         policy._device = device
         policy._expert_lifecycle_profiling = True
         policy = strategy.prepare_model(policy)
+        initial_sync = strategy.export_rollout_state(_bundle(policy))
+        assert initial_sync and all(value.device.type == "cpu" for value in initial_sync.values())
+        before = strategy.export_checkpoint_state(_bundle(policy))
         optimizer = torch.optim.AdamW(
             [parameter for parameter in policy.parameters() if parameter.requires_grad],
             lr=1e-2,
@@ -552,6 +555,10 @@ def _run_dual_cuda_offload_rank(
             getattr(parameter, "_local_tensor", parameter).device.type == "cpu"
             for parameter in policy.parameters()
         )
+        after = strategy.export_checkpoint_state(_bundle(policy))
+        assert _module_changed(before, after, "transformer")
+        assert _module_changed(before, after, "transformer_2")
+        assert strategy.export_optimizer_state(policy, optimizer)
         queue.put(
             (
                 rank,

@@ -305,6 +305,10 @@ def _full_cpu_tensor(value: torch.Tensor, *, keep: bool) -> torch.Tensor | None:
     from torch.distributed.tensor import DTensor
 
     if isinstance(value, DTensor):
+        if value.device.type == "cpu" and value.device_mesh.device_type == "cuda":
+            # CPU-offloaded shards still belong to the CUDA/NCCL mesh. Stage
+            # only this selected tensor for its collective, not the frozen model.
+            value = value.detach().to(device=torch.device("cuda", torch.cuda.current_device()))
         value = value.full_tensor()
     return value.detach().cpu().clone() if keep else None
 
