@@ -733,3 +733,47 @@ backward pass and distinguish state restoration from numerical repeatability.
 Do not rerun unchanged jobs or mark the I2V quality/physics gates complete.
 Both jobs are terminal, process query is empty and all four GPUs are clear.
 The matched-resume hardware claim is released.
+
+### Current claim: FP32-master restore isolation (Codex)
+
+The actual control checkpoint-1 has no model/master rounding disagreements
+across 800 parameter bindings, zero Adam first/second moments, and optimizer
+step=1. This rules out malformed saved master rounding as an explanation,
+but does not yet prove the resumed runtime state.
+
+Codex claims GPUs 2/3 for extended real two-rank BF16/FP32-master checkpoint
+tests, covering CUDA with and without CPU offload. Each branch starts with a
+zero-gradient update, saves/restores model and optimizer state exactly, then
+checks a nonzero second update for exact full optimizer/model equivalence.
+Runtime remains `5f3d0d50`; only the diagnostic test is extended. Fresh
+preflight found no training/Ray processes and all four GPUs clear.
+
+Isolated test commit `26faff39` completed this diagnostic: 4 tests passed in
+19.64 s with `CUDA_VISIBLE_DEVICES=2,3 pytest --distributed`, including real
+two-rank CUDA with CPU offload both disabled and enabled. Both CUDA branches
+verify finite zero first-step gradients and finite nonzero second-step
+gradients, exact restored model/master/moment/group state before the second
+step, and exact optimizer/model state after the second step. Touched-file
+Ruff/format and diff checks passed. Log:
+`outputs/perf/fsdp_master_zero_step_resume_verified.log`.
+
+Two earlier diagnostic harness errors were corrected before this result:
+Torch's nested assert_close cannot compare optimizer-type strings, and raw
+DTensor.full_tensor on a CPU-offloaded shard cannot use an NCCL-only mesh.
+The final harness handles scalar metadata explicitly, uses production state
+gathering for full-state checks, and compares local master shards on every
+rank. GPU tests require the explicit --distributed switch; the initial
+default invocation's skips are not GPU acceptance evidence. Production
+runtime code was not changed by this diagnostic.
+
+The simple BF16/FP32-master CUDA path did not reproduce the production Wan
+resume discrepancy. This is not proof that every optimizer restoration path
+is correct. Next extend the isolation to Wan LoRA, activation checkpointing,
+and parking/restoration, then inspect production-scale pre-backward state if
+needed. Existing training_debug records also show the same rank-local
+trainable SHA256 (`2669ebe8410f1e50004356ff672c6b77fe3f17c461a7786abdfe73a44f319a52`)
+at the control's initial gate and resumed step-1 gate; the control's step-1
+gate was not separately captured, so this does not prove equality of every
+runtime state at the matched boundary. Exact Wan equivalence remains open.
+The test process is terminal and GPU memory queries are clear. This claim
+is released; no expensive production rerun was launched unchanged.
