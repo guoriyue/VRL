@@ -373,7 +373,7 @@ class GenerationWorkerCore:
                 request_id=request.request_id,
                 worker_id=self.worker_id,
                 batch=batch,
-                output=self._to_cpu(output),
+                output=self._copy_output_to_cpu(output),
                 memory=memory,
                 metrics=self._batch_metrics(
                     runtime_debug=runtime_debug,
@@ -886,46 +886,42 @@ class GenerationWorkerCore:
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     @staticmethod
-    def _to_cpu(value: Any) -> Any:
-        """Move a batch output to CPU with pinned, queued copies.
+    def _copy_output_to_cpu(value: Any) -> Any:
+        """Return CPU output after all queued GPU-to-CPU copies finish.
 
-        Per-tensor ``.cpu()`` synchronizes the stream once per tensor (~376ms
-        of cudaStreamSynchronize per batch measured on the wire-diet profile);
-        pinned-buffer ``non_blocking`` copies queue every transfer and the
-        device synchronizes once before the payload is handed to Ray.
+        Pinned buffers live in CPU RAM. Queue transfers together, then wait once
+        before returning readable results to the caller.
         """
 
-        # Lazy import: this module stays torch-free at import time, and the
-        # trajectory package (the walker's home) pulls torch transitively.
+        # Keep Torch and trajectory imports out of module initialization.
+        import torch
+
         from vrl.trajectory.device import map_tensor_tree
 
         cuda_copies_pending = False
 
-        def _pinned_copy(leaf: Any) -> Any:
+        def copy_tensor_to_cpu(tensor: torch.Tensor) -> torch.Tensor:
             nonlocal cuda_copies_pending
-            tensor = leaf.detach()
-            if getattr(tensor, "is_cuda", False):
-                import torch
+            tensor = tensor.detach()
+            if not tensor.is_cuda:
+                return tensor.cpu()
 
-                host = torch.empty(
-                    tensor.shape,
-                    dtype=tensor.dtype,
-                    device="cpu",
-                    pin_memory=True,
-                )
-                host.copy_(tensor, non_blocking=True)
-                cuda_copies_pending = True
-                return host
-            return tensor.cpu()
+            cpu_buffer = torch.empty(
+                tensor.shape,
+                dtype=tensor.dtype,
+                device="cpu",
+                pin_memory=True,
+            )
+            cpu_buffer.copy_(tensor, non_blocking=True)
+            cuda_copies_pending = True
+            return cpu_buffer
 
         copied = map_tensor_tree(
             value,
-            _pinned_copy,
-            is_leaf=lambda candidate: hasattr(candidate, "detach") and hasattr(candidate, "cpu"),
+            copy_tensor_to_cpu,
+            is_leaf=lambda item: isinstance(item, torch.Tensor),
         )
         if cuda_copies_pending:
-            import torch
-
             torch.cuda.synchronize()
         return copied
 

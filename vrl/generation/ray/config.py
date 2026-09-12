@@ -143,7 +143,7 @@ class RayGenerationConfig:
             index = self._cuda_device_index(model_device)
             if index is not None:
                 devices.add(index)
-        for device in self._iter_parameter_devices(driver_bundle.trainable_modules):
+        for device in self._iter_model_devices(driver_bundle.trainable_modules):
             index = self._cuda_device_index(device)
             if index is not None:
                 devices.add(index)
@@ -232,7 +232,12 @@ class RayGenerationConfig:
             return None
 
     @classmethod
-    def _iter_parameter_devices(cls, obj: Any, seen: set[int] | None = None) -> Iterable[Any]:
+    def _iter_model_devices(cls, obj: Any, seen: set[int] | None = None) -> Iterable[Any]:
+        """Yield declared model or parameter devices from nested training roots.
+
+        Track visited objects to avoid revisiting shared modules or cycles.
+        Device deduplication belongs to the caller.
+        """
         if obj is None or isinstance(obj, (str, bytes)):
             return
         if seen is None:
@@ -244,7 +249,7 @@ class RayGenerationConfig:
 
         if isinstance(obj, Mapping):
             for value in obj.values():
-                yield from cls._iter_parameter_devices(value, seen)
+                yield from cls._iter_model_devices(value, seen)
             return
 
         device = cls._get_device(obj)
@@ -262,7 +267,7 @@ class RayGenerationConfig:
 
         if isinstance(obj, Iterable):
             for value in obj:
-                yield from cls._iter_parameter_devices(value, seen)
+                yield from cls._iter_model_devices(value, seen)
 
     @staticmethod
     def _cuda_device_index(device: Any) -> int | None:
