@@ -1,7 +1,7 @@
 path	baseline_blob	status	evidence
 vrl/__init__.py	b49f26da8677274678bce3d51fea5c89e5792935	pending	-
-vrl/algorithms/__init__.py	4d92be97dbc791411c5c99e7edc4bec479303ab7	pending	-
-vrl/algorithms/advantages.py	24ac727234be70af57dbe7616bbb4cb55910d863	pending	-
+vrl/algorithms/__init__.py	4d92be97dbc791411c5c99e7edc4bec479303ab7	reviewed	advantage_normalization.md
+vrl/algorithms/advantages.py	24ac727234be70af57dbe7616bbb4cb55910d863	reviewed	advantage_normalization.md
 vrl/algorithms/base.py	322dc0096f9aa739ae4c86a2f099b04f680d13a7	reviewed	algorithm_losses.md
 vrl/algorithms/config_contract.py	45a3c8b3b3b24bef5e8b685e182fdf3e3ddd8f47	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
 vrl/algorithms/diffusion_nft.py	6203c9077bd4a6473f0965b350fe150b4bdfe009	reviewed	forward_objectives.md

@@ -147,9 +147,9 @@ def group_relative_advantages(
 class GroupAdvantageEstimator:
     """Compute scalar or multi-objective group-relative advantages.
 
-    The estimator binds the resolved reward weights to one algorithm instance.
-    This keeps reward configuration out of the public algorithm dataclass and
-    provides a lifecycle owner for strategies that may gain runtime state.
+    The estimator binds reward-component weights and normalization settings to
+    one algorithm instance. The algorithm config selects the combination
+    strategy; the reward config supplies its component weights.
     """
 
     __slots__ = (
