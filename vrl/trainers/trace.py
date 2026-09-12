@@ -311,11 +311,12 @@ class TrainingRunTrace:
 
     @staticmethod
     def _runtime_snapshot() -> dict[str, Any]:
-        packages = {
-            distribution.metadata["Name"]: distribution.version
-            for distribution in importlib.metadata.distributions()
-            if distribution.metadata["Name"]
-        }
+        packages = {}
+        for distribution in importlib.metadata.distributions():
+            metadata = distribution.metadata
+            name = metadata["Name"]
+            if name:
+                packages[name] = metadata["Version"]
         devices = []
         driver: dict[str, Any] = {"available": False}
         if torch.cuda.is_available():
