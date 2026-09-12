@@ -979,7 +979,7 @@ async def test_weight_sync_rejects_coerced_ack(installed: Any) -> None:
         actor_dispatcher=RayActorDispatcher(("rollout-0",)),
         worker_rpc_timeout_s=30.0,
     )
-    with pytest.raises(RuntimeError, match="invalid installed policy version"):
+    with pytest.raises(RuntimeError, match="invalid policy version acknowledgment"):
         await sync.push_to_rollout_engines({"w": 1}, policy_version=3)
 
 

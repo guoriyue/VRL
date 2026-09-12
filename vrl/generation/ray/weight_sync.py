@@ -90,8 +90,12 @@ class RayGenerationWeightSync:
                 )
             else:
                 # Local test double: call the single rank directly.
-                installed = update_weights(trainable_state, policy_version, **verification)
-                self._require_installed_policy_version(engine, installed, policy_version)
+                acknowledged_policy_version = update_weights(
+                    trainable_state, policy_version, **verification
+                )
+                self._validate_policy_version_ack(
+                    engine, acknowledged_policy_version, policy_version
+                )
 
         if not remote_engines:
             return
@@ -114,34 +118,38 @@ class RayGenerationWeightSync:
             )
             for job_index, (engine, remote) in enumerate(remote_engines)
         ]
-        installed_pairs = await self.actor_dispatcher.run(
+        policy_version_acks = await self.actor_dispatcher.run(
             remote_jobs,
             operation="rollout.weight_sync",
             call_timeout_s=self.worker_rpc_timeout_s,
         )
-        for (engine, _remote), (_job_index, installed) in zip(
+        for (engine, _remote), (_job_index, acknowledged_policy_version) in zip(
             remote_engines,
-            installed_pairs,
+            policy_version_acks,
             strict=True,
         ):
-            self._require_installed_policy_version(engine, installed, policy_version)
+            self._validate_policy_version_ack(engine, acknowledged_policy_version, policy_version)
 
     @staticmethod
-    def _require_installed_policy_version(
+    def _validate_policy_version_ack(
         engine: RayGenerationEngine,
-        installed: Any,
-        expected: int,
+        acknowledged_policy_version: Any,
+        expected_policy_version: int,
     ) -> None:
         """Validate one untyped engine ACK at the Ray weight-sync boundary."""
 
-        if isinstance(installed, bool) or not isinstance(installed, int) or installed < 0:
+        if (
+            isinstance(acknowledged_policy_version, bool)
+            or not isinstance(acknowledged_policy_version, int)
+            or acknowledged_policy_version < 0
+        ):
             raise RuntimeError(
-                f"engine {engine.engine_id!r} returned invalid installed policy version {installed!r}",
+                f"engine {engine.engine_id!r} returned invalid policy version acknowledgment {acknowledged_policy_version!r}",
             )
-        if installed != expected:
+        if acknowledged_policy_version != expected_policy_version:
             raise RuntimeError(
-                f"engine {engine.engine_id!r} installed policy version {installed}, "
-                f"expected {expected}",
+                f"engine {engine.engine_id!r} acknowledged policy version {acknowledged_policy_version}, "
+                f"expected {expected_policy_version}",
             )
 
     async def _push_bucketed(self, state: Any, policy_version: int) -> None:
@@ -164,13 +172,17 @@ class RayGenerationWeightSync:
                 )
                 for index, engine in enumerate(self.engines)
             ]
-            installed = await self.actor_dispatcher.run(
+            policy_version_acks = await self.actor_dispatcher.run(
                 jobs,
                 operation=f"rollout.weight_sync.{method}",
                 call_timeout_s=self.worker_rpc_timeout_s,
             )
-            for engine, (_, version) in zip(self.engines, installed, strict=True):
-                self._require_installed_policy_version(engine, version, policy_version)
+            for engine, (_, acknowledged_policy_version) in zip(
+                self.engines, policy_version_acks, strict=True
+            ):
+                self._validate_policy_version_ack(
+                    engine, acknowledged_policy_version, policy_version
+                )
 
         try:
             await broadcast(
