@@ -9,19 +9,20 @@ deliberately do not share this helper.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import torch
 
 from vrl.models.interfaces import ReplayModel
 
 
-def ref_forward[T](
+@contextmanager
+def reference_model_context(
     model: ReplayModel,
     ref_model: ReplayModel | None,
-    run: Callable[[ReplayModel], T],
-) -> T:
-    """Run ``run`` under the reference-model convention and return its result.
+) -> Iterator[ReplayModel]:
+    """Select the reference model and scope its gradient/adapter state.
 
     Uses the distinct frozen ``ref_model`` when provided; otherwise reuses
     ``model`` inside ``no_grad`` + ``disable_adapter()`` so the adapter-off pass
@@ -30,6 +31,7 @@ def ref_forward[T](
 
     with torch.no_grad():
         if ref_model is not None:
-            return run(ref_model)
-        with model.disable_adapter():
-            return run(model)
+            yield ref_model
+        else:
+            with model.disable_adapter():
+                yield model

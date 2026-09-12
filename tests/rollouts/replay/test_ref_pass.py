@@ -5,7 +5,7 @@ from contextlib import contextmanager
 import pytest
 import torch
 
-from vrl.rollouts.evaluators.token.ref_pass import ref_forward
+from vrl.rollouts.evaluators.token.ref_pass import reference_model_context
 
 
 class _Model:
@@ -34,7 +34,8 @@ def test_reference_pass_disables_gradients_and_restores_caller_state(use_referen
         return selected.weight.square()
 
     with torch.enable_grad():
-        result = ref_forward(model, reference, forward)
+        with reference_model_context(model, reference) as selected:
+            result = forward(selected)
         assert torch.is_grad_enabled()
         assert not result.requires_grad
     assert not model.adapter_disabled
@@ -51,8 +52,11 @@ def test_reference_failure_restores_grad_and_adapter_state(use_reference):
         raise failure
 
     with torch.enable_grad():
-        with pytest.raises(RuntimeError) as caught:
-            ref_forward(model, reference, forward)
+        with (
+            pytest.raises(RuntimeError) as caught,
+            reference_model_context(model, reference) as selected,
+        ):
+            forward(selected)
         assert caught.value is failure
         assert torch.is_grad_enabled()
     assert not model.adapter_disabled

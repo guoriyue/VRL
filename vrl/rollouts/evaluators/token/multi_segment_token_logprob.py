@@ -13,7 +13,7 @@ from vrl.models.interfaces import (
 )
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import ReplayEvaluatorBase
-from vrl.rollouts.evaluators.token.ref_pass import ref_forward
+from vrl.rollouts.evaluators.token.ref_pass import reference_model_context
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SegmentSignal, SignalRequest, TrajectorySignalBatch
 from vrl.trajectory.types import TrajectorySegment
@@ -53,11 +53,8 @@ class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase):
         current_output = model.replay_forward(batch, request=replay_request)
         ref_output = None
         if request.need_ref:
-            ref_output = ref_forward(
-                model,
-                ref_model,
-                lambda m: m.replay_forward(batch, request=replay_request),
-            )
+            with reference_model_context(model, ref_model) as reference:
+                ref_output = reference.replay_forward(batch, request=replay_request)
 
         signal_builder = TrajectorySignalBuilder(batch)
         # R1 rollout scores every segment (text and image) with the same

@@ -49,6 +49,27 @@ Read `vrl/rollouts/evaluators/token/ref_pass.py`, its three evaluator call sites
 and `tests/rollouts/replay/test_ref_pass.py`. The helper owns a real shared lifetime:
 no gradients and temporary adapter disabling, restored even on failure. Keep that
 shared boundary. A context manager could make the three callback/lambda call sites
-more direct without creating a class. This is a candidate, not an implemented
-change; inspect full evaluator coverage before changing it. Other portions of the
-three evaluator modules remain pending. No tests have run in this audit yet.
+more direct without creating a class. Implemented as `reference_model_context`:
+all three production callers now run their forward directly inside `with`.
+The callback API was internal (no package export); all repository callers and
+its tests were migrated. External direct imports of `ref_forward` must migrate.
+
+Reviewed the five modules under `vrl/rollouts/evaluators/token`, the factory's
+token branches, replay result/model contracts, and the existing reference,
+adapter, temperature and multisegment tests. Retain the package exports as a
+public facade. Retain categorical versus continuous normalization, named segment
+selection and the second multisegment `no_grad` scope: reference normalization
+happens after the reference model context has exited. Do not merge those scopes
+across current-policy computations. No business vocabulary constants occur in
+these modules; `__all__` is the public export boundary.
+
+Potential follow-up: multisegment selection still returns `dict | None` and
+tests its own helper's result with `isinstance`; primary selection also uses
+`getattr` on a typed batch. Resolve these against trajectory construction before
+simplifying; they are recorded candidates, not proof of redundant validation.
+
+Validation: 48 replay tests passed using the original virtual environment with
+`PYTHONPATH` pointed at this worktree; `vrl.__file__` verified the isolated import.
+No GPU training or whole-repository regression claim. The original worktree and
+its environment were not modified. Commit history on this branch records each
+implementation group; setup ledger commit: `ec3d9c0b6`.
