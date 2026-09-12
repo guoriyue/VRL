@@ -883,3 +883,48 @@ the separate quality/physics gates remain open.
 Both processes are terminal, process queries empty and all GPUs clear. The
 repeat hardware claim is released. No runtime code change was needed for this
 result; the existing deterministic training option was used as designed.
+
+### Current claim: strict deterministic continuous control (Codex)
+
+Codex claims GPUs 2/3 for two uninterrupted canonical I2V updates using
+`trainer.deterministic=true`, `sampling.seed=7` and launch-time
+`CUBLAS_WORKSPACE_CONFIG=:4096:8`, frozen isolated runtime `9a2b01d2`.
+Output: `/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/control_seed7_deterministic`.
+Log: `outputs/perf/wan_i2v_l40s_control_seed7_deterministic.log`.
+Fresh preflight: all GPUs clear, no training/Ray/pytest processes, 367 GiB
+available host memory. Compare checkpoint-1 against the exact source used
+by both deterministic resumes, then compare final full payloads. A different
+checkpoint-1 requires a fresh matched resume from this control's own source.
+
+The deterministic continuous control completed with exit 0 and both rank
+verdicts success. Step 1 remains saturated/zero-gradient; step 2 has gradient
+norm 0.2728397151080096, exactly matching both deterministic resumes, reward
+mean/std 0.7610435486/0.3768313527 and max pre-update error 0.0000565871596.
+Final checkpoint loading validates next_epoch/next_step=2, all 800 LoRA
+tensors finite, 400 changed from checkpoint-1, and 800 nonzero Adam moment
+tensor leaves (first/second moments combined).
+
+Two complete comparisons PASSED with zero mismatches in every payload section:
+`deterministic_control_source_comparison.json` proves the new checkpoint-1
+equals the source used by the deterministic resumes, and
+`deterministic_continuous_resume_comparison.json` proves the uninterrupted
+final equals the resumed final, including model (131,072,000 elements),
+trainer/optimizer/EMA (524,288,800 elements), progress and both rank RNG trees.
+Both reports and executable comparison code live in the NVMe I2V proof root.
+The intermediate checkpoint identity justifies reusing the already completed
+resumes; this is not an assumption based on matching config or RNG alone.
+
+Scope: this closes the tested two-step deterministic comparison, including a
+nonzero resumed update. Its save boundary follows a zero-gradient first step,
+so it does NOT prove production resume of nonzero Adam moments. Preserve that
+remaining gate: extend the deterministic continuous control through step 3,
+then compare a resume from a matching step-2 checkpoint with nonzero moments.
+The full physics-reward/quality workload, remaining families/topologies and
+integration of isolated runtime fixes into the shared branch also remain open.
+No default-mode exact-repeatability failure is relabeled as a pass.
+
+Both processes and comparison sessions are terminal; process queries are empty
+and all GPUs clear. This hardware claim is released. While waiting, the original
+four-rank Wan FSDP config was located at
+`outputs/wan_hpsv3_flash_grpo/fsdp_smoke_main/resolved_config.yaml`: preserve its
+832x480, 81-frame, 20-step, HPSv3 workload when auditing that separate gate.

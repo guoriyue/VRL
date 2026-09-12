@@ -2,7 +2,18 @@
 
 ## Current execution state (2026-09-12 UTC)
 
-Status: **PLANNED: real update and strict resume passed; equivalence/quality open**.
+Status: **PLANNED: two-step deterministic equivalence passed; trained-moment resume and quality open**.
+
+The deterministic uninterrupted two-update control now matches the strict
+resume exactly in every checkpoint payload section. Its checkpoint-1 also
+matches the resume source exactly. Second-step gradient norm is 0.2728397151;
+400 of 800 finite LoRA tensors change, and the final checkpoint contains 800
+nonzero Adam moment leaves. Reports under the NVMe I2V proof root:
+`deterministic_control_source_comparison.json` and
+`deterministic_continuous_resume_comparison.json`.
+The tested save boundary follows a zero-gradient first step. A further
+step-2-to-step-3 comparison is still needed to exercise production restoration
+of already nonzero Adam moments; full physics reward and quality remain open.
 
 Deterministic repeatability update: two independent 14B two-rank resumes
 with `trainer.deterministic=true` and `CUBLAS_WORKSPACE_CONFIG=:4096:8`
@@ -10,8 +21,7 @@ match exactly across the full model, optimizer/EMA, progress and both rank
 RNG payloads, with nonzero gradient norm 0.2728397151. Evidence:
 `/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/deterministic_repeatability_comparison.json`.
 This resolves the cold-resume repeatability diagnostic under strict mode;
-uninterrupted-vs-resumed equivalence still needs a continuous control using
-the same deterministic settings. Default-mode results below remain failures
+the matching continuous control is now recorded above. Default-mode results below remain failures
 of exact repeatability and must not be relabeled as passed.
 
 Latest controlled hardware audit (isolated runtime `5f3d0d50`): explicitly
