@@ -73,12 +73,18 @@ def load_ar_replay_checkpoint(module: _StateDictModule, checkpoint_dir: str) -> 
         None,
     )
     if index_path is not None:
+        from vrl.models.checkpoint_identity import require_checkpoint_source_member
+
         with open(index_path, encoding="utf-8") as index_file:
             weight_map = json.load(index_file)["weight_map"]
         missing_keys = sorted(core_keys - weight_map.keys())
         if not missing_keys:
             shard_names = sorted(
-                {name for key, name in weight_map.items() if key in core_keys},
+                {
+                    require_checkpoint_source_member(name, field_name="checkpoint shard")
+                    for key, name in weight_map.items()
+                    if key in core_keys
+                },
             )
             loaded_keys: set[str] = set()
             for shard_name in shard_names:

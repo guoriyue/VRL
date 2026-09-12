@@ -54,11 +54,28 @@ the failed construction. Current filtering also accepts any owned key present in
 a selected shard, not only keys mapped to that exact shard by the index. Malformed
 duplicate/misassigned index contents need a deliberate format-contract decision.
 
-Deferred path review: index-provided shard names are joined directly to the source
-directory. They do not yet use require_checkpoint_source_member, the existing
-shared POSIX-member validator in models/checkpoint_identity.py. Its lexical
-absolute/parent-segment contract and Hub cache symlink compatibility should be
-checked together before consolidating this boundary; do not add a second ad-hoc
-safe-path helper. resolve_hf_checkpoint_dir likewise does not expand '~' or
-distinguish a nonexistent intended local path from a Hub ID. Current subfolder
-arguments come from replay-core declarations, not arbitrary request data.
+resolve_hf_checkpoint_dir does not expand '~' or distinguish a nonexistent intended
+local path from a Hub ID. Current subfolder arguments come from replay-core
+declarations, not arbitrary request data.
+
+## Follow-up: shared shard member contract
+
+Following 6be0ed27f, selected index shard names now use the existing
+require_checkpoint_source_member helper before opening any shard. This closes
+the previously deferred lexical path boundary without another validator/class.
+An absolute or parent-segment path is not a member of the declared checkpoint
+source. Nested relative paths remain accepted. Only selected shards are validated;
+irrelevant generation-only entries remain unopened and do not block minimal replay.
+
+Two regression cases failed on the old loader because external shard paths were
+opened instead of rejected. A real safetensors file outside the snapshot, linked
+through a nested snapshot member, still loads both actual module weights. This
+tests the HF-style cache topology without network or a fabricated loader result.
+All 12 checkpoint adapter tests passed after the change; Ruff check/format passed.
+
+Compatibility: malformed selected names that previously escaped the source root
+now raise ValueError before module mutation. The check is lexical, not realpath
+containment: cache symlinks may point outside the snapshot by design. This is not a
+filesystem sandbox or protection against symlink retargeting. The existing helper
+still owns its accepted path grammar; no speculative dtype or whole-index schema
+validation is added. Its lazy import preserves the loader's dependency boundary.

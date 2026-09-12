@@ -147,6 +147,54 @@ def test_shard_tensors_are_released_before_loading_next_shard(monkeypatch, tmp_p
     torch.testing.assert_close(core.right.weight, torch.ones(1, 1))
 
 
+@pytest.mark.parametrize("shard_name", ["../outside.safetensors", "/outside.safetensors"])
+def test_index_rejects_external_shard_paths_before_reading(monkeypatch, tmp_path, shard_name):
+    from transformers import modeling_utils
+
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"left.weight": "a.safetensors", "right.weight": shard_name}}),
+        encoding="utf-8",
+    )
+    opened = []
+
+    def load_shard(path):
+        opened.append(path)
+        return {"left.weight": torch.ones(1, 1), "right.weight": torch.ones(1, 1)}
+
+    monkeypatch.setattr(modeling_utils, "load_state_dict", load_shard)
+    core = _TinyReplayCore()
+    with pytest.raises(ValueError, match=r"checkpoint shard.*within its checkpoint source"):
+        loader.load_ar_replay_checkpoint(core, str(tmp_path))
+    assert opened == []
+    assert core.loaded_state_keys == []
+
+
+def test_index_accepts_nested_shard_symlink_to_cache_blob(tmp_path):
+    from safetensors.torch import save_file
+
+    snapshot = tmp_path / "snapshot"
+    (snapshot / "weights").mkdir(parents=True)
+    blob = tmp_path / "blob.safetensors"
+    save_file({"left.weight": torch.ones(1, 1), "right.weight": torch.full((1, 1), 2.0)}, blob)
+    (snapshot / "weights/core.safetensors").symlink_to(blob)
+    (snapshot / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "left.weight": "weights/core.safetensors",
+                    "right.weight": "weights/core.safetensors",
+                    "vision.extra": "../unused.safetensors",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    core = _TinyReplayCore()
+    loader.load_ar_replay_checkpoint(core, str(snapshot))
+    torch.testing.assert_close(core.left.weight, torch.ones(1, 1))
+    torch.testing.assert_close(core.right.weight, torch.full((1, 1), 2.0))
+
+
 def test_checkpoint_missing_core_keys_fails_before_loading_partial_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
