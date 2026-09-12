@@ -75,7 +75,7 @@ def build_torch_native_backend(
     *,
     family: str,
 ) -> TorchNativeDecoderAttentionBackend:
-    """Build the shared HF-cache fallback backend for an AR family model."""
+    """Build the explicitly selected HF-cache backend for an AR family model."""
 
     return TorchNativeDecoderAttentionBackend(
         trunk=_lm_trunk(model),
