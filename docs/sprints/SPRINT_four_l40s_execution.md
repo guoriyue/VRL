@@ -428,3 +428,18 @@ The diagnostic helper is failure-only and cannot replace the original error;
 44 worker tests passed, touched-file Ruff/format checks passed. The torchrun
 session is terminal with exit 1. Post-exit process and GPU allocation checks
 are empty. This hardware claim is released pending the next targeted probe.
+
+### Current claim: I2V BLAS-workspace parking fix (Codex)
+
+A standalone CUDA probe reproduced the retention: a live 8,519,680-byte BLAS
+workspace pinned a 2,147,483,648-byte allocator segment after empty_cache;
+clearing the idle workspace released the entire segment. The GPU regression
+also verifies a subsequent matrix multiplication recreates working state.
+CPU-offload handoff now opts into this cleanup; CuMem and other callers retain
+the existing default. One GPU regression and 64 CPU/worker/reward tests passed.
+The physical parking threshold is unchanged.
+
+Codex claims GPUs 2/3 for the canonical two-rank I2V retry from the isolated
+worktree after a separate preflight. Output:
+`outputs/wan_i2v_14b_l40s_proof/epoch1_blas_fix`; log:
+`outputs/perf/wan_i2v_l40s_epoch1_blas_fix.log`. Production validation remains open.
