@@ -293,3 +293,30 @@ uninitialized, and the probe exited 0 after owner and cluster shutdown. No
 model was loaded. This validates the masked-ID placement path, not a complete
 training run. The separate explicit-subset case with all GPUs visible remains
 open; the fix must not be treated as closing that scheduler constraint.
+
+### Explicit GPU subset fix and compiled-control result (Codex, 2026-09-12 UTC)
+
+The compiled single-GPU control driver 131204 is terminal. Its launch log
+ends with first-update replay parity failure: finite=True,
+`max_abs_diff=0.0155535 > 0.01`. Compilation therefore did not resolve this
+gate; no optimizer update is established by that run. No training/torchrun
+driver was found in the subsequent process check. This is not a release of
+the queue owner's remaining stages.
+
+Commit `254be02d`, on top of `2ca99be6` in
+`/home/ubuntu/VRL-gpu-placement`, addresses the separate explicit-subset case.
+Owned local Ray nodes inherit only the placement layout's actor GPU IDs;
+the driver mask is restored even if initialization fails. The node cannot
+expand the inherited mask. Attached and preinitialized clusters retain their
+existing ownership and device view. Both commits remain isolated from the
+shared training worktree, pending a coordinated runtime update.
+
+Validation: 109 focused CPU tests passed (21 deselected), touched-file Ruff,
+formatting and diff checks passed. The real cluster ownership suite passed
+13 tests before adding the second GPU parameter and mask-boundary guard;
+both additions were subsequently exercised by the focused runs. Metadata-only
+real Ray probes passed for explicit subsets `(3,)` and `(3, 1)` with no driver
+mask: probed bundles were `{0: 3}` and `{0: 3, 1: 1}` respectively, the trainer
+remained `cuda:3`, and CUDA initialization state was unchanged. Both private
+clusters shut down and the test process exited 0. These are scheduler and
+lifecycle results, not full online training, weight-sync, or resume evidence.
