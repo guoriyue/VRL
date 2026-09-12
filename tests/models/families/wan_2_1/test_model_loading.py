@@ -346,10 +346,11 @@ def test_wan_sequential_offload_weight_sync_changes_forward() -> None:
     class _TinyTransformer(nn.Module):
         def __init__(self) -> None:
             super().__init__()
+            self.scale_shift_table = nn.Parameter(torch.ones(2))
             self.proj = _FailingLinear()
 
         def forward(self, value: torch.Tensor) -> torch.Tensor:
-            return self.proj(value)
+            return self.proj(value) * self.scale_shift_table
 
     class _HookedPipeline:
         def __init__(self) -> None:

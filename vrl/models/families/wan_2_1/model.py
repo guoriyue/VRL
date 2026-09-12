@@ -410,6 +410,16 @@ class WanT2VDiffusersModel(
             )
 
         try:
+            from accelerate.hooks import remove_hook_from_module
+
+            # PEFT delegates attributes to its child, so Accelerate's hasattr
+            # traversal can detach a child's hook against the wrong owner.
+            # Remove explicitly owned hooks child-first before pipeline cleanup.
+            for transformer in self._wan_transformers().values():
+                if isinstance(transformer, torch.nn.Module):
+                    for module in reversed(list(transformer.modules())):
+                        if "_hf_hook" in vars(module) or "_old_forward" in vars(module):
+                            remove_hook_from_module(module, recurse=False)
             remove_hooks()
         except BaseException as remove_error:
             raise RuntimeError(
