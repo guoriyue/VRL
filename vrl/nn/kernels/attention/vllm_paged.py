@@ -17,12 +17,10 @@ from vrl.nn.layers.attention.paged import (
 class VllmPagedAttentionKernels:
     """Thin, real-call wrapper around vLLM's internal paged-attention APIs.
 
-    This class deliberately is not an ``ARAttentionBackend``. It does not
-    pretend to run a Janus/NextStep transformer by itself; family runners still
-    need to patch their attention layers so Q/K/V projection, output projection,
-    residuals, and MLP stay model-specific. The boundary here is only the part
-    worth borrowing from vLLM: block-table layout, slot mapping, paged KV writes,
-    and FlashAttention forward over a vLLM KV cache.
+    ``VllmDecoderPagedAttentionBackend`` executes the trunk's Q/K/V and output
+    projections, residuals, norms and MLPs. This wrapper owns only the vLLM API
+    boundary: block-table layout, slot mapping, paged KV writes and
+    FlashAttention forward over a vLLM KV cache.
     """
 
     _REQUIRED_MODULES = (
