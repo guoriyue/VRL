@@ -415,7 +415,7 @@ class _CausVidPolicyModel(LoraModelMixin, DiffusionModelBase):
     # executor owns generation as one grouped trajectory, so generic single-step
     # prepare/forward entry points are intentionally unreachable.
     def prepare_sampling(self, *args: Any, **kwargs: Any) -> Any:
-        raise RuntimeError("CausVid sampling must use CausVidChunkExecutor")
+        raise RuntimeError("CausVid sampling must use CausVidBatchExecutor")
 
     def forward_step(self, state: Any, step_idx: int) -> dict[str, Any]:
         del state, step_idx
@@ -1100,8 +1100,9 @@ def _require_causvid_flash_attention() -> None:
     for module_name in ("flash_attn_interface", "flash_attn"):
         try:
             importlib.import_module(module_name)
-        except ModuleNotFoundError:
-            continue
+        except ModuleNotFoundError as error:
+            if error.name != module_name:
+                failures.append(f"{module_name}: {error}")
         except Exception as error:
             failures.append(f"{module_name}: {error}")
         else:

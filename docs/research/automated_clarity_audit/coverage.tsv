@@ -93,7 +93,7 @@ vrl/models/dtypes.py	fd330edc987f707390d1d8564afac712cf14b388	reviewed	model_sam
 vrl/models/families/__init__.py	e469084a8f8b2173a5b3b269ca5a4e4fe9d9df9b	reviewed	package_roots.md
 vrl/models/families/causvid/__init__.py	097bba3fb1ee91fa5f4d3405ee7190dda49104c7	reviewed	causvid_runner.md
 vrl/models/families/causvid/config.py	d328fdeae11569458d8b8db4de94b0a67d2762b2	reviewed	causvid_runner.md
-vrl/models/families/causvid/model.py	738b999f2e2963f6a046fdcb96504be6f12f83fb	pending	-
+vrl/models/families/causvid/model.py	738b999f2e2963f6a046fdcb96504be6f12f83fb	reviewed	causvid_model.md; causvid_loading.md
 vrl/models/families/causvid/runner.py	5e62da2acd996481cfb251c92f216545a351ab8e	reviewed	causvid_runner.md
 vrl/models/families/causvid/runtime.py	77c5f0987b6c8f9a02d7eaa7fa7dbb81b5be33e8	reviewed	causvid_runner.md
 vrl/models/families/cogvideox/__init__.py	7ee0cd12875cc83b5fdf23b5bedd342b5ddd1777	pending	-
