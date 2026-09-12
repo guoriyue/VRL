@@ -1489,7 +1489,7 @@ class OnlineTrainer:
 
         training_microbatch_size = cfg.batch_plan.training_microbatch_size
 
-        # Debug first step: compare old vs fresh log-probs on first timestep
+        # Debug first step: compare old vs fresh log-probs on the first selected timestep
         # (using first filtered batch so memory footprint is bounded).
         first_step_debug_record: dict[str, Any] | None = None
         precision_metadata = self._precision_metadata()
@@ -1511,7 +1511,7 @@ class OnlineTrainer:
                 _dbg_signals = self.evaluator.evaluate(
                     self.model,
                     _dbg_batch,
-                    0,
+                    train_indices[0],
                     ref_model=self.ref_model,
                     signal_request=SignalRequest(need_ref=False, need_kl_intermediates=False),
                 )
