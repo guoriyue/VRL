@@ -196,7 +196,7 @@ class RayGenerationConfig:
 
         # colocated already implies a non-empty rollout device set (it is the
         # trainer/rollout intersection), so no separate GPU-fleet check needed.
-        if not (self.resources.colocated and self.resources.rollout_num_engines >= 1):
+        if not self.resources.colocated:
             return
         if not bundle.loads_full_generation_modules:
             return

@@ -56,14 +56,14 @@ vrl/generation/execution/rank_group.py	32c60cdf57f07a1c2036b93fd930ea9a871b6f4d	
 vrl/generation/execution/sample_batches.py	c5c98b1c6dae0dd4ec9e35a25a6cafbc47da469a	reviewed	sample_batch_contracts.md
 vrl/generation/execution/types.py	bfe6dd74a444aeaa64a84164792ce00c844c0fb8	reviewed	execution_contracts.md
 vrl/generation/execution/worker.py	373f2ae9c8b32dddb0061d140ee0a19227c4a104	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
-vrl/generation/launch_contract.py	9e6459395d36be8d343a66525b9f07d26ab40713	pending	-
+vrl/generation/launch_contract.py	9e6459395d36be8d343a66525b9f07d26ab40713	reviewed	launch_config.md
 vrl/generation/protocols.py	9b820fc3c3ae74bce1b76967fc6bc9353cea21fb	pending	-
 vrl/generation/ray/__init__.py	4dbcac310188b85480f8eae0ef9c757b216f7fb2	pending	-
-vrl/generation/ray/config.py	219c6bd550d1aed0af34c527e6e1561e89c01b53	pending	-
+vrl/generation/ray/config.py	219c6bd550d1aed0af34c527e6e1561e89c01b53	reviewed	launch_config.md
 vrl/generation/ray/engine.py	1b8292a72602846a13f17ee8d2721cf3ff555d3f	pending	-
 vrl/generation/ray/executor.py	5e6ab1dedb66ea4c6d3ebcd3a367bc0cb5bd7ff4	pending	-
 vrl/generation/ray/health_monitor.py	74e2dbcbbf429de3a4e44675aaff09b54aa98c21	pending	-
-vrl/generation/ray/launch_inputs.py	68452738b8dc5db96f41619cde73f852e9e9c85c	pending	-
+vrl/generation/ray/launch_inputs.py	68452738b8dc5db96f41619cde73f852e9e9c85c	reviewed	launch_config.md
 vrl/generation/ray/launcher.py	23916b0a9815b01872e236020a366db4d21bf4d5	pending	-
 vrl/generation/ray/pipeline_protocol.py	3968cb77ec1115b8f39c68f260337af39c0dae21	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
 vrl/generation/ray/runtime.py	9efba6e0fdc7dc65a1344cbc50baf3e3e05e0e47	pending	-
@@ -277,7 +277,7 @@ vrl/rewards/functions/videocon_physics.py	5da556db28ab6b63368a95144ead73a11ec7bb
 vrl/rewards/functions/videoscore2.py	dd1168868204df351601159fe152783b5fc3f35e	pending	-
 vrl/rewards/functions/wd_tagger.py	f1ea05f9e3df85baf843ef87620e8f7f84ef3366	pending	-
 vrl/rewards/inference.py	12aa8dbeb33f1cfe2bdae6fbc6fdd09ef36e2550	pending	-
-vrl/rewards/launch_contract.py	263250d5e3025c1bd42620b5580706c3b4c265ff	pending	-
+vrl/rewards/launch_contract.py	263250d5e3025c1bd42620b5580706c3b4c265ff	reviewed	launch_config.md
 vrl/rewards/models/__init__.py	a8349df16eeccbbf820e59778d3c8d4131520d33	pending	-
 vrl/rewards/models/aesthetic.py	42cfa1511d41a1061793a02c680eb17961039c43	pending	-
 vrl/rewards/models/animereward_quality.py	54a7776afb678a3bef66a8eee35ee6d3b47d567e	pending	-
