@@ -356,7 +356,7 @@ vrl/runtime_errors.py	d51ffae413d4d55b5e6ccf716f7415a6fb2834e0	reviewed	actor_st
 vrl/scripts/__init__.py	13782b00440542580c52345ce0e79f20d876e30a	pending	-
 vrl/scripts/common/__init__.py	f95f971c64480824ec0a64088fe3b7ea4c5e39dc	pending	-
 vrl/scripts/common/factory.py	f96ed69e82cfe1c14ea110fcf5629e89bde374a8	pending	-
-vrl/scripts/common/launch_environment.py	3016c0052ae5a9f801d40cbfec51c2310c467711	pending	-
+vrl/scripts/common/launch_environment.py	3016c0052ae5a9f801d40cbfec51c2310c467711	reviewed	rank_launch_context.md
 vrl/scripts/common/online.py	d35ce6b1526d316c3fd40d9c5ddbdd925207c2e2	pending	-
 vrl/scripts/data/__init__.py	790101a104d5cb41e7726c7e9a90f75df70d71b4	pending	-
 vrl/scripts/data/bootstrap.py	6a0b41e427b335b089c10718a7144459c46803b6	pending	-
@@ -464,7 +464,7 @@ vrl/trainers/data/prompts.py	2cc8154bbe10ff1fa763c49c855a2bd4dc1a5c3a	pending	-
 vrl/trainers/data/provenance.py	be2b6eef34a114d1103f4c1dc76f32143dc6dfe7	pending	-
 vrl/trainers/data/sft_latents.py	43ffcdc153b599f8a255ead6eb0c3a07d6747512	pending	-
 vrl/trainers/diagnostics.py	909f1069a7ed49ab2caaba01b3e81f758ce6bd56	pending	-
-vrl/trainers/distributed.py	78e868e22dabd7d9a1c2790a3e4571f9d6a44edf	pending	-
+vrl/trainers/distributed.py	78e868e22dabd7d9a1c2790a3e4571f9d6a44edf	reviewed	rank_launch_context.md
 vrl/trainers/fsdp.py	4953f817d2d34fac7a92a65c226a9ac8af8593e0	pending	-
 vrl/trainers/metrics_io.py	747f995cb560c6ee772b17bd593935c2e89c5276	pending	-
 vrl/trainers/offline/__init__.py	6fef898238a387b1f0092780b24ed1bc2d66fa78	pending	-

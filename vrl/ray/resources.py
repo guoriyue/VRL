@@ -350,8 +350,8 @@ class ResolvedDistributedResources:
         is the id's *position*, not its value — returning the raw physical id
         raised "CUDA error: invalid device ordinal" on every non-zero rank of
         the hpsv3 fsdp 4-rank smoke (2026-08-16; rank0 survived only because
-        physical 0 == logical 0). Translate only when the process view
-        provably matches the plan (device_count == len(visible_devices)); a
+        physical 0 == logical 0). Translation assumes the launcher aligned the
+        process view with the plan when device_count == len(visible_devices); a
         wider process view (bare launch, subset plan without a mask) keeps
         plan ordinals valid as-is, and an identity pool translates to itself.
         """

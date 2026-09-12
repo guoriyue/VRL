@@ -203,9 +203,9 @@ def init_training_process_group(
 
     No-op for ``single_process`` and when a group already exists. The owning
     ``Strategy.shutdown`` calls the matching ``shutdown_training_process_group``.
-    ``torchrun`` has already exported ``RANK`` / ``WORLD_SIZE`` / ``MASTER_ADDR``;
-    ``DistributedTrainingContext.from_root`` validated them, so ``init_method='env'`` is the
-    only contract we rely on here.
+    ``DistributedTrainingContext.from_root`` validates rank and world-size
+    identity. Torch's environment rendezvous validates ``MASTER_ADDR`` and
+    ``MASTER_PORT`` when creating the group.
     """
 
     import torch.distributed as dist
