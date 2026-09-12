@@ -916,6 +916,56 @@ def test_fsdp_parking_rolls_every_rank_back_when_one_peer_fails() -> None:
     assert strategy._parked_training_state is None
 
 
+@pytest.mark.parametrize("restore_parked", [True, False])
+def test_fsdp_shutdown_consumes_parked_state_before_group_cleanup(
+    monkeypatch, restore_parked
+) -> None:
+    from vrl.trainers.strategy import TrainingMemoryState
+
+    calls = []
+
+    class Model(nn.Linear):
+        def to(self, device):
+            calls.append("move")
+            return super().to(device)
+
+    strategy = _fsdp_strategy(_cpu_fsdp_context())
+    state = TrainingMemoryState(Model(2, 2), None, None, None, None, torch.device("cpu"))
+    strategy.park_training_state(state)
+    calls.clear()
+    monkeypatch.setattr(
+        "vrl.trainers.strategy.shutdown_training_process_group", lambda: calls.append("group")
+    )
+
+    strategy.shutdown(restore_parked=restore_parked)
+    strategy.restore_training_state(state)
+
+    assert calls == (["move", "group"] if restore_parked else ["group"])
+    assert strategy._parked_training_state is None
+
+
+def test_fsdp_shutdown_cleans_process_group_when_restore_fails(monkeypatch) -> None:
+    from vrl.trainers.strategy import TrainingMemoryState
+
+    strategy = _fsdp_strategy(_cpu_fsdp_context())
+    state = TrainingMemoryState(nn.Linear(2, 2), None, None, None, None, torch.device("cpu"))
+    strategy.park_training_state(state)
+    calls = []
+    failure = RuntimeError("restore failed")
+
+    def fail_restore(_state):
+        raise failure
+
+    monkeypatch.setattr(strategy, "restore_training_state", fail_restore)
+    monkeypatch.setattr(
+        "vrl.trainers.strategy.shutdown_training_process_group", lambda: calls.append("group")
+    )
+    with pytest.raises(RuntimeError) as caught:
+        strategy.shutdown()
+    assert caught.value is failure
+    assert calls == ["group"]
+
+
 def test_build_strategy_fsdp_rejects_train_compile() -> None:
     # torch.compile (inductor) is unsound with FSDP2 reshard-after-forward all-gathers;
     # the build_strategy §10 gate must reject it.

@@ -332,6 +332,15 @@ class _TrainingStateParking:
             ema.device = parked.ema_device
         empty_cuda_cache()
 
+    def shutdown(self, *, restore_parked: bool = True) -> None:
+        if self._parked_training_state is not None and restore_parked:
+            self.restore_training_state(self._parked_training_state.state)
+        elif self._parked_training_state is not None:
+            # Terminal role cleanup could not prove the shared GPU was released.
+            # Drop only this adapter's restore ticket; the live objects deliberately
+            # remain on CPU until process exit instead of racing another GPU owner.
+            self._parked_training_state = None
+
 
 class _ProcessGroupStrategy:
     """Shared behavior of strategies that own a torch process group.
@@ -482,14 +491,7 @@ class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy):
     ) -> float:
         return float(nn.utils.clip_grad_norm_(parameters, max_norm))
 
-    def shutdown(self, *, restore_parked: bool = True) -> None:
-        if self._parked_training_state is not None and restore_parked:
-            self.restore_training_state(self._parked_training_state.state)
-        elif self._parked_training_state is not None:
-            # Terminal role cleanup could not prove the shared GPU was released.
-            # Drop only this adapter's restore ticket; the live objects deliberately
-            # remain on CPU until process exit instead of racing another GPU owner.
-            self._parked_training_state = None
+
 
 
 def _module_device(module: Any, fallback: torch.device) -> torch.device:
@@ -934,6 +936,12 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
             raise failure
         if failure is not None:
             raise failure
+
+    def shutdown(self, *, restore_parked: bool = True) -> None:
+        try:
+            _TrainingStateParking.shutdown(self, restore_parked=restore_parked)
+        finally:
+            super().shutdown(restore_parked=restore_parked)
 
 
 class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):

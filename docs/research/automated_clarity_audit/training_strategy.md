@@ -59,11 +59,20 @@ reduction can fall back to NCCL. A new owner must cover creation/adoption,
 subgroup creation failure and teardown, not merely replace the global with a
 class variable. Preserve external-group test lifetimes when implementing it.
 
-FSDP inherits _ProcessGroupStrategy.shutdown, which ignores restore_parked and
-does not consume _parked_training_state. SingleProcessStrategy does restore or
-explicitly abandon its ticket. Review trainer terminal cleanup and whether GPU
-ownership is safe before unifying these paths; never restore automatically on
-an unsafe shared-device shutdown.
+Closed in the follow-up after 2bf88e724: FSDP inherited process-group shutdown
+and ignored restore_parked, leaving its parking ticket live. The rollout phase
+intentionally leaves the trainer parked after failed role release, and
+_OnlineRecipeLifecycle passes pipeline cleanup success as restore_parked. This
+is the explicit permission boundary; placement removal alone does not grant it.
+Move the existing single-process shutdown body into _TrainingStateParking and
+have FSDP compose that behavior with process-group shutdown in finally. False
+abandons the ticket without GPU restoration; true restores it before group
+cleanup. A restoration error retains the ticket and still attempts group cleanup.
+Single-process behavior and DDP's process-group-only shutdown remain unchanged.
+No new owner class, flag or module-level constant was introduced. The thin FSDP
+override is necessary composition of two cleanup responsibilities, not a wrapper
+to delete for line count. External process-group adoption remains a separate
+open ownership issue above.
 
 DDP's class description refers to symmetric colocated online execution, but
 validate_training_state_parking explicitly rejects shared-GPU parking. Verify
@@ -81,3 +90,11 @@ FSDP parking preflight/peer-failure rollback tests also passed. The CPU lane
 checks identity deduplication and live Adam/GradScaler state but does not prove
 CUDA memory reclamation or multi-rank NCCL parking. Ruff check and format check
 passed for strategy.py. No new tests mirror the removed cached field.
+
+Shutdown follow-up: three new behavioral cases failed before the change. They
+verify permitted restore before group cleanup, forbidden restore clearing the
+ticket (including a later restore attempt), and group cleanup despite restore
+failure. 39 parking/shutdown/strategy-contract/online-lifecycle tests passed;
+86 unrelated or GPU cases were deselected. CPU model moves and an observed group
+cleanup callback establish ordering and ticket behavior, not actual CUDA/NCCL
+reclamation. Ruff check and formatting passed on strategy.py and test_fsdp.py.
