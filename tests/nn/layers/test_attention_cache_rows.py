@@ -2,11 +2,51 @@
 
 from __future__ import annotations
 
+import builtins
+import importlib.util
+import sys
+
 import pytest
 import torch
 from transformers.cache_utils import DynamicCache
 
 from vrl.nn.layers.attention.cache_rows import ARCacheRows
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ModuleNotFoundError("missing transformers", name="transformers"),
+        ModuleNotFoundError("missing internal dependency", name="transformers.cache_utils"),
+        ModuleNotFoundError("missing dependency", name="some_dependency"),
+        ImportError("cannot import name DynamicCache"),
+    ],
+)
+def test_optional_cache_import_only_tolerates_absent_transformers(monkeypatch, error):
+    from vrl.nn.layers.attention import cache_rows
+
+    module_name = "_vrl_test_cache_rows_import"
+    spec = importlib.util.spec_from_file_location(module_name, cache_rows.__file__)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, module_name, module)
+    original_import = builtins.__import__
+
+    def import_with_failure(name, *args, **kwargs):
+        if name == "transformers.cache_utils":
+            raise error
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_with_failure)
+    if isinstance(error, ModuleNotFoundError) and error.name == "transformers":
+        spec.loader.exec_module(module)
+        assert module.Cache is None
+        values = torch.arange(4).reshape(2, 2)
+        rows = module.ARCacheRows.from_batched(values, 2)
+        torch.testing.assert_close(rows.gather([1, 0]), values.flip(0))
+    else:
+        with pytest.raises(type(error)) as caught:
+            spec.loader.exec_module(module)
+        assert caught.value is error
 
 
 def test_ar_split_and_concat_rows_preserve_nested_kv_order() -> None:

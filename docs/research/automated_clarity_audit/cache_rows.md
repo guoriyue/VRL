@@ -40,14 +40,33 @@ actual DynamicCache contents, every-layer batch mismatch, scalar rejection and
 dtype-promotion rejection. Native tests use trunk doubles. No CUDA memory or
 pretrained parity claims follow. No Python change or new redundant test was needed.
 
-Remaining optional-import issue: the module catches all ImportError from
-transformers.cache_utils and sets Cache/DynamicCache to None. This can hide a
-broken installed package, not only an absent optional dependency. Next action:
-test missing Transformers separately from internal missing dependencies/API import
-failure, then narrow the fallback without breaking plain tensor users.
+The optional-import issue identified in this review is closed by the follow-up
+below. Missing Transformers and broken installed imports now have distinct outcomes.
 
 DynamicCache reconstruction preserves key/value tensors through a default cache
 constructor; arbitrary extra cache metadata, specialized subclasses or sliding
 cache policies are not proven preserved. Unknown non-container values are shared
 by reference on split and must compare equal on concatenate. These are existing
 supported-shape limits, not reasons to add generic introspection fallbacks.
+
+## Follow-up: optional dependency failure handling
+
+Following 88a85474e, catch only ModuleNotFoundError naming the top-level
+transformers package. Missing cache_utils, missing transitive dependencies and
+ImportError for an incompatible exported API propagate unchanged. The previous
+broad catch falsely disabled HF cache support for all of those failures.
+
+The regression executes the actual module in an isolated module namespace with
+controlled import errors. Three broken-installation cases failed on the old code;
+the absent-package control successfully gathers real tensor rows without HF cache
+support. No shared environment packages were changed or uninstalled. The test
+preserves the original module used by other tests and restores the import hook.
+
+Compatibility: environments with an installed but broken Transformers now fail
+at import instead of silently using the plain-value path. Environments without
+Transformers retain plain tensor/container operations. No cache math, shape/dtype
+validation or production public API changed. This narrows an exception boundary;
+it introduces no new checker class or per-call validation.
+
+60 cache-row, native-backend and token-loop tests passed on CPU after this change.
+Ruff check and format check passed for both changed Python files.

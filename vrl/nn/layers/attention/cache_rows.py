@@ -10,7 +10,10 @@ import torch
 
 try:
     from transformers.cache_utils import Cache, DynamicCache
-except ImportError:  # pragma: no cover - plain tensor lanes work without transformers.
+except ModuleNotFoundError as error:
+    if error.name != "transformers":
+        raise
+    # Plain tensor lanes work without Transformers; a broken installation does not.
     Cache = None
     DynamicCache = None
 
