@@ -35,10 +35,10 @@ vrl/generation/bindings/__init__.py	3b7cd6c8c8811387489c82b5d69c0d9c96081c34	pen
 vrl/generation/bindings/chunk_autoregressive_denoise/__init__.py	52a01354ed85cb08932f2058e1ff0587d75611ac	pending	-
 vrl/generation/bindings/chunk_autoregressive_denoise/executor.py	5a98a2ddaa96215abab6cdf9cde58b618276f395	pending	-
 vrl/generation/bindings/chunk_autoregressive_denoise/gather.py	adc2712c610132d80b2365eab9cd790332702448	pending	-
-vrl/generation/bindings/full_sequence_denoise/__init__.py	38e87c305adf2b3d6baffcb476ba2e5896cc1622	pending	-
+vrl/generation/bindings/full_sequence_denoise/__init__.py	38e87c305adf2b3d6baffcb476ba2e5896cc1622	reviewed	denoise_layout_gather.md
 vrl/generation/bindings/full_sequence_denoise/executor.py	976b8869a6d73f19b209b792571a3032b49b0bf0	pending	-
-vrl/generation/bindings/full_sequence_denoise/gather.py	06a10ed576e514fb029cc45232055281c4116c9b	pending	-
-vrl/generation/bindings/full_sequence_denoise/layout.py	e70cb41dbddde0e65baa05aa272988d4f727b262	pending	-
+vrl/generation/bindings/full_sequence_denoise/gather.py	06a10ed576e514fb029cc45232055281c4116c9b	reviewed	denoise_layout_gather.md
+vrl/generation/bindings/full_sequence_denoise/layout.py	e70cb41dbddde0e65baa05aa272988d4f727b262	reviewed	denoise_layout_gather.md
 vrl/generation/bindings/token_autoregressive/__init__.py	91f3e2246dc2ec2a60f125065b10f347601d5f5f	pending	-
 vrl/generation/bindings/token_autoregressive/executor.py	5d759291589be542f040a27bc76469e3b3e9d0f8	pending	-
 vrl/generation/bindings/token_autoregressive/layout.py	8f3084c34293e95b5b205d7089306e4a8c462dc9	pending	-
