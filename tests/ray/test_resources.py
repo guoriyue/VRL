@@ -71,6 +71,21 @@ def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
     assert resolved.trainer_torch_device == "cuda:0"
 
 
+def test_auto_device_discovery_preserves_cuda_query_failure(monkeypatch) -> None:
+    import torch
+
+    error = RuntimeError("CUDA discovery failed")
+
+    def unavailable():
+        raise error
+
+    monkeypatch.setattr(torch.cuda, "is_available", unavailable)
+    root = parse_config(_cfg({"visible_devices": "auto"}))
+    with pytest.raises(RuntimeError) as caught:
+        ResolvedDistributedResources.from_root(root)
+    assert caught.value is error
+
+
 def test_resolved_resource_summaries_are_derived_from_topology() -> None:
     resolved = ResolvedDistributedResources.from_root(
         parse_config(

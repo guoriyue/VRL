@@ -253,9 +253,8 @@ class RayLifecyclePlan:
 class ResolvedDistributedResources:
     """Concrete resource plan consumed by trainer and Ray role launchers."""
 
-    # display/provenance-only: the full visible GPU pool, printed by
-    # format_distributed_resource_plan. No behavioral consumer reads it; it
-    # records which GPUs the machine exposed (may exceed the role union's spare).
+    # Plan-space GPU pool, also used to translate narrowed process-local torch
+    # ordinals. It can include devices unused by the execution roles.
     visible_devices: tuple[int, ...]
     trainer_devices: tuple[int, ...]
     rollout_devices: tuple[int, ...]
@@ -419,7 +418,7 @@ class ResolvedDistributedResources:
                 _auto_visible_cuda_devices()
                 if parsed_visible_devices == "auto"
                 else tuple(
-                    _dedupe_ints(
+                    _validate_device_ids(
                         parsed_visible_devices,
                         field_name="distributed.resources.visible_devices",
                     ),
@@ -538,9 +537,6 @@ class ResolvedDistributedResources:
         )
 
 
-_MISSING = object()
-
-
 def _validate_trainer_device_count(
     strategy: str,
     trainer_devices: tuple[int, ...],
@@ -644,7 +640,7 @@ def _resolve_cross_node_visible_devices(
     explicit = _parse_devices(config.visible_devices)
     if explicit != "auto":
         return tuple(
-            _dedupe_ints(explicit, field_name="distributed.resources.visible_devices"),
+            _validate_device_ids(explicit, field_name="distributed.resources.visible_devices"),
         )
 
     # Reward never reserves a local GPU under cross_node (rejected during
@@ -658,7 +654,7 @@ def _explicit_role_gpu_count(role_config: RoleResourceConfig) -> int:
 
     devices = _parse_devices(role_config.devices)
     if devices != "auto":
-        return len(_dedupe_ints(devices, field_name=f"{role_config.key_prefix}.devices"))
+        return len(_validate_device_ids(devices, field_name=f"{role_config.key_prefix}.devices"))
 
     num_gpus = _parse_num_gpus(
         role_config.num_gpus,
@@ -683,7 +679,7 @@ def _explicit_role_devices(
 ) -> tuple[int, ...] | None:
     """Resolve an explicitly configured ``devices`` list, or None when auto.
 
-    Shared by every role: dedupe and require a subset of the visible pool.
+    Shared device validation: reject duplicates and require a visible-pool subset.
     Pinned ``devices`` are the authoritative count: a ``num_gpus`` merged in
     from a lower preset layer (e.g. the colocated single-GPU base) is the
     weaker count-only request and is superseded, not cross-checked — a
@@ -694,7 +690,7 @@ def _explicit_role_devices(
     explicit_devices = _parse_devices(role_config.devices)
     if explicit_devices == "auto":
         return None
-    devices = tuple(_dedupe_ints(explicit_devices, field_name=f"{prefix}.devices"))
+    devices = tuple(_validate_device_ids(explicit_devices, field_name=f"{prefix}.devices"))
     _validate_subset(devices, visible_devices, field_name=f"{prefix}.devices")
     return devices
 
@@ -823,7 +819,7 @@ def _resolve_reward_devices(
         return devices
 
     if explicit != "auto":
-        devices = tuple(_dedupe_ints(explicit, field_name=f"{prefix}.devices"))
+        devices = tuple(_validate_device_ids(explicit, field_name=f"{prefix}.devices"))
         if len(devices) != 1:
             raise ValueError(
                 f"{prefix}.device=gpu reserves exactly one GPU for the "
@@ -947,7 +943,7 @@ def _parse_num_engines(value: Any, *, field_name: str) -> int | str:
     return parsed
 
 
-def _dedupe_ints(values: list[int], *, field_name: str) -> list[int]:
+def _validate_device_ids(values: list[int], *, field_name: str) -> list[int]:
     out: list[int] = []
     seen: set[int] = set()
     for value in values:
@@ -978,14 +974,13 @@ def _validate_subset(
 def _auto_visible_cuda_devices() -> tuple[int, ...]:
     try:
         import torch
-    except Exception:
+    except ModuleNotFoundError as error:
+        if error.name != "torch":
+            raise
         return ()
-    try:
-        if not torch.cuda.is_available():
-            return ()
-        return tuple(range(int(torch.cuda.device_count())))
-    except Exception:
+    if not torch.cuda.is_available():
         return ()
+    return tuple(range(torch.cuda.device_count()))
 
 
 def _is_auto(value: Any) -> bool:
