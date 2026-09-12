@@ -93,7 +93,7 @@ class RayGenerationWeightSync:
                 acknowledged_policy_version = update_weights(
                     trainable_state, policy_version, **verification
                 )
-                self._validate_policy_version_ack(
+                self._validate_policy_version_match(
                     engine, acknowledged_policy_version, policy_version
                 )
 
@@ -128,10 +128,12 @@ class RayGenerationWeightSync:
             policy_version_acks,
             strict=True,
         ):
-            self._validate_policy_version_ack(engine, acknowledged_policy_version, policy_version)
+            self._validate_policy_version_match(
+                engine, acknowledged_policy_version, policy_version
+            )
 
     @staticmethod
-    def _validate_policy_version_ack(
+    def _validate_policy_version_match(
         engine: RayGenerationEngine,
         acknowledged_policy_version: Any,
         expected_policy_version: int,
@@ -180,7 +182,7 @@ class RayGenerationWeightSync:
             for engine, (_, acknowledged_policy_version) in zip(
                 self.engines, policy_version_acks, strict=True
             ):
-                self._validate_policy_version_ack(
+                self._validate_policy_version_match(
                     engine, acknowledged_policy_version, policy_version
                 )
 

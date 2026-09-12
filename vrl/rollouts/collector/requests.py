@@ -74,10 +74,10 @@ class GenerationRequestBuilder:
         if "fps" in sampling:
             group_metadata.setdefault("video_fps", sampling["fps"])
 
-        resolved_inputs = [self._resolve_input(item) for item in inputs]
+        defaulted_inputs = [self._apply_input_defaults(item) for item in inputs]
         default_task_type = task_type_for(self.entry.task)
-        if default_task_type is not None and resolved_inputs:
-            first = resolved_inputs[0]
+        if default_task_type is not None and defaulted_inputs:
+            first = defaulted_inputs[0]
             group_metadata["task_type"] = first.task_type
             if first.reference_image is not None:
                 group_metadata["reference_image"] = first.reference_image
@@ -88,7 +88,7 @@ class GenerationRequestBuilder:
             request_id=f"{self.entry.family}-{uuid.uuid4()}",
             family=self.entry.family,
             task=self.entry.task,
-            inputs=list(resolved_inputs),
+            inputs=list(defaulted_inputs),
             # GenerationRequest names this `samples_per_prompt` (generation-domain
             # wording); the value is the collector's `group_size` — the GRPO group,
             # sourced from rollout.n_samples_per_prompt. Same number, three domain
@@ -108,7 +108,7 @@ class GenerationRequestBuilder:
             metadata=group_metadata,
         )
 
-    def _resolve_input(
+    def _apply_input_defaults(
         self,
         item: GenerationInput | str,
     ) -> GenerationInput:
