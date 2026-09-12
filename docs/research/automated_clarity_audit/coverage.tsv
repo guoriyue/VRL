@@ -188,7 +188,7 @@ vrl/models/families/wan_2_1/runtime.py	1b9ee08cf57d73247c5d27eefa946d4abd0592fa	
 vrl/models/interfaces/__init__.py	6bc6b704b4b878465905fe39da71088dce8c68fb	pending	-
 vrl/models/interfaces/generation_memory.py	9de6afec8a9d9bdf197216361c433db83f88372f	pending	-
 vrl/models/interfaces/replay.py	ab31a59699e21ca1a9a937d09304a97206b38eba	pending	-
-vrl/models/interfaces/runtime.py	421068fce678bc0148363b8bb24098ce6c51e9ad	pending	-
+vrl/models/interfaces/runtime.py	421068fce678bc0148363b8bb24098ce6c51e9ad	reviewed	runtime_build_contract.md
 vrl/models/loader.py	70b6387b7da30c99b6d02df9ba6244de35ead01a	reviewed	model_loading.md
 vrl/models/peft_adapter.py	1b4038785e61c7262ceb46f0b9c9e3d907ddb701	pending	-
 vrl/models/precision.py	88815dd855c241f4034a1188193b158a983bfd6c	pending	-

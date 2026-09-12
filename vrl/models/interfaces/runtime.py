@@ -337,8 +337,9 @@ class ModelBuild:
     def use_lora(self) -> bool:
         """Whether the family should attach a LoRA adapter.
 
-        ``False`` fallback when the block is absent (safe for fake test builds);
-        every real experiment config sets ``model.use_lora`` explicitly.
+        An absent or null ``model.use_lora`` leaves adapters disabled, matching
+        the model schema's default. Families that require LoRA reject that
+        choice before model loading.
         """
         return bool((self.model_config or {}).get("use_lora", False))
 
