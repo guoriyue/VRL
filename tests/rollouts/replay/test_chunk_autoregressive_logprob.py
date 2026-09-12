@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
+import pytest
 import torch
 
 from vrl.generation import GenerationRequest, GenerationSampleRow
@@ -39,6 +40,41 @@ def test_grouped_evaluator_flattens_policy_axes_and_replays_reference_once() -> 
     assert torch.all(signals.primary.ref_log_prob == 2.0)
     assert model.adapter_disable_count == 1
     assert model.requests == [("denoise",), ("denoise",)]
+
+
+@pytest.mark.parametrize("shared_reference", [False, True])
+def test_reference_replay_does_not_build_a_gradient_graph(shared_reference) -> None:
+    class DifferentiableReplay(_ReplayModel):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor(2.0))
+            self.grad_modes = []
+
+        def replay_forward(self, *args, **kwargs):
+            self.grad_modes.append(torch.is_grad_enabled())
+            result = super().replay_forward(*args, **kwargs)
+            segment = result.require_segment("denoise")
+            segment.values["log_probs"] = segment.values["log_probs"] * self.weight
+            return result
+
+    model = DifferentiableReplay()
+    reference = model if shared_reference else DifferentiableReplay()
+    signal = (
+        ChunkAutoregressiveDenoiseLogProbEvaluator()
+        .evaluate(
+            model, _batch(), 0, ref_model=reference, signal_request=SignalRequest(need_ref=True)
+        )
+        .primary
+    )
+
+    assert model.grad_modes[0] is True
+    assert reference.grad_modes[-1] is False
+    assert signal.log_prob.requires_grad
+    assert not signal.ref_log_prob.requires_grad
+    (signal.log_prob - signal.ref_log_prob).sum().backward()
+    assert model.weight.grad.item() == 36.0
+    if not shared_reference:
+        assert reference.weight.grad is None
 
 
 class _ReplayModel:

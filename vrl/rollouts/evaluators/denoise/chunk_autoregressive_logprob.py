@@ -5,6 +5,8 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
+import torch
+
 from vrl.models.interfaces import ReplayModel, ReplayRequest
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import ReplayEvaluatorBase
@@ -53,7 +55,10 @@ class ChunkAutoregressiveDenoiseLogProbEvaluator(ReplayEvaluatorBase):
         ref_log_prob = None
         if signal_request.need_ref and ref_model is not None:
             same_model = ref_model is model
-            with model.disable_adapter() if same_model else contextlib.nullcontext():
+            with (
+                torch.no_grad(),
+                model.disable_adapter() if same_model else contextlib.nullcontext(),
+            ):
                 reference = ref_model.replay_forward(
                     batch,
                     request=request,

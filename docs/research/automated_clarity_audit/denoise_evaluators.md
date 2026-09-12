@@ -46,13 +46,40 @@ fresh reference signals and count forward calls; slice tests prevent full tensor
 movement before step selection. Ruff check and format check pass for the changed
 source. No GPU/pretrained parity is claimed.
 
-Open: chunk reference evaluation does not explicitly enter no_grad, unlike SDE
-and token reference paths. The existing chunk fake produces constant tensors and
-therefore does not establish reference graph isolation. Whether every actual
-family/reference owner suppresses gradients requires inspection before changing
-this behavior; the present SDE consolidation neither fixes nor hides that gap.
+The chunk reference gradient-isolation gap found here is addressed by the
+follow-up below. The original constant-output fake did not exercise autograd.
 
 Both denoise evaluators may return absent reference signals when need_ref is true
 but no source exists. This is existing behavior; deciding whether the request
 must fail belongs with algorithm/reference setup validation, not an incidental
 cleanup of the duplicated math call.
+
+## Follow-up: scope chunk reference autograd
+
+Following 03b328e69, wrap the chunk reference forward in torch.no_grad while
+preserving the identical-model adapter-disable context. Current-policy replay
+remains differentiable. No new context helper or shared reference-selection class
+is introduced: denoise's explicit reference convention stays intact.
+
+CausVid replay_forward calls differentiable replay_log_probs; its base
+disable_adapter method controls adapters, not the global gradient mode. The
+online factory currently supplies the same model for LoRA KL, where frozen base
+parameters may already make the reference graph-free. This audit does not claim
+every current production run retained a graph. The evaluator also accepts distinct
+reference models and must own its frozen reference execution consistently with
+the SDE/token evaluators rather than depending on incidental parameter settings.
+
+Two regressions exercise real tensor autograd through a differentiable replay
+double with shared and distinct reference objects. Both failed on the prior code.
+They verify reference forward runs with grad disabled, current output remains
+differentiable, reference output has no graph, and a log-prob difference backward
+produces exactly the current branch's gradient without reference accumulation.
+The existing test continues to verify reference values, adapter disable count and
+one ordered request per branch.
+
+16 chunk evaluator, evaluator contract and reference cache tests passed on CPU.
+Ruff check and formatting pass on the changed files. No CUDA/pretrained execution
+was required to establish the autograd boundary. Compatibility: callers relying on
+gradients through reference signals now receive detached reference results, as the
+frozen-reference training contract requires; forward values and policy gradients
+are otherwise preserved.
