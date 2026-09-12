@@ -1869,18 +1869,7 @@ class OnlineTrainer:
             metadata=precision_metadata,
         )
         if record is not None:
-            worst = dict(record.get("worst_stats") or {})
-            worst["logprob_abs_diff_max"] = self._strategy.collectives.max_float(
-                float(worst.get("logprob_abs_diff_max", 0.0))
-            )
-            worst["ratio_abs_dev_max"] = self._strategy.collectives.max_float(
-                float(worst.get("ratio_abs_dev_max", 0.0))
-            )
-            worst["finite"] = self._strategy.collectives.all_true(bool(worst.get("finite", True)))
-            record["worst_stats"] = worst
-            record["violated"] = not self._strategy.collectives.all_true(
-                not bool(record["violated"])
-            )
+            # Measurement already selected the same complete record on every rank.
             # Fail on every rank; warn and persist evidence only on the writer.
             if record["mode"] == "fail" or self._strategy.context.is_primary:
                 enforce_precision_drift(record, logger=logger)

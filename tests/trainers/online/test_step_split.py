@@ -325,6 +325,40 @@ def test_corrected_replay_enforces_drift_guard_on_both_update_paths(
         assert [record["event"] for record in records] == ["precision_drift_guard"]
 
 
+def test_trainer_uses_already_gathered_drift_record_without_more_collectives(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import json
+
+    import vrl.trainers.online.trainer as trainer_module
+
+    trainer = _build_trainer(tmp_path)
+    batch = _diffusion_rollout_batch(
+        rewards=torch.arange(2, dtype=torch.float32),
+        group_ids=torch.zeros(2, dtype=torch.long),
+        num_steps=2,
+    )
+    record = {
+        "event": "precision_drift_guard",
+        "mode": "warn",
+        "violated": False,
+        "worst_rank": 1,
+        "worst_timestep": 7,
+        "worst_stats": {"finite": True, "logprob_abs_diff_max": 0.0},
+    }
+    monkeypatch.setattr(trainer_module, "measure_precision_drift", lambda *a, **kw: record)
+
+    def unexpected_reduce(*args, **kwargs):
+        raise AssertionError("the guard already gathered and selected the rank record")
+
+    monkeypatch.setattr(trainer_module, "_all_reduce_scalar", unexpected_reduce)
+    assert trainer._check_initial_precision_drift(batch, [0, 1]) is record
+    saved = json.loads((tmp_path / "training_debug.jsonl").read_text())
+    assert saved == record
+    assert trainer._precision_drift_guard_pending is False
+
+
 def test_streaming_scaler_skipped_update_does_not_publish_weights(tmp_path) -> None:
     """A skipped optimizer attempt counts but cannot publish unchanged weights."""
     from vrl.scripts.common.online import _run_streaming_optimizer_update
