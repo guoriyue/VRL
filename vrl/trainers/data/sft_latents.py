@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from vrl.utils.artifacts import atomic_file
+
 if TYPE_CHECKING:
     from vrl.trainers.data.prompts import PromptExample
 
@@ -89,20 +91,17 @@ def save_sft_latents(
         raise ValueError("refusing to write an empty sft-latents shard")
     if any(not isinstance(target, str) or not target.strip() for target in latents_by_target):
         raise ValueError("sft-latents target keys must be non-empty strings")
-    out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "schema_version": SFT_LATENTS_SCHEMA_VERSION,
-            "family": str(family),
-            "model_path": str(model_path),
-            "model_revision": str(model_revision),
-            "latents": {
-                target: value.detach().cpu() for target, value in latents_by_target.items()
-            },
-        },
-        out,
-    )
+    # Preserve writing through an existing symlink when publishing by replacement.
+    out = Path(path).expanduser().resolve()
+    payload = {
+        "schema_version": SFT_LATENTS_SCHEMA_VERSION,
+        "family": str(family),
+        "model_path": str(model_path),
+        "model_revision": str(model_revision),
+        "latents": {target: value.detach().cpu() for target, value in latents_by_target.items()},
+    }
+    with atomic_file(out, binary=True) as handle:
+        torch.save(payload, handle)
 
 
 def load_sft_latents(

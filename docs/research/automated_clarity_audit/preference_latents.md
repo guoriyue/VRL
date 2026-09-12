@@ -53,11 +53,9 @@ transfer. weights_only=True is not a guarantee every stored value is a tensor;
 no blanket tensor-validation claim is made here. Producer normally supplies
 encoded tensors; any stricter external-value contract belongs at shard loading.
 
-The shard writer uses Path(path), while its reader expands a leading tilde.
-Writer publication is a direct torch.save rather than atomic replacement.
-Review shared artifact publication/path policy before integrating these with
-the broader requested path cleanup; this review does not claim crash-safe
-publication or matching tilde behavior. Family/path/revision strings are
+The writer/reader tilde mismatch and direct shard publication are addressed in
+atomic_publication.md using the shared atomic_file context manager. Its explicit
+filesystem limits still apply. Family/path/revision strings are
 provenance comparisons, not a content digest of mutable model files.
 
 ## Validation

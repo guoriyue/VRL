@@ -9,11 +9,11 @@ exceptions remove temporary files; abrupt process termination may leave one.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any
+
+from vrl.utils.artifacts import atomic_file
 
 
 def write_json(path: str | Path, value: Any, *, overwrite: bool = True) -> Path:
@@ -23,11 +23,12 @@ def write_json(path: str | Path, value: Any, *, overwrite: bool = True) -> Path:
     ``FileExistsError`` is raised, for records that must never be replaced.
     """
 
-    def emit(handle: TextIO) -> None:
+    path = Path(path)
+    with atomic_file(path, overwrite=overwrite) as handle:
         json.dump(value, handle, indent=2, sort_keys=True)
         handle.write("\n")
 
-    return _write_atomically(Path(path), emit, overwrite=overwrite)
+    return path
 
 
 def read_json(path: str | Path) -> Any:
@@ -44,13 +45,11 @@ def write_jsonl(
 
     count = 0
 
-    def emit(handle: TextIO) -> None:
-        nonlocal count
+    with atomic_file(path) as handle:
         for row in rows:
             handle.write(json.dumps(dict(row), sort_keys=sort_keys) + "\n")
             count += 1
 
-    _write_atomically(Path(path), emit, overwrite=True)
     return count
 
 
@@ -68,28 +67,6 @@ def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
                 raise ValueError(f"{path}: line {line_number} must be a JSON object")
             rows.append(row)
     return rows
-
-
-def _write_atomically(path: Path, emit: Callable[[TextIO], None], *, overwrite: bool) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
-        ) as handle:
-            temporary = Path(handle.name)
-            emit(handle)
-            handle.flush()
-            os.fsync(handle.fileno())
-        if overwrite:
-            os.replace(temporary, path)
-        else:
-            # A hard link fails if ``path`` exists, so the earlier record survives.
-            os.link(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
-    return path
 
 
 __all__ = ["read_json", "read_jsonl", "write_json", "write_jsonl"]

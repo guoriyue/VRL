@@ -1,12 +1,55 @@
-"""Shared artifact path and provenance contracts."""
+"""Shared artifact paths, atomic publication and provenance contracts."""
 
 from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import IO, Any
 
 DATA_ROOT_ENV = "VRL_DATA_ROOT"
+
+
+@contextmanager
+def atomic_file(
+    path: str | Path,
+    *,
+    binary: bool = False,
+    overwrite: bool = True,
+) -> Iterator[IO[Any]]:
+    """Publish a completed file from a temporary sibling on successful exit.
+
+    Flush and fsync content before replacement (or exclusive hard-link creation).
+    Exceptions clean up the temporary file. This does not fsync the directory
+    or promise cleanup after abrupt process termination. Path policy belongs to
+    the caller; no root restriction or tilde expansion is applied here.
+    """
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb" if binary else "w",
+            encoding=None if binary else "utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            yield handle
+            handle.flush()
+            os.fsync(handle.fileno())
+        if overwrite:
+            os.replace(temporary, path)
+        else:
+            os.link(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def sha256_file(path: str | Path) -> str:
@@ -122,6 +165,7 @@ __all__ = [
     "ArtifactManifestError",
     "PathOutsideRootsError",
     "RootedPaths",
+    "atomic_file",
     "coerce_data_root",
     "default_data_root",
     "repo_root",

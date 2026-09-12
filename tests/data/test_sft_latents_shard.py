@@ -38,6 +38,56 @@ def test_sft_latents_round_trip(tmp_path) -> None:
         assert loaded[target].device.type == "cpu"
 
 
+@pytest.mark.parametrize("stage", ["serialize", "flush"])
+def test_failed_shard_publication_preserves_existing_file(tmp_path, monkeypatch, stage):
+    from pathlib import Path
+
+    import vrl.utils.artifacts as artifacts
+
+    path = tmp_path / "sft.pt"
+    path.write_bytes(b"previous shard")
+
+    def fail_save(payload, destination):
+        if hasattr(destination, "write"):
+            destination.write(b"partial replacement")
+        else:
+            Path(destination).write_bytes(b"partial replacement")
+        raise RuntimeError("serialization failed")
+
+    def fail_flush(fd):
+        raise OSError("flush failed")
+
+    if stage == "serialize":
+        monkeypatch.setattr(torch, "save", fail_save)
+    else:
+        monkeypatch.setattr(artifacts.os, "fsync", fail_flush)
+    with pytest.raises((RuntimeError, OSError), match="failed"):
+        save_sft_latents(
+            path,
+            family="f",
+            model_path="m",
+            model_revision="r",
+            latents_by_target={"target": torch.zeros(1)},
+        )
+    assert path.read_bytes() == b"previous shard"
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_shard_publication_preserves_destination_symlink(tmp_path):
+    target = tmp_path / "target.pt"
+    link = tmp_path / "linked.pt"
+    link.symlink_to(target)
+    save_sft_latents(
+        link,
+        family="f",
+        model_path="m",
+        model_revision="r",
+        latents_by_target={"target": torch.ones(1)},
+    )
+    assert link.is_symlink()
+    torch.testing.assert_close(load_sft_latents(target)["target"], torch.ones(1))
+
+
 def test_sft_latents_rejects_family_mismatch(tmp_path) -> None:
     shard = tmp_path / "sft.pt"
     save_sft_latents(

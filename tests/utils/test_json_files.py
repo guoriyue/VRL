@@ -51,3 +51,18 @@ def test_read_jsonl_rejects_a_non_object_row(tmp_path):
 
     with pytest.raises(ValueError, match="line 2 must be a JSON object"):
         read_jsonl(path)
+
+
+def test_failed_jsonl_iteration_preserves_existing_file(tmp_path):
+    path = tmp_path / "rows.jsonl"
+    write_jsonl(path, [{"old": True}])
+    original = path.read_bytes()
+
+    def rows():
+        yield {"new": True}
+        raise RuntimeError("input iteration failed")
+
+    with pytest.raises(RuntimeError, match="input iteration failed"):
+        write_jsonl(path, rows())
+    assert path.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [path]
