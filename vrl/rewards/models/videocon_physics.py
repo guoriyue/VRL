@@ -81,8 +81,16 @@ class VideoConPhysicsModel:
         tokenizer = LlamaTokenizer.from_pretrained(str(self.model_root))
         image_processor = MplugOwlImageProcessor.from_pretrained(str(self.model_root))
         processor = MplugOwlProcessor(image_processor, tokenizer)
+
+        # Modern Transformers replaced is_composition with this flag. Without
+        # it, config logging calls the vendor's broken no-argument constructor.
+        class VideoConConfig(MplugOwlForConditionalGeneration.config_class):
+            has_no_defaults_at_init = True
+
+        model_config = VideoConConfig.from_pretrained(str(self.model_root))
         model = MplugOwlForConditionalGeneration.from_pretrained(
             str(self.model_root),
+            config=model_config,
             torch_dtype=self.dtype,
         )
         model.eval()
