@@ -1,13 +1,15 @@
 # SD3.5 continuous: controlled follow-up
 
-Status: short hardware acceptance started on 2026-09-12. The user subsequently
+Status: initial short hardware acceptance completed on 2026-09-12; GPUs released.
+See [results and remaining boundaries](../../research/sd35_global_std_short_acceptance_20260912.md).
+The user subsequently
 explicitly authorized stopping the old long queue and switching. Queue PID
 284402 and continuous driver PID 318010 were stopped, their artifacts were
 preserved, and GPU inventory was empty before the corrected launch. The old
-dynamic stage must not restart automatically. Codex claims GPUs 0-3 for these
-sequential short runs; see the current override in the hardware execution log.
+dynamic stage must not restart automatically. The short-run claim is now
+released; no further long experiment is authorized by this acceptance.
 
-Corrected continuous is running from `/home/ubuntu/VRL-mgpu-integration` at
+Corrected continuous and single-GPU strict completed from `/home/ubuntu/VRL-mgpu-integration` at
 `e11c04bc`, using the unchanged shared Python environment. Output root:
 `/mnt/nvme/outputs/sd35_global_std_controlled`. Initial training arms are limited
 to two updates each, preserving 512px, 10 denoising steps, 128 samples/update,
