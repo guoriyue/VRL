@@ -314,24 +314,6 @@ class RayGenerationExecutor:
         for result in results:
             self._validate_result_identity(result, envelope_by_batch_key)
 
-        # A stale-slot result is a typed graceful discard, not a failure: the
-        # request's policy version was evicted from its worker's slot window under
-        # a non-draining weight sync. Route it BEFORE OOM-degrade (which hard-raises
-        # on any non-OOM error) and before the version assert (a stale slot stamps
-        # request.policy_version, so it would pass that check silently). Raising a
-        # distinct StaleSlotDiscard lets the producer count it as a stale discard
-        # instead of a collect error. One evicted batch poisons the whole request,
-        # so the group is discarded — partial mixed-version output is never built.
-        stale = [result for result in results if result.stale_slot]
-        if stale:
-            evicted = stale[0]
-            raise StaleSlotDiscard(
-                "distributed rollout discarded a stale trainable-state slot "
-                f"(rank={evicted.worker_id}, "
-                f"policy_version={evicted.policy_version}, "
-                f"batches={len(stale)}/{len(results)}): {evicted.error}",
-            )
-
         results, oom_splits = await self._degrade_oom_chunks(
             results,
             envelope_by_batch_key=envelope_by_batch_key,
@@ -647,6 +629,18 @@ class RayGenerationExecutor:
         pending = list(results)
         splits: list[dict[str, Any]] = []
         while pending:
+            # A slot can be evicted before initial execution or between OOM
+            # retries. In either case discard the whole request before treating
+            # errors as retryable OOMs or accepting partial successful output.
+            stale = [result for result in pending if result.stale_slot]
+            if stale:
+                evicted = stale[0]
+                raise StaleSlotDiscard(
+                    "distributed rollout discarded a stale trainable-state slot "
+                    f"(rank={evicted.worker_id}, "
+                    f"policy_version={evicted.policy_version}, "
+                    f"batches={len(stale)}/{len(pending)}): {evicted.error}",
+                )
             retry_jobs: list[RayActorJob] = []
             for result in pending:
                 parent_envelope = envelope_by_batch_key[result.batch.batch_key]

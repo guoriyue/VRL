@@ -354,7 +354,7 @@ async def test_stale_slot_routes_to_graceful_discard_not_failure() -> None:
     with pytest.raises(StaleSlotDiscard, match="policy_version=7"):
         await executor.execute(_versioned_request(2, version=7))
 
-    # Routed before the OOM-degrade loop, so the batch ran exactly once (no retry).
+    # Routed before scheduling any OOM retry, so the batch ran exactly once.
     assert worker.executed == [batch.batch_key]
 
 
@@ -364,6 +364,32 @@ def test_stale_slot_discard_is_not_runtime_error() -> None:
 
     assert not issubclass(StaleSlotDiscard, RuntimeError)
     assert issubclass(StaleSlotDiscard, Exception)
+
+
+@pytest.mark.asyncio
+async def test_slot_evicted_during_oom_retry_discards_request() -> None:
+    class EvictedAfterOOMWorker(_StaleSlotWorker):
+        def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
+            if not self.executed:
+                self.executed.append(envelope.batch_key)
+                return GenerationBatchResult(
+                    request_id=envelope.request.request_id,
+                    worker_id=self.worker_id,
+                    batch=envelope.batch,
+                    output=None,
+                    error=_OOM_MESSAGE,
+                    policy_version=envelope.request.policy_version,
+                )
+            return super().execute_batch(envelope)
+
+    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=4)
+    worker = EvictedAfterOOMWorker(worker_id="w0")
+    executor, _ = _executor([batch], [worker])
+
+    with pytest.raises(StaleSlotDiscard, match="policy_version=7"):
+        await executor.execute(_versioned_request(4, version=7))
+
+    assert worker.executed == [batch.batch_key, _key(0, 2), _key(2, 2)]
 
 
 def test_is_oom_error_classifier() -> None:
