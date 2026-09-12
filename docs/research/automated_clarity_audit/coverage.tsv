@@ -470,7 +470,7 @@ vrl/trainers/metrics_io.py	747f995cb560c6ee772b17bd593935c2e89c5276	reviewed	met
 vrl/trainers/offline/__init__.py	6fef898238a387b1f0092780b24ed1bc2d66fa78	pending	-
 vrl/trainers/offline/dpo.py	a4cc3e58a089a794cf68e254a10b1489ba9442fa	pending	-
 vrl/trainers/online/__init__.py	fce9b169cf6cd342e0d3fa6ee5c57217938578fd	pending	-
-vrl/trainers/online/config.py	a891b64232703e0426a015240d7e9e61b2fd9ee6	pending	-
+vrl/trainers/online/config.py	a891b64232703e0426a015240d7e9e61b2fd9ee6	reviewed	online_config.md
 vrl/trainers/online/ema.py	71b02686a63a9e19cd8a83a7c6e4c1a53dac14f3	reviewed	ema_state.md
 vrl/trainers/online/precision_guard.py	98c961a131a6f12584e23030dec714d8f57feabb	reviewed	precision_guard.md
 vrl/trainers/online/trainer.py	5b3ebee4e571b20f35f9f3f4223471196488c9ef	pending	-
