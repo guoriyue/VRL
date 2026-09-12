@@ -19,7 +19,7 @@ vrl/config/algorithm.py	1963845f5de42df3757494be24d7718e6164b833	reviewed	config
 vrl/config/base.py	dc90053ebba871e9ee6e8fa9c9e96ca0dff27f88	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
 vrl/config/builders.py	82d48708b051ac21ee4c778b4c6eae5442031978	reviewed	config_policies.md
 vrl/config/data.py	a26c0518e82acb817046e652d3ebf982453a7b30	reviewed	config_policies.md
-vrl/config/lint.py	3e462c82395cc8767cb2b0ed972f1a63b0035dbd	pending	-
+vrl/config/lint.py	3e462c82395cc8767cb2b0ed972f1a63b0035dbd	reviewed	config_lint.md
 vrl/config/loading.py	221c3b4032f74319e8f7c111cd88b22c56dcff2a	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
 vrl/config/model_schema.py	83969d5d1573d0385215ce9d07280824153080a4	pending	-
 vrl/config/precision.py	10245a48eb8b20681d4b02ed049aa325e7742b39	reviewed	config_policies.md

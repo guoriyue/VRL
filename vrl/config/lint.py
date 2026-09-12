@@ -15,6 +15,9 @@ import sys
 from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
+from pydantic import ValidationError
+
+from vrl.config.base import _extract_error_message
 
 
 def _without_mandatory_values(cfg: DictConfig) -> tuple[Any, set[str]]:
@@ -40,19 +43,28 @@ def experiment_parse_error(cfg: DictConfig) -> str | None:
     to launch time) are not errors here; an unknown key beside it still is.
     """
 
-    from vrl.config.schema import parse_config
+    from vrl.config.schema import RootConfig
 
     plain, missing = _without_mandatory_values(cfg)
     try:
-        parse_config(OmegaConf.create(plain))
-    except ValueError as error:
-        message = str(error)
-        for path in missing:
-            if message == f"config missing required field: {path}" or message.startswith(
-                f"{path}: "
+        RootConfig.model_validate(plain)
+    except ValidationError as error:
+        retained = []
+        for detail in error.errors(include_url=False):
+            message = _extract_error_message(
+                ValidationError.from_exception_data(error.title, [detail]),
+            )
+            if any(
+                message == f"config missing required field: {path}"
+                or message.startswith(f"{path}: ")
+                for path in missing
             ):
-                return None
-        return message
+                continue
+            retained.append(detail)
+        if retained:
+            return _extract_error_message(
+                ValidationError.from_exception_data(error.title, retained),
+            )
     return None
 
 

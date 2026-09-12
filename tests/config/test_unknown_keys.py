@@ -50,6 +50,23 @@ def test_typed_online_sections_keep_derived_fields_and_reject_unknown_extras() -
         )
 
 
+def test_mandatory_value_does_not_hide_an_invalid_field_elsewhere() -> None:
+    from vrl.config.lint import experiment_parse_error
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {"optim": {"lr": "???"}},
+            "distributed": {"training": {"strategy": "bogus"}},
+        },
+    )
+
+    error = experiment_parse_error(cfg)
+    assert error is not None
+    assert "distributed.training.strategy='bogus'" in error
+    cfg.distributed.training.strategy = "single_process"
+    assert experiment_parse_error(cfg) is None
+
+
 def test_unknown_keys_are_found_at_every_depth() -> None:
     """Typos at top level, section level, nested models, and nested runtime
     dataclasses are all named together, sorted."""
