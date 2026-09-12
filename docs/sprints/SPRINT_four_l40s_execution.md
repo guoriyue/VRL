@@ -1026,3 +1026,26 @@ Observed live SD3.5 2x1 epoch-0 metrics: reward mean 0.4095417112/std
 0.3335738704, pre-update logprob max difference 0 and nonzero gradient
 0.001623807475. The five-epoch job was still live at final process inspection,
 so these are partial observations, not a completed topology/learning verdict.
+
+### Separate Wan2.2 I2V cache verified (Codex)
+
+While SD3.5 driver PID 234733 continued using GPUs 0/1/2, downloaded the
+missing separate Wan2.2 I2V checkpoint without exposing CUDA to the download
+process. The historical I2V download note did not describe this host's actual
+cache state; T2V weights cannot substitute for I2V weights.
+
+Preset-pinned `Wan-AI/Wan2.2-I2V-A14B-Diffusers` revision
+`596658fd9ca6b7b71d5057529bbf319ecbc61d74` now resides under
+`/mnt/nvme/hf/huggingface/hub`. All 50 files (126,204,155,463 bytes) passed
+size and digest checks against repository metadata: SHA-256 for LFS files,
+Git blob SHA-1 for other files. All three weight indexes resolve their
+referenced shards: 12 per expert and three for the text encoder. Receipt:
+`outputs/perf/wan22_i2v_cache_verification.json`; reproducible verifier and
+successful terminal log: `/mnt/nvme/outputs/wan22_i2v_cache/`.
+
+No GPU training was launched, no shared runtime was changed, and this cache
+receipt is not model-forward or training acceptance. Main-branch integration,
+the queued I2V nonzero-moment strict resume, and all remaining source-sprint
+gates remain open. The other session's SD3.5 metrics now include epochs 0/1,
+both with zero pre-update logprob difference and nonzero gradient; the
+five-epoch job remains live, so its final verdict is still pending.

@@ -2,7 +2,7 @@
 
 ## Current execution state (2026-09-12 UTC)
 
-Status: **PLANNED: model ready, awaiting the coordinated GPU queue**.
+Status: **PLANNED: T2V/I2V caches ready, awaiting the coordinated GPU queue**.
 This section supersedes the historical hardware/storage blockers below.
 
 The four-L40S host has 372 GiB RAM and a mounted NVMe volume. The pinned
@@ -13,6 +13,17 @@ size and repository-digest verification. Each expert index references 12
 present shards; the text encoder index references three. Evidence:
 `outputs/perf/wan22_cache_verification.json`. No model forward or training
 acceptance is implied by cache verification.
+
+The separate `Wan-AI/Wan2.2-I2V-A14B-Diffusers` snapshot was absent from
+this host despite the historical download record below. It is now downloaded
+to the same NVMe cache at the preset-pinned revision
+`596658fd9ca6b7b71d5057529bbf319ecbc61d74`. All 50 files
+(126,204,155,463 bytes) passed size and repository-digest verification;
+both expert indexes reference 12 present shards and the text encoder index
+references three. Receipt: `outputs/perf/wan22_i2v_cache_verification.json`.
+Downloader/verifier and its terminal successful log are under
+`/mnt/nvme/outputs/wan22_i2v_cache/`. This closes only the I2V download
+prerequisite, not its dual-expert training, resume or quality criteria.
 
 Execute after the GPU queue in `../SPRINT_four_l40s_execution.md` releases
 the required devices:
