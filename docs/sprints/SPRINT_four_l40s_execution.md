@@ -473,3 +473,25 @@ tests and touched-file Ruff/format checks passed.
 Codex claims GPUs 2/3 for the same production recipe after a separate preflight.
 Output `outputs/wan_i2v_14b_l40s_proof/epoch1_restore_fix`; log
 `outputs/perf/wan_i2v_l40s_epoch1_restore_fix.log`. No training pass is implied.
+
+The production retry from isolated commit `f01c3625` completed successfully
+(torchrun exit 0; both rank verdicts success, world_size=2). The real I2V
+generate -> park -> replay -> backward -> optimizer -> checkpoint gate now
+has evidence. Full-precision epoch metrics: reward_mean=0.8894408941,
+reward_std=0.1914940476, grad_norm=0.0601723505, zero-advantage rate=0,
+pre-update max logprob difference=0.0000662058592 (unchanged limit 0.01).
+Both workers passed physical parking at residual=555,745,280 bytes.
+
+Final checkpoint metadata records global_step=1, next_epoch=1, next_step=1,
+pinned production I2V identity and checkpoint size 2,098,666,415 bytes.
+`TrainingCheckpoint.load` validated the actual checkpoint and its progress;
+both checkpoint-1 and checkpoint-final exist. This is one small-geometry
+real update with CPU motion reward, not the full physics-reward learning gate
+or a resume pass. Next required hardware steps are strict resume to step 2
+and comparison with an uninterrupted two-update control, then remaining
+source-sprint quality/reward gates.
+
+The job has exited and no training process or GPU allocation remains. This
+hardware claim is released. Root storage fell to about 13 GiB free while
+writing the two checkpoints; future run output directories must use the
+existing NVMe mount rather than accumulating more root-disk checkpoints.

@@ -2,8 +2,19 @@
 
 ## Current execution state (2026-09-12 UTC)
 
-Status: **PLANNED: weights and complete dataset ready; awaiting GPU queue**.
+Status: **PLANNED: real two-rank update passed; resume and quality gates open**.
 This update supersedes historical storage/data availability claims below.
+
+The L40S canonical two-rank FSDP proof completed one real update from isolated
+commit `f01c3625`. Evidence directory:
+`outputs/wan_i2v_14b_l40s_proof/epoch1_restore_fix`. Both ranks exited successfully;
+gradient norm=0.0601723505, reward standard deviation=0.1914940476, and first
+replay max logprob error=0.0000662058592 at the unchanged 0.01 threshold.
+The final production-identity checkpoint passed `TrainingCheckpoint.load`
+validation and records global_step=1. This establishes the small-geometry
+CPU-motion-reward update chain, not checkpoint/resume equivalence or learning
+quality with the full physics reward stack. The next run must exercise resume
+against an uninterrupted control; use NVMe outputs to avoid root disk pressure.
 
 The pinned model revision `b184e23a8a16b20f108f727c902e769e873ffc73` is cached
 under `/mnt/nvme/hf/huggingface/hub`. All 46 files (90,104,322,037 bytes)
