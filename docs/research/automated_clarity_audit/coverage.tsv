@@ -207,13 +207,13 @@ vrl/models/steps/denoise/common/masked_prompt.py	80eb97cd9868ed10bb0f44fab390447
 vrl/models/steps/denoise/common/tensors.py	3a1204280934dc51eeda3b40ef98970dec7b2324	pending	-
 vrl/models/steps/denoise/common/timestep.py	3ab5b7ab4c759eecbf1877dc79c33c703c96b273	pending	-
 vrl/models/steps/denoise/common/vae_decode_memory.py	78bfa351e1d16bd1131eeb9fa451e45ac18e629e	pending	-
-vrl/models/steps/token/__init__.py	6bcdbb47bb5159ed7ea4cef2cce8776addfe4482	pending	-
+vrl/models/steps/token/__init__.py	6bcdbb47bb5159ed7ea4cef2cce8776addfe4482	reviewed	token_adapter_contracts.md
 vrl/models/steps/token/base.py	485811e36d6d5ef3ea92d5eb69e2f879686710ea	pending	-
 vrl/models/steps/token/build.py	e463868893a6ab7f18d77c83416645abf91fb936	reviewed	token_build.md
 vrl/models/steps/token/loader.py	e8ab1051246137f9947698f8ec723508ba919f3d	reviewed	token_checkpoint_loader.md
-vrl/models/steps/token/lora.py	9d244eee3e7b91ed309dac280d1149dab7dfee01	pending	-
+vrl/models/steps/token/lora.py	9d244eee3e7b91ed309dac280d1149dab7dfee01	reviewed	token_adapter_contracts.md
 vrl/models/steps/token/paged_attention_helpers.py	41e5413eb74e46c33f14b98fe44c6bf428ab8b02	pending	-
-vrl/models/steps/token/vocab_head.py	cadf0919946949969bd3f4e9dcaad06e6dc6857f	pending	-
+vrl/models/steps/token/vocab_head.py	cadf0919946949969bd3f4e9dcaad06e6dc6857f	reviewed	token_adapter_contracts.md
 vrl/models/weight_utils.py	8c3fa3b0ac67d425a0ec19151a55db8957d64263	pending	-
 vrl/nn/__init__.py	f09ab18edfc08cb6d7419edd31160aa43f9bb1ef	pending	-
 vrl/nn/kernels/__init__.py	ed6e392d15f3903eb7e4ed5ac263bce3017c523e	pending	-
