@@ -84,15 +84,12 @@ class MultiSegmentTokenGRPO(TokenGRPO):
             raise RuntimeError(
                 "missing multi-segment GRPO segment: " + ", ".join(missing_weighted),
             )
-        segment_names = list(signals.segments)
-
-        for name in segment_names:
+        for name, segment_signal in signals.segments.items():
             if not bool(train_segments.get(name, True)):
                 continue
             weight = float(weights.get(name, 1.0))
             if weight <= 0:
                 continue
-            segment_signal = signals.segments.get(name)
             if segment_signal is None:
                 raise RuntimeError(f"missing multi-segment GRPO segment: {name}")
             segment_advantages = inputs.advantages
@@ -129,8 +126,6 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         total_loss = total_loss / total_weight
 
         def _weighted_avg(values: list[float]) -> float:
-            if not values:
-                return 0.0
             return (
                 sum(value * weight for value, weight in zip(values, metric_weights, strict=True))
                 / total_weight
