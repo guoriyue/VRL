@@ -1,5 +1,42 @@
 # SPRINT: Wan 2.1 I2V 14B GRPO proof run（图生视频 RL 落地验证）
 
+## Current execution state (2026-09-12 UTC)
+
+Status: **PLANNED: weights and complete dataset ready; awaiting GPU queue**.
+This update supersedes historical storage/data availability claims below.
+
+The pinned model revision `b184e23a8a16b20f108f727c902e769e873ffc73` is cached
+under `/mnt/nvme/hf/huggingface/hub`. All 46 files (90,104,322,037 bytes)
+passed repository-digest and size checks. Receipt:
+`outputs/perf/wan21_i2v_cache_verification.json`.
+
+The complete VideoPhy reference dataset now lives at
+`/mnt/nvme/data/external/videophy_i2v`. All 309 training and 35 evaluation rows
+match the repository prompt files in order. Every RGB image decodes at 832x480;
+source URL and CSV row match the official table, and the caption splits are
+disjoint. SHA-256 receipts for CSV, manifests and every image are in
+`outputs/perf/videophy_i2v_verification.json`. Eighty training and twelve eval
+rows use the next available official candidate after HTTP 403/404/410; the
+actual source and rejected URLs/statuses are recorded per row. No synthetic
+or old partial-manifest images were substituted.
+
+Once the queue in `../SPRINT_four_l40s_execution.md` releases two GPUs, run
+the existing `experiment/wan_2_1/online_grpo_i2v_fsdp_2x_l4` recipe with:
+
+```text
+HF_HOME=/mnt/nvme/hf/huggingface
+distributed.rollout.worker_rpc_timeout_s=1800
+data.manifest=/mnt/nvme/data/external/videophy_i2v/manifests/train.jsonl
+data.eval_manifest=/mnt/nvme/data/external/videophy_i2v/manifests/eval.jsonl
+data.artifact_data_root=/mnt/nvme/data/external/videophy_i2v
+data.source_report=/mnt/nvme/data/external/videophy_i2v/report.json
+```
+
+Use two torchrun ranks on the selected visible GPUs and a new output directory.
+Dataset-plan resolution passed with these overrides. The original real-weight
+update, finite nonzero gradients, replay parity, checkpoint/resume and quality
+requirements below remain open. Data preparation is not a training acceptance.
+
 > **2026-07-21 production-weight validation update:** the exact pinned
 > `Wan-AI/Wan2.1-I2V-14B-480P-Diffusers` revision is now present locally and
 > verified byte-for-byte (the transformer is 16,395,083,584 parameters). The

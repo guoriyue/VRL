@@ -15,14 +15,17 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import json
 import os
 import re
 import shutil
 import urllib.request
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 
 from vrl.scripts.data.common import (
     default_cache_dir,
@@ -142,18 +145,38 @@ def prepare_videophy_i2v_dataset(
     train_rows: list[dict[str, Any]] = []
     eval_rows: list[dict[str, Any]] = []
     for item in selected:
-        row = _materialize_selected_video(
-            item,
-            dataset_root=dataset_root,
-            repo_id=repo_id,
-            image_root=image_root,
-            video_root=video_root,
-            keep_videos=keep_videos,
-            width=width,
-            height=height,
-            fetch_video=fetch,
-            extract_first_frame=decode,
+        alternatives = sorted(
+            (
+                r
+                for r in candidates
+                if _normalize_caption(r.caption) == _normalize_caption(item.prompt)
+            ),
+            key=_candidate_sort_key,
         )
+        unavailable = []
+        for candidate in alternatives:
+            try:
+                row = _materialize_selected_video(
+                    replace(item, source_row=candidate),
+                    dataset_root=dataset_root,
+                    repo_id=repo_id,
+                    image_root=image_root,
+                    video_root=video_root,
+                    keep_videos=keep_videos,
+                    width=width,
+                    height=height,
+                    fetch_video=fetch,
+                    extract_first_frame=decode,
+                )
+                break
+            except HTTPError as error:
+                if error.code not in (403, 404, 410):
+                    raise
+                unavailable.append({"url": candidate.video_url, "status": error.code})
+        else:
+            raise RuntimeError(f"No accessible VideoPhy video for {item.prompt!r}: {unavailable}")
+        if unavailable:
+            row["metadata"]["unavailable_candidates"] = unavailable
         if item.split == "train":
             train_rows.append(row)
         else:
@@ -182,7 +205,8 @@ def prepare_videophy_i2v_dataset(
         "image_size": {"width": width, "height": height},
         "selection_policy": (
             "Per caption, prefer rows with majority_sa=1 and majority_pc=1; "
-            "tie-break by lower complexity, then CSV order."
+            "tie-break by lower complexity, then CSV order; try the next candidate "
+            "only when a source returns HTTP 403, 404 or 410."
         ),
         "license_note": (
             "Source metadata comes from the MIT-licensed Hugging Face dataset "
@@ -276,15 +300,24 @@ def _materialize_selected_video(
     fetch_video: Callable[[str, Path], None],
     extract_first_frame: Callable[[Path, Path], None],
 ) -> dict[str, Any]:
-    image_path = image_root / item.split / f"{item.split_index:03d}.png"
-    video_path = video_root / item.split / f"{item.split_index:03d}.mp4"
+    source_key = hashlib.sha256(item.source_row.video_url.encode()).hexdigest()[:16]
+    stem = f"{item.split_index:03d}-{source_key}-{width}x{height}"
+    image_path = image_root / item.split / f"{stem}.png"
+    video_path = video_root / item.split / f"{stem}.mp4"
+    source_info_path = image_path.with_suffix(".source.json")
     image_path.parent.mkdir(parents=True, exist_ok=True)
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if not image_path.exists():
+    # A different candidate must never reuse the prior candidate's frame. Keep
+    # the original dimensions separately so retries do not report resized sizes.
+    if not image_path.exists() or not source_info_path.exists():
         fetch_video(item.source_row.video_url, video_path)
         extract_first_frame(video_path, image_path)
-    source_size = _resize_image(image_path, width=width, height=height)
+        source_size = _resize_image(image_path, width=width, height=height)
+        write_json(source_info_path, {"source_size": list(source_size)})
+    else:
+        source_size = json.loads(source_info_path.read_text())["source_size"]
+        _resize_image(image_path, width=width, height=height)
     if not keep_videos and video_path.exists():
         video_path.unlink()
 

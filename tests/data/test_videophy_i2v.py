@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.error import HTTPError
 
+import pytest
 from PIL import Image
 
 from vrl.scripts.data import bootstrap
@@ -12,6 +14,72 @@ from vrl.scripts.data.videophy_i2v import (
     prepare_videophy_i2v_dataset,
     select_videos_for_prompts,
 )
+
+
+@pytest.mark.parametrize("status", [403, 404, 410, 503])
+def test_unavailable_candidate_fallback_keeps_source_and_cache_identity(
+    tmp_path: Path, status: int
+) -> None:
+    csv_path = tmp_path / "videos.csv"
+    csv_path.write_text(
+        "video_url,caption,source,complexity,majority_sa,majority_pc\n"
+        "https://example.test/best.mp4,A wheel rolls.,best,0,1,1\n"
+        "https://example.test/next.mp4,A wheel rolls.,next,0,1,0\n"
+    )
+    prompts = tmp_path / "prompts.txt"
+    prompts.write_text("A wheel rolls.\n")
+    fetched = []
+    best_available = False
+
+    def fetch(url: str, path: Path) -> None:
+        fetched.append(url)
+        if url.endswith("best.mp4") and not best_available:
+            raise HTTPError(url, status, "unavailable", None, None)
+        path.write_bytes(b"video")
+
+    def decode(video: Path, image: Path) -> None:
+        Image.new("RGB", (8, 6), (10, 20, 30)).save(image)
+
+    def prepare() -> dict:
+        return prepare_videophy_i2v_dataset(
+            csv_path=csv_path,
+            train_prompts=prompts,
+            eval_prompts=prompts,
+            data_root=tmp_path / "data",
+            repo_id="official/repo",
+            csv_file="videos.csv",
+            width=4,
+            height=4,
+            fetch_video=fetch,
+            extract_first_frame=decode,
+        )
+
+    if status == 503:
+        with pytest.raises(HTTPError):
+            prepare()
+        assert fetched == ["https://example.test/best.mp4"]
+        return
+
+    report = prepare()
+    manifest = Path(report["train_manifest"])
+    original = json.loads(manifest.read_text())
+    assert original["metadata"]["source_video_url"].endswith("next.mp4")
+    assert original["metadata"]["source_csv_row"] == 1
+    assert original["metadata"]["unavailable_candidates"][0]["status"] == status
+    prepare()
+    assert json.loads(manifest.read_text())["metadata"]["source_frame_size"] == {
+        "width": 8,
+        "height": 6,
+    }
+    assert fetched.count("https://example.test/next.mp4") == 2  # one per split
+
+    best_available = True
+    prepare()
+    recovered = json.loads(manifest.read_text())
+    assert recovered["image"] != original["image"]
+    assert recovered["metadata"]["source_video_url"].endswith("best.mp4")
+    assert recovered["metadata"]["source_csv_row"] == 0
+    assert "unavailable_candidates" not in recovered["metadata"]
 
 
 def test_select_videophy_videos_prefers_aligned_physical_candidate() -> None:
@@ -106,17 +174,17 @@ def test_prepare_videophy_i2v_dataset_writes_source_backed_manifest(tmp_path: Pa
     assert report["train_rows"] == 1
     assert report["eval_rows"] == 1
     assert fetched[0][0] == "https://example.test/train.mp4"
-    assert train_rows[0]["image"] == "images/train/000.png"
+    assert train_rows[0]["image"].startswith("images/train/000-")
     assert train_rows[0]["caption"] == "A wheel rolls."
     assert train_rows[0]["task_type"] == "image_to_video"
     assert train_rows[0]["metadata"]["source_video_url"] == "https://example.test/train.mp4"
     assert train_rows[0]["metadata"]["decode_method"] == DECODE_METHOD
     assert train_rows[0]["metadata"]["source_frame_size"] == {"width": 4, "height": 4}
     assert train_rows[0]["metadata"]["image_size"] == {"width": 832, "height": 480}
-    assert eval_rows[0]["image"] == "images/eval/000.png"
+    assert eval_rows[0]["image"].startswith("images/eval/000-")
     assert (dataset_root / train_rows[0]["image"]).exists()
     assert Image.open(dataset_root / train_rows[0]["image"]).size == (832, 480)
-    assert not (dataset_root / "videos" / "train" / "000.mp4").exists()
+    assert not list((dataset_root / "videos" / "train").glob("*.mp4"))
     assert (dataset_root / "report.json").exists()
 
 

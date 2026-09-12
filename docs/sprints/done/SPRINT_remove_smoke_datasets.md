@@ -176,6 +176,6 @@ pytest -q tests/data/test_setup.py tests/data/test_videophy_i2v.py tests/config/
 - `configs/experiment/diffusion/qwen_image/online_grpo_smoke_single_gpu.yaml`
 - `tests/data/test_videophy_i2v.py`
 - `docs/sprints/parked/SPRINT_cosmos_predict2_2b_trustworthy_curve.md`
-- `docs/sprints/parked/SPRINT_wan_2_1_i2v_proof_run.md`
+- `docs/sprints/planned/SPRINT_wan_2_1_i2v_proof_run.md`
 - `docs/sprints/planned/SPRINT_wan_2_2_proof_run.md`
 - `docs/sprints/info/SPRINT_cross_model_smoke.md`

@@ -27,7 +27,7 @@ not replace them or narrow their scope; add newly discovered hardware gates.
 4. Real GPU weight-delivery verification and transport measurements
    (`planned/SPRINT_miles_weight_delivery_verification.md`).
 5. Wan 2.1 I2V real distributed update and checkpoint/resume
-   (`parked/SPRINT_wan_2_1_i2v_proof_run.md`).
+   (`planned/SPRINT_wan_2_1_i2v_proof_run.md`).
 6. Wan 2.2 dual-expert update, lifecycle evidence, and resume
    (`planned/SPRINT_wan_2_2_proof_run.md`). Its historical disk blocker must be
    rechecked against the already-mounted NVMe, without formatting any device.
@@ -204,3 +204,26 @@ optimizer update with replay parity `max_abs_diff=0.0148427`, limit `0.01`;
 `metrics.csv` has only its header. This is a failed numerical gate, not a
 completed five-epoch run. Preserve that limit and coordinate the next diagnosis
 with the GPU queue owner.
+
+## I2V dataset completion
+
+The importer now tries the remaining officially listed videos for the same
+caption after HTTP 403/404/410, preserving the existing quality ordering and
+recording rejected sources. Other HTTP failures propagate. Cache filenames
+bind the source URL and output dimensions; original frame dimensions are kept
+in source sidecars so repeated imports cannot relabel a different cached video.
+Eight focused tests passed, including recovered-source cache separation and
+HTTP 503 fail-through; touched-file Ruff passed.
+
+Full import into `/mnt/nvme/data/external/videophy_i2v` completed: 309 train,
+35 eval rows, with 80/12 fallback selections. Every image was decoded and
+checked for RGB/832x480, every caption/order/source row/URL was checked against
+the source files, and train/eval caption intersection is empty. Digests are
+recorded in `outputs/perf/videophy_i2v_verification.json`. The canonical I2V
+recipe resolves its dataset plan as ready with explicit NVMe manifest/root/
+source-report overrides (`outputs/perf/wan21_i2v_dataset_plan.json`). Independent
+count/content checks above are necessary because the dataset-plan tool does
+not infer expected row counts for absolute manifest paths.
+
+The I2V proof sprint moved to `planned/`: weights and full data are ready;
+real multi-rank training and checkpoint/resume are still pending the GPU queue.
