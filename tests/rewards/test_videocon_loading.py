@@ -4,13 +4,17 @@ import json
 import sys
 from types import ModuleType, SimpleNamespace
 
+import pytest
 import torch
 from transformers import LlamaTokenizer, PretrainedConfig
 
 from vrl.rewards.models import videocon_physics
 
 
-def test_composite_config_logging_does_not_construct_vendor_defaults(tmp_path, monkeypatch):
+@pytest.mark.parametrize("fp32_modules", [["wo"], ["actual_module"], None])
+def test_composite_config_logging_does_not_construct_vendor_defaults(
+    tmp_path, monkeypatch, fp32_modules
+):
     class LegacyConfig(PretrainedConfig):
         is_composition = True
 
@@ -38,6 +42,8 @@ def test_composite_config_logging_does_not_construct_vendor_defaults(tmp_path, m
     monkeypatch.setattr(LlamaTokenizer, "from_pretrained", lambda *a, **kw: tokenizer)
     modeling = ModuleType("mplug_owl_video.modeling_mplug_owl")
     modeling.MplugOwlForConditionalGeneration = Model
+    vendor_base = type("VendorBase", (), {"_keep_in_fp32_modules": fp32_modules})
+    modeling.MplugOwlPreTrainedModel = vendor_base
     processing = ModuleType("mplug_owl_video.processing_mplug_owl")
     processing.MplugOwlImageProcessor = SimpleNamespace(from_pretrained=lambda *a: object())
     processing.MplugOwlProcessor = lambda *a: object()
@@ -52,3 +58,4 @@ def test_composite_config_logging_does_not_construct_vendor_defaults(tmp_path, m
     assert reward.token_id_no == 1939
     assert next(reward.model.parameters()).device.type == "cpu"
     assert not LegacyConfig.has_no_defaults_at_init
+    assert vendor_base._keep_in_fp32_modules == ([] if fp32_modules == ["wo"] else fp32_modules)

@@ -71,12 +71,19 @@ class VideoConPhysicsModel:
 
         from mplug_owl_video.modeling_mplug_owl import (
             MplugOwlForConditionalGeneration,
+            MplugOwlPreTrainedModel,
         )
         from mplug_owl_video.processing_mplug_owl import (
             MplugOwlImageProcessor,
             MplugOwlProcessor,
         )
         from transformers import LlamaTokenizer
+
+        # The pinned vendor lists a nonexistent T5-style module on every root,
+        # including the vision model. Modern Transformers validates this list.
+        # No VideoCon parameter is named wo; retain any different vendor policy.
+        if MplugOwlPreTrainedModel._keep_in_fp32_modules == ["wo"]:
+            MplugOwlPreTrainedModel._keep_in_fp32_modules = []
 
         tokenizer = LlamaTokenizer.from_pretrained(str(self.model_root))
         image_processor = MplugOwlImageProcessor.from_pretrained(str(self.model_root))
