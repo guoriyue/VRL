@@ -351,3 +351,19 @@ I2V recipe restarted on GPUs 2/3 from `0235947e`. New output directory:
 `outputs/wan_i2v_14b_l40s_proof/epoch1_gather_fix`; log:
 `outputs/perf/wan_i2v_l40s_epoch1_gather_fix.log`. The claim remains active
 through this retry. Full production update/resume evidence is still pending.
+
+The `epoch1_gather_fix` retry exited 1 after crossing the previous gather
+failure and loading both rollout pipelines. Initial weight installation then
+failed in `pipeline.remove_all_hooks()`: Accelerate's
+`remove_hook_from_module` uses delegated `hasattr(_hf_hook)` on the PEFT
+`LoraModel` wrapper and calls the underlying hook with that wrapper, which has
+no directly registered `scale_shift_table` parameter. The raised Wan error
+correctly marks the pipeline unusable rather than continuing with partial
+hooks. This is a separate hook-ownership failure, not an OOM or a successful
+update. No sample, optimizer step, or checkpoint/resume acceptance was produced.
+
+The torchrun session is terminal (exit 1), and subsequent process and GPU
+queries found no training drivers or allocations. The hardware claim is now
+released while this hook-ownership path is diagnosed in the isolated tree.
+Next I2V retry must follow a new preflight; do not report this stopped job as
+still running or duplicate it based on an observation timeout.
