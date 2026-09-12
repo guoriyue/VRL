@@ -88,3 +88,31 @@ def test_rollout_logprobs_match_teacher_forced_replay() -> None:
         F.log_softmax(logits.float(), dim=-1).gather(-1, token_ids.unsqueeze(-1)).squeeze(-1)
     )
     assert torch.allclose(replay_logprobs, rollout_logprobs, atol=1e-4)
+
+
+def test_image_decode_upsamples_tokens_without_recording_gradients(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    import vrl.models.families.glm_image.model as model_module
+
+    model = build_tiny_glm_image_model()
+    monkeypatch.setattr(model_module, "glm_image_grid_dims", lambda h, w: (2, 2, 1, 1))
+    expected = torch.tensor([[1, 1, 2, 2, 1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 4, 4]])
+    pixels = torch.full((1, 3, 4, 4), 0.5, requires_grad=True)
+
+    def decode(**kwargs):
+        assert not torch.is_grad_enabled()
+        assert torch.equal(kwargs["prior_token_ids"], expected)
+        return SimpleNamespace(images=pixels * 1.0)
+
+    pipeline = Mock(side_effect=decode)
+    monkeypatch.setattr(model, "_require_decode_pipeline", lambda: pipeline)
+    with torch.enable_grad():
+        output = model.decode_image_tokens(
+            torch.tensor([[0, 1, 2, 3, 4]]), height=64, width=64, prompts=["test"]
+        )
+        assert torch.is_grad_enabled()
+    assert not output.requires_grad
+    assert torch.equal(output, torch.zeros_like(pixels))
+    pipeline.assert_called_once()

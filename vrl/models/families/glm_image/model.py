@@ -596,7 +596,6 @@ class GlmImageModel(ARModelBase):
     # Decode — AR prior tokens -> pixels via the frozen DiT segment
     # ------------------------------------------------------------------
 
-    @torch.no_grad()
     @staticmethod
     def _upsample_token_ids(token_ids: torch.Tensor, token_h: int, token_w: int) -> torch.Tensor:
         """Nearest-upsample a flat d32 raster to the DiT's d16 grid, ``[1, 4*H*W]``.
@@ -613,6 +612,7 @@ class GlmImageModel(ARModelBase):
         ).to(dtype=torch.long)
         return token_ids.view(1, -1)
 
+    @torch.no_grad()
     def decode_image_tokens(
         self,
         image_token_ids: torch.Tensor,  # [B, L_total] codebook ids
