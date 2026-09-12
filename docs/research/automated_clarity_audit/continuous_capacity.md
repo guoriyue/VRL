@@ -2,8 +2,8 @@
 
 Reviewed complete generated_capacity.py, queue.py, types.py, staleness.py and
 consumer.py, producer admission/scoring/release/stop call sites, and mechanism
-and producer/consumer contract tests. Producer and owner full-module reviews
-remain separate pending work. Previous audit commit: 1788dd443.
+and producer/consumer contract tests. Subsequent full-module reviews are recorded
+in continuous_producer.md and continuous_owner.md. Previous audit commit: 1788dd443.
 
 ## Change
 

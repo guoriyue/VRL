@@ -147,11 +147,12 @@ class ContinuousRolloutProducer:
     def current_batch_id(self) -> int:
         """Identity the consumer must demand, independent of completion order."""
 
-        if self._active_batch is None:
+        batch = self._active_batch
+        if batch is None:
             raise RuntimeError("continuous producer has no installed prompt batch")
-        if self._active_batch.failure is not None:
-            raise self._active_batch.failure
-        return self._active_batch.batch_id
+        if batch.failure is not None:
+            raise batch.failure
+        return batch.batch_id
 
     def stage_stats(self) -> dict[str, float]:
         """Owner-loop snapshot of generation and reward capacity."""
@@ -219,7 +220,7 @@ class ContinuousRolloutProducer:
         group_size: int,
         runtime_debug: bool,
     ) -> None:
-        """Append the recipe's one preview without replacing unfinished work."""
+        """Append one prefetched prompt batch without replacing unfinished work."""
 
         if not self._split_reward:
             raise RuntimeError("early prefetch requires split generation/reward")
@@ -608,7 +609,7 @@ class ContinuousRolloutProducer:
             self._pending_reward_capacity.release(key)
 
     def _fail_batch(self, batch: _PromptBatchProgress, error: BaseException) -> None:
-        """Defer a preview-local failure until it becomes the demanded head.
+        """Defer a prefetched batch's failure until it becomes the demanded head.
 
         Runtime terminal errors still quarantine the entire fleet immediately;
         only a failure known to belong to one batch may preserve current work.
