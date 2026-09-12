@@ -521,3 +521,13 @@ fresh canonical two-update control, comparing its step-1 and step-2 model,
 optimizer, progress and RNG/sampler state against the split run. Use NVMe
 for both outputs and Ray temporary files. No I2V training process or GPU
 allocation remained after this run; the hardware claim is released.
+
+### Current claim: I2V uninterrupted control (Codex)
+
+Codex claims GPUs 2/3 for a fresh canonical two-update control from isolated
+`f01c3625`, with the same pinned model, dataset and seed as the split run.
+Output `/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/control_step2`; log
+`outputs/perf/wan_i2v_l40s_control_step2.log`; Ray temporary root on NVMe.
+Separate GPU/process preflight precedes launch. Compare both intermediate
+and final checkpoints with the first-update and resumed artifacts; matching
+successful exit codes alone do not prove numerical equivalence.
