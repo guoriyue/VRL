@@ -1,0 +1,59 @@
+# SD3.5 Medium + OCR GRPO on one four-GPU host with DEDICATED rollout GPUs:
+# the trainer owns GPU 0, three single-GPU rollout engines own GPUs 1-3, and
+# the PaddleOCR reward runs on CPU. This is the topology base for the two
+# multi-GPU A/B questions that only disjoint pools can answer, with the full
+# 512px / 10-step / n=16 learning geometry of online_grpo_ocr (unlike the
+# 128px continuous_4gpu_acceptance gate, which validates scheduling only):
+#
+#   1. Staleness (SPRINT_async_rollout_train_overlap Option A): strict
+#      on-policy vs continuous with max_stale_policy_versions=1, same seed.
+#   2. Chunk placement (SPRINT_generation_scheduler Track A): round_robin vs
+#      dynamic dispatch across the three engines.
+#
+# Physical topology (CUDA_VISIBLE_DEVICES=0,1,2,3):
+#   GPU 0: single-process trainer          GPU 1/2/3: one rollout engine each
+#
+# Arms are selected at launch; the preset itself is the strict baseline:
+#   python -m vrl.scripts.train --config experiment/sd3_5/online_grpo_ocr_dedicated_3x1 \
+#     trainer.output_dir=outputs/sd3_5_ocr_dedicated_3x1/strict
+#   python -m vrl.scripts.train --config experiment/sd3_5/online_grpo_ocr_dedicated_3x1 \
+#     /base/rollout/orchestration=continuous \
+#     trainer.rollout_orchestration.continuous.max_inflight_groups=8 \
+#     trainer.output_dir=outputs/sd3_5_ocr_dedicated_3x1/continuous
+#   python -m vrl.scripts.train --config experiment/sd3_5/online_grpo_ocr_dedicated_3x1 \
+#     distributed.rollout.batch_placement_strategy=dynamic \
+#     trainer.output_dir=outputs/sd3_5_ocr_dedicated_3x1/dynamic
+defaults:
+  - /experiment/sd3_5/online_grpo_ocr
+  - /base/rollout/orchestration/strict
+
+distributed:
+  training:
+    strategy: single_process
+    num_nodes: 1
+    gpus_per_node: 1
+  resources:
+    visible_devices: [0, 1, 2, 3]
+    trainer:
+      devices: [0]
+    rollout:
+      devices: [1, 2, 3]
+
+rollout:
+  # Eight prompt groups of 16 per update, one group per generation batch, so
+  # the dispatcher has eight units to place across three engines. Keeping the
+  # generation batch equal to the group keeps the SDE window iso-temporal
+  # within a group and the replay batch shape equal to the generation shape.
+  samples_per_generation_batch: 16
+
+trainer:
+  output_dir: outputs/sd3_5_ocr_dedicated_3x1/strict
+  # Same prompt order and process RNG in every arm; only the schedule differs.
+  seed: 1234
+  total_epochs: 40
+  save_freq: 20
+  # Per-phase wall times (phase_events.jsonl) are the throughput half of both
+  # A/B questions; the learning half is metrics.csv.
+  profile: true
+  debug:
+    first_step: true
