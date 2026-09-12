@@ -2,16 +2,16 @@ path	baseline_blob	status	evidence
 vrl/__init__.py	b49f26da8677274678bce3d51fea5c89e5792935	pending	-
 vrl/algorithms/__init__.py	4d92be97dbc791411c5c99e7edc4bec479303ab7	pending	-
 vrl/algorithms/advantages.py	24ac727234be70af57dbe7616bbb4cb55910d863	pending	-
-vrl/algorithms/base.py	322dc0096f9aa739ae4c86a2f099b04f680d13a7	pending	-
+vrl/algorithms/base.py	322dc0096f9aa739ae4c86a2f099b04f680d13a7	reviewed	algorithm_losses.md
 vrl/algorithms/config_contract.py	45a3c8b3b3b24bef5e8b685e182fdf3e3ddd8f47	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
 vrl/algorithms/diffusion_nft.py	6203c9077bd4a6473f0965b350fe150b4bdfe009	pending	-
-vrl/algorithms/dpo.py	d0cfd41e7d99f6711e5ecd583328c39b6e83107a	pending	-
-vrl/algorithms/grpo/__init__.py	ab65d014b7cfe0533650015c14c7463d15f08ea8	pending	-
-vrl/algorithms/grpo/continuous.py	ac52eddcc804d4b8ec68c79d7f06659c326b64a6	pending	-
+vrl/algorithms/dpo.py	d0cfd41e7d99f6711e5ecd583328c39b6e83107a	reviewed	algorithm_losses.md
+vrl/algorithms/grpo/__init__.py	ab65d014b7cfe0533650015c14c7463d15f08ea8	reviewed	algorithm_losses.md
+vrl/algorithms/grpo/continuous.py	ac52eddcc804d4b8ec68c79d7f06659c326b64a6	reviewed	algorithm_losses.md
 vrl/algorithms/grpo/multisegment.py	39f3d4437f4f1cbb47ca089bf491452c6bbe8702	pending	-
-vrl/algorithms/grpo/token.py	f30c8852f20646a16343646d21654447b4ffb5cc	pending	-
+vrl/algorithms/grpo/token.py	f30c8852f20646a16343646d21654447b4ffb5cc	reviewed	algorithm_losses.md
 vrl/algorithms/logprob_mismatch.py	736471b555c7b44b782dec30225d7cdcccf0172a	pending	-
-vrl/algorithms/trajectory.py	29b26d52d214c7e8ee56920622d2153e5c2cc3e1	pending	-
+vrl/algorithms/trajectory.py	29b26d52d214c7e8ee56920622d2153e5c2cc3e1	reviewed	algorithm_losses.md
 vrl/algorithms/types.py	a3697e1b34c0e4fa6bc1b7c0433d6dd2bab018f5	pending	-
 vrl/algorithms/v_grpo.py	bc1c30d9083565039db573f8f4c10744c47c5661	pending	-
 vrl/config/__init__.py	63ea04cd84f4ba47b0b3f27ce4cb6a9cb737d137	reviewed	config_boundaries.md; SFT numeric ownership follow-up open

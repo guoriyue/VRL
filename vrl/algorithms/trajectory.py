@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, Any
 
 from vrl.algorithms.types import TrainStepMetrics
@@ -104,14 +104,9 @@ class AlgorithmAdapter:
         self.validate_inputs(algorithm, inputs)
 
         if inputs.advantages is None:
-            inputs = AlgorithmInput(
-                signals=inputs.signals,
-                rewards=inputs.rewards,
-                group_ids=inputs.group_ids,
+            inputs = replace(
+                inputs,
                 advantages=self.compute_advantages(algorithm, inputs),
-                model=inputs.model,
-                rollout_batch=inputs.rollout_batch,
-                timestep_index=inputs.timestep_index,
             )
         return algorithm.compute_loss(inputs)
 

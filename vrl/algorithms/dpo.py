@@ -84,10 +84,6 @@ def diffusion_dpo_loss(
     target: torch.Tensor,
     beta: float,
 ) -> dict[str, torch.Tensor]:
-
-    import torch
-    import torch.nn.functional as F
-
     """Compute the Diffusion-DPO loss for one batch of preference pairs.
 
     Tensor layout: each tensor has leading dim ``2*B`` where the first ``B``
@@ -114,6 +110,9 @@ def diffusion_dpo_loss(
       ``implicit_acc``   — fraction of pairs where the policy ranks winner
                            above loser more strongly than the reference does
     """
+    import torch
+    import torch.nn.functional as F
+
     if model_pred.shape != ref_pred.shape or model_pred.shape != target.shape:
         raise ValueError(
             f"shape mismatch: model_pred={tuple(model_pred.shape)} "
@@ -156,13 +155,12 @@ def diffusion_sft_loss(
     model_pred_winner: torch.Tensor,
     target_winner: torch.Tensor,
 ) -> torch.Tensor:
-
-    import torch.nn.functional as F
-
     """Plain MSE on the winner only — useful as auxiliary regulariser.
 
     Pass ``model_pred[:B]`` and ``target[:B]`` (the winner halves).
     """
+    import torch.nn.functional as F
+
     # WHY keep this thin wrapper exported: it is a deliberately exposed
     # auxiliary-loss API paired with diffusion_dpo_loss (see module docstring
     # and __all__) to mirror the reference DPO loss surface for the offline DPO
