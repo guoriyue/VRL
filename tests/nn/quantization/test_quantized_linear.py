@@ -18,7 +18,7 @@ _SCHEMES = pytest.mark.parametrize("scheme", sorted(QUANTIZATION_SCHEMES))
 
 
 def _quantized(scheme: str, *, in_features: int = 64, out_features: int = 32, bias: bool = False):
-    # Both alignment rules (fp8 rowwise, nvfp4 K % 16 / N % 8) accept 64 x 32.
+    # Both schemes accept this shape, including NVFP4's K % 32 / N % 16 gate.
     return QUANTIZATION_SCHEMES[scheme](nn.Linear(in_features, out_features, bias=bias))
 
 
