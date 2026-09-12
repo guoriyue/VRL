@@ -126,3 +126,19 @@ def test_checkpointing_rejects_replay_compile_but_accepts_rollout_scope() -> Non
         bundle,
         _cfg({"enable": True, "scope": "rollout"}),
     )
+
+
+def test_selective_checkpointing_preserves_errors_inside_supported_method() -> None:
+    calls: list[object] = []
+
+    class _Transformer:
+        def enable_gradient_checkpointing(self, gradient_checkpointing_func=None) -> None:
+            calls.append(gradient_checkpointing_func)
+            if gradient_checkpointing_func is not None:
+                raise TypeError("checkpoint setup failed inside the model")
+
+    bundle = SimpleNamespace(trainable_modules={"transformer": _Transformer()})
+    with pytest.raises(TypeError, match="checkpoint setup failed inside the model"):
+        enable_transformer_gradient_checkpointing(bundle, parse_config(_config("selective")))
+
+    assert len(calls) == 1

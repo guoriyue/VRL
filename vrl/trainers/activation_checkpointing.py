@@ -15,6 +15,7 @@ docs/sprints/parked/SPRINT_training_mfu_selective_checkpointing.md (P0 results).
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -126,14 +127,18 @@ def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> 
             )
         if mode == "selective":
             try:
-                enable(gradient_checkpointing_func=selective_checkpoint_func)
-                continue
+                inspect.signature(enable).bind_partial(
+                    gradient_checkpointing_func=selective_checkpoint_func,
+                )
             except TypeError:
                 logger.warning(
                     "trainable module %r does not accept a custom gradient_checkpointing_func; "
                     "falling back to full checkpointing for it",
                     name,
                 )
+            else:
+                enable(gradient_checkpointing_func=selective_checkpoint_func)
+                continue
         enable()
 
 

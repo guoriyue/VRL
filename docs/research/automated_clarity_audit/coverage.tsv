@@ -452,7 +452,7 @@ vrl/scripts/rewards/train_droid_idm.py	2f7ef15ba68b58d904bba9a5b900cdd048466f87	
 vrl/scripts/supervise.py	11c38c8a97d8199209285cf83818b17252ad8d84	pending	-
 vrl/scripts/train.py	ec8756531f53eac70c72580aa949cac17e30adaa	pending	-
 vrl/trainers/__init__.py	32bb2778cdde4e39d2dd20135ea006c4d53ac9b0	pending	-
-vrl/trainers/activation_checkpointing.py	8b927b6aa92096b39b37e5e52ecc32f50669a2f8	pending	-
+vrl/trainers/activation_checkpointing.py	8b927b6aa92096b39b37e5e52ecc32f50669a2f8	reviewed	checkpoint_followup.md
 vrl/trainers/checkpointing.py	a00e90322a29005173e85fc406e2aa2b26435efa	pending	-
 vrl/trainers/core/__init__.py	41edc4be5f15d75531362935a83f14d9685a9356	pending	-
 vrl/trainers/core/types.py	f95db8586a7a6898ced8bc21cd06a7c55ce10d17	pending	-
