@@ -34,14 +34,21 @@ GPU model weights. Reward inference, calibration, memory handoff and the
 original 0.3 motion-quality / 0.7 physical-commonsense training objective
 remain unverified; motion-only acceptance runs do not replace that objective.
 
-Actual CPU VideoCon loading now has a confirmed compatibility blocker beyond
-the successful processor checks. The first failure was legacy composite
-configuration logging; integration candidate `a16e30f8` fixes it with a local
-config subclass and six passing focused tests. Loading then fails because
-the vendored MplugOwlVisionModel inherits `_keep_in_fp32_modules=["wo"]`
-although it contains no such module. No reward score was produced. Fix and
-re-run actual inference before treating the physics reward as runtime-ready;
-do not edit the shared dirty VideoPhy submodule underneath other sessions.
+Actual CPU VideoCon loading exposed two compatibility failures beyond the
+processor checks. Candidate `a16e30f8` fixes legacy composite configuration
+logging with a local config subclass. Candidate `92950604` removes the exact
+legacy `_keep_in_fp32_modules=["wo"]` declaration from the imported vendor
+base class; no VideoCon parameter has that name, and other declarations are
+preserved. Eight focused tests pass. Shared vendor files remain untouched.
+
+The real BF16/32-frame CPU model now loads and enters vision inference, but
+scoring remains unverified: after roughly five minutes the first scoring
+forward had reached vision layer index 5. The host's EPYC 7R13 exposes AVX2
+but no native BF16 CPU instructions. The owned diagnostic was explicitly
+terminated (exit 143), not completed; no score receipt exists. Resolve the
+CPU performance issue or validate a coordinated reward-GPU topology before
+the full quality run. Do not substitute a reduced input/precision diagnostic
+for the original reward acceptance gate.
 
 Execute after the GPU queue in `../SPRINT_four_l40s_execution.md` releases
 the required devices:

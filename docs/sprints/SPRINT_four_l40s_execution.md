@@ -1117,3 +1117,30 @@ not merged; shared runtime and pre-existing third_party/videophy dirt remain
 untouched. SD3.5 was still live at the final process check (elapsed 29m25s).
 The two-GPU trained-moment I2V resume remains queued, and the physics reward
 must pass real scoring after compatibility repairs before its quality gate.
+
+### VideoCon model loading repaired; CPU inference remains open (Codex)
+
+Candidate commit `92950604` removes the vendor's exact phantom FP32 module
+declaration `["wo"]` on the imported MplugOwlPreTrainedModel class. The
+vendored architecture has no such parameter/module, so this does not change
+actual parameter precision. Any different declaration is preserved. This is
+a process-local compatibility adjustment, not a change to third_party files.
+Focused configuration/resolver tests: 8 passed; touched-file Ruff and diff
+checks passed. Candidate worktree is clean and remains unmerged.
+
+The same provenance-checked video, original caption, BF16 and 32-frame reward
+settings now load the complete CPU model in 2.33 s and enter actual vision
+inference. Log: `/mnt/nvme/outputs/wan22_i2v_cache/videocon_cpu_probe_fp32_fix.log`
+(the filename denotes the stale FP32-list fix, NOT FP32 model execution).
+Live py-spy sampling confirmed linear-layer computation, batch 32, sequence
+length 257, width 1024, and first-forward encoder layer index 5 after roughly
+five minutes. The EPYC 7R13 CPU exposes AVX2 but no native BF16 instructions;
+CPU utilization remained about 131%, not an idle decoder/download wait.
+
+Explicitly terminated only owned probe PID 259503 to bound this diagnostic;
+its session is terminal with exit 143. This is NOT a passing scoring test,
+and no result JSON was produced. Input budget and dtype were not reduced.
+Real scoring, calibration and training quality remain open. Next reward work
+must address CPU execution cost or validate a coordinated reward-GPU topology
+without replacing the original physics objective. Other-session SD3.5 PID
+234733 remained live at 35m44s, and no GPU job was launched or stopped.
