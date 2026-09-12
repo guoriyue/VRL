@@ -3,7 +3,7 @@ vrl/__init__.py	b49f26da8677274678bce3d51fea5c89e5792935	pending	-
 vrl/algorithms/__init__.py	4d92be97dbc791411c5c99e7edc4bec479303ab7	pending	-
 vrl/algorithms/advantages.py	24ac727234be70af57dbe7616bbb4cb55910d863	pending	-
 vrl/algorithms/base.py	322dc0096f9aa739ae4c86a2f099b04f680d13a7	pending	-
-vrl/algorithms/config_contract.py	45a3c8b3b3b24bef5e8b685e182fdf3e3ddd8f47	pending	-
+vrl/algorithms/config_contract.py	45a3c8b3b3b24bef5e8b685e182fdf3e3ddd8f47	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
 vrl/algorithms/diffusion_nft.py	6203c9077bd4a6473f0965b350fe150b4bdfe009	pending	-
 vrl/algorithms/dpo.py	d0cfd41e7d99f6711e5ecd583328c39b6e83107a	pending	-
 vrl/algorithms/grpo/__init__.py	ab65d014b7cfe0533650015c14c7463d15f08ea8	pending	-
@@ -14,22 +14,22 @@ vrl/algorithms/logprob_mismatch.py	736471b555c7b44b782dec30225d7cdcccf0172a	pend
 vrl/algorithms/trajectory.py	29b26d52d214c7e8ee56920622d2153e5c2cc3e1	pending	-
 vrl/algorithms/types.py	a3697e1b34c0e4fa6bc1b7c0433d6dd2bab018f5	pending	-
 vrl/algorithms/v_grpo.py	bc1c30d9083565039db573f8f4c10744c47c5661	pending	-
-vrl/config/__init__.py	63ea04cd84f4ba47b0b3f27ce4cb6a9cb737d137	pending	-
-vrl/config/algorithm.py	1963845f5de42df3757494be24d7718e6164b833	pending	-
-vrl/config/base.py	dc90053ebba871e9ee6e8fa9c9e96ca0dff27f88	pending	-
+vrl/config/__init__.py	63ea04cd84f4ba47b0b3f27ce4cb6a9cb737d137	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
+vrl/config/algorithm.py	1963845f5de42df3757494be24d7718e6164b833	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
+vrl/config/base.py	dc90053ebba871e9ee6e8fa9c9e96ca0dff27f88	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
 vrl/config/builders.py	82d48708b051ac21ee4c778b4c6eae5442031978	pending	-
 vrl/config/data.py	a26c0518e82acb817046e652d3ebf982453a7b30	pending	-
 vrl/config/lint.py	3e462c82395cc8767cb2b0ed972f1a63b0035dbd	pending	-
-vrl/config/loading.py	221c3b4032f74319e8f7c111cd88b22c56dcff2a	pending	-
+vrl/config/loading.py	221c3b4032f74319e8f7c111cd88b22c56dcff2a	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
 vrl/config/model_schema.py	83969d5d1573d0385215ce9d07280824153080a4	pending	-
 vrl/config/precision.py	10245a48eb8b20681d4b02ed049aa325e7742b39	pending	-
 vrl/config/presets/__init__.py	84da826a3687342a68eb25faf4a20cb39d81c30a	pending	-
 vrl/config/reward_inference.py	b8d8f0269561ffa91ba0f716ad199a37ba2b888a	pending	-
 vrl/config/reward_service/__init__.py	e69de29bb2d1d6434b8b29ae775ad8c2e48c5391	pending	-
-vrl/config/rules.py	16a9f43862124487ae91ae3a89ca0c290d315fda	pending	-
+vrl/config/rules.py	16a9f43862124487ae91ae3a89ca0c290d315fda	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
 vrl/config/sampling_schema.py	b26e0041ec9613932a55c5312cfb07c630c34898	pending	-
 vrl/config/schema.py	27ec681d956ab66fe82e0c25722aef165e1ad3a2	pending	-
-vrl/config/validation.py	eba0e52f216c55a11218e1dec52edd9ae08dcb0d	pending	-
+vrl/config/validation.py	eba0e52f216c55a11218e1dec52edd9ae08dcb0d	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
 vrl/generation/__init__.py	6fb14cf89450b25f2d0238658595da8031bbd6b2	pending	-
 vrl/generation/bindings/__init__.py	3b7cd6c8c8811387489c82b5d69c0d9c96081c34	pending	-
 vrl/generation/bindings/chunk_autoregressive_denoise/__init__.py	52a01354ed85cb08932f2058e1ff0587d75611ac	pending	-

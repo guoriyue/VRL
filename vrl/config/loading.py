@@ -132,8 +132,6 @@ def _load_one(
                 continue
             entry_val = _apply_default_override(entry_val, default_overrides)
             if isinstance(entry_val, dict):
-                if len(entry_val) != 1:
-                    raise ValueError(f"defaults dict must have exactly one key: {entry_val}")
                 key, value = next(iter(entry_val.items()))
                 entry_val = f"{key}/{value}"
             sub_path = _join_config(root, _normalize_config_name(entry_val))
