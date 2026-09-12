@@ -5,7 +5,7 @@ whole run from the resolved :class:`BundleLayout` and probes which physical GPU
 each bundle actually landed on. The rollout runtime consumes its role placement
 handle; the in-process reward runtime consumes the reserved device directly.
 The public reward role mapping remains the protocol boundary for a future remote
-runtime. The owner removes the placement group exactly once at run shutdown.
+runtime. The owner retains the placement group until removal succeeds.
 
 This replaces two independent placement groups (one built by the rollout
 launcher, one by the reward actor runtime) and the reward ``gpu_reservation_count``
@@ -442,8 +442,8 @@ class GlobalRayPlacementOwner:
                 f"Ray placement CPU quantities must be finite and > 0, got {invalid}",
             )
         # Placement bundles accept fractional CPU reservations, while Ray node
-        # startup requires an integer capacity. Sum the actual bundle plan so
-        # colocated roles retain its max-not-sum semantics.
+        # startup requires an integer capacity. Sum the actual bundle plan,
+        # including capacity for role remapping; colocated roles share a bundle.
         return max(1, math.ceil(math.fsum(quantities)))
 
     def shutdown(self) -> None:
@@ -564,24 +564,22 @@ class GlobalRayPlacementOwner:
     def _bundle_requirements(self) -> list[dict[str, float]]:
         requirements: list[dict[str, float]] = []
         for bundle_index, gpu_id in enumerate(self.layout.bundle_gpu_ids):
-            cpu = self._bundle_cpu(bundle_index)
+            # Single-node GPU roles are assigned only after probing: any GPU
+            # bundle may become a rollout bundle, including a planned trainer
+            # or reward reservation. Its CPU capacity must allow that swap.
+            if bundle_index in self.layout.rollout_bundle_indices or (
+                gpu_id is not None
+                and self.resources.rollout_devices
+                and not self.resources.cross_node
+            ):
+                cpu = float(self.rollout_worker.cpus_per_worker)
+            else:
+                cpu = 0.001
             bundle: dict[str, float] = {"CPU": cpu}
             if gpu_id is not None:
                 bundle["GPU"] = 1.0
             requirements.append(bundle)
         return requirements
-
-    def _bundle_cpu(self, bundle_index: int) -> float:
-        """CPU a bundle reserves = max over the roles that may run in it.
-
-        A trainer-reserved GPU bundle (no role) only needs a token CPU so the
-        empty bundle is schedulable while still holding the GPU out of Ray's
-        pool.
-        """
-
-        if bundle_index in self.layout.rollout_bundle_indices:
-            return float(self.rollout_worker.cpus_per_worker)
-        return 0.001
 
     def _probe_gpu_bundles(self, ray: Any, pg: Any) -> dict[int, int]:
         gpu_bundles = [

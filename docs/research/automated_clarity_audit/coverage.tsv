@@ -242,7 +242,7 @@ vrl/ray/actor_group.py	fc280407590de76434ac0f456f40704407c07d06	reviewed	actor_s
 vrl/ray/actor_pool.py	607ed88be8b9e6e87820fbfb80c2d249ba8d8e20	reviewed	actor_dispatch.md
 vrl/ray/dependencies.py	12a4d335d1c646d6b9834566657782a0554c394d	reviewed	session_cleanup.md
 vrl/ray/operation_deadline.py	c38b70d9e7342bbe2af6e2cf03f58bbda8379447	reviewed	actor_dispatch.md
-vrl/ray/placement.py	4cd1be7797a67b981150d9852b780eb6f6a2c007	pending	-
+vrl/ray/placement.py	4cd1be7797a67b981150d9852b780eb6f6a2c007	reviewed	global_placement.md
 vrl/ray/resources.py	1089a56c40d6074eaa8059d0a578d46f46f1074e	pending	-
 vrl/rewards/__init__.py	4bf9110447a4f95d0c4b21b609694b875f1f3e25	pending	-
 vrl/rewards/artifacts.py	f17a30179b1d5effaa066915dd5bce8238f9e930	pending	-

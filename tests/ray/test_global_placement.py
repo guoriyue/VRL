@@ -243,6 +243,9 @@ def test_assign_roles_matches_requested_ordinals_under_permuted_probe() -> None:
     # rollout wants GPU 1 -> bundle 2; reward wants GPU 2 -> bundle 0.
     assert roles["rollout"] == (2,)
     assert roles["reward"] == (0,)
+    requirements = owner._bundle_requirements()
+    for bundle_index in roles["rollout"]:
+        assert requirements[bundle_index]["CPU"] >= owner.rollout_worker.cpus_per_worker
 
 
 def test_assign_roles_shared_reward_binds_same_bundle_as_rollout() -> None:
@@ -302,8 +305,8 @@ def test_assign_roles_rejects_duplicate_probed_gpu() -> None:
         owner.assign_roles({0: 0, 1: 0})
 
 
-def test_bundle_requirements_size_shared_bundle_to_max_role_cpu() -> None:
-    """A shared rollout/reward bundle reserves the larger of the two CPU asks."""
+def test_gpu_bundles_reserve_rollout_cpu_before_role_assignment() -> None:
+    """Every interchangeable GPU bundle can host the rollout worker."""
     owner = _owner(
         {
             "visible_devices": [0, 1],
@@ -313,14 +316,14 @@ def test_bundle_requirements_size_shared_bundle_to_max_role_cpu() -> None:
         },
         worker=_worker(cpus_per_worker=2.0),
     )
-    # reward_cpus_per_worker default is 0.5; shared bundle must take 2.0.
     requirements = owner._bundle_requirements()
     shared_bundle = owner.layout.rollout_bundle_indices[0]
     assert requirements[shared_bundle]["CPU"] == 2.0
     assert requirements[shared_bundle]["GPU"] == 1.0
-    # Trainer-reserved bundle holds the GPU with only a token CPU.
+    # Probing may swap the planned trainer and rollout bundle assignments.
     trainer_bundle = owner.layout.bundle_gpu_ids.index(owner.resources.trainer_devices[0])
-    assert requirements[trainer_bundle] == {"CPU": 0.001, "GPU": 1.0}
+    assert requirements[trainer_bundle] == {"CPU": 2.0, "GPU": 1.0}
+    assert owner.required_local_cluster_cpus() == 4
 
 
 def test_required_local_cluster_cpus_uses_placement_bundle_sum() -> None:
