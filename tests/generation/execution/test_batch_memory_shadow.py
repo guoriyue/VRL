@@ -314,6 +314,24 @@ def test_probe_fails_loud_when_one_sample_ooms(fake_cuda: None) -> None:
         core.probe_batch_size(_request(), max_samples=4)
 
 
+@_EXACT_BYTES_NEED_A_FIXED_CARD
+@pytest.mark.parametrize("max_samples", [1, 4])
+def test_probe_stops_when_one_sample_ooms_after_warmup(fake_cuda: None, max_samples: int) -> None:
+    class FailsAfterWarmup(_ProbeExecutor):
+        calls = 0
+
+        def forward_probe_batch(self, request, batch, *, execute_steps):
+            self.calls += 1
+            if self.calls == 2:
+                raise torch.OutOfMemoryError("CUDA out of memory during fit-low")
+            return super().forward_probe_batch(request, batch, execute_steps=execute_steps)
+
+    executor = FailsAfterWarmup()
+    with pytest.raises(RuntimeError, match="single sample does not fit"):
+        _probe_core(executor).probe_batch_size(_request(), max_samples=max_samples)
+    assert executor.calls == 2
+
+
 # -- runtime auto resolution --------------------------------------------------
 
 

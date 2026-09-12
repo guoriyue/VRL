@@ -522,16 +522,16 @@ class GenerationWorkerCore:
 
         # Warmup at n=1 (cudnn autotune, lazy init) so trial timings compare
         # warm-vs-warm; its memory verdict still counts: OOM at n=1 is terminal.
-        warmup = run_trial(1, timed_label="warmup")
-        if warmup.oom:
-            raise RuntimeError(
-                "batch-size probe: a single sample does not fit on this worker "
-                f"(phase budget {budget_bytes / 2**30:.1f} GiB); the recipe "
-                "shape is too large for this GPU",
-            )
-        trials.append(warmup)
-        low = run_trial(1, timed_label="fit-low")
-        trials.append(low)
+        for label in ("warmup", "fit-low"):
+            trial = run_trial(1, timed_label=label)
+            if trial.oom:
+                raise RuntimeError(
+                    "batch-size probe: a single sample does not fit on this worker "
+                    f"during {label} (phase budget {budget_bytes / 2**30:.1f} GiB); "
+                    "the recipe shape is too large for this GPU",
+                )
+            trials.append(trial)
+        low = trials[-1]
         final = 1
 
         if max_samples > 1:
