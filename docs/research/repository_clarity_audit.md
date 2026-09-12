@@ -7322,3 +7322,58 @@ The broader repository audit remains incomplete.
   Utils, math, rollout orchestration, model interfaces, rewards and trainers:
   1605 passed, 12 skipped, 22 warnings. Touched-file Ruff and diff checks pass.
   The broader repository clarity audit remains incomplete.
+
+
+## Generation ownership strategy (2026-09-11)
+
+### Recovery belongs at the retry boundary
+
+Commit c1ef98a0 releases failed forward frames before splitting and retrying an
+OOM batch. An exception traceback can retain tensor locals; allocator cache
+cleanup cannot release those live allocations. The shared rule is: classify the
+failure, recover owner-managed model state, release failed execution references,
+then reclaim unused memory and retry only where the execution contract permits
+it. A one-sample OOM or non-OOM failure propagates. Do not introduce process-wide
+exception cleanup: terminal errors need diagnostics, and different owners hold
+different live state. The existing CUDA error classifier is shared; retry and
+model recovery remain with their execution owners.
+
+Model loading similarly preserves caller thread state at the external loader
+boundary. Grad-mode restoration must work on success and failure and preserve
+both initially enabled and initially disabled mode. This is an adapter contract,
+not a global instruction to enable gradients after every load.
+
+### One trajectory axis model, independent of its consumer
+
+TrajectoryAxis and TrajectoryTensor already describe rollout facts independently
+of replay. Replay is a consumer and replay_input is a tensor role, not a separate
+axis system. The chunk result's parallel replay_tensors/replay_tensor_axes maps
+are transport duplication. The intended follow-up is to carry existing typed
+trajectory tensor records, keeping values and axes together through producer,
+wire payload, gather, and builder. This migration is not implemented by this
+entry. It must preserve sample concatenation, static context agreement, and
+non-sample axes without guessing from dimension sizes. Do not add a second
+AxisSchema or a global list of family-specific tensor names.
+
+### Collection and gathering are different scopes
+
+RolloutCollector owns prompt grouping, generation requests, reward execution,
+and construction of trainer batches. A generation gatherer reconstructs one
+request from execution microbatches, including batches split after OOM. It orders
+samples and combines outputs and trajectory facts before the collector scores
+them. Existing family gather_batches implementations are the shared interface;
+do not introduce another synonymous facade or a static-method utility class.
+Keep shared tensor concatenation and coverage checks where multiple gatherers
+use them. Consider further stateful consolidation only when one gather object
+can actually own the request, rows, and results and remove repeated plumbing.
+
+### Scheduling capacity is not hardware telemetry
+
+ClusterTopology.discover queries Ray-advertised logical GPU capacity. Hardware
+inventory, CUDA-visible assignment, and runtime memory readings answer different
+questions and must not substitute for that capacity. A physical GPU intentionally
+excluded with --num-gpus=0 must stay excluded from Ray placement preflight.
+The driver is the current process's node, not necessarily the cluster head.
+Naming and diagnostics now distinguish advertised capacity from available or
+physical GPUs; pending_axis_checks also names the validator's local work stack.
+These clarity edits do not introduce new runtime checks or schema constants.

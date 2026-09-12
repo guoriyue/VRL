@@ -206,9 +206,9 @@ class TrajectoryValidator:
                 self._fail(f"tensor {segment_name}.{tensor.name} repeats axis {axis_name!r}")
             seen.add(axis_name)
 
-        pending = [(tensor.value, 0)]
-        while pending:
-            value, axis_offset = pending.pop()
+        pending_axis_checks = [(tensor.value, 0)]
+        while pending_axis_checks:
+            value, axis_offset = pending_axis_checks.pop()
             axes = tensor.axes[axis_offset:]
             if not axes:
                 continue
@@ -216,7 +216,7 @@ class TrajectoryValidator:
                 shape = (len(value),)
                 checked_axes = axes[:1]
                 if len(axes) > 1:
-                    pending.extend((inner, axis_offset + 1) for inner in value)
+                    pending_axis_checks.extend((inner, axis_offset + 1) for inner in value)
             else:
                 shape = getattr(value, "shape", None)
                 if shape is None:

@@ -1,6 +1,6 @@
 """Shared Ray test helpers: a live-cluster topology stand-in.
 
-``ClusterTopology.from_ray(ray)`` and ``cross_node_preflight(ray, ...)`` take the
+``ClusterTopology.discover(ray)`` and ``cross_node_preflight(ray, ...)`` take the
 ``ray`` module as a parameter, which is the seam these two build against: a
 3-node / 2-GPU cluster cannot be created inside a unit test, but the code that
 reads one can still be driven for real. What the tests assert is the topology

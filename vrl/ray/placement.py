@@ -202,25 +202,26 @@ def cross_node_preflight(ray: Any, resources: ResolvedDistributedResources) -> N
 
     Runs after ``ray.init()`` (resolution earlier in the pipeline cannot see the
     cluster). Verifies that non-driver nodes expose enough GPUs for rollout, and
-    that the driver/head node does not expose Ray GPUs — otherwise rollout actors
+    that the driver node does not expose Ray GPUs — otherwise rollout actors
     could be scheduled onto the trainer GPU, since cross-node mode intentionally
     drops the placement-group trainer reservation.
     """
 
-    topology = ClusterTopology.from_ray(ray)
+    topology = ClusterTopology.discover(ray)
 
     needed = resources.rollout_num_gpus
     if topology.non_driver_gpus < needed:
         raise RuntimeError(
             f"cross_node rollout needs {needed} GPU(s) on non-driver Ray nodes, but "
-            f"only {topology.non_driver_gpus:g} are available. Join more rollout "
+            f"only {topology.non_driver_gpus:g} are advertised. Join more rollout "
             "workers, e.g. `ray start --address=<head>:6379 --num-gpus=<n>`.",
         )
     if topology.driver_gpus > 0:
         raise RuntimeError(
-            f"cross_node rollout: the driver/head node exposes {topology.driver_gpus:g} "
+            f"cross_node rollout: the driver node exposes {topology.driver_gpus:g} "
             "Ray GPU(s), so rollout could be scheduled onto the trainer GPU. Start the "
-            "head with `ray start --head --num-gpus=0` so the trainer GPU stays out "
+            "driver node with `ray start --num-gpus=0` (add `--head` only if it is "
+            "the head) so the trainer GPU stays out "
             "of Ray's scheduling pool.",
         )
 
@@ -239,7 +240,7 @@ def require_actor_gpu_ids(
     globally resolved ordinal set. Cross-node mode cannot use that assumption
     (each node has its own ordinal space and Ray remaps ``CUDA_VISIBLE_DEVICES``
     per actor), so it instead validates that every worker (a) got a GPU, (b) does
-    not run on the driver/head node, and (c) holds a unique ``(node_ip, gpu_id)``
+    not run on the driver node, and (c) holds a unique ``(node_ip, gpu_id)``
     pair so no two workers share a physical GPU.
     """
 
@@ -295,7 +296,7 @@ def _validate_cross_node_actor_gpu_ids(
             raise RuntimeError(f"Ray {role} worker {worker_id} has no assigned GPU ids")
         if driver_node_ip is not None and node_ip == str(driver_node_ip):
             raise RuntimeError(
-                f"Ray {role} worker {worker_id} landed on the driver/head node "
+                f"Ray {role} worker {worker_id} landed on the driver node "
                 f"{node_ip}; cross-node rollout must run off the trainer node. "
                 "Start the head with `ray start --head --num-gpus=0` so the trainer "
                 "GPU stays out of Ray's scheduling pool.",

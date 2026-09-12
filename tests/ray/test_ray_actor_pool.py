@@ -282,7 +282,7 @@ def test_validate_actor_gpu_ids_cross_node_accepts_remote_local_zero() -> None:
 def test_validate_actor_gpu_ids_cross_node_rejects_driver_node() -> None:
     """Cross-node drops the placement-group trainer reservation, so a rollout
     worker that landed on the head node would sit on the trainer's GPU."""
-    with pytest.raises(RuntimeError, match="driver/head node"):
+    with pytest.raises(RuntimeError, match="driver node"):
         require_actor_gpu_ids(
             [{"worker_id": "generation-0", "node_ip": "10.0.0.1", "gpu_ids": [0]}],
             expected_gpu_ids=(1,),

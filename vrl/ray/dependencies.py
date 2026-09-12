@@ -46,23 +46,22 @@ def current_gpu_ids() -> list[int]:
 
 @dataclass(frozen=True, slots=True)
 class ClusterTopology:
-    """Live Ray-cluster GPU layout: GPUs on the driver/head node vs on the other
-    (worker) nodes.
+    """Ray-advertised logical GPU capacity on driver and non-driver nodes.
 
-    The single basis for the single-node-vs-multi-node decision: the cross-node
-    preflight (``vrl.ray.placement.cross_node_preflight``) reads it instead of
-    re-walking ``ray.nodes()``.
+    This is total configured scheduling capacity on alive nodes, not physical
+    GPU inventory, currently unallocated capacity, free VRAM, or device health.
+    The driver node is where this process runs; it need not be the Ray head.
     """
 
     driver_gpus: float
     non_driver_gpus: float
 
     @classmethod
-    def from_ray(cls, ray: Any) -> ClusterTopology:
-        """Sum alive-node GPUs split by driver vs non-driver node.
+    def discover(cls, ray: Any) -> ClusterTopology:
+        """Read logical GPU capacity from an already attached Ray cluster.
 
-        Requires an initialized/attached Ray cluster. Nodes matching the current
-        process's node ip count as the driver/head.
+        Classify nodes by the current process's IP. This queries Ray's resource
+        declarations; it neither initializes Ray nor probes physical hardware.
         """
 
         driver_node_ip = current_node_ip()
