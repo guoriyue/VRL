@@ -367,3 +367,14 @@ queries found no training drivers or allocations. The hardware claim is now
 released while this hook-ownership path is diagnosed in the isolated tree.
 Next I2V retry must follow a new preflight; do not report this stopped job as
 still running or duplicate it based on an observation timeout.
+
+### Current claim: I2V hook-ownership retry (Codex)
+
+Isolated commit `195cfc14` removes explicitly owned transformer hooks
+child-first before public pipeline cleanup, avoiding PEFT's delegated hook
+lookup. Adding a root `scale_shift_table` parameter to the real Accelerate/PEFT
+offload regression reproduced the production failure before the fix; all 25
+loading/offload tests then passed. Touched-file Ruff and formatting passed.
+Codex claims GPUs 2/3 for the same canonical two-rank production proof after
+another separate preflight. Target: `outputs/wan_i2v_14b_l40s_proof/epoch1_hook_fix`,
+log `outputs/perf/wan_i2v_l40s_epoch1_hook_fix.log`. No completion is implied.
