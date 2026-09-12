@@ -994,3 +994,35 @@ forwards on the same kernel path. The 3x1 preset now pins
 `samples_per_generation_batch=1` / `samples_per_replay_batch=1` (commit
 6b0ab94d); the P6 online runs use it. The May L4 run's 6e-7 came
 from a 2-sample probe that predates the whole-replay gate (b8c1f766).
+
+### Integration candidate prepared (Codex)
+
+GPU preflight still finds the live SD3.5 driver PID 234733 and its GPU 1/2
+rollout actors; no new GPU job was launched. Instead, created
+`/home/ubuntu/VRL-mgpu-integration`, branch `integration/multi-gpu-runtime`,
+from shared commit `75d05860`, retaining the SD3.5 preset fix `6b0ab94d`.
+All 13 isolated runtime/test commits cherry-picked without conflicts.
+The candidate initially matched the hardware-tested isolated runtime exactly
+under vrl/tests except for that already-shared SD3.5 preset change.
+
+Broader CPU integration regression initially found five config-test failures:
+the shared cuda_devices fixture mocked a positive Torch GPU count while
+inheriting CUDA_VISIBLE_DEVICES="". Candidate commit `fa3557b0` makes the
+fixture install a consistent mocked mask and adds six inherited-mask cases.
+Production mask validation is unchanged. Final regression across all 12
+original changed test files plus tests/config: 661 passed, 16 skipped in
+127.90 s with CUDA hidden. Log:
+`outputs/perf/mgpu_integration_cpu_regression_fixed.log`. Touched-file
+Ruff/format and diff checks passed; candidate worktree is committed.
+
+Shared runtime files remain untouched while SD3.5 runs, and the existing
+third_party/videophy submodule dirt is preserved. This is a tested integration
+candidate, NOT a completed main-branch merge. Recheck shared changes and live
+processes before merging. The I2V step-2-to-step-3 strict deterministic resume
+also remains queued for an exclusively available two-GPU window; the candidate
+can run it because its I2V runtime matches the hardware-tested source.
+
+Observed live SD3.5 2x1 epoch-0 metrics: reward mean 0.4095417112/std
+0.3335738704, pre-update logprob max difference 0 and nonzero gradient
+0.001623807475. The five-epoch job was still live at final process inspection,
+so these are partial observations, not a completed topology/learning verdict.
