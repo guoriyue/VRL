@@ -96,6 +96,7 @@ class _RayClusterSession:
         cross_node: bool,
         environ: Mapping[str, str] | None = None,
         local_num_cpus: int | None = None,
+        local_gpu_ids: tuple[int, ...] | None = None,
     ) -> _RayClusterSession:
         """Connect to exactly the Ray cluster selected by the resource topology.
 
@@ -103,6 +104,8 @@ class _RayClusterSession:
         even when the host has a stale ``RAY_ADDRESS`` or another user's Ray
         instance. Cross-node runs require a concrete address; implicit
         ``address='auto'`` discovery is unsafe on a shared host.
+        ``local_gpu_ids`` restricts the owned node to physical actor reservations;
+        attached and pre-initialized clusters retain their operator-owned view.
         """
 
         if ray.is_initialized():
@@ -137,6 +140,8 @@ class _RayClusterSession:
             signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)
         }
         init_kwargs: dict[str, Any] = {"address": address}
+        original_cuda_mask = os.environ.get("CUDA_VISIBLE_DEVICES")
+        narrow_cuda_mask = ownership == "owned_local" and local_gpu_ids is not None
         if ownership == "owned_local":
             if local_num_cpus is not None:
                 if (
@@ -147,9 +152,30 @@ class _RayClusterSession:
                     raise ValueError("local Ray num_cpus must be a positive integer")
                 init_kwargs["num_cpus"] = local_num_cpus
             init_kwargs["include_dashboard"] = False
+            if local_gpu_ids is not None:
+                if any(type(gpu) is not int or gpu < 0 for gpu in local_gpu_ids) or len(
+                    set(local_gpu_ids)
+                ) != len(local_gpu_ids):
+                    raise ValueError("local Ray GPU IDs must be distinct nonnegative integers")
+                if original_cuda_mask is not None:
+                    allowed = {token.strip() for token in original_cuda_mask.split(",")}
+                    if any(str(gpu) not in allowed for gpu in local_gpu_ids):
+                        raise ValueError(
+                            "local Ray GPU IDs must remain within CUDA_VISIBLE_DEVICES"
+                        )
+                init_kwargs["num_gpus"] = len(local_gpu_ids)
         try:
+            # Only Ray's child node inherits this mask. The driver keeps its
+            # existing CUDA ordinal space, including trainer-only devices.
+            if narrow_cuda_mask:
+                os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, local_gpu_ids))
             context = ray.init(**init_kwargs)
         finally:
+            if narrow_cuda_mask:
+                if original_cuda_mask is None:
+                    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+                else:
+                    os.environ["CUDA_VISIBLE_DEVICES"] = original_cuda_mask
             for signum, handler in previous_handlers.items():
                 if handler is not None:
                     signal.signal(signum, handler)
@@ -839,6 +865,9 @@ async def run_online_recipe(
             ray,
             cross_node=resources.cross_node,
             local_num_cpus=placement_owner.required_local_cluster_cpus(),
+            local_gpu_ids=tuple(
+                gpu for gpu in placement_owner.layout.bundle_gpu_ids if gpu is not None
+            ),
         )
         if resources.cross_node:
             cross_node_preflight(ray, resources)

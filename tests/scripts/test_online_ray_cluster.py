@@ -1,6 +1,6 @@
 """Ray cluster ownership tests for the online recipe, against real Ray.
 
-Every test drives ``online._RayClusterSession.connect`` with the real ``ray``
+Ownership tests drive ``online._RayClusterSession.connect`` with the real ``ray``
 module; ownership is observed through ``ray.is_initialized()`` and the
 connected cluster's GCS address instead of recorded fake calls. Error-path
 tests raise before ``ray.init`` and stay in the fast lane; tests that start a
@@ -8,10 +8,12 @@ real cluster are ``slow_test`` (nightly lane). The attach test starts its
 operator cluster in a subprocess and tears it down with the subprocess's own
 ``ray.shutdown()`` — never ``ray stop``, which would kill unrelated clusters
 on a shared host.
+The startup-failure test injects a failing init to check environment restoration.
 """
 
 from __future__ import annotations
 
+import os
 import signal
 import subprocess
 import sys
@@ -22,6 +24,95 @@ from tests.conftest import ray_uv_hook_disabled
 from vrl.scripts.common import online
 
 ray = pytest.importorskip("ray")
+
+
+def test_local_gpu_ids_cannot_expand_inherited_mask(isolated_ray, monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "3,1")
+    with pytest.raises(ValueError, match="within CUDA_VISIBLE_DEVICES"):
+        online._RayClusterSession.connect(isolated_ray, cross_node=False, local_gpu_ids=(0,))
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "3,1"
+    assert not isolated_ray.is_initialized()
+
+
+@pytest.mark.parametrize("ids", [(3, 3), (-1,), (True,), ("3",)])
+def test_local_gpu_ids_reject_invalid_reservations(isolated_ray, ids):
+    original = os.environ.get("CUDA_VISIBLE_DEVICES")
+    with pytest.raises(ValueError, match="distinct nonnegative integers"):
+        online._RayClusterSession.connect(isolated_ray, cross_node=False, local_gpu_ids=ids)
+    assert not isolated_ray.is_initialized()
+    assert os.environ.get("CUDA_VISIBLE_DEVICES") == original
+
+
+@pytest.mark.parametrize("original", [None, "3,1"])
+def test_local_gpu_mask_restored_when_ray_init_fails(isolated_ray, monkeypatch, original):
+    if original is None:
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    else:
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", original)
+
+    def fail_init(**kwargs):
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "3"
+        assert kwargs["num_gpus"] == 1
+        raise RuntimeError("injected startup failure")
+
+    monkeypatch.setattr(isolated_ray, "init", fail_init)
+    with pytest.raises(RuntimeError, match="injected startup failure"):
+        online._RayClusterSession.connect(
+            isolated_ray,
+            cross_node=False,
+            local_gpu_ids=(3,),
+        )
+    assert os.environ.get("CUDA_VISIBLE_DEVICES") == original
+
+
+@pytest.mark.slow_test
+@pytest.mark.gpu
+@pytest.mark.parametrize("devices", [(3,), (3, 1)])
+def test_local_ray_reserves_nonprefix_subset_without_changing_driver_mask(isolated_ray, devices):
+    from types import SimpleNamespace
+
+    import torch
+    from omegaconf import OmegaConf
+
+    from vrl.config.schema import parse_config
+    from vrl.ray.placement import GlobalRayPlacementOwner
+    from vrl.ray.resources import ResolvedDistributedResources
+
+    if os.environ.get("CUDA_VISIBLE_DEVICES") is not None or torch.cuda.device_count() < 4:
+        pytest.skip("requires four unmasked GPUs; probe does not execute CUDA operations")
+    resources = ResolvedDistributedResources.from_root(
+        parse_config(
+            OmegaConf.create(
+                {
+                    "distributed": {
+                        "resources": {
+                            "visible_devices": list(devices),
+                            "rollout": {"devices": list(devices)},
+                        }
+                    },
+                }
+            )
+        )
+    )
+    owner = GlobalRayPlacementOwner(resources, SimpleNamespace(cpus_per_worker=1))
+    before_device = resources.trainer_torch_device
+    before_initialized = torch.cuda.is_initialized()
+    session = online._RayClusterSession.connect(
+        isolated_ray,
+        cross_node=False,
+        local_num_cpus=owner.required_local_cluster_cpus(),
+        local_gpu_ids=devices,
+    )
+    try:
+        assert "CUDA_VISIBLE_DEVICES" not in os.environ
+        assert resources.trainer_torch_device == before_device == "cuda:3"
+        assert isolated_ray.cluster_resources()["GPU"] == len(devices)
+        owner.create()
+        assert owner.rollout_placement.expected_gpu_ids == devices
+        assert torch.cuda.is_initialized() == before_initialized
+    finally:
+        owner.shutdown()
+        session.shutdown()
 
 
 @pytest.fixture()
@@ -116,6 +207,7 @@ def test_cross_node_attaches_only_to_explicit_address(isolated_ray) -> None:
             # Attached clusters own their resources; this local-only capacity
             # must not be forwarded to ray.init(address=<existing>).
             local_num_cpus=5,
+            local_gpu_ids=(3,),
         )
 
         assert isolated_ray.is_initialized()
@@ -146,6 +238,7 @@ def test_preinitialized_connection_remains_owned_by_embedding_caller(
         cross_node=False,
         environ={},
         local_num_cpus=5,
+        local_gpu_ids=(3,),
     )
     session.shutdown()
 

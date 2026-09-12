@@ -161,6 +161,7 @@ class _FakePlacementOwner:
         self._state["placement_worker"] = self.rollout_worker
         self.rollout_placement = object()
         self.reward_placement = None
+        self.layout = SimpleNamespace(bundle_gpu_ids=())
 
     def required_local_cluster_cpus(self) -> int:
         self._state["owner_cpu_plans"] += 1
