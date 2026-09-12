@@ -940,7 +940,7 @@ class _CheckpointSaveTransaction:
         return meta
 
     def _publish(self) -> None:
-        """Atomically rename the fully written staging directory into place.
+        """Publish the fully written staging directory and flush its parent directory.
 
         Re-saving to an existing directory (crash-loop overwriting the same
         ``checkpoint-N``) removes the stale directory first; the replaced window is
