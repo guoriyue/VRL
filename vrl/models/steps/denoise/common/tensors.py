@@ -28,13 +28,6 @@ def expand_tensor_to_batch(
     return expanded.clone(memory_format=torch.contiguous_format) if materialize else expanded
 
 
-def broadcast_singleton_replay_tensor(value: Any, batch_size: int) -> Any:
-    """Broadcast a leading-1 batch dim up to ``batch_size`` (contiguous)."""
-    if not isinstance(value, torch.Tensor) or value.shape[:1] != (1,) or batch_size == 1:
-        return value
-    return expand_tensor_to_batch(value, batch_size, materialize=True)
-
-
 def replay_tensor(
     replay_tensors: dict[str, Any],
     batch_context: dict[str, Any],
@@ -59,7 +52,6 @@ def shared_replay_tensor(
 
 
 __all__ = [
-    "broadcast_singleton_replay_tensor",
     "expand_tensor_to_batch",
     "replay_tensor",
     "shared_replay_tensor",

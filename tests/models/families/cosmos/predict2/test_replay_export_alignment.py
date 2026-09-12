@@ -8,7 +8,7 @@ samples_per_generation_batch > 1 and replay restore KeyError'd on ``init_latents
 by the OOM-split GPU gate, 2026-06-11).
 
 predict2.5 and anima share the same shared-conditioning shape: their export
-already calls the shared ``broadcast_singleton_replay_tensor`` so production is guarded,
+already calls the shared ``expand_tensor_to_batch`` so production is guarded,
 but nothing pinned it. This parametrizes the contract across all three
 Cosmos families so the alignment cannot silently regress in any of them: every
 exported replay tensor must leave the model sample-aligned.
@@ -166,3 +166,18 @@ def test_predict2_restore_tolerates_the_absent_uncond_bundle_when_cfg_is_off() -
     assert restored.uncond_mask is None
     assert restored.uncond_indicator is None
     torch.testing.assert_close(restored.cond_mask, state.cond_mask)
+
+
+def test_cosmos3_export_keeps_temporal_mask_without_batch_expansion():
+    from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
+
+    temporal_mask = torch.tensor([0, 1, 0]).reshape(3, 1, 1)
+    state = SimpleNamespace(
+        latents=torch.zeros(1, 2, 3, 4, 4),
+        cond_input_ids=[1, 2],
+        uncond_input_ids=[0],
+        vision_condition_mask=temporal_mask,
+    )
+    exported = Cosmos3Model.export_replay_tensors(object.__new__(Cosmos3Model), state)
+    assert exported["vision_condition_mask"] is temporal_mask
+    assert exported["vision_condition_mask"].shape == (3, 1, 1)

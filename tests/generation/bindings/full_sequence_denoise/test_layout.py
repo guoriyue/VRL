@@ -360,13 +360,3 @@ def test_batch_broadcast_preserves_view_and_materialized_storage_contracts():
     assert expand_tensor_to_batch(source, 1, materialize=True) is source
     with pytest.raises(ValueError, match="cannot broadcast tensor batch=2"):
         expand_tensor_to_batch(torch.ones(2, 3), 4)
-
-
-def test_singleton_replay_broadcast_keeps_nonbatch_values_unchanged():
-    from vrl.models.steps.denoise.common.tensors import broadcast_singleton_replay_tensor
-
-    for value in (None, [1, 2], torch.tensor(1), torch.ones(2, 3)):
-        assert broadcast_singleton_replay_tensor(value, 4) is value
-    expanded = broadcast_singleton_replay_tensor(torch.ones(1, 3), 4)
-    assert expanded.shape == (4, 3)
-    assert expanded.is_contiguous()

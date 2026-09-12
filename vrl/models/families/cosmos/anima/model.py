@@ -30,7 +30,7 @@ from vrl.models.steps.denoise import (
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
     LatentDecodePlan,
-    broadcast_singleton_replay_tensor,
+    expand_tensor_to_batch,
     shared_replay_tensor,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
@@ -367,9 +367,8 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         return {
             "prompt_embeds": state.prompt_embeds,
             "negative_prompt_embeds": state.negative_prompt_embeds,
-            "padding_mask": broadcast_singleton_replay_tensor(
-                state.padding_mask,
-                state.latents.shape[0],
+            "padding_mask": expand_tensor_to_batch(
+                state.padding_mask, state.latents.shape[0], materialize=True
             ),
         }
 

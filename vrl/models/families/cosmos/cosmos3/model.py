@@ -45,7 +45,6 @@ from vrl.models.steps.denoise import (
     GuidedDiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
-from vrl.models.steps.denoise.common import broadcast_singleton_replay_tensor
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 from vrl.utils.logging import init_logger, kv
 from vrl.utils.validation import require_int
@@ -315,10 +314,7 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             "latents_clean": state.latents.detach(),
             "cond_input_ids": SampleAlignedValues((state.cond_input_ids,)),
             "uncond_input_ids": SampleAlignedValues((state.uncond_input_ids,)),
-            "vision_condition_mask": broadcast_singleton_replay_tensor(
-                state.vision_condition_mask,
-                state.latents.shape[0],
-            ),
+            "vision_condition_mask": state.vision_condition_mask,
         }
 
     @staticmethod
