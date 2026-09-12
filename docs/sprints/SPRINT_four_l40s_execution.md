@@ -505,3 +505,19 @@ verified manifests. Isolated runtime remains `f01c3625`. Output:
 `/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/resume_step2`; log:
 `outputs/perf/wan_i2v_l40s_resume_step2.log`. Separate GPU/process preflight
 precedes launch. Resume success and uninterrupted equivalence remain unproven.
+
+Strict resume completed with torchrun exit 0 and success verdicts from both
+ranks (world_size=2). `TrainingCheckpoint.load` validated the actual final
+checkpoint with next_step=2 and next_epoch=2. All 800 transformer LoRA tensors
+are finite and all differ from the step-1 checkpoint, proving a continued
+parameter update. Full-precision resumed metrics: grad_norm=0.0220371052,
+pre-update max logprob error=0.0000896602869, reward_mean=1.0,
+reward_std=0.0. The lack of reward variation means this update is not learning
+quality evidence; the recipe also has a reference-KL objective.
+
+This establishes strict checkpoint loading and continued two-rank training,
+but not equivalence to uninterrupted training. The next required run is a
+fresh canonical two-update control, comparing its step-1 and step-2 model,
+optimizer, progress and RNG/sampler state against the split run. Use NVMe
+for both outputs and Ray temporary files. No I2V training process or GPU
+allocation remained after this run; the hardware claim is released.

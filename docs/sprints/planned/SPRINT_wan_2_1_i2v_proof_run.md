@@ -2,7 +2,7 @@
 
 ## Current execution state (2026-09-12 UTC)
 
-Status: **PLANNED: real two-rank update passed; resume and quality gates open**.
+Status: **PLANNED: real update and strict resume passed; equivalence/quality open**.
 This update supersedes historical storage/data availability claims below.
 
 The L40S canonical two-rank FSDP proof completed one real update from isolated
@@ -15,6 +15,15 @@ validation and records global_step=1. This establishes the small-geometry
 CPU-motion-reward update chain, not checkpoint/resume equivalence or learning
 quality with the full physics reward stack. The next run must exercise resume
 against an uninterrupted control; use NVMe outputs to avoid root disk pressure.
+
+Strict resume has now continued to step 2 successfully on both ranks. Evidence:
+`/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/resume_step2`; launch log:
+`outputs/perf/wan_i2v_l40s_resume_step2.log`. The final checkpoint passed actual
+loading/validation, all 800 LoRA tensors are finite and changed from step 1,
+gradient norm=0.0220371052, and first resumed replay error=0.0000896602869.
+Reward standard deviation was zero, so this is not evidence of reward learning.
+The uninterrupted two-update comparison and full reward/quality gates remain
+open; strict loading alone does not prove resume equivalence.
 
 The pinned model revision `b184e23a8a16b20f108f727c902e769e873ffc73` is cached
 under `/mnt/nvme/hf/huggingface/hub`. All 46 files (90,104,322,037 bytes)
