@@ -578,3 +578,28 @@ uninterrupted second update reuses the reward model while the resumed process
 loads it anew after trainer RNG restoration. Runtime source remains unchanged
 during the current job. Fix/verify this effect before claiming full RNG
 equivalence; changing only `sampling.seed` does not isolate trainer RNG.
+
+The seeded control completed with exit 0 and both rank verdicts success, but
+both logged gradient norms are zero. Reward standard deviations are 0 and
+0.0329200812; pre-update replay errors are 0.0000657960773 and 0.0000554621220.
+This is not a meaningful parameter-update equivalence control. Do not accept
+unchanged checkpoints as evidence that trained-state resume is correct.
+
+After the job exited, isolated commit `63ff171a` wrapped RAFT's CPU weight
+construction in a CPU-only Torch RNG fork. Nine focused reward tests passed
+(one optional quality test skipped), including successful/failed lazy load
+and cache reuse; the real cached RAFT probe now preserves CPU RNG exactly.
+Touched-file Ruff and formatting passed. GPU/process queries are clear.
+
+Additional source diagnosis: `FullSequenceDenoiseBatchExecutor` passes the
+unchanged request seed to `model.prepare_sampling` for every sample batch,
+while the denoise loop offsets its separate SDE generator by sample_start.
+Thus the two one-sample batches reuse the initial latent seed. The resolved
+SDE window_size is zero, so a randomly selected terminal window is not the
+explanation. Fix and test deterministic per-sample initial-noise semantics
+before selecting the next nondegenerate seeded control. Also audit per-rank
+checkpoint RNG ownership: the runner initializes rank-distinct streams but
+the current primary-only checkpoint publication stores the primary RNG tree.
+
+This hardware claim is released. Seeded resume equivalence and learning
+quality remain open; no zero-gradient result is treated as completion.
