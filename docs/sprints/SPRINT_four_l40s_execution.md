@@ -443,3 +443,18 @@ Codex claims GPUs 2/3 for the canonical two-rank I2V retry from the isolated
 worktree after a separate preflight. Output:
 `outputs/wan_i2v_14b_l40s_proof/epoch1_blas_fix`; log:
 `outputs/perf/wan_i2v_l40s_epoch1_blas_fix.log`. Production validation remains open.
+
+The real two-rank retry from `d9c66e4d` passed GPU parking on both workers:
+physical residual=555,745,280 bytes, baseline=446,693,376 bytes, excess about
+104 MiB, below the unchanged 256 MiB limit. This confirms idle BLAS workspace
+retention was the large parking blocker on the production I2V path.
+
+The run then entered trainer replay and exited 1 before the first optimizer
+update: Diffusers Wan attention's `apply_rotary_emb` multiplies CUDA query/key
+tensors with CPU rotary cosine/sine tensors. Inspect the CPU-built FSDP replay
+model's rotary buffers and their device movement; do not bypass replay parity
+or change the workload to avoid it. Checkpoint/resume remains untested.
+
+The tool session is terminal with exit 1, post-exit training-process/GPU
+allocation queries are empty, and this hardware claim is released while the
+new replay-device failure is diagnosed. No full I2V training pass is claimed.
