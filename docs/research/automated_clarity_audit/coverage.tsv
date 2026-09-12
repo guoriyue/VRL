@@ -235,7 +235,7 @@ vrl/nn/quantization/base.py	f64afa246243e9657d8474f05e4e6f6f8a0fba57	reviewed	qu
 vrl/nn/quantization/formats.py	5d014a39a27b9b0f01abbdd2ba7e432d7ba43b49	reviewed	quantization_ownership.md
 vrl/nn/quantization/fp4.py	bee27a5411da7b0d68c0ea88b5431e3cf6820ece	pending	-
 vrl/nn/quantization/fp4_kernels.py	f02ac260c9c6f0072f369c559b550d29fa1bf165	pending	-
-vrl/nn/quantization/fp8.py	44161c272a48b8540a53e81aa2589fd3af2e9849	pending	-
+vrl/nn/quantization/fp8.py	44161c272a48b8540a53e81aa2589fd3af2e9849	reviewed	fp8_linear.md
 vrl/nn/quantization/targeting.py	0afd6d1b5dfc3c20cde01bb1a361a3733cc737c3	reviewed	quantization_ownership.md
 vrl/ray/__init__.py	d5d7c6db71a92d5977cb71a0787114d599ef5cd4	pending	-
 vrl/ray/actor_group.py	fc280407590de76434ac0f456f40704407c07d06	reviewed	actor_startup.md; launcher_ownership.md narrows standalone recovery limitation

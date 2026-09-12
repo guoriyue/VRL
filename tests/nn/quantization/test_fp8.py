@@ -9,6 +9,7 @@ bounded relative error after depth accumulation.
 
 from __future__ import annotations
 
+import builtins
 import copy
 from types import SimpleNamespace
 
@@ -205,6 +206,37 @@ def test_blockwise_recipe_matches_bf16_via_vllm():
     ref, got = lin(x), fp8(x)
     rel = (got.float() - ref.float()).abs().mean() / ref.float().abs().mean()
     assert rel < 0.06, f"blockwise drift {rel:.4f} too high"
+
+
+@pytest.mark.parametrize(
+    "import_error",
+    [
+        ModuleNotFoundError("No module named 'vllm'", name="vllm"),
+        ModuleNotFoundError("missing kernel module", name="vllm.model_executor"),
+        ModuleNotFoundError("missing kernel dependency", name="kernel_dependency"),
+        ImportError("cannot import name 'w8a8_triton_block_scaled_mm'"),
+    ],
+)
+def test_blockwise_import_distinguishes_absent_vllm_from_broken_install(
+    import_error, monkeypatch
+) -> None:
+    fp8 = Fp8Linear(nn.Linear(128, 128), recipe="blockwise")
+    original_import = builtins.__import__
+
+    def import_kernel(name, *args, **kwargs):
+        if name == "vllm.model_executor.layers.quantization.utils.fp8_utils":
+            raise import_error
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_kernel)
+    if isinstance(import_error, ModuleNotFoundError) and import_error.name == "vllm":
+        with pytest.raises(RuntimeError, match="vLLM is not installed") as caught:
+            fp8(torch.zeros(1, 128))
+        assert caught.value.__cause__ is import_error
+    else:
+        with pytest.raises(type(import_error)) as caught:
+            fp8(torch.zeros(1, 128))
+        assert caught.value is import_error
 
 
 def test_blockwise_falls_back_to_rowwise_on_unaligned_dims():

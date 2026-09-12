@@ -156,7 +156,9 @@ class Fp8Linear(QuantizedLinear):
                 per_token_group_quant_fp8,
                 w8a8_triton_block_scaled_mm,
             )
-        except ImportError as exc:  # pragma: no cover - dep guard
+        except ModuleNotFoundError as exc:
+            if exc.name != "vllm":
+                raise
             raise RuntimeError(
                 "fp8 recipe='blockwise' reuses vLLM's block kernel but vLLM is not "
                 "installed. Install the vllm extra, or use recipe='rowwise' (torch, "
