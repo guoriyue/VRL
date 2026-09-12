@@ -454,8 +454,8 @@ vrl/scripts/train.py	ec8756531f53eac70c72580aa949cac17e30adaa	pending	-
 vrl/trainers/__init__.py	32bb2778cdde4e39d2dd20135ea006c4d53ac9b0	pending	-
 vrl/trainers/activation_checkpointing.py	8b927b6aa92096b39b37e5e52ecc32f50669a2f8	reviewed	checkpoint_followup.md
 vrl/trainers/checkpointing.py	a00e90322a29005173e85fc406e2aa2b26435efa	pending	-
-vrl/trainers/core/__init__.py	41edc4be5f15d75531362935a83f14d9685a9356	pending	-
-vrl/trainers/core/types.py	f95db8586a7a6898ced8bc21cd06a7c55ce10d17	pending	-
+vrl/trainers/core/__init__.py	41edc4be5f15d75531362935a83f14d9685a9356	reviewed	optimizer_state.md
+vrl/trainers/core/types.py	f95db8586a7a6898ced8bc21cd06a7c55ce10d17	reviewed	optimizer_state.md
 vrl/trainers/data/__init__.py	bb7e467bb51468efe1d2863a9cc92db627a067a2	pending	-
 vrl/trainers/data/artifacts.py	4724d9d285df0244ab10b520e0636be8a981b479	pending	-
 vrl/trainers/data/preferences.py	d7d504d0fb47e4d0e3d1e6db907d519e69726ed9	pending	-
@@ -474,7 +474,7 @@ vrl/trainers/online/config.py	a891b64232703e0426a015240d7e9e61b2fd9ee6	pending	-
 vrl/trainers/online/ema.py	71b02686a63a9e19cd8a83a7c6e4c1a53dac14f3	pending	-
 vrl/trainers/online/precision_guard.py	98c961a131a6f12584e23030dec714d8f57feabb	pending	-
 vrl/trainers/online/trainer.py	5b3ebee4e571b20f35f9f3f4223471196488c9ef	pending	-
-vrl/trainers/optimizer.py	d1c4eaa42d68c7849180ad05da784dcf63b68df5	pending	-
+vrl/trainers/optimizer.py	d1c4eaa42d68c7849180ad05da784dcf63b68df5	reviewed	optimizer_state.md
 vrl/trainers/strategy.py	841fbfda73cae20399101fc3169bfa435d8a3ffa	reviewed	training_strategy.md
 vrl/trainers/trace.py	50e7e6645993f4973c8902d823ae8314059f2f7f	pending	-
 vrl/trainers/weight_sync.py	aafc78ba693681ce0c34455f7e88fd34ccc6683a	pending	-

@@ -13,9 +13,9 @@ away and the weights never move at all. Keeping FP32 master copies lets those su
 residuals accumulate while the model itself stays low-precision — so the forward keeps
 its fast bf16 kernels, half-size activations, and bf16 rollout weight sync.
 
-LoRA runs never reach the wrapper: PEFT keeps adapter weights in fp32, so the trainer's
-gate sees no low-precision trainable parameter. It is the full-param path
-(``model.use_lora: false``) that depends on it.
+LoRA runs whose trainable adapter weights remain fp32 do not need the wrapper.
+The trainer selects it from actual trainable parameter dtypes, including for
+low-precision adapters; the full-param path commonly depends on it.
 """
 
 from __future__ import annotations
@@ -280,7 +280,6 @@ class FP32MasterWeightOptimizer(torch.optim.Optimizer):
             ):
                 if source is master:
                     continue
-                assert isinstance(saved, torch.Tensor)
                 master.copy_(saved.to(device=master.device))
         self._copy_masters_to_sources()
         self._gradients_prepared = False

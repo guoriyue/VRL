@@ -33,8 +33,9 @@ class OptimConfig:
     # 8-bit AdamW (bitsandbytes): keeps the optimizer momentum/variance in int8, cutting
     # Adam state from ~8 to ~2 bytes/param. This is what makes FULL-PARAMETER fine-tuning
     # of a 2B+ DiT fit on a single 32GB card (fp32 Adam state alone is ~16GB for 2B). It
-    # quantizes the OPTIMIZER STATE, not the forward, so it does NOT change rollout/replay
-    # logprobs — safe on the RL policy path (unlike fp8 forward). Default off (fp32 AdamW).
+    # quantizes optimizer state rather than forward computation. It can change
+    # weight updates and subsequent logprobs, but does not introduce a separate
+    # rollout/replay forward precision. Default off (standard AdamW).
     optim_8bit: bool = field(default=False)
 
 
