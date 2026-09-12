@@ -109,7 +109,7 @@ class RayGenerationExecutor:
             return await self._execute(request)
 
     @staticmethod
-    def _combine_batch_results(results: list[Any]) -> GenerationBatchResult:
+    def _select_batch_rank_result(results: list[Any]) -> GenerationBatchResult:
         """Retain any rank failure before selecting the primary rank's payload."""
 
         if not all(isinstance(result, GenerationBatchResult) for result in results):
@@ -136,7 +136,7 @@ class RayGenerationExecutor:
         return first
 
     @staticmethod
-    def _combine_pipelined_results(
+    def _select_pipelined_rank_result(
         results: list[Any],
     ) -> GenerationOutput | PipelinedRequestOutOfMemory:
         """Return an OOM reported by any rank; otherwise keep primary output."""
@@ -288,7 +288,7 @@ class RayGenerationExecutor:
                         job_index=job_index,
                         worker_id=engine.engine_id,
                         remote_method=engine.remote(
-                            "execute_batch", combine=self._combine_batch_results
+                            "execute_batch", combine=self._select_batch_rank_result
                         ),
                         payload=assignment.envelope,
                     ),
@@ -504,7 +504,7 @@ class RayGenerationExecutor:
                     job_index=0,
                     worker_id=engine.engine_id,
                     remote_method=engine.remote(
-                        "execute_request_pipelined", combine=self._combine_pipelined_results
+                        "execute_request_pipelined", combine=self._select_pipelined_rank_result
                     ),
                     payload=request,
                     keyword_args={
@@ -711,7 +711,7 @@ class RayGenerationExecutor:
                                 job_index=len(retry_jobs),
                                 worker_id=engine.engine_id,
                                 remote_method=engine.remote(
-                                    "execute_batch", combine=self._combine_batch_results
+                                    "execute_batch", combine=self._select_batch_rank_result
                                 ),
                                 payload=child_envelope,
                             ),
@@ -764,7 +764,7 @@ class RayGenerationExecutor:
                     f"engine {engine.engine_id!r} has no remote execute_batch",
                 )
             methods[engine.engine_id] = engine.remote(
-                "execute_batch", combine=self._combine_batch_results
+                "execute_batch", combine=self._select_batch_rank_result
             )
         return methods
 

@@ -220,7 +220,7 @@ async def test_generation_combiner_retains_nonprimary_error_payload(failure):
     )
     engine = _engine([], {"r0": _Ref(good), "r1": _Ref(bad)})
     result = await engine.remote(
-        "execute_batch", combine=RayGenerationExecutor._combine_batch_results
+        "execute_batch", combine=RayGenerationExecutor._select_batch_rank_result
     )("payload")
     assert result is bad
 
@@ -234,8 +234,8 @@ def test_generation_combiner_prioritizes_terminal_errors_over_retry_and_discard(
     oom = GenerationBatchResult("r", "r0", batch, None, error="CUDA out of memory")
     stale = GenerationBatchResult("r", "r1", batch, None, error="evicted", stale_slot=True)
     terminal = GenerationBatchResult("r", "r2", batch, None, error="decode failed")
-    assert RayGenerationExecutor._combine_batch_results([oom, stale, terminal]) is terminal
-    assert RayGenerationExecutor._combine_batch_results([oom, stale]) is stale
+    assert RayGenerationExecutor._select_batch_rank_result([oom, stale, terminal]) is terminal
+    assert RayGenerationExecutor._select_batch_rank_result([oom, stale]) is stale
 
 
 @pytest.mark.asyncio
@@ -259,7 +259,7 @@ async def test_pipeline_combiner_retains_nonprimary_oom_payload():
     bad = PipelinedRequestOutOfMemory("r", "r1", "CUDA out of memory")
     engine = _engine([], {"r0": _Ref(good), "r1": _Ref(bad)}, method="execute_request_pipelined")
     result = await engine.remote(
-        "execute_request_pipelined", combine=RayGenerationExecutor._combine_pipelined_results
+        "execute_request_pipelined", combine=RayGenerationExecutor._select_pipelined_rank_result
     )("payload")
     assert result is bad
 
@@ -276,7 +276,8 @@ def test_generation_combiner_rejects_rank_identity_disagreement(field):
     values = {"request_id": "other", "batch": GenerationSampleBatch(0, 1, 1), "policy_version": 2}
     other = replace(good, worker_id="r1", **{field: values[field]})
     with pytest.raises(RuntimeError, match="engine ranks returned different"):
-        RayGenerationExecutor._combine_batch_results([good, other])
+        RayGenerationExecutor._select_batch_rank_result([good, other])
     assert (
-        RayGenerationExecutor._combine_batch_results([good, replace(good, worker_id="r1")]) is good
+        RayGenerationExecutor._select_batch_rank_result([good, replace(good, worker_id="r1")])
+        is good
     )

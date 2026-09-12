@@ -179,17 +179,19 @@ class RolloutStats:
     ) -> None:
         """Accumulate one reward call's timings (primitives, no reward import)."""
 
-        def timing_value(name: str, value: float | None) -> float | None:
-            if value is None:
-                return None
-            normalized = float(value)
-            if not math.isfinite(normalized) or normalized < 0:
+        normalized_standard: dict[str, float | None] = {}
+        for name, value in (
+            ("latency_ms", latency_ms),
+            ("queue_wait_ms", queue_wait_ms),
+            ("inference_ms", inference_ms),
+        ):
+            normalized = None if value is None else float(value)
+            if normalized is not None and (not math.isfinite(normalized) or normalized < 0):
                 raise ValueError(f"reward timing {name!r} must be finite and non-negative")
-            return normalized
-
-        latency = timing_value("latency_ms", latency_ms)
-        queue_wait = timing_value("queue_wait_ms", queue_wait_ms)
-        inference = timing_value("inference_ms", inference_ms)
+            normalized_standard[name] = normalized
+        latency = normalized_standard["latency_ms"]
+        queue_wait = normalized_standard["queue_wait_ms"]
+        inference = normalized_standard["inference_ms"]
         normalized_extra: dict[str, float] = {}
         for name, milliseconds in dict(extra_ms or {}).items():
             if not name or not name.endswith("_ms"):
@@ -204,8 +206,10 @@ class RolloutStats:
                 "latency_p95_ms",
             }:
                 raise ValueError(f"extra reward timing {name!r} collides with a standard timing")
-            value = timing_value(name, milliseconds)
-            assert value is not None
+            assert milliseconds is not None
+            value = float(milliseconds)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"reward timing {name!r} must be finite and non-negative")
             normalized_extra[name] = value
 
         if any(value is not None for value in (latency, queue_wait, inference)) or (

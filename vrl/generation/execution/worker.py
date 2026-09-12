@@ -68,6 +68,8 @@ class GenerationWorkerCore:
         # None for single-rank engines. A spec makes this rank join its
         # engine's process group around the model lifetime (load -> release).
         self.rank_group = rank_group
+        # rank_group identifies this process's membership; this flag only owns
+        # cleanup of the communicator initialized here, not the Ray actor process.
         self._owns_rank_process_group = False
         self.launch_contract = launch_contract
         self.gatherer = gatherer
