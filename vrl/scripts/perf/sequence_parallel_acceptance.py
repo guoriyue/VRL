@@ -112,6 +112,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="fraction of elements allowed beyond --atol",
     )
+    compare.add_argument(
+        "--min-psnr-db",
+        type=float,
+        default=0.0,
+        help="lowest per-sample PSNR (dB, [0, 1] scale) accepted; set it from the "
+        "single-rank self-repeat floor measured on the same host",
+    )
     return parser
 
 
@@ -276,8 +283,18 @@ def _compare(args: argparse.Namespace) -> dict[str, Any]:
     b = _as_unit_scale(candidate["output"])
     if a.shape != b.shape:
         raise ValueError(f"output shapes differ: {tuple(a.shape)} != {tuple(b.shape)}")
+    for name, tensor in (("reference", a), ("candidate", b)):
+        if tensor.numel() == 0 or not torch.isfinite(tensor).all():
+            raise ValueError(f"{name} output must be nonempty and finite")
     diff = (a - b).abs()
     mismatch_fraction = float((diff > args.atol).float().mean())
+    # Per-sample PSNR on the [0, 1] scale: the number to read against the
+    # single-rank self-repeat floor (bf16 kernel noise amplified over the
+    # denoise schedule), which an absolute pixel tolerance cannot express.
+    per_sample_mse = ((a - b) ** 2).flatten(1).mean(dim=1)
+    psnr_db = [
+        float("inf") if mse == 0 else float(10 * torch.log10(1 / mse)) for mse in per_sample_mse
+    ]
     result = {
         "reference": str(args.reference),
         "candidate": str(args.candidate),
@@ -288,7 +305,9 @@ def _compare(args: argparse.Namespace) -> dict[str, Any]:
         "max_abs_diff": float(diff.max()),
         "mean_abs_diff": float(diff.mean()),
         "mismatch_fraction": mismatch_fraction,
-        "passed": mismatch_fraction <= args.max_mismatch_fraction,
+        "psnr_db": psnr_db,
+        "passed": mismatch_fraction <= args.max_mismatch_fraction
+        and min(psnr_db) >= args.min_psnr_db,
     }
     print(json.dumps(result, indent=2))
     return result
