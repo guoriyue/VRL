@@ -1243,3 +1243,24 @@ shared .venv, shared runtime and the dirty VideoPhy submodule are unchanged.
 All owned probe/test sessions are terminal. The next required physics reward
 evidence is actual scoring under supported dependencies, followed by resource
 handoff and the unchanged full quality objective.
+
+### Supported-version multi-GPU candidate CPU regression (Codex)
+
+Candidate `1ce7336b` now passes the original integration regression using the
+Transformers 5.13 dependency overlay rather than shared Transformers 4.57.6:
+661 passed, 16 skipped in 102.08 s. Coverage is tests/config and the twelve
+original changed test modules spanning generation seeds/parking, Wan loading,
+resource placement, motion reward RNG, online/Ray lifecycle, checkpoint RNG,
+checkpointing, FSDP master state and CUDA memory helpers. Exact invocation
+uses the same test set as the earlier 661-pass run, with PYTHONPATH set to
+the overlay then candidate, CUDA_VISIBLE_DEVICES empty, HF_HUB_OFFLINE=1 and
+the NVMe HF_HOME. Log: `outputs/perf/mgpu_integration_transformers5.log`.
+
+Together with the separate 407-pass rewards suite and actual supported-version
+VideoCon weight load, this strengthens candidate CPU compatibility evidence.
+It does not run the skipped CUDA/distributed gates, synchronize every project
+dependency, establish VideoCon scoring, or establish hardware resume under
+the new dependency version. Retain the old environment for the pending
+like-for-like I2V trained-moment comparison; qualify the supported environment
+with real hardware separately. The regression session exited 0; no shared
+runtime, shared environment or GPU job was modified.
