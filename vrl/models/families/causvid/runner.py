@@ -234,7 +234,7 @@ class CausVidCausalRunner:
         initial_noise: torch.Tensor,
         *,
         prompt_embeds: torch.Tensor,
-        generators: tuple[torch.Generator, ...] | None = None,
+        generators: tuple[torch.Generator, ...],
     ) -> CausVidRunResult:
         """Generate all temporal chunks and record the two policy actions each."""
 
@@ -353,7 +353,7 @@ class CausVidCausalRunner:
         self,
         initial_noise: torch.Tensor,
         prompt_embeds: torch.Tensor,
-        generators: tuple[torch.Generator, ...] | None,
+        generators: tuple[torch.Generator, ...],
     ) -> None:
         if not isinstance(initial_noise, torch.Tensor) or initial_noise.ndim != 5:
             raise ValueError("initial_noise must be a [B,F,C,H,W] tensor")
@@ -365,17 +365,15 @@ class CausVidCausalRunner:
             raise ValueError("prompt_embeds must be a sample-aligned tensor")
         if int(prompt_embeds.shape[0]) != int(initial_noise.shape[0]):
             raise ValueError("prompt_embeds batch must match initial_noise batch")
-        if generators is not None and len(generators) != int(initial_noise.shape[0]):
+        if len(generators) != int(initial_noise.shape[0]):
             raise ValueError("generators must contain one torch.Generator per sample")
 
     @staticmethod
     def _transition_noise(
         pred_x0: torch.Tensor,
         *,
-        generators: tuple[torch.Generator, ...] | None,
-    ) -> torch.Tensor | None:
-        if generators is None:
-            return None
+        generators: tuple[torch.Generator, ...],
+    ) -> torch.Tensor:
         rows = [
             torch.randn(
                 pred_x0[index].shape,
