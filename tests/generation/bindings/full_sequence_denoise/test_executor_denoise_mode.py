@@ -4,11 +4,57 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionBatchExecutorBase
 from vrl.generation.protocols import BatchSizeProbeExecutor
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
+from vrl.generation.types import DenoiseRequest
+
+
+@pytest.mark.parametrize("seed", [None, 7])
+def test_initial_noise_uses_batch_offset_without_mutating_request(seed: int | None) -> None:
+    request = DenoiseRequest(
+        width=128, height=128, frame_count=9, num_steps=1, guidance_scale=1.0, seed=seed
+    )
+
+    class PreparingModel:
+        def prepare_sampling(self, batch_request, encoded, *, marker):
+            assert encoded == {"prompt": "test"}
+            assert marker == "forwarded"
+            self.seed = batch_request.seed
+            generator = torch.Generator().manual_seed(self.seed or 0)
+            return _State(
+                torch.randn(1, 8, generator=generator), torch.tensor([1.0]), _Scheduler()
+            )
+
+    model = PreparingModel()
+    executor = _Executor(model)
+    states = []
+    for start in (0, 1, 1):
+        config = DenoiseLoopConfig(
+            sample_start=start,
+            sample_count=1,
+            seed=seed,
+            sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo", return_kl=False),
+            sde_window=None,
+            denoise_mode="native",
+        )
+        states.append(
+            executor.prepare_denoise_state(
+                request=request,
+                encoded={"prompt": "test"},
+                config=config,
+                prepare_kwargs={"marker": "forwarded"},
+            )
+        )
+        assert model.seed == (None if seed is None else seed + start)
+        assert request.seed == seed
+        assert config.seed == seed
+    assert torch.equal(states[1].latents, states[2].latents)
+    if seed is not None:
+        assert not torch.equal(states[0].latents, states[1].latents)
 
 
 def test_diffusion_executor_base_satisfies_probe_protocol() -> None:
