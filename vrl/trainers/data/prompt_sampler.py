@@ -74,7 +74,7 @@ class PromptBatchSampler:
             )
 
     def sample(self, *, epoch: int = 0) -> list[int]:
-        """Consume the generator and return this rank's prompt indices."""
+        """Return this rank's indices, advancing the generator for random draws."""
 
         return self._sample_with(self.generator, epoch=epoch)
 
