@@ -1,4 +1,4 @@
-"""Execution boundary for temporal-batch autoregressive denoise families."""
+"""Execution boundary for chunk-autoregressive denoise families."""
 
 from __future__ import annotations
 
@@ -101,7 +101,7 @@ class ChunkAutoregressiveDenoiseResult:
 class ChunkAutoregressiveDenoiseExecutorBase(BatchExecutorBase):
     """Shared request transport around family-owned batch generation.
 
-    Cache allocation, per-temporal-batch scheduling, denoise math, and decode
+    Cache allocation, temporal chunk scheduling, denoise math, and decode
     stay in the family model's ``generate_chunk_autoregressive`` method.  This
     base only owns prompt/sample batching and the typed gather boundary.
     """
