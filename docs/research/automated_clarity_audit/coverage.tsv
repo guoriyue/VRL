@@ -71,10 +71,10 @@ vrl/generation/ray/session.py	bffaa8f3a6272f89859ceb4c1fb060d1545a6add	pending	-
 vrl/generation/ray/weight_sync.py	5f026ce350f3e20131e279945cfb5111d85f9b51	pending	-
 vrl/generation/ray/worker.py	7761931de4851bf7bf4718f80b24120b19fc5442	pending	-
 vrl/generation/steps/__init__.py	9e4d5502cfd16a059bdd49c5f18aad77ff6338fb	pending	-
-vrl/generation/steps/denoise/__init__.py	9027ebd20aa65b0298dda296346eba354b04cfb8	pending	-
-vrl/generation/steps/denoise/config.py	b1330007576e5f456f345b6b6b3aea9aff02524a	pending	-
-vrl/generation/steps/denoise/loop.py	0e4bf141dccbcdd427e2dcabc8d9e7496bd0f381	pending	-
-vrl/generation/steps/denoise/teacache.py	39f21a82a76cdd01032012cd110b8110262969f5	pending	-
+vrl/generation/steps/denoise/__init__.py	9027ebd20aa65b0298dda296346eba354b04cfb8	reviewed	denoise_steps.md
+vrl/generation/steps/denoise/config.py	b1330007576e5f456f345b6b6b3aea9aff02524a	reviewed	denoise_steps.md
+vrl/generation/steps/denoise/loop.py	0e4bf141dccbcdd427e2dcabc8d9e7496bd0f381	reviewed	denoise_steps.md
+vrl/generation/steps/denoise/teacache.py	39f21a82a76cdd01032012cd110b8110262969f5	reviewed	denoise_steps.md
 vrl/generation/steps/token/__init__.py	014f9cad115298898d572edc1bc936eb573d1a26	pending	-
 vrl/generation/steps/token/protocol.py	ff8bb60fcd9542b0c01f8f6d4d1397d7334861d9	pending	-
 vrl/generation/types.py	30b5e01b2dc640f2ec952a80966c2910bffc0e5c	pending	-

@@ -21,11 +21,12 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
-
-import torch
+from typing import TYPE_CHECKING, Any
 
 from vrl.utils.validation import require_int
+
+if TYPE_CHECKING:
+    import torch
 
 
 def relative_l1_change(cur: torch.Tensor, prev: torch.Tensor) -> float:
