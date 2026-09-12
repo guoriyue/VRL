@@ -95,7 +95,7 @@ class HttpRewardScorer:
             expected_model_version = (
                 "" if expected_model_version is None else expected_model_version
             )
-        timeout_s = require_timeout(timeout_s, name="reward service timeout_s")
+            timeout_s = require_timeout(timeout_s, name="reward service timeout_s")
 
         self._base_url = service_url
         self._timeout = aiohttp.ClientTimeout(total=timeout_s)

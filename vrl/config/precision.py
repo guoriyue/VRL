@@ -8,9 +8,9 @@ conservatively replaces eligible MLP Linears only. Unswapped operations keep
 the role dtype.
 
 Rollout dtype and outer-autocast behavior default to the training role.
-Prompt-encoder dtype defaults to the resolved rollout dtype; the canonical base
-preset explicitly selects fp16 to preserve its established memory policy. VAE
-precision is family-owned and is not represented by this prompt-encoder axis.
+Prompt-encoder dtype defaults to the resolved rollout dtype unless explicitly
+overridden. VAE precision is family-owned and is not represented by this
+prompt-encoder axis.
 Diffusion math defaults to fp32. FP32 matmul precision is an explicit run-wide
 policy because PyTorch process defaults are not a stable trainer/worker contract.
 

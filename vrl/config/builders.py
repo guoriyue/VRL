@@ -153,7 +153,7 @@ def build_configs(cfg: DictConfig) -> BuiltConfigs:
     if root.algorithm is None:
         raise ValueError("config missing `algorithm` section")
     algorithm = root.algorithm.hyperparameters
-    is_offline_dpo = root.algorithm is not None and root.algorithm.kind == "diffusion_dpo"
+    is_offline_dpo = root.algorithm.kind == "diffusion_dpo"
     trainer = None if is_offline_dpo else TrainerConfig.from_root(root, precision=precision)
     reward = RewardRuntimeConfig.from_cfg(root.reward) if root.reward is not None else None
     if not is_offline_dpo:
