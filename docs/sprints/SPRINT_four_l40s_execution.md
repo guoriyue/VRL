@@ -276,3 +276,20 @@ preflight result before any dependent launch and wait for the queue release.
   `0..k-1`. The torchrun path avoids it by remapping per rank explicitly.
   Not fixed here; it blocks running two single-GPU experiments side by side
   on GPUs other than 0.
+
+### Masked GPU placement fix staged separately (Codex, 2026-09-12 00:44 UTC)
+
+Commit `2ca99be6` in isolated worktree `/home/ubuntu/VRL-gpu-placement`
+preserves integer `CUDA_VISIBLE_DEVICES` IDs and ordering during automatic
+resource resolution and translates the trainer device back to its local Torch
+ordinal. It is deliberately not applied to the shared runtime while the
+compiled-control job is running. The focused resource/placement suite passed
+85 tests (3 deselected); touched-file Ruff and formatting checks passed.
+
+A private, metadata-only Ray probe with `CUDA_VISIBLE_DEVICES=3` succeeded:
+`visible=[3]`, `trainer=cuda:0`, `probed_gpus={0: 3}`,
+`expected_ray_ids=[3]`, rollout bundle `[0]`. The driver asserted CUDA remained
+uninitialized, and the probe exited 0 after owner and cluster shutdown. No
+model was loaded. This validates the masked-ID placement path, not a complete
+training run. The separate explicit-subset case with all GPUs visible remains
+open; the fix must not be treated as closing that scheduler constraint.
