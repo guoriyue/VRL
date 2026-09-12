@@ -34,6 +34,55 @@ class _EchoWorker:
         return self.worker_id, payload + int(self.config["offset"])
 
 
+def test_failed_startup_actor_is_reclaimed_by_placement_removal(local_ray, monkeypatch) -> None:
+    from ray.util.placement_group import placement_group, remove_placement_group
+
+    class FailingStartupWorker(_EchoWorker):
+        def startup(self):
+            raise RuntimeError("startup failed")
+
+    ray = local_ray
+    pg = placement_group([{"CPU": 1}])
+    retained = []
+
+    def fail_kill(_ray, actors):
+        retained.extend(actors)
+        return [(actor, RuntimeError("kill unavailable")) for actor in actors]
+
+    monkeypatch.setattr("vrl.ray.actor_group.kill_actors", fail_kill)
+    try:
+        ray.get(pg.ready(), timeout=10)
+        with pytest.raises(RuntimeError, match="startup failed"):
+            RayActorGroup.launch(
+                worker_cls=FailingStartupWorker,
+                worker_configs=[{"offset": 1}],
+                worker_ids=["candidate"],
+                num_cpus=0.1,
+                num_gpus=0,
+                rpc_timeout_s=10,
+                operation_prefix="test.startup",
+                placement_group=pg,
+                bundle_indices=[0],
+                startup_method="startup",
+            )
+        assert len(retained) == 1
+        actor = retained[0]
+        assert ray.get(actor.echo.remote(1), timeout=5) == ("candidate", 2)
+        remove_placement_group(pg)
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                ray.get(actor.echo.remote(1), timeout=1)
+            except ray.exceptions.ActorDiedError:
+                break
+            assert time.monotonic() < deadline, "placement removal left its actor alive"
+            time.sleep(0.01)
+    finally:
+        for actor in retained:
+            ray.kill(actor, no_restart=True)
+        remove_placement_group(pg)
+
+
 def test_ray_actor_group_launch_lifecycle(local_ray) -> None:
     """Launch really places two actors, hands back their own metadata, routes
     per-worker config into them, and shutdown drops every handle."""

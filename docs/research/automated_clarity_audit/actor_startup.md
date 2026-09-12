@@ -11,7 +11,7 @@ Correct actor_group's module description: normal shutdown retains failed actor
 handles, but startup failure only attempts kill and annotates the original
 exception when kill fails. The old description promised retention unconditionally.
 
-Open, not fixed: if launch creates actors, startup/metadata then fails, and kill
+Initial finding: if launch creates actors, startup/metadata then fails, and kill
 also fails, no structured cleanup owner is returned. In generation launcher,
 `actor_group` is still None when RayActorGroup.launch raises. The launcher cannot
 retry those failed handles; it only adds another note when a group had already
@@ -19,12 +19,14 @@ been returned. The acceptance probe likewise assigns its group only on return.
 Traceback locals may incidentally retain references, but that is not a cleanup
 API or a reliable ownership transfer.
 
-Next action is the complete launcher/activation ownership review, including a
-combined startup-plus-kill-failure regression. Choose a path that carries failed
-resources to an owner that actually retries them. Do not merely attach a new
-exception attribute with no consumer, swallow startup failure, assume a Ray
-cluster shutdown is authorized, or add unbounded kill retries. This remains an
-actionable unresolved audit finding, not a completed cleanup.
+Follow-up in `launcher_ownership.md` narrows this finding: online launch already
+has the outer placement owner, and a real CPU actor test verifies group removal
+reclaims an actor even when direct kill failed. The owned-cluster acceptance
+probe also shuts its local Ray session down in finally. Standalone actor-group
+launch with neither outer owner still lacks a structured handle-return path on
+double failure; defer that public-API change explicitly. Do not add an unused
+exception attribute, assume shared-cluster shutdown is authorized, or add
+unbounded kill retries. The original production-wide ownership claim was too broad.
 
 ## Retain and why
 

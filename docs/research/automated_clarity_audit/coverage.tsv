@@ -64,7 +64,7 @@ vrl/generation/ray/engine.py	1b8292a72602846a13f17ee8d2721cf3ff555d3f	reviewed	e
 vrl/generation/ray/executor.py	5e6ab1dedb66ea4c6d3ebcd3a367bc0cb5bd7ff4	pending	-
 vrl/generation/ray/health_monitor.py	74e2dbcbbf429de3a4e44675aaff09b54aa98c21	pending	-
 vrl/generation/ray/launch_inputs.py	68452738b8dc5db96f41619cde73f852e9e9c85c	reviewed	launch_config.md
-vrl/generation/ray/launcher.py	23916b0a9815b01872e236020a366db4d21bf4d5	pending	-
+vrl/generation/ray/launcher.py	23916b0a9815b01872e236020a366db4d21bf4d5	reviewed	launcher_ownership.md
 vrl/generation/ray/pipeline_protocol.py	3968cb77ec1115b8f39c68f260337af39c0dae21	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
 vrl/generation/ray/runtime.py	9efba6e0fdc7dc65a1344cbc50baf3e3e05e0e47	pending	-
 vrl/generation/ray/session.py	bffaa8f3a6272f89859ceb4c1fb060d1545a6add	reviewed	session_cleanup.md
@@ -238,7 +238,7 @@ vrl/nn/quantization/fp4_kernels.py	f02ac260c9c6f0072f369c559b550d29fa1bf165	pend
 vrl/nn/quantization/fp8.py	44161c272a48b8540a53e81aa2589fd3af2e9849	pending	-
 vrl/nn/quantization/targeting.py	0afd6d1b5dfc3c20cde01bb1a361a3733cc737c3	pending	-
 vrl/ray/__init__.py	d5d7c6db71a92d5977cb71a0787114d599ef5cd4	pending	-
-vrl/ray/actor_group.py	fc280407590de76434ac0f456f40704407c07d06	reviewed	actor_startup.md; startup cleanup ownership unresolved
+vrl/ray/actor_group.py	fc280407590de76434ac0f456f40704407c07d06	reviewed	actor_startup.md; launcher_ownership.md narrows standalone recovery limitation
 vrl/ray/actor_pool.py	607ed88be8b9e6e87820fbfb80c2d249ba8d8e20	pending	-
 vrl/ray/dependencies.py	12a4d335d1c646d6b9834566657782a0554c394d	reviewed	session_cleanup.md
 vrl/ray/operation_deadline.py	c38b70d9e7342bbe2af6e2cf03f58bbda8379447	pending	-
