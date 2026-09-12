@@ -212,7 +212,7 @@ class BatchResultWithIdentity(Protocol):
     batch: GenerationSampleBatch
 
 
-def ordered_covering_batches[TBatch: BatchResultWithIdentity](
+def sort_and_validate_batch_coverage[TBatch: BatchResultWithIdentity](
     request: GenerationRequest,
     sample_rows: Sequence[GenerationSampleRow],
     batches: Sequence[TBatch],
@@ -372,6 +372,6 @@ __all__ = [
     "execute_generation_batches",
     "gather_batch_context",
     "gather_replay_tensors",
-    "ordered_covering_batches",
     "require_sample_rows",
+    "sort_and_validate_batch_coverage",
 ]

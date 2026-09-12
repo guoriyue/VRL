@@ -16,7 +16,7 @@ from vrl.generation.execution.sample_batches import (
     concatenate_sample_values,
     gather_batch_context,
     gather_replay_tensors,
-    ordered_covering_batches,
+    sort_and_validate_batch_coverage,
 )
 from vrl.generation.protocols import BatchPayload
 from vrl.generation.types import (
@@ -39,7 +39,7 @@ class DiffusionBatchGatherer:
         sample_rows: Sequence[GenerationSampleRow],
         batches: Sequence[BatchPayload],
     ) -> GenerationOutput:
-        ordered_batches = ordered_covering_batches(
+        ordered_batches = sort_and_validate_batch_coverage(
             request,
             sample_rows,
             cast("Sequence[DiffusionBatchResult]", batches),

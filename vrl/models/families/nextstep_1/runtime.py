@@ -17,7 +17,7 @@ from vrl.generation.composition.token_autoregressive.token_loop import TokenAuto
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
     gather_batch_context,
-    ordered_covering_batches,
+    sort_and_validate_batch_coverage,
 )
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.generation.types import (
@@ -242,7 +242,7 @@ class NextStep1GenerationBatchGatherer:
             "uncond_input_ids",
             "uncond_attention_mask",
         )
-        ordered_ar_chunks = ordered_covering_batches(
+        ordered_ar_chunks = sort_and_validate_batch_coverage(
             request,
             sample_rows,
             batches,

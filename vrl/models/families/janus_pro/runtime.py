@@ -21,8 +21,8 @@ from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
     concatenate_sample_values,
     gather_batch_context,
-    ordered_covering_batches,
     require_sample_rows,
+    sort_and_validate_batch_coverage,
 )
 from vrl.generation.types import (
     GenerationOutput,
@@ -434,7 +434,7 @@ class JanusProR1GenerationBatchGatherer:
         batches: Sequence[JanusProR1BatchPayload],
     ) -> GenerationOutput:
         fields = ("initial_image", "final_image", "selfcheck")
-        ordered = ordered_covering_batches(
+        ordered = sort_and_validate_batch_coverage(
             request,
             sample_rows,
             batches,

@@ -9,7 +9,7 @@ from vrl.generation.execution.sample_batches import (
     concatenate_sample_values,
     gather_batch_context,
     gather_replay_tensors,
-    ordered_covering_batches,
+    sort_and_validate_batch_coverage,
 )
 from vrl.generation.protocols import BatchPayload
 from vrl.generation.types import (
@@ -101,7 +101,7 @@ class ChunkAutoregressiveDenoiseGatherer:
         sample_rows: Sequence[GenerationSampleRow],
         batches: Sequence[ChunkAutoregressiveDenoiseResult],
     ) -> list[ChunkAutoregressiveDenoiseResult]:
-        ordered = ordered_covering_batches(
+        ordered = sort_and_validate_batch_coverage(
             request,
             sample_rows,
             batches,
