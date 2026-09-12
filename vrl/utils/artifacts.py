@@ -33,6 +33,41 @@ class ArtifactManifestError(ValueError):
     """Raised when an artifact path violates storage policy."""
 
 
+class PathOutsideRootsError(ValueError):
+    """A resolved path escaped its configured storage roots."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        super().__init__(f"path is outside configured roots: {path}")
+
+
+class RootedPaths:
+    """Resolve file references within one or more configured storage roots.
+
+    Relative references require a single root. Absolute references must also
+    stay within a root after resolving symlinks. Input syntax policies and
+    protocol-specific errors remain with the caller; file writers are separate.
+    """
+
+    def __init__(self, root: str | Path, *additional_roots: str | Path) -> None:
+        self.roots = tuple(
+            Path(value).expanduser().resolve() for value in (root, *additional_roots)
+        )
+
+    def resolve(self, raw_path: str | Path, *, strict: bool = False) -> Path:
+        """Resolve a reference and reject escapes; strict requires an existing path."""
+
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            if len(self.roots) != 1:
+                raise ValueError("relative paths require exactly one storage root")
+            path = self.roots[0] / path
+        resolved = path.resolve(strict=strict)
+        if not any(resolved.is_relative_to(root) for root in self.roots):
+            raise PathOutsideRootsError(resolved)
+        return resolved
+
+
 def repo_root() -> Path:
     """Return the repository root for local ignored artifact defaults."""
 
@@ -69,10 +104,10 @@ def resolve_artifact_path(
         return path.resolve()
     if any(part == ".." for part in path.parts):
         raise ArtifactManifestError(f"artifact paths must stay under data root: {text}")
-    resolved_path = (root / path).resolve()
-    if not resolved_path.is_relative_to(root):
-        raise ArtifactManifestError(f"artifact paths must stay under data root: {text}")
-    return resolved_path
+    try:
+        return RootedPaths(root).resolve(path)
+    except PathOutsideRootsError as error:
+        raise ArtifactManifestError(f"artifact paths must stay under data root: {text}") from error
 
 
 def coerce_data_root(value: str | Path | None) -> Path:
@@ -85,6 +120,8 @@ __all__ = [
     "DATA_ROOT_ENV",
     "IMAGE_SUFFIXES",
     "ArtifactManifestError",
+    "PathOutsideRootsError",
+    "RootedPaths",
     "coerce_data_root",
     "default_data_root",
     "repo_root",

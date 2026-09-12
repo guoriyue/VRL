@@ -14,7 +14,7 @@ from PIL import Image
 
 from vrl.models.checkpoint_identity import MODEL_IDENTITY_SCHEMA
 from vrl.scripts.eval.denoise_generation import GeneratorRuntimeIdentity, ImageSampling
-from vrl.utils.artifacts import sha256_file
+from vrl.utils.artifacts import PathOutsideRootsError, RootedPaths, sha256_file
 
 ANIMA_GENERATION_SCHEMA = "vrl.anima-generation/v1"
 ANIMA_ANCHOR_MANIFEST_SCHEMA = "vrl.anima-anchor-manifest/v1"
@@ -520,13 +520,12 @@ def _resolve_archive_file(
     candidate = Path(raw_path).expanduser()
     if relative_only and candidate.is_absolute():
         raise ValueError(f"{source_path}:{line_number} {field_name} must be a relative path")
-    if not candidate.is_absolute():
-        candidate = directory / candidate
-    candidate = candidate.resolve()
-    if not candidate.is_relative_to(directory):
+    try:
+        candidate = RootedPaths(directory).resolve(candidate)
+    except PathOutsideRootsError as error:
         raise ValueError(
-            f"{source_path}:{line_number} {field_name} escapes generation directory: {candidate}",
-        )
+            f"{source_path}:{line_number} {field_name} escapes generation directory: {error.path}",
+        ) from error
     if not candidate.is_file():
         raise FileNotFoundError(f"generated image does not exist: {candidate}")
     return candidate

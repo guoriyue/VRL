@@ -46,7 +46,7 @@ from vrl.rewards.service.wire import (
     score_response_to_wire,
     status_to_wire,
 )
-from vrl.utils.artifacts import sha256_file
+from vrl.utils.artifacts import PathOutsideRootsError, RootedPaths, sha256_file
 from vrl.utils.logging import init_logger
 
 if TYPE_CHECKING:
@@ -207,7 +207,7 @@ class RewardService:
 
         self._host = host
         self._port = int(port)
-        self._artifact_roots = tuple(roots)
+        self._artifact_paths = RootedPaths(roots[0], *roots[1:])
         self._info = RewardServiceInfo(
             model_name=str(model_name).strip() or type(runtime).__name__,
             model_version=str(model_version).strip(),
@@ -591,16 +591,20 @@ class RewardService:
                     request_id=request.request_id,
                 )
             try:
-                resolved = path.resolve(strict=True)
+                resolved = self._artifact_paths.resolve(path, strict=True)
+            except PathOutsideRootsError as error:
+                raise RewardServiceProtocolError(
+                    RewardServiceErrorCode.PATH_NOT_ALLOWED,
+                    f"reward artifact path is outside configured roots: {artifact.path!r}",
+                    request_id=request.request_id,
+                ) from error
             except OSError as error:
                 raise RewardServiceProtocolError(
                     RewardServiceErrorCode.PATH_NOT_ALLOWED,
                     f"reward artifact path does not exist: {artifact.path!r}",
                     request_id=request.request_id,
                 ) from error
-            if not resolved.is_file() or not any(
-                resolved.is_relative_to(root) for root in self._artifact_roots
-            ):
+            if not resolved.is_file():
                 raise RewardServiceProtocolError(
                     RewardServiceErrorCode.PATH_NOT_ALLOWED,
                     f"reward artifact path is outside configured roots: {artifact.path!r}",
