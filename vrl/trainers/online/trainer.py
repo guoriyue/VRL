@@ -1188,11 +1188,11 @@ class OnlineTrainer:
             # policy action.
             return self._sde_window_indices(batch)
 
-        from vrl.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryReader
 
-        resolver = TrajectoryResolver.from_batch(batch)
-        primary_segment = resolver.primary_trainable_segment_name()
-        action = resolver.role_tensor(primary_segment, "action")
+        reader = TrajectoryReader.from_batch(batch)
+        primary_segment = reader.primary_trainable_segment_name()
+        action = reader.role_tensor(primary_segment, "action")
         action_axes = tuple(axis for axis in action.axes if axis != "sample")
         if len(action_axes) != 1:
             raise ValueError(
@@ -1201,7 +1201,7 @@ class OnlineTrainer:
                 f"{action.axes!r}",
             )
         action_axis_name = action_axes[0]
-        action_axis = resolver.trajectory.axes[action_axis_name]
+        action_axis = reader.trajectory.axes[action_axis_name]
         num_timesteps = action_axis.length
         if num_timesteps is None:
             action_shape = getattr(action.value, "shape", None)
@@ -1231,9 +1231,9 @@ class OnlineTrainer:
         requests and iso-temporal grouping is already broken upstream.
         """
 
-        from vrl.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryReader
 
-        replay = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")
+        replay = TrajectoryReader.from_batch(batch).replay_tensor_dict("denoise")
         window = replay.get("sde_window")
         if window is None:
             raise ValueError(
@@ -2052,7 +2052,7 @@ class OnlineTrainer:
 
         from vrl.math.denoise.flow_matching import diffusion_pretraining_pair
         from vrl.trainers.data.sft_latents import CleanTargetRef
-        from vrl.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryReader
 
         assert self._sft_latents is not None  # ctor validated
         reward_metadata = group_batch.context.get("reward_metadata", {})
@@ -2070,9 +2070,9 @@ class OnlineTrainer:
                 "no scheduler",
             )
 
-        resolver = TrajectoryResolver.from_batch(group_batch)
-        primary_segment = resolver.primary_trainable_segment_name()
-        observations = resolver.role_value(primary_segment, "observation")
+        reader = TrajectoryReader.from_batch(group_batch)
+        primary_segment = reader.primary_trainable_segment_name()
+        observations = reader.role_value(primary_segment, "observation")
         clean_latents = self._sft_latents[target_key]
         batch_shape = (int(observations.shape[0]), *clean_latents.shape)
         expected_shape = tuple(observations.shape[0:1]) + tuple(observations.shape[2:])
@@ -2091,7 +2091,7 @@ class OnlineTrainer:
             )
         )
 
-        timesteps = resolver.tensor_value(
+        timesteps = reader.tensor_value(
             primary_segment,
             "timesteps",
         )

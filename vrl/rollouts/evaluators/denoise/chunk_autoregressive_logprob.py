@@ -10,7 +10,7 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import ReplayEvaluatorBase
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
-from vrl.trajectory import TrajectoryResolver
+from vrl.trajectory import TrajectoryReader
 
 
 class ChunkAutoregressiveDenoiseLogProbEvaluator(ReplayEvaluatorBase):
@@ -44,11 +44,11 @@ class ChunkAutoregressiveDenoiseLogProbEvaluator(ReplayEvaluatorBase):
         current = model.replay_forward(batch, request=request).require_segment("denoise")
         log_prob = self._flatten_actions(current.require_value("log_probs"))
 
-        resolver = TrajectoryResolver.from_batch(batch)
+        reader = TrajectoryReader.from_batch(batch)
         old_log_prob = self._flatten_actions(
-            resolver.role_value("denoise", "old_log_prob"),
+            reader.role_value("denoise", "old_log_prob"),
         )
-        mask = self._flatten_actions(resolver.role_value("denoise", "mask"))
+        mask = self._flatten_actions(reader.role_value("denoise", "mask"))
 
         ref_log_prob = None
         if signal_request.need_ref and ref_model is not None:

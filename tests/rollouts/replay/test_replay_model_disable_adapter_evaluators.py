@@ -17,7 +17,7 @@ from vrl.rollouts.evaluators.token.continuous_token_logprob import (
 from vrl.rollouts.evaluators.token.token_logprob import TokenLogProbEvaluator
 from vrl.rollouts.evaluators.types import SignalRequest
 from vrl.trajectory import (
-    TrajectoryResolver,
+    TrajectoryReader,
     build_ar_continuous_trajectory,
     build_ar_discrete_trajectory,
 )
@@ -113,7 +113,7 @@ class _DiscreteReplayModel:
 
     def replay_forward(self, batch: RolloutBatch, timestep_idx: int = 0, **_) -> ReplayResult:
         del timestep_idx
-        actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+        actions = TrajectoryReader.from_batch(batch).role_value("image_tokens", "action")
         logits = torch.zeros(actions.shape[0], actions.shape[1], 8)
         boost = 1.0 if self._disabled else 4.0
         logits.scatter_(-1, actions.unsqueeze(-1), boost)
@@ -149,7 +149,7 @@ class _ContinuousReplayModel:
     def replay_forward(self, batch: RolloutBatch, timestep_idx: int = 0, **_) -> ReplayResult:
         del timestep_idx
         value = 0.5 if self._disabled else 2.0
-        actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+        actions = TrajectoryReader.from_batch(batch).role_value("image_tokens", "action")
         return ReplayResult(
             segments={
                 "image_tokens": ReplaySegmentResult(
@@ -173,7 +173,7 @@ def test_token_logprob_evaluator_applies_rollout_temperature() -> None:
         batch,
     )
 
-    actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+    actions = TrajectoryReader.from_batch(batch).role_value("image_tokens", "action")
     logits = torch.zeros(2, 2, 8)
     logits.scatter_(-1, actions.unsqueeze(-1), 4.0)
     expected = (

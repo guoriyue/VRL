@@ -59,25 +59,25 @@ class DiffusionSDELogProbEvaluator(ReplayEvaluatorBase):
         if signal_request is None:
             signal_request = SignalRequest()
 
-        from vrl.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryReader
 
-        resolver = TrajectoryResolver.from_batch(batch)
+        reader = TrajectoryReader.from_batch(batch)
 
         fwd = model.replay_forward(batch, timestep_idx).require_segment("denoise")
         noise_pred = fwd.require_value("noise_pred")
         device = getattr(noise_pred, "device", None)
-        replay = resolver.replay_tensor_dict(
+        replay = reader.replay_tensor_dict(
             "denoise",
             axis="denoise",
             axis_index=timestep_idx,
         )
         t = move_value_to_device(replay["timesteps"], device)
         observations = move_value_to_device(
-            replay[resolver.role_tensor("denoise", "observation").name],
+            replay[reader.role_tensor("denoise", "observation").name],
             device,
         )
         actions = move_value_to_device(
-            replay[resolver.role_tensor("denoise", "action").name],
+            replay[reader.role_tensor("denoise", "action").name],
             device,
         )
 

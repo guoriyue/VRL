@@ -71,7 +71,7 @@ class CausVidResolvedArtifacts:
         _require_noncommercial_license(model_config)
         source_root = _resolve_source_root(model_config)
         # Fail on a missing/wrong editable install before either multi-gigabyte
-        # checkpoint resolver is allowed to touch the Hub cache.
+        # checkpoint reader is allowed to touch the Hub cache.
         _require_pinned_source_import(source_root)
         _require_causvid_flash_attention()
         base_model_dir = _resolve_base_model(model_config)
@@ -456,9 +456,9 @@ class _CausVidPolicyModel(LoraModelMixin, DiffusionModelBase):
 
         self.reject_replay_timestep_selection(timestep_idx)
         self.reject_unsupported_replay_segments(request)
-        from vrl.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryReader
 
-        replay = TrajectoryResolver.from_batch(batch).replay_tensor_dict(
+        replay = TrajectoryReader.from_batch(batch).replay_tensor_dict(
             "denoise",
             device=self.device,
         )

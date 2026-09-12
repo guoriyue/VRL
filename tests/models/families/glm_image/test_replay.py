@@ -14,7 +14,7 @@ from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.families.glm_image.model import glm_image_token_num
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import TrajectoryResolver, build_ar_discrete_trajectory
+from vrl.trajectory import TrajectoryReader, build_ar_discrete_trajectory
 
 # 128x192 target -> large 4x6 (24 tokens) + preview 13x19 (247 tokens).
 HEIGHT, WIDTH = 128, 192
@@ -93,7 +93,7 @@ def test_replay_forward_returns_fused_codebook_head() -> None:
         "image_token_ids",
     }
     assert segment.values["head_weight"].shape[0] == TINY_CODEBOOK
-    actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+    actions = TrajectoryReader.from_batch(batch).role_value("image_tokens", "action")
     assert torch.equal(segment.values["image_token_ids"], actions)
 
     # The contract path must agree with the eager codebook-logits gather.
@@ -178,7 +178,7 @@ def test_replay_model_replays_without_vision_tower_or_decode_stack() -> None:
     assert segment.values["head_weight"].shape[0] == TINY_CODEBOOK
     assert segment.values["head_hidden"].shape[:2] == (2, TOTAL)
     with pytest.raises(RuntimeError, match="cannot decode image tokens"):
-        actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+        actions = TrajectoryReader.from_batch(batch).role_value("image_tokens", "action")
         model.decode_image_tokens(
             actions,
             height=HEIGHT,
@@ -195,7 +195,7 @@ def test_lora_wrap_keeps_replay_and_adapter_surfaces_working() -> None:
     assert sum(p.numel() for p in model.parameters() if p.requires_grad) > 0
 
     batch = _discrete_batch()
-    actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+    actions = TrajectoryReader.from_batch(batch).role_value("image_tokens", "action")
     log_probs = model.replay_forward(batch).segments["image_tokens"].logprobs(actions)
     assert log_probs.shape == (2, TOTAL)
 

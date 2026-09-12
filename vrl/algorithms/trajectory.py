@@ -70,9 +70,9 @@ class AlgorithmAdapter:
                 )
             import torch
 
-            from vrl.trajectory import TrajectoryResolver
+            from vrl.trajectory import TrajectoryReader
 
-            replay_tensors = TrajectoryResolver.from_batch(batch).replay_tensor_dict()
+            replay_tensors = TrajectoryReader.from_batch(batch).replay_tensor_dict()
             available = sorted(
                 key for key, value in replay_tensors.items() if isinstance(value, torch.Tensor)
             )

@@ -163,13 +163,13 @@ class DiffusionNFT:
 
         import torch
 
-        from vrl.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryReader
 
         cfg = self.config
         advantage_scale = float(cfg.advantage_scale)
         if advantage_scale <= 0:
             raise RuntimeError("DiffusionNFTConfig.advantage_scale must be > 0")
-        replay_tensors = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")
+        replay_tensors = TrajectoryReader.from_batch(batch).replay_tensor_dict("denoise")
         # Presence + tensor-type of these keys is enforced upstream by
         # AlgorithmAdapter.validate_inputs (declared in required_data_keys);
         # read them directly here.

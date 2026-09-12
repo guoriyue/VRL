@@ -22,7 +22,7 @@ from vrl.models.families.janus_pro.runtime import (
 )
 from vrl.models.interfaces import ReplayRequest, ReplayResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import TrajectoryResolver, build_ar_multisegment_trajectory
+from vrl.trajectory import TrajectoryReader, build_ar_multisegment_trajectory
 
 HIDDEN = 16
 TEXT_VOCAB = 128
@@ -310,7 +310,7 @@ def test_r1_model_replay_forward_returns_requested_replay_segments() -> None:
     # Image segments use the fused vocab-head payload (no materialized logits).
     assert result.segments["final_image"].values["head_weight"].shape[0] == IMAGE_VOCAB
     assert result.segments["final_image"].values["head_hidden"].shape[:2] == (2, 3)
-    actions = TrajectoryResolver.from_batch(batch).role_value("final_image", "action")
+    actions = TrajectoryReader.from_batch(batch).role_value("final_image", "action")
     assert torch.equal(
         result.segments["final_image"].values["token_ids"],
         actions,

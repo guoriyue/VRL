@@ -19,7 +19,7 @@ from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.families.emu3.model import emu3_grid_token_num
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import TrajectoryResolver, build_ar_discrete_trajectory
+from vrl.trajectory import TrajectoryReader, build_ar_discrete_trajectory
 
 HEIGHT, WIDTH = 2, 3
 TOTAL = emu3_grid_token_num(HEIGHT, WIDTH)  # 11
@@ -94,7 +94,7 @@ def test_replay_forward_returns_masked_gen_vocab_logits() -> None:
     assert set(segment.values) == {"logits", "image_token_ids"}
     logits = segment.values["logits"]
     assert logits.shape == (2, TOTAL, TINY_GEN_VOCAB)
-    actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+    actions = TrajectoryReader.from_batch(batch).role_value("image_tokens", "action")
     assert torch.equal(segment.values["image_token_ids"], actions)
 
     # Free positions: image columns finite, structural columns -inf.
@@ -138,7 +138,7 @@ def test_replay_model_replays_without_vq_or_processor() -> None:
         TINY_GEN_VOCAB,
     )
     with pytest.raises(RuntimeError, match="cannot decode image tokens"):
-        actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+        actions = TrajectoryReader.from_batch(batch).role_value("image_tokens", "action")
         model.decode_image_tokens(actions, height=HEIGHT, width=WIDTH)
     with pytest.raises(RuntimeError, match="Emu3Processor"):
         _ = model.processor

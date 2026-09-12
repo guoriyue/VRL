@@ -195,11 +195,11 @@ class ARModelBase(ReplayRequestContract, nn.Module):
 
         self.reject_replay_timestep_selection(timestep_idx)
         self.reject_unsupported_replay_segments(request)
-        from vrl.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryReader
 
-        resolver = TrajectoryResolver.from_batch(batch)
-        replay = resolver.replay_tensor_dict("image_tokens")
-        action = resolver.role_value("image_tokens", "action")
+        reader = TrajectoryReader.from_batch(batch)
+        replay = reader.replay_tensor_dict("image_tokens")
+        action = reader.role_value("image_tokens", "action")
         return replay, action
 
 

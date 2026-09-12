@@ -4,11 +4,11 @@ import pytest
 import torch
 
 from vrl.generation.types import GenerationRequest
-from vrl.trajectory import TrajectoryResolver, build_diffusion_trajectory
+from vrl.trajectory import TrajectoryReader, build_diffusion_trajectory
 
 
 @pytest.fixture
-def resolver() -> TrajectoryResolver:
+def reader() -> TrajectoryReader:
     request = GenerationRequest(
         request_id="replay-axis",
         family="test",
@@ -27,18 +27,18 @@ def resolver() -> TrajectoryResolver:
         replay_tensors={"prompt_embeds": torch.ones(2, 4, 8)},
         context={},
     )
-    return TrajectoryResolver(trajectory)
+    return TrajectoryReader(trajectory)
 
 
 @pytest.mark.parametrize("segment_name", ["", "missing"])
-def test_replay_rejects_unknown_explicit_segment(resolver, segment_name) -> None:
+def test_replay_rejects_unknown_explicit_segment(reader, segment_name) -> None:
     with pytest.raises(ValueError, match="unknown trajectory segment"):
-        resolver.replay_tensor_dict(segment_name)
+        reader.replay_tensor_dict(segment_name)
 
 
-def test_replay_defaults_to_primary_segment_only_when_omitted(resolver) -> None:
-    explicit = resolver.replay_tensor_dict("denoise")
-    for selected in (resolver.replay_tensor_dict(), resolver.replay_tensor_dict(None)):
+def test_replay_defaults_to_primary_segment_only_when_omitted(reader) -> None:
+    explicit = reader.replay_tensor_dict("denoise")
+    for selected in (reader.replay_tensor_dict(), reader.replay_tensor_dict(None)):
         assert selected.keys() == explicit.keys()
         assert all(selected[name] is value for name, value in explicit.items())
 
@@ -56,14 +56,14 @@ def test_replay_defaults_to_primary_segment_only_when_omitted(resolver) -> None:
         ({"axis": "denoise", "axis_index": 3}, "out of range"),
     ],
 )
-def test_replay_rejects_invalid_axis_selection(resolver, selection, message) -> None:
+def test_replay_rejects_invalid_axis_selection(reader, selection, message) -> None:
     with pytest.raises(ValueError, match=message):
-        resolver.replay_tensor_dict("denoise", **selection)
+        reader.replay_tensor_dict("denoise", **selection)
 
 
-def test_replay_slices_step_tensors_and_preserves_static_payload(resolver) -> None:
-    complete = resolver.replay_tensor_dict("denoise")
-    selected = resolver.replay_tensor_dict("denoise", axis="denoise", axis_index=1)
+def test_replay_slices_step_tensors_and_preserves_static_payload(reader) -> None:
+    complete = reader.replay_tensor_dict("denoise")
+    selected = reader.replay_tensor_dict("denoise", axis="denoise", axis_index=1)
 
     torch.testing.assert_close(selected["observations"], complete["observations"][:, 1])
     assert selected["prompt_embeds"] is complete["prompt_embeds"]
@@ -71,19 +71,19 @@ def test_replay_slices_step_tensors_and_preserves_static_payload(resolver) -> No
 
 
 @pytest.mark.parametrize("container", [list, tuple])
-def test_replay_slices_nested_sequences(resolver, container) -> None:
-    observations = resolver.tensor("denoise", "observations")
+def test_replay_slices_nested_sequences(reader, container) -> None:
+    observations = reader.tensor("denoise", "observations")
     values = observations.value.tolist()
     observations.value = container(container(row) for row in values)
     # Revalidate the same representation accepted at the public boundary.
-    resolver = TrajectoryResolver(resolver.trajectory)
+    reader = TrajectoryReader(reader.trajectory)
 
-    selected = resolver.replay_tensor_dict("denoise", axis="denoise", axis_index=1)
+    selected = reader.replay_tensor_dict("denoise", axis="denoise", axis_index=1)
 
     assert selected["observations"] == [row[1] for row in values]
 
 
-def test_replay_preserves_tensor_index_failure_without_sequence_retry(resolver) -> None:
+def test_replay_preserves_tensor_index_failure_without_sequence_retry(reader) -> None:
     failure = RuntimeError("backend indexing failed")
 
     class BrokenTensor:
@@ -95,10 +95,10 @@ def test_replay_preserves_tensor_index_failure_without_sequence_retry(resolver) 
         def __iter__(self):
             pytest.fail("a failed tensor operation must not fall back to iteration")
 
-    resolver.tensor("denoise", "observations").value = BrokenTensor()
+    reader.tensor("denoise", "observations").value = BrokenTensor()
 
     with pytest.raises(ValueError, match="backend indexing failed") as caught:
-        resolver.replay_tensor_dict("denoise", axis="denoise", axis_index=1)
+        reader.replay_tensor_dict("denoise", axis="denoise", axis_index=1)
     assert caught.value.__cause__ is failure
 
 
@@ -112,15 +112,15 @@ def test_replay_preserves_tensor_index_failure_without_sequence_retry(resolver) 
         ([torch.ones(3, 2), torch.ones(2, 2)], "contains runtime-only state: Tensor"),
     ],
 )
-def test_replay_validates_declared_axes_of_sequence_payloads(resolver, container, values, message):
-    resolver.tensor("denoise", "observations").value = container(values)
+def test_replay_validates_declared_axes_of_sequence_payloads(reader, container, values, message):
+    reader.tensor("denoise", "observations").value = container(values)
     with pytest.raises(ValueError, match=message):
-        TrajectoryResolver(resolver.trajectory)
+        TrajectoryReader(reader.trajectory)
 
 
-def test_replay_allows_ragged_dimensions_without_declared_axes(resolver):
+def test_replay_allows_ragged_dimensions_without_declared_axes(reader):
     # Only sample is declared for prompt embeddings; inner lengths need not match.
     payload = ([1, 2], [3, 4, 5])
-    resolver.tensor("denoise", "prompt_embeds").value = payload
-    checked = TrajectoryResolver(resolver.trajectory)
+    reader.tensor("denoise", "prompt_embeds").value = payload
+    checked = TrajectoryReader(reader.trajectory)
     assert checked.replay_tensor_dict("denoise")["prompt_embeds"] is payload

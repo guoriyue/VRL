@@ -15,7 +15,7 @@ from tests.models.families.llamagen.fixtures import (
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import TrajectoryResolver, build_ar_discrete_trajectory
+from vrl.trajectory import TrajectoryReader, build_ar_discrete_trajectory
 
 
 def _request(samples: int = 2) -> GenerationRequest:
@@ -136,7 +136,7 @@ def test_replay_forward_returns_typed_replay_result() -> None:
     assert segment.segment == "image_tokens"
     assert set(segment.values) == {"logits", "image_token_ids"}
     assert segment.values["logits"].shape == (2, TINY_BLOCK_SIZE, TINY_VOCAB_SIZE)
-    actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+    actions = TrajectoryReader.from_batch(batch).role_value("image_tokens", "action")
     assert torch.equal(segment.values["image_token_ids"], actions)
 
 

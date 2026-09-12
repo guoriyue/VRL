@@ -15,7 +15,7 @@ from vrl.models.families.janus_pro.model import (
 )
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import TrajectoryResolver, build_ar_discrete_trajectory
+from vrl.trajectory import TrajectoryReader, build_ar_discrete_trajectory
 
 HIDDEN = 32
 TEXT_VOCAB = 64
@@ -129,7 +129,7 @@ def test_janus_model_replay_forward_returns_typed_replay_result() -> None:
         "image_token_ids",
     }
     assert segment.values["head_weight"].shape[0] == JANUS_IMAGE_VOCAB_SIZE
-    actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+    actions = TrajectoryReader.from_batch(batch).role_value("image_tokens", "action")
     assert torch.equal(segment.values["image_token_ids"], actions)
 
     # The contract path must agree with the eager forward_image_logits gather.

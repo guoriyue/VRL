@@ -36,7 +36,7 @@ from vrl.trainers.core.types import (
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trajectory import (
-    TrajectoryResolver,
+    TrajectoryReader,
     TrajectoryTensor,
     build_chunk_autoregressive_denoise_trajectory,
 )
@@ -123,9 +123,9 @@ class _TrajectoryEvaluator:
 
     def evaluate(self, model, batch, timestep_idx, **kwargs):
         del kwargs
-        resolver = TrajectoryResolver.from_batch(batch)
-        segment = resolver.primary_trainable_segment_name()
-        observations = resolver.role_value(segment, "observation")
+        reader = TrajectoryReader.from_batch(batch)
+        segment = reader.primary_trainable_segment_name()
+        observations = reader.role_value(segment, "observation")
         assert tuple(observations.shape[1:3]) == (4, 3)
         self.calls.append(int(timestep_idx))
         log_prob = model.weight.reshape(()).expand(batch.rewards.shape[0])

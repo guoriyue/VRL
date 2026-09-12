@@ -14,7 +14,7 @@ from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
-from vrl.trajectory import TrajectoryResolver, TrajectoryStoragePolicy
+from vrl.trajectory import TrajectoryReader, TrajectoryStoragePolicy
 
 
 def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
@@ -44,9 +44,9 @@ def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
         ),
     ).build(torch.tensor([1.0]))
 
-    resolver = TrajectoryResolver.from_batch(batch)
-    observations = resolver.role_value("denoise", "observation")
-    actions = resolver.role_value("denoise", "action")
+    reader = TrajectoryReader.from_batch(batch)
+    observations = reader.role_value("denoise", "observation")
+    actions = reader.role_value("denoise", "action")
     assert observations.device.type == "cpu"
     assert observations.dtype == torch.float16
     assert actions.dtype == torch.float16

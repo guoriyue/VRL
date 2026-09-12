@@ -161,10 +161,10 @@ class VGRPO:
 
         import torch
 
-        from vrl.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryReader
 
         cfg = self.config
-        replay_tensors = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")
+        replay_tensors = TrajectoryReader.from_batch(batch).replay_tensor_dict("denoise")
         x0 = replay_tensors["latents_clean"]
         prompt_embeds = replay_tensors["prompt_embeds"]
         timesteps = replay_tensors["timesteps"]

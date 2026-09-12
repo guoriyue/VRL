@@ -1,6 +1,6 @@
 """Trajectory contract types for generation RL.
 
-Lazy public boundary: ``types``/``storage``/``resolver`` are torch-free, but
+Lazy public boundary: ``types``/``storage``/``reader`` are torch-free, but
 ``builders`` is not. ``vrl.config.schema`` reaches TrajectoryStoragePolicy while
 validating every recipe, so an eager re-export here charged all config parsing
 for the tensor builders. Deferring per symbol keeps both import paths honest.
@@ -28,8 +28,8 @@ if TYPE_CHECKING:
         build_chunk_autoregressive_generation_trajectory as build_chunk_autoregressive_generation_trajectory,
     )
     from vrl.trajectory.builders import build_diffusion_trajectory as build_diffusion_trajectory
-    from vrl.trajectory.resolver import TrajectoryResolver as TrajectoryResolver
-    from vrl.trajectory.resolver import TrajectoryResolverError as TrajectoryResolverError
+    from vrl.trajectory.reader import TrajectoryReader as TrajectoryReader
+    from vrl.trajectory.reader import TrajectoryReaderError as TrajectoryReaderError
     from vrl.trajectory.storage import TrajectoryStoragePolicy as TrajectoryStoragePolicy
     from vrl.trajectory.storage import trajectory_tensor_bytes as trajectory_tensor_bytes
     from vrl.trajectory.types import AxisKind as AxisKind
@@ -55,8 +55,8 @@ _PUBLIC_EXPORTS = {
     "TensorRole": ("vrl.trajectory.types", "TensorRole"),
     "TrajectoryAxis": ("vrl.trajectory.types", "TrajectoryAxis"),
     "TrajectoryBatch": ("vrl.trajectory.types", "TrajectoryBatch"),
-    "TrajectoryResolver": ("vrl.trajectory.resolver", "TrajectoryResolver"),
-    "TrajectoryResolverError": ("vrl.trajectory.resolver", "TrajectoryResolverError"),
+    "TrajectoryReader": ("vrl.trajectory.reader", "TrajectoryReader"),
+    "TrajectoryReaderError": ("vrl.trajectory.reader", "TrajectoryReaderError"),
     "TrajectorySegment": ("vrl.trajectory.types", "TrajectorySegment"),
     "TrajectoryStoragePolicy": ("vrl.trajectory.storage", "TrajectoryStoragePolicy"),
     "TrajectoryTensor": ("vrl.trajectory.types", "TrajectoryTensor"),

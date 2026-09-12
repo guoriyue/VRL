@@ -273,10 +273,10 @@ def test_prompt_embedding_dimensions_do_not_become_chunk_axes() -> None:
     output = ChunkAutoregressiveDenoiseGatherer().gather_batches(
         request, request.sample_rows(), [result, other]
     )
-    from vrl.trajectory.resolver import TrajectoryResolver
+    from vrl.trajectory.reader import TrajectoryReader
 
-    resolver = TrajectoryResolver(output.trajectory)
-    replay = resolver.replay_tensor_dict("denoise", axis="temporal_chunk", axis_index=1)
+    reader = TrajectoryReader(output.trajectory)
+    replay = reader.replay_tensor_dict("denoise", axis="temporal_chunk", axis_index=1)
     assert replay["prompt_embeds"].shape == (2, 2, 3)
     assert replay["transition_noise"].shape == (2, 3, 1)
 

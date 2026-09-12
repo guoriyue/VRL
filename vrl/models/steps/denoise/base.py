@@ -262,17 +262,17 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
     ) -> tuple[dict[str, Any], dict[str, Any], Any]:
         """Resolve only the current denoise step's replay tensors on model device."""
 
-        from vrl.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryReader
 
         device = self.device
-        resolver = TrajectoryResolver.from_batch(batch)
-        replay_tensors = resolver.replay_tensor_dict(
+        reader = TrajectoryReader.from_batch(batch)
+        replay_tensors = reader.replay_tensor_dict(
             "denoise",
             axis="denoise",
             axis_index=timestep_idx,
             device=device,
         )
-        latents = replay_tensors[resolver.role_tensor("denoise", "observation").name]
+        latents = replay_tensors[reader.role_tensor("denoise", "observation").name]
         return replay_tensors, dict(batch.context), latents
 
     def _require_transformer(self) -> Any:
