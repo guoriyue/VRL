@@ -478,14 +478,14 @@ vrl/trainers/optimizer.py	d1c4eaa42d68c7849180ad05da784dcf63b68df5	pending	-
 vrl/trainers/strategy.py	841fbfda73cae20399101fc3169bfa435d8a3ffa	pending	-
 vrl/trainers/trace.py	50e7e6645993f4973c8902d823ae8314059f2f7f	pending	-
 vrl/trainers/weight_sync.py	aafc78ba693681ce0c34455f7e88fd34ccc6683a	pending	-
-vrl/trajectory/__init__.py	8d98a2057416dce58df1966a3901d8fdf42fd6b0	pending	-
-vrl/trajectory/builders.py	ffb01fed68d3fe662ee06ed447c62e4d426eaac0	pending	-
-vrl/trajectory/device.py	e2c6fad050793931d0239a71146b76a585d803a8	pending	-
-vrl/trajectory/reader.py	f0f6de3876a5d056444e7b3d97cf47a3583652e0	pending	-
-vrl/trajectory/storage.py	b94865459c0a1d2cc7ad783aea5cfeca95fb1936	pending	-
-vrl/trajectory/types.py	092eada2e889d46504b451a6e8f32d5a03674bf5	pending	-
-vrl/trajectory/validation.py	bf9338ede77bbff5ae84735896cbc01eedbcd86f	pending	-
-vrl/trajectory/views.py	513ae9172ad4c6a24cb2eb0d7ba32bc4f53fe7a9	pending	-
+vrl/trajectory/__init__.py	8d98a2057416dce58df1966a3901d8fdf42fd6b0	reviewed	trajectory.md; open builder findings tracked separately
+vrl/trajectory/builders.py	ffb01fed68d3fe662ee06ed447c62e4d426eaac0	reviewed	trajectory.md; open builder findings tracked separately
+vrl/trajectory/device.py	e2c6fad050793931d0239a71146b76a585d803a8	reviewed	trajectory.md; open builder findings tracked separately
+vrl/trajectory/reader.py	f0f6de3876a5d056444e7b3d97cf47a3583652e0	reviewed	trajectory.md; open builder findings tracked separately
+vrl/trajectory/storage.py	b94865459c0a1d2cc7ad783aea5cfeca95fb1936	reviewed	trajectory.md; open builder findings tracked separately
+vrl/trajectory/types.py	092eada2e889d46504b451a6e8f32d5a03674bf5	reviewed	trajectory.md; open builder findings tracked separately
+vrl/trajectory/validation.py	bf9338ede77bbff5ae84735896cbc01eedbcd86f	reviewed	trajectory.md; open builder findings tracked separately
+vrl/trajectory/views.py	513ae9172ad4c6a24cb2eb0d7ba32bc4f53fe7a9	reviewed	trajectory.md; open builder findings tracked separately
 vrl/utils/__init__.py	f46a82a3c0e7d3ebeef27ac134c99ffbd3e82ecb	pending	-
 vrl/utils/artifacts.py	7908487a98a0f272123914632a2a52e36d1ac87a	pending	-
 vrl/utils/config.py	d4afecfba71e039cd4e54d9820f58da75e1ed41c	pending	-

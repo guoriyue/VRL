@@ -39,8 +39,17 @@ class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase):
         del timestep_idx
         model, ref_model = self._require_models(model, ref_model)
         request = signal_request or SignalRequest()
-        segments = self._segments_from_batch(batch)
-        if not isinstance(segments, dict):
+        trajectory = batch.trajectory
+        segments = (
+            {
+                name: segment
+                for name, segment in trajectory.segments.items()
+                if segment.distribution == "categorical"
+            }
+            if trajectory is not None
+            else {}
+        )
+        if not segments:
             raise RuntimeError(
                 "MultiSegmentTokenLogProbEvaluator requires trajectory segments",
             )
@@ -93,7 +102,9 @@ class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase):
                 mask_key="token_mask",
             )
 
-        primary_name = self._primary_segment_name(batch, enabled_names)
+        primary_name = signal_builder.trajectory.primary_segment
+        if primary_name not in enabled_names:
+            primary_name = enabled_names[0]
         return TrajectorySignalBatch(
             segments=segment_signals,
             group_ids=signal_builder.group_ids,
@@ -115,32 +126,11 @@ class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase):
         return result.logprobs(token_ids, temperature=temperature)
 
     @staticmethod
-    def _segments_from_batch(batch: RolloutBatch) -> dict[str, TrajectorySegment] | None:
-        trajectory = batch.trajectory
-        if trajectory is None:
-            return None
-        segments = {
-            name: segment
-            for name, segment in trajectory.segments.items()
-            if segment.distribution == "categorical"
-        }
-        return segments or None
-
-    @staticmethod
     def _segment_tensor(segment: TrajectorySegment, role: str) -> torch.Tensor:
         value = segment.role_tensor(role).value
         if not isinstance(value, torch.Tensor):
             raise RuntimeError(f"R1 segment {segment.name!r} role {role!r} must be a tensor")
         return value
-
-    @staticmethod
-    def _primary_segment_name(batch: RolloutBatch, enabled_names: list[str]) -> str:
-        trajectory = getattr(batch, "trajectory", None)
-        if trajectory is not None:
-            primary = trajectory.primary_segment
-            if isinstance(primary, str) and primary in enabled_names:
-                return primary
-        return enabled_names[0]
 
 
 __all__ = ["MultiSegmentTokenLogProbEvaluator"]

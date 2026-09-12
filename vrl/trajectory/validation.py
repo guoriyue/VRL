@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import io
-import types
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -55,8 +53,6 @@ class TrajectoryValidator:
                 self._fail(
                     f"Axis key {axis_name!r} does not match TrajectoryAxis.name={axis.name!r}",
                 )
-            if axis.length is not None and axis.length < 0:
-                self._fail(f"Axis {axis_name!r} length must be >= 0")
 
         sample_axis = batch.axes["sample"]
         if sample_axis.length is not None and sample_axis.length != len(batch.sample_rows):
@@ -245,15 +241,12 @@ class TrajectoryValidator:
 
     def _ensure_tensor_refs(self) -> dict[str, TrajectoryTensor]:
         if not self.tensor_refs:
-            self.tensor_refs.update(self._collect_tensor_refs())
+            self.tensor_refs.update(
+                (tensor_ref(segment.name, tensor.name), tensor)
+                for segment in self.batch.segments.values()
+                for tensor in segment.tensors.values()
+            )
         return self.tensor_refs
-
-    def _collect_tensor_refs(self) -> dict[str, TrajectoryTensor]:
-        refs: dict[str, TrajectoryTensor] = {}
-        for segment in self.batch.segments.values():
-            for tensor in segment.tensors.values():
-                refs[tensor_ref(segment.name, tensor.name)] = tensor
-        return refs
 
     def _reject_runtime_state(
         self,
@@ -281,15 +274,6 @@ class TrajectoryValidator:
             return False
         if getattr(value, "shape", None) is not None:
             return not allow_tensor_like
-        if isinstance(value, (types.ModuleType, io.IOBase)):
-            return True
-        if callable(value):
-            return True
-        has_model_api = callable(getattr(value, "state_dict", None)) and callable(
-            getattr(value, "parameters", None),
-        )
-        if has_model_api:
-            return True
         # Anything that reached here is neither a serializable scalar/container
         # nor tensor-like, so it's treated as runtime-only.
         return True
