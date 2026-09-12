@@ -232,18 +232,6 @@ class JanusProR1BatchExecutor(JanusProBatchExecutor):
     family: str = "janus_pro_r1"
     task: str = "ar_t2i_r1"
 
-    @staticmethod
-    def _resolve_refine_mode(sampling: dict[str, Any]) -> str:
-        policy = sampling.get("final_image_policy")
-        if policy == "always_generate":
-            return "always"
-        if policy == "use_selfcheck":
-            return "selfcheck"
-        raise ValueError(
-            "janus_pro_r1 requires rollout.final_image_policy to be "
-            f"'always_generate' or 'use_selfcheck', got {policy!r}",
-        )
-
     def forward_batch(
         self,
         request: GenerationRequest,
@@ -288,7 +276,7 @@ class JanusProR1BatchExecutor(JanusProBatchExecutor):
                 uncond_input_ids=uncond_ids,
                 uncond_attention_mask=uncond_mask,
                 image_size=params.image_size,
-                refine_mode=self._resolve_refine_mode(sampling),
+                final_image_policy=sampling["final_image_policy"],
                 image_sampler=self._r1_image_sampler(
                     request=request,
                     scheduler_batch_size=scheduler_batch_size,

@@ -189,11 +189,15 @@ def _r1_rollout_batch() -> RolloutBatch:
     )
 
 
-def test_generate_with_refine_returns_three_segments_and_selects_final_image() -> None:
-    """One selfcheck refine round samples twice (initial 10s, regenerated 20s) and returns all
-    three JANUS_R1_SEGMENTS; the final image follows the per-row verdict, Yes keeping the
-    initial candidate and No taking the regenerated one.
-    """
+@pytest.mark.parametrize(
+    ("final_image_policy", "first_output_token"),
+    [("use_selfcheck", 10), ("always_generate", 20)],
+)
+def test_generate_with_refine_returns_three_segments_and_selects_final_image(
+    final_image_policy: str,
+    first_output_token: int,
+) -> None:
+    """Both policies generate twice; only use_selfcheck keeps the accepted first image."""
     model = _model()
     sample_calls: list[int] = []
 
@@ -265,7 +269,7 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
         temperature=0.9,
         image_token_num=4,
         max_reflect_len=3,
-        refine_mode="selfcheck",
+        final_image_policy=final_image_policy,
         image_sampler=image_sampler,
     )
 
@@ -273,7 +277,7 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
     assert out["context"] == {
         "temperature": 0.9,
         "guidance_scale": 5.0,
-        "refine_mode": "selfcheck",
+        "final_image_policy": final_image_policy,
     }
     assert set(out["segments"]) == set(JANUS_R1_SEGMENTS)
     assert out["segments"]["initial_image"]["token_ids"].shape == (2, 4)
@@ -281,13 +285,13 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
     assert out["segments"]["final_image"]["token_ids"].shape == (2, 4)
     assert torch.equal(
         out["segments"]["final_image"]["token_ids"][0],
-        torch.full((4,), 10),
+        torch.full((4,), first_output_token),
     )
     assert torch.equal(
         out["segments"]["final_image"]["token_ids"][1],
         torch.full((4,), 20),
     )
-    assert torch.equal(out["final_image"][0], torch.full((3, 2, 2), 10.0))
+    assert torch.equal(out["final_image"][0], torch.full((3, 2, 2), float(first_output_token)))
     assert torch.equal(out["final_image"][1], torch.full((3, 2, 2), 20.0))
 
 
@@ -341,7 +345,7 @@ class _ExecutorModel:
         uncond_input_ids: torch.Tensor,
         uncond_attention_mask: torch.Tensor,
         image_size: int,
-        refine_mode: str,
+        final_image_policy: str,
         image_sampler: object,
     ) -> dict[str, object]:
         del image_sampler  # This fixture returns fixed segments without sampling.
@@ -353,7 +357,7 @@ class _ExecutorModel:
             uncond_input_ids,
             uncond_attention_mask,
             image_size,
-            refine_mode,
+            final_image_policy,
         )
         batch = prompt_input_ids.shape[0]
         token_mask = torch.ones(batch, image_token_num)

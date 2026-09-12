@@ -491,7 +491,7 @@ class JanusProModel(ARModelBase):
         uncond_input_ids: torch.Tensor | None = None,
         uncond_attention_mask: torch.Tensor | None = None,
         image_size: int = JANUS_IMAGE_PIXEL_SIZE,
-        refine_mode: str | None = None,
+        final_image_policy: str = "use_selfcheck",
         image_sampler: Callable[..., tuple[torch.Tensor, torch.Tensor]] | None = None,
     ) -> dict[str, Any]:
         """Run Janus-Pro-R1-style first image, self-check, and regeneration.
@@ -507,9 +507,10 @@ class JanusProModel(ARModelBase):
             raise ValueError("max_reflect_len must be >= 1")
         temperature = require_positive_temperature(temperature)
 
-        mode = (refine_mode or "selfcheck").lower()
-        if mode not in {"selfcheck", "always"}:
-            raise ValueError("refine_mode must be one of: 'selfcheck', 'always'")
+        if final_image_policy not in {"use_selfcheck", "always_generate"}:
+            raise ValueError(
+                "final_image_policy must be one of: 'use_selfcheck', 'always_generate'"
+            )
 
         prompt_input_ids = prompt_input_ids.to(self.device)
         prompt_attention_mask = prompt_attention_mask.to(self.device)
@@ -652,7 +653,7 @@ class JanusProModel(ARModelBase):
             image_size=image_size,
         )
 
-        if mode == "always":
+        if final_image_policy == "always_generate":
             use_refined = torch.ones_like(selfcheck, dtype=torch.bool)
         else:
             # Reference R1 semantics: "Yes" accepts the first image;
@@ -734,7 +735,7 @@ class JanusProModel(ARModelBase):
                 # Display/provenance-only: OnlineTrainer persists these R1
                 # policy choices in its first-step ``rollout_context`` record.
                 "guidance_scale": float(guidance_scale),
-                "refine_mode": mode,
+                "final_image_policy": final_image_policy,
             },
         }
 
