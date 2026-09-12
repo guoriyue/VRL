@@ -568,3 +568,13 @@ otherwise unchanged, from isolated `f01c3625`. Output:
 `outputs/perf/wan_i2v_l40s_control_seed7.log`. Ray temporary files use NVMe.
 After completion, resume this control's own checkpoint-1 for a matched branch.
 Launch follows a separate process/GPU preflight; equivalence is still unproven.
+
+While the seeded control runs, an independent CPU-only probe of the actual
+`MotionDynamicsModel._module_for_inference()` confirmed that first lazy load
+changes Torch CPU RNG state (2,494 state bytes changed after seed 42). The
+base `LazyTorchModule` directly calls `_load_module`; no RNG guard surrounds
+RAFT construction. This is a concrete resume-lifecycle asymmetry: the
+uninterrupted second update reuses the reward model while the resumed process
+loads it anew after trainer RNG restoration. Runtime source remains unchanged
+during the current job. Fix/verify this effect before claiming full RNG
+equivalence; changing only `sampling.seed` does not isolate trainer RNG.
