@@ -156,10 +156,14 @@ this preparation task.
   not run-to-run noise.
 - One-forward probe (`sequence_parallel_forward_probe`, real SD3.5 weights,
   2 ranks): float32 rel_l2 2.5e-7, bfloat16 rel_l2 3.4e-3. Verdict: the
-  Ulysses exchange is exact; the image gap is bf16 amplification over the
-  schedule. P6 parity gate: PASS at fp32, bf16 within precision expectation.
+  the small FP32 forward difference supports precision amplification as the
+  cause of the image gap. This is a one-forward observation, not a completed
+  FP32 denoise/image comparison. The original BF16 pixel gate remains FAILED
+  at atol 0.02 with zero permitted mismatches; no replacement tolerance has
+  been established. P6 numerical acceptance remains open.
 - Throughput/memory at this geometry (4 single-sample batches): N=1 generate
-  5.3 s, N=2 8.0 s; peak 16.8 GB per rank in both. Sequence parallel does not
+  5.3 s, N=2 8.0 s; reported primary-rank peak about 16.8 GB in both. The
+  original reports predate complete per-rank telemetry. Sequence parallel does not
   pay off for 512px single-sample batches (all-gather overhead dominates);
   the win, if any, needs long sequences (video) — recorded, not pursued here.
 - continuous x streaming (Gap 3) smoke: `online_grpo_ocr_continuous_4gpu_acceptance`
