@@ -19,7 +19,6 @@ there, not just a summary table that may be silently incomplete.
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import socket
 from collections.abc import Iterable, Iterator
@@ -27,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from vrl.utils.json_files import write_json
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -423,7 +423,7 @@ def _write_manifest(
         "hostname": socket.gethostname(),
     }
     path = trace_dir / "profile_manifest.json"
-    path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    write_json(path, manifest)
     if not trace_files:
         logger.error(
             "Torch profiler produced no trace file in %s; manifest records an "

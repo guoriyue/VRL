@@ -63,10 +63,10 @@ happens after the reference model context has exited. Do not merge those scopes
 across current-policy computations. No business vocabulary constants occur in
 these modules; `__all__` is the public export boundary.
 
-Potential follow-up: multisegment selection still returns `dict | None` and
-tests its own helper's result with `isinstance`; primary selection also uses
-`getattr` on a typed batch. Resolve these against trajectory construction before
-simplifying; they are recorded candidates, not proof of redundant validation.
+Follow-up completed in `d09493da4`: multisegment selection now reads declared
+fields directly. See [trajectory review](trajectory.md) for retained boundaries,
+validation and remaining builder findings; see [utilities review](utils.md) for
+the next inspection group. Module review does not imply all findings are closed.
 
 Validation: 48 replay tests passed using the original virtual environment with
 `PYTHONPATH` pointed at this worktree; `vrl.__file__` verified the isolated import.

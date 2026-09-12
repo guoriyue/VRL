@@ -486,15 +486,15 @@ vrl/trajectory/storage.py	b94865459c0a1d2cc7ad783aea5cfeca95fb1936	reviewed	traj
 vrl/trajectory/types.py	092eada2e889d46504b451a6e8f32d5a03674bf5	reviewed	trajectory.md; open builder findings tracked separately
 vrl/trajectory/validation.py	bf9338ede77bbff5ae84735896cbc01eedbcd86f	reviewed	trajectory.md; open builder findings tracked separately
 vrl/trajectory/views.py	513ae9172ad4c6a24cb2eb0d7ba32bc4f53fe7a9	reviewed	trajectory.md; open builder findings tracked separately
-vrl/utils/__init__.py	f46a82a3c0e7d3ebeef27ac134c99ffbd3e82ecb	pending	-
-vrl/utils/artifacts.py	7908487a98a0f272123914632a2a52e36d1ac87a	pending	-
-vrl/utils/config.py	d4afecfba71e039cd4e54d9820f58da75e1ed41c	pending	-
-vrl/utils/cuda_memory.py	967250ad70fad512aa2b7079bbaba424f53b5dbf	pending	-
-vrl/utils/deadline.py	824355a3144c6af73bc168e38d5c715dcb20429c	pending	-
-vrl/utils/json_files.py	b3a09c8167ae47afa7247b87843ab700c9fc19fe	pending	-
-vrl/utils/lifecycle.py	05155ead67706175cae2c3b3962c847e8398330a	pending	-
-vrl/utils/logging.py	fe4d272929028c65af033c1efd0c499ce4442458	pending	-
-vrl/utils/media.py	2743fc89f748bd537aefdf26e32ea5b6fff67307	pending	-
-vrl/utils/memory.py	f37312698cedfb829d3fdd33bf9925cbd59b1b28	pending	-
-vrl/utils/profiling.py	38d88e8e0246247a8502ce7259a0e34826315ea3	pending	-
-vrl/utils/validation.py	f58369011ff18beb20f94c37be9f9c79486adaa0	pending	-
+vrl/utils/__init__.py	f46a82a3c0e7d3ebeef27ac134c99ffbd3e82ecb	reviewed	utils.md; consumer and compatibility follow-ups tracked
+vrl/utils/artifacts.py	7908487a98a0f272123914632a2a52e36d1ac87a	reviewed	utils.md; consumer and compatibility follow-ups tracked
+vrl/utils/config.py	d4afecfba71e039cd4e54d9820f58da75e1ed41c	reviewed	utils.md; consumer and compatibility follow-ups tracked
+vrl/utils/cuda_memory.py	967250ad70fad512aa2b7079bbaba424f53b5dbf	reviewed	utils.md; consumer and compatibility follow-ups tracked
+vrl/utils/deadline.py	824355a3144c6af73bc168e38d5c715dcb20429c	reviewed	utils.md; consumer and compatibility follow-ups tracked
+vrl/utils/json_files.py	b3a09c8167ae47afa7247b87843ab700c9fc19fe	reviewed	utils.md; consumer and compatibility follow-ups tracked
+vrl/utils/lifecycle.py	05155ead67706175cae2c3b3962c847e8398330a	reviewed	utils.md; consumer and compatibility follow-ups tracked
+vrl/utils/logging.py	fe4d272929028c65af033c1efd0c499ce4442458	reviewed	utils.md; consumer and compatibility follow-ups tracked
+vrl/utils/media.py	2743fc89f748bd537aefdf26e32ea5b6fff67307	reviewed	utils.md; consumer and compatibility follow-ups tracked
+vrl/utils/memory.py	f37312698cedfb829d3fdd33bf9925cbd59b1b28	reviewed	utils.md; consumer and compatibility follow-ups tracked
+vrl/utils/profiling.py	38d88e8e0246247a8502ce7259a0e34826315ea3	reviewed	utils.md; consumer and compatibility follow-ups tracked
+vrl/utils/validation.py	f58369011ff18beb20f94c37be9f9c79486adaa0	reviewed	utils.md; consumer and compatibility follow-ups tracked
