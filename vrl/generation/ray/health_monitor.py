@@ -90,7 +90,8 @@ class RolloutWorkerHealthMonitor:
             self._paused.clear()
         thread.join(timeout=self._timeout_s + self._interval_s + _STOP_JOIN_GRACE_S)
         if thread.is_alive():
-            logger.warning("rollout health monitor thread did not exit; abandoning it")
+            logger.warning("rollout health monitor thread did not exit; retaining it for join")
+            return
         self._thread = None
 
     def pause(self) -> None:

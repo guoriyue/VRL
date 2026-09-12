@@ -406,6 +406,31 @@ def test_stop_joins_the_thread(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @_SCRIPTED_RAY_WIRE
+def test_timed_out_stop_retains_thread_until_it_can_be_joined(monkeypatch) -> None:
+    actor = _Actor("rollout-0")
+    ray = _BlockingFailureRay([actor])
+    _install_ray(monkeypatch, ray)
+    monkeypatch.setattr("vrl.generation.ray.health_monitor._STOP_JOIN_GRACE_S", 0.0)
+    monitor = _monitor(_runtime(actor), interval_s=0.01, timeout_s=0.01)
+    assert monitor.start() is True
+    thread = monitor._thread
+    try:
+        monitor.resume()
+        assert ray.probe_started.wait(timeout=1)
+        monitor.stop()
+        assert thread.is_alive()
+        assert monitor._thread is thread
+        assert monitor.start() is False
+        assert monitor._stop.is_set()
+    finally:
+        ray.release_probe.set()
+        thread.join(timeout=1)
+        monitor.stop()
+    assert not thread.is_alive()
+    assert monitor._thread is None
+
+
+@_SCRIPTED_RAY_WIRE
 def test_a_worker_without_a_health_method_terminalizes_the_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
