@@ -185,9 +185,25 @@ class EMAWeights:
 
         from torch.distributed.tensor import DTensor, distribute_tensor
 
+        incoming = state_dict.get("ema_parameters") if isinstance(state_dict, dict) else None
+        if not isinstance(incoming, list):
+            raise ValueError("checkpoint EMA state missing ema_parameters")
+        if len(incoming) != len(self.ema_parameters):
+            raise ValueError(
+                "checkpoint EMA parameter count mismatch: "
+                f"checkpoint={len(incoming)} current={len(self.ema_parameters)}",
+            )
+        # Validate all full shapes before any DTensor redistribution collective.
+        for index, (current, loaded) in enumerate(zip(self.ema_parameters, incoming, strict=True)):
+            if not isinstance(loaded, torch.Tensor):
+                raise ValueError(f"checkpoint EMA parameter {index} is not a tensor")
+            if loaded.shape != current.shape:
+                raise ValueError(
+                    f"checkpoint EMA parameter shape mismatch at index {index}: "
+                    f"checkpoint={tuple(loaded.shape)} current={tuple(current.shape)}",
+                )
         decay = state_dict.get("decay", self.decay)
         num_updates = int(state_dict.get("num_updates", self.num_updates))
-        incoming = state_dict.get("ema_parameters", self.ema_parameters)
         resharded: list[torch.Tensor] = []
         # Checkpoints store full tensors; when the live shadows are DTensor
         # (FSDP2), re-shard each one onto the live shadow's layout (SPMD:

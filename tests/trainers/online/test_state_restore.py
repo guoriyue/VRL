@@ -31,6 +31,31 @@ def test_invalid_progress_does_not_modify_trainer(field, value, strict):
 class TestOnlineTrainerResumeState:
     """Groups tests for online trainer resume state."""
 
+    @pytest.mark.parametrize("strict", [False, True])
+    def test_incompatible_ema_shape_preserves_existing_shadows(self, strict, caplog):
+        import torch
+
+        trainer = _make_resume_trainer(ema=True)
+        ema = trainer._ensure_ema()
+        shadows = ema.ema_parameters
+        original = shadows[0].clone()
+        state = trainer.state_dict()
+        state["ema"] = {
+            "decay": 0.5,
+            "num_updates": 10,
+            "ema_parameters": [torch.ones(2, 2)],
+        }
+        if strict:
+            with pytest.raises(ValueError, match="EMA parameter shape mismatch"):
+                trainer.load_state_dict(state, strict=True)
+        else:
+            trainer.load_state_dict(state, strict=False)
+            assert "Skipping incompatible EMA state" in caplog.text
+        assert ema.ema_parameters is shadows
+        torch.testing.assert_close(shadows[0], original)
+        assert ema.num_updates == 0
+        assert ema.decay == trainer.config.ema.decay
+
     def test_load_state_dict_accepts_legacy_total_keys(self) -> None:
         """Checkpoints written before the totals were dropped still resume."""
 

@@ -46,17 +46,32 @@ Non-goals: changing EMA math, configuring new warmup behavior, deleting snapshot
 state, replacing framework tensor operations, or claiming CPU tests validate
 multi-GPU DTensor collective failure recovery.
 
-## Remaining restore boundary issue
+## Restore boundary follow-up
 
-Trainer._validate_ema_state_shapes returns early on incompatible shapes in
-non-strict mode, then the caller still invokes EMA.load_state_dict. Equal-count
-plain tensors with wrong shapes can therefore be installed successfully and
-fail on a later update. The current patch preserves state on actual load failure;
-it does not fix that successful incompatible load. Consolidate the compatibility
-decision with the actual loader during the trainer restore review, preserving
-strict/non-strict error policy rather than duplicating another shape checker.
-Also retain the distinction between state_dict's aliased tensors and the
-checkpoint export's independent CPU snapshots.
+Closed in the follow-up to 581855168. The trainer's separate shape validator
+returned early in non-strict mode, then still invoked the loader. Move its
+list/count/tensor/full-shape contract into EMA.load_state_dict before any
+redistribution or state mutation. Remove the trainer validator and its call.
+Trainer retains only strict rethrow versus non-strict logged skip, so it can no
+longer report successful loading of incompatible shadows.
+
+The live EMA shadow layout supplies the expected shapes, rather than traversing
+model parameters a second time in trainer. Direct loader callers now receive
+the same compatibility check. Missing ema_parameters no longer means silently
+retaining old shadows while loading new scalar state: it is an invalid EMA
+payload, matching the existing strict trainer checkpoint contract. Optional
+decay/num_updates defaults remain unchanged. No dtype conversion policy or
+additional validator class is introduced.
+
+The regression failed before the edit for non-strict restore: no skip warning
+was emitted and the incompatible state was installed. Both strict and non-strict
+cases now preserve the original shadow list, values, decay and update count;
+strict raises and non-strict logs the skip. 157 EMA, online resume and checkpoint
+tests passed, one skipped and two GPU tests deselected. Ruff passed for the three
+changed Python files. This establishes local loader state behavior; it does not
+make the entire trainer resume atomic or coordinate failures across DTensor
+redistribution ranks. The state_dict alias versus independent checkpoint export
+snapshot distinction remains.
 
 ## Validation
 
