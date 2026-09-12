@@ -21,7 +21,7 @@ from typing import Any
 
 import torch
 
-from vrl.nn.layers.attention.cache_rows import ar_concat_rows, ar_split_rows
+from vrl.nn.layers.attention.cache_rows import ARCacheRows
 from vrl.nn.layers.attention.paged import (
     ARAttentionBackend,
     ARAttentionConfig,
@@ -51,7 +51,9 @@ class TorchNativeDecoderAttentionBackend(ARAttentionBackend):
         last_hidden, past_key_values = self._forward(request.inputs_embeds, request.attention_mask)
         return ARAttentionPrefillOutput(
             last_hidden=last_hidden,
-            sequence_states=tuple(ar_split_rows(past_key_values, request.inputs_embeds.shape[0])),
+            sequence_states=tuple(
+                ARCacheRows.split_batched(past_key_values, request.inputs_embeds.shape[0])
+            ),
         )
 
     @torch.no_grad()
@@ -60,11 +62,11 @@ class TorchNativeDecoderAttentionBackend(ARAttentionBackend):
         last_hidden, past_key_values = self._forward(
             request.input_embeds,
             request.attention_mask,
-            ar_concat_rows(request.sequence_states),
+            ARCacheRows.concatenate(request.sequence_states),
         )
         return ARAttentionStepOutput(
             last_hidden=last_hidden,
-            sequence_states=tuple(ar_split_rows(past_key_values, batch)),
+            sequence_states=tuple(ARCacheRows.split_batched(past_key_values, batch)),
         )
 
     def _forward(

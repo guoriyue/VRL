@@ -48,7 +48,7 @@ from vrl.models.steps.token.paged_attention_helpers import (
     scatter_paged_states,
     select_paged_states,
 )
-from vrl.nn.layers.attention.cache_rows import ar_concat_rows, ar_split_rows
+from vrl.nn.layers.attention.cache_rows import ARCacheRows
 
 
 @dataclass(slots=True, kw_only=True)
@@ -159,7 +159,7 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
                 "GLM-Image trunk prefill returned no past_key_values; use_cache must be enabled",
             )
         last_hidden = outputs.last_hidden_state[:, -1, :]
-        return last_hidden, ar_split_rows(past, inputs_embeds.shape[0])
+        return last_hidden, ARCacheRows.split_batched(past, inputs_embeds.shape[0])
 
     def _sample_ar_step(
         self,
@@ -228,7 +228,7 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
             3, batch_size, 1
         ) + state.prompt_valid_lens[rows].view(1, batch_size, 1)
 
-        kv = ar_concat_rows(select_paged_states(state.kv_rows, batch.row_indices))
+        kv = ARCacheRows.concatenate(select_paged_states(state.kv_rows, batch.row_indices))
         outputs = trunk(
             inputs_embeds=token_embed,
             attention_mask=next_attn,
@@ -244,7 +244,7 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
         scatter_paged_states(
             state.kv_rows,
             batch.row_indices,
-            ar_split_rows(past, batch_size),
+            ARCacheRows.split_batched(past, batch_size),
         )
         hidden = normalize_paged_last_hidden(outputs.last_hidden_state)
         return {
