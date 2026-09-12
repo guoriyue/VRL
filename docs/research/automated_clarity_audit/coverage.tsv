@@ -348,8 +348,8 @@ vrl/rollouts/orchestration/continuous/types.py	d208a73c199d1d9b602cb84b3f87e766e
 vrl/rollouts/orchestration/rollout_runtime.py	c64ef2980612c140cad23061c3b4a1d1b0318363	reviewed	rollout_handoff.md
 vrl/rollouts/orchestration/schedule.py	7746f1bfc9dfe651d689f7a4a10c26e9852c6b75	reviewed	rollout_handoff.md
 vrl/rollouts/orchestration/strict_on_policy.py	46cc176dda0005dd3f662aa649a101176c07d1ab	reviewed	rollout_handoff.md
-vrl/rollouts/orchestration/types.py	b5c4cf575cb771c0eabdef6c928251b11920158e	pending	-
-vrl/rollouts/stats.py	c536543e835e327d43be0ebf5c78ae0b5dbf996f	pending	-
+vrl/rollouts/orchestration/types.py	b5c4cf575cb771c0eabdef6c928251b11920158e	reviewed	rollout_statistics.md
+vrl/rollouts/stats.py	c536543e835e327d43be0ebf5c78ae0b5dbf996f	reviewed	rollout_statistics.md
 vrl/run.py	1f668ed3e7ed298988065da4c4c1eefc38a97344	pending	-
 vrl/run_verdict.py	f074e1bdaea7b102f9d46c1f0f105e88b133dfbe	pending	-
 vrl/runtime_errors.py	d51ffae413d4d55b5e6ccf716f7415a6fb2834e0	reviewed	actor_startup.md

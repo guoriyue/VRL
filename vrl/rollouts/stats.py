@@ -256,8 +256,8 @@ class LoggingStatsSink:
         }
         total = sum(percentage_phases.values())
         if total <= 0:
-            self._logger.info("phase_times[step=%d] total=0.000s", step)
-            return
+            total = 0.0
+            percentage_phases = {}
         parts = " | ".join(
             (
                 f"{name}={value:.3f}s ({100 * value / total:.1f}%)"

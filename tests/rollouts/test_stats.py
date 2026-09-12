@@ -141,6 +141,22 @@ def test_logging_sink_noop_on_empty(caplog) -> None:
     assert caplog.records == []
 
 
+def test_logging_sink_keeps_metrics_without_a_percentage_base(caplog) -> None:
+    stats = RolloutStats()
+    stats.add_phase("collect.wall", 2.0)
+    stats.add_counter("collect.sample_count", 4)
+    stats.observe_gauge("continuous.producer_inflight", 2)
+    sink = LoggingStatsSink(logging.getLogger("vrl.stats.collection"))
+    with caplog.at_level(logging.INFO, logger="vrl.stats.collection"):
+        sink.record(3, stats)
+    message = caplog.records[-1].getMessage()
+    assert "total=0.000s" in message
+    assert "collect.wall=2.000" in message
+    assert "collect.sample_count=4.000" in message
+    assert "continuous.producer_inflight=2.000" in message
+    assert "%" not in message
+
+
 def test_jsonl_stats_sink_writes_one_row_per_step(tmp_path) -> None:
     """Checks collect.* phases reach a machine-readable file, not just the log."""
     from vrl.rollouts.stats import JsonlStatsSink
