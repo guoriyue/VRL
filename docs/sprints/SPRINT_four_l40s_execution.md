@@ -388,3 +388,19 @@ a fresh process. No source dependency or sampling configuration was changed.
 No training process or GPU allocation remained after cleanup. After a separate
 preflight, the claim continues for output `outputs/wan_i2v_14b_l40s_proof/epoch1_ftfy`
 and log `outputs/perf/wan_i2v_l40s_epoch1_ftfy.log`, on the same isolated commit.
+
+The `epoch1_ftfy` run completed two generated samples per rank (35.747/35.866 s
+generation wall time). Thus real-model initial weight installation, prompt
+cleanup, conditioning, denoise and decode crossed the earlier failures.
+It then exited 1 at the strict rollout-to-trainer GPU parking check:
+worker physical residual 2,657,091,584 bytes, pre-load baseline 446,693,376
+bytes, allowed excess 268,435,456 bytes. No backward/optimizer update or
+checkpoint was reached. The 378 MB batch allocator peak is not a proof of
+total physical release; NVML accounts for process-owned CUDA memory outside
+that allocator too. Keep the parking threshold unchanged and diagnose both
+live tensors and runtime/workspace allocations before the next retry.
+
+The torchrun tool session exited 1, no training driver remains, and all four
+GPUs reported 0 MiB after cleanup. The hardware claim is released during CPU
+diagnosis. The isolated hook fix remains at `195cfc14`; no shared runtime
+source was modified and no training acceptance gate is marked complete.
