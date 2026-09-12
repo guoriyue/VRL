@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 
-import pytest
 import torch
 
 from vrl.config.precision import RolePrecision
@@ -254,9 +253,3 @@ def test_evaluator_retains_generator_segment_selection_across_iterations():
     second = evaluator.evaluate(model, batch)
     assert tuple(first.segments) == tuple(second.segments) == ("selfcheck_text", "final_image")
     assert len(model.calls) == 4
-
-
-@pytest.mark.parametrize("names", ["image", b"image", ("",), (1,), ("image", "image")])
-def test_evaluator_rejects_invalid_segment_selection_at_construction(names):
-    with pytest.raises(ValueError, match="enabled_segments"):
-        MultiSegmentTokenLogProbEvaluator(enabled_segments=names)

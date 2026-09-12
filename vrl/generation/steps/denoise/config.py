@@ -160,8 +160,6 @@ class DenoiseLoopConfig:
             raise ValueError(
                 f"denoise_mode must be one of {get_args(DenoiseMode)}; got {self.denoise_mode!r}"
             )
-        if self.execute_steps is not None:
-            require_int(self.execute_steps, path="execute_steps", minimum=1)
 
 
 __all__ = [

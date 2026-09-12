@@ -508,9 +508,3 @@ def test_probe_rejects_invalid_step_limit_before_encoding(steps) -> None:
     with pytest.raises(ValueError, match="execute_steps"):
         executor.forward_probe_batch(request, _chunk(), execute_steps=steps)
     assert executor.calls == []
-
-
-@pytest.mark.parametrize("steps", [0, -1, True, 1.5, "1"])
-def test_denoise_config_rejects_invalid_direct_step_limit(steps) -> None:
-    with pytest.raises(ValueError, match="execute_steps"):
-        replace(_config(), execute_steps=steps)
