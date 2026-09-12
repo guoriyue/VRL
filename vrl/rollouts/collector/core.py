@@ -187,29 +187,16 @@ class RolloutCollector:
     async def shutdown(self) -> None:
         """Release generation before waking/destroying the reward owner."""
 
-        errors: list[BaseException] = []
         runtime = self._generation_runtime
         if runtime is not None:
-            try:
-                await runtime.shutdown()
-            except BaseException as error:
-                errors.append(error)
-            else:
-                self._generation_runtime = None
-        if errors:
             # A slept reward pool must not remap pages while rollout ownership is
             # unknown. Retain it asleep and let the next shutdown retry finish
             # generation first.
-            raise errors[0]
+            await runtime.shutdown()
+            self._generation_runtime = None
         if not self._reward_shutdown_complete:
-            try:
-                await self.reward_runtime.shutdown()
-            except BaseException as error:
-                errors.append(error)
-            else:
-                self._reward_shutdown_complete = True
-        if errors:
-            raise errors[0]
+            await self.reward_runtime.shutdown()
+            self._reward_shutdown_complete = True
 
     async def activate_generation_runtime(self) -> None:
         await self._require_generation_runtime().activate()

@@ -314,14 +314,14 @@ vrl/rewards/service/protocol.py	e4ebb4b5d4a56c7644704104ce38687c3b6b85f3	pending
 vrl/rewards/service/server.py	0971e387f04e9433eaf2c563648f9b498c78d4f7	pending	-
 vrl/rewards/service/wire.py	33825aed99844129ae59142459cd710d293c3508	pending	-
 vrl/rewards/types.py	63a225b8d45b630036b4f291b3ed56673d404e9f	pending	-
-vrl/rollouts/__init__.py	0e3eeebda8045c4756bc3c6f250c9a21e94d02e2	pending	-
+vrl/rollouts/__init__.py	0e3eeebda8045c4756bc3c6f250c9a21e94d02e2	reviewed	collector_owner.md
 vrl/rollouts/batch/__init__.py	212366c42668c7c7dd270231ddacf8dcdfbd5c11	reviewed	rollout_batch.md
 vrl/rollouts/batch/core.py	d7176035a829f951921b02a46ae670e2b44146d9	reviewed	rollout_batch.md
 vrl/rollouts/batch/ops.py	d11ced1a885d54e7937512badbf5312a3665c3ca	reviewed	rollout_batch.md
-vrl/rollouts/collector/__init__.py	8fdc4cd9c88788ca64ad6b02f6cf3304f6b13f30	pending	-
+vrl/rollouts/collector/__init__.py	8fdc4cd9c88788ca64ad6b02f6cf3304f6b13f30	reviewed	collector_owner.md
 vrl/rollouts/collector/batch_builder.py	85a30ddd3447c0981ead41d3e1c3abf1e41d1cc4	pending	-
 vrl/rollouts/collector/config.py	62bf691a2692fb3e2217cf9dafa9c483deec2eb5	reviewed	rollout_batch.md
-vrl/rollouts/collector/core.py	c2e54e864516b433a64e5547675bef376713d683	pending	-
+vrl/rollouts/collector/core.py	c2e54e864516b433a64e5547675bef376713d683	reviewed	collector_owner.md
 vrl/rollouts/collector/requests.py	66f4ef6e66822d0b86a1b0deba624cf4dc73a385	reviewed	model_sampling_boundaries.md
 vrl/rollouts/evaluators/__init__.py	6ad2ed02d948c1acf5629a802e922d5d7bb4a61a	reviewed	evaluator_boundaries.md
 vrl/rollouts/evaluators/base.py	23788559aa1fd17e625a0e4c0cb64358c573867b	reviewed	evaluator_boundaries.md
@@ -335,7 +335,7 @@ vrl/rollouts/evaluators/token/ref_pass.py	e65a9a627c2b6cdf366528a429749fd8a64c1a
 vrl/rollouts/evaluators/token/token_logprob.py	9248cc81fe92c25c2aac9c52f0495397709cf46c	reviewed	README.md: First inspection; multisegment follow-ups tracked
 vrl/rollouts/evaluators/trajectory.py	56a26ff9212b328603b21789abf2ac346bf4be0c	reviewed	evaluator_boundaries.md
 vrl/rollouts/evaluators/types.py	7e3c0362d20e3fb15bc7bfc2383a29283936840d	reviewed	forward_objectives.md
-vrl/rollouts/orchestration/__init__.py	81625f37b564cda0696cc46de1c952435a88fcd5	pending	-
+vrl/rollouts/orchestration/__init__.py	81625f37b564cda0696cc46de1c952435a88fcd5	reviewed	collector_owner.md
 vrl/rollouts/orchestration/continuous/__init__.py	c3203771200922b4c9fe70077814271f1a8c2190	reviewed	continuous_owner.md
 vrl/rollouts/orchestration/continuous/consumer.py	f96055e7e5dfa985b8e753bb31d5c754169a7049	reviewed	continuous_capacity.md
 vrl/rollouts/orchestration/continuous/generated_capacity.py	4739b8d74fec70f500d1fc8d1167dc0db3d10a5e	reviewed	continuous_capacity.md
