@@ -34,7 +34,7 @@ class ScoredRolloutQueue:
         return len(self._items)
 
     def stats(self) -> dict[str, float]:
-        # Occupancy spans the installed current/preview window. The consumer
+        # Occupancy spans the installed current/prefetched window. The consumer
         # owns batch selection; this container reports physical occupancy.
         oldest_age = max((item.age_s for item in self._items), default=0.0)
         return {

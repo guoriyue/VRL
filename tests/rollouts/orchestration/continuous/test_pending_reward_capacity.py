@@ -49,7 +49,7 @@ def test_cancel_at_every_stage_releases_capacity_and_close_stops_admission() -> 
     capacity.record_generated((0, 1), nbytes=8)
     capacity.record_generated((0, 2), nbytes=6)
     capacity.start_scoring((0, 1))
-    # One generating, one scoring, one capacityd.
+    # One generating, one scoring, one waiting for scoring.
     for slot in range(3):
         capacity.release((0, slot))
     assert capacity.stats()["reserved_bytes"] == 0

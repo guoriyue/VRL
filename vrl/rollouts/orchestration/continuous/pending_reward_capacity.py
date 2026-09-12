@@ -92,7 +92,11 @@ class PendingRewardCapacity:
         }
 
     def close(self) -> None:
-        """Close admission after the owner has settled generation and reward."""
+        """Close admission and clear bookkeeping during terminal shutdown.
+
+        This does not release payloads or prove producer tasks have stopped.
+        Late task cleanup may still call release(), which becomes a no-op.
+        """
 
         self._closed = True
         self._waiting.clear()
