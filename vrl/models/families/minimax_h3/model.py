@@ -60,7 +60,7 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import ChunkedLatentDecoder, LatentDecodePlan
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
-from vrl.models.steps.denoise.common.tensors import broadcast_batch_tensor
+from vrl.models.steps.denoise.common.tensors import expand_tensor_to_batch
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -804,10 +804,10 @@ class MiniMaxH3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModel
         padded[:, :num_text_tokens] = embeds
         audio_by_step = torch.stack(state.audio_rows_by_step, dim=1)  # [B, steps, rows, C]
         return {
-            "prompt_embeds": broadcast_batch_tensor(padded, batch, materialize=True),
+            "prompt_embeds": expand_tensor_to_batch(padded, batch, materialize=True),
             "num_text_tokens": torch.full((batch,), num_text_tokens, dtype=torch.int64),
             "latents_clean": state.latents.detach(),
-            "audio_rows_by_step": broadcast_batch_tensor(audio_by_step, batch, materialize=True),
+            "audio_rows_by_step": expand_tensor_to_batch(audio_by_step, batch, materialize=True),
         }
 
     def restore_eval_state(

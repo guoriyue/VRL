@@ -7,7 +7,7 @@ from typing import Any
 import torch
 
 
-def broadcast_batch_tensor(
+def expand_tensor_to_batch(
     value: torch.Tensor,
     batch_size: int,
     *,
@@ -32,7 +32,7 @@ def broadcast_singleton_replay_tensor(value: Any, batch_size: int) -> Any:
     """Broadcast a leading-1 batch dim up to ``batch_size`` (contiguous)."""
     if not isinstance(value, torch.Tensor) or value.shape[:1] != (1,) or batch_size == 1:
         return value
-    return broadcast_batch_tensor(value, batch_size, materialize=True)
+    return expand_tensor_to_batch(value, batch_size, materialize=True)
 
 
 def replay_tensor(
@@ -59,8 +59,8 @@ def shared_replay_tensor(
 
 
 __all__ = [
-    "broadcast_batch_tensor",
     "broadcast_singleton_replay_tensor",
+    "expand_tensor_to_batch",
     "replay_tensor",
     "shared_replay_tensor",
 ]

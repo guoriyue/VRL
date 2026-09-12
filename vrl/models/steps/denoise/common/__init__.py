@@ -18,8 +18,8 @@ from vrl.models.steps.denoise.common.masked_prompt import (
     TrainTimestepMaskedPromptSamplingState,
 )
 from vrl.models.steps.denoise.common.tensors import (
-    broadcast_batch_tensor,
     broadcast_singleton_replay_tensor,
+    expand_tensor_to_batch,
     replay_tensor,
     shared_replay_tensor,
 )
@@ -42,10 +42,10 @@ __all__ = [
     "MaskedPromptSamplingState",
     "TrainTimestepMaskedPromptSamplingState",
     "VaeDecodeMixin",
-    "broadcast_batch_tensor",
     "broadcast_singleton_replay_tensor",
     "broadcast_spatial_timestep",
     "expand_batch_timestep",
+    "expand_tensor_to_batch",
     "pack_eval_timestep",
     "replay_tensor",
     "set_mu_shifted_timesteps",

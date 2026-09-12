@@ -57,8 +57,8 @@ from vrl.models.steps.denoise.common import (
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
     LatentDecodePlan,
-    broadcast_batch_tensor,
     expand_batch_timestep,
+    expand_tensor_to_batch,
     pack_eval_timestep,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
@@ -926,7 +926,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             embeds = request.negative_prompt_embeds
 
         extra = request.extra
-        condition = broadcast_batch_tensor(
+        condition = expand_tensor_to_batch(
             extra["condition"],
             request.hidden_states.shape[0],
         )
@@ -940,7 +940,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         extra_kwargs: dict[str, torch.Tensor] = {}
         image_embeds = extra.get("image_embeds")
         if image_embeds is not None:
-            extra_kwargs["encoder_hidden_states_image"] = broadcast_batch_tensor(
+            extra_kwargs["encoder_hidden_states_image"] = expand_tensor_to_batch(
                 image_embeds,
                 request.hidden_states.shape[0],
             )

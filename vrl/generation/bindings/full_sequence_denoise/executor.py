@@ -37,7 +37,7 @@ from vrl.generation.types import (
     GenerationRequest,
     GenerationSampleRow,
 )
-from vrl.models.steps.denoise.common.tensors import broadcast_batch_tensor
+from vrl.models.steps.denoise.common.tensors import expand_tensor_to_batch
 from vrl.trajectory.storage import (
     TrajectoryStoragePolicy,
     trajectory_tensor_bytes,
@@ -282,7 +282,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         stage_durations["encode"] = time.perf_counter() - started
 
         started = time.perf_counter()
-        batch_encoded = self.expand_batch_conditioning(
+        batch_encoded = self.expand_conditioning_to_batch(
             encoded=encoded,
             generation_request=request,
             video_request=video_request,
@@ -498,7 +498,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
             request=video_request,
         )
 
-    # Encoded keys copied through UNREPEATED by the default expand_batch_conditioning.
+    # Encoded keys copied through UNREPEATED by the default expand_conditioning_to_batch.
     # For batch-shared tensors whose leading dim is not a batch axis (FLUX's
     # ``text_ids`` is ``[seq, 3]``), the generic repeat would corrupt the shape,
     # so the family lists them here instead of overriding the whole method.
@@ -506,7 +506,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
     # through input preparation untouched and need no listing.
     batch_passthrough_keys: tuple[str, ...] = ()
 
-    def expand_batch_conditioning(
+    def expand_conditioning_to_batch(
         self,
         *,
         encoded: dict[str, Any],
@@ -523,7 +523,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         for key, value in encoded.items():
             if key not in passthrough and isinstance(value, torch.Tensor) and value.ndim > 0:
                 try:
-                    value = broadcast_batch_tensor(value, batch.sample_count, materialize=True)
+                    value = expand_tensor_to_batch(value, batch.sample_count, materialize=True)
                 except ValueError as error:
                     raise ValueError(f"encoded field {key!r}: {error}") from error
             batch_encoded[key] = value
@@ -557,7 +557,7 @@ __all__ = [
 class GenericDiffusionBatchExecutor(DiffusionBatchExecutorBase):
     """Generic batch executor for pure-data diffusion families.
 
-    A family whose executor overrides no method (no ``expand_batch_conditioning`` /
+    A family whose executor overrides no method (no ``expand_conditioning_to_batch`` /
     ``encode_prompt_for_batch``) is pure configuration: ``family`` / ``task``
     plus a few ``default_*`` values. Rather than ship a boilerplate subclass,
     it declares a ``model.executor`` block in its model config yaml and
