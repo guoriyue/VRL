@@ -11,3 +11,8 @@
 - Use all-keyword-only signatures for configuration-only APIs with no primary data input. Do not add `*` to every function, introduce positional-only `/`, or move existing keyword-only parameters forward just for visual uniformity.
 - Keep parameter kinds consistent across a protocol, its implementations, and same-purpose family adapters. Preserve signatures imposed by frameworks, callbacks, and vendored upstream code, including PyTorch and Diffusers overrides.
 - When changing parameter kinds, inspect and update callers, including tests and RPC forwarding. Avoid unrelated argument reordering. Run the existing behavioral tests; do not add runtime signature checkers or tests that only assert punctuation.
+
+## Local helper functions
+
+- Keep inner functions when repeated calls, recursion, or captured per-operation state make the parent operation clearer. Do not expand them into duplicated logic or manual traversal stacks merely to remove nesting.
+- Inline single-use helpers when that improves readability. Keep framework callbacks and native-API simplifications based on their actual role, not invocation count alone.
