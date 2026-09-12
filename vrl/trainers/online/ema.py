@@ -181,9 +181,12 @@ class EMAWeights:
         }
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        """Prepare restored shadows before replacing any live EMA state."""
+
         from torch.distributed.tensor import DTensor, distribute_tensor
 
-        self.decay = state_dict.get("decay", self.decay)
+        decay = state_dict.get("decay", self.decay)
+        num_updates = int(state_dict.get("num_updates", self.num_updates))
         incoming = state_dict.get("ema_parameters", self.ema_parameters)
         resharded: list[torch.Tensor] = []
         # Checkpoints store full tensors; when the live shadows are DTensor
@@ -196,7 +199,7 @@ class EMAWeights:
                     current.device_mesh,
                     current.placements,
                 )
-            resharded.append(loaded)
+            resharded.append(loaded.to(device=self.device))
+        self.decay = decay
         self.ema_parameters = resharded
-        self.num_updates = int(state_dict.get("num_updates", self.num_updates))
-        self.to(self.device)
+        self.num_updates = num_updates

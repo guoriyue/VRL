@@ -150,3 +150,32 @@ def test_both_checkpoint_paths_snapshot_away_from_the_live_shadow(is_primary: bo
     else:
         # Non-primary ranks join the gather and keep nothing.
         assert sharded is None
+@pytest.mark.parametrize("failure", ["count", "device_copy"])
+def test_failed_ema_restore_preserves_live_state(failure) -> None:
+    ema = EMAWeights([_single_param(10.0)], decay=0.9, device=torch.device("cpu"))
+    shadows = ema.ema_parameters
+    incoming = [] if failure == "count" else [torch.ones(1, device="meta")]
+
+    with pytest.raises((ValueError, NotImplementedError)):
+        ema.load_state_dict({"decay": 0.5, "num_updates": 7, "ema_parameters": incoming})
+
+    assert ema.decay == 0.9
+    assert ema.num_updates == 0
+    assert ema.ema_parameters is shadows
+    assert shadows[0].item() == 10.0
+
+
+def test_ema_restore_preserves_next_update() -> None:
+    param = _single_param(10.0)
+    original = EMAWeights([param], decay=0.8)
+    original.ema_parameters[0].fill_(0.0)
+    original.step([param], 0)
+    state = original.checkpoint_state_dict(is_primary=True)
+    restored = EMAWeights([param], decay=0.5)
+    restored.load_state_dict(state)
+
+    original.step([param], 1)
+    restored.step([param], 1)
+    assert restored.decay == original.decay
+    assert restored.num_updates == original.num_updates
+    torch.testing.assert_close(restored.ema_parameters[0], original.ema_parameters[0])
