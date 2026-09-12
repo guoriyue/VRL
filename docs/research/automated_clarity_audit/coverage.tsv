@@ -325,9 +325,9 @@ vrl/rollouts/collector/core.py	c2e54e864516b433a64e5547675bef376713d683	pending	
 vrl/rollouts/collector/requests.py	66f4ef6e66822d0b86a1b0deba624cf4dc73a385	reviewed	model_sampling_boundaries.md
 vrl/rollouts/evaluators/__init__.py	6ad2ed02d948c1acf5629a802e922d5d7bb4a61a	reviewed	evaluator_boundaries.md
 vrl/rollouts/evaluators/base.py	23788559aa1fd17e625a0e4c0cb64358c573867b	reviewed	evaluator_boundaries.md
-vrl/rollouts/evaluators/denoise/__init__.py	fc1c2b65541f4896d5777231bf10cbb2ba7e3d94	pending	-
-vrl/rollouts/evaluators/denoise/chunk_autoregressive_logprob.py	c60ea680a442b82de5a20aa397c9fcd65da14e58	pending	-
-vrl/rollouts/evaluators/denoise/sde_logprob.py	1503cd0b15c2c2ed2ed6060382a8e35ed3ca2035	pending	-
+vrl/rollouts/evaluators/denoise/__init__.py	fc1c2b65541f4896d5777231bf10cbb2ba7e3d94	reviewed	denoise_evaluators.md
+vrl/rollouts/evaluators/denoise/chunk_autoregressive_logprob.py	c60ea680a442b82de5a20aa397c9fcd65da14e58	reviewed	denoise_evaluators.md
+vrl/rollouts/evaluators/denoise/sde_logprob.py	1503cd0b15c2c2ed2ed6060382a8e35ed3ca2035	reviewed	denoise_evaluators.md
 vrl/rollouts/evaluators/token/__init__.py	6df1207721cd5b646fd34e20e5302f6ecefcfdb3	reviewed	README.md: First inspection; multisegment follow-ups tracked
 vrl/rollouts/evaluators/token/continuous_token_logprob.py	97bf5af70d446f0518902c2ea439d0026cc17743	reviewed	README.md: First inspection; multisegment follow-ups tracked
 vrl/rollouts/evaluators/token/multi_segment_token_logprob.py	624e1e6a49caf55b13dc962fbac35c9660d3a232	reviewed	README.md: First inspection; multisegment follow-ups tracked

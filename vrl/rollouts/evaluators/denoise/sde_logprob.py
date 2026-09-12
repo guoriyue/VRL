@@ -111,22 +111,8 @@ class DiffusionSDELogProbEvaluator(ReplayEvaluatorBase):
                 else None
             )
             with torch.no_grad():
-                if cached_ref_noise_pred is not None:
-                    ref_result = flow_matching_math.sde_step_with_logprob(
-                        self.scheduler,
-                        cached_ref_noise_pred,
-                        t,
-                        observations,
-                        prev_sample=actions,
-                        return_dt=signal_request.need_kl_intermediates,
-                        noise_level=self.noise_level,
-                        sde_type=self.sde_type,
-                        math_dtype=self.math_dtype,
-                    )
-                    ref_log_prob = ref_result.log_prob
-                    ref_prev_sample_mean = ref_result.prev_sample_mean
-                    ref_sqrt_neg_dt = ref_result.sqrt_neg_dt
-                elif ref_model is not None:
+                ref_noise_pred = cached_ref_noise_pred
+                if ref_noise_pred is None and ref_model is not None:
                     # ReplayModel.disable_adapter() may be a no-op for non-adapter
                     # models. A distinct frozen reference still comes through
                     # the explicit ref_model path.
@@ -144,6 +130,7 @@ class DiffusionSDELogProbEvaluator(ReplayEvaluatorBase):
                         ).require_segment("denoise")
                     ref_noise_pred = ref_fwd.require_value("noise_pred")
 
+                if cached_ref_noise_pred is not None or ref_model is not None:
                     ref_result = flow_matching_math.sde_step_with_logprob(
                         self.scheduler,
                         ref_noise_pred,
