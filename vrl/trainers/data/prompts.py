@@ -220,7 +220,7 @@ def load_prompt_examples_from_config(data: DataConfig) -> list[PromptExample]:
             return load_prompt_dataset_index(next(iter(sources)))
         if data.mix_seed is None:
             raise ValueError("config missing required field: data.mix_seed")
-        return load_prompt_mixture(sources, seed=int(data.mix_seed))
+        return load_prompt_mixture(sources, seed=data.mix_seed)
 
     if data.loader == "prompt_image_manifest":
         return list(ImageCaptionPromptDataset.from_config(data, path=manifest).examples)
@@ -231,9 +231,9 @@ def load_prompt_examples_from_config(data: DataConfig) -> list[PromptExample]:
 class JsonlPromptDataset(Dataset):
     """Dataset that loads :class:`PromptExample` objects from a JSONL file.
 
-    Each line must be a JSON object whose keys match the
-    :class:`PromptExample` fields.  Only ``prompt`` is required; all
-    other fields fall back to their dataclass defaults when absent.
+    Each line must be a JSON object. Known keys populate :class:`PromptExample`;
+    unknown keys are merged into metadata. Only ``prompt`` is required; other
+    fields use their dataclass defaults when absent.
     """
 
     def __init__(self, path: str | Path) -> None:
