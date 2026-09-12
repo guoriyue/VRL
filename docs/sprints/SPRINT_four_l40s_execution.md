@@ -557,3 +557,14 @@ The trainer RNG difference also needs inspection in that controlled audit.
 
 The control process is terminal and post-exit process/GPU queries are empty.
 This hardware claim is released. Resume equivalence remains open.
+
+### Current claim: seeded I2V equivalence control (Codex)
+
+Source inspection confirms `sampling.seed` controls I2V initial latents,
+per-sample denoise SDE generators and stochastic-window selection. Codex
+claims GPUs 2/3 for the canonical two-update control with `sampling.seed=7`,
+otherwise unchanged, from isolated `f01c3625`. Output:
+`/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/control_seed7`; log:
+`outputs/perf/wan_i2v_l40s_control_seed7.log`. Ray temporary files use NVMe.
+After completion, resume this control's own checkpoint-1 for a matched branch.
+Launch follows a separate process/GPU preflight; equivalence is still unproven.
