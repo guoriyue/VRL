@@ -19,6 +19,7 @@ from typing import Any
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.operation_deadline import cancel_ray_refs
+from vrl.runtime_errors import TerminalRuntimeError
 
 
 class EngineCallRef:
@@ -130,17 +131,33 @@ class RayGenerationEngine:
             return getattr(self.ranks[0].actor, method_name).remote
 
         def submit(*args: Any, **kwargs: Any) -> EngineCallRef:
-            refs = [
-                getattr(rank.actor, method_name).remote(*args, **kwargs) for rank in self.ranks
-            ]
+            refs = self._submit_rank_calls(method_name, *args, **kwargs)
             return EngineCallRef(refs, combine=combine)
 
         return submit
 
+    def _submit_rank_calls(self, method_name: str, *args: Any, **kwargs: Any) -> list[Any]:
+        """Own rank refs until the complete fan-out can be handed to its waiter."""
+
+        refs: list[Any] = []
+        try:
+            for rank in self.ranks:
+                refs.append(getattr(rank.actor, method_name).remote(*args, **kwargs))
+        except BaseException as cause:
+            if not refs:
+                raise
+            error = TerminalRuntimeError(
+                f"engine {self.engine_id!r} partially submitted {method_name!r}: "
+                f"{len(refs)}/{len(self.ranks)} ranks received the call",
+            )
+            cancel_ray_refs(None, refs, root_error=error)
+            raise error from cause
+        return refs
+
     async def sleep(self) -> tuple[WorkerMemoryParkingSnapshot, ...]:
         """Park every rank and return its validated physical-memory evidence."""
 
-        refs = [rank.actor.sleep.remote() for rank in self.ranks]
+        refs = self._submit_rank_calls("sleep")
         values = await asyncio.gather(*refs)
         snapshots: list[WorkerMemoryParkingSnapshot] = []
         for rank, value in zip(self.ranks, values, strict=True):
@@ -161,7 +178,7 @@ class RayGenerationEngine:
     async def wake(self) -> None:
         """Restore every parked rank onto its assigned GPU."""
 
-        await asyncio.gather(*[rank.actor.wake.remote() for rank in self.ranks])
+        await asyncio.gather(*self._submit_rank_calls("wake"))
 
 
 def rank_handles(engines: Sequence[RayGenerationEngine]) -> list[RayActorHandle]:

@@ -60,7 +60,7 @@ vrl/generation/launch_contract.py	9e6459395d36be8d343a66525b9f07d26ab40713	revie
 vrl/generation/protocols.py	9b820fc3c3ae74bce1b76967fc6bc9353cea21fb	pending	-
 vrl/generation/ray/__init__.py	4dbcac310188b85480f8eae0ef9c757b216f7fb2	pending	-
 vrl/generation/ray/config.py	219c6bd550d1aed0af34c527e6e1561e89c01b53	reviewed	launch_config.md
-vrl/generation/ray/engine.py	1b8292a72602846a13f17ee8d2721cf3ff555d3f	pending	-
+vrl/generation/ray/engine.py	1b8292a72602846a13f17ee8d2721cf3ff555d3f	reviewed	engine_submission.md
 vrl/generation/ray/executor.py	5e6ab1dedb66ea4c6d3ebcd3a367bc0cb5bd7ff4	pending	-
 vrl/generation/ray/health_monitor.py	74e2dbcbbf429de3a4e44675aaff09b54aa98c21	pending	-
 vrl/generation/ray/launch_inputs.py	68452738b8dc5db96f41619cde73f852e9e9c85c	reviewed	launch_config.md

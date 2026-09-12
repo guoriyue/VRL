@@ -1,8 +1,7 @@
 """Multi-rank fan-out/aggregate semantics of the driver-side engine.
 
-Today every engine owns one rank; these tests drive RayGenerationEngine over
-recording fake rank actors at N=2/3 so the coordination layer is pinned before
-a multi-GPU engine backend exists: broadcast order, rank-0 result selection,
+These tests drive RayGenerationEngine over recording fake rank actors at N=2/3:
+broadcast order, rank-0 result selection,
 uniform-echo validation, fail-closed on any rank failure (with sibling
 cancellation), and parking-snapshot aggregation.
 """
@@ -89,6 +88,45 @@ async def test_single_rank_returns_the_raw_rank_ref() -> None:
     # No aggregate wrapper for the degenerate case: identical to pre-engine
     # behavior byte-for-byte (completion/cancellation timing included).
     assert ref is raw
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["execute_batch", "sleep", "wake"])
+@pytest.mark.parametrize("failed_rank", [0, 1])
+async def test_partial_submission_cancels_owned_refs_and_reports_terminal_failure(
+    monkeypatch, method, failed_rank
+) -> None:
+    from vrl.runtime_errors import TerminalRuntimeError
+
+    calls = []
+    refs = {"r0": _Ref(), "r1": _Ref(), "r2": _Ref()}
+    engine = _engine(calls, refs, method=method)
+    failure = RuntimeError("rank submission failed")
+    cancelled = []
+
+    def fail(*args, **kwargs):
+        raise failure
+
+    def cancel(_ray, submitted, *, root_error):
+        cancelled.extend(submitted)
+        return ()
+
+    monkeypatch.setattr(getattr(engine.ranks[failed_rank].actor, method), "remote", fail)
+    monkeypatch.setattr("vrl.generation.ray.engine.cancel_ray_refs", cancel)
+    with pytest.raises(RuntimeError) as caught:
+        if method == "execute_batch":
+            engine.remote(method)("payload")
+        else:
+            await getattr(engine, method)()
+
+    if failed_rank:
+        assert isinstance(caught.value, TerminalRuntimeError)
+        assert caught.value.__cause__ is failure
+        assert cancelled == [refs["r0"]]
+    else:
+        assert caught.value is failure
+        assert cancelled == []
+    assert len(calls) == failed_rank
 
 
 @pytest.mark.asyncio
