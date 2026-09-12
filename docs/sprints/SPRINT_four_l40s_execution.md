@@ -458,3 +458,18 @@ or change the workload to avoid it. Checkpoint/resume remains untested.
 The tool session is terminal with exit 1, post-exit training-process/GPU
 allocation queries are empty, and this hardware claim is released while the
 new replay-device failure is diagnosed. No full I2V training pass is claimed.
+
+### Current claim: I2V mixed-residency restore fix (Codex)
+
+Trainer parking recorded one device per module from its first parameter.
+CPU-offloaded FSDP parameters live on CPU while rotary buffers live on CUDA;
+restoring everything to that one CPU device lost the buffer placement.
+The isolated fix records named parameter/buffer devices and restores current
+objects by name (Module.to can replace buffers). One- and two-rank CUDA Wan
+tests now park/restore before both expert backwards, verifying CUDA buffers
+and CPU parameter shards survive. Both tests passed; 60 strategy/FSDP CPU
+tests and touched-file Ruff/format checks passed.
+
+Codex claims GPUs 2/3 for the same production recipe after a separate preflight.
+Output `outputs/wan_i2v_14b_l40s_proof/epoch1_restore_fix`; log
+`outputs/perf/wan_i2v_l40s_epoch1_restore_fix.log`. No training pass is implied.
