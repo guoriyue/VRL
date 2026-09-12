@@ -863,17 +863,8 @@ class OnlineTrainer:
             device=self.device,
             worker_name="online_trainer",
         ):
-            return await self._step_impl(prompts, next_prompts=next_prompts)
-
-    async def _step_impl(
-        self,
-        prompts: list[Any],
-        *,
-        next_prompts: list[Any] | None = None,
-    ) -> TrainStepMetrics:
-        """Run one full training step without profiler wrapping."""
-        batch = await self.collect_training_batch(prompts, next_prompts=next_prompts)
-        return await self.train_on_rollout_batch(batch)
+            batch = await self.collect_training_batch(prompts, next_prompts=next_prompts)
+            return await self.train_on_rollout_batch(batch)
 
     @staticmethod
     def merge_reward_scores(

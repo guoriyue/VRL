@@ -172,7 +172,7 @@ def test_weight_sync_happens_in_train_half_not_collect(tmp_path) -> None:
 
 
 def test_next_prompts_reaches_the_rollout_schedule(tmp_path) -> None:
-    """The lookahead must survive step -> _step_impl -> collect -> schedule.
+    """The next-batch prefetch input must reach step -> collect -> schedule.
 
     Continuous rollout installs this as the producer's next prompt batch so
     generation overlaps training. A dropped forward costs that overlap without failing
