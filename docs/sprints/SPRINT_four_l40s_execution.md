@@ -928,3 +928,69 @@ and all GPUs clear. This hardware claim is released. While waiting, the original
 four-rank Wan FSDP config was located at
 `outputs/wan_hpsv3_flash_grpo/fsdp_smoke_main/resolved_config.yaml`: preserve its
 832x480, 81-frame, 20-step, HPSv3 workload when auditing that separate gate.
+
+### Current claim: three-step deterministic I2V baseline (Codex)
+
+Codex claims GPUs 2/3 for three uninterrupted updates with the same canonical
+seed-7 deterministic settings and frozen isolated runtime `9a2b01d2`.
+Output: `/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/control_seed7_deterministic_step3`.
+Log: `outputs/perf/wan_i2v_l40s_control_seed7_deterministic_step3.log`.
+This adds a third-step baseline so the matched save boundary can contain
+nonzero Adam moments and updated LoRA weights. Do not substitute the earlier
+zero-gradient checkpoint-1 boundary for this stronger resume check.
+Preflight found GPUs 2/3 clear, 1.3 TiB NVMe free, and a separate SD3.5 job
+PID 223661 on GPU 0 (`outputs/sp_online/ctrl_1gpu_nocompile_b4`); preserve it.
+
+The three-step control exited 0 with both rank verdicts success. Gradients
+are 0, 0.2728397151080096 and 0.15291466209240082. Third-step reward mean/std
+are 0.7994599342/0.3473456204; max pre-update logprob error is
+0.0000990182161, below the unchanged 0.01 limit. Actual checkpoint loading
+validates next_epoch/next_step=3 and all 800 finite LoRA tensors changed from
+checkpoint-2 to final. The checkpoint-2 source contains 800 nonzero Adam
+moment leaves. `deterministic_step2_source_comparison.json` (NVMe proof root)
+shows this checkpoint-2 exactly equals the previous two-step control's state.
+
+CPU pre-integration regression of the 12 changed test files completed with
+CUDA hidden: 319 passed, 16 skipped in 73.79 s. Log:
+`outputs/perf/isolated_gpu_fixes_cpu_regression.log`. Thirteen isolated commits
+remain unintegrated; the shared branch has no intervening vrl/tests changes.
+Do not edit the shared runtime while another session's job imports it.
+
+Resource collision occurred during the third update: another session started
+SD3.5 driver PID 234733 (`outputs/sp_online/2x1`) with rollout actors 235213/235214
+on GPUs 1/2, overlapping the already claimed GPU 2. The Wan job remained within
+capacity and completed, but third-step timing is NOT exclusive-GPU performance
+evidence. No other process was killed or modified. At final inspection the
+SD3.5 driver was still live and GPUs 0/1/2 remained occupied; GPU 3 was free.
+The Wan process and all comparison/test sessions are terminal, and its claim
+is released, not a claim that all hardware is idle.
+
+Next launch only after a fresh two-GPU availability check: strict deterministic
+resume from `control_seed7_deterministic_step3/checkpoint-2` to total_epochs=3,
+with unchanged model/data/seed settings, then compare all final checkpoint
+sections against this baseline. That nonzero-moment production resume gate,
+quality gates and main-branch integration remain unverified.
+
+### Replay parity root cause (vrl-74, 2026-09-12 03:15 PDT)
+
+Controls on one L40S, `experiment/sd3_5/online_grpo_ocr`, 1 epoch, first
+replay `max_abs_logprob_diff` (limit 0.01):
+
+| generation batch | replay batch | compile | max_abs_diff | verdict |
+|---|---|---|---|---|
+| 16 | 1 | off | 0.0173 | fail (`ctrl_1gpu_nocompile`) |
+| 16 | 1 | on  | 0.0156 | fail (`ctrl_1gpu_compile`) |
+| 16 | 1 | off, 2 engines | 0.0148 | fail (`2x1`) |
+| 16 | 16 | off | OOM in replay on a colocated 44 GB card | (`ctrl_1gpu_nocompile_rb16`) |
+| 4 | 4 | off | 0.0111 | fail (`ctrl_1gpu_nocompile_b4`) |
+| 1 | 1 | off | **0.0** | pass (`ctrl_1gpu_nocompile_gb1`) |
+
+The drift is entirely the bf16 kernel-path difference between a 16-sample
+(32 with CFG) rollout forward and a 1-sample replay forward; with equal shapes
+the two log-probs are bit-identical. Generation at batch 1 costs 18.4 s vs
+13.1 s per 16-sample group (SD3.5 at 512px is launch-bound), so shape
+alignment is cheap. Equal shapes at batch 4 still differ (0.0111): only batch 1 puts both
+forwards on the same kernel path. The 3x1 preset now pins
+`samples_per_generation_batch=1` / `samples_per_replay_batch=1` (commit
+6b0ab94d); the P6 online runs use it. The May L4 run's 6e-7 came
+from a 2-sample probe that predates the whole-replay gate (b8c1f766).

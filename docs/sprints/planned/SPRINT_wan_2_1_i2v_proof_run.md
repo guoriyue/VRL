@@ -4,6 +4,16 @@
 
 Status: **PLANNED: two-step deterministic equivalence passed; trained-moment resume and quality open**.
 
+The uninterrupted three-step baseline is now available at
+`/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/control_seed7_deterministic_step3`.
+Both ranks succeeded; third-step gradient is 0.1529146621, replay max error
+0.0000990182161, and all 800 finite LoRA tensors change from step 2 to step 3.
+Its checkpoint-2 contains 800 nonzero Adam moment leaves and matches the
+previous deterministic two-step state exactly. Resume from this checkpoint-2
+and compare the final payload to close the trained-moment gate; this branch
+has not yet run. A concurrent SD3.5 job overlapped GPU 2 during the baseline's
+third update, so its timings are not exclusive-capacity/performance evidence.
+
 The deterministic uninterrupted two-update control now matches the strict
 resume exactly in every checkpoint payload section. Its checkpoint-1 also
 matches the resume source exactly. Second-step gradient norm is 0.2728397151;
