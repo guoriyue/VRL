@@ -1028,7 +1028,7 @@ def test_host_memory_budget_fail_fast(monkeypatch) -> None:
     import pytest
 
     from vrl.scripts.common import online
-    from vrl.utils.memory import HostMemorySnapshot
+    from vrl.utils.memory import HostMemoryMonitor, HostMemorySnapshot
 
     def _inject(used_fraction: float) -> None:
         # total=100GiB; available carved so used_fraction comes out as asked.
@@ -1038,7 +1038,7 @@ def test_host_memory_budget_fail_fast(monkeypatch) -> None:
             available_mb=total * (1.0 - used_fraction),
             total_mb=total,
         )
-        monkeypatch.setattr(HostMemorySnapshot, "capture", classmethod(lambda cls: snap))
+        monkeypatch.setattr(HostMemoryMonitor, "capture", lambda self: snap)
 
     # Over budget -> fail fast with an actionable message.
     _inject(0.95)
@@ -1053,9 +1053,9 @@ def test_host_memory_budget_fail_fast(monkeypatch) -> None:
 
     # Unreadable host memory (used_fraction None) -> never raises (no false kill).
     monkeypatch.setattr(
-        HostMemorySnapshot,
+        HostMemoryMonitor,
         "capture",
-        classmethod(lambda cls: HostMemorySnapshot(rss_mb=None, available_mb=None, total_mb=None)),
+        lambda self: HostMemorySnapshot(rss_mb=None, available_mb=None, total_mb=None),
     )
     online._check_host_memory_budget(0.9, microbatch_prompts=1, n_samples_per_prompt=8)
 

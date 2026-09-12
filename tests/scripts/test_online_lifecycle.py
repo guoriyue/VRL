@@ -467,7 +467,7 @@ def _install_common_fakes(
         "enable_transformer_gradient_checkpointing",
         lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr(online, "log_host_memory", lambda *args, **kwargs: None)
+    monkeypatch.setattr(online._host_memory, "log", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         online,
         "GlobalRayPlacementOwner",

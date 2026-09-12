@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 from vrl.utils.logging import init_logger
 
-logger = init_logger(__name__)
+_logger = init_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,32 +18,6 @@ class HostMemorySnapshot:
     rss_mb: float | None
     available_mb: float | None
     total_mb: float | None
-
-    @classmethod
-    def capture(cls) -> HostMemorySnapshot:
-        """Capture Linux host memory without adding a psutil dependency."""
-
-        return cls(
-            rss_mb=cls._read_proc_field_mb("/proc/self/status", "VmRSS"),
-            available_mb=cls._read_proc_field_mb("/proc/meminfo", "MemAvailable"),
-            total_mb=cls._read_proc_field_mb("/proc/meminfo", "MemTotal"),
-        )
-
-    @staticmethod
-    def _read_proc_field_mb(path: str, field: str) -> float | None:
-        """Read ``field:`` (kB) from a /proc table and return it in MiB."""
-        try:
-            with open(path, encoding="utf-8") as handle:
-                for line in handle:
-                    if not line.startswith(f"{field}:"):
-                        continue
-                    parts = line.split()
-                    if len(parts) < 2:
-                        return None
-                    return float(parts[1]) / 1024.0
-        except OSError:
-            return None
-        return None
 
     def __str__(self) -> str:
         """Format host-memory values with unknown fields omitted."""
@@ -66,16 +41,53 @@ class HostMemorySnapshot:
         return 1.0 - (self.available_mb / self.total_mb)
 
 
-def log_host_memory(label: str, *, log: logging.Logger | None = None) -> HostMemorySnapshot:
-    """Log a compact host-memory snapshot and return it for tests/hooks."""
+class HostMemoryMonitor:
+    """Read host memory and log measurements through one configured logger."""
 
-    snapshot = HostMemorySnapshot.capture()
-    target = log or logger
-    target.info("host_memory[%s]: %s", label, snapshot)
-    return snapshot
+    def __init__(
+        self,
+        *,
+        logger: logging.Logger | None = None,
+        proc_root: str | Path = "/proc",
+    ) -> None:
+        self.logger = logger if logger is not None else _logger
+        self.proc_root = Path(proc_root)
+
+    def capture(self) -> HostMemorySnapshot:
+        """Read process RSS and system totals, opening each proc table once."""
+
+        process = self._read_fields_mb(self.proc_root / "self/status", ("VmRSS",))
+        system = self._read_fields_mb(self.proc_root / "meminfo", ("MemAvailable", "MemTotal"))
+        return HostMemorySnapshot(
+            rss_mb=process.get("VmRSS"),
+            available_mb=system.get("MemAvailable"),
+            total_mb=system.get("MemTotal"),
+        )
+
+    def log(self, label: str) -> HostMemorySnapshot:
+        """Capture, log, and return the same measurement."""
+
+        snapshot = self.capture()
+        self.logger.info("host_memory[%s]: %s", label, snapshot)
+        return snapshot
+
+    @staticmethod
+    def _read_fields_mb(path: Path, fields: tuple[str, ...]) -> dict[str, float]:
+        """Read requested kB fields as MiB; unavailable fields stay absent."""
+
+        values: dict[str, float] = {}
+        try:
+            with path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    name, separator, raw = line.partition(":")
+                    if not separator or name not in fields:
+                        continue
+                    parts = raw.split()
+                    if parts:
+                        values[name] = float(parts[0]) / 1024.0
+        except OSError:
+            return {}
+        return values
 
 
-__all__ = [
-    "HostMemorySnapshot",
-    "log_host_memory",
-]
+__all__ = ["HostMemoryMonitor", "HostMemorySnapshot"]

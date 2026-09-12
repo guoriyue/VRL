@@ -67,10 +67,11 @@ from vrl.trainers.online.config import OnlineBatchPlan
 from vrl.trainers.strategy import Strategy, build_strategy
 from vrl.trainers.trace import TrainingRunTrace
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
-from vrl.utils.memory import HostMemorySnapshot, log_host_memory
+from vrl.utils.memory import HostMemoryMonitor
 from vrl.utils.profiling import profile_range
 
 logger = logging.getLogger(__name__)
+_host_memory = HostMemoryMonitor(logger=logger)
 
 _RAY_ADDRESS_ENV = "RAY_ADDRESS"
 
@@ -499,7 +500,7 @@ def _check_host_memory_budget(
     also contribute to the measured pressure. Process RSS is included in the
     diagnostic snapshot but does not determine this threshold.
     """
-    snapshot = HostMemorySnapshot.capture()
+    snapshot = _host_memory.capture()
     used = snapshot.used_fraction
     if used is None or used <= budget_fraction:
         return
@@ -806,9 +807,9 @@ async def run_online_recipe(
     resume_step = resume_checkpoint.next_step if resume_checkpoint is not None else None
     resume_dir = resume_checkpoint.checkpoint_dir if resume_checkpoint is not None else None
 
-    log_host_memory("before_trainer_bundle_build", log=logger)
+    _host_memory.log("before_trainer_bundle_build")
     bundle = resolved_model.materialize(context="replay bundle construction")
-    log_host_memory("after_trainer_bundle_build", log=logger)
+    _host_memory.log("after_trainer_bundle_build")
     if family_entry.policy_semantics.step_kind == "denoise":
         enable_transformer_gradient_checkpointing(bundle, built.root)
     model = require_runtime_model(
@@ -868,7 +869,7 @@ async def run_online_recipe(
         generation_launcher = RayGenerationLauncher()
         generation_config.validate_driver_state(driver_bundle=bundle)
         generation_launch_inputs = resolved.ray_launch_inputs(resolved_model)
-        log_host_memory("before_rollout_backend_build", log=logger)
+        _host_memory.log("before_rollout_backend_build")
         generation_runtime = generation_launcher.create_runtime(
             generation_config,
             generation_launch_inputs,
@@ -878,7 +879,7 @@ async def run_online_recipe(
         # fleet must answer one bounded health probe before the schedule starts.
         await generation_runtime.preflight()
         collector.set_generation_runtime(generation_runtime)
-        log_host_memory("after_rollout_backend_build", log=logger)
+        _host_memory.log("after_rollout_backend_build")
 
         # Only denoise evaluators consume a KL reference. With LoRA, the policy
         # itself supplies the base-model reference through adapter disabling.
@@ -983,7 +984,7 @@ async def run_online_recipe(
             resume_checkpoint.payload.clear()
             resume_checkpoint = None
             gc.collect()
-            log_host_memory("after_resume_checkpoint_release", log=logger)
+            _host_memory.log("after_resume_checkpoint_release")
 
         adapter_exports = build_adapter_exports(
             bundle,

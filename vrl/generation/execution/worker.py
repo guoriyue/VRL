@@ -98,9 +98,11 @@ class GenerationWorkerCore:
         if self.executor is not None:
             self._memory_parking.validate_loaded(self.executor)
             return
-        from vrl.utils.memory import log_host_memory
+        from vrl.utils.memory import HostMemoryMonitor
 
-        log_host_memory(f"generation_worker:{self.worker_id}:before_load_policy", log=logger)
+        host_memory = HostMemoryMonitor(logger=logger)
+
+        host_memory.log(f"generation_worker:{self.worker_id}:before_load_policy")
         try:
             if self.rank_group is not None:
                 init_rank_process_group(self.rank_group)
@@ -130,7 +132,7 @@ class GenerationWorkerCore:
                     f"load={load_error!r}; cleanup={release_error!r}",
                 ) from release_error
             raise
-        log_host_memory(f"generation_worker:{self.worker_id}:after_load_policy", log=logger)
+        host_memory.log(f"generation_worker:{self.worker_id}:after_load_policy")
 
     def release_policy(self) -> None:
         """Drop loaded model state so the rank releases CUDA memory before exit."""
