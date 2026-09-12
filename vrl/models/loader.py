@@ -1,5 +1,8 @@
-"""Shared model loaders: load diffusers transformer/scheduler pieces and
-prepare the transformer (LoRA / full fine-tune / compile) for family runtimes."""
+"""Shared Diffusers component loading and rollout quantization.
+
+Family builders own LoRA/full-finetune setup; optimization passes order the
+quantization, device placement, compilation and memory hooks.
+"""
 
 from __future__ import annotations
 
@@ -86,10 +89,9 @@ def load_flow_match_scheduler(
 def validate_rollout_quantization_support(build: ModelBuild) -> None:
     """Fail before model mutation when the requested rollout format cannot run.
 
-    Deliberately a free function rather than a ``ModelBuild`` method: quantization
-    support is a loader concern, and callers pass the build structurally — a
-    nominal method would demand a fully constructed ModelBuild where the contract
-    only needs the shape.
+    Builders call this before loading a checkpoint. Direct quantization callers
+    also use it before swapping modules, so both entry points reject unsupported
+    targets without partially constructing or transforming the model.
     """
 
     quantization = build.precision.quantization
