@@ -10,7 +10,7 @@ from vrl.math.token.logprob import gather_categorical_log_probs
 
 
 def test_gather_categorical_log_probs_matches_full_log_softmax() -> None:
-    """Chunked gathering over the vocab axis (``chunk_size=3``) matches a full bf16-to-fp32
+    """Chunked gathering over token positions (``chunk_size=3``) matches a full bf16-to-fp32
     ``log_softmax`` plus gather.
     """
     logits = torch.randn(2, 5, 11, dtype=torch.bfloat16)

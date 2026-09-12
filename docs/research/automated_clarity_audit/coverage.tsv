@@ -79,14 +79,14 @@ vrl/generation/steps/token/__init__.py	014f9cad115298898d572edc1bc936eb573d1a26	
 vrl/generation/steps/token/protocol.py	ff8bb60fcd9542b0c01f8f6d4d1397d7334861d9	reviewed	token_step_scheduling.md
 vrl/generation/types.py	30b5e01b2dc640f2ec952a80966c2910bffc0e5c	reviewed	generation_payloads.md
 vrl/generation/weight_transfer.py	207cb65d39dfba9a92563a7631e21a295ab4c13f	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
-vrl/math/__init__.py	dc566089e0058e221887ab5ba911c843fa65df8a	pending	-
+vrl/math/__init__.py	dc566089e0058e221887ab5ba911c843fa65df8a	reviewed	token_math.md
 vrl/math/denoise/__init__.py	712e17865350233b2da6211a92752ff8087a6436	pending	-
 vrl/math/denoise/ddim.py	3a2d13c1cbe238a8468e06af605319b14d401098	pending	-
 vrl/math/denoise/flow_matching.py	98168face346ba05233422010d95bccf7b855ea7	pending	-
 vrl/math/denoise/renoise.py	3708e9f04207dd5b9bb6729accc908bd4e22cd2e	pending	-
-vrl/math/token/__init__.py	630af4658b867c9cfe39bae565983ae4b8e74a50	pending	-
-vrl/math/token/flow_matching.py	0ecc93e01d7a3db22a8a59b28094cf56236b780e	pending	-
-vrl/math/token/logprob.py	e0819ffa647504dcc2ca139378834b3fd478f9a2	pending	-
+vrl/math/token/__init__.py	630af4658b867c9cfe39bae565983ae4b8e74a50	reviewed	token_math.md
+vrl/math/token/flow_matching.py	0ecc93e01d7a3db22a8a59b28094cf56236b780e	reviewed	token_math.md
+vrl/math/token/logprob.py	e0819ffa647504dcc2ca139378834b3fd478f9a2	reviewed	token_math.md
 vrl/models/__init__.py	69285acb49d1dc4f09c37778ba4cf59077e86cf0	pending	-
 vrl/models/checkpoint_identity.py	8ff026646ab9599185520db301d31d145a114990	reviewed	model_identity.md
 vrl/models/dtypes.py	fd330edc987f707390d1d8564afac712cf14b388	reviewed	model_sampling_boundaries.md

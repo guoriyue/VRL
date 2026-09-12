@@ -56,8 +56,9 @@ def gather_categorical_log_probs(
     Janus replay logits can be ``[B, L, V]`` with a large image-token vocab.
     A full fp32 ``log_softmax`` creates another tensor of that same size and
     can OOM when trainer and rollout worker are colocated on one GPU. Chunking
-    over flattened token positions keeps peak memory bounded while preserving
-    fp32 normalization.
+    over flattened token positions limits each normalization temporary while
+    preserving fp32 normalization. Autograd still retains chunk tensors for
+    backward; chunk_size does not bound the whole training graph's memory.
 
     ``temperature`` scales logits before normalization. The AR policy contract
     scores the temperature-scaled conditional (rollout samplers divide by the
