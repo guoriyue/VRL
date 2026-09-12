@@ -411,6 +411,8 @@ def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path
         def export_checkpoint_state(self, bundle):
             return export_checkpoint_state(bundle)
 
+        all_ranks_succeeded = staticmethod(bool)
+
     source = _Bundle()
     save_training_checkpoint(
         tmp_path / "checkpoint-strategy-restore",
@@ -456,6 +458,8 @@ def test_save_training_checkpoint_routes_export_through_strategy(tmp_path) -> No
             self.calls.append(bundle)
             return {"module": {"weight": torch.full((1, 1), 9.0)}}
 
+        all_ranks_succeeded = staticmethod(bool)
+
     strategy = _SpyStrategy()
     bundle = _Bundle()  # module weight is the Linear default, never 9.0
     save_training_checkpoint(
@@ -484,6 +488,8 @@ def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) 
         def export_checkpoint_state(self, bundle):
             self.calls.append(bundle)
             return {"module": {"weight": torch.full((1, 1), 7.0)}}
+
+        all_ranks_succeeded = staticmethod(bool)
 
     class _CheckpointTrainer(_Trainer):
         def checkpoint_state_dict(self):
@@ -1068,6 +1074,8 @@ def test_training_checkpoint_restores_raw_weights_when_ema_gather_fails(tmp_path
                 raise RuntimeError("EMA gather failed")
             return export_checkpoint_state(bundle)
 
+        all_ranks_succeeded = staticmethod(bool)
+
     module = _ExportModule(1, 1, bias=False)
     bundle = _Bundle(module)
     ema = _ema_holding(module, average=7.0, live=3.0)
@@ -1152,7 +1160,7 @@ def test_peer_ema_swap_failure_rolls_back_before_second_export(tmp_path) -> None
 
         def all_ranks_succeeded(self, succeeded):
             self.agreements.append(succeeded)
-            if len(self.agreements) == 9:
+            if len(self.agreements) == 7:
                 return False
             return succeeded
 
@@ -1197,7 +1205,7 @@ def test_peer_ema_swap_failure_propagates_local_rollback_failure(monkeypatch, tm
 
         def all_ranks_succeeded(self, succeeded):
             self.agreements.append(succeeded)
-            if len(self.agreements) == 9:
+            if len(self.agreements) == 7:
                 return False
             return succeeded
 
@@ -1255,7 +1263,7 @@ def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path
 
         def all_ranks_succeeded(self, succeeded):
             self.agreements.append(succeeded)
-            if len(self.agreements) in {6, 7}:
+            if len(self.agreements) in {2, 3}:
                 return False
             return succeeded
 
@@ -1263,7 +1271,7 @@ def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path
     strategy = _Strategy()
     ema = _ema_holding(module, average=7.0, live=3.0)
 
-    with pytest.raises(RuntimeError, match="disagree on EMA update state"):
+    with pytest.raises(RuntimeError, match="disagree on EMA export decision"):
         save_training_checkpoint(
             tmp_path / "checkpoint-mixed-ema-state",
             trainer=_Trainer(),
@@ -1277,7 +1285,7 @@ def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path
             strategy=strategy,
         )
 
-    assert strategy.export_calls == 1
+    assert strategy.export_calls == 0
     # No swap was attempted: the sentinel assertions the previous stub raised are
     # now the real wrapper's own state — weights untouched, no snapshot taken.
     assert module.weight.item() == pytest.approx(3.0)

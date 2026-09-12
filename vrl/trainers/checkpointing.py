@@ -600,32 +600,6 @@ def _safe_relative_output_path(
     return PurePosixPath(*segments)
 
 
-def _checkpoint_stage_agreement(strategy: Any | None, succeeded: bool) -> bool:
-    """Agree on rank-local work before another checkpoint collective begins."""
-
-    if strategy is None:
-        return succeeded
-    agreement = getattr(strategy, "all_ranks_succeeded", None)
-    if agreement is None:
-        return succeeded
-    return agreement(succeeded)
-
-
-def _checkpoint_ranks_agree_bool(
-    strategy: Any | None,
-    value: bool,
-    *,
-    field: str,
-) -> bool:
-    """Require every checkpoint rank to choose the same boolean branch."""
-
-    all_true = _checkpoint_stage_agreement(strategy, value)
-    all_false = _checkpoint_stage_agreement(strategy, not value)
-    if all_true == all_false:
-        raise RuntimeError(f"checkpoint ranks disagree on {field}")
-    return all_true
-
-
 def _checkpoint_trainable_parameters(bundle: Any) -> list[Any]:
     """Return EMA parameters in the same order used by the trainer model."""
 
@@ -759,6 +733,7 @@ def save_training_checkpoint(
     if not isinstance(model_identity, dict) or not model_identity:
         raise ValueError("model_identity must be a non-empty dict")
     is_primary = True if strategy is None else strategy.context.is_primary
+    all_ranks_succeeded = bool if strategy is None else strategy.all_ranks_succeeded
     adapter_sources: dict[str, _AdapterCheckpointSource] = {}
     ema_has_updates = False
     setup_failure: BaseException | None = None
@@ -768,17 +743,17 @@ def save_training_checkpoint(
             ema_has_updates = export_ema.has_updates
     except BaseException as error:
         setup_failure = error
-    if not _checkpoint_stage_agreement(strategy, setup_failure is None):
+    if not all_ranks_succeeded(setup_failure is None):
         if setup_failure is not None:
             raise setup_failure
         raise RuntimeError("checkpoint setup was aborted because a peer rank failed")
-    if setup_failure is not None:
-        raise setup_failure
-    uses_ema_export = _checkpoint_ranks_agree_bool(
-        strategy,
-        bool(adapter_sources and export_ema is not None),
-        field="EMA artifact export presence",
-    )
+    # Only this decision changes the collective sequence. Presence and update
+    # state need not be checked separately when both lead to skipping EMA.
+    export_ema_weights = bool(adapter_sources and export_ema is not None and ema_has_updates)
+    all_export_ema = all_ranks_succeeded(export_ema_weights)
+    all_skip_ema = all_ranks_succeeded(not export_ema_weights)
+    if all_export_ema == all_skip_ema:
+        raise RuntimeError("checkpoint ranks disagree on EMA export decision")
     export_checkpoint = (
         strategy.export_checkpoint_state if strategy is not None else export_checkpoint_state
     )
@@ -791,13 +766,10 @@ def save_training_checkpoint(
         checkpoint_state = export_checkpoint(bundle)
     except BaseException as error:
         checkpoint_failure = error
-    if not _checkpoint_stage_agreement(strategy, checkpoint_failure is None):
+    if not all_ranks_succeeded(checkpoint_failure is None):
         if checkpoint_failure is not None:
             raise checkpoint_failure
         raise RuntimeError("checkpoint export was aborted because a peer rank failed")
-    if checkpoint_failure is not None:
-        raise checkpoint_failure
-
     trainer_state: dict[str, Any] = {}
     trainer_state_failure: BaseException | None = None
     try:
@@ -811,117 +783,95 @@ def save_training_checkpoint(
         )
     except BaseException as error:
         trainer_state_failure = error
-    if not _checkpoint_stage_agreement(strategy, trainer_state_failure is None):
+    if not all_ranks_succeeded(trainer_state_failure is None):
         if trainer_state_failure is not None:
             raise trainer_state_failure
         raise RuntimeError("trainer-state export was aborted because a peer rank failed")
-    if trainer_state_failure is not None:
-        raise trainer_state_failure
     artifact_state = checkpoint_state
-    if uses_ema_export:
-        ema_has_updates = _checkpoint_ranks_agree_bool(
-            strategy,
-            ema_has_updates,
-            field="EMA update state",
-        )
-        if ema_has_updates:
-            trainable_parameters: list[Any] = []
-            parameter_failure: BaseException | None = None
-            try:
-                trainable_parameters = _checkpoint_trainable_parameters(bundle)
-                if not trainable_parameters:
-                    raise ValueError(
-                        "export_ema was provided but bundle has no trainable parameters",
-                    )
-            except BaseException as error:
-                parameter_failure = error
-            if not _checkpoint_stage_agreement(strategy, parameter_failure is None):
-                if parameter_failure is not None:
-                    raise parameter_failure
-                raise RuntimeError(
-                    "EMA artifact export was aborted because a peer rank "
-                    "failed parameter preflight",
+    if all_export_ema:
+        trainable_parameters: list[Any] = []
+        parameter_failure: BaseException | None = None
+        try:
+            trainable_parameters = _checkpoint_trainable_parameters(bundle)
+            if not trainable_parameters:
+                raise ValueError(
+                    "export_ema was provided but bundle has no trainable parameters",
                 )
+        except BaseException as error:
+            parameter_failure = error
+        if not all_ranks_succeeded(parameter_failure is None):
             if parameter_failure is not None:
                 raise parameter_failure
-            # The raw gather above proved the immutable root/key manifest on every
-            # rank. EMA swapping is rank-local, so agree on its outcome before any
-            # rank enters the second FSDP gather. A peer failure rolls successful
-            # ranks back instead of leaving them blocked in a mismatched collective.
-            swap_failure: BaseException | None = None
-            swapped = False
-            try:
-                export_ema.copy_ema_to(trainable_parameters)
-                swapped = True
-            except BaseException as error:
-                swap_failure = error
-            all_swapped = _checkpoint_stage_agreement(strategy, swap_failure is None)
-            if not all_swapped:
-                rollback_failure: BaseException | None = None
-                if swapped:
-                    try:
-                        export_ema.copy_temp_to(trainable_parameters)
-                    except BaseException as error:
-                        rollback_failure = error
-                all_rolled_back = _checkpoint_stage_agreement(
-                    strategy,
-                    rollback_failure is None,
-                )
-                if not all_rolled_back:
-                    if rollback_failure is not None:
-                        raise RuntimeError(
-                            "EMA swap failure rollback could not restore raw training weights",
-                        ) from rollback_failure
-                    raise RuntimeError(
-                        "EMA swap failure rollback was aborted because a peer rank "
-                        "could not restore raw training weights",
-                    )
-                if swap_failure is not None:
-                    raise swap_failure
-                raise RuntimeError(
-                    "EMA artifact export was rolled back because a peer rank "
-                    "failed before the gathered export",
-                )
-            if swap_failure is not None:
-                raise swap_failure
-
-            export_failure: BaseException | None = None
-            restore_failure: BaseException | None = None
-            try:
-                artifact_state = export_checkpoint(bundle)
-            except BaseException as error:
-                export_failure = error
-            finally:
+            raise RuntimeError(
+                "EMA artifact export was aborted because a peer rank failed parameter preflight",
+            )
+        # The raw gather above proved the immutable root/key manifest on every
+        # rank. EMA swapping is rank-local, so agree on its outcome before any
+        # rank enters the second FSDP gather. A peer failure rolls successful
+        # ranks back instead of leaving them blocked in a mismatched collective.
+        swap_failure: BaseException | None = None
+        swapped = False
+        try:
+            export_ema.copy_ema_to(trainable_parameters)
+            swapped = True
+        except BaseException as error:
+            swap_failure = error
+        all_swapped = all_ranks_succeeded(swap_failure is None)
+        if not all_swapped:
+            rollback_failure: BaseException | None = None
+            if swapped:
                 try:
                     export_ema.copy_temp_to(trainable_parameters)
                 except BaseException as error:
-                    restore_failure = error
-            all_exported_and_restored = _checkpoint_stage_agreement(
-                strategy,
-                export_failure is None and restore_failure is None,
+                    rollback_failure = error
+            all_rolled_back = all_ranks_succeeded(
+                rollback_failure is None,
             )
-            if not all_exported_and_restored:
-                if restore_failure is not None:
+            if not all_rolled_back:
+                if rollback_failure is not None:
                     raise RuntimeError(
-                        "EMA artifact export failed to restore raw training weights",
-                    ) from restore_failure
-                if export_failure is not None:
-                    raise export_failure
+                        "EMA swap failure rollback could not restore raw training weights",
+                    ) from rollback_failure
                 raise RuntimeError(
-                    "EMA artifact export was aborted because a peer rank failed "
-                    "during gather or raw-weight restoration",
+                    "EMA swap failure rollback was aborted because a peer rank "
+                    "could not restore raw training weights",
                 )
+            if swap_failure is not None:
+                raise swap_failure
+            raise RuntimeError(
+                "EMA artifact export was rolled back because a peer rank "
+                "failed before the gathered export",
+            )
+        export_failure: BaseException | None = None
+        restore_failure: BaseException | None = None
+        try:
+            artifact_state = export_checkpoint(bundle)
+        except BaseException as error:
+            export_failure = error
+        finally:
+            try:
+                export_ema.copy_temp_to(trainable_parameters)
+            except BaseException as error:
+                restore_failure = error
+        all_exported_and_restored = all_ranks_succeeded(
+            export_failure is None and restore_failure is None,
+        )
+        if not all_exported_and_restored:
             if restore_failure is not None:
                 raise RuntimeError(
                     "EMA artifact export failed to restore raw training weights",
                 ) from restore_failure
             if export_failure is not None:
                 raise export_failure
-        else:
-            logger.info(
-                "Skipping EMA export weights because EMA has not updated; "
-                "exporting raw checkpoint-owned weights.",
+            raise RuntimeError(
+                "EMA artifact export was aborted because a peer rank failed "
+                "during gather or raw-weight restoration",
             )
+    elif adapter_sources and export_ema is not None:
+        logger.info(
+            "Skipping EMA export weights because EMA has not updated; "
+            "exporting raw checkpoint-owned weights."
+        )
     published_meta: dict[str, Any] = {}
     publish_failure: BaseException | None = None
     if is_primary:
@@ -949,12 +899,10 @@ def save_training_checkpoint(
     # Publication is part of the all-rank checkpoint protocol. Peers wait here,
     # not in a caller-owned barrier, so a rank0 IO failure becomes the same
     # explicit exception on every rank instead of stranding peers forever.
-    if not _checkpoint_stage_agreement(strategy, publish_failure is None):
+    if not all_ranks_succeeded(publish_failure is None):
         if publish_failure is not None:
             raise publish_failure
         raise RuntimeError("checkpoint publication failed on the primary rank")
-    if publish_failure is not None:
-        raise publish_failure
     return published_meta
 
 
