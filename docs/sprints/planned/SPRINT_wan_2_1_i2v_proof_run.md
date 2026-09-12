@@ -4,6 +4,16 @@
 
 Status: **PLANNED: real update and strict resume passed; equivalence/quality open**.
 
+Deterministic repeatability update: two independent 14B two-rank resumes
+with `trainer.deterministic=true` and `CUBLAS_WORKSPACE_CONFIG=:4096:8`
+match exactly across the full model, optimizer/EMA, progress and both rank
+RNG payloads, with nonzero gradient norm 0.2728397151. Evidence:
+`/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/deterministic_repeatability_comparison.json`.
+This resolves the cold-resume repeatability diagnostic under strict mode;
+uninterrupted-vs-resumed equivalence still needs a continuous control using
+the same deterministic settings. Default-mode results below remain failures
+of exact repeatability and must not be relabeled as passed.
+
 Latest controlled hardware audit (isolated runtime `5f3d0d50`): explicitly
 seeded two-update control and strict resume from its own checkpoint-1 both
 finished successfully on two L40S GPUs. Control step 1 has zero gradient;

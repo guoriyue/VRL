@@ -834,3 +834,52 @@ with the existing option before adding new runtime mechanisms. Rollout/reward
 process determinism remains a separate consideration; this policy explicitly
 owns trainer processes only. Exact resume and all broader quality gates remain
 open, and no tolerance was relaxed.
+
+### Current claim: strict deterministic I2V resume (Codex)
+
+Codex claims GPUs 2/3 for strict resume from
+`control_seed7_rank_rng/checkpoint-1`, now adding `trainer.deterministic=true`
+and launch-time `CUBLAS_WORKSPACE_CONFIG=:4096:8`. Other model/data/sampling
+and update settings are unchanged. Isolated runtime `9a2b01d2` is frozen.
+Output: `/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/resume_seed7_deterministic`.
+Log: `outputs/perf/wan_i2v_l40s_resume_seed7_deterministic.log`.
+Fresh preflight found all GPUs clear and no training/Ray/pytest processes.
+This strict mode must either complete or expose an unsupported nondeterministic
+operation; do not downgrade to warn-only to make the diagnostic pass.
+
+First strict-mode run exited 0 with success verdicts on both ranks. Launch
+evidence confirms deterministic_algorithms=true, warn_only=false,
+cudnn_deterministic=true, cudnn_benchmark=false and the expected cuBLAS
+workspace environment. Reward mean/std and replay error match previous runs;
+gradient norm is 0.2728397151080096. The run completed without a deterministic
+algorithm exception. This alone does not establish repeatability. Process/GPU
+preflight is clear; the first-run claim is released.
+
+Codex now claims GPUs 2/3 for the identical strict-mode independent repeat,
+changing only output to `resume_seed7_deterministic_repeat` in the same NVMe
+root, log `outputs/perf/wan_i2v_l40s_resume_seed7_deterministic_repeat.log`.
+Compare complete final checkpoint payloads before declaring repeatability.
+
+The strict deterministic repeat completed with exit 0 and success verdicts
+on both ranks. Launch evidence again confirms strict deterministic settings.
+Both runs have exactly the same nonzero gradient norm 0.2728397151080096,
+reward mean 0.7610435486/std 0.3768313527 and pre-update max error
+0.0000565871596. Full checkpoint comparison PASSED exact repeatability:
+zero mismatches in model (131,072,000 elements), trainer/optimizer/EMA
+(524,288,800 elements), both rank RNG trees (1,273 leaves), progress,
+family and schema. No comparison tolerance was relaxed.
+
+Evidence: `/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/deterministic_repeatability_comparison.json`
+and `.log`, produced with the existing comparator's explicit branch arguments.
+These runs establish deterministic cold-resume repeatability, not yet the
+uninterrupted-vs-resumed gate: previous uninterrupted control used default
+nondeterministic training. Next run the two-update continuous control with
+the same strict deterministic flags; compare its checkpoint-1 and final
+against the tested resume source and outputs. If checkpoint-1 differs, use
+the new control's own checkpoint for a fresh matched resume. Retain nonzero
+second-update and exact full-state requirements; first-step saturation and
+the separate quality/physics gates remain open.
+
+Both processes are terminal, process queries empty and all GPUs clear. The
+repeat hardware claim is released. No runtime code change was needed for this
+result; the existing deterministic training option was used as designed.
