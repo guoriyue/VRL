@@ -26,6 +26,7 @@ class ModelParking:
         self._tensors: list[tuple[torch.Tensor, torch.device]] = []
         self._seen_modules: set[int] = set()
         self._seen_tensors: set[int] = set()
+        self._module_tensor_devices: dict[int, dict[str, Any]] = {}
 
     @property
     def restore_device(self) -> Any | None:
@@ -46,11 +47,19 @@ class ModelParking:
         if callable(buffers):
             yield from (buffer for buffer in buffers() if isinstance(buffer, torch.Tensor))
 
-    def park(self, model: Any, *, restore_device: Any) -> None:
+    def park(self, model: Any, *, restore_device: Any, preserve_tensor_devices: bool = False) -> None:
         if id(model) in self._seen_modules:
             return
         self._seen_modules.add(id(model))
         self._modules.append((model, restore_device))
+        if preserve_tensor_devices:
+            import torch
+
+            if isinstance(model, torch.nn.Module):
+                self._module_tensor_devices[id(model)] = {
+                    name: self.tensor_device(tensor)
+                    for name, tensor in (*model.named_parameters(), *model.named_buffers())
+                }
         self._seen_tensors.update(id(tensor) for tensor in self.module_tensors(model))
         model.to("cpu")
         move_frozen = getattr(model, "move_frozen_components", None)
@@ -108,6 +117,15 @@ class ModelParking:
                     move_frozen(device)
                 except BaseException as error:
                     failures.append(error)
+            targets = self._module_tensor_devices.get(id(model), {})
+            if targets:
+                # Module.to may replace buffers; resolve the current objects by name.
+                tensors = dict((*model.named_parameters(), *model.named_buffers()))
+                for name, target in targets.items():
+                    try:
+                        self._move_tensor(tensors[name], target)
+                    except BaseException as error:
+                        failures.append(error)
         for tensor, device in reversed(self._tensors):
             try:
                 self._move_tensor(tensor, device)
@@ -125,6 +143,7 @@ class ModelParking:
         self._tensors.clear()
         self._seen_modules.clear()
         self._seen_tensors.clear()
+        self._module_tensor_devices.clear()
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,11 +192,9 @@ class TrainingStateParking(ModelParking):
         for model in (state.model, state.ref_model):
             if model is None:
                 continue
-            # Whole modules restore to their original device; heterogeneous
-            # pipeline offload is owned by generation's hook backend instead.
             tensor = next(self.module_tensors(model), None)
             device = state.device if tensor is None else torch.device(tensor.device)
-            self.park(model, restore_device=device)
+            self.park(model, restore_device=device, preserve_tensor_devices=True)
         if state.optimizer is not None:
             # Independent FP32 master parameters and live grads may not belong
             # to the model. The shared ledger deduplicates ordinary parameters.

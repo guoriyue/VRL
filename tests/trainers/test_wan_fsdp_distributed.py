@@ -531,6 +531,16 @@ def _run_dual_cuda_offload_rank(
         initial_sync = strategy.export_rollout_state(_bundle(policy))
         assert initial_sync and all(value.device.type == "cpu" for value in initial_sync.values())
         before = strategy.export_checkpoint_state(_bundle(policy))
+        from vrl.trainers.strategy import TrainingMemoryState
+
+        residency = {name: buffer.device for name, buffer in policy.named_buffers()}
+        assert any(target.type == "cuda" for target in residency.values())
+        memory_state = TrainingMemoryState(policy, None, None, None, None, device)
+        strategy.park_training_state(memory_state)
+        assert all(buffer.device.type == "cpu" for buffer in policy.buffers())
+        strategy.restore_training_state(memory_state)
+        assert {name: buffer.device for name, buffer in policy.named_buffers()} == residency
+        assert all(parameter.to_local().device.type == "cpu" for parameter in policy.parameters())
         optimizer = torch.optim.AdamW(
             [parameter for parameter in policy.parameters() if parameter.requires_grad],
             lr=1e-2,
