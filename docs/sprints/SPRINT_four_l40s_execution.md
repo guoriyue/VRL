@@ -495,3 +495,13 @@ The job has exited and no training process or GPU allocation remains. This
 hardware claim is released. Root storage fell to about 13 GiB free while
 writing the two checkpoints; future run output directories must use the
 existing NVMe mount rather than accumulating more root-disk checkpoints.
+
+### Current claim: I2V strict resume (Codex)
+
+Codex claims GPUs 2/3 for strict resume from
+`outputs/wan_i2v_14b_l40s_proof/epoch1_restore_fix/checkpoint-final` to
+`trainer.total_epochs=2`, preserving the canonical recipe, pinned model and
+verified manifests. Isolated runtime remains `f01c3625`. Output:
+`/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/resume_step2`; log:
+`outputs/perf/wan_i2v_l40s_resume_step2.log`. Separate GPU/process preflight
+precedes launch. Resume success and uninterrupted equivalence remain unproven.
