@@ -39,7 +39,7 @@ import torch
 import torch.nn.functional as F
 
 from vrl.math.token.logprob import require_positive_temperature
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 # Keep chunk buffers ~16 MB fp32 regardless of vocab size.
 _CHUNK_ELEMENTS = 4 * 1024 * 1024
@@ -209,7 +209,7 @@ def fused_linear_logprob(
     ``gather_categorical_log_probs`` up to floating-point reduction order.
     """
     if chunk_rows is not None:
-        require_exact_int(chunk_rows, path="chunk_rows", minimum=1)
+        require_int(chunk_rows, path="chunk_rows", minimum=1)
     temp = require_positive_temperature(temperature)
     if hidden.ndim == 0:
         raise ValueError("hidden must have a trailing feature dimension: expected [..., D]")

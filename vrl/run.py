@@ -57,7 +57,7 @@ from vrl.models.interfaces import ModelBuild, RuntimeBundle
 from vrl.ray import resources as ray_resources
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,9 +70,9 @@ class OnlineRunConfig:
     deterministic: bool = False
 
     def __post_init__(self) -> None:
-        require_exact_int(self.total_epochs, path="trainer.total_epochs", minimum=0)
-        require_exact_int(self.save_freq, path="trainer.save_freq", minimum=0)
-        require_exact_int(self.seed, path="trainer.seed")
+        require_int(self.total_epochs, path="trainer.total_epochs", minimum=0)
+        require_int(self.save_freq, path="trainer.save_freq", minimum=0)
+        require_int(self.seed, path="trainer.seed")
         if not -(2**63) <= self.seed < 2**64:
             raise ValueError("trainer.seed must fit torch's signed/unsigned 64-bit seed range")
         if type(self.deterministic) is not bool:
@@ -104,7 +104,7 @@ class OnlineRunConfig:
 
         import numpy as np
 
-        require_exact_int(rank, path="training rank", minimum=0)
+        require_int(rank, path="training rank", minimum=0)
         if self.deterministic:
             workspace = os.environ.get("CUBLAS_WORKSPACE_CONFIG")
             if workspace is None:

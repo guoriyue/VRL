@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
     from PIL import Image as PILImage
@@ -167,7 +167,7 @@ def sample_frames(frames: torch.Tensor, num_frames: int | None) -> torch.Tensor:
 
     if num_frames is None:
         return frames
-    require_exact_int(num_frames, path="num_frames", minimum=1)
+    require_int(num_frames, path="num_frames", minimum=1)
     if frames.shape[0] <= num_frames:
         return frames
     indices = torch.linspace(0, frames.shape[0] - 1, steps=num_frames).round().long()

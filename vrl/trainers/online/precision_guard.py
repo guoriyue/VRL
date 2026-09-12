@@ -23,7 +23,7 @@ from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
 )
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 _logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def select_guard_timesteps(timestep_indices: Sequence[int], max_checks: int) -> 
 
     ordered = list(
         dict.fromkeys(
-            require_exact_int(t, path=f"timestep_indices[{index}]", minimum=0)
+            require_int(t, path=f"timestep_indices[{index}]", minimum=0)
             for index, t in enumerate(timestep_indices)
         )
     )

@@ -24,7 +24,7 @@ from typing import Any
 
 import torch
 
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 def _flow_terminal_mean(
@@ -49,7 +49,7 @@ def _flow_terminal_mean(
     the velocity field, so we never call the head directly — always ``.net``.
     """
 
-    require_exact_int(num_steps, path="num_steps", minimum=1)
+    require_int(num_steps, path="num_steps", minimum=1)
     B = cond.shape[0]
     t_grid = torch.linspace(0.0, 1.0, num_steps + 1, device=x.device, dtype=x.dtype)
     dt = 1.0 / num_steps

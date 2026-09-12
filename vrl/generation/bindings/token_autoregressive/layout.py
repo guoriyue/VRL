@@ -13,7 +13,7 @@ from vrl.generation.execution.sample_batches import (
     concatenate_sample_values,
 )
 from vrl.generation.types import GenerationRequest
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +69,7 @@ class ARRequestLayout:
             seed=(
                 None
                 if sampling.get("seed") is None
-                else require_exact_int(sampling["seed"], path="request.sampling.seed")
+                else require_int(sampling["seed"], path="request.sampling.seed")
             ),
         )
 
@@ -176,7 +176,7 @@ class ARRequestLayout:
     ) -> int:
         if key not in sampling and default is None:
             raise ValueError(f"request.sampling.{key} is required")
-        return require_exact_int(
+        return require_int(
             sampling.get(key, default),
             path=f"request.sampling.{key}",
             minimum=1,

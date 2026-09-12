@@ -18,9 +18,10 @@ from vrl.generation.execution.types import BatchPlacementStrategy
 from vrl.ray.resources import (
     ResolvedDistributedResources,
 )
-from vrl.utils.config import require_exact_int, to_builtin_deep
+from vrl.utils.config import to_builtin_deep
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
+from vrl.utils.validation import require_int
 
 logger = init_logger(__name__)
 
@@ -273,7 +274,7 @@ class RayGenerationConfig:
                 return None
             index = getattr(device, "index", None)
             if index is not None:
-                return require_exact_int(index, path="CUDA device index", minimum=0)
+                return require_int(index, path="CUDA device index", minimum=0)
         else:
             text = str(device).lower()
             if not text.startswith("cuda"):

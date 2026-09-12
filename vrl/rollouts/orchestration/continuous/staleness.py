@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 @dataclass(slots=True)
@@ -24,9 +24,7 @@ class StalenessPolicy:
     max_stale_policy_versions: int = 0
 
     def __post_init__(self) -> None:
-        require_exact_int(
-            self.max_stale_policy_versions, path="max_stale_policy_versions", minimum=0
-        )
+        require_int(self.max_stale_policy_versions, path="max_stale_policy_versions", minimum=0)
 
     def staleness(
         self,
@@ -36,9 +34,9 @@ class StalenessPolicy:
         """Versions behind the trainer, or ``None`` when versions are absent."""
 
         if item_version is not None:
-            require_exact_int(item_version, path="item_policy_version", minimum=0)
+            require_int(item_version, path="item_policy_version", minimum=0)
         if current_version is not None:
-            require_exact_int(current_version, path="current_policy_version", minimum=0)
+            require_int(current_version, path="current_policy_version", minimum=0)
         if item_version is None or current_version is None:
             return None
         return current_version - item_version

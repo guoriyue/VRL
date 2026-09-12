@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ def current_gpu_ids() -> list[int]:
             if not gpu_id.isascii() or not gpu_id.isdecimal():
                 raise ValueError(f"{path} must be a non-negative integer ordinal, got {gpu_id!r}")
             gpu_id = int(gpu_id)
-        out.append(require_exact_int(gpu_id, path=path, minimum=0))
+        out.append(require_int(gpu_id, path=path, minimum=0))
     return out
 
 

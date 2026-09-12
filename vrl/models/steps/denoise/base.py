@@ -35,7 +35,7 @@ from vrl.models.weight_utils import (
     verify_trainable_modules,
 )
 from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 @dataclass
@@ -374,7 +374,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         batches share one version pays the copy at most once.
         """
 
-        version = require_exact_int(version, path="policy version", minimum=0)
+        version = require_int(version, path="policy version", minimum=0)
         if getattr(self, "_active_slot_version", None) == version:
             return
         self.load_trainable_state(self._versioned_state_slots().get(version))
@@ -389,7 +389,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         not repair it by installing the desired version before comparing.
         """
 
-        version = require_exact_int(version, path="policy version", minimum=0)
+        version = require_int(version, path="policy version", minimum=0)
         active = getattr(self, "_active_slot_version", None)
         if active != version:
             raise RuntimeError(

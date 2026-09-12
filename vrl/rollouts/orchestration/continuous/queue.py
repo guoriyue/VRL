@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections import deque
 
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutItem
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 class ContinuousRolloutQueue:
@@ -24,12 +24,8 @@ class ContinuousRolloutQueue:
         max_items: int,
         max_bytes: int = 0,
     ) -> None:
-        self.max_items = require_exact_int(
-            max_items, path="ContinuousRolloutQueue.max_items", minimum=1
-        )
-        self.max_bytes = require_exact_int(
-            max_bytes, path="ContinuousRolloutQueue.max_bytes", minimum=0
-        )
+        self.max_items = require_int(max_items, path="ContinuousRolloutQueue.max_items", minimum=1)
+        self.max_bytes = require_int(max_bytes, path="ContinuousRolloutQueue.max_bytes", minimum=0)
         self._items: deque[ContinuousRolloutItem] = deque()
         self._bytes = 0
 
@@ -53,9 +49,7 @@ class ContinuousRolloutQueue:
     def set_item_limit(self, max_items: int) -> None:
         """Resize for the installed batch window without discarding receipts."""
 
-        next_limit = require_exact_int(
-            max_items, path="ContinuousRolloutQueue.max_items", minimum=1
-        )
+        next_limit = require_int(max_items, path="ContinuousRolloutQueue.max_items", minimum=1)
         if next_limit < len(self._items):
             raise RuntimeError(
                 "continuous ready queue item limit cannot shrink below resident items "
@@ -77,7 +71,7 @@ class ContinuousRolloutQueue:
                 "continuous ready queue exceeds its active prompt-batch item limit "
                 f"(ready={len(self._items)}, limit={self.max_items})",
             )
-        item_bytes = require_exact_int(item.nbytes, path="ready item.nbytes", minimum=0)
+        item_bytes = require_int(item.nbytes, path="ready item.nbytes", minimum=0)
         next_bytes = self._bytes + item_bytes
         if self.max_bytes > 0 and next_bytes > self.max_bytes:
             raise ValueError(

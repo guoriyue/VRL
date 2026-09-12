@@ -15,7 +15,7 @@ from typing import Any, Literal
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.generation_memory import GenerationMemoryPolicy
 from vrl.models.interfaces.replay import RuntimeModel
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 # Single source of truth for the model_config compile block that the
 # ``ModelBuild.torch_compile`` property below consumes.
@@ -377,7 +377,7 @@ class ModelBuild:
         return (
             None
             if num_steps is None
-            else require_exact_int(num_steps, path="sampling.num_steps", minimum=1)
+            else require_int(num_steps, path="sampling.num_steps", minimum=1)
         )
 
     @property

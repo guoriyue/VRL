@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 # The one protocol identifier: trainer client and standalone service can be
 # deployed at different versions, so a mismatched peer must fail loudly (426)
@@ -65,8 +65,8 @@ class RewardServiceInfo:
         if not isinstance(self.generation_overlap_safe, bool):
             # bool("false") is True; a stringly wire value must fail, not flip.
             raise ValueError("reward service generation_overlap_safe must be a boolean")
-        require_exact_int(self.max_concurrency, path="reward service max_concurrency", minimum=1)
-        require_exact_int(
+        require_int(self.max_concurrency, path="reward service max_concurrency", minimum=1)
+        require_int(
             self.max_pending_requests, path="reward service max_pending_requests", minimum=1
         )
         if self.max_pending_requests < self.max_concurrency:

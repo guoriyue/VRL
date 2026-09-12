@@ -7,7 +7,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,8 +240,8 @@ def replay_context_image_size(
             f"{owner} replay requires image_height/image_width in the rollout "
             "context to rebuild the replay token schedule.",
         )
-    height = require_exact_int(height, path=f"{owner} replay image_height", minimum=1)
-    width = require_exact_int(width, path=f"{owner} replay image_width", minimum=1)
+    height = require_int(height, path=f"{owner} replay image_height", minimum=1)
+    width = require_int(width, path=f"{owner} replay image_width", minimum=1)
     expected = expected_token_num(height, width)
     if expected != token_count:
         raise RuntimeError(

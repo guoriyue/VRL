@@ -13,13 +13,13 @@ from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_group import RayActorHandle
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
-from vrl.utils.config import require_exact_int
 from vrl.utils.deadline import OperationDeadline
 from vrl.utils.lifecycle import (
     RuntimeLifecycle,
     RuntimeLifecycleError,
     RuntimePhase,
 )
+from vrl.utils.validation import require_int
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +326,7 @@ class RayGenerationRuntime:
                 "the rollout schedule must await the GPU handoff before syncing",
             )
 
-        require_exact_int(policy_version, path="policy_version", minimum=0)
+        require_int(policy_version, path="policy_version", minimum=0)
         policy = _PendingPolicyInstall(
             trainable_state=trainable_state,
             policy_version=policy_version,

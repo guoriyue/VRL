@@ -11,7 +11,7 @@ from typing import Any
 
 import torch
 
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 class ARAttentionUnavailable(RuntimeError):
@@ -33,7 +33,7 @@ class VllmPagedAttentionConfig(ARAttentionConfig):
     cache_dtype: str = "auto"
 
     def __post_init__(self) -> None:
-        require_exact_int(self.block_size, path="VllmPagedAttentionConfig.block_size", minimum=1)
+        require_int(self.block_size, path="VllmPagedAttentionConfig.block_size", minimum=1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,9 +47,7 @@ class ARAttentionPrefillInput:
 
     def __post_init__(self) -> None:
         _require_embed_mask_batch(self.inputs_embeds, self.attention_mask)
-        require_exact_int(
-            self.max_new_tokens, path="ARAttentionPrefillInput.max_new_tokens", minimum=1
-        )
+        require_int(self.max_new_tokens, path="ARAttentionPrefillInput.max_new_tokens", minimum=1)
 
 
 @dataclass(frozen=True, slots=True)

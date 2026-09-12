@@ -12,7 +12,7 @@ from vrl.generation.types import (
     DenoiseRequest,
     GenerationRequest,
 )
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +104,7 @@ class DiffusionRequestLayout:
             cache_ref_noise_pred=options.cache_ref_noise_pred,
         )
         if max_sequence_length is not None:
-            max_sequence_length = require_exact_int(
+            max_sequence_length = require_int(
                 max_sequence_length,
                 path="sampling.max_sequence_length",
                 minimum=1,

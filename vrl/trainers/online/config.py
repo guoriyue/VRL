@@ -15,8 +15,8 @@ from vrl.trainers.core.types import (
     ReplayParityConfig,
     RolloutOrchestrationConfig,
 )
-from vrl.utils.config import require_exact_int
 from vrl.utils.profiling import TorchProfilerConfig
+from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
     from vrl.config.precision import PrecisionPolicy
@@ -64,7 +64,7 @@ class OnlineBatchPlan:
             value = None if actor is None else getattr(actor, name)
             if value is None:
                 return None
-            parsed = require_exact_int(value, path=f"actor.{name}", minimum=0)
+            parsed = require_int(value, path=f"actor.{name}", minimum=0)
             return parsed if parsed > 0 else None
 
         accumulation_steps = optional_non_negative_int("gradient_accumulation_steps")
@@ -101,22 +101,22 @@ class OnlineBatchPlan:
         return cls(**payload)
 
     def __post_init__(self) -> None:
-        prompts = require_exact_int(
+        prompts = require_int(
             self.prompts_per_batch,
             path="rollout.prompts_per_batch",
             minimum=1,
         )
-        require_exact_int(
+        require_int(
             self.n_samples_per_prompt,
             path="rollout.n_samples_per_prompt",
             minimum=1,
         )
-        accumulation_steps = require_exact_int(
+        accumulation_steps = require_int(
             self.gradient_accumulation_steps,
             path="actor.gradient_accumulation_steps",
             minimum=0,
         )
-        require_exact_int(
+        require_int(
             self.samples_per_replay_batch,
             path="actor.samples_per_replay_batch",
             minimum=0,

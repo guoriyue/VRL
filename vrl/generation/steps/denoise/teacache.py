@@ -25,7 +25,7 @@ from typing import Any
 
 import torch
 
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 def relative_l1_change(cur: torch.Tensor, prev: torch.Tensor) -> float:
@@ -64,7 +64,7 @@ class TeaCacheConfig:
             or self.threshold <= 0
         ):
             raise ValueError(f"teacache.threshold must be finite and > 0; got {self.threshold!r}")
-        require_exact_int(self.warmup_steps, path="teacache.warmup_steps", minimum=0)
+        require_int(self.warmup_steps, path="teacache.warmup_steps", minimum=0)
 
     @classmethod
     def from_sampling(cls, value: Any) -> TeaCacheConfig | None:

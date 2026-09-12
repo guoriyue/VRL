@@ -30,7 +30,7 @@ from vrl.models.precision import (
     model_precision,
 )
 from vrl.trainers.data.preferences import PreferenceBatch
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
     from vrl.algorithms.dpo import DiffusionDPOConfig
@@ -64,7 +64,7 @@ class OfflineDPOTrainerConfig:
     prediction_type: str = "flow_matching"  # "epsilon" | "v_prediction" | "flow_matching"
 
     def __post_init__(self) -> None:
-        require_exact_int(
+        require_int(
             self.gradient_accumulation_steps,
             path="gradient_accumulation_steps",
             minimum=1,
@@ -458,7 +458,7 @@ class OfflineDPOTrainer:
 
         if not isinstance(state, dict):
             raise TypeError("OfflineDPOTrainer.load_state_dict expects a dict")
-        self.global_step = require_exact_int(
+        self.global_step = require_int(
             state.get("global_step", 0), path="trainer_state.global_step", minimum=0
         )
         # Parameter .grad buffers are not checkpointed, so resume must start a

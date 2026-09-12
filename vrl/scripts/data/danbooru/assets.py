@@ -18,8 +18,8 @@ from vrl.scripts.data.danbooru.metadata import (
     record_id,
     record_score,
 )
-from vrl.utils.config import require_exact_int
 from vrl.utils.json_files import write_jsonl
+from vrl.utils.validation import require_int
 
 
 def build_positive_images(
@@ -154,7 +154,7 @@ def positive_image_rows(
     source: str = "danbooru",
 ) -> list[dict[str, Any]]:
     if limit is not None:
-        require_exact_int(limit, path="limit", minimum=0)
+        require_int(limit, path="limit", minimum=0)
         if limit == 0:
             return []
     out: list[dict[str, Any]] = []

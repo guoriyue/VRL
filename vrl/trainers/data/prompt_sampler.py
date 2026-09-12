@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 # Call-time dependency only: ``vrl.config.schema`` imports PromptSamplingStrategy
 # (a plain Enum) to validate every recipe, and must not pay for torch to do it.
@@ -43,7 +43,7 @@ class PromptBatchSampler:
 
     def __post_init__(self) -> None:
         for name in ("num_examples", "prompts_per_rank", "num_replicas", "rank"):
-            require_exact_int(getattr(self, name), path=f"prompt sampler {name}")
+            require_int(getattr(self, name), path=f"prompt sampler {name}")
         if self.num_examples < 1:
             raise ValueError("prompt manifest must contain at least one example")
         if self.prompts_per_rank < 1:
@@ -97,7 +97,7 @@ class PromptBatchSampler:
                 generator=generator,
             )[:global_batch_size].tolist()
         else:
-            epoch = require_exact_int(epoch, path="prompt sampling epoch", minimum=0)
+            epoch = require_int(epoch, path="prompt sampling epoch", minimum=0)
             start = (epoch * global_batch_size) % self.num_examples
             global_indices = [
                 (start + offset) % self.num_examples for offset in range(global_batch_size)

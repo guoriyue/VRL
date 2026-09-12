@@ -42,8 +42,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from vrl.utils.config import require_exact_int
 from vrl.utils.logging import init_logger
+from vrl.utils.validation import require_int
 
 logger = init_logger(__name__)
 
@@ -241,7 +241,7 @@ class GpuBusyReport:
             ("top_nvtx", top_nvtx),
             ("min_gap_ns", min_gap_ns),
         ):
-            require_exact_int(value, path=name, minimum=0)
+            require_int(value, path=name, minimum=0)
 
         conn, sqlite_path = open_report(path)
         try:

@@ -9,8 +9,8 @@ from typing import Any, Protocol
 from vrl.generation.ray.engine import RayGenerationEngine, uniform_rank_result
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.dependencies import require_ray
-from vrl.utils.config import require_exact_int
 from vrl.utils.deadline import require_timeout
+from vrl.utils.validation import require_int
 
 
 class GenerationWeightSync(Protocol):
@@ -70,7 +70,7 @@ class RayGenerationWeightSync:
         trainable_state: Any,
         policy_version: int,
     ) -> None:
-        require_exact_int(policy_version, path="policy_version", minimum=0)
+        require_int(policy_version, path="policy_version", minimum=0)
         if self.update_weight_buffer_size is not None and trainable_state is not None:
             await self._push_bucketed(trainable_state, policy_version)
             return

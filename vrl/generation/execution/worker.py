@@ -32,10 +32,11 @@ from vrl.generation.protocols import (
 )
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import require_runtime_model
-from vrl.utils.config import import_from_path, require_exact_int
+from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import is_cuda_out_of_memory, release_cuda_memory
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
+from vrl.utils.validation import require_int
 
 # Batch-size probe tuning (SPRINT_chunk_size_probe). Fixed policy, not knobs:
 # production never varied them; tests steer via monkeypatch.
@@ -189,7 +190,7 @@ class GenerationWorkerCore:
         a separate activation-aware acceptance probe.
         """
 
-        require_exact_int(policy_version, path="policy_version", minimum=0)
+        require_int(policy_version, path="policy_version", minimum=0)
         self._memory_parking.require_active(
             "update_weights",
             executor=self.executor,
@@ -277,7 +278,7 @@ class GenerationWorkerCore:
         from the receiver's retained slot that is itself under test.
         """
 
-        require_exact_int(policy_version, path="policy_version", minimum=0)
+        require_int(policy_version, path="policy_version", minimum=0)
         self._memory_parking.require_active("verify_active_weights", executor=self.executor)
         model = getattr(self.executor, "model", None)
         if trainable_state is None:

@@ -13,7 +13,7 @@ from typing import Any
 import torch
 
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 def weight_manifest(state: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -61,7 +61,7 @@ class StagedWeightTransfer:
         if not manifest:
             raise ValueError("staged weight transfer requires a manifest")
         self.transfer_id = transfer_id
-        self.policy_version = require_exact_int(policy_version, path="policy_version", minimum=0)
+        self.policy_version = require_int(policy_version, path="policy_version", minimum=0)
         self._specs = {}
         self._offsets = {}
         self._buffers: dict[str, torch.Tensor] = {}

@@ -50,9 +50,9 @@ import torch.nn as nn
 
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.scripts.perf.common.synthetic_diffusion import build_synthetic_inputs
-from vrl.utils.config import require_exact_int
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import profile_range
+from vrl.utils.validation import require_int
 
 logger = init_logger(__name__)
 
@@ -263,8 +263,8 @@ def profile_projection_gemms(
     Run on CUDA for real kernel time; CPU works for self-test (CPU self-time).
     """
 
-    require_exact_int(warmup, path="warmup", minimum=0)
-    require_exact_int(active, path="active", minimum=1)
+    require_int(warmup, path="warmup", minimum=0)
+    require_int(active, path="active", minimum=1)
     device = torch.device(device)
     cuda = device.type == "cuda"
 

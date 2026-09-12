@@ -14,8 +14,8 @@ from typing import Any
 import torch
 
 from vrl.models.interfaces.runtime import ModelBuild
-from vrl.utils.config import require_exact_int
 from vrl.utils.media import to_pil_image
+from vrl.utils.validation import require_int
 
 # These mappings are persisted protocol identities, not tunable defaults.
 OFFICIAL_SAMPLING_PROTOCOL = {
@@ -66,11 +66,7 @@ def require_scheduler(scheduler: Any) -> dict[str, Any]:
         raise TypeError("official SANA scheduler has no config")
     actual = {
         "class_name": type(scheduler).__name__,
-        **{
-            key: _config_value(config, key)
-            for key in SCHEDULER_PROTOCOL
-            if key != "class_name"
-        },
+        **{key: _config_value(config, key) for key in SCHEDULER_PROTOCOL if key != "class_name"},
     }
     if actual != SCHEDULER_PROTOCOL:
         raise ValueError(
@@ -93,7 +89,7 @@ def generate_prompt_images(
 ) -> list[Any]:
     """Generate one prompt group through the official native pipeline."""
 
-    require_exact_int(num_images, path="num_images", minimum=1)
+    require_int(num_images, path="num_images", minimum=1)
     if torch.is_autocast_enabled(device.type):
         raise RuntimeError("SANA native inference must run without an outer autocast context")
     require_scheduler(scheduler)

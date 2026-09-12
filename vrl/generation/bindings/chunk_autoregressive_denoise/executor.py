@@ -12,7 +12,7 @@ from vrl.generation.execution.sample_batches import (
 from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.types import GenerationRequest
 from vrl.trajectory.validation import validate_shape_prefix
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 @dataclass(slots=True)
@@ -41,11 +41,9 @@ class ChunkAutoregressiveDenoiseResult:
     context: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        require_exact_int(self.temporal_chunk_count, path="temporal_chunk_count", minimum=1)
+        require_int(self.temporal_chunk_count, path="temporal_chunk_count", minimum=1)
         if self.denoise_transition_count is not None:
-            require_exact_int(
-                self.denoise_transition_count, path="denoise_transition_count", minimum=0
-            )
+            require_int(self.denoise_transition_count, path="denoise_transition_count", minimum=0)
 
         transition_values = (
             self.observations,

@@ -42,20 +42,6 @@ def plain_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
     raise TypeError(f"{field_name} must be a mapping")
 
 
-def require_exact_int(value: object, *, path: str, minimum: int | None = None) -> int:
-    """Validate an exact-integer config boundary and return the value.
-
-    Rejects ``bool`` (Python's ``bool`` is an ``int`` subclass) and any non-int,
-    then an optional lower bound. ``path`` names the offending key in the error.
-    """
-
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{path} must be an integer (got {value!r})")
-    if minimum is not None and value < minimum:
-        raise ValueError(f"{path} must be >= {minimum} (got {value})")
-    return value
-
-
 def to_builtin_deep(value: Any) -> Any:
     """Deep-convert OmegaConf configs and nested Mapping/list/tuple to plain types.
 
@@ -95,6 +81,5 @@ def import_from_path(path: str) -> Any:
 __all__ = [
     "import_from_path",
     "plain_mapping",
-    "require_exact_int",
     "to_builtin_deep",
 ]

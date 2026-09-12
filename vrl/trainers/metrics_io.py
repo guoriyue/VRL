@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
     from vrl.algorithms.types import TrainStepMetrics
@@ -141,7 +141,7 @@ class OnlineMetricRow:
 
     def __post_init__(self) -> None:
         for name in ("epoch", "trained_prompt_num"):
-            require_exact_int(getattr(self, name), path=f"online metric {name}", minimum=0)
+            require_int(getattr(self, name), path=f"online metric {name}", minimum=0)
         self._component_columns(self.component_names)
         if len(self.component_values) != len(self.component_names):
             raise ValueError(
@@ -315,7 +315,7 @@ class MetricsCSV:
             return
 
         position_column, resume_position = resume_at
-        require_exact_int(resume_position, path="metrics resume position", minimum=0)
+        require_int(resume_position, path="metrics resume position", minimum=0)
         if position_column not in column_names:
             raise ValueError(f"metrics CSV is missing resume column {position_column!r}: {path}")
         if not path.exists():

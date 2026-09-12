@@ -19,7 +19,7 @@ import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
     from vrl.generation.steps.denoise.config import DenoiseRequestOptions
@@ -65,11 +65,11 @@ class DenoiseRequest:
 
     def __post_init__(self) -> None:
         for name in ("width", "height", "frame_count", "num_steps"):
-            require_exact_int(getattr(self, name), path=f"DenoiseRequest.{name}", minimum=1)
+            require_int(getattr(self, name), path=f"DenoiseRequest.{name}", minimum=1)
         if self.fps is not None:
-            require_exact_int(self.fps, path="DenoiseRequest.fps", minimum=1)
+            require_int(self.fps, path="DenoiseRequest.fps", minimum=1)
         if self.seed is not None:
-            require_exact_int(self.seed, path="DenoiseRequest.seed")
+            require_int(self.seed, path="DenoiseRequest.seed")
 
 
 @dataclass(slots=True, init=False)
@@ -169,16 +169,14 @@ class GenerationRequest:
         if not isinstance(self.runtime_debug, bool):
             raise TypeError("GenerationRequest.runtime_debug must be a bool")
         if self.policy_version is not None:
-            require_exact_int(
+            require_int(
                 self.policy_version,
                 path="GenerationRequest.policy_version",
                 minimum=0,
             )
 
         if self.sde_window_seed is not None:
-            require_exact_int(
-                self.sde_window_seed, path="GenerationRequest.sde_window_seed", minimum=0
-            )
+            require_int(self.sde_window_seed, path="GenerationRequest.sde_window_seed", minimum=0)
         elif (
             self.denoise is not None
             and self.denoise.sde_window_size > 0

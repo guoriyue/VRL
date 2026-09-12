@@ -25,7 +25,7 @@ from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSetting
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.rollouts.stats import RolloutStats
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ class _ContinuousOwnerRuntime:
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
         async def operation() -> RolloutIteration:
-            require_exact_int(group_size, path="continuous prompt batch.group_size", minimum=1)
+            require_int(group_size, path="continuous prompt batch.group_size", minimum=1)
             if not prompts:
                 raise ValueError("continuous rollout requires at least one prompt")
             if next_prompts is not None and not next_prompts:

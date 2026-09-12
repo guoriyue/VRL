@@ -7,7 +7,7 @@ import math
 import torch
 import torch.nn.functional as F
 
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 def top_k_top_p_filtering(
@@ -66,7 +66,7 @@ def gather_categorical_log_probs(
     finite and strictly positive.
     """
 
-    require_exact_int(chunk_size, path="chunk_size", minimum=1)
+    require_int(chunk_size, path="chunk_size", minimum=1)
     if logits.ndim != token_ids.ndim + 1:
         raise ValueError(
             "logits rank must equal token_ids rank + 1; "

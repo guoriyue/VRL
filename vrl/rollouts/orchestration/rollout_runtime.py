@@ -19,7 +19,7 @@ import torch
 
 from vrl.generation import GenerationRuntime
 from vrl.rollouts.stats import RolloutStats
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 class RolloutPhaseCleanupError(RuntimeError):
@@ -159,7 +159,7 @@ class RolloutRuntimeCoordinator:
                 continue
             value = provider.current_policy_version
             if value is not None:
-                return require_exact_int(value, path="current_policy_version", minimum=0)
+                return require_int(value, path="current_policy_version", minimum=0)
         return None
 
     def requires_driver_model_offload(self) -> bool:

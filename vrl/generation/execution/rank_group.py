@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,9 @@ class RankGroupSpec:
     def __post_init__(self) -> None:
         if not isinstance(self.master_addr, str) or not self.master_addr:
             raise ValueError("rank group master_addr must be a non-empty string")
-        require_exact_int(self.master_port, path="rank group.master_port")
-        require_exact_int(self.group_rank, path="rank group.group_rank")
-        require_exact_int(self.group_world_size, path="rank group.group_world_size")
+        require_int(self.master_port, path="rank group.master_port")
+        require_int(self.group_rank, path="rank group.group_rank")
+        require_int(self.group_world_size, path="rank group.group_world_size")
         if not 0 < self.master_port < 65536:
             raise ValueError(f"rank group master_port out of range: {self.master_port}")
         if self.group_world_size < 2:

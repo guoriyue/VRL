@@ -7306,3 +7306,19 @@ The broader repository audit remains incomplete.
   semantics; family support checks remain at the model boundary.
 - Completed verification after an intentional turn interruption. The broader
   repository clarity audit remains incomplete.
+
+## Shared integer validation ownership and naming
+
+- Move integer validation from config utilities to dependency-free
+  `vrl.utils.validation.require_int`, updating all 57 caller files. Remove the
+  old name rather than retaining a forwarding alias. Keep bool rejection,
+  no coercion, optional minimum, and existing errors unchanged.
+- Keep timeout and categorical-temperature checks with their domain owners:
+  they perform conversion and impose domain-specific constraints. A generic
+  static-method Checker class would only add a namespace; the shared module
+  already provides one. No changes to trajectory gather validation.
+- AST comparison confirms caller changes are limited to imports, naming and
+  formatting. Dependency-free import and integer rejection checks pass.
+  Utils, math, rollout orchestration, model interfaces, rewards and trainers:
+  1605 passed, 12 skipped, 22 warnings. Touched-file Ruff and diff checks pass.
+  The broader repository clarity audit remains incomplete.

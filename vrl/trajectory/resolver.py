@@ -15,7 +15,7 @@ from vrl.trajectory.validation import (
     TrajectoryValidator,
     tensor_ref,
 )
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 
 class TrajectoryResolverError(ValueError):
@@ -99,7 +99,7 @@ class TrajectoryResolver:
         if axis is not None:
             if axis not in self.trajectory.axes:
                 raise TrajectoryResolverError(f"unknown replay axis {axis!r}")
-            axis_index = require_exact_int(axis_index, path="replay.axis_index", minimum=0)
+            axis_index = require_int(axis_index, path="replay.axis_index", minimum=0)
 
         name = self.primary_trainable_segment_name() if segment_name is None else segment_name
         segment = self.trajectory.segments.get(name)

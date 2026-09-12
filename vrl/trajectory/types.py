@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from vrl.generation.types import GenerationSampleRow
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
     from vrl.trajectory.views import RewardView
@@ -74,7 +74,7 @@ class TrajectoryAxis:
         if self.kind not in get_args(AxisKind):
             raise ValueError(f"unknown TrajectoryAxis.kind {self.kind!r}")
         if self.length is not None:
-            require_exact_int(self.length, path="TrajectoryAxis.length", minimum=0)
+            require_int(self.length, path="TrajectoryAxis.length", minimum=0)
 
 
 @dataclass(slots=True)

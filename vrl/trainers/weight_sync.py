@@ -12,7 +12,7 @@ import torch
 from vrl.models.interfaces import RuntimeBundle
 from vrl.models.weight_utils import unwrap_compile_and_ddp
 from vrl.trajectory.device import map_tensor_tree
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 TrainableStateGetter = Callable[[], dict[str, Any]]
 
@@ -72,7 +72,7 @@ class RayRuntimeWeightSyncer(WeightSyncer):
         if current is None:
             current = getattr(runtime, "current_policy_version", None)
         if current is not None:
-            require_exact_int(current, path="initial_policy_version", minimum=0)
+            require_int(current, path="initial_policy_version", minimum=0)
         self._next_policy_version = 1 if current is None else current + 1
         self._push_lock = asyncio.Lock()
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig
-from vrl.utils.config import require_exact_int
+from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
     from vrl.config.sampling_schema import SamplingSection
@@ -48,7 +48,7 @@ class DenoiseRequestOptions:
             raise ValueError(
                 f"rollout.sde.type must be one of {get_args(SdeType)}; got {self.sde_type!r}",
             )
-        require_exact_int(self.sde_window_size, path="rollout.sde.window_size", minimum=0)
+        require_int(self.sde_window_size, path="rollout.sde.window_size", minimum=0)
         if self.sde_window_range is not None:
             if (
                 not isinstance(self.sde_window_range, (tuple, list))
@@ -56,8 +56,8 @@ class DenoiseRequestOptions:
             ):
                 raise ValueError("rollout.sde.window_range must contain two integer values")
             lo, hi = self.sde_window_range
-            require_exact_int(lo, path="rollout.sde.window_range[0]")
-            require_exact_int(hi, path="rollout.sde.window_range[1]")
+            require_int(lo, path="rollout.sde.window_range[0]")
+            require_int(hi, path="rollout.sde.window_range[1]")
             if lo < 0 or hi <= lo:
                 raise ValueError("rollout.sde.window_range must satisfy 0 <= lo < hi")
             if self.sde_window_size > hi - lo:
@@ -154,14 +154,14 @@ class DenoiseLoopConfig:
     execute_steps: int | None = None
 
     def __post_init__(self) -> None:
-        require_exact_int(self.sample_start, path="sample_start", minimum=0)
-        require_exact_int(self.sample_count, path="sample_count", minimum=1)
+        require_int(self.sample_start, path="sample_start", minimum=0)
+        require_int(self.sample_count, path="sample_count", minimum=1)
         if self.denoise_mode not in get_args(DenoiseMode):
             raise ValueError(
                 f"denoise_mode must be one of {get_args(DenoiseMode)}; got {self.denoise_mode!r}"
             )
         if self.execute_steps is not None:
-            require_exact_int(self.execute_steps, path="execute_steps", minimum=1)
+            require_int(self.execute_steps, path="execute_steps", minimum=1)
 
 
 __all__ = [
