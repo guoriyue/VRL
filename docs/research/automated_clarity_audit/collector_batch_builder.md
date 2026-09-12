@@ -35,19 +35,20 @@ Non-goals: merge AR and diffusion reward policy, remove primary/view validation,
 change reward normalization, detach or clone trajectories, or add a distribution
 dispatch registry simply to remove three branches.
 
-## Open policy differences
+## Policy differences and follow-up evidence
 
 Diffusion packing follows the stored observation device; AR packing first honors
 context.device. The collector supplies CPU as the context device, but diffusion's
 actual placement depends on storage policy. Do not infer that the context setting
-alone guarantees all completed batches are on CPU. Unifying placement requires
-examining supported storage policies and the cost/order of KL computation.
+alone guarantees all completed batches are on CPU. The production-path follow-up
+below explains why this is not currently evidence of unwanted GPU placement.
 
 Diffusion copies reward_metadata and runtime_debug into batch context, while AR
 copies only trajectory context. RewardSample metadata reaches scoring in both
 paths. Deciding whether trainer-side context should also match requires checking
 its consumers; moving this code into a shared constructor without that decision
-would change observable batch metadata.
+would change observable batch metadata. The SFT consumer is identified below;
+AR debug propagation remains open.
 
 Diffusion currently reads the kl tensor even when kl_reward_coef is zero. Current
 canonical denoise builders provide it. Removing this requirement is a contract
@@ -59,3 +60,42 @@ new test was introduced for this module review.
 Validation: 79 CPU tests passed across collector runtime, R1 wiring, full-sequence
 storage adoption and chunk binding tests. They exercise actual trajectory/batch
 construction with model doubles and tensors, not pretrained GPU execution.
+
+## Follow-up: trace actual placement and metadata consumers
+
+Following 07b8ae798, inspect GenerationWorkerCore.forward_batch's successful
+result: output passes through _to_cpu before GenerationBatchResult publication.
+The recursive copy detaches tensor leaves, queues pinned CUDA-to-host copies and
+synchronizes before returning. The pipelined path separately joins copy events
+before returning host payloads (previously reviewed in pipeline.md). Ray executor
+passes those payloads to its gatherer. Thus the current worker path establishes
+CPU residency upstream; a preserve storage policy does not put these tensors back
+on the trainer GPU. OnlineTrainer's replay sweep later invokes
+move_training_batch_to_device with the trainer device and its deferred-replay
+option.
+
+Disposition: retain the builder's existing placement semantics. No production
+residency bug has been established from the differing device expressions alone.
+Custom GenerationRuntime implementations and direct builder callers can supply
+other devices; the protocol does not declare an enforced host-only result. A
+future runtime must explicitly decide its placement contract rather than infer it
+from RolloutBatchBuildContext.device. Do not add another full tensor walk solely
+to normalize already-host-owned production results.
+
+The located trainer reward_metadata consumer is _compute_sft_loss, which uses
+CleanTargetRef and the diffusion evaluator scheduler to find/noise clean latents.
+That explains the diffusion-specific context copy. No AR consumer requiring this
+SFT metadata was found in the trainer search. Retain this behavior unless an AR
+consumer supplies a concrete need.
+
+runtime_debug has a separate consumer: the trainer's parity diagnostic writes
+batch.context['runtime_debug'] into its training_debug.jsonl evidence. The AR
+packer does not copy GenerationOutput.runtime_debug, so it can omit that evidence
+even though scoring metadata is intact. This remains a distinct follow-up to
+trace AR diagnostic production and mode gating; it should not be silently folded
+into an unrelated device-policy unification.
+
+This follow-up is source/caller evidence, not a new CUDA experiment. No runtime
+change or repeated test run was needed. Worker, Ray executor and trainer modules
+remain pending their complete module reviews; these scoped reads do not mark
+them covered.
