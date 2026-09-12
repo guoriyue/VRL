@@ -413,3 +413,18 @@ parking threshold and workload are unchanged; 44 focused worker tests passed.
 Output: `outputs/wan_i2v_14b_l40s_proof/epoch1_parking_diag`, log:
 `outputs/perf/wan_i2v_l40s_epoch1_parking_diag.log`. Launch follows a separate
 process/GPU preflight; the claim does not establish update or resume success.
+
+The diagnostic run (`fe6a1b0e`) exited 1 after successful generation, reproducing
+the exact 2,657,091,584-byte physical residual. Both worker diagnostics agree:
+Torch allocated=9,719,296 bytes, reserved=2,105,540,608 bytes; component CUDA
+parameter/buffer bytes: VAE=0, text_encoder=0, image_encoder=2,056,
+transformer=1,048,576. These observations narrow the failure to allocator
+reservation retention with small live allocations, not full model weights.
+They do not yet identify which live allocation prevents segment release.
+Inspect segment/block residency and the surviving buffers/runtime workspaces;
+do not increase the physical parking allowance or call this gate passed.
+
+The diagnostic helper is failure-only and cannot replace the original error;
+44 worker tests passed, touched-file Ruff/format checks passed. The torchrun
+session is terminal with exit 1. Post-exit process and GPU allocation checks
+are empty. This hardware claim is released pending the next targeted probe.
