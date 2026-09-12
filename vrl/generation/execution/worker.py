@@ -142,6 +142,10 @@ class GenerationWorkerCore:
         self._weight_transfer = None
         with self._memory_parking.release_scope():
             self.executor = None
+        # A cold rebuild restores the launch checkpoint, not the last installed
+        # weights or their retained slots. Sleep/wake keeps both with the model.
+        self._policy_version = self.launch_contract.policy_version
+        self._uses_versioned_slots = False
         if self._rank_process_group is not None:
             destroy_rank_process_group(self._rank_process_group)
             self._rank_process_group = None

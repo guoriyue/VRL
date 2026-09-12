@@ -55,7 +55,7 @@ vrl/generation/execution/planner.py	be729a171f088dc5c35c694e1edea6ad91273d0a	rev
 vrl/generation/execution/rank_group.py	32c60cdf57f07a1c2036b93fd930ea9a871b6f4d	reviewed	placement_rank_probe.md
 vrl/generation/execution/sample_batches.py	c5c98b1c6dae0dd4ec9e35a25a6cafbc47da469a	reviewed	sample_batch_contracts.md
 vrl/generation/execution/types.py	bfe6dd74a444aeaa64a84164792ce00c844c0fb8	reviewed	execution_contracts.md
-vrl/generation/execution/worker.py	373f2ae9c8b32dddb0061d140ee0a19227c4a104	pending	placement_rank_probe.md; full source read, transfer/version-slot contracts pending
+vrl/generation/execution/worker.py	373f2ae9c8b32dddb0061d140ee0a19227c4a104	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
 vrl/generation/launch_contract.py	9e6459395d36be8d343a66525b9f07d26ab40713	pending	-
 vrl/generation/protocols.py	9b820fc3c3ae74bce1b76967fc6bc9353cea21fb	pending	-
 vrl/generation/ray/__init__.py	4dbcac310188b85480f8eae0ef9c757b216f7fb2	pending	-
@@ -65,11 +65,11 @@ vrl/generation/ray/executor.py	5e6ab1dedb66ea4c6d3ebcd3a367bc0cb5bd7ff4	pending	
 vrl/generation/ray/health_monitor.py	74e2dbcbbf429de3a4e44675aaff09b54aa98c21	pending	-
 vrl/generation/ray/launch_inputs.py	68452738b8dc5db96f41619cde73f852e9e9c85c	pending	-
 vrl/generation/ray/launcher.py	23916b0a9815b01872e236020a366db4d21bf4d5	pending	-
-vrl/generation/ray/pipeline_protocol.py	3968cb77ec1115b8f39c68f260337af39c0dae21	pending	-
+vrl/generation/ray/pipeline_protocol.py	3968cb77ec1115b8f39c68f260337af39c0dae21	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
 vrl/generation/ray/runtime.py	9efba6e0fdc7dc65a1344cbc50baf3e3e05e0e47	pending	-
 vrl/generation/ray/session.py	bffaa8f3a6272f89859ceb4c1fb060d1545a6add	pending	-
-vrl/generation/ray/weight_sync.py	5f026ce350f3e20131e279945cfb5111d85f9b51	pending	-
-vrl/generation/ray/worker.py	7761931de4851bf7bf4718f80b24120b19fc5442	pending	-
+vrl/generation/ray/weight_sync.py	5f026ce350f3e20131e279945cfb5111d85f9b51	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
+vrl/generation/ray/worker.py	7761931de4851bf7bf4718f80b24120b19fc5442	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
 vrl/generation/steps/__init__.py	9e4d5502cfd16a059bdd49c5f18aad77ff6338fb	pending	-
 vrl/generation/steps/denoise/__init__.py	9027ebd20aa65b0298dda296346eba354b04cfb8	reviewed	denoise_steps.md
 vrl/generation/steps/denoise/config.py	b1330007576e5f456f345b6b6b3aea9aff02524a	reviewed	denoise_steps.md
@@ -78,7 +78,7 @@ vrl/generation/steps/denoise/teacache.py	39f21a82a76cdd01032012cd110b8110262969f
 vrl/generation/steps/token/__init__.py	014f9cad115298898d572edc1bc936eb573d1a26	pending	-
 vrl/generation/steps/token/protocol.py	ff8bb60fcd9542b0c01f8f6d4d1397d7334861d9	pending	-
 vrl/generation/types.py	30b5e01b2dc640f2ec952a80966c2910bffc0e5c	pending	-
-vrl/generation/weight_transfer.py	207cb65d39dfba9a92563a7631e21a295ab4c13f	pending	-
+vrl/generation/weight_transfer.py	207cb65d39dfba9a92563a7631e21a295ab4c13f	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
 vrl/math/__init__.py	dc566089e0058e221887ab5ba911c843fa65df8a	pending	-
 vrl/math/denoise/__init__.py	712e17865350233b2da6211a92752ff8087a6436	pending	-
 vrl/math/denoise/ddim.py	3a2d13c1cbe238a8468e06af605319b14d401098	pending	-

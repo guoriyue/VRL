@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
+import pytest
 import torch
 
 from tests.generation.execution._helpers import launch_contract
@@ -204,6 +205,27 @@ def test_plain_model_keeps_global_version_mismatch() -> None:
     assert result.stale_slot is False
     assert "policy_version mismatch" in (result.error or "")
     assert result.policy_version == 1
+
+
+@pytest.mark.parametrize("model_type", [_PlainModel, _SlotModel])
+def test_cold_reload_serves_bootstrap_version_until_weights_are_reinstalled(
+    monkeypatch, model_type
+) -> None:
+    core = _core(model_type())
+    core.update_weights({"transformer.w": "v2"}, 2)
+    core.release_policy()
+    monkeypatch.setattr(core, "_build_executor", lambda: _Executor(model_type()))
+    core.wake()
+
+    bootstrap = core.execute_batch(_envelope(1))
+    assert bootstrap.error is None
+    assert bootstrap.policy_version == 1
+    assert core.execute_batch(_envelope(2)).output is None
+
+    core.update_weights({"transformer.w": "v2"}, 2)
+    installed = core.execute_batch(_envelope(2))
+    assert installed.error is None
+    assert installed.policy_version == 2
 
 
 class _ReadbackModel(_PlainModel):

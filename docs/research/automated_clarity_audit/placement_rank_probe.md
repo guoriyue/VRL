@@ -2,8 +2,9 @@
 
 Reviewed complete execution `batch_placement.py`, `rank_group.py` and
 `__init__.py`, their launcher/executor callers and existing tests. Also read the
-complete worker source, but keep its ledger entry pending until staged weight
-transfer and version-slot caller contracts have been followed in full.
+complete worker source; its ledger entry remained pending in this batch until
+staged weight transfer and version-slot caller contracts were followed in full.
+That follow-up is now recorded in `weight_transfer_worker.md`.
 
 ## Change
 
@@ -52,7 +53,7 @@ fit and confirmation operation, after auditing runtime auto-width caching;
 moving only constants to a new tiny file would add navigation without ownership.
 Do not add user-facing tuning knobs or change numeric values during that move.
 
-Keep worker coverage pending for staged transfer/version-slot ownership review.
+The staged transfer/version-slot follow-up is complete in `weight_transfer_worker.md`.
 Do not interpret the CPU tests as proving GPU memory capacity, NCCL placement,
 cross-node rendezvous, or the validity of two-point extrapolation for every model.
 The single-sample fix changes only an unsuccessful probe's outcome. Other probe
