@@ -531,3 +531,29 @@ Output `/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/control_step2`; log
 Separate GPU/process preflight precedes launch. Compare both intermediate
 and final checkpoints with the first-update and resumed artifacts; matching
 successful exit codes alone do not prove numerical equivalence.
+
+The uninterrupted control completed with exit 0 and two success rank verdicts.
+Both updates had finite nonzero gradients (0.0959043399 / 0.8270630873), and
+first-replay errors remained below 0.01. Ray temporary files and checkpoints
+were written on NVMe. This adds continuous two-update execution evidence.
+
+Numerical split/control equivalence did NOT pass. The actual checkpoint
+comparison is `/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/split_control_comparison.json`,
+with its executable `compare_split_control.py` alongside it. It checks model,
+trainer/optimizer/EMA, progress and RNG payloads and rejects nonfinite values.
+Step 1 already differs in 400 model tensor leaves and 1,600 trainer leaves,
+while progress and stored RNG match; step 2 differs in 800 model and 3,200
+trainer leaves, with one RNG leaf difference too. These are not equivalent
+starting trajectories, so the final differences cannot isolate resume behavior.
+
+The resolved configurations differ only in total epochs/output directory,
+but neither specifies `sampling.seed`: the diffusion request parser forwards
+`sampling.get("seed")`, independently of trainer RNG. Thus the claim of a
+controlled stochastic trajectory was too strong. Next run: explicitly seeded
+two-update control, then resume its own published checkpoint-1 to step 2 and
+compare all states. Keep the original recipe geometry/objectives; explicit
+sampling control is for this numerical audit, not a substitute quality test.
+The trainer RNG difference also needs inspection in that controlled audit.
+
+The control process is terminal and post-exit process/GPU queries are empty.
+This hardware claim is released. Resume equivalence remains open.
