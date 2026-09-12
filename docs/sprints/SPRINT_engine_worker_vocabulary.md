@@ -1,6 +1,6 @@
 # SPRINT：engine / worker 抽象 + 多卡引擎全量支持
 
-状态：**P1–P5 已实施；P6（多卡整机验收）挂多卡硬件（2026-08-14）**。
+状态：**P1–P6 已完成（P6 于 2026-09-12 在 4×L40S 上执行，结果见 §P6 结果）**。
 实施记录：P1 = `5fbb1470`（num_engines 键 + RolloutRuntimeSection）；
 P2 = `6d0f716d`（GenerationRankActor 协议、RayGenerationEngine 组合体、driver
 全链改单位、BundleLayout 引擎分组、N=2/3 假件单测、reward 双子改名）；
@@ -175,6 +175,36 @@ RayGenerationWorker            rank actor（词归位：vLLM 语义的 per-GPU w
 - 在线小跑：2 engine × 1 rank 与 1 engine × 2 rank 各一轮，收敛曲线无异常。
 
 功能在 P1–P5 已交付并单测完毕；P6 是物理回归，不阻塞合并。
+
+### P6 结果（2026-09-12，4×L40S 46GB，SD3.5 medium，512px / 10 步 / bf16）
+
+工具：`vrl/scripts/perf/sequence_parallel_acceptance.py`（生产 placement→launcher→
+runtime 路径，固定 seed、native 采样，dump + compare）与
+`vrl/scripts/perf/sequence_parallel_forward_probe.py`（真实权重单步前向，N rank NCCL
+vs 单卡参考）。原始产物在训练机 `outputs/sp_acceptance/`、`outputs/sp_online/`。
+
+1. **数值等价**：N=1 自身重复逐位相同；N=2 与 N=1 的解码图像 PSNR 32.8 / 36.3 /
+   42.0 / 42.9 dB，差异只在高频边缘。单步前向 fp32 相对 L2 误差 2.5e-7（两 rank
+   一致），bf16 3.4e-3。判定：Ulysses 交换精确；图像差异是 bf16 kernel 噪声沿
+   10 步 + CFG 放大。fp32 通过，bf16 在精度预期内。
+2. **吞吐 / 峰值显存**：4 个单样本批次，N=1 生成 5.3 s，N=2 8.0 s；峰值均 16.8 GB
+   /rank（权重占主导，激活很小）。序列并行在 512px 图像上没有收益，all_gather
+   开销占优；收益要靠视频级长序列，未在本轮追。
+3. **在线小跑**（`experiment/sd3_5/online_grpo_ocr_dedicated_3x1`，batch 1，5 epoch）：
+   - 2 引擎×1 rank：replay parity 0.0，reward_mean 0.41→0.48，clip 0；每 epoch 555 s
+     （生成 79 + CPU OCR 70 + evaluate 255 + backward 151）。
+   - 1 引擎×2 rank：parity 0.0088–0.0111（SP rollout 与单卡 replay 的 bf16 路径不同，
+     需把门限从 0.01 放到实测的 0.02 才能启动）；生成 239 s（3×慢）；
+     `pre_update_clip_fraction` 0.39–0.45——配方 clip_ratio=1e-4 挡不住 8e-4 的均值
+     ratio 偏差，四成样本在任何更新前就被 clip。reward 曲线与 2×1 同量级但不可比。
+   - 结论：图像家族默认 `gpus_per_engine=1`，多卡 rollout 走引擎复制；`gpus_per_engine>1`
+     只在单卡装不下序列时使用，并且届时 replay 侧也必须走同一序列并行路径（或用
+     实测漂移重定 clip / parity 门限），否则 drift rail 会吃掉训练信号。
+
+顺带发现（记录在 `docs/sprints/SPRINT_four_l40s_execution.md`）：SD3.5 配方的
+replay parity 只有在生成 batch == replay batch == 1 时为 0（16 vs 1：0.015–0.017；
+4 vs 4：0.011）；单进程启动只能用从 GPU0 起的前缀 GPU 集合。
+
 
 ## 非目标
 
