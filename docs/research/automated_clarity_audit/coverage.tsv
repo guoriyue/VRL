@@ -323,8 +323,8 @@ vrl/rollouts/collector/batch_builder.py	85a30ddd3447c0981ead41d3e1c3abf1e41d1cc4
 vrl/rollouts/collector/config.py	62bf691a2692fb3e2217cf9dafa9c483deec2eb5	reviewed	rollout_batch.md
 vrl/rollouts/collector/core.py	c2e54e864516b433a64e5547675bef376713d683	pending	-
 vrl/rollouts/collector/requests.py	66f4ef6e66822d0b86a1b0deba624cf4dc73a385	reviewed	model_sampling_boundaries.md
-vrl/rollouts/evaluators/__init__.py	6ad2ed02d948c1acf5629a802e922d5d7bb4a61a	pending	-
-vrl/rollouts/evaluators/base.py	23788559aa1fd17e625a0e4c0cb64358c573867b	pending	-
+vrl/rollouts/evaluators/__init__.py	6ad2ed02d948c1acf5629a802e922d5d7bb4a61a	reviewed	evaluator_boundaries.md
+vrl/rollouts/evaluators/base.py	23788559aa1fd17e625a0e4c0cb64358c573867b	reviewed	evaluator_boundaries.md
 vrl/rollouts/evaluators/denoise/__init__.py	fc1c2b65541f4896d5777231bf10cbb2ba7e3d94	pending	-
 vrl/rollouts/evaluators/denoise/chunk_autoregressive_logprob.py	c60ea680a442b82de5a20aa397c9fcd65da14e58	pending	-
 vrl/rollouts/evaluators/denoise/sde_logprob.py	1503cd0b15c2c2ed2ed6060382a8e35ed3ca2035	pending	-
@@ -333,7 +333,7 @@ vrl/rollouts/evaluators/token/continuous_token_logprob.py	97bf5af70d446f0518902c
 vrl/rollouts/evaluators/token/multi_segment_token_logprob.py	624e1e6a49caf55b13dc962fbac35c9660d3a232	reviewed	README.md: First inspection; multisegment follow-ups tracked
 vrl/rollouts/evaluators/token/ref_pass.py	e65a9a627c2b6cdf366528a429749fd8a64c1a0e	reviewed	README.md: First inspection; multisegment follow-ups tracked
 vrl/rollouts/evaluators/token/token_logprob.py	9248cc81fe92c25c2aac9c52f0495397709cf46c	reviewed	README.md: First inspection; multisegment follow-ups tracked
-vrl/rollouts/evaluators/trajectory.py	56a26ff9212b328603b21789abf2ac346bf4be0c	pending	-
+vrl/rollouts/evaluators/trajectory.py	56a26ff9212b328603b21789abf2ac346bf4be0c	reviewed	evaluator_boundaries.md
 vrl/rollouts/evaluators/types.py	7e3c0362d20e3fb15bc7bfc2383a29283936840d	reviewed	forward_objectives.md
 vrl/rollouts/orchestration/__init__.py	81625f37b564cda0696cc46de1c952435a88fcd5	pending	-
 vrl/rollouts/orchestration/continuous/__init__.py	c3203771200922b4c9fe70077814271f1a8c2190	reviewed	continuous_owner.md
