@@ -238,7 +238,7 @@ vrl/nn/quantization/fp4_kernels.py	f02ac260c9c6f0072f369c559b550d29fa1bf165	pend
 vrl/nn/quantization/fp8.py	44161c272a48b8540a53e81aa2589fd3af2e9849	pending	-
 vrl/nn/quantization/targeting.py	0afd6d1b5dfc3c20cde01bb1a361a3733cc737c3	pending	-
 vrl/ray/__init__.py	d5d7c6db71a92d5977cb71a0787114d599ef5cd4	pending	-
-vrl/ray/actor_group.py	fc280407590de76434ac0f456f40704407c07d06	pending	-
+vrl/ray/actor_group.py	fc280407590de76434ac0f456f40704407c07d06	reviewed	actor_startup.md; startup cleanup ownership unresolved
 vrl/ray/actor_pool.py	607ed88be8b9e6e87820fbfb80c2d249ba8d8e20	pending	-
 vrl/ray/dependencies.py	12a4d335d1c646d6b9834566657782a0554c394d	reviewed	session_cleanup.md
 vrl/ray/operation_deadline.py	c38b70d9e7342bbe2af6e2cf03f58bbda8379447	pending	-
@@ -352,7 +352,7 @@ vrl/rollouts/orchestration/types.py	b5c4cf575cb771c0eabdef6c928251b11920158e	pen
 vrl/rollouts/stats.py	c536543e835e327d43be0ebf5c78ae0b5dbf996f	pending	-
 vrl/run.py	1f668ed3e7ed298988065da4c4c1eefc38a97344	pending	-
 vrl/run_verdict.py	f074e1bdaea7b102f9d46c1f0f105e88b133dfbe	pending	-
-vrl/runtime_errors.py	d51ffae413d4d55b5e6ccf716f7415a6fb2834e0	pending	-
+vrl/runtime_errors.py	d51ffae413d4d55b5e6ccf716f7415a6fb2834e0	reviewed	actor_startup.md
 vrl/scripts/__init__.py	13782b00440542580c52345ce0e79f20d876e30a	pending	-
 vrl/scripts/common/__init__.py	f95f971c64480824ec0a64088fe3b7ea4c5e39dc	pending	-
 vrl/scripts/common/factory.py	f96ed69e82cfe1c14ea110fcf5629e89bde374a8	pending	-

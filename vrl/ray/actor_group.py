@@ -2,8 +2,9 @@
 
 The launch half of the actor story: create homogeneous actors (optionally
 pinned into placement-group bundles), run their startup barrier, capture
-driver-visible metadata, and kill them — retaining any handle whose kill
-failed so cleanup is never falsely reported complete. Dispatching calls onto
+driver-visible metadata, and kill them. Shutdown retains handles whose kill
+failed; startup failure attempts cleanup and annotates the original exception
+if cleanup also fails. Dispatching calls onto
 an already-launched fleet is the separate concern of ``vrl.ray.actor_pool``;
 keeping launch/teardown apart from admission lets the generation launcher own
 group lifetime while the executor and weight sync share one dispatcher over
