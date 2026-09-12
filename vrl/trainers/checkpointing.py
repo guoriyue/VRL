@@ -1520,24 +1520,22 @@ def _select_owned_checkpoint_state(
 def capture_rng_state(**generators: torch.Generator) -> dict[str, Any]:
     """Capture process RNG state plus named torch.Generator states."""
 
+    import random
+
     state: dict[str, Any] = {
         "torch": torch.get_rng_state(),
         "generators": {name: gen.get_state() for name, gen in generators.items()},
+        "python_random": random.getstate(),
     }
     if torch.cuda.is_available():
         state["cuda"] = torch.cuda.get_rng_state_all()
     try:
-        import random
-
-        state["python_random"] = random.getstate()
-    except Exception:
-        pass
-    try:
         import numpy as np
-
+    except ModuleNotFoundError as error:
+        if error.name != "numpy":
+            raise
+    else:
         state["numpy"] = np.random.get_state()
-    except Exception:
-        pass
     return state
 
 
@@ -1556,19 +1554,13 @@ def restore_rng_state(state: dict[str, Any] | None, **generators: torch.Generato
             if name in named:
                 gen.set_state(named[name])
     if "python_random" in state:
-        try:
-            import random
+        import random
 
-            random.setstate(state["python_random"])
-        except Exception:
-            pass
+        random.setstate(state["python_random"])
     if "numpy" in state:
-        try:
-            import numpy as np
+        import numpy as np
 
-            np.random.set_state(state["numpy"])
-        except Exception:
-            pass
+        np.random.set_state(state["numpy"])
 
 
 RESOLVED_CONFIG_NAME = "resolved_config.yaml"

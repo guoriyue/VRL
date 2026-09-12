@@ -39,6 +39,82 @@ from vrl.trainers.checkpointing import (
 )
 
 
+@pytest.mark.parametrize("provider", ["python_random", "numpy"])
+@pytest.mark.parametrize("operation", ["capture", "restore"])
+def test_rng_state_errors_are_not_silently_ignored(monkeypatch, provider, operation):
+    import random
+
+    import numpy as np
+
+    from vrl.trainers.checkpointing import capture_rng_state, restore_rng_state
+
+    module = random if provider == "python_random" else np.random
+    getter, setter = (
+        ("getstate", "setstate")
+        if provider == "python_random"
+        else (
+            "get_state",
+            "set_state",
+        )
+    )
+    saved = getattr(module, getter)()
+    failure = RuntimeError("RNG state operation failed")
+
+    def fail(*args):
+        raise failure
+
+    monkeypatch.setattr(module, getter if operation == "capture" else setter, fail)
+    with pytest.raises(RuntimeError) as caught:
+        if operation == "capture":
+            capture_rng_state()
+        else:
+            restore_rng_state({provider: saved})
+    assert caught.value is failure
+
+
+@pytest.mark.parametrize("missing_module", ["numpy", "numpy._core"])
+def test_rng_capture_only_tolerates_absent_numpy(monkeypatch, missing_module):
+    import builtins
+
+    from vrl.trainers.checkpointing import capture_rng_state, restore_rng_state
+
+    original_import = builtins.__import__
+
+    def import_without_numpy(name, *args, **kwargs):
+        if name == "numpy":
+            raise ModuleNotFoundError("unavailable dependency", name=missing_module)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_numpy)
+    if missing_module == "numpy":
+        assert "numpy" not in capture_rng_state()
+    else:
+        with pytest.raises(ModuleNotFoundError):
+            capture_rng_state()
+    # A saved NumPy state requires NumPy, even if capture can omit absent NumPy.
+    with pytest.raises(ModuleNotFoundError):
+        restore_rng_state({"numpy": ()})
+
+
+def test_rng_checkpoint_restores_python_numpy_and_named_generator_draws():
+    import random
+
+    import numpy as np
+
+    from vrl.trainers.checkpointing import capture_rng_state, restore_rng_state
+
+    generator = torch.Generator().manual_seed(17)
+    state = capture_rng_state(prompt_generator=generator)
+    try:
+        expected = (random.random(), float(np.random.random()), torch.rand(3, generator=generator))
+        restore_rng_state(state, prompt_generator=generator)
+        assert random.random() == expected[0]
+        assert float(np.random.random()) == expected[1]
+        torch.testing.assert_close(torch.rand(3, generator=generator), expected[2])
+    finally:
+        restore_rng_state(state, prompt_generator=generator)
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [(None, True), (True, True), (False, False)],

@@ -52,10 +52,9 @@ lazy facade, or deleting provenance fields because there are several of them.
 
 ## Follow-up findings
 
-- capture_rng_state/restore_rng_state catch all exceptions around Python random
-  and NumPy state operations. This can silently lose state or ignore a malformed
-  restored state; Python random is not an optional package. Audit optional NumPy
-  import separately from state-operation errors in checkpoint ownership work.
+- RNG exception suppression is fixed in the follow-up recorded in
+  rng_checkpoint.md. Only absent optional NumPy may be omitted at capture;
+  provider state errors and missing providers required by saved state propagate.
 - SourceReport converts counts with int(payload.get(...) or 0), despite already
   requiring both keys. Fractional values can be truncated and strings coerced.
   Builders emit len(...) integers. Consolidate the report's count boundary with
