@@ -58,6 +58,13 @@ _QUANTIZATION_FORMAT_RULES = {
 _PRECISION_TOKENS = (*_PLAIN_DTYPES, *_QUANTIZATION_FORMAT_RULES)
 
 
+def normalize_role_precision_label(precision: str) -> str:
+    """Normalize role labels while retaining quantization and autocast suffixes."""
+
+    token = str(precision or "").strip().lower()
+    return "fp32" if token in ("", "no") else token
+
+
 def normalize_precision(value: Any, *, default: str = "fp32") -> str:
     """Normalize a known precision token at a config or tool boundary."""
 
@@ -352,4 +359,5 @@ __all__ = [
     "RolloutPrecisionConfig",
     "TrainingPrecisionConfig",
     "normalize_precision",
+    "normalize_role_precision_label",
 ]

@@ -22,6 +22,7 @@ from typing import Any
 from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
 )
+from vrl.config.precision import normalize_role_precision_label
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 from vrl.utils.validation import require_int
 
@@ -272,18 +273,10 @@ def run_precision_drift_guard(
     return record
 
 
-def normalize_role_precision_label(precision: str) -> str:
-    """Normalize role labels while retaining quantization and autocast suffixes."""
-
-    token = str(precision or "").strip().lower()
-    return "fp32" if token in ("", "no") else token
-
-
 __all__ = [
     "PrecisionDriftError",
     "enforce_precision_drift",
     "measure_precision_drift",
-    "normalize_role_precision_label",
     "resolve_guard_mode",
     "run_precision_drift_guard",
     "select_guard_timesteps",

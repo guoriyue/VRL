@@ -115,9 +115,9 @@ class RolloutRuntimeCoordinator:
         prepared = self.sync_state_getter()
         if not isinstance(prepared, dict):
             raise TypeError("rollout weight sync getter must return a dict snapshot")
-        pending: list[Any] = [prepared]
-        while pending:
-            value = pending.pop()
+        pending_weight_checks: list[Any] = [prepared]
+        while pending_weight_checks:
+            value = pending_weight_checks.pop()
             if isinstance(value, torch.Tensor):
                 if value.device.type != "cpu" or value.requires_grad:
                     raise ValueError(
@@ -125,9 +125,9 @@ class RolloutRuntimeCoordinator:
                         f"got device={value.device}, requires_grad={value.requires_grad}",
                     )
             elif isinstance(value, Mapping):
-                pending.extend(reversed(list(value.values())))
+                pending_weight_checks.extend(reversed(list(value.values())))
             elif isinstance(value, (list, tuple)):
-                pending.extend(reversed(value))
+                pending_weight_checks.extend(reversed(value))
         return prepared
 
     def prepare_initial_weight_sync_state(self) -> dict[str, Any] | None:

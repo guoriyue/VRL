@@ -24,6 +24,7 @@ from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
 )
 from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
+from vrl.config.precision import normalize_role_precision_label
 from vrl.models.dtypes import dtype_to_precision_token
 from vrl.models.precision import (
     apply_float32_precision,
@@ -57,7 +58,6 @@ from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.online.precision_guard import (
     enforce_precision_drift,
     measure_precision_drift,
-    normalize_role_precision_label,
 )
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer, build_optimizer
 from vrl.trainers.strategy import SingleProcessStrategy, Strategy, TrainingMemoryState

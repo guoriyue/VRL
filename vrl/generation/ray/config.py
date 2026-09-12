@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 import math
 import os
-import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -21,7 +20,6 @@ from vrl.ray.resources import (
 from vrl.utils.config import to_builtin_deep
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
-from vrl.utils.validation import require_int
 
 logger = init_logger(__name__)
 
@@ -268,30 +266,21 @@ class RayGenerationConfig:
 
     @staticmethod
     def _cuda_device_index(device: Any) -> int | None:
-        device_type = getattr(device, "type", None)
-        if device_type is not None:
-            if str(device_type).lower() != "cuda":
-                return None
-            index = getattr(device, "index", None)
-            if index is not None:
-                return require_int(index, path="CUDA device index", minimum=0)
-        else:
-            text = str(device).lower()
-            if not text.startswith("cuda"):
-                return None
-            match = re.fullmatch(r"cuda(?::([0-9]+))?", text)
-            if match is None:
-                raise ValueError(
-                    f"invalid CUDA device {device!r}; expected 'cuda' or 'cuda:<index>'"
-                )
-            if match.group(1) is not None:
-                return int(match.group(1))
+        """Resolve a runtime CUDA device with PyTorch's own device parser."""
 
-        # Unindexed CUDA means the current device, not ordinal zero. This function
-        # runs at driver validation; parsing config still does not import Torch.
+        text = str(device).lower()
+        if not text.startswith("cuda"):
+            return None
+        # Driver validation is a runtime boundary; config parsing stays torch-free.
         import torch
 
-        return torch.cuda.current_device()
+        try:
+            cuda_device = torch.device(text)
+        except (RuntimeError, ValueError) as error:
+            raise ValueError(
+                f"invalid CUDA device {device!r}; expected 'cuda' or 'cuda:<index>'"
+            ) from error
+        return cuda_device.index if cuda_device.index is not None else torch.cuda.current_device()
 
 
 __all__ = [
