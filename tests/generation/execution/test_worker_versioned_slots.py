@@ -84,7 +84,7 @@ class _Executor:
     def forward_batch(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return {"noise_pred": torch.zeros(1)}
 
-    def gather_batches(self, *args: Any, **kwargs: Any) -> Any:
+    def merge_generation_batches(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
 

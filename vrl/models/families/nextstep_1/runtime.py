@@ -224,7 +224,7 @@ class NextStep1GenerationBatchGatherer:
 
     layout = ARRequestLayout()
 
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],

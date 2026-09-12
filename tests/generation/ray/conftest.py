@@ -88,7 +88,7 @@ def _worker_setup_hook(repo_root: str) -> Any:
                     "Ray launcher test only verifies worker construction",
                 )
 
-            def gather_batches(self, *args: Any, **kwargs: Any) -> Any:
+            def merge_generation_batches(self, *args: Any, **kwargs: Any) -> Any:
                 raise NotImplementedError(
                     "Ray launcher test only verifies worker construction",
                 )

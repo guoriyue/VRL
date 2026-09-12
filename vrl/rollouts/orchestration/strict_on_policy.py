@@ -52,7 +52,7 @@ class StrictOnPolicyRolloutSchedule:
         # is owned by the coordinator's phase manager.
         async with self.lifecycle.rollout_phase(stats):
             with stats.phase("rollout.collect_s"):
-                batches = await self.lifecycle.collector.collect_prompt_groups(
+                batches = await self.lifecycle.collector.prepare_training_batches(
                     prompts=list(prompts),
                     group_size=group_size,
                     runtime_debug=runtime_debug,

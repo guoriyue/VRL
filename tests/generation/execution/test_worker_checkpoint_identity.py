@@ -42,7 +42,7 @@ class _ChunkExecutor:
     def forward_batch(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
-    def gather_batches(self, *args: Any, **kwargs: Any) -> Any:
+    def merge_generation_batches(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
 

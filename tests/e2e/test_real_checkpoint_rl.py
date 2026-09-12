@@ -609,7 +609,10 @@ class _SyntheticDiffusionReplayCollector:
         self.device = device
         self.generation_runtime = _StaticPolicyRuntime()
 
-    async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> Any:
+    async def generate_rollout(self, prompts: list[str], **kwargs: Any) -> Any:
+        prepared = prompts
+        prompts = prepared.inputs
+        kwargs = prepared.options
         return _synthetic_diffusion_replay_batch(
             model=self.model,
             case=self.case,
@@ -620,7 +623,7 @@ class _SyntheticDiffusionReplayCollector:
             device=self.device,
         )
 
-    async def score_rollouts(self, pendings: Any) -> Any:
+    async def evaluate_rollout(self, pendings: Any) -> Any:
         return list(pendings)
 
     async def activate_generation_runtime(self) -> None:

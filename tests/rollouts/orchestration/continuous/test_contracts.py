@@ -68,7 +68,10 @@ class _GatedCollector(PromptCollectionFake):
         self.generation_started = asyncio.Event()
         self.events: list[str] = []
 
-    async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> _Unscored:
+    async def generate_rollout(self, prompts: list[str], **kwargs: Any) -> _Unscored:
+        prepared = prompts
+        prompts = prepared.inputs
+        kwargs = prepared.options
         self.generation_started.set()
         self.events.append("generate_start")
         await self.allow_generate.wait()
@@ -78,7 +81,7 @@ class _GatedCollector(PromptCollectionFake):
             phases={"collect.engine_generate": 1.0},
         )
 
-    async def score_rollouts(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
+    async def evaluate_rollout(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
         await self.allow_score.wait()
         self.events.append("score_end")
         pendings[0].phases["collect.reward_score"] = 0.5
@@ -175,7 +178,10 @@ class _FiniteCollector(PromptCollectionFake):
         self.max_active: dict[str, int] = {}
         self.calls: list[tuple[str, int | None, int, bool]] = []
 
-    async def collect_unscored(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
+    async def generate_rollout(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
+        prepared = prompts
+        prompts = prepared.inputs
+        kwargs = prepared.options
         prompt = str(getattr(prompts[0], "prompt", prompts[0]))
         attempt = self.attempts.get(prompt, 0) + 1
         self.attempts[prompt] = attempt
@@ -203,7 +209,7 @@ class _FiniteCollector(PromptCollectionFake):
         finally:
             self.active[prompt] -= 1
 
-    async def score_rollouts(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
+    async def evaluate_rollout(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
         return [pending.batch for pending in pendings]
 
 
@@ -243,7 +249,7 @@ async def test_failed_reward_scoring_never_enqueues() -> None:
     """Reward failures surface as producer errors, not as queue items."""
 
     class _RewardBoom(_GatedCollector):
-        async def score_rollouts(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
+        async def evaluate_rollout(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
             raise RuntimeError("reward model exploded")
 
     collector = _RewardBoom()
@@ -300,7 +306,10 @@ async def test_terminal_generation_error_is_not_retried_or_wrapped() -> None:
     )
 
     class _TerminalCollector(_GatedCollector):
-        async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> _Unscored:
+        async def generate_rollout(self, prompts: list[str], **kwargs: Any) -> _Unscored:
+            prepared = prompts
+            prompts = prepared.inputs
+            kwargs = prepared.options
             del prompts, kwargs
             raise error
 
@@ -348,11 +357,14 @@ async def test_idle_health_failure_makes_next_collect_fatal_without_slot_retry()
             super().__init__()
             self.attempts = 0
 
-        async def collect_unscored(
+        async def generate_rollout(
             self,
             prompts: list[str],
             **kwargs: Any,
         ) -> _Unscored:
+            prepared = prompts
+            prompts = prepared.inputs
+            kwargs = prepared.options
             del prompts, kwargs
             self.attempts += 1
             lifecycle.require_running("generate")
@@ -400,7 +412,10 @@ async def test_cleanup_wrapper_around_terminal_error_is_not_retried() -> None:
     )
 
     class _TerminalCollector(_GatedCollector):
-        async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> _Unscored:
+        async def generate_rollout(self, prompts: list[str], **kwargs: Any) -> _Unscored:
+            prepared = prompts
+            prompts = prepared.inputs
+            kwargs = prepared.options
             del prompts, kwargs
             raise wrapped
 
@@ -628,7 +643,9 @@ async def test_finite_prompt_batch_fails_before_mutation_at_queue_byte_limit() -
 @pytest.mark.asyncio
 async def test_finite_prompt_batch_fails_after_one_slot_exhausts_retry_budget() -> None:
     class _AlwaysFailCollector(_FiniteCollector):
-        async def collect_unscored(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
+        async def generate_rollout(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
+            prepared = prompts
+            prompts = prepared.inputs
             prompt = str(getattr(prompts[0], "prompt", prompts[0]))
             self.attempts[prompt] = self.attempts.get(prompt, 0) + 1
             raise RuntimeError(f"deterministic failure for {prompt}")
@@ -679,7 +696,10 @@ async def test_prompt_batch_drain_times_out_when_collect_never_returns() -> None
 @pytest.mark.asyncio
 async def test_active_prompt_batch_fails_when_collect_is_cancelled() -> None:
     class _CancelledCollector(_FiniteCollector):
-        async def collect_unscored(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
+        async def generate_rollout(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
+            prepared = prompts
+            prompts = prepared.inputs
+            kwargs = prepared.options
             del prompts, kwargs
             raise asyncio.CancelledError
 
@@ -732,14 +752,17 @@ async def test_producer_stop_does_not_wait_forever_for_cancel_suppression() -> N
             self.cancelled = asyncio.Event()
             self.release = asyncio.Event()
 
-        async def collect_unscored(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
+        async def generate_rollout(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
+            prepared = prompts
+            prompts = prepared.inputs
+            kwargs = prepared.options
             self.started.set()
             while not self.release.is_set():
                 try:
                     await self.release.wait()
                 except asyncio.CancelledError:
                     self.cancelled.set()
-            return await super().collect_unscored(prompts, **kwargs)
+            return await super().generate_rollout(super().request_builder.build(prompts, **kwargs))
 
     collector = _CancellationResistantCollector()
     producer = _producer(collector, ContinuousRolloutQueue(max_items=2))
@@ -805,7 +828,7 @@ async def test_late_reward_finishes_before_version_bump_under_draining() -> None
     weight-sync barrier must finish before the policy-version bump, so the group
     is never trained off-policy. This is the reward-late timing variant of
     ``test_drain_prompt_batch_waits_for_generation_and_reward``: here generation is
-    already done and only ``score_rollouts`` is outstanding when the barrier
+    already done and only ``evaluate_rollout`` is outstanding when the barrier
     starts. ``schedule.after_train_step`` (non_draining=False) runs
     ``drain_prompt_batch`` -> ``sync_weights_after_train``, so reward(N) must
     complete strictly before the version advances to N+1.
@@ -820,7 +843,7 @@ async def test_late_reward_finishes_before_version_bump_under_draining() -> None
 
     await producer.start()
     try:
-        # Generation has completed; the group is parked in score_rollouts.
+        # Generation has completed; the group is parked in evaluate_rollout.
         await asyncio.wait_for(collector.generation_started.wait(), 5.0)
         await _wait_until(lambda: "generate_end" in collector.events)
         assert "score_end" not in collector.events  # reward still in flight
@@ -1284,7 +1307,7 @@ async def test_split_reward_retry_reuses_generation_and_exhaustion_is_terminal()
             self.score_calls = 0
             self.receipts: list[Any] = []
 
-        async def score_rollouts(self, pendings: list[Any]) -> list[RolloutBatch]:
+        async def evaluate_rollout(self, pendings: list[Any]) -> list[RolloutBatch]:
             self.score_calls += 1
             self.receipts.append(pendings[0])
             raise ValueError("reward is unavailable")
@@ -1324,7 +1347,7 @@ async def test_split_shutdown_releases_queued_and_scoring_receipts() -> None:
 @pytest.mark.parametrize("failure", ["bytes", "count"])
 async def test_split_invalid_generated_or_scored_receipt_never_regenerates(failure: str) -> None:
     class WrongCount(_GatedCollector):
-        async def score_rollouts(self, pendings: list[Any]) -> list[RolloutBatch]:
+        async def evaluate_rollout(self, pendings: list[Any]) -> list[RolloutBatch]:
             return []
 
     collector = WrongCount() if failure == "count" else _GatedCollector()
@@ -1496,12 +1519,15 @@ async def test_failed_preview_preserves_current_until_head_advances() -> None:
             super().__init__()
             self.failed_payloads = []
 
-        async def collect_unscored(self, prompts, **kwargs):
+        async def generate_rollout(self, prompts, **kwargs):
+            prepared = prompts
+            prompts = prepared.inputs
+            kwargs = prepared.options
             if prompts[0].prompt == "bad":
                 payload = torch.zeros(256)
                 self.failed_payloads.append(weakref.ref(payload))
                 raise ValueError("preview generation failed")
-            return await super().collect_unscored(prompts, **kwargs)
+            return await super().generate_rollout(super().request_builder.build(prompts, **kwargs))
 
     collector = FailedPreview()
     collector.allow_score.clear()
@@ -1538,10 +1564,13 @@ async def test_terminal_runtime_failure_in_preview_still_stops_current() -> None
     class BrokenFleet(_GatedCollector):
         supports_reward_generation_overlap = True
 
-        async def collect_unscored(self, prompts, **kwargs):
+        async def generate_rollout(self, prompts, **kwargs):
+            prepared = prompts
+            prompts = prepared.inputs
+            kwargs = prepared.options
             if prompts[0].prompt == "bad":
                 raise root
-            return await super().collect_unscored(prompts, **kwargs)
+            return await super().generate_rollout(super().request_builder.build(prompts, **kwargs))
 
     collector = BrokenFleet()
     collector.allow_score.clear()

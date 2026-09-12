@@ -427,7 +427,7 @@ class JanusProR1GenerationBatchGatherer:
             }
         return out
 
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],

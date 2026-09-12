@@ -32,7 +32,7 @@ from vrl.run import (
 
 
 class _TestGatherer:
-    def gather_batches(self, *_args: Any) -> Any:
+    def merge_generation_batches(self, *_args: Any) -> Any:
         raise AssertionError("test gatherer must not execute")
 
 
@@ -100,7 +100,7 @@ def test_every_registry_entry_has_pickle_safe_ray_launch_inputs(
         f"{type(restored.gatherer).__module__}:{type(restored.gatherer).__qualname__}"
         == entry.gatherer_cls
     )
-    assert callable(restored.gatherer.gather_batches)
+    assert callable(restored.gatherer.merge_generation_batches)
     assert not isinstance(restored.gatherer, GenerationBatchExecutor)
 
 

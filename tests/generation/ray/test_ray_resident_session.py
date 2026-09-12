@@ -39,7 +39,7 @@ class _TinyRuntimeModel:
 
 
 class _TinyGatherer:
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
@@ -76,14 +76,14 @@ class _TinyChunkExecutor:
     def forward_batch(self, *args: Any, **kwargs: Any) -> BatchPayload:
         raise NotImplementedError("Ray worker idempotency test never executes batches")
 
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         batches: Sequence[BatchPayload],
     ) -> GenerationOutput:
         assert self.gatherer is not None
-        return self.gatherer.gather_batches(request, sample_rows, batches)
+        return self.gatherer.merge_generation_batches(request, sample_rows, batches)
 
 
 def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:

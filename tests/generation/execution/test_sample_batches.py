@@ -9,7 +9,7 @@ def test_sample_batch_plan_prompt_major() -> None:
     """Checks build prompt batches prompt major."""
     from vrl.generation.execution.sample_batches import GenerationSampleBatch
 
-    batches = GenerationSampleBatch.plan(
+    batches = GenerationSampleBatch.plan_generation_batches(
         2,
         samples_per_prompt=5,
         max_samples_per_batch=2,
@@ -26,13 +26,13 @@ def test_sample_batch_plan_prompt_major() -> None:
     ]
 
 
-def test_run_sample_batches_with_oom_retry_splits_until_success() -> None:
+def test_execute_generation_batches_splits_oom_until_success() -> None:
     """An OOM on a 5-sample batch halves recursively (2, then 3 -> 1 + 2) and the results come
     back in sample order.
     """
     from vrl.generation.execution.sample_batches import (
         GenerationSampleBatch,
-        run_sample_batches_with_oom_retry,
+        execute_generation_batches,
     )
 
     seen: list[tuple[int, int]] = []
@@ -43,7 +43,7 @@ def test_run_sample_batches_with_oom_retry_splits_until_success() -> None:
             raise RuntimeError("CUDA out of memory while allocating tensor")
         return batch.sample_count
 
-    results = run_sample_batches_with_oom_retry(
+    results = execute_generation_batches(
         [
             GenerationSampleBatch(
                 prompt_index=0,
@@ -125,7 +125,7 @@ def test_oom_retry_releases_failed_forward_locals_before_emptying_cache(monkeypa
         assert retained and retained[-1]() is None
 
     monkeypatch.setattr(sample_batches, "empty_cuda_cache", empty_cache)
-    result = sample_batches.run_sample_batches_with_oom_retry(
+    result = sample_batches.execute_generation_batches(
         [sample_batches.GenerationSampleBatch(0, 0, 2)], forward
     )
     assert result == [1, 1]
@@ -135,7 +135,7 @@ def test_oom_retry_releases_failed_forward_locals_before_emptying_cache(monkeypa
 def test_terminal_batch_failure_keeps_forward_traceback_locals(message, count):
     from vrl.generation.execution.sample_batches import (
         GenerationSampleBatch,
-        run_sample_batches_with_oom_retry,
+        execute_generation_batches,
     )
 
     marker = object()
@@ -145,7 +145,7 @@ def test_terminal_batch_failure_keeps_forward_traceback_locals(message, count):
         raise RuntimeError(message)
 
     with pytest.raises(RuntimeError, match=message) as caught:
-        run_sample_batches_with_oom_retry([GenerationSampleBatch(0, 0, count)], forward)
+        execute_generation_batches([GenerationSampleBatch(0, 0, count)], forward)
     trace = caught.value.__traceback__
     while trace.tb_next is not None:
         trace = trace.tb_next

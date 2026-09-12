@@ -27,7 +27,7 @@ _TARGET_IMAGE = "targets/training.png"
 
 
 class _Collector(CollectorControlFake):
-    async def score_rollouts(self, pendings):
+    async def evaluate_rollout(self, pendings):
         return list(pendings)
 
 

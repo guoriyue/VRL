@@ -244,7 +244,7 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
         assert entry.task
         assert entry.model_section_cls
         assert entry.sampling_section_cls
-        assert callable(entry.new_gatherer().gather_batches)
+        assert callable(entry.new_gatherer().merge_generation_batches)
         assert entry.policy_semantics.generation_regime in {
             "full_sequence",
             "token_autoregressive",
@@ -542,8 +542,8 @@ def test_all_registry_entries_build_collectors_from_the_same_entry() -> None:
             config=RolloutCollectorConfig(samples_per_generation_batch=1),
         )
         assert collector.request_builder.entry is entry
-        assert callable(collector.collect_unscored)
-        assert callable(collector.score_rollouts)
+        assert callable(collector.generate_rollout)
+        assert callable(collector.evaluate_rollout)
 
 
 def test_unknown_family_raises_clear_error() -> None:

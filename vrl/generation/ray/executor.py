@@ -369,7 +369,7 @@ class RayGenerationExecutor:
                 )
             batch_outputs.append(result.output)
 
-        output = self.gatherer.gather_batches(request, sample_rows, batch_outputs)
+        output = self.gatherer.merge_generation_batches(request, sample_rows, batch_outputs)
         # Log measured peaks without changing the probe's batch-size decision.
         for result in results:
             reading = result.memory

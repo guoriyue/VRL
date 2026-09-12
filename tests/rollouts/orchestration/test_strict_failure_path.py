@@ -80,10 +80,10 @@ class _Collector(PromptCollectionFake):
     async def shutdown(self) -> None:
         self.calls.append("collector_shutdown")
 
-    async def collect_unscored(self, *_args: object, **_kwargs: object) -> object:
+    async def generate_rollout(self, *_args: object, **_kwargs: object) -> object:
         if self.collect_raises:
             raise RuntimeError("collect blew up")
-        raise AssertionError("collect_unscored should not run for empty prompts")
+        raise AssertionError("generate_rollout should not run for empty prompts")
 
 
 class _Syncer:

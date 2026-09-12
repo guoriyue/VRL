@@ -33,7 +33,7 @@ class _RealChunkExecutor:
         x = torch.randn(batch.sample_count, 8, generator=g, device=self.device) + 1.0
         return x @ torch.ones(8, 8, device=self.device)
 
-    def gather_batches(self, request, sample_rows, batches):
+    def merge_generation_batches(self, request, sample_rows, batches):
         del request, sample_rows
         return SimpleNamespace(output=list(batches))
 

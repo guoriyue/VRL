@@ -71,10 +71,13 @@ class TestTrainableState:
         syncer = _Syncer()
 
         class _Collector(CollectorControlFake):
-            async def score_rollouts(self, pendings):
+            async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, prompts, **kwargs):
+            async def generate_rollout(self, prompts, **kwargs):
+                prepared = prompts
+                prompts = prepared.inputs
+                kwargs = prepared.options
                 collect_seen_sync_counts.append(len(syncer.calls))
                 group_size = int(kwargs["group_size"])
                 return _diffusion_rollout_batch(
@@ -140,10 +143,13 @@ class TestTrainableState:
             config = _Config()
 
         class _Collector(CollectorControlFake):
-            async def score_rollouts(self, pendings):
+            async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, prompts, **kwargs):
+            async def generate_rollout(self, prompts, **kwargs):
+                prepared = prompts
+                prompts = prepared.inputs
+                kwargs = prepared.options
                 del prompts, kwargs
                 raise AssertionError("constructor guard should run before collect")
 

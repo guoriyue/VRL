@@ -253,7 +253,7 @@ def test_nextstep_gather_uses_canonical_output_as_reward_source() -> None:
         context={},
     )
 
-    output = NextStep1GenerationBatchGatherer().gather_batches(
+    output = NextStep1GenerationBatchGatherer().merge_generation_batches(
         request,
         sample_rows,
         [batch],

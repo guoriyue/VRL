@@ -85,12 +85,15 @@ class _OwnerCollector(PromptCollectionFake):
     def release_scores(self) -> None:
         self.allow_score.set()
 
-    async def collect_unscored(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
+    async def generate_rollout(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
+        prepared = prompts
+        prompts = prepared.inputs
+        kwargs = prepared.options
         self.collect_threads.append(threading.get_ident())
         prompt_list = list(prompts)
         return _batch(prompt_list, int(kwargs["group_size"]))
 
-    async def score_rollouts(self, pendings: Any) -> list[RolloutBatch]:
+    async def evaluate_rollout(self, pendings: Any) -> list[RolloutBatch]:
         self.score_threads.append(threading.get_ident())
         with self._score_lock:
             self.score_calls += 1
@@ -633,10 +636,15 @@ async def test_early_preview_generates_during_current_reward_and_preserves_versi
             self.generated: list[tuple[str, int]] = []
             self.preview_generated = threading.Event()
 
-        async def collect_unscored(self, prompts, **kwargs):
+        async def generate_rollout(self, prompts, **kwargs):
+            prepared = prompts
+            prompts = prepared.inputs
+            kwargs = prepared.options
             prompt = prompts[0].prompt
             self.generated.append((prompt, kwargs["policy_version"]))
-            result = await super().collect_unscored(prompts, **kwargs)
+            result = await super().generate_rollout(
+                super().request_builder.build(prompts, **kwargs)
+            )
             if prompt == "p1":
                 self.preview_generated.set()
             return result
@@ -745,8 +753,13 @@ async def test_checkpointed_sampler_replays_preview_prompt_order_in_a_new_owner(
     class PromptCollector(_OwnerCollector):
         supports_reward_generation_overlap = True
 
-        async def collect_unscored(self, prompts, **kwargs):
-            batch = await super().collect_unscored(prompts, **kwargs)
+        async def generate_rollout(self, prompts, **kwargs):
+            prepared = prompts
+            prompts = prepared.inputs
+            kwargs = prepared.options
+            batch = await super().generate_rollout(
+                super().request_builder.build(prompts, **kwargs)
+            )
             batch.rewards.fill_(int(prompts[0].prompt))
             return batch
 

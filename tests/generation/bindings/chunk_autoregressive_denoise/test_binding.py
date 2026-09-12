@@ -25,7 +25,7 @@ def test_trainable_trajectory_declares_temporal_chunk_and_transition_axes() -> N
     request = _request()
     sample_rows = request.sample_rows()
 
-    output = ChunkAutoregressiveDenoiseGatherer().gather_batches(
+    output = ChunkAutoregressiveDenoiseGatherer().merge_generation_batches(
         request,
         sample_rows,
         [_trainable_result(20.0, sample_start=1), _trainable_result(10.0, sample_start=0)],
@@ -61,7 +61,7 @@ def test_gatherer_orders_transport_chunks_and_concatenates_sample_rows() -> None
     request = _request()
     sample_rows = request.sample_rows()
 
-    output = ChunkAutoregressiveDenoiseGatherer().gather_batches(
+    output = ChunkAutoregressiveDenoiseGatherer().merge_generation_batches(
         request,
         sample_rows,
         [_trainable_result(20.0, sample_start=1), _trainable_result(10.0, sample_start=0)],
@@ -85,7 +85,7 @@ def test_generation_only_result_has_no_fabricated_policy_facts() -> None:
         _generation_only_result(10.0, sample_start=0),
     ]
 
-    output = ChunkAutoregressiveDenoiseGatherer().gather_batches(
+    output = ChunkAutoregressiveDenoiseGatherer().merge_generation_batches(
         request,
         sample_rows,
         batches,
@@ -121,7 +121,7 @@ def test_gatherer_rejects_mismatched_batch_context() -> None:
     batches[1].context = {"model_family": "different"}
 
     with pytest.raises(ValueError, match="batch context at ordered index 1 does not match"):
-        ChunkAutoregressiveDenoiseGatherer().gather_batches(
+        ChunkAutoregressiveDenoiseGatherer().merge_generation_batches(
             request,
             request.sample_rows(),
             batches,
@@ -233,7 +233,7 @@ def test_gatherer_rejects_result_with_misaligned_trajectory_axes(field_name: str
     setattr(batches[1], field_name, torch.zeros(1, 4, 3))
 
     with pytest.raises(ValueError, match=f"batch {field_name} has leading dimensions"):
-        ChunkAutoregressiveDenoiseGatherer().gather_batches(
+        ChunkAutoregressiveDenoiseGatherer().merge_generation_batches(
             request, request.sample_rows(), batches
         )
 
@@ -270,7 +270,7 @@ def test_prompt_embedding_dimensions_do_not_become_chunk_axes() -> None:
     for batch in (result, other):
         batch.replay_tensors["prompt_embeds"] = torch.ones(1, 2, 3)
         batch.replay_tensor_axes["prompt_embeds"] = ("sample",)
-    output = ChunkAutoregressiveDenoiseGatherer().gather_batches(
+    output = ChunkAutoregressiveDenoiseGatherer().merge_generation_batches(
         request, request.sample_rows(), [result, other]
     )
     from vrl.trajectory.reader import TrajectoryReader
@@ -293,6 +293,6 @@ def test_gather_rejects_missing_or_inconsistent_replay_axes(invalid_axes) -> Non
         batches[1].replay_tensor_axes["transition_noise"] = invalid_axes
         match = "must declare the same"
     with pytest.raises(ValueError, match=match):
-        ChunkAutoregressiveDenoiseGatherer().gather_batches(
+        ChunkAutoregressiveDenoiseGatherer().merge_generation_batches(
             request, request.sample_rows(), batches
         )

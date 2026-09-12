@@ -207,7 +207,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         packing, on a copy stream), hiding the per-batch copy+CPU boundary behind
         the next batch's denoise. BIT-EXACT to forward_plan: same per-batch stage
         methods (via forward_batch), value-preserving side-stream copy,
-        and the SAME order-preserving gather_batches — so the gathered output is
+        and the SAME order-preserving merge_generation_batches — so the gathered output is
         identical; only the wall-clock changes.
 
         This is the executor-level entry for the single-GPU stage-overlap lever; the
@@ -223,7 +223,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
             plan.sample_batches,
             completion_callback=completion_callback,
         )
-        return self.gather_batches(request, sample_rows, batches)
+        return self.merge_generation_batches(request, sample_rows, batches)
 
     def forward_batch(
         self,

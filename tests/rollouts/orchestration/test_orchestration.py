@@ -66,12 +66,15 @@ class _Collector(PromptCollectionFake):
         self.activation_calls = 0
         self.offload_calls = 0
 
-    async def collect_unscored(self, inputs, **kwargs):
+    async def generate_rollout(self, inputs, **kwargs):
+        prepared = inputs
+        inputs = prepared.inputs
+        kwargs = prepared.options
         prompts = [getattr(item, "prompt", item) for item in inputs]
         self.calls.append({"prompts": prompts, **dict(kwargs)})
         return _batch(prompts, int(kwargs["group_size"]))
 
-    async def score_rollouts(self, pendings):
+    async def evaluate_rollout(self, pendings):
         return list(pendings)
 
     async def activate_generation_runtime(self) -> None:
@@ -176,11 +179,14 @@ class _FailingPhaseCollector(_Collector):
     async def activate_generation_runtime(self) -> None:
         self.events.append("rollout.activate")
 
-    async def collect_unscored(self, prompts, **kwargs):
+    async def generate_rollout(self, prompts, **kwargs):
+        prepared = prompts
+        prompts = prepared.inputs
+        kwargs = prepared.options
         self.events.append("rollout.collect")
         if self.fail_collect:
             raise RuntimeError("collect failed")
-        return await super().collect_unscored(prompts, **kwargs)
+        return await super().generate_rollout(super().request_builder.build(prompts, **kwargs))
 
     async def offload_generation_runtime_memory(self) -> None:
         self.events.append("rollout.offload")

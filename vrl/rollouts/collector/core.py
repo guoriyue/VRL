@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 from vrl.generation import GenerationInput, GenerationOutput, GenerationRuntime
 from vrl.models.families.registry import ModelFamilyEntry
-from vrl.rewards import RewardRuntime
+from vrl.rewards import RewardOutput, RewardRuntime
 from vrl.rewards.base import RewardCleanupError
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import remap_group_ids_, split_batch_by_group
@@ -56,6 +56,16 @@ class UnscoredRollout:
     profile: bool = False
     phases: dict[str, float] = field(default_factory=dict)
     reward_timing_ms: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RolloutEvaluation:
+    """Request-local rewards and trajectory builders awaiting batch assembly."""
+
+    rollouts: list[UnscoredRollout]
+    builders: list[TrajectoryRolloutBatchBuilder]
+    sample_counts: list[int]
+    rewards: RewardOutput
 
 
 class RewardCollectionMode(str, Enum):  # noqa: UP042
@@ -228,33 +238,9 @@ class RolloutCollector:
                 errors,
             )
 
-    async def collect_unscored(
-        self,
-        inputs: list[Any],
-        *,
-        group_size: int,
-        metadata: Mapping[str, Any] | None = None,
-        request_overrides: Mapping[str, Any] | None = None,
-        runtime_debug: bool = False,
-        policy_version: int | None = None,
-    ) -> UnscoredRollout:
-        """Generate one group of ``GenerationInput`` (or bare prompt) conditioning.
+    async def generate_rollout(self, collector_request: CollectorRequest) -> UnscoredRollout:
+        """Execute one prepared generation request without acquiring rewards."""
 
-        Generation half of the collection flow: the runtime stays
-        resident so several groups can be generated back to back; scoring (and
-        the rollout offload shared-GPU reward runs need before it) happens in
-        score_rollouts(). ``metadata`` is the group's opaque reward-scoring
-        payload (see ``PromptExample.reward_metadata``).
-        """
-
-        collector_request = self.request_builder.build(
-            inputs,
-            group_size,
-            metadata=metadata,
-            request_overrides=request_overrides,
-            runtime_debug=runtime_debug,
-            policy_version=policy_version,
-        )
         # A new generation phase has not activated reward memory yet. This also
         # prevents a previous iteration's state from authorizing a later handoff.
         self._reward_phase_started = False
@@ -272,17 +258,11 @@ class RolloutCollector:
             unscored.phases["collect.engine_generate"] = time.perf_counter() - phase_t
         return unscored
 
-    async def score_rollouts(self, unscored: list[UnscoredRollout]) -> list[RolloutBatch]:
-        """Score unscored groups through one reward call and build their batches.
-
-        Rollout prompts/metadata are per-sample, so all groups score in a
-        single reward_runtime.score call — model-backed rewards with
-        phase parking pay one model activation per call instead of one per
-        group. Batches return in input order.
-        """
+    async def evaluate_rollout(self, unscored: list[UnscoredRollout]) -> RolloutEvaluation | None:
+        """Evaluate generated samples through one reward call, without assembling batches."""
 
         if not unscored:
-            return []
+            return None
         if self.requires_generation_offload_before_reward:
             # Shared single-GPU reward runs park rollout model memory before the
             # in-process reward model takes over the physical GPU.
@@ -332,15 +312,34 @@ class RolloutCollector:
         unscored[0].reward_timing_ms.update(score_result.timing_ms)
         reward_score_s = time.perf_counter() - phase_t if phase_t is not None else None
 
+        if reward_score_s is not None:
+            unscored[0].phases["collect.reward_score"] = reward_score_s
+        return RolloutEvaluation(
+            rollouts=unscored,
+            builders=builders,
+            sample_counts=[len(samples) for samples in reward_samples],
+            rewards=score_result,
+        )
+
+    def assemble_training_batches(
+        self, evaluation: RolloutEvaluation | None
+    ) -> list[RolloutBatch]:
+        """Assemble trajectories and evaluated rewards into trainer-owned batches."""
+
+        if evaluation is None:
+            return []
+        unscored = evaluation.rollouts
+        score_result = evaluation.rewards
+        profile = any(rollout.profile for rollout in unscored)
         build_t = time.perf_counter() if profile else None
         batches: list[RolloutBatch] = []
         sample_offset = 0
-        for builder, group_samples in zip(
-            builders,
-            reward_samples,
+        for builder, sample_count in zip(
+            evaluation.builders,
+            evaluation.sample_counts,
             strict=True,
         ):
-            sample_stop = sample_offset + len(group_samples)
+            sample_stop = sample_offset + sample_count
             group_rewards = torch.tensor(
                 score_result.scores[sample_offset:sample_stop],
                 dtype=torch.float32,
@@ -361,13 +360,12 @@ class RolloutCollector:
                 }
             sample_offset = sample_stop
             batches.append(batch)
-        if reward_score_s is not None and build_t is not None:
+        if build_t is not None:
             # One score call and one build pass cover every group, so the
             # call-level timings live on the first group only: a caller summing
             # phases over groups must not multiply the same wall time. The
             # phases stay on the rollouts (caller-owned) so concurrent collects
             # never share mutable collector state.
-            unscored[0].phases["collect.reward_score"] = reward_score_s
             unscored[0].phases["collect.batch_build"] = time.perf_counter() - build_t
         return batches
 
@@ -423,47 +421,43 @@ class RolloutCollector:
             and self.reward_runtime.external_accelerator_isolation_verified
         )
 
-    async def generate_prompt_groups(
+    def build_generation_requests(
         self,
         *,
         prompts: list[Any],
         group_size: int,
         runtime_debug: bool,
         policy_version: int | None,
-    ) -> AsyncIterator[GeneratedPromptGroup]:
-        """Yield generated groups without acquiring or running the reward runtime.
+    ) -> Iterator[tuple[CollectorRequest, list[int]]]:
+        """Build requests and original prompt indices without executing generation.
 
-        Consecutive plain prompts retain their batched request; structured examples
-        retain their own metadata and overrides. Iteration is demand-driven: the
-        caller owns admission, each yielded receipt, and any downstream scoring.
+        Consecutive plain prompts share a request; structured examples retain
+        their own metadata and overrides. Requests are built on demand.
         """
 
         pending_prompts: list[str] = []
         pending_indices: list[int] = []
 
-        async def generate(
-            inputs: list[Any], indices: list[int], **kwargs: Any
-        ) -> GeneratedPromptGroup:
-            started = time.perf_counter()
-            unscored = await self.collect_unscored(
+        def build(inputs: list[Any], indices: list[int], **kwargs: Any):
+            request = self.request_builder.build(
                 inputs,
                 group_size=group_size,
                 runtime_debug=runtime_debug,
                 policy_version=policy_version,
                 **kwargs,
             )
-            return GeneratedPromptGroup(unscored, indices, started, time.perf_counter())
+            return request, indices
 
         for prompt_idx, item in enumerate(prompts):
             if not isinstance(item, (str, bytes)) and hasattr(item, "generation_input"):
                 if pending_prompts:
-                    yield await generate(
+                    yield build(
                         [GenerationInput(prompt=prompt) for prompt in pending_prompts],
                         list(pending_indices),
                     )
                     pending_prompts.clear()
                     pending_indices.clear()
-                yield await generate(
+                yield build(
                     [item.generation_input()],
                     [prompt_idx],
                     metadata=item.reward_metadata(),
@@ -473,12 +467,12 @@ class RolloutCollector:
                 pending_prompts.append(str(item))
                 pending_indices.append(prompt_idx)
         if pending_prompts:
-            yield await generate(
+            yield build(
                 [GenerationInput(prompt=prompt) for prompt in pending_prompts],
                 list(pending_indices),
             )
 
-    async def collect_prompt_groups(
+    async def prepare_training_batches(
         self,
         *,
         prompts: list[Any],
@@ -540,7 +534,7 @@ class RolloutCollector:
         async def score_unscored(groups: list[UnscoredRollout]) -> list[RolloutBatch]:
             started = time.perf_counter()
             try:
-                return await self.score_rollouts(groups)
+                return self.assemble_training_batches(await self.evaluate_rollout(groups))
             finally:
                 reward_intervals.append((started, time.perf_counter()))
 
@@ -584,12 +578,17 @@ class RolloutCollector:
             )
 
         try:
-            async for generated in self.generate_prompt_groups(
+            for request, prompt_indices in self.build_generation_requests(
                 prompts=prompts,
                 group_size=group_size,
                 runtime_debug=runtime_debug,
                 policy_version=policy_version,
             ):
+                started = time.perf_counter()
+                unscored = await self.generate_rollout(request)
+                generated = GeneratedPromptGroup(
+                    unscored, prompt_indices, started, time.perf_counter()
+                )
                 await record_generated(generated)
             if not generated_groups:
                 return []
@@ -682,5 +681,6 @@ __all__ = [
     "PromptCollectionCleanupError",
     "RewardCollectionMode",
     "RolloutCollector",
+    "RolloutEvaluation",
     "UnscoredRollout",
 ]

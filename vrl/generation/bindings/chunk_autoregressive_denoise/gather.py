@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 class ChunkAutoregressiveDenoiseGatherer:
     """Order and concatenate prompt/sample batches without owning a model."""
 
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],

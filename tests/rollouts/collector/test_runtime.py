@@ -668,19 +668,25 @@ def test_collector_uses_one_reward_call_and_splits_scores_per_group() -> None:
     )
 
     async def _collect_groups():
-        first = await collector.collect_unscored(
-            ["same prompt"],
-            group_size=2,
-            metadata={"target_text": "group-0"},
-            policy_version=4,
+        first = await collector.generate_rollout(
+            collector.request_builder.build(
+                ["same prompt"],
+                group_size=2,
+                metadata={"target_text": "group-0"},
+                policy_version=4,
+            )
         )
-        second = await collector.collect_unscored(
-            ["same prompt"],
-            group_size=3,
-            metadata={"target_text": "group-1"},
-            policy_version=5,
+        second = await collector.generate_rollout(
+            collector.request_builder.build(
+                ["same prompt"],
+                group_size=3,
+                metadata={"target_text": "group-1"},
+                policy_version=5,
+            )
         )
-        return await collector.score_rollouts([first, second])
+        return collector.assemble_training_batches(
+            await collector.evaluate_rollout([first, second])
+        )
 
     first, second = asyncio.run(_collect_groups())
 
@@ -733,10 +739,14 @@ def test_collector_attaches_components_to_their_exact_rollout_groups() -> None:
 
     async def _collect_two_groups():
         pending = [
-            await collector.collect_unscored(["p0"], group_size=2),
-            await collector.collect_unscored(["p1"], group_size=3),
+            await collector.generate_rollout(
+                collector.request_builder.build(["p0"], group_size=2)
+            ),
+            await collector.generate_rollout(
+                collector.request_builder.build(["p1"], group_size=3)
+            ),
         ]
-        return await collector.score_rollouts(pending)
+        return collector.assemble_training_batches(await collector.evaluate_rollout(pending))
 
     first, second = asyncio.run(_collect_two_groups())
 
@@ -746,7 +756,7 @@ def test_collector_attaches_components_to_their_exact_rollout_groups() -> None:
     assert second.extras["reward_components"]["observer"].tolist() == [12.0, 13.0, 14.0]
 
 
-def test_collect_prompt_groups_folds_reward_timing_into_stats() -> None:
+def test_prepare_training_batches_folds_reward_timing_into_stats() -> None:
     """Checks reward runtime timing reaches RolloutStats."""
     import asyncio
 
@@ -783,7 +793,7 @@ def test_collect_prompt_groups_folds_reward_timing_into_stats() -> None:
     stats = RolloutStats()
 
     batches = asyncio.run(
-        collector.collect_prompt_groups(
+        collector.prepare_training_batches(
             prompts=["p0"],
             group_size=2,
             runtime_debug=False,
@@ -1102,14 +1112,18 @@ def test_collect_phase_timings_are_per_call_not_shared(
     )
 
     async def _run() -> tuple[Any, Any]:
-        first = await collector.collect_unscored(["p0"], group_size=1)
-        second = await collector.collect_unscored(["p1"], group_size=1)
-        await collector.score_rollouts([first, second])
+        first = await collector.generate_rollout(
+            collector.request_builder.build(["p0"], group_size=1)
+        )
+        second = await collector.generate_rollout(
+            collector.request_builder.build(["p1"], group_size=1)
+        )
+        collector.assemble_training_batches(await collector.evaluate_rollout([first, second]))
         return first, second
 
     first, second = asyncio.run(_run())
 
-    # Generation time is owned per collect_unscored call.
+    # Generation time is owned per generate_rollout call.
     assert "collect.engine_generate" in first.phases
     assert "collect.engine_generate" in second.phases
     # Call-level score/build timings land on the first group only, so summing
@@ -1127,5 +1141,55 @@ def test_collector_does_not_coerce_group_size_before_request_validation(group_si
     runtime = _Runtime()
     collector = _collector(generation_runtime=runtime, reward_runtime=_RewardRuntime())
     with pytest.raises(ValueError, match="samples_per_prompt must be an integer"):
-        asyncio.run(collector.collect_unscored(["p0"], group_size=group_size))
+        asyncio.run(
+            collector.generate_rollout(
+                collector.request_builder.build(["p0"], group_size=group_size)
+            )
+        )
     assert runtime.requests == []
+
+
+def test_request_generation_reward_and_assembly_are_separate_stages(monkeypatch) -> None:
+    import asyncio
+
+    runtime = _Runtime()
+    rewards = _RewardRuntime()
+    collector = _collector(generation_runtime=runtime, reward_runtime=rewards)
+    requests = list(
+        collector.build_generation_requests(
+            prompts=["first", "second"],
+            group_size=2,
+            runtime_debug=False,
+            policy_version=7,
+        )
+    )
+    assert runtime.requests == []
+    assert rewards.calls == []
+    assert len(requests) == 1
+    request, indices = requests[0]
+    assert indices == [0, 1]
+    assert request.request.samples_per_prompt == 2
+
+    assembled = []
+    original_build = TrajectoryRolloutBatchBuilder.build
+
+    def record_build(self, reward_values):
+        assembled.append(reward_values)
+        return original_build(self, reward_values)
+
+    monkeypatch.setattr(TrajectoryRolloutBatchBuilder, "build", record_build)
+
+    async def run():
+        rollout = await collector.generate_rollout(request)
+        assert len(runtime.requests) == 1
+        assert rewards.calls == []
+        evaluation = await collector.evaluate_rollout([rollout])
+        assert len(rewards.calls) == 1
+        assert assembled == []
+        batches = collector.assemble_training_batches(evaluation)
+        assert len(assembled) == 1
+        return batches
+
+    batches = asyncio.run(run())
+    assert len(batches) == 1
+    assert batches[0].rewards.tolist() == [0.0, 1.0, 2.0, 3.0]

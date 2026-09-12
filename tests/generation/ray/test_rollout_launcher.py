@@ -24,7 +24,7 @@ pytestmark = pytest.mark.slow_test
 
 
 class _Gatherer:
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],

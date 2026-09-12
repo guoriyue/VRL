@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from vrl.generation.execution.planner import EnginePlan
-from vrl.generation.execution.sample_batches import run_sample_batches_with_oom_retry
+from vrl.generation.execution.sample_batches import execute_generation_batches
 from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
 from vrl.generation.types import (
     GenerationOutput,
@@ -26,11 +26,11 @@ class BatchExecutorBase:
       and the same gather as the Ray dispatch, with a local OOM-split retry.
       Production drives batches through the Ray dispatcher instead; planning is
       shared via ``EnginePlan.from_request``'s single width fallback.
-    - ``gather_batches`` delegates to the gatherer injected by the composition
+    - ``merge_generation_batches`` delegates to the gatherer injected by the composition
       root that already owns the family registry entry. The neutral execution
       layer never looks family identity up again.
 
-    Families own ``forward_batch``; overriding ``gather_batches`` is only
+    Families own ``forward_batch``; overriding ``merge_generation_batches`` is only
     for payloads that never reach the registry (test doubles).
     """
 
@@ -45,13 +45,13 @@ class BatchExecutorBase:
         sample_rows: Sequence[GenerationSampleRow],
         plan: EnginePlan,
     ) -> GenerationOutput:
-        batches = run_sample_batches_with_oom_retry(
+        batches = execute_generation_batches(
             plan.sample_batches,
             lambda batch: self.forward_batch(request, batch),
         )
-        return self.gather_batches(request, list(sample_rows), batches)
+        return self.merge_generation_batches(request, list(sample_rows), batches)
 
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
@@ -62,7 +62,7 @@ class BatchExecutorBase:
                 f"{type(self).__name__} requires an injected batch gatherer "
                 "for request-level execution",
             )
-        return self._gatherer.gather_batches(request, sample_rows, batches)
+        return self._gatherer.merge_generation_batches(request, sample_rows, batches)
 
 
 __all__ = ["BatchExecutorBase"]

@@ -30,7 +30,7 @@ def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
         samples_per_prompt=1,
         sampling={"num_steps": 2},
     )
-    output = DiffusionBatchGatherer().gather_batches(
+    output = DiffusionBatchGatherer().merge_generation_batches(
         request,
         request.sample_rows(),
         [_chunk()],

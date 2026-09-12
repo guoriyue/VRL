@@ -126,10 +126,13 @@ class TestDiagnostics:
                 )
 
         class _Collector(CollectorControlFake):
-            async def score_rollouts(self, pendings):
+            async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, prompts, **kwargs):
+            async def generate_rollout(self, prompts, **kwargs):
+                prepared = prompts
+                prompts = prepared.inputs
+                kwargs = prepared.options
                 assert kwargs["runtime_debug"] is debug_enabled
                 group_size = int(kwargs["group_size"])
                 return _diffusion_rollout_batch(
@@ -338,10 +341,13 @@ class TestDiagnostics:
                 super().__init__()
                 self.collections = 0
 
-            async def score_rollouts(self, pendings):
+            async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, prompts, **kwargs):
+            async def generate_rollout(self, prompts, **kwargs):
+                prepared = prompts
+                prompts = prepared.inputs
+                kwargs = prepared.options
                 del prompts
                 group_size = int(kwargs["group_size"])
                 self.collections += 1

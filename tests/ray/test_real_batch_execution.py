@@ -57,7 +57,7 @@ class _ChunkWorker:
 
 
 class _ListGatherer:
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Any,

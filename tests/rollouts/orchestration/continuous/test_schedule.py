@@ -91,12 +91,15 @@ class _Collector(PromptCollectionFake):
         self.shutdown_calls = 0
         self.shutdown_failures = 0
 
-    async def collect_unscored(self, inputs: Any, **kwargs: Any) -> RolloutBatch:
+    async def generate_rollout(self, inputs: Any, **kwargs: Any) -> RolloutBatch:
+        prepared = inputs
+        inputs = prepared.inputs
+        kwargs = prepared.options
         prompts = [getattr(item, "prompt", item) for item in inputs]
         self.calls.append({"prompts": prompts, **dict(kwargs)})
         return _batch(prompts, int(kwargs["group_size"]))
 
-    async def score_rollouts(self, pendings: Any) -> list[RolloutBatch]:
+    async def evaluate_rollout(self, pendings: Any) -> list[RolloutBatch]:
         return list(pendings)
 
     async def activate_generation_runtime(self) -> None:
@@ -236,9 +239,12 @@ async def test_shutdown_failure_retries_cleanup_before_closing_owner() -> None:
 
 
 class _SlowCollector(_Collector):
-    async def collect_unscored(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
+    async def generate_rollout(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
+        prepared = prompts
+        prompts = prepared.inputs
+        kwargs = prepared.options
         await asyncio.sleep(0.02)
-        return await super().collect_unscored(prompts, **kwargs)
+        return await super().generate_rollout(super().request_builder.build(prompts, **kwargs))
 
 
 @pytest.mark.asyncio
@@ -514,7 +520,9 @@ class _FailingCollector(_Collector):
         super().__init__(runtime)
         self.message = message
 
-    async def collect_unscored(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
+    async def generate_rollout(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
+        prepared = prompts
+        prompts = prepared.inputs
         raise RuntimeError(self.message)
 
 
@@ -542,7 +550,7 @@ async def test_persistent_producer_failure_fails_fast_with_root_cause() -> None:
 class _RewardFailingCollector(_Collector):
     """Generation succeeds; reward scoring always fails."""
 
-    async def score_rollouts(self, pendings: Any) -> list[RolloutBatch]:
+    async def evaluate_rollout(self, pendings: Any) -> list[RolloutBatch]:
         raise RuntimeError("reward model exploded")
 
 
@@ -578,12 +586,12 @@ class _GatedScoreCollector(_Collector):
         self.block_after_scores = 0
         self.score_calls = 0
 
-    async def score_rollouts(self, pendings: Any) -> list[RolloutBatch]:
+    async def evaluate_rollout(self, pendings: Any) -> list[RolloutBatch]:
         self.score_calls += 1
         if self.score_calls > self.block_after_scores and not self.allow_score.is_set():
             self.score_blocked.set()
             await asyncio.to_thread(self.allow_score.wait)
-        return await super().score_rollouts(pendings)
+        return await super().evaluate_rollout(pendings)
 
 
 @pytest.mark.asyncio
@@ -776,7 +784,9 @@ class _StaleSlotCollector(_Collector):
     window: a typed StaleSlotDiscard, NOT a generation failure.
     """
 
-    async def collect_unscored(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
+    async def generate_rollout(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
+        prepared = prompts
+        prompts = prepared.inputs
         raise StaleSlotDiscard("trainable-state slot evicted for policy_version=1")
 
 

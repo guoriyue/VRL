@@ -185,7 +185,7 @@ class _ProbeExecutor:
             ),
         )
 
-    def gather_batches(self, *args: Any, **kwargs: Any) -> Any:
+    def merge_generation_batches(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
 
@@ -425,7 +425,7 @@ class _MemoryExecutor:
     def forward_batch(self, *args: Any, **kwargs: Any) -> Any:
         return SimpleNamespace(memory=asdict(_reading()))
 
-    def gather_batches(self, *args: Any, **kwargs: Any) -> Any:
+    def merge_generation_batches(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
 

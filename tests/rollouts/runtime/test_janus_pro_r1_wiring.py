@@ -132,7 +132,9 @@ def test_r1_gather_rejects_inconsistent_segment_batches(mismatch: str) -> None:
         value = batches[1].segments["final_image"][mismatch]
         batches[1].segments["final_image"][mismatch] = value.to(torch.float64)
     with pytest.raises(ValueError, match=error_pattern):
-        JanusProR1GenerationBatchGatherer().gather_batches(request, _sample_rows(), batches)
+        JanusProR1GenerationBatchGatherer().merge_generation_batches(
+            request, _sample_rows(), batches
+        )
 
 
 def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:

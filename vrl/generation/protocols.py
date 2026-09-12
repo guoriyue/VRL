@@ -11,7 +11,7 @@ engine — none exists for taste. One request flows as::
                                           |     .forward_batch(batch)
                  batch results return <---|--- BatchPayload (family-owned shape)
                  GenerationBatchGatherer            |
-                 .gather_batches()         |
+                 .merge_generation_batches()         |
                  reassemble full output   |
 
 - ``GenerationRuntime``: the engine's only face toward vrl/rollouts (the dual
@@ -63,7 +63,7 @@ BatchPayload = Any
 class GenerationBatchGatherer(Protocol):
     """Pure batch gather contract that does not require an executor/model."""
 
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
@@ -177,7 +177,7 @@ class GenerationBatchExecutor(Protocol):
         batch: GenerationSampleBatch,
     ) -> BatchPayload: ...
 
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],

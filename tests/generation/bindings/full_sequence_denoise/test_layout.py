@@ -317,7 +317,7 @@ def test_unseeded_window_survives_serialized_batch_split_retry(monkeypatch):
 
     from vrl.generation.execution.sample_batches import (
         GenerationSampleBatch,
-        run_sample_batches_with_oom_retry,
+        execute_generation_batches,
     )
     from vrl.generation.execution.types import GenerationBatchEnvelope
 
@@ -334,7 +334,7 @@ def test_unseeded_window_survives_serialized_batch_split_retry(monkeypatch):
             raise RuntimeError("CUDA out of memory")
         return params.sde_window
 
-    result = run_sample_batches_with_oom_retry([GenerationSampleBatch(0, 0, 2)], execute)
+    result = execute_generation_batches([GenerationSampleBatch(0, 0, 2)], execute)
     assert len(windows) == 3
     assert windows[0] is not None
     assert windows == [windows[0]] * 3

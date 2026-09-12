@@ -50,7 +50,7 @@ class EnginePlan:
             batch_size = raw
         with profile_range("engine.plan"):
             return cls(
-                sample_batches=GenerationSampleBatch.plan(
+                sample_batches=GenerationSampleBatch.plan_generation_batches(
                     len(request.inputs),
                     samples_per_prompt=request.samples_per_prompt,
                     max_samples_per_batch=batch_size,

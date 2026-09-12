@@ -286,7 +286,7 @@ class GenerationSampleBatch:
         return left, right
 
     @classmethod
-    def plan(
+    def plan_generation_batches(
         cls,
         prompt_count: int,
         *,
@@ -317,7 +317,7 @@ class GenerationSampleBatch:
         return tuple(batches)
 
 
-def run_sample_batches_with_oom_retry[T](
+def execute_generation_batches[T](
     batches: Sequence[GenerationSampleBatch],
     run_one: Callable[[GenerationSampleBatch], T],
 ) -> list[T]:
@@ -348,9 +348,9 @@ __all__ = [
     "GenerationSampleBatch",
     "SampleAlignedValues",
     "concatenate_sample_values",
+    "execute_generation_batches",
     "gather_batch_context",
     "gather_replay_tensors",
     "ordered_covering_batches",
     "require_sample_rows",
-    "run_sample_batches_with_oom_retry",
 ]

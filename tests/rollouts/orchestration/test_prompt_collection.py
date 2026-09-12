@@ -13,6 +13,7 @@ from tests.rollouts.collector._helpers import PromptCollectionFake
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.core import (
+    GeneratedPromptGroup,
     PromptCollectionCleanupError,
     RewardCollectionMode,
 )
@@ -22,11 +23,11 @@ from vrl.trainers.data import PromptExample
 from vrl.trajectory import build_ar_discrete_trajectory
 
 
-def collect_prompt_groups(*, collector, stats: RolloutStats | None = None, **kwargs):
+def prepare_training_batches(*, collector, stats: RolloutStats | None = None, **kwargs):
     """Test shim: production requires the accumulator (both real callers pass
     one); tests that do not assert on stats hand in a throwaway."""
 
-    return collector.collect_prompt_groups(
+    return collector.prepare_training_batches(
         stats=stats if stats is not None else RolloutStats(), **kwargs
     )
 
@@ -96,23 +97,29 @@ class _DeferredCollector(PromptCollectionFake):
         self.requires_driver_model_offload_for_reward = trainer_reward_handoff
         self.supports_reward_generation_overlap = supports_overlap
 
-    async def collect_unscored(self, inputs: list[Any], **kwargs: Any) -> Any:
+    async def generate_rollout(self, inputs: list[Any], **kwargs: Any) -> Any:
+        prepared = inputs
+        inputs = prepared.inputs
+        kwargs = prepared.options
         prompts = [getattr(item, "prompt", item) for item in inputs]
         self.events.append(f"generate:{','.join(prompts)}")
         batch = _batch(prompts, int(kwargs["group_size"]))
         self._prompt_names[id(batch)] = tuple(prompts)
         return batch
 
-    async def score_rollouts(self, pendings: list[Any]) -> list[RolloutBatch]:
+    async def evaluate_rollout(self, pendings: list[Any]) -> list[RolloutBatch]:
         names = [",".join(dict.fromkeys(self._prompt_names[id(pending)])) for pending in pendings]
-        self.events.append(f"score_rollouts:[{';'.join(names)}]")
+        self.events.append(f"evaluate_rollout:[{';'.join(names)}]")
         return list(pendings)
 
 
 class _TrajectoryDeferredCollector(_DeferredCollector):
     """Deferred collector whose trainer and trajectory grouping never alias."""
 
-    async def collect_unscored(self, inputs: list[Any], **kwargs: Any) -> RolloutBatch:
+    async def generate_rollout(self, inputs: list[Any], **kwargs: Any) -> RolloutBatch:
+        prepared = inputs
+        inputs = prepared.inputs
+        kwargs = prepared.options
         prompts = [getattr(item, "prompt", item) for item in inputs]
         self.events.append(f"generate:{','.join(prompts)}")
         batch = _batch_with_trajectory(prompts, int(kwargs["group_size"]))
@@ -126,7 +133,7 @@ async def test_prompt_examples_generate_all_groups_before_one_scoring_call() -> 
     collector = _DeferredCollector()
     prompts = [PromptExample(prompt=f"p{i}") for i in range(3)]
 
-    batches = await collect_prompt_groups(
+    batches = await prepare_training_batches(
         collector=collector,
         prompts=prompts,
         group_size=2,
@@ -138,7 +145,7 @@ async def test_prompt_examples_generate_all_groups_before_one_scoring_call() -> 
         "generate:p0",
         "generate:p1",
         "generate:p2",
-        "score_rollouts:[p0;p1;p2]",
+        "evaluate_rollout:[p0;p1;p2]",
     ]
     # One split batch per prompt group, remapped to the prompt index.
     assert len(batches) == 3
@@ -153,7 +160,7 @@ async def test_mixed_prompts_preserve_group_id_remap() -> None:
     collector = _DeferredCollector()
     prompts: list[Any] = ["s0", PromptExample(prompt="e1"), "s2"]
 
-    batches = await collect_prompt_groups(
+    batches = await prepare_training_batches(
         collector=collector,
         prompts=prompts,
         group_size=1,
@@ -166,7 +173,7 @@ async def test_mixed_prompts_preserve_group_id_remap() -> None:
         "generate:s0",
         "generate:e1",
         "generate:s2",
-        "score_rollouts:[s0;e1;s2]",
+        "evaluate_rollout:[s0;e1;s2]",
     ]
     assert [batch.group_ids.unique().tolist() for batch in batches] == [[0], [1], [2]]
 
@@ -175,7 +182,7 @@ async def test_mixed_prompts_preserve_group_id_remap() -> None:
 async def test_prompt_example_scalar_remap_updates_trainer_group_ids() -> None:
     """Checks remaps update trainer grouping without rewriting stable identity."""
 
-    batches = await collect_prompt_groups(
+    batches = await prepare_training_batches(
         collector=_TrajectoryDeferredCollector(),
         prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
         group_size=2,
@@ -195,7 +202,7 @@ async def test_prompt_example_scalar_remap_updates_trainer_group_ids() -> None:
 async def test_plain_string_list_remap_updates_signal_group_ids() -> None:
     """Checks evaluator signals consume the remapped trainer-owned groups."""
 
-    batches = await collect_prompt_groups(
+    batches = await prepare_training_batches(
         collector=_TrajectoryDeferredCollector(),
         prompts=["p0", "p1"],
         group_size=1,
@@ -220,14 +227,17 @@ class _PhasedCollector(PromptCollectionFake):
     requires_driver_model_offload_for_reward = False
     supports_reward_generation_overlap = False
 
-    async def collect_unscored(self, inputs: list[Any], **kwargs: Any) -> _Unscored:
+    async def generate_rollout(self, inputs: list[Any], **kwargs: Any) -> _Unscored:
+        prepared = inputs
+        inputs = prepared.inputs
+        kwargs = prepared.options
         prompts = [getattr(item, "prompt", item) for item in inputs]
         return _Unscored(
             batch=_batch(prompts, int(kwargs["group_size"])),
             phases={"collect.engine_generate": 1.0},
         )
 
-    async def score_rollouts(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
+    async def evaluate_rollout(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
         # Call-level timings on the first group only (RolloutCollector contract).
         pendings[0].phases["collect.reward_score"] = 0.5
         pendings[0].phases["collect.batch_build"] = 0.25
@@ -241,7 +251,7 @@ async def test_phase_times_accumulate_per_call() -> None:
 
     stats = RolloutStats()
 
-    await collect_prompt_groups(
+    await prepare_training_batches(
         collector=_PhasedCollector(),
         prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
         group_size=1,
@@ -285,7 +295,10 @@ class _StreamingCollector(_DeferredCollector):
         self.active_scores = 0
         self.max_active_scores = 0
 
-    async def collect_unscored(self, inputs: list[Any], **kwargs: Any) -> Any:
+    async def generate_rollout(self, inputs: list[Any], **kwargs: Any) -> Any:
+        prepared = inputs
+        inputs = prepared.inputs
+        kwargs = prepared.options
         prompts = [getattr(item, "prompt", item) for item in inputs]
         name = ",".join(prompts)
         self.events.append(f"generate_start:{name}")
@@ -301,7 +314,7 @@ class _StreamingCollector(_DeferredCollector):
         self._prompt_names[id(batch)] = tuple(prompts)
         return batch
 
-    async def score_rollouts(self, pendings: list[Any]) -> list[RolloutBatch]:
+    async def evaluate_rollout(self, pendings: list[Any]) -> list[RolloutBatch]:
         names = [",".join(dict.fromkeys(self._prompt_names[id(pending)])) for pending in pendings]
         name = ";".join(names)
         self.active_scores += 1
@@ -335,22 +348,25 @@ class _TimedCollector(_DeferredCollector):
         )
         self.delay_s = delay_s
 
-    async def collect_unscored(self, inputs: list[Any], **kwargs: Any) -> Any:
+    async def generate_rollout(self, inputs: list[Any], **kwargs: Any) -> Any:
+        prepared = inputs
+        inputs = prepared.inputs
+        kwargs = prepared.options
         await asyncio.sleep(self.delay_s)
-        return await super().collect_unscored(inputs, **kwargs)
+        return await super().generate_rollout(super().request_builder.build(inputs, **kwargs))
 
-    async def score_rollouts(self, pendings: list[Any]) -> list[RolloutBatch]:
+    async def evaluate_rollout(self, pendings: list[Any]) -> list[RolloutBatch]:
         # Batched scoring keeps the same per-group work as streamed scoring, so
         # the only A/B difference is whether that work overlaps generation.
         await asyncio.sleep(self.delay_s * len(pendings))
-        return await super().score_rollouts(pendings)
+        return await super().evaluate_rollout(pendings)
 
 
 @pytest.mark.asyncio
 async def test_capable_collector_overlaps_reward_with_next_generation() -> None:
     collector = _StreamingCollector()
 
-    batches = await collect_prompt_groups(
+    batches = await prepare_training_batches(
         collector=collector,
         prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
         group_size=1,
@@ -377,7 +393,7 @@ async def test_overlap_stats_support_batched_serial_vs_streaming_wall_ab() -> No
     serial_stats = RolloutStats()
     overlap_stats = RolloutStats()
 
-    await collect_prompt_groups(
+    await prepare_training_batches(
         collector=_TimedCollector(supports_overlap=False),
         prompts=prompts,
         group_size=1,
@@ -385,7 +401,7 @@ async def test_overlap_stats_support_batched_serial_vs_streaming_wall_ab() -> No
         policy_version=3,
         stats=serial_stats,
     )
-    await collect_prompt_groups(
+    await prepare_training_batches(
         collector=_TimedCollector(supports_overlap=True),
         prompts=prompts,
         group_size=1,
@@ -419,7 +435,7 @@ async def test_reward_handoff_collector_keeps_generation_and_scoring_serial(
         trainer_reward_handoff=trainer_handoff,
     )
 
-    await collect_prompt_groups(
+    await prepare_training_batches(
         collector=collector,
         prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
         group_size=1,
@@ -430,7 +446,7 @@ async def test_reward_handoff_collector_keeps_generation_and_scoring_serial(
     assert collector.events == [
         "generate:p0",
         "generate:p1",
-        "score_rollouts:[p0;p1]",
+        "evaluate_rollout:[p0;p1]",
     ]
 
 
@@ -442,7 +458,7 @@ async def test_safe_topology_without_runtime_capability_stays_batched_and_serial
         supports_overlap=False,
     )
 
-    await collect_prompt_groups(
+    await prepare_training_batches(
         collector=collector,
         prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
         group_size=1,
@@ -453,7 +469,7 @@ async def test_safe_topology_without_runtime_capability_stays_batched_and_serial
     assert collector.events == [
         "generate:p0",
         "generate:p1",
-        "score_rollouts:[p0;p1]",
+        "evaluate_rollout:[p0;p1]",
     ]
 
 
@@ -468,7 +484,7 @@ async def test_missing_overlap_capability_fails_loud() -> None:
     del collector.supports_reward_generation_overlap
 
     with pytest.raises(AttributeError, match="supports_reward_generation_overlap"):
-        await collect_prompt_groups(
+        await prepare_training_batches(
             collector=collector,
             prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
             group_size=1,
@@ -482,7 +498,7 @@ async def test_score_failure_is_drained_without_task_leak() -> None:
     collector = _StreamingCollector(fail_score=True)
 
     with pytest.raises(RuntimeError, match="score failed"):
-        await collect_prompt_groups(
+        await prepare_training_batches(
             collector=collector,
             prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
             group_size=1,
@@ -500,7 +516,7 @@ async def test_score_failure_is_drained_without_task_leak() -> None:
 async def test_collection_cancellation_does_not_detach_score_task() -> None:
     collector = _StreamingCollector()
     collection = asyncio.create_task(
-        collect_prompt_groups(
+        prepare_training_batches(
             collector=collector,
             prompts=[PromptExample(prompt="p0")],
             group_size=1,
@@ -533,7 +549,7 @@ async def test_generation_failure_cancels_and_settles_inflight_score(
 
     if cleanup_fails:
         with pytest.raises(PromptCollectionCleanupError) as raised:
-            await collect_prompt_groups(
+            await prepare_training_batches(
                 collector=collector,
                 prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
                 group_size=1,
@@ -546,7 +562,7 @@ async def test_generation_failure_cancels_and_settles_inflight_score(
         ]
     else:
         with pytest.raises(RuntimeError, match="generation failed"):
-            await collect_prompt_groups(
+            await prepare_training_batches(
                 collector=collector,
                 prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
                 group_size=1,
@@ -567,7 +583,7 @@ async def test_per_group_serial_scores_each_group_before_the_next_generation() -
     )
     prompts = [PromptExample(prompt=f"p{i}") for i in range(3)]
 
-    batches = await collect_prompt_groups(
+    batches = await prepare_training_batches(
         collector=collector,
         prompts=prompts,
         group_size=1,
@@ -579,11 +595,11 @@ async def test_per_group_serial_scores_each_group_before_the_next_generation() -
     # Per-group call granularity (same as streaming), strictly interleaved.
     assert collector.events == [
         "generate:p0",
-        "score_rollouts:[p0]",
+        "evaluate_rollout:[p0]",
         "generate:p1",
-        "score_rollouts:[p1]",
+        "evaluate_rollout:[p1]",
         "generate:p2",
-        "score_rollouts:[p2]",
+        "evaluate_rollout:[p2]",
     ]
     assert [batch.group_ids.unique().tolist() for batch in batches] == [[0], [1], [2]]
 
@@ -603,7 +619,7 @@ async def test_forcing_per_group_mode_without_capability_raises(
     collector = _DeferredCollector(supports_overlap=False)
 
     with pytest.raises(ValueError, match="cannot be forced on"):
-        await collect_prompt_groups(
+        await prepare_training_batches(
             collector=collector,
             prompts=[PromptExample(prompt="p0")],
             group_size=1,
@@ -623,7 +639,7 @@ async def test_capable_collector_can_be_restricted_to_the_batched_serial_arm() -
         supports_overlap=True,
     )
 
-    await collect_prompt_groups(
+    await prepare_training_batches(
         collector=collector,
         prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
         group_size=1,
@@ -635,7 +651,7 @@ async def test_capable_collector_can_be_restricted_to_the_batched_serial_arm() -
     assert collector.events == [
         "generate:p0",
         "generate:p1",
-        "score_rollouts:[p0;p1]",
+        "evaluate_rollout:[p0;p1]",
     ]
 
 
@@ -659,7 +675,7 @@ async def test_three_acceptance_arms_isolate_overlap_from_per_group_call_tax() -
     rewards: dict[RewardCollectionMode, list[list[float]]] = {}
 
     for mode, stats in arms.items():
-        batches = await collect_prompt_groups(
+        batches = await prepare_training_batches(
             # Every arm runs on a capable collector so the only difference is
             # the requested mode, not the collector fake.
             collector=_TimedCollector(supports_overlap=True),
@@ -696,22 +712,31 @@ async def test_three_acceptance_arms_isolate_overlap_from_per_group_call_tax() -
 async def test_generation_handoff_is_demand_driven_and_never_scores() -> None:
 
     collector = _DeferredCollector()
-    groups = collector.generate_prompt_groups(
+    groups = collector.build_generation_requests(
         prompts=["plain", PromptExample(prompt="example"), "later"],
         group_size=2,
         runtime_debug=False,
         policy_version=7,
     )
-    first = await anext(groups)
+    first_request, first_indices = next(groups)
+    assert collector.events == []
+    first = GeneratedPromptGroup(
+        await collector.generate_rollout(first_request), first_indices, 0.0, 0.0
+    )
     assert first.prompt_indices == [0]
     assert first.completed_at >= first.started_at
     assert collector.events == ["generate:plain"]
-    second = await anext(groups)
+    second_request, second_indices = next(groups)
+    second = GeneratedPromptGroup(
+        await collector.generate_rollout(second_request), second_indices, 0.0, 0.0
+    )
     assert second.prompt_indices == [1]
     assert collector.events == ["generate:plain", "generate:example"]
-    await groups.aclose()
+    groups.close()
     # Closing admission must not generate the remaining prompt or start reward.
     assert collector.events == ["generate:plain", "generate:example"]
-    scored = await collector.score_rollouts([first.unscored, second.unscored])
+    scored = collector.assemble_training_batches(
+        await collector.evaluate_rollout([first.unscored, second.unscored])
+    )
     assert len(scored) == 2
     assert all(batch.rewards.shape == (2,) for batch in scored)

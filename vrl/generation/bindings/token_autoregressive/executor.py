@@ -273,7 +273,7 @@ class ARDiscreteBatchGatherer:
     ``ARDiscreteBatchResult``, so nothing here is family-specific.
     """
 
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],

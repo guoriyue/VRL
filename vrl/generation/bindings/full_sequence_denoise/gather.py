@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 class DiffusionBatchGatherer:
     """Pure gatherer for shared diffusion batch payloads."""
 
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],

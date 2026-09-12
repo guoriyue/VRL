@@ -7377,3 +7377,39 @@ The driver is the current process's node, not necessarily the cluster head.
 Naming and diagnostics now distinguish advertised capacity from available or
 physical GPUs; pending_axis_checks also names the validator's local work stack.
 These clarity edits do not introduce new runtime checks or schema constants.
+
+
+## Rollout and generation API vocabulary (2026-09-11)
+
+Implemented the reviewed naming and phase boundaries:
+
+```text
+RolloutCollector.prepare_training_batches
+  build_generation_requests -> prepared requests + original prompt indices
+  generate_rollout(request) -> UnscoredRollout
+    GenerationSampleBatch.plan_generation_batches
+    execute_generation_batches (local execution and OOM splitting)
+    family_gatherer.merge_generation_batches (also used by Ray)
+  evaluate_rollout -> RolloutEvaluation
+  assemble_training_batches -> RolloutBatch objects
+  finish_scored_prompt_groups -> original group IDs and per-group training batches
+```
+
+Request construction is lazy and does not execute generation. Adjacent plain
+prompts remain grouped; structured examples retain independent overrides and
+reward metadata. Continuous production consumes the same request builder and
+single-request generation entry, retaining its own admission and reward retry
+control. The old generation iterator wrapper is removed.
+
+Reward evaluation creates the scoring inputs and calls the reward runtime;
+assembly uses its request-local RolloutEvaluation value to build training
+batches. It does not score again or keep a mutable last-result cache. Serial and
+overlapping schedules compose the same phases. Metric keys remain unchanged so
+existing run traces remain comparable.
+
+Generation batches are execution sample slices controlled by
+samples_per_generation_batch; training microbatches count prompts and control
+gradient accumulation. Naming distinguishes these without changing either
+configuration or sampling counts. Protocol implementations, direct execution,
+Ray gather calls, and test doubles use merge_generation_batches consistently.
+These API renames intentionally have no legacy forwarding aliases.

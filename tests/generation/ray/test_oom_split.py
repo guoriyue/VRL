@@ -122,7 +122,7 @@ class _StaticPlanner:
 class _CoverageGatherer:
     """Assert sample coverage by batch metadata, using the shared coverage validator."""
 
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Any,

@@ -864,11 +864,11 @@ class GenerationWorkerCore:
             )
         built = executor_cls(model, **executor_kwargs)
         if not callable(getattr(built, "forward_batch", None)) or not callable(
-            getattr(built, "gather_batches", None)
+            getattr(built, "merge_generation_batches", None)
         ):
             raise TypeError(
                 f"{type(built).__name__} does not implement "
-                "forward_batch(...) and gather_batches(...)",
+                "forward_batch(...) and merge_generation_batches(...)",
             )
         return built
 

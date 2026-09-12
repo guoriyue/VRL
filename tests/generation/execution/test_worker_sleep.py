@@ -93,7 +93,7 @@ class _Executor:
     def forward_batch(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise NotImplementedError
 
-    def gather_batches(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
+    def merge_generation_batches(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise NotImplementedError
 
 

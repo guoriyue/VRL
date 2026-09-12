@@ -28,22 +28,34 @@ async def collect_scored(
     The public prompt-group API additionally restores prompt IDs and splits batches.
     """
 
-    unscored = await collector.collect_unscored(
-        inputs,
-        group_size=group_size,
-        metadata=metadata,
-        request_overrides=request_overrides,
-        runtime_debug=runtime_debug,
-        policy_version=policy_version,
+    unscored = await collector.generate_rollout(
+        collector.request_builder.build(
+            inputs,
+            group_size=group_size,
+            metadata=metadata,
+            request_overrides=request_overrides,
+            runtime_debug=runtime_debug,
+            policy_version=policy_version,
+        )
     )
-    return (await collector.score_rollouts([unscored]))[0]
+    return (collector.assemble_training_batches(await collector.evaluate_rollout([unscored])))[0]
 
 
 class PromptCollectionFake:
     """Run production prompt collection over fake generation and reward operations."""
 
-    generate_prompt_groups = RolloutCollector.generate_prompt_groups
-    collect_prompt_groups = RolloutCollector.collect_prompt_groups
+    def assemble_training_batches(self, evaluated):
+        # These scheduling fakes use prebuilt batches as their reward result.
+        return evaluated
+
+    request_builder = SimpleNamespace(
+        build=lambda inputs, group_size, **kwargs: SimpleNamespace(
+            inputs=inputs, options={"group_size": group_size, **kwargs}
+        )
+    )
+    build_generation_requests = RolloutCollector.build_generation_requests
+    prepare_training_batches = RolloutCollector.prepare_training_batches
+
     def finish_scored_prompt_groups(
         self,
         generated_groups: list[GeneratedPromptGroup],

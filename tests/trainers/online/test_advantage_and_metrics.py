@@ -98,11 +98,14 @@ class TestAdvantageAndMetrics:
                 self._reward_values = reward_values
                 self._cursor = 0
 
-            async def score_rollouts(self, pendings):
+            async def evaluate_rollout(self, pendings):
 
                 return list(pendings)
 
-            async def collect_unscored(self, prompts, **kwargs):
+            async def generate_rollout(self, prompts, **kwargs):
+                prepared = prompts
+                prompts = prepared.inputs
+                kwargs = prepared.options
                 group_size = int(kwargs["group_size"])
                 rewards = []
                 for _ in range(group_size):
@@ -335,10 +338,13 @@ class TestAdvantageAndMetrics:
                 return torch.tensor(0.0, requires_grad=True), TrainStepMetrics()
 
         class _Collector(CollectorControlFake):
-            async def score_rollouts(self, pendings):
+            async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, prompts, **kwargs):
+            async def generate_rollout(self, prompts, **kwargs):
+                prepared = prompts
+                prompts = prepared.inputs
+                kwargs = prepared.options
                 group_size = int(kwargs["group_size"])
                 prompts = list(prompts)
                 request = GenerationRequest(

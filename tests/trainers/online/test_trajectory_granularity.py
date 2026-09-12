@@ -105,10 +105,13 @@ def _chunk_denoise_batch(batch_size: int = 2) -> RolloutBatch:
 
 
 class _Collector(CollectorControlFake):
-    async def score_rollouts(self, pendings):
+    async def evaluate_rollout(self, pendings):
         return list(pendings)
 
-    async def collect_unscored(self, prompts, **kwargs):
+    async def generate_rollout(self, prompts, **kwargs):
+        prepared = prompts
+        prompts = prepared.inputs
+        kwargs = prepared.options
         prompts = [getattr(item, "prompt", item) for item in prompts]
         group_size = int(kwargs["group_size"])
         batch_size = len(prompts) * group_size

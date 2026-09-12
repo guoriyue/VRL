@@ -29,7 +29,7 @@ import torch
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import move_training_batch_to_device
-from vrl.rollouts.collector.core import RewardCollectionMode
+from vrl.rollouts.collector.core import GeneratedPromptGroup, RewardCollectionMode
 from vrl.rollouts.orchestration.continuous.generated_capacity import GeneratedRolloutCapacity
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
@@ -514,7 +514,7 @@ class ContinuousRolloutProducer:
         stats.observe_gauge("continuous.generation_queue_wait_s", admission_wait_s)
         if self._split_reward:
             return await self._collect_split_group(prompt_batch, slot, stats)
-        batches = await self.lifecycle.collector.collect_prompt_groups(
+        batches = await self.lifecycle.collector.prepare_training_batches(
             prompts=[prompt_batch.prompts[slot]],
             group_size=prompt_batch.group_size,
             runtime_debug=prompt_batch.runtime_debug,
@@ -534,12 +534,17 @@ class ContinuousRolloutProducer:
         started = time.perf_counter()
         generated = False
         try:
-            async for receipt in self.lifecycle.collector.generate_prompt_groups(
+            for request, prompt_indices in self.lifecycle.collector.build_generation_requests(
                 prompts=[prompt_batch.prompts[slot]],
                 group_size=prompt_batch.group_size,
                 runtime_debug=prompt_batch.runtime_debug,
                 policy_version=prompt_batch.policy_version,
             ):
+                generation_started = time.perf_counter()
+                unscored = await self.lifecycle.collector.generate_rollout(request)
+                receipt = GeneratedPromptGroup(
+                    unscored, prompt_indices, generation_started, time.perf_counter()
+                )
                 generated = True
                 if self.staleness.too_stale(
                     prompt_batch.policy_version,
@@ -562,8 +567,8 @@ class ContinuousRolloutProducer:
                     failures = 0
                     while True:
                         try:
-                            batches = await self.lifecycle.collector.score_rollouts(
-                                [receipt.unscored]
+                            batches = self.lifecycle.collector.assemble_training_batches(
+                                await self.lifecycle.collector.evaluate_rollout([receipt.unscored])
                             )
                             break
                         except Exception as error:

@@ -26,7 +26,7 @@ from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
 
 
 class _PureGatherer:
-    def gather_batches(
+    def merge_generation_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[Any],
@@ -50,7 +50,7 @@ def test_chunk_executor_uses_injected_gatherer() -> None:
     gatherer = _PureGatherer()
     executor = _Executor(gatherer=gatherer)
 
-    output = executor.gather_batches(request, sample_rows, ["batch"])
+    output = executor.merge_generation_batches(request, sample_rows, ["batch"])
 
     assert output.output == ["batch"]
     assert executor._gatherer is gatherer
@@ -60,7 +60,7 @@ def test_chunk_executor_rejects_request_execution_without_gatherer() -> None:
     request = _request()
 
     with pytest.raises(RuntimeError, match="requires an injected batch gatherer"):
-        _Executor().gather_batches(request, request.sample_rows(), ["batch"])
+        _Executor().merge_generation_batches(request, request.sample_rows(), ["batch"])
 
 
 def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
@@ -74,7 +74,7 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
         "model_family": "sd3_5",
     }
 
-    output = gatherer.gather_batches(request, sample_rows, _diffusion_batches(context))
+    output = gatherer.merge_generation_batches(request, sample_rows, _diffusion_batches(context))
 
     assert output.output.device.type == "cpu"
     assert output.trajectory is not None
@@ -96,7 +96,7 @@ def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
         "model_family": "sd3_5",
     }
 
-    output = gatherer.gather_batches(
+    output = gatherer.merge_generation_batches(
         request,
         sample_rows,
         list(reversed(_diffusion_batches(context))),
@@ -116,7 +116,7 @@ def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
         "model_family": "cosmos",
     }
 
-    output = gatherer.gather_batches(request, sample_rows, _diffusion_batches(context))
+    output = gatherer.merge_generation_batches(request, sample_rows, _diffusion_batches(context))
 
     assert output.trajectory is not None
     assert output.trajectory.context == context
@@ -143,7 +143,7 @@ def test_diffusion_chunk_gatherer_strictly_merges_replay_values() -> None:
         "scheduler": "flow",
     }
 
-    output = DiffusionBatchGatherer().gather_batches(
+    output = DiffusionBatchGatherer().merge_generation_batches(
         request,
         request.sample_rows(),
         batches,
@@ -218,7 +218,7 @@ def test_diffusion_chunk_gatherer_rejects_mixed_none_replay_values() -> None:
     batches[1].replay_tensors = {"prompt_embeds": torch.ones(1, 1)}
 
     with pytest.raises(ValueError, match="must be present on all results"):
-        DiffusionBatchGatherer().gather_batches(
+        DiffusionBatchGatherer().merge_generation_batches(
             request,
             request.sample_rows(),
             batches,
@@ -232,7 +232,7 @@ def test_diffusion_chunk_gatherer_rejects_mismatched_static_replay_values() -> N
     batches[1].replay_tensors = {"scheduler": "ddim"}
 
     with pytest.raises(ValueError, match="non-batched replay value 'scheduler' must match"):
-        DiffusionBatchGatherer().gather_batches(
+        DiffusionBatchGatherer().merge_generation_batches(
             request,
             request.sample_rows(),
             batches,
@@ -246,7 +246,7 @@ def test_diffusion_chunk_gatherer_rejects_mismatched_replay_keys() -> None:
     batches[1].replay_tensors = {"pooled_prompt_embeds": torch.ones(1, 1)}
 
     with pytest.raises(ValueError, match="replay_tensors keys must match"):
-        DiffusionBatchGatherer().gather_batches(
+        DiffusionBatchGatherer().merge_generation_batches(
             request,
             request.sample_rows(),
             batches,
@@ -259,7 +259,7 @@ def test_diffusion_chunk_gatherer_rejects_mismatched_context() -> None:
     batches[1].context = {"model_family": "sd3_5", "cfg": True}
 
     with pytest.raises(ValueError, match="batch context at ordered index 1 does not match"):
-        DiffusionBatchGatherer().gather_batches(
+        DiffusionBatchGatherer().merge_generation_batches(
             request,
             request.sample_rows(),
             batches,
@@ -365,7 +365,7 @@ def test_diffusion_gather_rejects_mixed_field_dtypes(field) -> None:
     batches = _diffusion_batches({"model_family": "sd3_5"})
     setattr(batches[1], field, getattr(batches[1], field).double())
     with pytest.raises(ValueError, match=rf"{field!r}.*index 1.*dtypes must match"):
-        DiffusionBatchGatherer().gather_batches(request, request.sample_rows(), batches)
+        DiffusionBatchGatherer().merge_generation_batches(request, request.sample_rows(), batches)
 
 
 def test_ar_field_gather_rejects_lossy_dtype_promotion() -> None:
