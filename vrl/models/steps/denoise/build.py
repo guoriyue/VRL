@@ -3,7 +3,7 @@
 Single-transformer denoise families share one imperative runtime/replay build
 sequence. A ``DenoiseFamilyBuild`` descriptor in the model-family registry supplies
 the model classes, upstream transformer classname, and scheduler;
-Ray dispatches directly to the generic builder functions in this module.
+The registry dispatches rollout and replay construction to these shared builders.
 
 Families keep custom assembly only when construction has real per-call semantics
 that a descriptor cannot express. This module stays family-agnostic and resolves
@@ -90,8 +90,14 @@ def build_denoise_runtime_bundle(
 def assemble_replay_bundle(
     model: object,
     build: ModelBuild,
+    *,
+    loads_full_generation_modules: bool = False,
 ) -> RuntimeBundle:
-    """Apply shared training knobs and assemble a minimal replay bundle."""
+    """Apply shared training knobs and declare the replay model's residency.
+
+    Most replay models own only policy modules. A family retaining generation
+    components must declare them for the colocated memory guard.
+    """
 
     build.require_replay()
     if build.use_lora:
@@ -99,8 +105,8 @@ def assemble_replay_bundle(
     else:
         model.apply_full_finetune(build)
 
-    compile_cfg = build.torch_compile or {}
-    if compile_cfg.get("enable"):
+    compile_cfg = build.torch_compile
+    if compile_cfg is not None:
         model.torch_compile_transformer(compile_cfg["mode"])
 
     apply_float32_precision(build.precision.float32_precision)
@@ -110,7 +116,7 @@ def assemble_replay_bundle(
         scheduler=model.scheduler,
         raw_handle=None,
         precision=build.precision,
-        loads_full_generation_modules=False,
+        loads_full_generation_modules=loads_full_generation_modules,
         adapter_roots=model.adapter_roots,
     )
 

@@ -197,7 +197,7 @@ vrl/models/source_integrity.py	91f4b5b1a194c838acb1ea6158bfa558f64b8573	pending	
 vrl/models/steps/__init__.py	6c95d00546b83f52e2835944a356b3f450b27adc	pending	-
 vrl/models/steps/denoise/__init__.py	611772778c01ebec7b3a233ff592a0bbbbed4cae	pending	-
 vrl/models/steps/denoise/base.py	d2d6f434a31e07dcfc75880683eff154c4d159bc	pending	-
-vrl/models/steps/denoise/build.py	43957ce1db94131c619cefab60312accdee402ae	pending	-
+vrl/models/steps/denoise/build.py	43957ce1db94131c619cefab60312accdee402ae	reviewed	denoise_build.md
 vrl/models/steps/denoise/common/__init__.py	a0efc372369a381b382465357b38717c84accfc0	pending	-
 vrl/models/steps/denoise/common/backbone.py	a2d626ff4285a007a87dd3be55f3d6f47668cf56	pending	-
 vrl/models/steps/denoise/common/cfg.py	17802a432b697a55107d416fafdd0da5f91f73fc	pending	-

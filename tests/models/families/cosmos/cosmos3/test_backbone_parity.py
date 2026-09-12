@@ -70,6 +70,34 @@ def _model(**vae_stats: float) -> Cosmos3Model:
     return model
 
 
+def test_replay_bundle_declares_retained_generation_modules(monkeypatch) -> None:
+    from vrl.config.precision import RolePrecision
+    from vrl.models.families.cosmos.cosmos3.runtime import build_cosmos3_replay_runtime_bundle
+    from vrl.models.interfaces.runtime import ModelBuild
+
+    pipeline = build_tiny_cosmos3_pipeline()
+    monkeypatch.setattr(
+        Cosmos3Model,
+        "from_build",
+        classmethod(lambda cls, build: cls(pipeline=pipeline, device=build.device)),
+    )
+    build = ModelBuild(
+        model_name_or_path="local-test",
+        revision=None,
+        device="cpu",
+        parameter_dtype=torch.float32,
+        family="cosmos3",
+        precision=RolePrecision("fp32", "ieee"),
+        model_config={"use_lora": False},
+    )
+
+    bundle = build_cosmos3_replay_runtime_bundle(build)
+
+    assert bundle.model._pipeline is pipeline
+    assert next(bundle.model._pipeline.vae.parameters()).numel() > 0
+    assert bundle.loads_full_generation_modules is True
+
+
 def _sampling_state(
     model: Cosmos3Model, *, guidance_scale: float = _GUIDANCE
 ) -> Cosmos3SamplingState:

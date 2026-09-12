@@ -408,10 +408,13 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
 
 
 class Cosmos3ReplayModel(ReplayRolloutStubs, Cosmos3Model):
-    """Trainer-side replay model: transformer + scheduler + the pipeline's segment
-    builders, but no generation pipeline. It still needs the pipeline's
+    """Trainer-side replay model retaining the full pipeline for its segment builders.
+
+    It needs the pipeline's
     ``_prepare_text_segment`` / ``_prepare_vision_segment`` / ``_mask_velocity_predictions``
-    to rebuild packed_static, so it holds a weights-free pipeline shell."""
+    to rebuild packed_static. The builder currently passes the loaded pipeline,
+    including its VAE; this is not a weights-free shell.
+    """
 
     def __init__(self, *, pipeline_shell: Any, scheduler: Any, device: Any = None) -> None:
         DiffusionModelBase.__init__(self)

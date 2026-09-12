@@ -45,7 +45,7 @@ def build_cosmos3_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     )
     from vrl.models.steps.denoise.build import assemble_replay_bundle
 
-    return assemble_replay_bundle(model, build)
+    return assemble_replay_bundle(model, build, loads_full_generation_modules=True)
 
 
 class Cosmos3BatchExecutor(DiffusionBatchExecutorBase):
