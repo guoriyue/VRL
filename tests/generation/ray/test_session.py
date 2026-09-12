@@ -85,7 +85,7 @@ def _session(
             )
             for index, actor in enumerate(actors)
         ],
-        supports_non_draining_weight_sync,
+        supports_non_draining_weight_sync=supports_non_draining_weight_sync,
     )
 
 

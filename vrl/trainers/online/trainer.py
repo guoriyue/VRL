@@ -137,7 +137,7 @@ class PhaseTimer:
     are captured.
     """
 
-    def __init__(self, enabled: bool = False) -> None:
+    def __init__(self, *, enabled: bool = False) -> None:
         self.enabled = enabled
         self.sync = torch.cuda.is_available()
         self.times: dict[str, float] = defaultdict(float)

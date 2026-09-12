@@ -42,6 +42,7 @@ class OCRReward(InferenceRewardFunction):
     def __init__(
         self,
         device: str = "cuda",
+        *,
         debug_dir: str | None = None,
         engine_profile: str = "flow_grpo_compat",
         text_selection: str = "all_text",

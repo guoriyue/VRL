@@ -29,6 +29,7 @@ def sde_step_with_logprob(
     model_output: Any,
     timestep: Any,
     sample: Any,
+    *,
     prev_sample: Any | None = None,
     generator: Any | None = None,
     deterministic: bool = False,

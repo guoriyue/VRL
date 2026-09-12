@@ -71,6 +71,7 @@ class PickAPicPreferenceDataset(Dataset):
     def __init__(
         self,
         hf_dataset: Any,
+        *,
         resolution: int = 512,
         random_crop: bool = False,
         no_hflip: bool = False,
@@ -101,6 +102,7 @@ class PickAPicPreferenceDataset(Dataset):
     def from_hub(
         cls,
         split: str = "train",
+        *,
         cache_dir: str | None = None,
         max_samples: int | None = None,
         resolution: int = 512,

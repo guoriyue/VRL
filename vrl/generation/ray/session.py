@@ -41,6 +41,7 @@ class RayGenerationSession:
         executor: RayGenerationExecutor,
         weight_sync: GenerationWeightSync | None,
         owned_engines: list[RayGenerationEngine],
+        *,
         supports_non_draining_weight_sync: bool = False,
     ) -> None:
         if executor is None:

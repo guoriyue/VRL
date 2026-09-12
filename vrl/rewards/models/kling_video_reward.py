@@ -235,6 +235,7 @@ class KlingVideoRewardModel:
         self,
         video_paths: list[str],
         prompts: list[str],
+        *,
         max_pixels: int | None = None,
         min_pixels: int | None = None,
     ) -> Mapping[str, Any]:
@@ -270,11 +271,14 @@ class KlingVideoRewardModel:
         self,
         video_paths: list[str],
         prompts: list[str],
+        *,
         max_pixels: int | None = None,
         min_pixels: int | None = None,
         use_norm: bool = True,
     ) -> list[dict[str, float]]:
-        batch = self._prepare_batch(video_paths, prompts, max_pixels, min_pixels)
+        batch = self._prepare_batch(
+            video_paths, prompts, max_pixels=max_pixels, min_pixels=min_pixels
+        )
         with torch.no_grad():
             logits = self.model(return_dict=True, **batch)["logits"]
         rewards = [

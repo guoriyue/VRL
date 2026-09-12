@@ -110,6 +110,7 @@ class GenerationRequest:
         task: str,
         inputs: list[GenerationInput | str],
         samples_per_prompt: int,
+        *,
         sampling: dict[str, Any] | None = None,
         samples_per_generation_batch: int | Literal["auto"] | None = None,
         train_segments: dict[str, bool] | None = None,
