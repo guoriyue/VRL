@@ -53,7 +53,7 @@ vrl/generation/execution/memory_parking.py	47bdd37330e10738437e72197bd6b7845908c
 vrl/generation/execution/pipeline.py	1c04decba405c040e3407a8508c51649c110d068	pending	-
 vrl/generation/execution/planner.py	be729a171f088dc5c35c694e1edea6ad91273d0a	reviewed	execution_contracts.md
 vrl/generation/execution/rank_group.py	32c60cdf57f07a1c2036b93fd930ea9a871b6f4d	pending	-
-vrl/generation/execution/sample_batches.py	c5c98b1c6dae0dd4ec9e35a25a6cafbc47da469a	pending	-
+vrl/generation/execution/sample_batches.py	c5c98b1c6dae0dd4ec9e35a25a6cafbc47da469a	reviewed	sample_batch_contracts.md
 vrl/generation/execution/types.py	bfe6dd74a444aeaa64a84164792ce00c844c0fb8	reviewed	execution_contracts.md
 vrl/generation/execution/worker.py	373f2ae9c8b32dddb0061d140ee0a19227c4a104	pending	-
 vrl/generation/launch_contract.py	9e6459395d36be8d343a66525b9f07d26ab40713	pending	-
