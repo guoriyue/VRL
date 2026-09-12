@@ -319,7 +319,7 @@ vrl/rollouts/batch/__init__.py	212366c42668c7c7dd270231ddacf8dcdfbd5c11	reviewed
 vrl/rollouts/batch/core.py	d7176035a829f951921b02a46ae670e2b44146d9	reviewed	rollout_batch.md
 vrl/rollouts/batch/ops.py	d11ced1a885d54e7937512badbf5312a3665c3ca	reviewed	rollout_batch.md
 vrl/rollouts/collector/__init__.py	8fdc4cd9c88788ca64ad6b02f6cf3304f6b13f30	reviewed	collector_owner.md
-vrl/rollouts/collector/batch_builder.py	85a30ddd3447c0981ead41d3e1c3abf1e41d1cc4	pending	-
+vrl/rollouts/collector/batch_builder.py	85a30ddd3447c0981ead41d3e1c3abf1e41d1cc4	reviewed	collector_batch_builder.md
 vrl/rollouts/collector/config.py	62bf691a2692fb3e2217cf9dafa9c483deec2eb5	reviewed	rollout_batch.md
 vrl/rollouts/collector/core.py	c2e54e864516b433a64e5547675bef376713d683	reviewed	collector_owner.md
 vrl/rollouts/collector/requests.py	66f4ef6e66822d0b86a1b0deba624cf4dc73a385	reviewed	model_sampling_boundaries.md
