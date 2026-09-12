@@ -595,7 +595,7 @@ class TrainingCheckpoint:
             )
             module = unwrap_compile_and_ddp(wrapped)
             runtime_state = module.state_dict()
-            known_names = frozenset(str(name) for name in runtime_state)
+            known_names = frozenset(runtime_state)
             owned_names = checkpoint_owned_state_names(module)
             saved_names = frozenset(saved)
             if self.schema_version == CHECKPOINT_SCHEMA_VERSION:
@@ -1483,7 +1483,7 @@ def load_full_checkpoint_state(
         module_state = state[name]
         if not isinstance(module_state, dict):
             raise TypeError(f"checkpoint module {name!r} state must be a dict")
-        known_names = frozenset(str(key) for key in module.state_dict())
+        known_names = frozenset(module.state_dict())
         missing_keys = sorted(known_names - set(module_state))
         extra_keys = sorted(set(module_state) - known_names)
         if strict and (missing_keys or extra_keys):
@@ -1493,8 +1493,8 @@ def load_full_checkpoint_state(
             )
         validated[name] = (module, module_state)
 
-    # Validate every root/key before the first load so a malformed full v1
-    # checkpoint cannot partially mutate an earlier module.
+    # Check every root/key before the first load. The restore entry point also
+    # checks tensor shapes across roots before calling this loader.
     for name in sorted(validated):
         module, module_state = validated[name]
         module.load_state_dict(module_state, strict=strict)
