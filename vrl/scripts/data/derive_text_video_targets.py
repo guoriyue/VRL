@@ -16,7 +16,7 @@ from typing import Any
 from vrl.scripts.data.common import emit
 from vrl.trainers.data.artifacts import (
     SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
-    ArtifactManifestReport,
+    DatasetFileReport,
 )
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
@@ -123,7 +123,7 @@ def _cmd_derive_text_video_targets(args: argparse.Namespace) -> None:
     write_jsonl(train_output, train_rows)
     write_jsonl(eval_output, eval_rows)
 
-    validation = ArtifactManifestReport.from_manifest(
+    validation = DatasetFileReport.from_manifest(
         train_output,
         eval_manifest=eval_output,
         data_root=data_root,

@@ -102,7 +102,7 @@ def test_diffusion_encoded_batch_preserves_shared_values_and_expands_samples() -
         params=None,
         batch=GenerationSampleBatch(0, 0, 3),
     )
-    result = executor.build_batch_encoded(
+    result = executor.expand_batch_conditioning(
         encoded=dict(
             single=torch.ones(1, 2),
             sized=already_sized,
@@ -117,8 +117,8 @@ def test_diffusion_encoded_batch_preserves_shared_values_and_expands_samples() -
     assert result["text_ids"] is shared_ids
     assert result["scalar"] is scalar
     assert result["metadata"] is metadata
-    with pytest.raises(ValueError, match="cannot repeat tensor batch=2"):
-        executor.build_batch_encoded(encoded={"single": torch.ones(2, 2)}, **arguments)
+    with pytest.raises(ValueError, match="cannot broadcast tensor batch=2"):
+        executor.expand_batch_conditioning(encoded={"single": torch.ones(2, 2)}, **arguments)
 
 
 @pytest.mark.parametrize(
@@ -272,7 +272,7 @@ def test_cosmos_encoded_batch_reuses_text_expansion(negative):
     executor = object.__new__(CosmosBatchExecutor)
     reference = object()
     executor._reference_image_for_batch = lambda request, batch: reference
-    result = executor.build_batch_encoded(
+    result = executor.expand_batch_conditioning(
         encoded={"prompt_embeds": torch.ones(1, 2), "negative_prompt_embeds": negative},
         generation_request=_request(),
         video_request=None,
@@ -300,7 +300,7 @@ def test_single_sample_families_preserve_encoded_values(family):
         else {"prompt_embeds": torch.ones(1, 4, 8), "max_text_tokens": 4}
     )
     executor = executor_cls(SimpleNamespace())
-    result = executor.build_batch_encoded(
+    result = executor.expand_batch_conditioning(
         encoded=encoded,
         generation_request=_request(),
         video_request=None,
@@ -340,3 +340,33 @@ def test_unseeded_window_survives_serialized_batch_split_retry(monkeypatch):
     assert windows == [windows[0]] * 3
     assert result == [windows[0]] * 2
     assert request.sampling.get("seed") is None
+
+
+def test_batch_broadcast_preserves_view_and_materialized_storage_contracts():
+    from vrl.models.steps.denoise.common.tensors import broadcast_batch_tensor
+
+    source = torch.tensor([[1.0, 2.0]], requires_grad=True)
+    view = broadcast_batch_tensor(source, 3)
+    copied = broadcast_batch_tensor(source, 3, materialize=True)
+    assert view.untyped_storage().data_ptr() == source.untyped_storage().data_ptr()
+    assert copied.untyped_storage().data_ptr() != source.untyped_storage().data_ptr()
+    assert copied.is_contiguous()
+    assert torch.equal(view, copied)
+    copied.sum().backward()
+    assert torch.equal(source.grad, torch.tensor([[3.0, 3.0]]))
+    copied.detach()[0, 0] = 9
+    assert copied[1, 0] == 1
+    assert source[0, 0] == 1
+    assert broadcast_batch_tensor(source, 1, materialize=True) is source
+    with pytest.raises(ValueError, match="cannot broadcast tensor batch=2"):
+        broadcast_batch_tensor(torch.ones(2, 3), 4)
+
+
+def test_singleton_replay_broadcast_keeps_nonbatch_values_unchanged():
+    from vrl.models.steps.denoise.common.tensors import broadcast_singleton_replay_tensor
+
+    for value in (None, [1, 2], torch.tensor(1), torch.ones(2, 3)):
+        assert broadcast_singleton_replay_tensor(value, 4) is value
+    expanded = broadcast_singleton_replay_tensor(torch.ones(1, 3), 4)
+    assert expanded.shape == (4, 3)
+    assert expanded.is_contiguous()

@@ -47,7 +47,7 @@ HF modeling: ``transformers/models/glm_image/modeling_glm_image.py``
 Processor: ``transformers/models/glm_image/processing_glm_image.py``
 (_build_prompt_with_target_shape). Decode:
 ``diffusers/pipelines/glm_image/pipeline_glm_image.py`` (__call__ with
-``prior_token_ids``, _upsample_token_ids).
+``prior_token_ids``, _upsample_token_grid).
 """
 
 from __future__ import annotations
@@ -597,7 +597,7 @@ class GlmImageModel(ARModelBase):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _upsample_token_ids(token_ids: torch.Tensor, token_h: int, token_w: int) -> torch.Tensor:
+    def _upsample_token_grid(token_ids: torch.Tensor, token_h: int, token_w: int) -> torch.Tensor:
         """Nearest-upsample a flat d32 raster to the DiT's d16 grid, ``[1, 4*H*W]``.
 
         Byte-for-byte the reference ``GlmImagePipeline._upsample_token_ids``
@@ -650,7 +650,7 @@ class GlmImageModel(ARModelBase):
             )
         large = image_token_ids[:, prev_h * prev_w :]
         prior_token_ids = torch.cat(
-            [self._upsample_token_ids(large[row], token_h, token_w) for row in range(B)],
+            [self._upsample_token_grid(large[row], token_h, token_w) for row in range(B)],
             dim=0,
         )
 

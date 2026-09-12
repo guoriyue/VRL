@@ -730,7 +730,7 @@ def test_invalid_concurrency_does_not_start_runtime_owner(tmp_path, monkeypatch)
             owner_started = True
 
     monkeypatch.setattr(
-        "vrl.rewards.service.server.RewardScorerOwner",
+        "vrl.rewards.service.server.RewardScoringThread",
         _UnexpectedOwner,
     )
 
@@ -1029,7 +1029,7 @@ def test_wire_rejects_nonobject_error_details(details):
 
 @pytest.mark.asyncio
 async def test_owner_cancellation_before_execution_still_acknowledges_completion(tmp_path):
-    from vrl.rewards.service.owner import RewardScorerOwner
+    from vrl.rewards.service.owner import RewardScoringThread
 
     class Runtime:
         calls = 0
@@ -1045,7 +1045,7 @@ async def test_owner_cancellation_before_execution_still_acknowledges_completion
     artifact.write_bytes(b"test")
     request = _request(str(artifact))
     runtime = Runtime()
-    owner = RewardScorerOwner(runtime)
+    owner = RewardScoringThread(runtime)
     blocked = threading.Event()
     release = threading.Event()
 
@@ -1071,7 +1071,7 @@ async def test_owner_cancellation_before_execution_still_acknowledges_completion
 
 @pytest.mark.asyncio
 async def test_owner_repeated_cancellation_waits_for_runtime_exit(tmp_path):
-    from vrl.rewards.service.owner import RewardScorerOwner
+    from vrl.rewards.service.owner import RewardScoringThread
 
     started = threading.Event()
     release = threading.Event()
@@ -1091,7 +1091,7 @@ async def test_owner_repeated_cancellation_waits_for_runtime_exit(tmp_path):
 
     artifact = tmp_path / "artifact.pt"
     artifact.write_bytes(b"test")
-    owner = RewardScorerOwner(Runtime())
+    owner = RewardScoringThread(Runtime())
     task = asyncio.create_task(owner.score_batch(_request(str(artifact))))
     try:
         assert await asyncio.to_thread(started.wait, 1)

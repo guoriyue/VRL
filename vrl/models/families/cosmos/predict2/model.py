@@ -39,7 +39,7 @@ from vrl.models.steps.denoise.common import (
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
     LatentDecodePlan,
-    align_replay_tensor,
+    broadcast_singleton_replay_tensor,
     broadcast_spatial_timestep,
     replay_tensor,
     shared_replay_tensor,
@@ -469,24 +469,26 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
         return {
             "prompt_embeds": state.prompt_embeds,
             "negative_prompt_embeds": state.negative_prompt_embeds,
-            "init_latents": align_replay_tensor(
+            "init_latents": broadcast_singleton_replay_tensor(
                 state.init_latents,
                 state.latents.shape[0],
             ),
-            "cond_mask": align_replay_tensor(state.cond_mask, state.latents.shape[0]),
-            "uncond_mask": align_replay_tensor(
+            "cond_mask": broadcast_singleton_replay_tensor(
+                state.cond_mask, state.latents.shape[0]
+            ),
+            "uncond_mask": broadcast_singleton_replay_tensor(
                 state.uncond_mask,
                 state.latents.shape[0],
             ),
-            "padding_mask": align_replay_tensor(
+            "padding_mask": broadcast_singleton_replay_tensor(
                 state.padding_mask,
                 state.latents.shape[0],
             ),
-            "cond_indicator": align_replay_tensor(
+            "cond_indicator": broadcast_singleton_replay_tensor(
                 state.cond_indicator,
                 state.latents.shape[0],
             ),
-            "uncond_indicator": align_replay_tensor(
+            "uncond_indicator": broadcast_singleton_replay_tensor(
                 state.uncond_indicator,
                 state.latents.shape[0],
             ),

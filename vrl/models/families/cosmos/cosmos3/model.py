@@ -45,7 +45,7 @@ from vrl.models.steps.denoise import (
     GuidedDiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
-from vrl.models.steps.denoise.common import align_replay_tensor
+from vrl.models.steps.denoise.common import broadcast_singleton_replay_tensor
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 from vrl.utils.logging import init_logger, kv
 from vrl.utils.validation import require_int
@@ -208,8 +208,8 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             condition_frame_indexes=cond_frames,
         )
 
-        cond_static = self._assemble_packed_static(cond_text, cond_vision)
-        uncond_static = self._assemble_packed_static(uncond_text, uncond_vision)
+        cond_static = self._build_packed_conditioning(cond_text, cond_vision)
+        uncond_static = self._build_packed_conditioning(uncond_text, uncond_vision)
 
         return Cosmos3SamplingState(
             latents=latents,
@@ -315,14 +315,14 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             "latents_clean": state.latents.detach(),
             "cond_input_ids": SampleAlignedValues((state.cond_input_ids,)),
             "uncond_input_ids": SampleAlignedValues((state.uncond_input_ids,)),
-            "vision_condition_mask": align_replay_tensor(
+            "vision_condition_mask": broadcast_singleton_replay_tensor(
                 state.vision_condition_mask,
                 state.latents.shape[0],
             ),
         }
 
     @staticmethod
-    def _single_sample_input_ids(value: Any, *, name: str) -> list[int]:
+    def _unpack_single_token_sequence(value: Any, *, name: str) -> list[int]:
         """Unwrap one ragged replay row at Cosmos3's enforced batch-one boundary."""
 
         if not isinstance(value, (list, tuple)) or len(value) != 1:
@@ -336,7 +336,7 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
         ]
 
     @staticmethod
-    def _assemble_packed_static(text: dict[str, Any], vision: dict[str, Any]) -> dict[str, Any]:
+    def _build_packed_conditioning(text: dict[str, Any], vision: dict[str, Any]) -> dict[str, Any]:
         """Merge text+vision segments into the transformer-facing packed_static, MINUS
         the step-varying ``vision_tokens`` / ``vision_timesteps`` (spliced per step).
         Mirrors the inline assembly in ``Cosmos3OmniPipeline.__call__``."""
@@ -360,11 +360,11 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
         device = self.device
         fps = int(batch_context.get("fps", _DEFAULT_FPS))
         vision_condition_mask = replay_tensors["vision_condition_mask"]
-        cond_input_ids = self._single_sample_input_ids(
+        cond_input_ids = self._unpack_single_token_sequence(
             replay_tensors["cond_input_ids"],
             name="cond_input_ids",
         )
-        uncond_input_ids = self._single_sample_input_ids(
+        uncond_input_ids = self._unpack_single_token_sequence(
             replay_tensors["uncond_input_ids"],
             name="uncond_input_ids",
         )
@@ -396,8 +396,8 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             latents=latents,
             timesteps=pipe.scheduler.timesteps,
             scheduler=pipe.scheduler,
-            cond_packed_static=self._assemble_packed_static(cond_text, cond_vision),
-            uncond_packed_static=self._assemble_packed_static(uncond_text, uncond_vision),
+            cond_packed_static=self._build_packed_conditioning(cond_text, cond_vision),
+            uncond_packed_static=self._build_packed_conditioning(uncond_text, uncond_vision),
             vision_condition_mask=vision_condition_mask,
             num_noisy_vision_tokens=int(cond_vision["num_noisy_vision_tokens"]),
             guidance_scale=float(batch_context["guidance_scale"]),

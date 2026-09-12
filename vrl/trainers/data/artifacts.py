@@ -47,7 +47,7 @@ class ResolvedArtifact:
 
 
 @dataclass(frozen=True, slots=True)
-class ArtifactManifestReport:
+class DatasetFileReport:
     """Validation report for one or two artifact manifests."""
 
     manifest_path: Path
@@ -62,7 +62,7 @@ class ArtifactManifestReport:
     source_episode_overlap: tuple[str, ...] = ()
 
     @staticmethod
-    def _artifact_values(example: PromptExample, field_name: str) -> tuple[str, ...]:
+    def _read_file_paths(example: PromptExample, field_name: str) -> tuple[str, ...]:
         value = getattr(example, field_name, None)
         if value is None:
             value = example.metadata.get(field_name)
@@ -77,7 +77,7 @@ class ArtifactManifestReport:
         )
 
     @staticmethod
-    def _assert_readable(path: Path, *, manifest_path: Path, row_index: int) -> None:
+    def _validate_file_readability(path: Path, *, manifest_path: Path, row_index: int) -> None:
         try:
             with path.open("rb") as handle:
                 handle.read(1)
@@ -129,7 +129,7 @@ class ArtifactManifestReport:
         artifact_fields: Sequence[str] = DEFAULT_ARTIFACT_FIELDS,
         required_artifact_fields: Sequence[str] = (),
         required_metadata_fields: Sequence[str] = (),
-    ) -> ArtifactManifestReport:
+    ) -> DatasetFileReport:
         """Build the report for a prompt manifest, rejecting missing or unreadable artifacts.
 
         With ``eval_manifest`` the same checks run on both files and the report also
@@ -160,7 +160,7 @@ class ArtifactManifestReport:
         artifact_fields: Sequence[str] = DEFAULT_ARTIFACT_FIELDS,
         required_artifact_fields: Sequence[str] = (),
         required_metadata_fields: Sequence[str] = (),
-    ) -> ArtifactManifestReport:
+    ) -> DatasetFileReport:
         """Build the report for already-loaded examples.
 
         The loader is the caller's choice (a native prompt manifest, an
@@ -187,12 +187,12 @@ class ArtifactManifestReport:
                         f"{path}: row {row_index} metadata.{field_name} is required",
                     )
             for field_name in required_artifact_fields:
-                if not cls._artifact_values(example, field_name):
+                if not cls._read_file_paths(example, field_name):
                     raise ArtifactManifestError(
                         f"{path}: row {row_index} is missing required field {field_name}",
                     )
             for field_name in artifact_fields:
-                for raw_value in cls._artifact_values(example, field_name):
+                for raw_value in cls._read_file_paths(example, field_name):
                     resolved_path = resolve_artifact_path(
                         raw_value,
                         data_root=root,
@@ -202,7 +202,9 @@ class ArtifactManifestReport:
                         raise ArtifactManifestError(
                             f"{path}: row {row_index} {field_name} does not exist: {resolved_path}",
                         )
-                    cls._assert_readable(resolved_path, manifest_path=path, row_index=row_index)
+                    cls._validate_file_readability(
+                        resolved_path, manifest_path=path, row_index=row_index
+                    )
                     resolved.append(
                         ResolvedArtifact(
                             row_index=row_index,
@@ -260,7 +262,7 @@ class ArtifactManifestReport:
         eval_manifest: str | Path | None = None,
         data_root: str | Path | None = None,
         require_target_video: bool = False,
-    ) -> ArtifactManifestReport:
+    ) -> DatasetFileReport:
         """Build the report for a Video2World manifest, requiring first-frame provenance."""
 
         artifact_fields = (
@@ -400,7 +402,7 @@ def resolve_required_reference_images_(
 
 __all__ = [
     "SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS",
-    "ArtifactManifestReport",
+    "DatasetFileReport",
     "ResolvedArtifact",
     "resolve_prompt_example_artifacts",
     "resolve_prompt_example_references",

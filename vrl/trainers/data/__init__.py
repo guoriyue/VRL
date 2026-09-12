@@ -12,7 +12,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from vrl.trainers.data.artifacts import ArtifactManifestReport as ArtifactManifestReport
+    from vrl.trainers.data.artifacts import DatasetFileReport as DatasetFileReport
     from vrl.trainers.data.artifacts import ResolvedArtifact as ResolvedArtifact
     from vrl.trainers.data.artifacts import (
         resolve_prompt_example_artifacts as resolve_prompt_example_artifacts,
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from vrl.trainers.data.prompts import load_prompt_manifest as load_prompt_manifest
 
 _PUBLIC_EXPORTS = {
-    "ArtifactManifestReport": ("vrl.trainers.data.artifacts", "ArtifactManifestReport"),
+    "DatasetFileReport": ("vrl.trainers.data.artifacts", "DatasetFileReport"),
     "ImageCaptionPromptDataset": ("vrl.trainers.data.prompts", "ImageCaptionPromptDataset"),
     "JsonlPromptDataset": ("vrl.trainers.data.prompts", "JsonlPromptDataset"),
     "PickAPicPreferenceDataset": ("vrl.trainers.data.preferences", "PickAPicPreferenceDataset"),

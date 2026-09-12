@@ -37,6 +37,7 @@ from vrl.generation.types import (
     GenerationRequest,
     GenerationSampleRow,
 )
+from vrl.models.steps.denoise.common.tensors import broadcast_batch_tensor
 from vrl.trajectory.storage import (
     TrajectoryStoragePolicy,
     trajectory_tensor_bytes,
@@ -281,7 +282,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         stage_durations["encode"] = time.perf_counter() - started
 
         started = time.perf_counter()
-        batch_encoded = self.build_batch_encoded(
+        batch_encoded = self.expand_batch_conditioning(
             encoded=encoded,
             generation_request=request,
             video_request=video_request,
@@ -497,7 +498,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
             request=video_request,
         )
 
-    # Encoded keys copied through UNREPEATED by the default build_batch_encoded.
+    # Encoded keys copied through UNREPEATED by the default expand_batch_conditioning.
     # For batch-shared tensors whose leading dim is not a batch axis (FLUX's
     # ``text_ids`` is ``[seq, 3]``), the generic repeat would corrupt the shape,
     # so the family lists them here instead of overriding the whole method.
@@ -505,7 +506,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
     # through input preparation untouched and need no listing.
     batch_passthrough_keys: tuple[str, ...] = ()
 
-    def build_batch_encoded(
+    def expand_batch_conditioning(
         self,
         *,
         encoded: dict[str, Any],
@@ -514,21 +515,17 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
-        """Build per-sample encoded tensors for one sample batch."""
+        """Expand already-encoded conditioning to this batch, preserving shared fields."""
 
         del generation_request, video_request, params
         passthrough = set(self.batch_passthrough_keys)
         batch_encoded: dict[str, Any] = {}
         for key, value in encoded.items():
             if key not in passthrough and isinstance(value, torch.Tensor) and value.ndim > 0:
-                rows = value.shape[0]
-                if rows != batch.sample_count:
-                    if rows != 1:
-                        raise ValueError(
-                            f"cannot repeat tensor batch={rows} to batch sample count "
-                            f"{batch.sample_count} for encoded field {key!r}",
-                        )
-                    value = value.repeat((batch.sample_count,) + (1,) * (value.ndim - 1))
+                try:
+                    value = broadcast_batch_tensor(value, batch.sample_count, materialize=True)
+                except ValueError as error:
+                    raise ValueError(f"encoded field {key!r}: {error}") from error
             batch_encoded[key] = value
         return batch_encoded
 
@@ -560,7 +557,7 @@ __all__ = [
 class GenericDiffusionBatchExecutor(DiffusionBatchExecutorBase):
     """Generic batch executor for pure-data diffusion families.
 
-    A family whose executor overrides no method (no ``build_batch_encoded`` /
+    A family whose executor overrides no method (no ``expand_batch_conditioning`` /
     ``encode_prompt_for_batch``) is pure configuration: ``family`` / ``task``
     plus a few ``default_*`` values. Rather than ship a boilerplate subclass,
     it declares a ``model.executor`` block in its model config yaml and

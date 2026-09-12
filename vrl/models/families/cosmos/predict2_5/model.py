@@ -29,7 +29,7 @@ from vrl.models.steps.denoise.common import (
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
     LatentDecodePlan,
-    align_replay_tensor,
+    broadcast_singleton_replay_tensor,
     replay_tensor,
     shared_replay_tensor,
 )
@@ -446,12 +446,14 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             "prompt_attention_mask": None,
             "pooled_prompt_embeds": None,
             "latents_clean": state.latents.detach(),
-            "cond_mask": align_replay_tensor(state.cond_mask, state.latents.shape[0]),
-            "cond_indicator": align_replay_tensor(
+            "cond_mask": broadcast_singleton_replay_tensor(
+                state.cond_mask, state.latents.shape[0]
+            ),
+            "cond_indicator": broadcast_singleton_replay_tensor(
                 state.cond_indicator,
                 state.latents.shape[0],
             ),
-            "padding_mask": align_replay_tensor(
+            "padding_mask": broadcast_singleton_replay_tensor(
                 state.padding_mask,
                 state.latents.shape[0],
             ),

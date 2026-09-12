@@ -173,7 +173,7 @@ def test_batch_executor_pins_one_sample_and_carries_only_the_prompt() -> None:
     assert encoded_calls == [
         ("a cat video", None, {"guidance_scale": 1.0, "max_sequence_length": 64})
     ]
-    passthrough = executor.build_batch_encoded(
+    passthrough = executor.expand_batch_conditioning(
         encoded=encoded,
         generation_request=request,
         video_request=None,

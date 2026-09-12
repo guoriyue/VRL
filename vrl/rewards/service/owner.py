@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from vrl.rewards.protocols import RewardScorer
 
 
-class RewardScorerOwner:
+class RewardScoringThread:
     """Run every runtime operation on one dedicated event-loop thread."""
 
     def __init__(self, runtime: RewardScorer) -> None:
@@ -148,4 +148,4 @@ class RewardScorerOwner:
             self._loop.close()
 
 
-__all__ = ["RewardScorerOwner"]
+__all__ = ["RewardScoringThread"]

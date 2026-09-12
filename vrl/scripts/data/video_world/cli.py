@@ -19,7 +19,7 @@ from vrl.scripts.data.video_world.manifests import (
     build_target_video_world_rows,
     build_video_world_rows,
 )
-from vrl.trainers.data.artifacts import ArtifactManifestReport
+from vrl.trainers.data.artifacts import DatasetFileReport
 from vrl.utils.json_files import write_json, write_jsonl
 
 COMMAND_NAME = "video-world-bridge"
@@ -157,7 +157,7 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
 
     validation_summary: dict[str, Any] = {}
     if eval_rows:
-        validation = ArtifactManifestReport.from_video_world_manifest(
+        validation = DatasetFileReport.from_video_world_manifest(
             train_manifest,
             eval_manifest=eval_manifest,
             data_root=data_root,
@@ -236,7 +236,7 @@ def _cmd_video_world_targets(args: argparse.Namespace) -> None:
 
     validation_summary: dict[str, Any] = {}
     if eval_rows:
-        validation = ArtifactManifestReport.from_video_world_manifest(
+        validation = DatasetFileReport.from_video_world_manifest(
             train_manifest,
             eval_manifest=eval_manifest,
             data_root=data_root,

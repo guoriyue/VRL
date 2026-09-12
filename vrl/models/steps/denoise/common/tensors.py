@@ -6,24 +6,33 @@ from typing import Any
 
 import torch
 
-# -- replay-tensor batch helpers (Cosmos Predict2 / Predict2.5 / Anima) ------
-#
-# These resolve per-sample replay tensors during eval/replay reconstruction:
-# broadcast a leading-1 batch dim, fall back to batch_context, and slice the
-# shared (CFG-invariant) row, shared across the Cosmos-family
-# ``restore_eval_state`` paths.
-#
-# Note: Wan deliberately keeps its own ``_batch_align_tensor`` — it is the
-# STRICT variant that raises on an incompatible batch dim instead of passing
-# the tensor through, guarding I2V conditioning shapes. That is a different
-# contract and is intentionally NOT consolidated here.
+
+def broadcast_batch_tensor(
+    value: torch.Tensor,
+    batch_size: int,
+    *,
+    materialize: bool = False,
+) -> torch.Tensor:
+    """Match the leading batch dimension, broadcasting only singleton inputs.
+
+    Matching inputs are returned unchanged. On expansion, materialize=True
+    allocates independent contiguous rows; otherwise return a shared view.
+    """
+    if value.shape[0] == batch_size:
+        return value
+    if value.shape[0] != 1:
+        raise ValueError(
+            f"cannot broadcast tensor batch={value.shape[0]} to batch_size={batch_size}"
+        )
+    expanded = value.expand(batch_size, *value.shape[1:])
+    return expanded.clone(memory_format=torch.contiguous_format) if materialize else expanded
 
 
-def align_replay_tensor(value: Any, batch_size: int) -> Any:
+def broadcast_singleton_replay_tensor(value: Any, batch_size: int) -> Any:
     """Broadcast a leading-1 batch dim up to ``batch_size`` (contiguous)."""
     if not isinstance(value, torch.Tensor) or value.shape[:1] != (1,) or batch_size == 1:
         return value
-    return value.expand(batch_size, *value.shape[1:]).contiguous()
+    return broadcast_batch_tensor(value, batch_size, materialize=True)
 
 
 def replay_tensor(
@@ -50,7 +59,8 @@ def shared_replay_tensor(
 
 
 __all__ = [
-    "align_replay_tensor",
+    "broadcast_batch_tensor",
+    "broadcast_singleton_replay_tensor",
     "replay_tensor",
     "shared_replay_tensor",
 ]

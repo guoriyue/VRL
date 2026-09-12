@@ -60,6 +60,7 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import ChunkedLatentDecoder, LatentDecodePlan
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
+from vrl.models.steps.denoise.common.tensors import broadcast_batch_tensor
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -780,18 +781,6 @@ class MiniMaxH3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModel
             "vae_geometry": [int(v) for v in self._vae_geometry()],
         }
 
-    @staticmethod
-    def _expand_replay_batch(value: torch.Tensor, batch: int) -> torch.Tensor:
-        """Broadcast singleton replay inputs; reject other batch-size mismatches."""
-
-        if value.shape[0] == batch:
-            return value
-        if value.shape[0] != 1:
-            raise ValueError(
-                f"cannot align a batch-{value.shape[0]} replay tensor to batch {batch}"
-            )
-        return value.expand(batch, *value.shape[1:]).contiguous()
-
     def export_replay_tensors(self, state: MiniMaxH3SamplingState) -> dict[str, Any]:
         """Prompt embeds padded to a fixed width plus the audio input of every step.
 
@@ -815,10 +804,10 @@ class MiniMaxH3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModel
         padded[:, :num_text_tokens] = embeds
         audio_by_step = torch.stack(state.audio_rows_by_step, dim=1)  # [B, steps, rows, C]
         return {
-            "prompt_embeds": self._expand_replay_batch(padded, batch),
+            "prompt_embeds": broadcast_batch_tensor(padded, batch, materialize=True),
             "num_text_tokens": torch.full((batch,), num_text_tokens, dtype=torch.int64),
             "latents_clean": state.latents.detach(),
-            "audio_rows_by_step": self._expand_replay_batch(audio_by_step, batch),
+            "audio_rows_by_step": broadcast_batch_tensor(audio_by_step, batch, materialize=True),
         }
 
     def restore_eval_state(

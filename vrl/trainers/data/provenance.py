@@ -8,10 +8,10 @@ artifact fields, which metadata keys, which report keys — and that is a
 ``DatasetProvenanceSpec`` in ``PROVENANCE_SPECS``, keyed by ``data.task_type``.
 
 ``DatasetProvenance.from_config`` is the one check, in the repo's
-constructor-validates shape (like ``ArtifactManifestReport.from_manifest`` and
+constructor-validates shape (like ``DatasetFileReport.from_manifest`` and
 ``PrecisionPolicy.from_section``): it loads both manifests with the loader the
 config declares (so the rows are exactly what training will read), runs the
-artifact / metadata checks through ``ArtifactManifestReport``, and cross-checks
+artifact / metadata checks through ``DatasetFileReport``, and cross-checks
 the source report against the loaded rows. It reads files, so it is reached
 from a launch gate (``vrl/config/validation.py``), never a schema rule.
 """
@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from vrl.trainers.data.artifacts import (
     SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
-    ArtifactManifestReport,
+    DatasetFileReport,
 )
 from vrl.trainers.data.prompts import (
     ImageCaptionPromptDataset,
@@ -167,7 +167,7 @@ class DatasetProvenance:
     """
 
     spec: DatasetProvenanceSpec | None
-    train: ArtifactManifestReport | None
+    train: DatasetFileReport | None
     report: SourceReport | None
 
     @classmethod
@@ -198,7 +198,7 @@ class DatasetProvenance:
         artifact_fields = spec.artifact_fields
         train_examples = spec.load_manifest(data, data.manifest)
         eval_examples = spec.load_manifest(data, str(data.eval_manifest))
-        train = ArtifactManifestReport.from_examples(
+        train = DatasetFileReport.from_examples(
             train_examples,
             manifest_path=data.manifest,
             eval_examples=eval_examples,

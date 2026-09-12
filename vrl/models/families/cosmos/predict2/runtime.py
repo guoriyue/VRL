@@ -28,7 +28,7 @@ class CosmosBatchExecutor(ReferenceConditionedBatches, DiffusionBatchExecutorBas
     default_num_frames: int = 93
     default_fps: int | None = 16
 
-    def build_batch_encoded(
+    def expand_batch_conditioning(
         self,
         *,
         encoded: dict[str, Any],
@@ -39,7 +39,7 @@ class CosmosBatchExecutor(ReferenceConditionedBatches, DiffusionBatchExecutorBas
     ) -> dict[str, Any]:
         """Repeat Cosmos text embeds and pass reference image through unchanged."""
 
-        batch_encoded = super().build_batch_encoded(
+        batch_encoded = super().expand_batch_conditioning(
             encoded={
                 "prompt_embeds": encoded["prompt_embeds"],
                 "negative_prompt_embeds": encoded.get("negative_prompt_embeds"),

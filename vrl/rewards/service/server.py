@@ -7,7 +7,7 @@ colocated in-process scorer, which is why ``RewardService.from_yaml`` rejects
 ``sleep_offload``. ``RewardService`` owns HTTP-side policy only — admission
 limits, request-id idempotency, cancellation, and artifact path/integrity
 validation against the configured roots — while the model runs on
-``RewardScorerOwner``'s dedicated thread (service/owner.py) so liveness and
+``RewardScoringThread``'s dedicated thread (service/owner.py) so liveness and
 cancel endpoints stay responsive during synchronous GPU work. The generation
 engine has no service twin: its workers are Ray actors inside the job.
 """
@@ -32,7 +32,7 @@ from pydantic import ConfigDict, Field, StrictBool, StrictInt, ValidationError, 
 
 from vrl.config.base import ConfigBase
 from vrl.rewards.launch_contract import RewardRuntimeLaunchContract
-from vrl.rewards.service.owner import RewardScorerOwner
+from vrl.rewards.service.owner import RewardScoringThread
 from vrl.rewards.service.protocol import (
     RewardServiceErrorCode,
     RewardServiceInfo,
@@ -286,7 +286,7 @@ class RewardService:
         # Start the owner thread only after every fallible configuration and
         # aiohttp setup step has completed, so constructor errors cannot leak a
         # runtime thread that the caller never receives a handle to shut down.
-        self._owner = RewardScorerOwner(runtime)
+        self._owner = RewardScoringThread(runtime)
 
     @property
     def address(self) -> tuple[str, int]:

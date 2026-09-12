@@ -253,7 +253,7 @@ classDiagram
 | `build_reward_scorer` (`runtime.py`) | Factory: worker config or `RewardInferenceConfig` → in-process or HTTP scorer. |
 | `HttpRewardScorer` (`service/client.py`) | `RewardScorer` + `RemoteReadyScorer` over HTTP: checks service identity/capabilities at `ensure_ready`, requires the shared-filesystem artifact transport, marks ambiguous transport failures with `retain_reward_artifacts`. |
 | `RewardService`, `RewardServiceConfig` (`service/server.py`) | The standalone scoring process: parses the same launch contract, re-verifies artifact integrity (`sha256_file`), runs the same `validate_and_order_results` guard server-side. |
-| `RewardScorerOwner` (`service/owner.py`) | Runs every runtime operation on one dedicated event-loop thread inside the service. |
+| `RewardScoringThread` (`service/owner.py`) | Runs every runtime operation on one dedicated event-loop thread inside the service. |
 | `RewardServiceInfo`, `RewardServiceErrorCode`, `RewardServiceProtocolError(ValueError)`, `RemoteRewardServiceError(RuntimeError)` (`service/protocol.py`) | The wire protocol vocabulary; `RemoteRewardServiceError` carries `retain_reward_artifacts` (typed ctor field) and thereby satisfies `ArtifactRetainingError`. |
 
 ### 3.4 Reward models (`models/`)

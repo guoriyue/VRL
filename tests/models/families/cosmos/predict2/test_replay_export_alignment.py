@@ -8,7 +8,7 @@ samples_per_generation_batch > 1 and replay restore KeyError'd on ``init_latents
 by the OOM-split GPU gate, 2026-06-11).
 
 predict2.5 and anima share the same shared-conditioning shape: their export
-already calls the shared ``align_replay_tensor`` so production is guarded,
+already calls the shared ``broadcast_singleton_replay_tensor`` so production is guarded,
 but nothing pinned it. This parametrizes the contract across all three
 Cosmos families so the alignment cannot silently regress in any of them: every
 exported replay tensor must leave the model sample-aligned.

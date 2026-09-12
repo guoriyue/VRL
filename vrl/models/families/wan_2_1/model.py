@@ -57,6 +57,7 @@ from vrl.models.steps.denoise.common import (
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
     LatentDecodePlan,
+    broadcast_batch_tensor,
     expand_batch_timestep,
     pack_eval_timestep,
 )
@@ -72,17 +73,6 @@ class _PipelineOffloadState(Enum):
     MODEL = "model"
     SEQUENTIAL = "sequential"
     BROKEN = "broken"
-
-
-def _batch_align_tensor(value: torch.Tensor, batch_size: int) -> torch.Tensor:
-    if value.shape[0] == batch_size:
-        return value
-    if value.shape[0] != 1:
-        raise ValueError(
-            "Wan I2V conditioning tensor has incompatible batch dimension: "
-            f"{tuple(value.shape)} for batch_size={batch_size}",
-        )
-    return value.expand(batch_size, *value.shape[1:])
 
 
 @dataclass
@@ -936,7 +926,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             embeds = request.negative_prompt_embeds
 
         extra = request.extra
-        condition = _batch_align_tensor(
+        condition = broadcast_batch_tensor(
             extra["condition"],
             request.hidden_states.shape[0],
         )
@@ -950,7 +940,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         extra_kwargs: dict[str, torch.Tensor] = {}
         image_embeds = extra.get("image_embeds")
         if image_embeds is not None:
-            extra_kwargs["encoder_hidden_states_image"] = _batch_align_tensor(
+            extra_kwargs["encoder_hidden_states_image"] = broadcast_batch_tensor(
                 image_embeds,
                 request.hidden_states.shape[0],
             )
