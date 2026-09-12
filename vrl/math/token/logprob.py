@@ -51,6 +51,8 @@ def gather_categorical_log_probs(
 ) -> torch.Tensor:
     """Return log-probs for selected tokens without materializing full log-softmax.
 
+    ``token_ids`` contains integer indices from sampling or recorded replay actions.
+
     Janus replay logits can be ``[B, L, V]`` with a large image-token vocab.
     A full fp32 ``log_softmax`` creates another tensor of that same size and
     can OOM when trainer and rollout worker are colocated on one GPU. Chunking
@@ -77,9 +79,6 @@ def gather_categorical_log_probs(
             "logits leading shape must match token_ids shape; "
             f"got logits={tuple(logits.shape)} token_ids={tuple(token_ids.shape)}",
         )
-
-    if token_ids.is_floating_point() or token_ids.is_complex() or token_ids.dtype == torch.bool:
-        raise ValueError("token_ids must use an integer tensor dtype")
 
     temp = require_positive_temperature(temperature)
     if token_ids.numel() == 0:

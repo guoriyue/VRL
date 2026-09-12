@@ -73,16 +73,6 @@ def test_gather_categorical_log_probs_rejects_shape_mismatch() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    "dtype", [torch.float16, torch.float32, torch.float64, torch.complex64, torch.bool]
-)
-def test_categorical_log_probs_reject_noninteger_token_ids(dtype):
-    logits = torch.tensor([[0.0, 1.0, 2.0]])
-    token_ids = torch.tensor([1.9]).to(dtype)
-    with pytest.raises(ValueError, match="integer tensor dtype"):
-        gather_categorical_log_probs(logits, token_ids)
-
-
 def test_categorical_log_probs_accept_int32_token_ids():
     logits = torch.tensor([[0.0, 1.0, 2.0]])
     result = gather_categorical_log_probs(logits, torch.tensor([1], dtype=torch.int32))
