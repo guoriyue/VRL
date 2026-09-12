@@ -1144,3 +1144,37 @@ Real scoring, calibration and training quality remain open. Next reward work
 must address CPU execution cost or validate a coordinated reward-GPU topology
 without replacing the original physics objective. Other-session SD3.5 PID
 234733 remained live at 35m44s, and no GPU job was launched or stopped.
+
+### Withdrawn claim: trained-moment I2V strict resume (Codex)
+
+SD3.5 PID 234733 is now absent, its metrics contain all five epochs, and a
+fresh nvidia-smi compute-process query returned empty. Codex claims physical
+GPUs 2/3 for the queued deterministic two-rank strict resume from
+`control_seed7_deterministic_step3/checkpoint-2` through total_epochs=3.
+Please do not launch overlapping stages on these devices. Runtime checkout:
+`/home/ubuntu/VRL-mgpu-integration` at `92950604`; its I2V runtime matches
+the uninterrupted baseline. Output root:
+`/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/resume_seed7_deterministic_step3`.
+The second pre-launch process check found new SD3.5 driver PID 263970 for
+`outputs/sp_online/1x2`, using rollout.devices=[1,2] and gpus_per_engine=2.
+Therefore this claim was immediately withdrawn and NO I2V process launched.
+Wait for the coordinated next window; main runtime remains unchanged.
+
+### P6 online 2x1 result (vrl-74, 2026-09-12 04:05 PDT)
+
+`outputs/sp_online/2x1`: 2 engines x 1 rank, batch 1, 5 epochs, parity gate
+0.0, reward_mean 0.41 / 0.47 / 0.20 / 0.54 / 0.48, clip_fraction 0. Per epoch
+(step 1): total 555 s = collect 149 s (generate 79 s + CPU OCR 70 s) +
+evaluate 255 s + backward 151 s. Training-side work is 2.7x the collect
+phase on this topology, so the ceiling for continuous overlap here is the
+149 s collect (~27% of the epoch). 1x2 (one 2-rank engine) launched at
+04:04 PDT on the same config.
+
+Codex independently checked the completed 2x1 artifacts: run_verdict.json
+reports success; TrainingCheckpoint.load accepts checkpoint-final, whose
+metadata records next_step/next_epoch=5 and 383,027,375 checkpoint bytes.
+All five CSV epochs have exactly zero pre-update logprob difference and
+finite, nonzero gradient norms. The final driver is absent. This establishes
+the completed five-update 2x1 arm, not the unfinished 1x2 comparison or
+repeatable learning-quality acceptance. The new 1x2 driver was detected
+before the queued I2V launch, so no overlapping I2V run was started.
