@@ -230,7 +230,7 @@ class GenerationRequest:
         ):
             if type(value) is not int:
                 raise ValueError(f"batch.{name} must be an integer, got {value!r}")
-        if prompt_index < 0 or prompt_index >= len(self.prompts):
+        if prompt_index < 0 or prompt_index >= len(self.inputs):
             raise ValueError(f"batch.prompt_index={prompt_index} is out of range")
         sample_end = sample_start + sample_count
         if sample_start < 0 or sample_count < 1:

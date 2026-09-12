@@ -14,9 +14,9 @@ engine — none exists for taste. One request flows as::
                  .merge_generation_batches()         |
                  reassemble full output   |
 
-- ``GenerationRuntime``: the engine's only face toward vrl/rollouts (the dual
-  of ``RewardRuntime``); the collector isinstance-checks it so orchestration
-  never imports Ray code.
+- ``GenerationRuntime``: the engine's face toward vrl/rollouts (the dual
+  of ``RewardRuntime``); the collector calls this interface without importing
+  the concrete Ray runtime or repeating a structural isinstance check.
 - ``GenerationBatchExecutor``: the model-family plugin contract (wan, sana,
   cosmos, ...); keeps ``if family == ...`` branches out of neutral execution.
 - ``GenerationBatchGatherer``: the model-free slice of the executor, split out because
@@ -120,13 +120,14 @@ class GenerationRuntime(Protocol):
 
 @runtime_checkable
 class GenerationRankActor(Protocol):
-    """RPC contract of one generation rank actor (the per-GPU worker).
+    """Core RPC contract of one generation rank actor (the per-GPU worker).
 
     The driver-side engine (``vrl/generation/ray/engine.py``) fans every call
     out to its ranks and aggregates; this protocol is the cross-process
     boundary those calls travel over. ``RayGenerationWorker`` satisfies it
-    structurally — pinned by a conformance test so the engine's method-name
-    strings cannot drift from the actor surface.
+    structurally — pinned by a conformance test for the methods listed here.
+    Bucketed weight transfer and acceptance readback have additional actor
+    endpoints outside this core protocol.
     """
 
     def health(self) -> str: ...
