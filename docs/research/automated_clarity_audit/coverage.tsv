@@ -21,13 +21,13 @@ vrl/config/builders.py	82d48708b051ac21ee4c778b4c6eae5442031978	reviewed	config_
 vrl/config/data.py	a26c0518e82acb817046e652d3ebf982453a7b30	reviewed	config_policies.md
 vrl/config/lint.py	3e462c82395cc8767cb2b0ed972f1a63b0035dbd	reviewed	config_lint.md
 vrl/config/loading.py	221c3b4032f74319e8f7c111cd88b22c56dcff2a	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
-vrl/config/model_schema.py	83969d5d1573d0385215ce9d07280824153080a4	pending	-
+vrl/config/model_schema.py	83969d5d1573d0385215ce9d07280824153080a4	reviewed	model_sampling_boundaries.md
 vrl/config/precision.py	10245a48eb8b20681d4b02ed049aa325e7742b39	reviewed	config_policies.md
 vrl/config/presets/__init__.py	84da826a3687342a68eb25faf4a20cb39d81c30a	pending	-
 vrl/config/reward_inference.py	b8d8f0269561ffa91ba0f716ad199a37ba2b888a	reviewed	config_policies.md
 vrl/config/reward_service/__init__.py	e69de29bb2d1d6434b8b29ae775ad8c2e48c5391	pending	-
 vrl/config/rules.py	16a9f43862124487ae91ae3a89ca0c290d315fda	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
-vrl/config/sampling_schema.py	b26e0041ec9613932a55c5312cfb07c630c34898	pending	-
+vrl/config/sampling_schema.py	b26e0041ec9613932a55c5312cfb07c630c34898	reviewed	model_sampling_boundaries.md
 vrl/config/schema.py	27ec681d956ab66fe82e0c25722aef165e1ad3a2	pending	-
 vrl/config/validation.py	eba0e52f216c55a11218e1dec52edd9ae08dcb0d	reviewed	config_boundaries.md; SFT numeric ownership follow-up open
 vrl/generation/__init__.py	6fb14cf89450b25f2d0238658595da8031bbd6b2	pending	-
@@ -89,7 +89,7 @@ vrl/math/token/flow_matching.py	0ecc93e01d7a3db22a8a59b28094cf56236b780e	pending
 vrl/math/token/logprob.py	e0819ffa647504dcc2ca139378834b3fd478f9a2	pending	-
 vrl/models/__init__.py	69285acb49d1dc4f09c37778ba4cf59077e86cf0	pending	-
 vrl/models/checkpoint_identity.py	8ff026646ab9599185520db301d31d145a114990	pending	-
-vrl/models/dtypes.py	fd330edc987f707390d1d8564afac712cf14b388	pending	-
+vrl/models/dtypes.py	fd330edc987f707390d1d8564afac712cf14b388	reviewed	model_sampling_boundaries.md
 vrl/models/families/__init__.py	e469084a8f8b2173a5b3b269ca5a4e4fe9d9df9b	pending	-
 vrl/models/families/causvid/__init__.py	097bba3fb1ee91fa5f4d3405ee7190dda49104c7	pending	-
 vrl/models/families/causvid/config.py	d328fdeae11569458d8b8db4de94b0a67d2762b2	pending	-
@@ -159,7 +159,7 @@ vrl/models/families/minimax_h3/model.py	98864bb1d8a527a7681e212909a99ae9b1fbb63a
 vrl/models/families/minimax_h3/runtime.py	d669c27460d5cb1b5793d060fdf47cf29cff8275	pending	-
 vrl/models/families/mochi/__init__.py	0a2f1874dceb29a7507faf5ee9c8d8861e56d444	pending	-
 vrl/models/families/mochi/model.py	c24d7aeed71dd98a6e527432951389f3bf1551ff	pending	-
-vrl/models/families/names.py	c5247e67a450dc617b30191b9093f7660482f394	pending	-
+vrl/models/families/names.py	c5247e67a450dc617b30191b9093f7660482f394	reviewed	model_sampling_boundaries.md
 vrl/models/families/nextstep_1/__init__.py	084d69d40864772086de3a71ef087337798886b5	pending	-
 vrl/models/families/nextstep_1/config.py	cf7dde93ddaf09404b63c036c6beb54ed9feeda1	pending	-
 vrl/models/families/nextstep_1/model.py	52bdb29d330b3c03d7a50e157c265d6750dc81d7	pending	-
@@ -322,7 +322,7 @@ vrl/rollouts/collector/__init__.py	8fdc4cd9c88788ca64ad6b02f6cf3304f6b13f30	pend
 vrl/rollouts/collector/batch_builder.py	85a30ddd3447c0981ead41d3e1c3abf1e41d1cc4	pending	-
 vrl/rollouts/collector/config.py	62bf691a2692fb3e2217cf9dafa9c483deec2eb5	pending	-
 vrl/rollouts/collector/core.py	c2e54e864516b433a64e5547675bef376713d683	pending	-
-vrl/rollouts/collector/requests.py	66f4ef6e66822d0b86a1b0deba624cf4dc73a385	pending	-
+vrl/rollouts/collector/requests.py	66f4ef6e66822d0b86a1b0deba624cf4dc73a385	reviewed	model_sampling_boundaries.md
 vrl/rollouts/evaluators/__init__.py	6ad2ed02d948c1acf5629a802e922d5d7bb4a61a	pending	-
 vrl/rollouts/evaluators/base.py	23788559aa1fd17e625a0e4c0cb64358c573867b	pending	-
 vrl/rollouts/evaluators/denoise/__init__.py	fc1c2b65541f4896d5777231bf10cbb2ba7e3d94	pending	-
