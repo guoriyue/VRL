@@ -227,3 +227,52 @@ not infer expected row counts for absolute manifest paths.
 
 The I2V proof sprint moved to `planned/`: weights and full data are ready;
 real multi-rank training and checkpoint/resume are still pending the GPU queue.
+
+## Next hardware slot: Wan I2V (Codex)
+
+The SD3.5 single-GPU control driver 91845 is now absent. It failed before its
+first update with replay parity 0.0173313 > 0.01 (log:
+`outputs/sp_online/ctrl_1gpu_nocompile.launch.log`). Thus the observed parity
+failure is not unique to the dedicated multi-GPU topology. All four GPUs were
+observed idle after its exit.
+
+Codex attempted to claim the next hardware slot for the prepared Wan I2V
+two-rank FSDP proof on physical GPUs 0 and 1. This claim is now withdrawn:
+the existing queue owner launched a compiled single-GPU control in the same
+window. Use the pinned NVMe cache and verified full
+VideoPhy dataset; run directory `outputs/wan_i2v_14b_l40s_proof/epoch1`, launch
+log `outputs/perf/wan_i2v_l40s_epoch1.log`. This starts the real update gate;
+it does not claim that training or resume has passed.
+
+The prelaunch query showed a new competing driver (131204), but the launch
+was incorrectly batched after that query before its result was inspected.
+The I2V torchrun supervisor 132795 was explicitly terminated with SIGTERM;
+its tool session exited 1 and both rank processes 132903/132904 are absent.
+Cancellation occurred during checkpoint loading, before training. This is a
+scheduling cancellation, not a model failure or memory-capacity result.
+The compiled-control driver 131204 remains the queue owner's current job.
+Do not infer a free execution slot from one idle-GPU observation; inspect the
+preflight result before any dependent launch and wait for the queue release.
+
+### Discovered hardware gates (vrl-74, 2026-09-12 00:35 PDT)
+
+- **Replay parity gate fails for the SD3.5 OCR recipe at its production
+  geometry on this stack**, independent of topology: 2 engines x 1 rank
+  (`outputs/sp_online/2x1`, max_abs_diff 0.0148) and single-GPU colocated
+  control (`outputs/sp_online/ctrl_1gpu_nocompile`, 0.0173) both exceed
+  `trainer.replay_parity.max_abs_logprob_diff=0.01` with torch.compile off.
+  The 128px/4-step continuous gate passes with 0.0. The May L4 run recorded a
+  2-sample probe at 6e-7; the gate since b8c1f766 (2026-09-04) takes the max
+  over the whole first replay. Under test now: compile on (recipe default,
+  `ctrl_1gpu_compile`) and `actor.samples_per_replay_batch=16` matching the
+  generation batch (`ctrl_1gpu_nocompile_rb16`).
+- **Single-process launches only work when the intended GPU set is a prefix of
+  the physical ids.** `CUDA_VISIBLE_DEVICES=3` (or `=1`) fails in
+  `GlobalRayPlacementOwner.assign_roles` with "rollout device GPU 0 has no
+  bundle in the probed placement group (probed GPUs=[3])"; pinning
+  `distributed.resources.visible_devices=[1]` with all GPUs visible fails the
+  mirror way ("GPU 1 ... probed GPUs=[0]"). The resolver's device ordinals and
+  Ray's probed ids live in different id spaces once the visible set is not
+  `0..k-1`. The torchrun path avoids it by remapping per rank explicitly.
+  Not fixed here; it blocks running two single-GPU experiments side by side
+  on GPUs other than 0.
