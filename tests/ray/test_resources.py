@@ -543,6 +543,19 @@ def test_auto_resources_reject_ambiguous_cuda_mask(monkeypatch, mask) -> None:
         ResolvedDistributedResources.from_root(parse_config(_cfg({})))
 
 
+@pytest.mark.parametrize("inherited_mask", ["", "3,1", "GPU-external"])
+@pytest.mark.parametrize("count", [1, 3])
+def test_mock_topology_replaces_inherited_cuda_mask(
+    cuda_devices, monkeypatch, inherited_mask, count
+):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", inherited_mask)
+    cuda_devices(count)
+    resolved = ResolvedDistributedResources.from_root(
+        parse_config(_cfg({"rollout": {"gpu_pool": "trainer"}})),
+    )
+    assert resolved.visible_devices == tuple(range(count))
+
+
 def test_reward_torch_device_without_a_reservation_follows_the_rank_local_trainer() -> None:
     """An unreserved in-process reward shares the caller's actual trainer device."""
     resolved = ResolvedDistributedResources.from_root(
