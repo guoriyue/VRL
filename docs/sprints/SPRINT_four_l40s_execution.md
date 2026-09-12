@@ -629,3 +629,35 @@ test distinct rank streams across save/resume. Only after runtime fixes are
 frozen should the seeded, nonzero-update GPU control and matched resume run.
 No GPU job was launched for this CPU-only change; the hardware claim remains
 released. All broader acceptance gates remain as recorded above.
+
+### Per-rank checkpoint RNG ownership fix (Codex)
+
+Isolated runtime commit `6bc896f0` gathers every training rank's RNG tree
+through the strategy's CPU coordination group before primary-only checkpoint
+publication. Multi-rank checkpoints now store `rng.world_size` and ordered
+`rng.by_rank`; the online runner restores its own entry. RNG capture joins
+the existing setup-failure agreement before any later collectives. The
+initial-noise and reward-construction fixes remain in this runtime lineage.
+
+Strict multi-rank resume rejects legacy primary-only RNG trees. Non-strict
+legacy resume emits an explicit nonequivalence warning; single-process legacy
+restore remains supported. Rank bounds, malformed rank lists and changed
+world sizes fail before RNG mutation, including in non-strict mode. Thus the
+older I2V checkpoint artifacts remain historical update/resume evidence but
+cannot satisfy the new strict per-rank RNG contract.
+
+Verification: 191 tests passed, 5 skipped, with CUDA hidden. The new real
+two-process Gloo test writes and loads the actual checkpoint, proves the two
+saved Torch states differ, and reproduces each rank's subsequent Torch,
+named prompt-generator, Python and NumPy random draws exactly. Checkpoint
+publication failure, strategy/MRO and online lifecycle suites also passed.
+Touched-file Ruff/format and diff checks passed. This is CPU distributed
+evidence, not CUDA RNG/NCCL or full trained-state equivalence acceptance.
+
+Preflight found a separate main-worktree SD3.5 job (PID 192781,
+`outputs/sp_online/ctrl_1gpu_nocompile_gb1`) running on GPU 0; GPUs 1/2/3
+reported idle. No GPU workload was launched or interrupted by this change,
+and no shared runtime source was edited. Next: fresh hardware preflight,
+CUDA/NCCL per-rank RNG round trip on free GPUs, then a newly seeded I2V
+nonzero-update control and strict resume from its own new-format checkpoint.
+All full-workload, learning-quality and remaining family gates stay open.
