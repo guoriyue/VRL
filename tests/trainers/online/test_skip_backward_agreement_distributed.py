@@ -3,7 +3,7 @@
 A backward pass fires cross-rank collectives — FSDP2 per-layer all-gather +
 reduce-scatter, or DDP's gradient all-reduce. If one rank skips an all-filtered
 (zero-advantage) microbatch while another rank runs it, those collectives
-mismatch and the job DEADLOCKS (an unrecoverable NCCL hang). ``_all_ranks_have_work``
+mismatch and the job DEADLOCKS (an unrecoverable NCCL hang). ``all_ranks_true``
 all-reduces the local ``has_work`` flag with MIN so every rank takes the SAME
 branch: the microbatch runs only when ALL ranks have work. This spawns a real
 gloo 2-rank group and asserts the agreed result is the logical AND of the ranks'
@@ -32,13 +32,13 @@ from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
 from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
+from vrl.trainers.distributed import all_ranks_true
 from vrl.trainers.online import trainer as trainer_module
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import (
     OnlineTrainer,
     PhaseTimer,
     TrainingBatch,
-    _all_ranks_have_work,
     _distributed_initial_replay_stats,
     _distributed_parity_verdict,
     _ReplayMetrics,
@@ -66,7 +66,7 @@ def _run_rank(rank: int, world_size: int, port: int, local_flags: list[bool], q:
     os.environ["MASTER_PORT"] = str(port)
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
     try:
-        agreed = _all_ranks_have_work(local_flags[rank], torch.device("cpu"))
+        agreed = all_ranks_true(local_flags[rank], torch.device("cpu"))
         q.put((rank, agreed))
     finally:
         dist.destroy_process_group()
@@ -97,8 +97,8 @@ def test_skip_backward_decision_is_unanimous(local_flags: list[bool], expected: 
 
 
 def test_falls_back_to_local_without_process_group() -> None:
-    assert _all_ranks_have_work(True, torch.device("cpu")) is True
-    assert _all_ranks_have_work(False, torch.device("cpu")) is False
+    assert all_ranks_true(True, torch.device("cpu")) is True
+    assert all_ranks_true(False, torch.device("cpu")) is False
 
 
 def test_zero_weight_initial_replay_is_fully_neutral() -> None:
@@ -232,7 +232,7 @@ def test_parity_verdict_is_rank_consistent() -> None:
 def test_replay_planner_pads_to_global_slot_count(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         trainer_module,
-        "_distributed_max_int",
+        "all_ranks_max_int",
         lambda value, device: 8,
     )
 

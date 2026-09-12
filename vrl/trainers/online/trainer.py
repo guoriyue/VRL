@@ -53,6 +53,7 @@ from vrl.trainers.diagnostics import (
     tensor_stats,
     trainable_state_digest,
 )
+from vrl.trainers.distributed import all_ranks_max_float, all_ranks_max_int, all_ranks_true
 from vrl.trainers.online.config import TrainerConfig
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.online.precision_guard import (
@@ -97,30 +98,6 @@ def _global_reward_stats(rewards: Any) -> tuple[float, float]:
     g_var = (g_sumsq / g_count) - g_mean * g_mean
     std = float(torch.sqrt(torch.clamp(g_var, min=0.0)).item())
     return mean, std
-
-
-def _all_ranks_have_work(has_work: bool, device: torch.device) -> bool:
-    """True iff EVERY training rank has a non-empty (post-filter) microbatch.
-
-    A backward pass fires cross-rank collectives — FSDP2 per-layer all-gather +
-    reduce-scatter, or DDP's gradient all-reduce. If one rank skips backward on an
-    all-filtered (zero-advantage) microbatch while another rank runs it, those
-    collectives mismatch and the job DEADLOCKS: an unrecoverable NCCL hang, not an
-    exception. So the skip decision must be unanimous. All-reduce the local
-    ``has_work`` flag with MIN, so every rank takes the SAME branch — the
-    microbatch runs only when all ranks have work, otherwise all ranks skip it
-    together (matched: no rank issues backward collectives). Dropping a microbatch
-    because one rank's slice came back empty wastes the other ranks' work for that
-    slice, but empty slices are rare (reward spread) and a dropped slice beats a
-    hung run.
-
-    No process group / world_size==1 (single-GPU) returns the local value
-    unchanged. Must be called UNCONDITIONALLY on every rank, the same number of
-    times, so this collective itself stays balanced (the recipe runs a fixed
-    microbatch/step count per rank regardless of filtering).
-    """
-
-    return _distributed_all_true(has_work, device)
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +371,7 @@ class _ReplaySampleBatch:
         for batch, adv in zip(batches, advantages, strict=True):
             sample_batches.extend(cls.from_prompt_group(batch, adv, samples_per_replay_batch))
 
-        target_count = _distributed_max_int(len(sample_batches), device)
+        target_count = all_ranks_max_int(len(sample_batches), device)
         if target_count == len(sample_batches):
             return sample_batches
         if target_count <= 0:
@@ -402,7 +379,7 @@ class _ReplaySampleBatch:
         if not sample_batches:
             raise RuntimeError(
                 "distributed replay planner cannot synthesize dummy slots without a "
-                "local real batch; call _all_ranks_have_work before planning replay batches",
+                "local real batch; call all_ranks_true before planning replay batches",
             )
         # Use the smallest available local batch as the dummy template to minimize
         # the extra zero-loss forward/backward work needed for collective balance.
@@ -419,46 +396,6 @@ class _ReplaySampleBatch:
         return sample_batches
 
 
-def _all_reduce_scalar(
-    value: float,
-    *,
-    dtype: torch.dtype,
-    op: Any,
-    device: torch.device,
-) -> float:
-    """One scalar collective (nccl needs the tensor on the rank's GPU)."""
-
-    dist = torch.distributed
-    if not (dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1):
-        return value
-    tensor = torch.tensor([value], dtype=dtype)
-    if dist.get_backend() == "nccl":
-        tensor = tensor.to(device)
-    dist.all_reduce(tensor, op=op)
-    return tensor.item()
-
-
-def _distributed_max_int(value: int, device: torch.device) -> int:
-    """Return the maximum integer value across training ranks."""
-
-    op = torch.distributed.ReduceOp.MAX
-    return int(_all_reduce_scalar(int(value), dtype=torch.int64, op=op, device=device))
-
-
-def _distributed_max_float(value: float, device: torch.device) -> float:
-    """Return the maximum float across ranks without changing single-rank runs."""
-
-    op = torch.distributed.ReduceOp.MAX
-    return float(_all_reduce_scalar(float(value), dtype=torch.float64, op=op, device=device))
-
-
-def _distributed_all_true(value: bool, device: torch.device) -> bool:
-    """Return True only when every training rank reports True (MIN over {0,1})."""
-
-    op = torch.distributed.ReduceOp.MIN
-    return bool(_all_reduce_scalar(int(bool(value)), dtype=torch.int32, op=op, device=device))
-
-
 def _distributed_parity_verdict(
     *,
     local_finite: bool,
@@ -468,8 +405,8 @@ def _distributed_parity_verdict(
 ) -> tuple[bool, float, bool]:
     """Return one rank-consistent parity verdict for every training process."""
 
-    finite = _distributed_all_true(local_finite, device)
-    max_abs_diff = _distributed_max_float(
+    finite = all_ranks_true(local_finite, device)
+    max_abs_diff = all_ranks_max_float(
         local_max_abs_diff if local_finite else float("inf"),
         device,
     )
@@ -521,14 +458,14 @@ def _distributed_initial_replay_stats(
     # exist precisely so an all-filtered rank still runs matching collectives.
     # Whether ANY rank measured something is the gate's decision (it skips a
     # globally empty first update), not a per-rank finiteness verdict.
-    finite = _distributed_all_true(local.finite or not has_local_measurements, device)
+    finite = all_ranks_true(local.finite or not has_local_measurements, device)
     if not has_local_measurements:
         local_max_abs_diff = 0.0
     elif local.finite:
         local_max_abs_diff = local.logprob_abs_diff_max
     else:
         local_max_abs_diff = float("inf")
-    max_abs_diff = _distributed_max_float(
+    max_abs_diff = all_ranks_max_float(
         local_max_abs_diff,
         device,
     )
@@ -961,7 +898,7 @@ class OnlineTrainer:
         return await self.train_on_rollout_batch(batch)
 
     @staticmethod
-    def _collect_reward_components(
+    def merge_reward_scores(
         batches: list[RolloutBatch],
     ) -> dict[str, list[float]]:
         """Extract batch-aligned component scores before sample filtering."""
@@ -1021,7 +958,7 @@ class OnlineTrainer:
             next_prompts=next_prompts,
         )
         all_batches: list[RolloutBatch] = iteration.batches
-        reward_components = self._collect_reward_components(all_batches)
+        reward_components = self.merge_reward_scores(all_batches)
 
         # 2. Compute advantages (per-prompt normalization).
         # Rewards are concatenated across all collected batches, normalized
@@ -1385,10 +1322,10 @@ class OnlineTrainer:
             self._update_phase_timers.append(batch.timer)
         # Unanimous skip across ranks: a backward fires cross-rank collectives, so
         # one rank skipping an empty microbatch while another runs it deadlocks
-        # (see _all_ranks_have_work). Called once per microbatch on every rank, in
+        # (see all_ranks_true). Called once per microbatch on every rank, in
         # lockstep with the fixed gradient-accumulation count, so this collective
         # is balanced.
-        if not _all_ranks_have_work(bool(batch.batches), self.device):
+        if not all_ranks_true(bool(batch.batches), self.device):
             return
         self._update_had_training_work = True
         uses_evaluator = self.algorithm.uses_evaluator
@@ -1535,10 +1472,10 @@ class OnlineTrainer:
         algorithm_adapter = AlgorithmAdapter()
 
         # If every batch was filtered out (all dead), skip training this step.
-        # Unanimous across ranks (see _all_ranks_have_work): a backward fires
+        # Unanimous across ranks (see all_ranks_true): a backward fires
         # cross-rank collectives, so the skip must be agreed or the ranks that did
         # vs. did not run backward deadlock. Called once per step on every rank.
-        if not _all_ranks_have_work(bool(filtered_batches), self.device):
+        if not all_ranks_true(bool(filtered_batches), self.device):
             logger.info(
                 "step %d: all batches filtered (zero advantages) on this or a peer "
                 "rank; skipping backward",
@@ -1944,20 +1881,20 @@ class OnlineTrainer:
         )
         if record is not None:
             worst = dict(record.get("worst_stats") or {})
-            worst["logprob_abs_diff_max"] = _distributed_max_float(
+            worst["logprob_abs_diff_max"] = all_ranks_max_float(
                 float(worst.get("logprob_abs_diff_max", 0.0)),
                 self.device,
             )
-            worst["ratio_abs_dev_max"] = _distributed_max_float(
+            worst["ratio_abs_dev_max"] = all_ranks_max_float(
                 float(worst.get("ratio_abs_dev_max", 0.0)),
                 self.device,
             )
-            worst["finite"] = _distributed_all_true(
+            worst["finite"] = all_ranks_true(
                 bool(worst.get("finite", True)),
                 self.device,
             )
             record["worst_stats"] = worst
-            record["violated"] = not _distributed_all_true(
+            record["violated"] = not all_ranks_true(
                 not bool(record["violated"]),
                 self.device,
             )
