@@ -49,8 +49,11 @@ class CosmosBatchExecutor(ReferenceConditionedBatches, DiffusionBatchExecutorBas
             params=params,
             batch=batch,
         )
-        reference_image = self._reference_image_for_batch(generation_request, batch)
-        batch_encoded["reference_image"] = encoded.get("reference_image", reference_image)
+        batch_encoded["reference_image"] = (
+            encoded["reference_image"]
+            if "reference_image" in encoded
+            else self._reference_image_for_batch(generation_request, batch)
+        )
         return batch_encoded
 
 

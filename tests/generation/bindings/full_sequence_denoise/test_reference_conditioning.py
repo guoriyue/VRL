@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from PIL import Image
 
@@ -57,3 +59,50 @@ def test_reference_conditioning_rejects_missing_prompt_reference() -> None:
             request,
             _batch(0),
         )
+
+
+@pytest.mark.parametrize("family", ["cosmos", "wan"])
+def test_encode_and_prepare_share_the_loaded_reference(tmp_path, monkeypatch, family) -> None:
+    import torch
+
+    from vrl.models.families.cosmos.predict2.runtime import CosmosBatchExecutor
+    from vrl.models.families.wan_2_1.runtime import Wan_2_1I2VBatchExecutor
+
+    path = tmp_path / "reference.png"
+    Image.new("RGB", (2, 2), (255, 0, 0)).save(path)
+    opens = []
+    open_image = Image.open
+
+    def counted_open(path):
+        opens.append(path)
+        return open_image(path)
+
+    monkeypatch.setattr(Image, "open", counted_open)
+    model = SimpleNamespace(
+        encode_prompt=lambda *args, **kwargs: {
+            "prompt_embeds": torch.ones(1, 2),
+            "reference_image": kwargs["reference_image"],
+        },
+    )
+    executor_cls = CosmosBatchExecutor if family == "cosmos" else Wan_2_1I2VBatchExecutor
+    executor = executor_cls(model)
+    request = GenerationRequest(
+        request_id="shared-reference",
+        family=executor.family,
+        task=executor.task,
+        inputs=[GenerationInput(prompt="prompt", reference_image=path)],
+        samples_per_prompt=1,
+    )
+    arguments = dict(
+        generation_request=request,
+        video_request=SimpleNamespace(negative_prompt=None),
+        params=SimpleNamespace(text_encode_kwargs=lambda: {}),
+        batch=_batch(0),
+    )
+    encoded = executor.encode_prompt_for_batch(**arguments)
+    batch_encoded = executor.build_batch_encoded(encoded=encoded, **arguments)
+    prepare = executor.build_prepare_kwargs(encoded=encoded, **arguments)
+
+    assert opens == [path]
+    assert prepare["reference_image"] is encoded["reference_image"]
+    assert batch_encoded["reference_image"] is encoded["reference_image"]

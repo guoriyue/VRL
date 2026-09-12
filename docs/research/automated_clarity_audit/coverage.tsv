@@ -36,7 +36,7 @@ vrl/generation/bindings/chunk_autoregressive_denoise/__init__.py	52a01354ed85cb0
 vrl/generation/bindings/chunk_autoregressive_denoise/executor.py	5a98a2ddaa96215abab6cdf9cde58b618276f395	pending	-
 vrl/generation/bindings/chunk_autoregressive_denoise/gather.py	adc2712c610132d80b2365eab9cd790332702448	pending	-
 vrl/generation/bindings/full_sequence_denoise/__init__.py	38e87c305adf2b3d6baffcb476ba2e5896cc1622	reviewed	denoise_layout_gather.md
-vrl/generation/bindings/full_sequence_denoise/executor.py	976b8869a6d73f19b209b792571a3032b49b0bf0	pending	-
+vrl/generation/bindings/full_sequence_denoise/executor.py	976b8869a6d73f19b209b792571a3032b49b0bf0	reviewed	denoise_executor.md
 vrl/generation/bindings/full_sequence_denoise/gather.py	06a10ed576e514fb029cc45232055281c4116c9b	reviewed	denoise_layout_gather.md
 vrl/generation/bindings/full_sequence_denoise/layout.py	e70cb41dbddde0e65baa05aa272988d4f727b262	reviewed	denoise_layout_gather.md
 vrl/generation/bindings/token_autoregressive/__init__.py	91f3e2246dc2ec2a60f125065b10f347601d5f5f	pending	-
@@ -109,7 +109,7 @@ vrl/models/families/cosmos/cosmos3/model.py	9c88ab8e75ca5eca40f1ebb8a248d118a6f9
 vrl/models/families/cosmos/cosmos3/runtime.py	eb6790fc302d543a84e57a8aa7edfd391c8bcd24	pending	-
 vrl/models/families/cosmos/predict2/__init__.py	fda2af26f0113f18c4d9ffa13c2c9a95d3df55ae	pending	-
 vrl/models/families/cosmos/predict2/model.py	b9dc9139d6a67cb9e945e3f1033868aa3a3c2dec	pending	-
-vrl/models/families/cosmos/predict2/runtime.py	a4245193dbce4d4e3189b9237256a10045ab1232	pending	-
+vrl/models/families/cosmos/predict2/runtime.py	a4245193dbce4d4e3189b9237256a10045ab1232	reviewed	denoise_executor.md
 vrl/models/families/cosmos/predict2_5/__init__.py	e50442d0d1fbca89eaac60493c643152ea572bba	pending	-
 vrl/models/families/cosmos/predict2_5/config.py	83631dd13338b12733245253765f9be8afe3515f	pending	-
 vrl/models/families/cosmos/predict2_5/model.py	32398df97e413976b476c3744f5006748644bb05	pending	-
@@ -184,7 +184,7 @@ vrl/models/families/vdn_h3/vendor.py	f0f3e68694fc6f66005347ef8f47385c5d5af1a6	pe
 vrl/models/families/wan_2_1/__init__.py	fce1bd5e705af3f8dfad5e8ba021c3ee46b45c1a	pending	-
 vrl/models/families/wan_2_1/config.py	683a13c6790e4d3c88eb0d423b0861a4936fae84	pending	-
 vrl/models/families/wan_2_1/model.py	97c27c83ee39991c2b79e9a62509ced2093303b4	pending	-
-vrl/models/families/wan_2_1/runtime.py	1b9ee08cf57d73247c5d27eefa946d4abd0592fa	pending	-
+vrl/models/families/wan_2_1/runtime.py	1b9ee08cf57d73247c5d27eefa946d4abd0592fa	reviewed	denoise_executor.md
 vrl/models/interfaces/__init__.py	6bc6b704b4b878465905fe39da71088dce8c68fb	pending	-
 vrl/models/interfaces/generation_memory.py	9de6afec8a9d9bdf197216361c433db83f88372f	pending	-
 vrl/models/interfaces/replay.py	ab31a59699e21ca1a9a937d09304a97206b38eba	pending	-
