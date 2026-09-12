@@ -457,7 +457,7 @@ vrl/trainers/checkpointing.py	a00e90322a29005173e85fc406e2aa2b26435efa	pending	-
 vrl/trainers/core/__init__.py	41edc4be5f15d75531362935a83f14d9685a9356	reviewed	optimizer_state.md
 vrl/trainers/core/types.py	f95db8586a7a6898ced8bc21cd06a7c55ce10d17	reviewed	optimizer_state.md
 vrl/trainers/data/__init__.py	bb7e467bb51468efe1d2863a9cc92db627a067a2	reviewed	data_sampling_provenance.md
-vrl/trainers/data/artifacts.py	4724d9d285df0244ab10b520e0636be8a981b479	pending	-
+vrl/trainers/data/artifacts.py	4724d9d285df0244ab10b520e0636be8a981b479	reviewed	artifact_manifests.md
 vrl/trainers/data/preferences.py	d7d504d0fb47e4d0e3d1e6db907d519e69726ed9	reviewed	preference_latents.md
 vrl/trainers/data/prompt_sampler.py	b07a1aa117d8bc15b8167068416f993784210015	reviewed	data_sampling_provenance.md
 vrl/trainers/data/prompts.py	2cc8154bbe10ff1fa763c49c855a2bd4dc1a5c3a	reviewed	prompt_loading.md

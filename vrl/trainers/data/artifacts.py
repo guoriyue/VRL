@@ -194,7 +194,7 @@ class DatasetFileReport:
         resolved: list[ResolvedArtifact] = []
         warnings: list[str] = []
         for row_index, example in enumerate(examples):
-            metadata = dict(getattr(example, "metadata", None) or {})
+            metadata = example.metadata
             if "domain" in metadata:
                 raise ArtifactManifestError(
                     f"{path}: row {row_index} metadata.domain is reserved; "
@@ -288,13 +288,12 @@ class DatasetFileReport:
         artifact_fields = (
             ("reference_image", "target_video") if require_target_video else ("reference_image",)
         )
-        required_artifact_fields = artifact_fields
         return cls.from_manifest(
             manifest_path,
             eval_manifest=eval_manifest,
             data_root=data_root,
             artifact_fields=artifact_fields,
-            required_artifact_fields=required_artifact_fields,
+            required_artifact_fields=artifact_fields,
             required_metadata_fields=SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
         )
 
