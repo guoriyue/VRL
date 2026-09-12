@@ -13,7 +13,7 @@ from __future__ import annotations
 import traceback
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Protocol
 
 from vrl.utils.cuda_memory import empty_cuda_cache, is_cuda_out_of_memory
@@ -89,6 +89,8 @@ def gather_replay_tensors(
 
     import torch
 
+    from vrl.trajectory.types import TrajectoryTensor
+
     if not replay_mappings:
         raise ValueError("replay_mappings must be non-empty")
     if len(sample_counts) != len(replay_mappings):
@@ -107,6 +109,25 @@ def gather_replay_tensors(
             gathered[key] = None
         elif any(value is None for value in values):
             raise ValueError(f"replay tensor {key!r} must be present on all results")
+        elif any(isinstance(value, TrajectoryTensor) for value in values):
+            if not all(isinstance(value, TrajectoryTensor) for value in values):
+                raise TypeError(f"replay tensor {key!r} must use TrajectoryTensor on all results")
+            first = values[0]
+            if any(
+                (value.name, value.axes, value.role) != (key, first.axes, first.role)
+                for value in values
+            ):
+                raise ValueError(
+                    f"replay tensor {key!r} must declare the same name, axes and role"
+                )
+            if first.axes[:1] != ("sample",):
+                raise ValueError(f"replay tensor {key!r} axes must start with 'sample'")
+            for value, sample_count in zip(values, sample_counts, strict=True):
+                require_sample_rows(f"replay_tensors.{key}", value.value, sample_count)
+            gathered[key] = replace(
+                first,
+                value=concatenate_sample_values([value.value for value in values], name=key),
+            )
         elif all(isinstance(value, torch.Tensor) for value in values):
             for value, sample_count in zip(values, sample_counts, strict=True):
                 require_sample_rows(f"replay_tensors.{key}", value, sample_count)

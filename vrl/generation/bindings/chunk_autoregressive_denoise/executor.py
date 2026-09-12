@@ -11,6 +11,7 @@ from vrl.generation.execution.sample_batches import (
 )
 from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.types import GenerationRequest
+from vrl.trajectory.types import TrajectoryTensor
 from vrl.trajectory.validation import validate_shape_prefix
 from vrl.utils.validation import require_int
 
@@ -35,9 +36,8 @@ class ChunkAutoregressiveDenoiseResult:
     timesteps: Any | None = None
     kl: Any | None = None
     finalized_chunk_latents: Any | None = None
-    replay_tensors: dict[str, Any] = field(default_factory=dict)
-    # Producer-owned logical axes for each replay tensor, including sample.
-    replay_tensor_axes: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # Values and producer-declared axes travel together across the wire.
+    replay_tensors: dict[str, TrajectoryTensor] = field(default_factory=dict)
     context: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

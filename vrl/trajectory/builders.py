@@ -145,10 +145,9 @@ def build_chunk_autoregressive_denoise_trajectory(
     mask: Any,
     timesteps: Any,
     finalized_chunk_latents: Any,
-    replay_tensors: dict[str, Any],
+    replay_tensors: dict[str, TrajectoryTensor],
     context: dict[str, Any],
     kl: Any | None = None,
-    replay_tensor_axes: dict[str, tuple[str, ...]] | None = None,
 ) -> TrajectoryBatch:
     """Build a trainable chunk-autoregressive denoise trajectory.
 
@@ -158,7 +157,7 @@ def build_chunk_autoregressive_denoise_trajectory(
     therefore starts with ``[sample, temporal_chunk, denoise_transition]``.
     Terminal chunk latents are kept separately at ``[sample, temporal_chunk]``
     so replay can reconstruct the cache/conditioning boundary between chunks.
-    Extra replay tensors require an explicit axes declaration for every key;
+    Extra replay tensors carry their own logical axes in TrajectoryTensor records;
     equal dimension lengths do not establish chunk or transition semantics.
     """
 
@@ -235,16 +234,14 @@ def build_chunk_autoregressive_denoise_trajectory(
         ),
     }
     replay_tensor_names: list[str] = []
-    declared_axes = replay_tensor_axes if replay_tensor_axes is not None else {}
-    if declared_axes.keys() != replay_tensors.keys():
-        raise ValueError("chunk replay_tensor_axes must declare exactly the replay_tensors keys")
-    for name, value in replay_tensors.items():
+    for name, tensor in replay_tensors.items():
         if name in tensors:
             raise ValueError(f"chunk replay tensor {name!r} conflicts with a built-in tensor")
-        axes = declared_axes[name]
-        if not isinstance(axes, tuple) or not axes or axes[0] != "sample":
+        if tensor.role != "replay_input":
+            raise ValueError(f"chunk replay tensor {name!r} must have replay_input role")
+        if tensor.axes[:1] != ("sample",):
             raise ValueError(f"chunk replay tensor {name!r} axes must start with 'sample'")
-        tensors[name] = TrajectoryTensor(name, value, axes, "replay_input")
+        tensors[name] = tensor
         replay_tensor_names.append(name)
 
     reward_modality = task_modality(request.task)

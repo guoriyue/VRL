@@ -20,6 +20,7 @@ from typing import Any, Protocol, TypedDict
 import torch
 
 from vrl.math.denoise.renoise import renoise_step_with_logprob
+from vrl.trajectory.types import TrajectoryTensor
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,8 +169,7 @@ class CausVidTrajectoryMapping(TypedDict):
     mask: torch.Tensor
     timesteps: torch.Tensor
     finalized_chunk_latents: torch.Tensor
-    replay_tensors: dict[str, Any]
-    replay_tensor_axes: dict[str, tuple[str, ...]]
+    replay_tensors: dict[str, TrajectoryTensor]
     context: dict[str, Any]
 
 
@@ -201,12 +201,15 @@ class CausVidRunResult:
             "timesteps": self.timesteps,
             "finalized_chunk_latents": self.finalized_chunk_latents,
             "replay_tensors": {
-                "prompt_embeds": self.prompt_embeds,
-                "next_sigmas": self.next_sigmas,
-            },
-            "replay_tensor_axes": {
-                "prompt_embeds": ("sample",),
-                "next_sigmas": ("sample", "temporal_chunk", "denoise_transition"),
+                "prompt_embeds": TrajectoryTensor(
+                    "prompt_embeds", self.prompt_embeds, ("sample",), "replay_input"
+                ),
+                "next_sigmas": TrajectoryTensor(
+                    "next_sigmas",
+                    self.next_sigmas,
+                    ("sample", "temporal_chunk", "denoise_transition"),
+                    "replay_input",
+                ),
             },
             "context": dict(context),
         }

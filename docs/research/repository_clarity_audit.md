@@ -7413,3 +7413,22 @@ gradient accumulation. Naming distinguishes these without changing either
 configuration or sampling counts. Protocol implementations, direct execution,
 Ray gather calls, and test doubles use merge_generation_batches consistently.
 These API renames intentionally have no legacy forwarding aliases.
+
+
+## Completed chunk replay tensor transport consolidation (2026-09-11)
+
+The chunk producer, CausVidTrajectoryMapping, ChunkAutoregressiveDenoiseResult,
+and chunk trajectory builder now carry dict[str, TrajectoryTensor] rather than
+parallel value and axis maps. replay_tensor_axes is removed from runtime code
+and tests. The existing trajectory record is reused; no replay-specific axis
+schema or wrapper class was added.
+
+The shared replay gather handles typed records by checking matching names,
+axes and roles, validating each sample count, and concatenating values into a
+new record. It does not mutate worker payloads. The chunk builder retains the
+records directly. Other families' existing raw replay payloads remain supported.
+This completes the transport migration described in the ownership strategy
+above, without widening its scope to unrelated family payload formats.
+
+Validation covers serialized worker results, prompt-major merge order, replay
+chunk slicing, coincident text/chunk dimension sizes, and mismatched axes/keys.

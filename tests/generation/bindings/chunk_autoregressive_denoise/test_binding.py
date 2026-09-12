@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -19,6 +20,7 @@ from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
+from vrl.trajectory.types import TrajectoryTensor
 
 
 def test_trainable_trajectory_declares_temporal_chunk_and_transition_axes() -> None:
@@ -201,12 +203,18 @@ def _trainable_result(
         timesteps=torch.arange(3).view(1, 1, 3).expand(1, 2, 3),
         finalized_chunk_latents=torch.full((1, 2, 1), value + 5),
         replay_tensors={
-            "transition_noise": torch.full((1, 2, 3, 1), value + 6),
-            "cache_position": torch.arange(2).view(1, 2),
-        },
-        replay_tensor_axes={
-            "transition_noise": ("sample", "temporal_chunk", "denoise_transition"),
-            "cache_position": ("sample", "temporal_chunk"),
+            "transition_noise": TrajectoryTensor(
+                "transition_noise",
+                torch.full((1, 2, 3, 1), value + 6),
+                ("sample", "temporal_chunk", "denoise_transition"),
+                "replay_input",
+            ),
+            "cache_position": TrajectoryTensor(
+                "cache_position",
+                torch.arange(2).view(1, 2),
+                ("sample", "temporal_chunk"),
+                "replay_input",
+            ),
         },
         context={"model_family": "causvid"},
     )
@@ -268,8 +276,9 @@ def test_prompt_embedding_dimensions_do_not_become_chunk_axes() -> None:
     other = _trainable_result(20.0, sample_start=1)
     # Token count and embedding width happen to equal chunk/transition counts.
     for batch in (result, other):
-        batch.replay_tensors["prompt_embeds"] = torch.ones(1, 2, 3)
-        batch.replay_tensor_axes["prompt_embeds"] = ("sample",)
+        batch.replay_tensors["prompt_embeds"] = TrajectoryTensor(
+            "prompt_embeds", torch.ones(1, 2, 3), ("sample",), "replay_input"
+        )
     output = ChunkAutoregressiveDenoiseGatherer().merge_generation_batches(
         request, request.sample_rows(), [result, other]
     )
@@ -282,17 +291,49 @@ def test_prompt_embedding_dimensions_do_not_become_chunk_axes() -> None:
 
 
 @pytest.mark.parametrize("invalid_axes", [None, ("sample",)])
-def test_gather_rejects_missing_or_inconsistent_replay_axes(invalid_axes) -> None:
+def test_gather_rejects_missing_records_or_inconsistent_axes(invalid_axes) -> None:
     request = _request()
     batches = [_trainable_result(10.0, sample_start=0), _trainable_result(20.0, sample_start=1)]
     if invalid_axes is None:
-        for batch in batches:
-            del batch.replay_tensor_axes["transition_noise"]
-        match = "must declare exactly"
+        del batches[1].replay_tensors["transition_noise"]
+        match = "keys must match"
     else:
-        batches[1].replay_tensor_axes["transition_noise"] = invalid_axes
+        batches[1].replay_tensors["transition_noise"] = replace(
+            batches[1].replay_tensors["transition_noise"], axes=invalid_axes
+        )
         match = "must declare the same"
     with pytest.raises(ValueError, match=match):
         ChunkAutoregressiveDenoiseGatherer().merge_generation_batches(
             request, request.sample_rows(), batches
         )
+
+
+def test_serialized_replay_records_preserve_axes_values_and_sample_order() -> None:
+    import cloudpickle
+
+    from vrl.trajectory.reader import TrajectoryReader
+
+    request = _request()
+    batches = cloudpickle.loads(
+        cloudpickle.dumps(
+            [
+                _trainable_result(20.0, sample_start=1),
+                _trainable_result(10.0, sample_start=0),
+            ]
+        )
+    )
+    original = batches[0].replay_tensors["transition_noise"]
+    output = ChunkAutoregressiveDenoiseGatherer().merge_generation_batches(
+        request, request.sample_rows(), batches
+    )
+    tensor = output.trajectory.segments["denoise"].tensors["transition_noise"]
+    assert isinstance(tensor, TrajectoryTensor)
+    assert tensor.axes == ("sample", "temporal_chunk", "denoise_transition")
+    assert tensor.role == "replay_input"
+    assert tensor.value[:, 0, 0, 0].tolist() == [16.0, 26.0]
+    assert original.value.shape == (1, 2, 3, 1)
+    replay = TrajectoryReader(output.trajectory).replay_tensor_dict(
+        "denoise", axis="temporal_chunk", axis_index=1
+    )
+    assert replay["transition_noise"].shape == (2, 3, 1)
+    assert replay["transition_noise"][:, 0, 0].tolist() == [16.0, 26.0]

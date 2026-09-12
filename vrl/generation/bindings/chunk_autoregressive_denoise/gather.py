@@ -79,7 +79,6 @@ class ChunkAutoregressiveDenoiseGatherer:
                     [batch.replay_tensors for batch in ordered],
                     sample_counts=[batch.batch.sample_count for batch in ordered],
                 ),
-                replay_tensor_axes=ordered[0].replay_tensor_axes,
                 context=context,
             )
         else:
@@ -115,10 +114,6 @@ class ChunkAutoregressiveDenoiseGatherer:
             if batch.has_trainable_trajectory != first.has_trainable_trajectory:
                 raise ValueError("cannot gather mixed trainable and generation-only results")
             if batch.has_trainable_trajectory:
-                if batch.replay_tensor_axes != first.replay_tensor_axes:
-                    raise ValueError(
-                        "all trainable results must declare the same replay tensor axes"
-                    )
                 if batch.denoise_transition_count != first.denoise_transition_count:
                     raise ValueError(
                         "all trainable results must have the same denoise_transition_count",
