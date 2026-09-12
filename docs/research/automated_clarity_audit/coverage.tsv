@@ -228,8 +228,8 @@ vrl/nn/modules/__init__.py	e28d8645c3aab3736da9f779c4ec602875a0d9c7	pending	-
 vrl/nn/modules/ar_attention_backends.py	eddd1c806d5c1c8e1ca6e6b789599ba79dd7ebbb	pending	-
 vrl/nn/modules/ar_decoder.py	703d92e72e542a29a7090ea6b28207f115ce5f7a	pending	-
 vrl/nn/modules/torch_attention.py	736cb764dbb29c277eacabc267fc892774a2a527	pending	-
-vrl/nn/optimization/__init__.py	3c42480084cb5323ce87bd20634b45917080448a	pending	-
-vrl/nn/optimization/passes.py	e6de15ea541e0e10fa3114c1b27ba13d20de3f39	pending	-
+vrl/nn/optimization/__init__.py	3c42480084cb5323ce87bd20634b45917080448a	reviewed	optimization_passes.md
+vrl/nn/optimization/passes.py	e6de15ea541e0e10fa3114c1b27ba13d20de3f39	reviewed	optimization_passes.md
 vrl/nn/quantization/__init__.py	63eacbbe336ad5b8e1418c5dd6874f2159edeb79	pending	-
 vrl/nn/quantization/base.py	f64afa246243e9657d8474f05e4e6f6f8a0fba57	pending	-
 vrl/nn/quantization/formats.py	5d014a39a27b9b0f01abbdd2ba7e432d7ba43b49	pending	-

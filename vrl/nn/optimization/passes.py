@@ -15,8 +15,9 @@ rather than in each family builder:
   optimization, so it stays with the builder and this module takes an
   already-adapted model.
 * Quantization runs BEFORE compile so inductor traces the final module tree.
-* Device moves and Accelerate offload hooks run AFTER every pass, for the same
-  reason: hooks must see the final tree.
+* Device moves run AFTER quantization and BEFORE compile, so they act on the
+  compact real modules. Accelerate offload hooks run AFTER compile so they see
+  the final policy tree.
 
 Not every rollout optimization is a pass. TeaCache is resolved per sampling
 request in the denoise binding and skips forwards inside the loop without
@@ -114,11 +115,10 @@ class QuantizationPass:
 
         count = apply_rollout_quantization(model, build)
         quantization = build.precision.quantization
-        if count:
-            validate_every_core_quantized(model, quantization.format)
+        validate_every_core_quantized(model, quantization.format)
         return PassResult(
             name=self.name,
-            applied=bool(count),
+            applied=True,
             detail=f"{quantization.format}: {count} linears",
         )
 
@@ -290,8 +290,8 @@ def apply_rollout_optimizations(
 ) -> None:
     """Run every enabled rollout pass in dependency order.
 
-    Call AFTER LoRA attachment and BEFORE offload-hook installation (see the
-    module docstring for why each boundary is where it is).
+    Call AFTER LoRA attachment. This sequence includes offload-hook installation
+    after policy quantization, device placement and compilation.
 
     ``before_compile`` runs once between the module-mutating passes and the
     compile pass. That seam is where the policy moves to its device: the move
@@ -319,7 +319,9 @@ def apply_rollout_optimizations(
         if not optimization.enabled(build):
             continue
         result = optimization.apply(model, build)
-        logger.info("rollout pass %s applied (%s)", result.name, result.detail)
+        logger.info(
+            "rollout pass %s: applied=%s (%s)", result.name, result.applied, result.detail
+        )
     if not seam_done and before_compile is not None:
         before_compile()  # no replacing pass registered at all
 
