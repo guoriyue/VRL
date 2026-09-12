@@ -193,12 +193,15 @@ class TrajectoryRolloutBatchBuilder:
         # passes its primary segment. Both carry an action-role tensor co-located
         # on the batch device, so the fallback device source is identical.
         device = self.context.device or segment.role_tensor("action").value.device
+        rollout_context = dict(self.trajectory.context)
+        if self.output.runtime_debug is not None:
+            rollout_context["runtime_debug"] = self.output.runtime_debug
 
         return RolloutBatch(
             rewards=rewards_raw.to(device),
             group_ids=self._group_ids(device=device),
             extras={},
-            context=dict(self.trajectory.context),
+            context=rollout_context,
             trajectory=self.trajectory,
         )
 

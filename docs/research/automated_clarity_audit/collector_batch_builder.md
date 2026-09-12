@@ -48,7 +48,7 @@ copies only trajectory context. RewardSample metadata reaches scoring in both
 paths. Deciding whether trainer-side context should also match requires checking
 its consumers; moving this code into a shared constructor without that decision
 would change observable batch metadata. The SFT consumer is identified below;
-AR debug propagation remains open.
+AR debug propagation is addressed in the final follow-up below.
 
 Diffusion currently reads the kl tensor even when kl_reward_coef is zero. Current
 canonical denoise builders provide it. Removing this requirement is a contract
@@ -91,11 +91,30 @@ consumer supplies a concrete need.
 runtime_debug has a separate consumer: the trainer's parity diagnostic writes
 batch.context['runtime_debug'] into its training_debug.jsonl evidence. The AR
 packer does not copy GenerationOutput.runtime_debug, so it can omit that evidence
-even though scoring metadata is intact. This remains a distinct follow-up to
-trace AR diagnostic production and mode gating; it should not be silently folded
-into an unrelated device-policy unification.
+even though scoring metadata is intact. This is handled separately below rather
+than folded into an unrelated device-policy unification.
 
 This follow-up is source/caller evidence, not a new CUDA experiment. No runtime
 change or repeated test run was needed. Worker, Ray executor and trainer modules
 remain pending their complete module reviews; these scoped reads do not mark
 them covered.
+
+## Follow-up: preserve AR runtime diagnostics
+
+Following 14682476d, confirm Ray executor builds output.runtime_debug whenever
+runtime_debug is requested, without a denoise-only gate. OnlineTrainer requests
+that flag for debug.first_step at step zero and reads the batch payload when an
+evaluator is in use, including token evaluators. This is a real missing handoff.
+
+AR packing now copies the supplied runtime_debug into its copied batch context,
+matching diffusion's existing behavior. Keep placement, reward metadata and
+trajectory ownership unchanged. No new helper, checker, schema or test matrix is
+needed for this three-line projection. Existing debug data takes precedence over
+an older context key, as it already does for diffusion.
+
+54 existing collector/R1 wiring tests passed. A one-off check using the existing
+AR builder fixture confirmed the output debug payload reaches the built batch
+without modifying trajectory.context. No new test file or hypothetical failure
+case was added. Ruff check and format check passed. Forward/training math is
+unchanged; token first-step diagnostics can now include the worker evidence that
+the runtime already collected.

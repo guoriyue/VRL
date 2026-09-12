@@ -29,6 +29,11 @@ criterion. No token budget was requested.
 
 ## Decisions
 
+User clarification: do not add checks, tests or examples for hypothetical states
+without a realistic production path. Prefer existing regression coverage for
+simple cleanups. A possible malformed value alone does not justify a new gate,
+wrapper or test matrix. Tie changes to actual producers and consumers.
+
 Change redundant internal checks, speculative loading fallback, unclear names,
 misplaced ownership, and genuinely duplicated mechanisms when callers establish
 that the change is safe. Prefer existing owners over additional wrapper classes.
