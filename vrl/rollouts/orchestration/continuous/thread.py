@@ -82,7 +82,6 @@ class _ContinuousRolloutController:
         self.consumer: ContinuousRolloutConsumer | None = None
         self.producer: ContinuousRolloutProducer | None = None
         self._installed_prompt_batch: _InstalledPromptBatch | None = None
-        self._prefetched_prompt_batch: _InstalledPromptBatch | None = None
 
         self._command_lock = asyncio.Lock()
         self._active_commands: set[asyncio.Task[Any]] = set()
@@ -142,6 +141,7 @@ class _ContinuousRolloutController:
             current_policy_version = self.lifecycle.current_policy_version()
             batch_id = self.producer.current_batch_id
             prefetch_next_batch_early = self.settings.split_generation_reward
+            prefetched_prompt_batch: _InstalledPromptBatch | None = None
             if prefetch_next_batch_early and next_prompts is not None:
                 self.producer.append_prompt_batch(
                     next_prompts,
@@ -150,9 +150,7 @@ class _ContinuousRolloutController:
                 )
                 assert self.queue is not None
                 self.queue.set_item_limit(len(prompts) + len(next_prompts))
-                self._prefetched_prompt_batch = _InstalledPromptBatch(
-                    tuple(next_prompts), group_size
-                )
+                prefetched_prompt_batch = _InstalledPromptBatch(tuple(next_prompts), group_size)
                 self.producer.admit_now()
 
             iteration = await self.consumer.collect_iteration(
@@ -167,8 +165,7 @@ class _ContinuousRolloutController:
             prefetch_next_batch_requested = float(next_prompts is not None)
             if prefetch_next_batch_early:
                 self.producer.consume_prompt_batch(batch_id)
-                self._installed_prompt_batch = self._prefetched_prompt_batch
-                self._prefetched_prompt_batch = None
+                self._installed_prompt_batch = prefetched_prompt_batch
                 assert self.queue is not None
                 self.queue.set_item_limit(1 if next_prompts is None else len(next_prompts))
             elif next_prompts is not None:
@@ -251,10 +248,7 @@ class _ContinuousRolloutController:
     async def reset(self) -> None:
         """Clear continuous queue/producer state without touching the controller."""
 
-        async def operation() -> None:
-            await self._stop_pipeline()
-
-        await self._run_command(operation)
+        await self._run_command(self._stop_pipeline)
 
     async def shutdown(self) -> None:
         """Cancel owner commands, stop production, and close its controller once."""
@@ -404,7 +398,6 @@ class _ContinuousRolloutController:
         self.queue = None
         self.consumer = None
         self._installed_prompt_batch = None
-        self._prefetched_prompt_batch = None
 
     def _attach_producer_metrics(self, iteration: RolloutIteration) -> None:
         if self.producer is None:
