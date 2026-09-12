@@ -319,10 +319,14 @@ def test_metrics_csv_discards_rows_not_covered_by_checkpoint(tmp_path) -> None:
     columns = ("epoch", "loss")
     header = "epoch,loss\n"
     path.write_text(header + "38,1.0\n39,0.9\n40,0.8\n41,0.7\n42,0")
+    unrelated = tmp_path / "metrics.csv.tmp"
+    unrelated.write_text("another writer's file")
 
     MetricsCSV(path, columns, resume_at=("epoch", 40))
 
     assert path.read_text() == header + "38,1.0\n39,0.9\n"
+    assert unrelated.read_text() == "another writer's file"
+    assert set(tmp_path.iterdir()) == {path, unrelated}
 
 
 def test_metrics_csv_rejects_wrong_row_width(tmp_path) -> None:

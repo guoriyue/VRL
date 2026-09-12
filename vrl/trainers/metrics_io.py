@@ -5,12 +5,12 @@ from __future__ import annotations
 import csv
 import io
 import logging
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from vrl.utils.artifacts import atomic_file
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
@@ -366,12 +366,8 @@ class MetricsCSV:
 
         aligned_text = normalized_header + "".join(retained_lines)
         if aligned_text != text:
-            temporary = path.with_suffix(f"{path.suffix}.tmp")
-            with temporary.open("w", encoding="utf-8") as handle:
+            with atomic_file(path) as handle:
                 handle.write(aligned_text)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, path)
         if truncated_rows:
             logger.warning(
                 "Discarded %d metrics row(s) at %s >= %d before checkpoint resume",

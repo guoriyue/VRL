@@ -466,7 +466,7 @@ vrl/trainers/data/sft_latents.py	43ffcdc153b599f8a255ead6eb0c3a07d6747512	review
 vrl/trainers/diagnostics.py	909f1069a7ed49ab2caaba01b3e81f758ce6bd56	pending	-
 vrl/trainers/distributed.py	78e868e22dabd7d9a1c2790a3e4571f9d6a44edf	reviewed	rank_launch_context.md
 vrl/trainers/fsdp.py	4953f817d2d34fac7a92a65c226a9ac8af8593e0	pending	-
-vrl/trainers/metrics_io.py	747f995cb560c6ee772b17bd593935c2e89c5276	pending	-
+vrl/trainers/metrics_io.py	747f995cb560c6ee772b17bd593935c2e89c5276	reviewed	metrics_csv.md
 vrl/trainers/offline/__init__.py	6fef898238a387b1f0092780b24ed1bc2d66fa78	pending	-
 vrl/trainers/offline/dpo.py	a4cc3e58a089a794cf68e254a10b1489ba9442fa	pending	-
 vrl/trainers/online/__init__.py	fce9b169cf6cd342e0d3fa6ee5c57217938578fd	pending	-
