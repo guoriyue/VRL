@@ -259,7 +259,7 @@ async def test_pipeline_combiner_retains_nonprimary_oom_payload():
     bad = PipelinedRequestOutOfMemory("r", "r1", "CUDA out of memory")
     engine = _engine([], {"r0": _Ref(good), "r1": _Ref(bad)}, method="execute_request_pipelined")
     result = await engine.remote(
-        "execute_request_pipelined", combine=RayGenerationExecutor._select_pipelined_rank_result
+        "execute_request_pipelined", combine=RayGenerationExecutor._select_request_rank_result
     )("payload")
     assert result is bad
 

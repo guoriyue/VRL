@@ -136,7 +136,7 @@ class RayGenerationExecutor:
         return first
 
     @staticmethod
-    def _select_pipelined_rank_result(
+    def _select_request_rank_result(
         results: list[Any],
     ) -> GenerationOutput | PipelinedRequestOutOfMemory:
         """Return an OOM reported by any rank; otherwise keep primary output."""
@@ -504,7 +504,7 @@ class RayGenerationExecutor:
                     job_index=0,
                     worker_id=engine.engine_id,
                     remote_method=engine.remote(
-                        "execute_request_pipelined", combine=self._select_pipelined_rank_result
+                        "execute_request_pipelined", combine=self._select_request_rank_result
                     ),
                     payload=request,
                     keyword_args={

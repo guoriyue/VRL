@@ -16,6 +16,7 @@ import torch
 from vrl.scripts.perf.profile_smoke import run_smoke
 from vrl.utils.profiling import (
     ProfilerActivitySelection,
+    TimeIntervals,
     TorchProfilerConfig,
     _safe_label,
     _safe_worker_name,
@@ -262,3 +263,20 @@ def test_trace_discovery_excludes_temporary_and_backup_files(tmp_path: Path) -> 
         (tmp_path / name).touch()
     (tmp_path / "worker.6.pt.trace.json").mkdir()
     assert _discover_trace_files(tmp_path, "worker") == names[:2]
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "duration", "overlap"),
+    [
+        ([], [(0, 9)], 0, 0),
+        ([(0, 6)], [(4, 9)], 6, 2),
+        ([(0, 2), (5, 7)], [(2, 5)], 4, 0),
+        ([(5, 9), (0, 6), (1, 2)], [(3, 7), (4, 8)], 9, 5),
+    ],
+)
+def test_time_intervals_measure_coverage_and_overlap(left, right, duration, overlap):
+    first = TimeIntervals(left)
+    second = TimeIntervals(right)
+    assert first.duration_s == duration
+    assert first.overlap_s(second) == overlap
+    assert second.overlap_s(first) == overlap

@@ -44,7 +44,7 @@ from vrl.rollouts.collector.requests import (
     GenerationRequestBuilder,
 )
 from vrl.rollouts.stats import RolloutStats
-from vrl.utils.profiling import profile_range
+from vrl.utils.profiling import TimeIntervals, profile_range
 
 
 @dataclass(slots=True)
@@ -627,12 +627,17 @@ class RolloutCollector:
             raise
 
         all_batches = self.finish_scored_prompt_groups(generated_groups, batches, stats)
-        stats.add_collection_timing(
-            wall_s=time.perf_counter() - collection_started,
-            generation_intervals=[
-                (group.started_at, group.completed_at) for group in generated_groups
-            ],
-            reward_intervals=reward_intervals,
+        generation_timing = TimeIntervals(
+            (group.started_at, group.completed_at) for group in generated_groups
+        )
+        reward_timing = TimeIntervals(reward_intervals)
+        stats.add_phases(
+            {
+                "collect.wall": time.perf_counter() - collection_started,
+                "collect.generation_wall": generation_timing.duration_s,
+                "collect.reward_wall": reward_timing.duration_s,
+                "collect.generation_reward_overlap": generation_timing.overlap_s(reward_timing),
+            },
         )
         stats.add_counter("collect.group_count", len(all_batches))
         stats.add_counter(
