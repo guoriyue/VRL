@@ -603,3 +603,29 @@ the current primary-only checkpoint publication stores the primary RNG tree.
 
 This hardware claim is released. Seeded resume equivalence and learning
 quality remain open; no zero-gradient result is treated as completion.
+
+### Initial latent seed offset fix (Codex)
+
+Isolated runtime commit `99633226` offsets the request seed passed to
+`model.prepare_sampling` by the denoise batch's `sample_start`. It uses a
+replacement request, leaving the original request and loop seed unchanged,
+so the existing SDE generator offset is not applied twice. This prevents
+identical initial noise in successive one-sample native batches with a fixed
+seed. Unseeded requests retain their existing behavior.
+
+The full-sequence binding and denoise-step suites passed: 154 tests. New
+coverage checks the initial batch, later batch, deterministic repeat,
+unseeded requests, unchanged input/config seeds, and prepare keyword
+forwarding. Touched-file Ruff/format and diff checks passed. This establishes
+batch-start seed semantics, not arbitrary batch-partition invariance and not
+a hardware learning or resume acceptance result.
+
+Before another expensive equivalence run, fix the confirmed per-rank RNG
+checkpoint gap: `save_training_checkpoint` publishes only the primary
+process RNG tree, while `scripts/common/online.py` restores that tree on
+every rank after initializing rank-distinct streams. Audit strategy-owned
+collectives, legacy checkpoint compatibility, and topology validation, then
+test distinct rank streams across save/resume. Only after runtime fixes are
+frozen should the seeded, nonzero-update GPU control and matched resume run.
+No GPU job was launched for this CPU-only change; the hardware claim remains
+released. All broader acceptance gates remain as recorded above.
