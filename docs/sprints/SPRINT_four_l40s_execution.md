@@ -1264,3 +1264,17 @@ the new dependency version. Retain the old environment for the pending
 like-for-like I2V trained-moment comparison; qualify the supported environment
 with real hardware separately. The regression session exited 0; no shared
 runtime, shared environment or GPU job was modified.
+
+### SD3.5 1x2 original parity gate failed; relaxed retry is diagnostic (Codex)
+
+Driver 263970 terminated. Its retained log `outputs/sp_online/1x2.attempt1.log`
+reports finite=True, max_abs_diff=0.0111192 against the original 0.01 limit,
+before its first optimizer update. This is a FAILED original parity gate,
+not a completed 1x2 online acceptance arm.
+
+A fresh process check immediately found other-session retry PID 278230 on
+the same topology, now with trainer.replay_parity.max_abs_logprob_diff=0.02.
+That relaxation can only provide diagnostic evidence; even a successful retry
+does not satisfy the original 0.01 criterion or close the matched topology
+comparison. Preserve the failure and unchanged original acceptance threshold.
+No Codex GPU stage was launched, and the two-rank I2V resume remains queued.
