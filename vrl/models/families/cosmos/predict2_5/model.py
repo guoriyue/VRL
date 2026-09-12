@@ -22,7 +22,6 @@ from vrl.models.steps.denoise import (
     DiffusersReplayModelBase,
     GuidedDiffusionSamplingStateBase,
 )
-from vrl.models.steps.denoise.base import diffusers_pipeline_dtypes
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
@@ -178,10 +177,9 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         import diffusers.pipelines.cosmos.pipeline_cosmos2_5_predict as _predict_mod
         from diffusers import Cosmos2_5_PredictBasePipeline
 
-        prompt_dtype, kwargs = diffusers_pipeline_dtypes(
+        prompt_dtype, kwargs = cls._pipeline_load_dtypes(
             build,
             build.parameter_dtype,
-            encoder_names=cls._frozen_encoder_names,
         )
         revision = kwargs.get("revision")
         skip_text_encoder = bool((build.model_config or {}).get("skip_text_encoder", False))

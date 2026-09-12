@@ -7,7 +7,6 @@ from vrl.models.steps.denoise.base import (
     DiffusionSamplingStateBase,
     GuidedDiffusionSamplingStateBase,
     ReplayRolloutStubs,
-    diffusers_pipeline_dtypes,
 )
 
 __all__ = [
@@ -17,5 +16,4 @@ __all__ = [
     "DiffusionSamplingStateBase",
     "GuidedDiffusionSamplingStateBase",
     "ReplayRolloutStubs",
-    "diffusers_pipeline_dtypes",
 ]

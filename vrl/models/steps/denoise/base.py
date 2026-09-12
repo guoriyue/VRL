@@ -571,36 +571,6 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
                 module.to(device)
 
 
-def diffusers_pipeline_dtypes(
-    build: ModelBuild,
-    model_dtype: torch.dtype,
-    *,
-    encoder_names: tuple[str, ...],
-) -> tuple[torch.dtype, dict[str, Any]]:
-    """Resolve prompt-encoder dtype plus pipeline load kwargs for a family.
-
-    ``build.rollout.prompt_encoder_dtype`` is authoritative when present; bare
-    test builds retain the historical fallback. VAEs are not controlled by this
-    option: rollout families explicitly keep them in fp32 for decode fidelity.
-    The initial ``from_pretrained`` mapping preserves that fp32 VAE boundary
-    while avoiding an all-fp32 prompt-encoder load peak.
-    """
-
-    rollout = getattr(build, "rollout", None)
-    prompt_encoder_dtype = getattr(rollout, "prompt_encoder_dtype", None)
-    if prompt_encoder_dtype is None:
-        prompt_encoder_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
-    # Full-pipeline rollout and component-only replay must resolve the same
-    # immutable Hub snapshot; otherwise parity can compare different weights.
-    load_kwargs: dict[str, Any] = build.pretrained_kwargs
-    load_kwargs["torch_dtype"] = {
-        "default": model_dtype,
-        "vae": torch.float32,
-        **{name: prompt_encoder_dtype for name in encoder_names},
-    }
-    return prompt_encoder_dtype, load_kwargs
-
-
 class DiffusersPipelineModelBase(DiffusionModelBase):
     """Shared shape for families backed by ONE diffusers pipeline + ONE
     trainable transformer (sd3_5, flux, qwen_image, cosmos, wan's primary).
@@ -677,6 +647,35 @@ class DiffusersPipelineModelBase(DiffusionModelBase):
     _prompt_encoder_on_cpu: bool
 
     @classmethod
+    def _pipeline_load_dtypes(
+        cls,
+        build: ModelBuild,
+        model_dtype: torch.dtype,
+    ) -> tuple[torch.dtype, dict[str, Any]]:
+        """Resolve prompt-encoder dtype plus pipeline load kwargs for a family.
+
+        ``build.rollout.prompt_encoder_dtype`` is authoritative when present; bare
+        test builds retain the historical fallback. VAEs are not controlled by this
+        option: rollout families explicitly keep them in fp32 for decode fidelity.
+        The initial ``from_pretrained`` mapping preserves that fp32 VAE boundary
+        while avoiding an all-fp32 prompt-encoder load peak.
+        """
+
+        rollout = getattr(build, "rollout", None)
+        prompt_encoder_dtype = getattr(rollout, "prompt_encoder_dtype", None)
+        if prompt_encoder_dtype is None:
+            prompt_encoder_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
+        # Full-pipeline rollout and component-only replay must resolve the same
+        # immutable Hub snapshot; otherwise parity can compare different weights.
+        load_kwargs: dict[str, Any] = build.pretrained_kwargs
+        load_kwargs["torch_dtype"] = {
+            "default": model_dtype,
+            "vae": torch.float32,
+            **{name: prompt_encoder_dtype for name in cls._frozen_encoder_names},
+        }
+        return prompt_encoder_dtype, load_kwargs
+
+    @classmethod
     def from_build(cls, build: ModelBuild) -> DiffusersPipelineModelBase:
         """Load the family pipeline and freeze everything but the transformer."""
 
@@ -690,10 +689,9 @@ class DiffusersPipelineModelBase(DiffusionModelBase):
         pipeline_cls = getattr(diffusers, cls._pipeline_classname)
         # Prompt encoders follow the rollout-only precision policy; the VAE stays
         # family-owned fp32 below because decode fidelity is a separate concern.
-        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(
+        prompt_encoder_dtype, load_kwargs = cls._pipeline_load_dtypes(
             build,
             build.parameter_dtype,
-            encoder_names=cls._frozen_encoder_names,
         )
         pipeline = pipeline_cls.from_pretrained(
             build.model_name_or_path,
@@ -793,5 +791,4 @@ __all__ = [
     "DiffusionModelBase",
     "DiffusionSamplingStateBase",
     "GuidedDiffusionSamplingStateBase",
-    "diffusers_pipeline_dtypes",
 ]

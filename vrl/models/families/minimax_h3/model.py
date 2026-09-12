@@ -58,7 +58,6 @@ from vrl.models.steps.denoise import (
     DiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
-from vrl.models.steps.denoise.base import diffusers_pipeline_dtypes
 from vrl.models.steps.denoise.common import ChunkedLatentDecoder, LatentDecodePlan
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 from vrl.utils.logging import init_logger, kv
@@ -314,10 +313,9 @@ class MiniMaxH3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModel
     def from_build(cls, build: ModelBuild) -> MiniMaxH3Model:
         from diffusers import ModularPipeline
 
-        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(
+        prompt_encoder_dtype, load_kwargs = cls._pipeline_load_dtypes(
             build,
             build.parameter_dtype,
-            encoder_names=cls._frozen_encoder_names,
         )
         load_kwargs["torch_dtype"]["audio_vae"] = torch.float32
         pipeline = ModularPipeline.from_pretrained(

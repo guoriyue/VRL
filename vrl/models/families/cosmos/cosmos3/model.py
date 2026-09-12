@@ -45,7 +45,6 @@ from vrl.models.steps.denoise import (
     GuidedDiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
-from vrl.models.steps.denoise.base import diffusers_pipeline_dtypes
 from vrl.models.steps.denoise.common import align_replay_tensor
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 from vrl.utils.logging import init_logger, kv
@@ -84,16 +83,17 @@ class Cosmos3SamplingState(GuidedDiffusionSamplingStateBase):
 class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBase):
     """Cosmos3 Omni T2V generator wrapped for the vrl diffusion RL seam."""
 
+    _frozen_encoder_names: tuple[str, ...] = ()
+
     # ---- properties (mirror predict2_5) ----
     @classmethod
     def from_build(cls, build: ModelBuild) -> Cosmos3Model:
         # Lazy: the optional cosmos extra must not be imported at module load.
         from diffusers import Cosmos3OmniPipeline
 
-        _, kwargs = diffusers_pipeline_dtypes(
+        _, kwargs = cls._pipeline_load_dtypes(
             build,
             build.parameter_dtype,
-            encoder_names=(),
         )
         # enable_safety_checker=False avoids the cosmos_guardrail import/dep in dev.
         with torch.set_grad_enabled(torch.is_grad_enabled()):

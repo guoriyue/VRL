@@ -7,7 +7,7 @@ import torch
 
 from vrl.config.precision import RolePrecision
 from vrl.models.interfaces.runtime import ModelBuild
-from vrl.models.steps.denoise.base import diffusers_pipeline_dtypes
+from vrl.models.steps.denoise.base import DiffusersPipelineModelBase
 
 
 def test_full_pipeline_propagates_revision_like_component_loader() -> None:
@@ -21,7 +21,7 @@ def test_full_pipeline_propagates_revision_like_component_loader() -> None:
         model_config={},
     )
 
-    _, kwargs = diffusers_pipeline_dtypes(build, torch.float16, encoder_names=("text_encoder",))
+    _, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build, torch.float16)
 
     assert kwargs["revision"] == "immutable-revision"
 
@@ -37,7 +37,7 @@ def test_full_pipeline_propagates_local_files_only_like_component_loader() -> No
         model_config={"local_files_only": True},
     )
 
-    _, kwargs = diffusers_pipeline_dtypes(build, torch.float16, encoder_names=("text_encoder",))
+    _, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build, torch.float16)
 
     assert kwargs["revision"] == "immutable-revision"
     assert kwargs["local_files_only"] is True
@@ -54,7 +54,7 @@ def test_full_pipeline_omits_absent_revision() -> None:
         model_config={},
     )
 
-    _, kwargs = diffusers_pipeline_dtypes(build, torch.float16, encoder_names=("text_encoder",))
+    _, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build, torch.float16)
 
     assert "revision" not in kwargs
     assert "local_files_only" not in kwargs
@@ -144,7 +144,7 @@ def test_pipeline_load_preserves_source_vae_precision(tmp_path) -> None:
         precision=RolePrecision("bf16", "tf32"),
         model_config={},
     )
-    _, kwargs = diffusers_pipeline_dtypes(build, torch.bfloat16, encoder_names=("text_encoder",))
+    _, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build, torch.bfloat16)
     loaded = type(pipeline).from_pretrained(tmp_path, text_encoder=None, **kwargs)
     assert next(loaded.transformer.parameters()).dtype == torch.bfloat16
     assert next(loaded.vae.parameters()).dtype == torch.float32
@@ -164,10 +164,13 @@ def test_pipeline_dtype_projection_keeps_encoder_override_separate_from_model() 
         model_config={},
         rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.float32),
     )
-    encoder_dtype, kwargs = diffusers_pipeline_dtypes(
+
+    class DualEncoderPipelineModel(DiffusersPipelineModelBase):
+        _frozen_encoder_names = ("text_encoder", "text_encoder_2")
+
+    encoder_dtype, kwargs = DualEncoderPipelineModel._pipeline_load_dtypes(
         build,
         torch.bfloat16,
-        encoder_names=("text_encoder", "text_encoder_2"),
     )
     assert encoder_dtype == torch.float32
     assert kwargs["torch_dtype"] == {

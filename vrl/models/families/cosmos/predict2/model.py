@@ -32,7 +32,6 @@ from vrl.models.steps.denoise import (
     DiffusersReplayModelBase,
     GuidedDiffusionSamplingStateBase,
 )
-from vrl.models.steps.denoise.base import diffusers_pipeline_dtypes
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
@@ -202,10 +201,9 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
         import diffusers.pipelines.cosmos.pipeline_cosmos2_video2world as _v2w_mod
         from diffusers import Cosmos2VideoToWorldPipeline
 
-        prompt_dtype, load_kwargs = diffusers_pipeline_dtypes(
+        prompt_dtype, load_kwargs = cls._pipeline_load_dtypes(
             build,
             build.parameter_dtype,
-            encoder_names=cls._frozen_encoder_names,
         )
         with torch.set_grad_enabled(torch.is_grad_enabled()), no_safety_checker(_v2w_mod):
             pipeline = Cosmos2VideoToWorldPipeline.from_pretrained(
