@@ -43,8 +43,8 @@ vrl/generation/bindings/token_autoregressive/__init__.py	91f3e2246dc2ec2a60f1250
 vrl/generation/bindings/token_autoregressive/executor.py	5d759291589be542f040a27bc76469e3b3e9d0f8	pending	-
 vrl/generation/bindings/token_autoregressive/layout.py	8f3084c34293e95b5b205d7089306e4a8c462dc9	pending	-
 vrl/generation/composition/__init__.py	093fbf82bc8748510d2b732221668e180f301845	pending	-
-vrl/generation/composition/token_autoregressive/__init__.py	90572d1353c5111185f84f59335d650ec627e1ab	pending	-
-vrl/generation/composition/token_autoregressive/token_loop.py	5f564fbc1eca34f84a9447f452abfeaa47c94ef0	pending	-
+vrl/generation/composition/token_autoregressive/__init__.py	90572d1353c5111185f84f59335d650ec627e1ab	reviewed	token_step_scheduling.md
+vrl/generation/composition/token_autoregressive/token_loop.py	5f564fbc1eca34f84a9447f452abfeaa47c94ef0	reviewed	token_step_scheduling.md
 vrl/generation/execution/__init__.py	6428df9582d2f5852c5d3bafdd86f2883f28f4f2	reviewed	placement_rank_probe.md
 vrl/generation/execution/batch_memory.py	6f5369cf9af1ae67467865b95a04e08487892907	reviewed	batch_memory.md
 vrl/generation/execution/batch_placement.py	20b21641069ce0f706be8e774c6a0801d045a7af	reviewed	placement_rank_probe.md
@@ -75,8 +75,8 @@ vrl/generation/steps/denoise/__init__.py	9027ebd20aa65b0298dda296346eba354b04cfb
 vrl/generation/steps/denoise/config.py	b1330007576e5f456f345b6b6b3aea9aff02524a	reviewed	denoise_steps.md
 vrl/generation/steps/denoise/loop.py	0e4bf141dccbcdd427e2dcabc8d9e7496bd0f381	reviewed	denoise_steps.md
 vrl/generation/steps/denoise/teacache.py	39f21a82a76cdd01032012cd110b8110262969f5	reviewed	denoise_steps.md
-vrl/generation/steps/token/__init__.py	014f9cad115298898d572edc1bc936eb573d1a26	pending	-
-vrl/generation/steps/token/protocol.py	ff8bb60fcd9542b0c01f8f6d4d1397d7334861d9	pending	-
+vrl/generation/steps/token/__init__.py	014f9cad115298898d572edc1bc936eb573d1a26	reviewed	token_step_scheduling.md
+vrl/generation/steps/token/protocol.py	ff8bb60fcd9542b0c01f8f6d4d1397d7334861d9	reviewed	token_step_scheduling.md
 vrl/generation/types.py	30b5e01b2dc640f2ec952a80966c2910bffc0e5c	reviewed	generation_payloads.md
 vrl/generation/weight_transfer.py	207cb65d39dfba9a92563a7631e21a295ab4c13f	reviewed	weight_transfer_worker.md; probe ownership follow-up in placement_rank_probe.md
 vrl/math/__init__.py	dc566089e0058e221887ab5ba911c843fa65df8a	pending	-
