@@ -34,6 +34,15 @@ GPU model weights. Reward inference, calibration, memory handoff and the
 original 0.3 motion-quality / 0.7 physical-commonsense training objective
 remain unverified; motion-only acceptance runs do not replace that objective.
 
+Actual CPU VideoCon loading now has a confirmed compatibility blocker beyond
+the successful processor checks. The first failure was legacy composite
+configuration logging; integration candidate `a16e30f8` fixes it with a local
+config subclass and six passing focused tests. Loading then fails because
+the vendored MplugOwlVisionModel inherits `_keep_in_fp32_modules=["wo"]`
+although it contains no such module. No reward score was produced. Fix and
+re-run actual inference before treating the physics reward as runtime-ready;
+do not edit the shared dirty VideoPhy submodule underneath other sessions.
+
 Execute after the GPU queue in `../SPRINT_four_l40s_execution.md` releases
 the required devices:
 

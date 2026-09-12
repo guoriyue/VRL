@@ -1085,3 +1085,35 @@ for its quality gate; a motion-only diagnostic cannot replace it.
 All download and preflight processes exited successfully. No new GPU job was
 launched and shared runtime files remain unchanged. The trained-moment I2V
 resume and integration merge still await the coordinated GPU window.
+
+### Real CPU physics reward preflight exposed compatibility failures (Codex)
+
+The original physics recipe assigns VideoCon to CPU. With 359 GiB host memory
+available and SD3.5 PID 234733 still live, attempted actual BF16/32-frame
+VideoCon scoring without exposing CUDA. Input is the existing Wan evaluation
+video `outputs/wan_hpsv3_flash_grpo/eval_final/final/videos/final/p0002_s00.mp4`,
+832x480/81 frames according to its generation provenance, with the original
+caption and manifest-verified SHA-256/byte count. This is reward-path
+validation, not an I2V learning or quality substitute.
+
+The first attempt failed before model construction: modern Transformers
+configuration logging invokes the legacy composite config's no-argument
+constructor, whose sibling Llama import is invalid. Candidate commit
+`a16e30f8` uses a local config subclass with has_no_defaults_at_init=True and
+passes that loaded config to the original model loader. It does not monkey
+patch vendor classes or edit the shared submodule. Focused loader/resolver
+tests: 6 passed; touched-file Ruff and diff checks passed.
+
+The rerun explicitly imported `/home/ubuntu/VRL-mgpu-integration` via
+PYTHONPATH and advanced into model construction, then failed at
+MplugOwlVisionModel.post_init: inherited `_keep_in_fp32_modules=["wo"]`
+names no actual vision module. That second compatibility issue remains open;
+no score or passing inference receipt exists. Artifact script and both logs:
+`/mnt/nvme/outputs/wan22_i2v_cache/videocon_cpu_probe.py`,
+`videocon_cpu_probe.log`, and `videocon_cpu_probe_config_fix.log`.
+
+Both probes and all focused tests are terminal. Candidate is committed but
+not merged; shared runtime and pre-existing third_party/videophy dirt remain
+untouched. SD3.5 was still live at the final process check (elapsed 29m25s).
+The two-GPU trained-moment I2V resume remains queued, and the physics reward
+must pass real scoring after compatibility repairs before its quality gate.
