@@ -344,8 +344,6 @@ class RayActorDispatcher:
                 deadline_by_ref.pop(ref)
                 try:
                     result = task.result()
-                except asyncio.CancelledError as error:
-                    failure = error
                 except BaseException as error:
                     failure = error
                 else:

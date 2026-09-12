@@ -239,9 +239,9 @@ vrl/nn/quantization/fp8.py	44161c272a48b8540a53e81aa2589fd3af2e9849	pending	-
 vrl/nn/quantization/targeting.py	0afd6d1b5dfc3c20cde01bb1a361a3733cc737c3	pending	-
 vrl/ray/__init__.py	d5d7c6db71a92d5977cb71a0787114d599ef5cd4	pending	-
 vrl/ray/actor_group.py	fc280407590de76434ac0f456f40704407c07d06	reviewed	actor_startup.md; launcher_ownership.md narrows standalone recovery limitation
-vrl/ray/actor_pool.py	607ed88be8b9e6e87820fbfb80c2d249ba8d8e20	pending	-
+vrl/ray/actor_pool.py	607ed88be8b9e6e87820fbfb80c2d249ba8d8e20	reviewed	actor_dispatch.md
 vrl/ray/dependencies.py	12a4d335d1c646d6b9834566657782a0554c394d	reviewed	session_cleanup.md
-vrl/ray/operation_deadline.py	c38b70d9e7342bbe2af6e2cf03f58bbda8379447	pending	-
+vrl/ray/operation_deadline.py	c38b70d9e7342bbe2af6e2cf03f58bbda8379447	reviewed	actor_dispatch.md
 vrl/ray/placement.py	4cd1be7797a67b981150d9852b780eb6f6a2c007	pending	-
 vrl/ray/resources.py	1089a56c40d6074eaa8059d0a578d46f46f1074e	pending	-
 vrl/rewards/__init__.py	4bf9110447a4f95d0c4b21b609694b875f1f3e25	pending	-
