@@ -4,9 +4,9 @@
 implementation of the trainer-side lease operations: parking/restoring
 training state around a shared-GPU phase, preparing weight snapshots on the
 trainer thread (strategy export may run DDP/FSDP collectives) and pushing
-them from any loop, and tracking the policy version across syncs. Schedules
-talk to the collector only through the ``RolloutCollectorControl`` protocol,
-so the scheduling layer never imports a concrete collector or strategy type.
+them from any loop, and tracking the policy version across syncs.
+``RolloutCollectorControl`` describes the runtime-control subset; schedules
+also use the collector's prompt collection and scoring APIs.
 """
 
 from __future__ import annotations
@@ -230,14 +230,10 @@ class RolloutRuntimeCoordinator:
         cleanup_error: BaseException | None = None
         try:
             await self.offload_rollout_runtime_memory(stats)
+            if parked:
+                self.restore_training_state_after_rollout(stats)
         except BaseException as error:
             cleanup_error = error
-        else:
-            if parked:
-                try:
-                    self.restore_training_state_after_rollout(stats)
-                except BaseException as error:
-                    cleanup_error = error
 
         if phase_error is not None:
             if cleanup_error is not None:

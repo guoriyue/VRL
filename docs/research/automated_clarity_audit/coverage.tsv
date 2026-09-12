@@ -345,9 +345,9 @@ vrl/rollouts/orchestration/continuous/queue.py	2c8fefc619346e841a183400310a7a515
 vrl/rollouts/orchestration/continuous/schedule.py	b208f8d61d2e646245cdebbef3600b87d10aeb39	pending	-
 vrl/rollouts/orchestration/continuous/staleness.py	7bd9965b20dc8b5bff7d2fc5fec8fe8dc829ace5	pending	-
 vrl/rollouts/orchestration/continuous/types.py	d208a73c199d1d9b602cb84b3f87e766e6759d59	pending	-
-vrl/rollouts/orchestration/rollout_runtime.py	c64ef2980612c140cad23061c3b4a1d1b0318363	pending	-
-vrl/rollouts/orchestration/schedule.py	7746f1bfc9dfe651d689f7a4a10c26e9852c6b75	pending	-
-vrl/rollouts/orchestration/strict_on_policy.py	46cc176dda0005dd3f662aa649a101176c07d1ab	pending	-
+vrl/rollouts/orchestration/rollout_runtime.py	c64ef2980612c140cad23061c3b4a1d1b0318363	reviewed	rollout_handoff.md
+vrl/rollouts/orchestration/schedule.py	7746f1bfc9dfe651d689f7a4a10c26e9852c6b75	reviewed	rollout_handoff.md
+vrl/rollouts/orchestration/strict_on_policy.py	46cc176dda0005dd3f662aa649a101176c07d1ab	reviewed	rollout_handoff.md
 vrl/rollouts/orchestration/types.py	b5c4cf575cb771c0eabdef6c928251b11920158e	pending	-
 vrl/rollouts/stats.py	c536543e835e327d43be0ebf5c78ae0b5dbf996f	pending	-
 vrl/run.py	1f668ed3e7ed298988065da4c4c1eefc38a97344	pending	-
