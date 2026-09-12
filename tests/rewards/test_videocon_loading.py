@@ -23,6 +23,7 @@ def test_composite_config_logging_does_not_construct_vendor_defaults(
                 raise ImportError("legacy default imports a missing sibling package")
             super().__init__(**kwargs)
             self.text_config = text_config
+            self.vendor_initialized = True
 
     captured = {}
 
@@ -32,6 +33,7 @@ def test_composite_config_logging_does_not_construct_vendor_defaults(
         @staticmethod
         def from_pretrained(path, *, config, torch_dtype):
             captured.update(path=path, config=config, dtype=torch_dtype)
+            assert config.vendor_initialized
             # This is where modern Transformers serializes the composite config.
             assert json.loads(config.to_json_string())["text_config"] == {"model_type": "llama"}
             return torch.nn.Linear(1, 1).to(torch_dtype)
@@ -46,7 +48,14 @@ def test_composite_config_logging_does_not_construct_vendor_defaults(
     modeling.MplugOwlPreTrainedModel = vendor_base
     processing = ModuleType("mplug_owl_video.processing_mplug_owl")
     processing.MplugOwlImageProcessor = SimpleNamespace(from_pretrained=lambda *a: object())
-    processing.MplugOwlProcessor = lambda *a: object()
+
+    class Processor:
+        def __init__(self, image_processor, tokenizer):
+            assert self.get_attributes() == []
+            self.image_processor = image_processor
+            self.tokenizer = tokenizer
+
+    processing.MplugOwlProcessor = Processor
     monkeypatch.setitem(sys.modules, "mplug_owl_video.modeling_mplug_owl", modeling)
     monkeypatch.setitem(sys.modules, "mplug_owl_video.processing_mplug_owl", processing)
 
