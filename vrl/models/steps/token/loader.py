@@ -86,6 +86,10 @@ def load_ar_replay_checkpoint(module: _StateDictModule, checkpoint_dir: str) -> 
                 core_state = {key: value for key, value in shard_state.items() if key in core_keys}
                 module.load_state_dict(core_state, strict=False)
                 loaded_keys.update(core_state)
+                # Release this shard before load_state_dict allocates the next;
+                # assigning shard_state alone would keep the old tensors alive
+                # while the right-hand side reads the next shard.
+                del core_state, shard_state
             missing_keys = sorted(core_keys - loaded_keys)
     else:
         checkpoint_path = next(

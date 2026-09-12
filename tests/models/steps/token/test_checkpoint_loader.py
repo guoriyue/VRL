@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import weakref
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -119,6 +120,31 @@ def test_sharded_checkpoint_opens_only_shards_with_core_keys(
     assert core.loaded_state_keys == [{"left.weight"}, {"right.weight"}]
     torch.testing.assert_close(core.left.weight, torch.tensor([[4.0]]))
     torch.testing.assert_close(core.right.weight, torch.tensor([[5.0]]))
+
+
+def test_shard_tensors_are_released_before_loading_next_shard(monkeypatch, tmp_path) -> None:
+    from transformers import modeling_utils
+
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"left.weight": "a.bin", "right.weight": "b.bin"}}),
+        encoding="utf-8",
+    )
+    previous_tensors: list[weakref.ReferenceType] = []
+
+    def load_shard(path: str) -> dict[str, torch.Tensor]:
+        assert all(reference() is None for reference in previous_tensors)
+        key = "left.weight" if Path(path).name == "a.bin" else "right.weight"
+        state = {key: torch.ones(1, 1), "vision.extra": torch.zeros(1, 1)}
+        previous_tensors.extend(weakref.ref(value) for value in state.values())
+        return state
+
+    monkeypatch.setattr(modeling_utils, "load_state_dict", load_shard)
+    core = _TinyReplayCore()
+    loader.load_ar_replay_checkpoint(core, str(tmp_path))
+
+    assert all(reference() is None for reference in previous_tensors)
+    torch.testing.assert_close(core.left.weight, torch.ones(1, 1))
+    torch.testing.assert_close(core.right.weight, torch.ones(1, 1))
 
 
 def test_checkpoint_missing_core_keys_fails_before_loading_partial_state(
