@@ -1,8 +1,19 @@
 # SD3.5 continuous: controlled follow-up
 
-Status: queued follow-up, requested by the user on 2026-09-12. Preserve the
-running continuous experiment and existing GPU queue. This plan does not
-authorize interruption, change the queue script, or claim a hardware slot.
+Status: short hardware acceptance started on 2026-09-12. The user subsequently
+explicitly authorized stopping the old long queue and switching. Queue PID
+284402 and continuous driver PID 318010 were stopped, their artifacts were
+preserved, and GPU inventory was empty before the corrected launch. The old
+dynamic stage must not restart automatically. Codex claims GPUs 0-3 for these
+sequential short runs; see the current override in the hardware execution log.
+
+Corrected continuous is running from `/home/ubuntu/VRL-mgpu-integration` at
+`e11c04bc`, using the unchanged shared Python environment. Output root:
+`/mnt/nvme/outputs/sd35_global_std_controlled`. Initial training arms are limited
+to two updates each, preserving 512px, 10 denoising steps, 128 samples/update,
+generation/replay batch 1, seed 1234, global_std and four-way accumulation.
+One post-warmup update is preliminary timing evidence, not a statistically
+established speedup. Startup logs confirm update-wide normalization is active.
 
 ## Purpose
 
@@ -29,9 +40,9 @@ Reward means from different training prompts are not a controlled comparison.
 
 ## Next steps after continuous
 
-1. Archive the current continuous verdict, resolved config, metrics and final
-   checkpoint. Label it pre-fix. Coordinate a GPU slot with the queue owner;
-   do not launch over the remaining queued work.
+1. Preserve the stopped continuous config, metrics, logs and any existing
+   checkpoints. Label it pre-fix and user-stopped, not successfully completed;
+   do not invent a final checkpoint or success verdict for the interrupted run.
 2. Review and integrate `e11c04bc` through the candidate's dependency chain,
    without changing source or dependencies under live jobs. Record the exact
    runtime revision and environment used by every comparison arm.
