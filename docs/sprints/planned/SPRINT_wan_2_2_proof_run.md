@@ -53,13 +53,16 @@ for the original reward acceptance gate.
 Dependency audit correction: those VideoCon load/forward probes used the
 shared, unsupported Transformers 4.57.6 environment. Project requirements
 and uv.lock select 5.13.0. An isolated locked-version overlay passes the
-whole rewards suite (405 passed, 5 skipped), but the real VideoCon vendor
-cannot import find_pruneable_heads_and_indices from transformers.pytorch_utils
-on 5.13.0. Supported-version vendor integration is therefore a separate
-confirmed prerequisite, not covered by mocked loader tests. See the execution
-ledger's dependency-drift section for versions, commands and logs. Do not
-weaken the project dependency pin or treat old-environment evidence as a
-supported-version acceptance result.
+whole rewards suite; actual vendor probing initially failed on removed
+pruning imports and changed processor/config initialization. Candidate
+`1ce7336b` now repairs those compatibility contracts without editing vendor
+files or weakening the dependency pin. Real Transformers 5.13 loading passes:
+917 weight entries, 7,152,633,856 model parameters. Log:
+`outputs/perf/videocon_transformers5_config_init_fix.log`. Updated whole
+rewards regression: 407 passed, 5 skipped. Actual supported-version video
+scoring and training integration remain open. See the execution ledger for
+the dependency overlay and retained failed probes; old-environment evidence
+still cannot substitute for supported-version acceptance.
 
 Execute after the GPU queue in `../SPRINT_four_l40s_execution.md` releases
 the required devices:

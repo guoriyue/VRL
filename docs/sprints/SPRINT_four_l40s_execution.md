@@ -1213,3 +1213,33 @@ suite's mocked VideoCon loader does not cover this external dependency.
 Port/validate the real vendor adapter on supported Transformers before claiming
 physics reward readiness; do not resolve this by weakening the project pin.
 All diagnostic sessions are terminal; SD3.5 1x2 PID 263970 was left untouched.
+
+### Actual VideoCon loading on Transformers 5 repaired (Codex)
+
+Candidate `1ce7336b` addresses three real supported-version failures:
+
+- Installs the legacy head-pruning index helper only when Transformers lacks
+  it, preserving the upstream implementation and repeated-pruning semantics.
+  prune_linear_layer remains the library implementation. No empty stubs.
+- A local processor subclass preserves the vendor's attributes=[] contract;
+  video sampling, tokenization and tensor assembly remain vendor-owned.
+- An explicit config subclass constructor delegates to the vendor constructor;
+  otherwise Transformers 5's generated dataclass initializer skips conversion
+  of nested vision/text dictionaries into real config objects.
+
+The actual pinned VideoCon checkpoint now loads offline on CPU/BF16 with
+Transformers 5.13.0: all 917 weight entries loaded, 7,152,633,856 model
+parameters, process exit 0. Log:
+`outputs/perf/videocon_transformers5_config_init_fix.log`. Earlier failed
+stages remain in videocon_transformers5_load.log and
+videocon_transformers5_processor_fix.log. This successful probe stops after
+model construction; it is not a video score, GPU lifecycle or learning gate.
+
+Updated supported-version rewards regression: 407 passed, 5 skipped in 7.19 s;
+log `outputs/perf/mgpu_reward_regression_transformers5_videocon_fix.log`.
+Old-environment focused compatibility/resolver tests: 10 passed. Touched-file
+Ruff/format and diff checks passed. Candidate is committed, not merged;
+shared .venv, shared runtime and the dirty VideoPhy submodule are unchanged.
+All owned probe/test sessions are terminal. The next required physics reward
+evidence is actual scoring under supported dependencies, followed by resource
+handoff and the unchanged full quality objective.
