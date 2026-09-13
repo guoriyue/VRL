@@ -56,3 +56,29 @@ bazel test //tests/build:python_toolchain_test
 优先接入 rules_cuda 的 deliverable Toolkit（NVIDIA redistribution 清单及 hash）
 和固定 C++ 编译工具链，执行真实 GPU 核函数测试。
 然后接入锁定 Torch 依赖及实际 VRL 内核/生成/训练目标。
+
+## CUDA 工具链阶段
+
+已通过：
+- Bazel 下载 CUDA 12.8.1 redistribution 的 cccl/cudart/nvcc；清单固定 SHA-256。
+- LLVM 19.1.7 + 固定 Chromium Debian sysroot + libstdc++。
+- 显式 compute_120:sm_120；实际 RTX 5090 执行加法核并验证回传数值。
+- 清除 CUDA_HOME、CUDA_PATH、VIRTUAL_ENV、PYTHONPATH 后测试通过。
+- aquery 确认编译命令使用 Bazel external 内的 nvcc、LLVM wrapper 和 sysroot。
+- ldd 确认 cudart 来自 Bazel 产物；运行时 glibc 和 NVIDIA 驱动仍由 Linux 主机提供。
+
+命令：
+
+```bash
+bazel test --config=cuda //tests/toolchains:cuda_execution_test
+```
+
+真实测试不是 mock，但它目前只是独立核函数，不是 Torch 扩展、
+VRL 生成或训练验收。CUDA 清单的整项验收仍未勾选。
+系统平台的动态 loader/glibc 兼容范围尚需在干净执行镜像验证。
+CPU 目标无需 --config=cuda；GPU 测试标记 manual，普通 //... 不运行 GPU。
+
+发现并解决：
+- LLVM 18 官方 Linux 包要求未声明的 libtinfo.so.5，未在宿主机安装补救；
+  改用 CUDA 支持的 LLVM 19 发行包。
+- NVCC x86 拒绝 libc++，明确选择 sysroot 的 libstdc++。

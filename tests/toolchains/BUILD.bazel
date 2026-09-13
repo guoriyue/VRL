@@ -1,0 +1,15 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("@rules_cuda//cuda:defs.bzl", "cuda_library")
+
+cuda_library(
+    name = "cuda_probe",
+    srcs = ["cuda_probe.cu"],
+)
+
+cc_test(
+    name = "cuda_execution_test",
+    size = "small",
+    srcs = ["cuda_execution_test.cc"],
+    deps = [":cuda_probe"],
+    tags = ["gpu", "manual", "no-remote"],
+)

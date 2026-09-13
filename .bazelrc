@@ -1,3 +1,6 @@
 # Runtime dependencies must be declared, not inherited from a developer venv.
 build --incompatible_default_to_explicit_init_py
 test --test_output=errors
+
+# Opt-in Blackwell lane; CPU-only targets do not need a GPU.
+build:cuda --@rules_cuda//cuda:archs=compute_120:sm_120
