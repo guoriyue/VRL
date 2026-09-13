@@ -20,6 +20,14 @@ vrl_library(
     requirements = vllm_requirements,
 )
 
+# Shared-GPU topology: the model/reward stack plus vLLM's CuMem allocator for
+# memory parking. Both hubs come from one uv.lock and every shared pin is
+# identical, so this is the README's "vllm --no-deps overlay" made explicit.
+vrl_library(
+    name = "vrl_shared_gpu",
+    requirements = all_requirements + vllm_requirements,
+)
+
 py_binary(
     name = "vrl_train",
     srcs = ["vrl/scripts/train.py"],

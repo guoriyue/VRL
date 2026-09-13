@@ -8,6 +8,7 @@ import inspect
 import math
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,9 @@ from vrl.generation.execution.planner import EnginePlan
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.ray.resources import ResolvedDistributedResources
+from vrl.rewards.base import RewardFunction
 from vrl.rewards.runtime import RewardFunctionRuntime
+from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.run import resolve_reward_inputs
@@ -523,9 +526,11 @@ def test_every_case_config_parses_without_a_gpu(
     parse_config(load_config(case.config, overrides=overrides))
 
 
-class _IndexReward:
-    async def score_batch(self, rollouts: list[Any]) -> list[float]:
-        return [float(i) for i, _ in enumerate(rollouts)]
+class _IndexReward(RewardFunction):
+    """Deterministic non-constant scores so the update has a non-zero advantage."""
+
+    async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
+        return RewardOutput(scores=tuple(float(i) for i, _ in enumerate(samples)))
 
 
 class _DirectExecutorGenerationRuntime:
@@ -609,22 +614,30 @@ class _SyntheticDiffusionReplayCollector:
         self.device = device
         self.generation_runtime = _StaticPolicyRuntime()
 
-    async def generate_rollout(self, prompts: list[str], **kwargs: Any) -> Any:
-        prepared = prompts
-        prompts = prepared.inputs
-        kwargs = prepared.options
-        return _synthetic_diffusion_replay_batch(
-            model=self.model,
-            case=self.case,
-            cfg=self.cfg,
-            prompts=prompts,
-            group_size=int(kwargs["group_size"]),
-            policy_version=kwargs.get("policy_version"),
-            device=self.device,
-        )
+    async def prepare_training_batches(
+        self,
+        *,
+        prompts: list[Any],
+        group_size: int,
+        runtime_debug: bool,
+        policy_version: int | None,
+        stats: Any,
+        reward_mode: Any = None,
+    ) -> list[Any]:
+        """One synthetic replay batch per call; rewards are baked into the batch."""
 
-    async def evaluate_rollout(self, pendings: Any) -> Any:
-        return list(pendings)
+        del runtime_debug, stats, reward_mode
+        return [
+            _synthetic_diffusion_replay_batch(
+                model=self.model,
+                case=self.case,
+                cfg=self.cfg,
+                prompts=[str(getattr(prompt, "prompt", prompt)) for prompt in prompts],
+                group_size=int(group_size),
+                policy_version=policy_version,
+                device=self.device,
+            )
+        ]
 
     async def activate_generation_runtime(self) -> None:
         return None

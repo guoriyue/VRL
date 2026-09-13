@@ -24,7 +24,7 @@
 - [x] 显式处理 Triton/JIT 编译依赖与缓存；驱动作为运行平台要求。
 - [ ] 外部源码版本与补丁进入构建输入。
 - [ ] CountGD 权重与依赖进入 Bazel，评分/服务等价性通过后删除旧安装器。
-- [ ] 真实生成与训练步骤测试通过，非 CPU/mock 替代。
+- [x] 真实生成与训练步骤测试通过，非 CPU/mock 替代。（5 个真实权重 case；见下）
 - [ ] Reward 服务集成测试通过。
 - [ ] Ray、torchrun、跨节点产物交付与解释器选择明确并验证。
 - [x] 普通 lint/配置/单元测试不下载所有模型权重。
@@ -156,3 +156,34 @@ Ray/torchrun 解释器、CI。
   `uv.lock` 里的 profile 保留。可选出路：rules_rust 驱动 maturin，或 vbench 升级。
 - MAGI-1：官方 requirements 需要 flash-attn 2.4.2 + flashinfer cu124/torch2.4 源码构建，
   与 uv.lock 无交集（README 已要求用户自建 `third_party/MAGI-1/.venv`）。未建 hub。
+
+## 真实权重生成 + 训练步（2026-09-13）
+
+`bazel test --config=gpu --config=real_weights //tests:e2e_real_checkpoint_tests`
+（`HF_HOME` 指向操作者的 HF 缓存，`WM_REAL_MODEL_RL_CASES` 选 case；权重是操作者选择的
+checkpoint，不是构建输入；`HF_HUB_OFFLINE=1`）。每个 case 是一次真实 rollout（生成）+
+一次优化器更新，断言可训练权重变化、reward std/advantage 非退化、loss/grad 有限、
+rollout-vs-replay log-prob 一致。在 RTX 5090 上从 Bazel runfiles 通过：
+
+| case | 模型 | 说明 |
+|---|---|---|
+| wan_2_1 | Wan2.1-T2V-1.3B | 视频，LoRA |
+| sd3_5 | SD3.5-medium | 图像，LoRA |
+| sd3_5_dance_grpo | SD3.5-medium | DanceGRPO |
+| cosmos_predict2 | Cosmos-Predict2-2B-Video2World | 需要 vLLM CuMem 停车 |
+| cosmos_predict2_kling_real_reward | 同上 + KlingTeam/VideoReward | 真实 reward 模型评分 |
+
+依赖栈：`//:vrl_shared_gpu` = 主 hub + vLLM hub。两个 hub 出自同一 uv.lock，100 个共同包
+版本全部一致（已核对），所以这等价于 README "shared-GPU" 的 `vllm --no-deps` 覆盖，
+只是变成了声明式依赖。
+
+修复的测试漂移（e2e 长期没跑，和运行时脱节）：`_IndexReward` 不是 `RewardFunction`；
+`_SyntheticDiffusionReplayCollector` 还在实现旧的 `generate_rollout/evaluate_rollout`
+而调度器已改调 `prepare_training_batches`。
+
+仍失败、与 Bazel 无关：
+- sd3_5_flow_dppo、sd3_5_grpo_guard：case 覆盖项与新校验冲突（严格 on-policy 且
+  `ppo_epochs=1` 时比率恒为 1，算法拒绝启动）。需要改 case 配置，属算法测试维护。
+- cosmos_anima、cosmos_anima_safe：训练步之后触发 `PrecisionDriftError`（已知未解）。
+- janus_pro：需要 `deepseek-ai/Janus` 源码包（不在 PyPI，也不在 uv.lock，.venv 里同样缺）。
+- cosmos_predict2_5：本机无缓存；nextstep_1：需要 64 GiB 显存。

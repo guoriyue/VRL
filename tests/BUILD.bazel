@@ -16,7 +16,6 @@ TEST_TREE = glob(
     ["**/*.py"],
     exclude = [
         "build/**",
-        "e2e/**",
         "toolchains/**",
     ],
 )
@@ -35,6 +34,13 @@ py_library(
     srcs = TEST_TREE,
     data = TEST_FIXTURE_FILES,
     deps = ["//:vrl_vllm"],
+)
+
+py_library(
+    name = "support_shared_gpu",
+    srcs = TEST_TREE,
+    data = TEST_FIXTURE_FILES,
+    deps = ["//:vrl_shared_gpu"],
 )
 
 # CPU lanes mirror `make verify`: the CUDA mask keeps optional GPU tests from
@@ -112,4 +118,21 @@ vrl_pytest(
     args = ["-m", "gpu"],
     support = ":support_vllm",
     tags = GPU_TAGS,
+)
+
+# Real-weight end-to-end RL steps (one rollout + one optimizer update per
+# model family) against checkpoints the operator already has in the Hugging
+# Face cache. Weights are the operator's choice, not build inputs: pass
+# `--test_env=HF_HOME=...` and select cases with WM_REAL_MODEL_RL_CASES.
+#   bazel test --config=gpu --config=real_weights //tests:e2e_real_checkpoint_tests
+vrl_pytest(
+    name = "e2e_real_checkpoint_tests",
+    size = "enormous",
+    timeout = "eternal",
+    srcs = glob(["e2e/**/*.py"]),
+    args = ["-m", "e2e"],
+    data = ["//datasets:manifests"],
+    env = {"WM_RUN_REAL_MODEL_TESTS": "1"},
+    support = ":support_shared_gpu",
+    tags = GPU_TAGS + ["external"],
 )

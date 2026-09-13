@@ -11,3 +11,6 @@ test:gpu --test_tag_filters=gpu --test_env=NVIDIA_VISIBLE_DEVICES --test_env=CUD
 # The same test tree is built against several dependency hubs; precompiled
 # .pyc outputs would collide and buy nothing for these targets.
 build --@rules_python//python/config_settings:precompile=force_disabled
+
+# Real-weight lanes read the operator's Hugging Face cache; checkpoints are not build inputs.
+test:real_weights --test_env=HF_HOME --test_env=HF_HUB_OFFLINE=1 --test_env=WM_REAL_MODEL_RL_CASES
