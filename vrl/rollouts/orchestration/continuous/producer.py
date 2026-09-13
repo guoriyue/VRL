@@ -30,13 +30,13 @@ from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import move_training_batch_to_device
 from vrl.rollouts.collector.core import RewardCollectionMode, RolloutGenerationResult
-from vrl.rollouts.orchestration.continuous.generated_capacity import GeneratedRolloutCapacity
-from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
+from vrl.rollouts.orchestration.continuous.pending_reward_capacity import PendingRewardCapacity
+from vrl.rollouts.orchestration.continuous.scored_queue import ScoredRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
-    ContinuousRolloutItem,
     ContinuousRolloutProducerState,
     ContinuousRolloutSettings,
+    ScoredRollout,
 )
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.stats import RolloutStats
@@ -58,7 +58,7 @@ class _GroupProductionError(RuntimeError):
 
 
 @dataclass(slots=True)
-class _ActivePromptBatch:
+class _PromptBatchProgress:
     """Batch-owned inputs and mutable progress for one finite prompt batch.
 
     Keeping both on one object prevents a retry from reading policy or collection
@@ -94,7 +94,7 @@ class ContinuousRolloutProducer:
         self,
         *,
         lifecycle: RolloutRuntimeCoordinator,
-        queue: ContinuousRolloutQueue,
+        queue: ScoredRolloutQueue,
         staleness: StalenessPolicy,
         settings: ContinuousRolloutSettings,
     ) -> None:
@@ -112,7 +112,7 @@ class ContinuousRolloutProducer:
                 "split generation/reward requires nonblocking reward scoring and "
                 "verified accelerator isolation",
             )
-        self._generated_capacity = GeneratedRolloutCapacity(
+        self._pending_reward_capacity = PendingRewardCapacity(
             max_groups=settings.max_unscored_groups,
             max_bytes=settings.max_unscored_bytes_mb * 1024 * 1024,
         )
@@ -127,27 +127,29 @@ class ContinuousRolloutProducer:
         self._blocked_reason: str | None = None
         self._blocked_since: float | None = None
         self._loop_task: asyncio.Task[None] | None = None
-        self._inflight: dict[
+        self._running_tasks: dict[
             asyncio.Task[tuple[list[RolloutBatch], RolloutStats]],
             tuple[int, int],
         ] = {}
-        self._batches: dict[int, _ActivePromptBatch] = {}
+        self._batches: dict[int, _PromptBatchProgress] = {}
         self._last_tick_at: float | None = None
         self._last_observability_log_at = 0.0
 
     @property
-    def _active_batch(self) -> _ActivePromptBatch | None:
+    def _active_batch(self) -> _PromptBatchProgress | None:
         return next(iter(self._batches.values()), None)
 
     @property
     def _has_pending_work(self) -> bool:
-        return bool(self._inflight or any(batch.pending_slots for batch in self._batches.values()))
+        return bool(
+            self._running_tasks or any(batch.pending_slots for batch in self._batches.values())
+        )
 
     @property
     def inflight_count(self) -> int:
         """Display-only live task count derived from its owning container."""
 
-        return len(self._inflight)
+        return len(self._running_tasks)
 
     @property
     def current_batch_id(self) -> int:
@@ -167,7 +169,7 @@ class ContinuousRolloutProducer:
         return {
             "active_batches": float(len(self._batches)),
             "generation_inflight": float(len(self._generating)),
-            **self._generated_capacity.stats(),
+            **self._pending_reward_capacity.stats(),
         }
 
     # -- lifecycle ------------------------------------------------------
@@ -203,11 +205,11 @@ class ContinuousRolloutProducer:
         """
 
         current = self._active_batch
-        if current is not None and (current.pending_slots or self._inflight):
+        if current is not None and (current.pending_slots or self._running_tasks):
             raise RuntimeError(
                 "cannot replace an incomplete continuous prompt batch "
                 f"(pending={list(current.pending_slots)}, "
-                f"inflight={sorted(self._inflight.values())})",
+                f"inflight={sorted(self._running_tasks.values())})",
             )
         if current is not None and self.queue.size():
             raise RuntimeError(
@@ -241,7 +243,7 @@ class ContinuousRolloutProducer:
         if batch_id != self.current_batch_id:
             raise RuntimeError("continuous consumption attempted to skip the head batch")
         batch = self._batches[batch_id]
-        if batch.pending_slots or any(key[0] == batch_id for key in self._inflight.values()):
+        if batch.pending_slots or any(key[0] == batch_id for key in self._running_tasks.values()):
             raise RuntimeError("continuous consumption attempted to retire unfinished work")
         if any(item.batch_id == batch_id for item in self.queue.snapshot()):
             raise RuntimeError("continuous consumption left ready items in the head batch")
@@ -253,12 +255,12 @@ class ContinuousRolloutProducer:
         *,
         group_size: int,
         runtime_debug: bool,
-    ) -> _ActivePromptBatch:
+    ) -> _PromptBatchProgress:
         """Construct and validate a batch before changing installed state."""
 
         prompt_batch = tuple(prompts)
         installed_at = time.monotonic()
-        return _ActivePromptBatch(
+        return _PromptBatchProgress(
             batch_id=self._next_batch_id,
             policy_version=self.lifecycle.current_policy_version(),
             prompts=prompt_batch,
@@ -280,9 +282,9 @@ class ContinuousRolloutProducer:
         self.state.running = False
         if self._loop_task is not None and not self._loop_task.done():
             self._loop_task.cancel()
-        for task in self._inflight:
+        for task in self._running_tasks:
             task.cancel()
-        tasks = set(self._inflight)
+        tasks = set(self._running_tasks)
         if self._loop_task is not None:
             tasks.add(self._loop_task)
         pending: set[asyncio.Task[Any]] = set()
@@ -304,9 +306,9 @@ class ContinuousRolloutProducer:
                 wait_timeout_s,
             )
         self._loop_task = None
-        self._inflight.clear()
+        self._running_tasks.clear()
         self._generating.clear()
-        self._generated_capacity.close()
+        self._pending_reward_capacity.close()
 
     # -- weight-sync barrier -------------------------------------------
 
@@ -342,7 +344,7 @@ class ContinuousRolloutProducer:
             if not self._has_pending_work:
                 return
             blocked_reason = self._admit(allow_paused=True)
-            tasks = list(self._inflight)
+            tasks = list(self._running_tasks)
             if not tasks:
                 raise RuntimeError(
                     "continuous finite prompt batch cannot admit its pending slots "
@@ -362,16 +364,16 @@ class ContinuousRolloutProducer:
 
     def _drain_timeout_message(
         self,
-        prompt_batch: _ActivePromptBatch,
+        prompt_batch: _PromptBatchProgress,
         wait_timeout_s: float,
     ) -> str:
         completed_slots = sum(
             len(batch.prompts) - len(batch.pending_slots) for batch in self._batches.values()
-        ) - len(self._inflight)
+        ) - len(self._running_tasks)
         return (
             "continuous weight-sync barrier timed out draining finite prompt batch "
             f"after {wait_timeout_s}s (pending={list(prompt_batch.pending_slots)}, "
-            f"inflight={sorted(self._inflight.values())}, "
+            f"inflight={sorted(self._running_tasks.values())}, "
             f"completed={completed_slots}, "
             f"failures={prompt_batch.failure_counts}, last_error={self.state.last_error})"
         )
@@ -444,12 +446,12 @@ class ContinuousRolloutProducer:
             self.state.last_error = repr(error)
             self.state.fatal_error = error
             if find_error_cause(error, TerminalRuntimeError) is not None:
-                siblings = list(self._inflight)
+                siblings = list(self._running_tasks)
                 for task in siblings:
                     task.cancel()
                 if siblings:
                     await asyncio.gather(*siblings, return_exceptions=True)
-                self._inflight.clear()
+                self._running_tasks.clear()
             logger.error(
                 "continuous rollout producer control loop failed",
                 exc_info=(type(error), error, error.__traceback__),
@@ -471,24 +473,24 @@ class ContinuousRolloutProducer:
                     raise prompt_batch.failure
                 continue
             while prompt_batch.pending_slots:
-                active = len(self._generating) if self._split_reward else len(self._inflight)
+                active = len(self._generating) if self._split_reward else len(self._running_tasks)
                 if active >= self.max_inflight_groups:
                     return "inflight_full"
                 slot = prompt_batch.pending_slots[0]
-                if self._split_reward and not self._generated_capacity.reserve(
+                if self._split_reward and not self._pending_reward_capacity.reserve(
                     (prompt_batch.batch_id, slot),
                     max_group_bytes=self._group_byte_ceiling,
                 ):
                     return "unscored_full"
                 prompt_batch.pending_slots.popleft()
-                if (prompt_batch.batch_id, slot) in self._inflight.values():
+                if (prompt_batch.batch_id, slot) in self._running_tasks.values():
                     raise RuntimeError(
                         f"continuous prompt batch attempted duplicate in-flight slot {slot}",
                     )
                 self._submit(prompt_batch, slot)
         return None
 
-    def _submit(self, prompt_batch: _ActivePromptBatch, slot: int) -> None:
+    def _submit(self, prompt_batch: _PromptBatchProgress, slot: int) -> None:
         pending_since = prompt_batch.pending_since.pop(slot)
         admission_wait_s = max(0.0, time.monotonic() - pending_since)
         task = asyncio.create_task(
@@ -498,7 +500,7 @@ class ContinuousRolloutProducer:
                 admission_wait_s=admission_wait_s,
             ),
         )
-        self._inflight[task] = (prompt_batch.batch_id, slot)
+        self._running_tasks[task] = (prompt_batch.batch_id, slot)
         if self._split_reward:
             self._generating.add((prompt_batch.batch_id, slot))
         self.state.submitted_count += 1
@@ -506,7 +508,7 @@ class ContinuousRolloutProducer:
     async def _collect_group(
         self,
         *,
-        prompt_batch: _ActivePromptBatch,
+        prompt_batch: _PromptBatchProgress,
         slot: int,
         admission_wait_s: float,
     ) -> tuple[list[RolloutBatch], RolloutStats]:
@@ -526,7 +528,7 @@ class ContinuousRolloutProducer:
 
     async def _collect_split_group(
         self,
-        prompt_batch: _ActivePromptBatch,
+        prompt_batch: _PromptBatchProgress,
         slot: int,
         stats: RolloutStats,
     ) -> tuple[list[RolloutBatch], RolloutStats]:
@@ -551,7 +553,7 @@ class ContinuousRolloutProducer:
                     self.lifecycle.current_policy_version(),
                 ):
                     raise RuntimeError("continuous generated group became stale before reward")
-                self._generated_capacity.record_generated(
+                self._pending_reward_capacity.record_generated(
                     key, nbytes=trajectory_tensor_bytes(receipt.unscored)
                 )
                 # Only GPU generation occupies a generation slot. Capacity for
@@ -559,7 +561,7 @@ class ContinuousRolloutProducer:
                 self._generating.discard(key)
                 queued_at = time.perf_counter()
                 async with self._reward_lock:
-                    self._generated_capacity.start_scoring(key)
+                    self._pending_reward_capacity.start_scoring(key)
                     stats.observe_gauge(
                         "continuous.reward_queue_wait_s", time.perf_counter() - queued_at
                     )
@@ -611,9 +613,9 @@ class ContinuousRolloutProducer:
             raise
         finally:
             self._generating.discard(key)
-            self._generated_capacity.release(key)
+            self._pending_reward_capacity.release(key)
 
-    def _fail_batch(self, batch: _ActivePromptBatch, error: BaseException) -> None:
+    def _fail_batch(self, batch: _PromptBatchProgress, error: BaseException) -> None:
         """Defer a preview-local failure until it becomes the demanded head.
 
         Runtime terminal errors still quarantine the entire fleet immediately;
@@ -637,16 +639,16 @@ class ContinuousRolloutProducer:
                 asyncio.get_running_loop().call_soon(traceback.clear_frames, cause.__traceback__)
             cause = cause.__cause__ or cause.__context__
         batch.pending_slots.clear()
-        for task, key in self._inflight.items():
+        for task, key in self._running_tasks.items():
             if key[0] == batch.batch_id:
                 task.cancel()
 
     def _harvest_done(self) -> None:
-        if not self._inflight:
+        if not self._running_tasks:
             return
-        done = [task for task in self._inflight if task.done()]
+        done = [task for task in self._running_tasks if task.done()]
         for task in done:
-            batch_id, slot = self._inflight.pop(task)
+            batch_id, slot = self._running_tasks.pop(task)
             prompt_batch = self._batches.get(batch_id)
             if prompt_batch is None:
                 raise RuntimeError("continuous collect completed without an active prompt batch")
@@ -658,7 +660,7 @@ class ContinuousRolloutProducer:
                     # A task cancelled before its first execution never entered
                     # _collect_split_group's finally block.
                     self._generating.discard(key)
-                    self._generated_capacity.release(key)
+                    self._pending_reward_capacity.release(key)
                 continue
             try:
                 batches, stats = task.result()
@@ -728,7 +730,7 @@ class ContinuousRolloutProducer:
     def _enqueue_result(
         self,
         *,
-        prompt_batch: _ActivePromptBatch,
+        prompt_batch: _PromptBatchProgress,
         slot: int,
         batches: list[RolloutBatch],
         stats: RolloutStats,
@@ -776,7 +778,7 @@ class ContinuousRolloutProducer:
                 "continuous.reward_queue_wait_s",
                 float(stats.reward_queue_wait_ms) / 1000.0,
             )
-        item = ContinuousRolloutItem(
+        item = ScoredRollout(
             batch_id=prompt_batch.batch_id,
             group_slot=slot,
             rollout_policy_version=prompt_batch.policy_version,
@@ -816,7 +818,7 @@ class ContinuousRolloutProducer:
             "inflight=%d queue_size=%d submitted=%d completed=%d paused=%s errors=%d",
             gap_s,
             self.state.max_tick_gap_s,
-            len(self._inflight),
+            len(self._running_tasks),
             self.queue.size(),
             self.state.submitted_count,
             self.state.completed_count,

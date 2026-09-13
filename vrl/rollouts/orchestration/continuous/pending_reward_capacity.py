@@ -9,7 +9,7 @@ from __future__ import annotations
 from vrl.utils.validation import require_int
 
 
-class GeneratedRolloutCapacity:
+class PendingRewardCapacity:
     """Account group and byte capacity from generation admission through scoring."""
 
     def __init__(self, *, max_groups: int, max_bytes: int) -> None:

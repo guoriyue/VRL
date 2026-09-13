@@ -2,11 +2,11 @@
 
 import pytest
 
-from vrl.rollouts.orchestration.continuous.generated_capacity import GeneratedRolloutCapacity
+from vrl.rollouts.orchestration.continuous.pending_reward_capacity import PendingRewardCapacity
 
 
 def test_reservation_bounds_unfinished_generation_before_receipt() -> None:
-    capacity = GeneratedRolloutCapacity(max_groups=3, max_bytes=10)
+    capacity = PendingRewardCapacity(max_groups=3, max_bytes=10)
     assert capacity.reserve((0, 0), max_group_bytes=6)
     assert not capacity.reserve((0, 1), max_group_bytes=6)
     capacity.record_generated((0, 0), nbytes=4)
@@ -15,7 +15,7 @@ def test_reservation_bounds_unfinished_generation_before_receipt() -> None:
 
 
 def test_scoring_and_retry_retain_capacity() -> None:
-    capacity = GeneratedRolloutCapacity(max_groups=1, max_bytes=10)
+    capacity = PendingRewardCapacity(max_groups=1, max_bytes=10)
     assert capacity.reserve((0, 0), max_group_bytes=10)
     capacity.record_generated((0, 0), nbytes=8)
     capacity.start_scoring((0, 0))
@@ -29,7 +29,7 @@ def test_scoring_and_retry_retain_capacity() -> None:
 
 
 def test_overflow_and_duplicate_size_report_fail_before_mutation() -> None:
-    capacity = GeneratedRolloutCapacity(max_groups=2, max_bytes=10)
+    capacity = PendingRewardCapacity(max_groups=2, max_bytes=10)
     assert capacity.reserve((0, 0), max_group_bytes=5)
     with pytest.raises(ValueError, match="ceiling"):
         capacity.record_generated((0, 0), nbytes=6)
@@ -43,7 +43,7 @@ def test_overflow_and_duplicate_size_report_fail_before_mutation() -> None:
 
 
 def test_cancel_at_every_stage_releases_capacity_and_close_stops_admission() -> None:
-    capacity = GeneratedRolloutCapacity(max_groups=3, max_bytes=30)
+    capacity = PendingRewardCapacity(max_groups=3, max_bytes=30)
     for slot in range(3):
         assert capacity.reserve((0, slot), max_group_bytes=10)
     capacity.record_generated((0, 1), nbytes=8)
@@ -61,7 +61,7 @@ def test_cancel_at_every_stage_releases_capacity_and_close_stops_admission() -> 
 
 
 def test_impossible_or_missing_reservations_fail_instead_of_waiting_forever() -> None:
-    capacity = GeneratedRolloutCapacity(max_groups=1, max_bytes=10)
+    capacity = PendingRewardCapacity(max_groups=1, max_bytes=10)
     with pytest.raises(ValueError, match="fit"):
         capacity.reserve((0, 0), max_group_bytes=11)
     with pytest.raises(RuntimeError, match="unreserved"):
@@ -93,8 +93,8 @@ def test_unscored_payload_estimate_counts_dataclass_media_without_alias_duplicat
     assert trajectory_tensor_bytes(receipt) == 32 + 800 + 3
 
 
-def test_scoring_requires_generated_capacity_and_cannot_start_twice() -> None:
-    capacity = GeneratedRolloutCapacity(max_groups=1, max_bytes=10)
+def test_scoring_requires_pending_reward_capacity_and_cannot_start_twice() -> None:
+    capacity = PendingRewardCapacity(max_groups=1, max_bytes=10)
     assert capacity.reserve((0, 0), max_group_bytes=10)
     with pytest.raises(RuntimeError, match="not waiting"):
         capacity.start_scoring((0, 0))
@@ -110,7 +110,7 @@ def test_scoring_requires_generated_capacity_and_cannot_start_twice() -> None:
 
 @pytest.mark.parametrize("nbytes", [-1, 0.5, float("nan"), True, "4"])
 def test_invalid_byte_counts_leave_reservation_unchanged(nbytes) -> None:
-    capacity = GeneratedRolloutCapacity(max_groups=2, max_bytes=8)
+    capacity = PendingRewardCapacity(max_groups=2, max_bytes=8)
     with pytest.raises(ValueError):
         capacity.reserve((0, 0), max_group_bytes=nbytes)
     assert capacity.stats()["reserved_groups"] == 0

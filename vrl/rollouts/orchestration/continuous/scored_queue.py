@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from collections import deque
 
-from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutItem
+from vrl.rollouts.orchestration.continuous.types import ScoredRollout
 from vrl.utils.validation import require_int
 
 
-class ContinuousRolloutQueue:
+class ScoredRolloutQueue:
     """Bounded FIFO container of ready rollout items (no version logic)."""
 
     def __init__(
@@ -24,9 +24,9 @@ class ContinuousRolloutQueue:
         max_items: int,
         max_bytes: int = 0,
     ) -> None:
-        self.max_items = require_int(max_items, path="ContinuousRolloutQueue.max_items", minimum=1)
-        self.max_bytes = require_int(max_bytes, path="ContinuousRolloutQueue.max_bytes", minimum=0)
-        self._items: deque[ContinuousRolloutItem] = deque()
+        self.max_items = require_int(max_items, path="ScoredRolloutQueue.max_items", minimum=1)
+        self.max_bytes = require_int(max_bytes, path="ScoredRolloutQueue.max_bytes", minimum=0)
+        self._items: deque[ScoredRollout] = deque()
         self._bytes = 0
 
     # -- size / stats ---------------------------------------------------
@@ -49,7 +49,7 @@ class ContinuousRolloutQueue:
     def set_item_limit(self, max_items: int) -> None:
         """Resize for the installed batch window without discarding receipts."""
 
-        next_limit = require_int(max_items, path="ContinuousRolloutQueue.max_items", minimum=1)
+        next_limit = require_int(max_items, path="ScoredRolloutQueue.max_items", minimum=1)
         if next_limit < len(self._items):
             raise RuntimeError(
                 "continuous ready queue item limit cannot shrink below resident items "
@@ -57,7 +57,7 @@ class ContinuousRolloutQueue:
             )
         self.max_items = next_limit
 
-    def put(self, item: ContinuousRolloutItem) -> None:
+    def put(self, item: ScoredRollout) -> None:
         """Append one item, failing before mutation when a hard cap is exceeded.
 
         Every ready item belongs to the installed current/prefetched batch window.
@@ -82,16 +82,16 @@ class ContinuousRolloutQueue:
         self._items.append(item)
         self._bytes = next_bytes
 
-    def snapshot(self) -> list[ContinuousRolloutItem]:
+    def snapshot(self) -> list[ScoredRollout]:
         """FIFO-ordered view of the current items for the consumer to inspect."""
 
         return list(self._items)
 
-    def remove(self, items: list[ContinuousRolloutItem]) -> None:
+    def remove(self, items: list[ScoredRollout]) -> None:
         """Drop the given items (by identity) and fix the byte accounting."""
 
         remove_ids = {id(item) for item in items}
-        kept: deque[ContinuousRolloutItem] = deque()
+        kept: deque[ScoredRollout] = deque()
         for item in self._items:
             if id(item) in remove_ids:
                 self._bytes -= item.nbytes
@@ -106,4 +106,4 @@ class ContinuousRolloutQueue:
         self._bytes = 0
 
 
-__all__ = ["ContinuousRolloutQueue"]
+__all__ = ["ScoredRolloutQueue"]

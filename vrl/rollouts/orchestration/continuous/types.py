@@ -15,8 +15,8 @@ class ContinuousRolloutSettings:
     """The continuous rollout tuning that threads from config down to the runtime.
 
     One object carries the resolved settings through ``build_rollout_schedule`` ->
-    ``ContinuousRolloutSchedule`` -> ``ContinuousRolloutOwner`` ->
-    ``_ContinuousOwnerRuntime`` so adding a knob touches one field here, not four
+    ``ContinuousRolloutSchedule`` -> ``ContinuousRolloutThread`` ->
+    ``_ContinuousRolloutController`` so adding a knob touches one field here, not four
     repeated signatures. Deliberately has NO defaults: ``ContinuousRolloutConfig``
     (``vrl.trainers.core.types``) remains the single source of default values, and
     the rollout layer must not keep a second copy of them.
@@ -49,7 +49,7 @@ class ContinuousRolloutSettings:
 
 
 @dataclass(frozen=True, slots=True)
-class ContinuousRolloutItem:
+class ScoredRollout:
     """One completed prompt group waiting in the ready queue.
 
     ``batch_id + group_slot`` is the logical work identity. ``group_slot`` is
@@ -126,7 +126,7 @@ class ContinuousRolloutProducerState:
 
 
 __all__ = [
-    "ContinuousRolloutItem",
     "ContinuousRolloutProducerState",
     "ContinuousRolloutSettings",
+    "ScoredRollout",
 ]

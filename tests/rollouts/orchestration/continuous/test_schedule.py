@@ -181,7 +181,7 @@ async def _snapshot_when(
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     while True:
-        snapshot = await owner_snapshot(schedule._owner)
+        snapshot = await owner_snapshot(schedule._rollout_thread)
         if condition(snapshot):
             return snapshot
         if loop.time() >= deadline:
@@ -200,7 +200,7 @@ async def test_shutdown_joins_owner_and_is_idempotent() -> None:
     )
 
     await schedule.next_iteration(["p0"], group_size=1)
-    running = await owner_snapshot(schedule._owner)
+    running = await owner_snapshot(schedule._rollout_thread)
     assert running.producer_state is not None
     assert running.producer_state.running is True
 
@@ -208,8 +208,8 @@ async def test_shutdown_joins_owner_and_is_idempotent() -> None:
     await schedule.shutdown()
 
     assert collector.shutdown_calls == 1
-    assert schedule._owner._stopped.is_set()
-    thread = schedule._owner._thread
+    assert schedule._rollout_thread._stopped.is_set()
+    thread = schedule._rollout_thread._thread
     assert thread is not None and not thread.is_alive()
 
 
@@ -225,16 +225,16 @@ async def test_shutdown_failure_retries_cleanup_before_closing_owner() -> None:
     with pytest.raises(RuntimeError, match="collector cleanup failed"):
         await schedule.shutdown()
 
-    thread = schedule._owner._thread
+    thread = schedule._rollout_thread._thread
     assert collector.shutdown_calls == 1
-    assert schedule._owner._closed is False
+    assert schedule._rollout_thread._closed is False
     assert thread is not None and thread.is_alive()
 
     await schedule.shutdown()
     await schedule.shutdown()
 
     assert collector.shutdown_calls == 2
-    assert schedule._owner._closed is True
+    assert schedule._rollout_thread._closed is True
     assert thread is not None and not thread.is_alive()
 
 
@@ -259,14 +259,14 @@ async def test_owner_production_advances_while_trainer_loop_is_blocked() -> None
             group_size=1,
             next_prompts=["p1"],
         )
-        before = await owner_snapshot(schedule._owner)
+        before = await owner_snapshot(schedule._rollout_thread)
         assert before.producer_state is not None
         assert before.producer_state.submitted_count == 2
 
         # This blocks the trainer asyncio loop exactly like synchronous backward.
         time.sleep(0.12)
 
-        after = await owner_snapshot(schedule._owner)
+        after = await owner_snapshot(schedule._rollout_thread)
         assert after.producer_state is not None
         assert after.producer_state.tick_count > before.producer_state.tick_count
         assert after.producer_state.submitted_count == before.producer_state.submitted_count
@@ -393,7 +393,7 @@ async def test_weight_sync_barrier_advances_version_and_resumes() -> None:
         await schedule.after_train_step()
         # Barrier performed exactly one post-train sync and resumed admission.
         assert len(syncer.calls) == sync_calls_before + 1
-        snapshot = await owner_snapshot(schedule._owner)
+        snapshot = await owner_snapshot(schedule._rollout_thread)
         assert snapshot.producer_state is not None
         assert snapshot.producer_state.paused_for_weight_sync is False
         assert runtime.current_policy_version == 2
@@ -420,7 +420,7 @@ async def test_partial_commit_failure_closes_admission_and_runtime() -> None:
             await schedule.after_train_step()
 
         calls_after_failure = len(collector.calls)
-        failed = await owner_snapshot(schedule._owner)
+        failed = await owner_snapshot(schedule._rollout_thread)
         assert failed.producer_state is None
         assert failed.queue_stats == {}
         assert "worker install ACK mismatch" in str(failed.terminal_error)
@@ -455,7 +455,7 @@ async def test_draining_sync_finishes_the_active_prompt_batch_before_commit() ->
         assert _iteration_stat(first, "continuous.rollout_policy_version") == 1.0
         await schedule.after_train_step()
         assert runtime.current_policy_version == 2
-        after = await owner_snapshot(schedule._owner)
+        after = await owner_snapshot(schedule._rollout_thread)
         assert after.queue_stats["ready_items"] == 2
 
         second = await schedule.next_iteration(["p2", "p3"], group_size=2)
@@ -570,7 +570,7 @@ async def test_reward_failure_fails_fast_and_never_reaches_queue() -> None:
     try:
         with pytest.raises(RuntimeError, match="reward model exploded"):
             await schedule.next_iteration(["p0", "p1"], group_size=2)
-        assert (await owner_snapshot(schedule._owner)).queue_stats == {}
+        assert (await owner_snapshot(schedule._rollout_thread)).queue_stats == {}
     finally:
         await schedule.shutdown()
 
@@ -619,7 +619,7 @@ async def test_weight_sync_waits_for_inflight_reward() -> None:
         barrier = asyncio.create_task(schedule.after_train_step())
         await asyncio.sleep(0.05)
         # Reward still in flight: admission paused, sync not yet performed.
-        blocked = await owner_snapshot(schedule._owner)
+        blocked = await owner_snapshot(schedule._rollout_thread)
         assert blocked.producer_state is not None
         assert blocked.producer_state.paused_for_weight_sync is True
         assert len(syncer.calls) == sync_calls_before
@@ -628,7 +628,7 @@ async def test_weight_sync_waits_for_inflight_reward() -> None:
         collector.allow_score.set()
         await asyncio.wait_for(barrier, 5.0)
         assert len(syncer.calls) == sync_calls_before + 1
-        resumed = await owner_snapshot(schedule._owner)
+        resumed = await owner_snapshot(schedule._rollout_thread)
         assert resumed.producer_state is not None
         assert resumed.producer_state.paused_for_weight_sync is False
     finally:
@@ -681,7 +681,7 @@ async def test_non_draining_sync_skips_inflight_wait() -> None:
 
         assert phases.as_metrics_dict()["continuous.weight_sync_barrier_mode"] == 1.0
         assert len(syncer.calls) == sync_calls_before + 1
-        snapshot = await owner_snapshot(schedule._owner)
+        snapshot = await owner_snapshot(schedule._rollout_thread)
         assert snapshot.producer_state is not None
         assert snapshot.producer_state.paused_for_weight_sync is False
     finally:
@@ -770,7 +770,7 @@ async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence() -> No
         ] == [1.0, 1.0, 1.0]
         assert runtime.current_policy_version == 4
 
-        snapshot = await owner_snapshot(schedule._owner)
+        snapshot = await owner_snapshot(schedule._rollout_thread)
         assert snapshot.producer_state is not None
         assert snapshot.queue_stats["ready_items"] == 0
     finally:
@@ -825,7 +825,7 @@ async def test_prefetch_installs_the_next_prompt_batch() -> None:
             next_prompts=["p0", "p2"],
         )
         await schedule.next_iteration(["p0", "p2"], group_size=2)
-        assert (await owner_snapshot(schedule._owner)).prompts == ("p0", "p2")
+        assert (await owner_snapshot(schedule._rollout_thread)).prompts == ("p0", "p2")
     finally:
         await schedule.shutdown()
 

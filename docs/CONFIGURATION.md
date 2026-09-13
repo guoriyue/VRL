@@ -292,3 +292,20 @@ to the archived versions, not current launch entrypoints.
   `status` (`success`, `failed`, or `terminated`); aggregated worker records
   use `rank_results`. The supervisor reads the new names only. Historical
   `run_verdict.json` files are not rewritten automatically.
+
+
+### Continuous rollout components
+
+`ContinuousRolloutThread` manages the dedicated thread and event loop.
+Its `_ContinuousRolloutController` coordinates producer, queue, consumer,
+and weight synchronization on that loop.
+
+`ContinuousRolloutProducer` tracks each batch in `_PromptBatchProgress`
+and asynchronous tasks in `_running_tasks`. `PendingRewardCapacity`
+reserves group/byte capacity from generation admission through reward completion;
+it stores accounting, not rollout payloads.
+
+Completed `ScoredRollout` records enter `ScoredRolloutQueue`.
+`ContinuousRolloutConsumer` retrieves the requested complete batch and returns
+the shared `RolloutIteration` type. Configuration keys and metric names are
+unchanged.

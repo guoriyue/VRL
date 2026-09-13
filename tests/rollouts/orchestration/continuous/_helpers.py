@@ -7,8 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from vrl.rollouts.orchestration.continuous.owner import (
-    ContinuousRolloutOwner,
+from vrl.rollouts.orchestration.continuous.thread import (
+    ContinuousRolloutThread,
 )
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutProducerState
 
@@ -32,7 +32,7 @@ class OwnerSnapshot:
     terminal_error: str | None
 
 
-async def owner_snapshot(owner: ContinuousRolloutOwner) -> OwnerSnapshot:
+async def owner_snapshot(owner: ContinuousRolloutThread) -> OwnerSnapshot:
     """Copy producer/queue state off the owner loop without racing it.
 
     The owner runs on its own thread and event loop; the copy must execute as

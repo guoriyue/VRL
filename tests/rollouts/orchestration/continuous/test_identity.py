@@ -29,11 +29,10 @@ def test_continuous_item_is_constructed_only_by_the_producer() -> None:
     offenders = [
         path
         for path in _python_sources(_SRC_ROOT)
-        if "ContinuousRolloutItem(" in path.read_text(encoding="utf-8")
-        and path.name != "producer.py"
+        if "ScoredRollout(" in path.read_text(encoding="utf-8") and path.name != "producer.py"
     ]
     assert not offenders, (
-        "ContinuousRolloutItem must have one production construction site "
+        "ScoredRollout must have one production construction site "
         f"(the producer); also constructed in: {offenders}"
     )
 

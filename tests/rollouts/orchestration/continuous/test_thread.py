@@ -16,7 +16,7 @@ from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.orchestration.continuous.owner import ContinuousRolloutOwner
+from vrl.rollouts.orchestration.continuous.thread import ContinuousRolloutThread
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.rollouts.stats import RolloutStats
 from vrl.utils.lifecycle import RuntimePhase
@@ -166,13 +166,13 @@ class _OwnerLifecycle:
         await self.collector.shutdown()
 
 
-def _owner(
+def _rollout_thread(
     lifecycle: _OwnerLifecycle,
     *,
     max_inflight_groups: int = 1,
     split_generation_reward: bool = False,
-) -> ContinuousRolloutOwner:
-    return ContinuousRolloutOwner(
+) -> ContinuousRolloutThread:
+    return ContinuousRolloutThread(
         lifecycle=lifecycle,
         settings=ContinuousRolloutSettings(
             split_generation_reward=split_generation_reward,
@@ -195,7 +195,7 @@ async def test_empty_prefetch_fails_before_initial_weight_sync(split_generation_
     collector = _OwnerCollector()
     collector.supports_reward_generation_overlap = split_generation_reward
     lifecycle = _OwnerLifecycle(collector)
-    owner = _owner(lifecycle, split_generation_reward=split_generation_reward)
+    owner = _rollout_thread(lifecycle, split_generation_reward=split_generation_reward)
     try:
         with pytest.raises(ValueError, match="prefetch prompts must be non-empty"):
             await owner.next_iteration(
@@ -216,7 +216,7 @@ async def test_owner_cadence_survives_blocked_trainer_event_loop() -> None:
     main_thread = threading.get_ident()
     collector = _OwnerCollector()
     lifecycle = _OwnerLifecycle(collector)
-    owner = _owner(lifecycle)
+    owner = _rollout_thread(lifecycle)
 
     try:
         iteration = await owner.next_iteration(
@@ -248,7 +248,7 @@ async def test_owner_skips_initial_commit_for_initialized_runtime() -> None:
     collector = _OwnerCollector()
     lifecycle = _OwnerLifecycle(collector)
     lifecycle.version = 7
-    owner = _owner(lifecycle)
+    owner = _rollout_thread(lifecycle)
 
     try:
         iteration = await owner.next_iteration(
@@ -268,7 +268,7 @@ async def test_owner_skips_initial_commit_for_initialized_runtime() -> None:
 async def test_draining_commit_waits_for_reward_then_resumes() -> None:
     collector = _OwnerCollector()
     lifecycle = _OwnerLifecycle(collector)
-    owner = _owner(lifecycle)
+    owner = _rollout_thread(lifecycle)
 
     try:
         collector.block_scores_after(1)
@@ -308,7 +308,7 @@ async def test_draining_commit_waits_for_reward_then_resumes() -> None:
 async def test_version_slots_skip_drain_but_still_gate_new_admission() -> None:
     collector = _OwnerCollector()
     lifecycle = _OwnerLifecycle(collector, non_draining=True)
-    owner = _owner(lifecycle)
+    owner = _rollout_thread(lifecycle)
 
     try:
         collector.block_scores_after(1)
@@ -338,7 +338,7 @@ async def test_version_slots_skip_drain_but_still_gate_new_admission() -> None:
 async def test_failed_commit_closes_admission_and_preserves_root_cause() -> None:
     collector = _OwnerCollector()
     lifecycle = _OwnerLifecycle(collector, fail_push_call=2)
-    owner = _owner(lifecycle)
+    owner = _rollout_thread(lifecycle)
 
     await owner.next_iteration(
         ["p0"],
@@ -370,7 +370,7 @@ async def test_failed_commit_closes_admission_and_preserves_root_cause() -> None
 async def test_concurrent_failed_commands_share_one_terminal_cleanup() -> None:
     collector = _OwnerCollector(shutdown_delay_s=0.05)
     lifecycle = _OwnerLifecycle(collector, fail_push_call=1)
-    owner = _owner(lifecycle)
+    owner = _rollout_thread(lifecycle)
 
     results = await asyncio.gather(
         owner.commit_weights({"w": 1}),
@@ -436,7 +436,7 @@ async def test_real_runtime_cleanup_failure_does_not_replace_ack_root() -> None:
             await self.collector.shutdown()
 
     lifecycle = _RuntimeLifecycle(collector)
-    owner = _owner(lifecycle)
+    owner = _rollout_thread(lifecycle)
 
     await owner.next_iteration(
         ["p0"],
@@ -498,7 +498,7 @@ async def test_health_failure_after_weight_ack_never_resumes_owner_admission() -
             await runtime.shutdown()
             await self.collector.shutdown()
 
-    owner = _owner(_RuntimeLifecycle(collector))
+    owner = _rollout_thread(_RuntimeLifecycle(collector))
     await owner.next_iteration(
         ["p0"],
         group_size=1,
@@ -528,7 +528,7 @@ async def test_health_failure_after_weight_ack_never_resumes_owner_admission() -
 async def test_failed_terminal_cleanup_is_retried_by_shutdown_once() -> None:
     collector = _OwnerCollector(shutdown_failures=1)
     lifecycle = _OwnerLifecycle(collector, fail_push_call=2)
-    owner = _owner(lifecycle)
+    owner = _rollout_thread(lifecycle)
 
     await owner.next_iteration(
         ["p0"],
@@ -551,7 +551,7 @@ async def test_failed_terminal_cleanup_is_retried_by_shutdown_once() -> None:
 async def test_failed_shutdown_keeps_owner_alive_for_cleanup_retry() -> None:
     collector = _OwnerCollector(shutdown_failures=1)
     lifecycle = _OwnerLifecycle(collector)
-    owner = _owner(lifecycle)
+    owner = _rollout_thread(lifecycle)
 
     await owner.next_iteration(
         ["p0"],
@@ -579,7 +579,7 @@ async def test_failed_shutdown_keeps_owner_alive_for_cleanup_retry() -> None:
 @pytest.mark.asyncio
 async def test_immediate_shutdown_publishes_result_before_owner_stops() -> None:
     collector = _OwnerCollector()
-    owner = _owner(_OwnerLifecycle(collector))
+    owner = _rollout_thread(_OwnerLifecycle(collector))
 
     await asyncio.wait_for(owner.shutdown(), timeout=2.0)
 
@@ -604,7 +604,7 @@ async def test_cancelled_shutdown_waiter_does_not_abandon_cleanup() -> None:
             await super().shutdown()
 
     collector = GatedCollector()
-    owner = _owner(_OwnerLifecycle(collector))
+    owner = _rollout_thread(_OwnerLifecycle(collector))
     waiter = asyncio.create_task(owner.shutdown())
     try:
         assert await asyncio.to_thread(started.wait, 2.0)
@@ -652,7 +652,7 @@ async def test_early_preview_generates_during_current_reward_and_preserves_versi
     collector = RecordingCollector()
     collector.block_future_scores()
     lifecycle = _OwnerLifecycle(collector, non_draining=non_draining)
-    owner = _owner(lifecycle, split_generation_reward=True)
+    owner = _rollout_thread(lifecycle, split_generation_reward=True)
     demand = asyncio.create_task(
         owner.next_iteration(
             ["p0"],
@@ -701,7 +701,7 @@ async def test_early_preview_generates_during_current_reward_and_preserves_versi
 async def test_early_preview_rejects_mismatched_next_demand(mismatch: str) -> None:
     collector = _OwnerCollector()
     collector.supports_reward_generation_overlap = True
-    owner = _owner(_OwnerLifecycle(collector), split_generation_reward=True)
+    owner = _rollout_thread(_OwnerLifecycle(collector), split_generation_reward=True)
     try:
         await owner.next_iteration(
             ["p0"],
@@ -725,7 +725,7 @@ async def test_early_preview_rejects_mismatched_next_demand(mismatch: str) -> No
 async def test_split_owner_without_preview_accepts_a_later_independent_batch() -> None:
     collector = _OwnerCollector()
     collector.supports_reward_generation_overlap = True
-    owner = _owner(_OwnerLifecycle(collector), split_generation_reward=True)
+    owner = _rollout_thread(_OwnerLifecycle(collector), split_generation_reward=True)
     try:
         for step in range(2):
             iteration = await owner.next_iteration(
@@ -776,7 +776,7 @@ async def test_checkpointed_sampler_replays_preview_prompt_order_in_a_new_owner(
     current = [str(index) for index in original_sampler.sample(epoch=0)]
     preview = [str(index) for index in original_sampler.preview(epoch=1)]
     lifecycle = _OwnerLifecycle(PromptCollector())
-    original = _owner(lifecycle, split_generation_reward=True)
+    original = _rollout_thread(lifecycle, split_generation_reward=True)
     restored = None
     try:
         await original.next_iteration(
@@ -806,7 +806,7 @@ async def test_checkpointed_sampler_replays_preview_prompt_order_in_a_new_owner(
         assert resumed_prompts == next_current == preview
         resumed_lifecycle = _OwnerLifecycle(PromptCollector())
         resumed_lifecycle.version = saved["version"]
-        restored = _owner(resumed_lifecycle, split_generation_reward=True)
+        restored = _rollout_thread(resumed_lifecycle, split_generation_reward=True)
         resumed = await restored.next_iteration(
             resumed_prompts,
             group_size=2,
@@ -831,7 +831,7 @@ async def test_checkpointed_sampler_replays_preview_prompt_order_in_a_new_owner(
 async def test_owner_rejects_invalid_group_size_before_weight_push(group_size) -> None:
     collector = _OwnerCollector()
     lifecycle = _OwnerLifecycle(collector)
-    owner = _owner(lifecycle)
+    owner = _rollout_thread(lifecycle)
     try:
         with pytest.raises(ValueError, match="group_size"):
             await owner.next_iteration(
@@ -861,7 +861,7 @@ async def test_shutdown_retries_producer_stop_before_closing_collector(monkeypat
 
     monkeypatch.setattr(ContinuousRolloutProducer, "stop", stop)
     collector = _OwnerCollector()
-    owner = _owner(_OwnerLifecycle(collector))
+    owner = _rollout_thread(_OwnerLifecycle(collector))
     try:
         await owner.next_iteration(
             ["p0"], group_size=1, runtime_debug=False, initial_weights={"w": 0}

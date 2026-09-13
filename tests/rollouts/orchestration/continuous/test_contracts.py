@@ -30,11 +30,11 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.core import PromptCollectionCleanupError
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
-from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
+from vrl.rollouts.orchestration.continuous.scored_queue import ScoredRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
-    ContinuousRolloutItem,
     ContinuousRolloutSettings,
+    ScoredRollout,
 )
 from vrl.rollouts.stats import RolloutStats
 from vrl.utils.lifecycle import RuntimeLifecycle
@@ -131,7 +131,7 @@ def _settings(
 
 def _producer(
     collector: Any,
-    queue: ContinuousRolloutQueue,
+    queue: ScoredRolloutQueue,
     *,
     lifecycle: _Lifecycle | None = None,
     max_stale: int = 0,
@@ -221,7 +221,7 @@ async def test_ready_queue_gets_items_only_after_reward_scoring() -> None:
     """A generated-but-unscored group must never appear in the ready queue."""
     collector = _GatedCollector()
     collector.allow_score.clear()
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     producer = _producer(collector, queue)
 
     await producer.start()
@@ -253,7 +253,7 @@ async def test_failed_reward_scoring_never_enqueues() -> None:
             raise RuntimeError("reward model exploded")
 
     collector = _RewardBoom()
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     producer = _producer(collector, queue)
 
     await producer.start()
@@ -269,7 +269,7 @@ async def test_failed_reward_scoring_never_enqueues() -> None:
 @pytest.mark.asyncio
 async def test_control_loop_failure_reaches_consumer_without_timeout() -> None:
     collector = _GatedCollector()
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     producer = _producer(collector, queue)
 
     def fail_admission() -> None:
@@ -313,7 +313,7 @@ async def test_terminal_generation_error_is_not_retried_or_wrapped() -> None:
             del prompts, kwargs
             raise error
 
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     producer = _producer(_TerminalCollector(), queue)
 
     await producer.start()
@@ -371,7 +371,7 @@ async def test_idle_health_failure_makes_next_collect_fatal_without_slot_retry()
             raise AssertionError("closed runtime accepted generation")
 
     collector = _ClosedRuntimeCollector()
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     producer = _producer(collector, queue)
 
     await producer.start()
@@ -419,7 +419,7 @@ async def test_cleanup_wrapper_around_terminal_error_is_not_retried() -> None:
             del prompts, kwargs
             raise wrapped
 
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     producer = _producer(_TerminalCollector(), queue)
 
     await producer.start()
@@ -450,7 +450,7 @@ async def test_cleanup_wrapper_around_terminal_error_is_not_retried() -> None:
 @pytest.mark.asyncio
 async def test_finite_prompt_batch_completes_each_slot_once_then_idles() -> None:
     collector = _FiniteCollector()
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     producer = _producer(
         collector,
         queue,
@@ -481,7 +481,7 @@ async def test_finite_prompt_batch_completes_each_slot_once_then_idles() -> None
 async def test_backpressure_accrues_paused_then_starved_durations() -> None:
     """The loop charges blocked time to the observed reason, with entry counts."""
     collector = _FiniteCollector()
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     producer = _producer(collector, queue, prompts=["p0"], max_inflight=2)
 
     await producer.start()
@@ -508,7 +508,7 @@ async def test_backpressure_accrues_paused_then_starved_durations() -> None:
 async def test_backpressure_accrues_inflight_full_while_slots_wait() -> None:
     collector = _GatedCollector()
     collector.allow_generate.clear()
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     producer = _producer(
         collector,
         queue,
@@ -539,7 +539,7 @@ async def test_backpressure_accrues_inflight_full_while_slots_wait() -> None:
 @pytest.mark.asyncio
 async def test_prompt_batch_freezes_version_and_options_across_serial_retry() -> None:
     collector = _FiniteCollector(fail_once={"p0"})
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     lifecycle = _Lifecycle(collector, version=7)
     producer = _producer(
         collector,
@@ -585,7 +585,7 @@ async def test_prompt_batch_freezes_version_and_options_across_serial_retry() ->
 async def test_prompt_batch_rejects_replacing_incomplete_work() -> None:
     collector = _GatedCollector()
     collector.allow_generate.clear()
-    producer = _producer(collector, ContinuousRolloutQueue(max_items=2))
+    producer = _producer(collector, ScoredRolloutQueue(max_items=2))
 
     await producer.start()
     producer.admit_now()
@@ -604,7 +604,7 @@ async def test_prompt_batch_rejects_replacing_incomplete_work() -> None:
 
 @pytest.mark.asyncio
 async def test_prompt_batch_rejects_replacing_unconsumed_ready_work() -> None:
-    queue = ContinuousRolloutQueue(max_items=2)
+    queue = ScoredRolloutQueue(max_items=2)
     producer = _producer(_FiniteCollector(), queue)
 
     await producer.start()
@@ -623,7 +623,7 @@ async def test_prompt_batch_rejects_replacing_unconsumed_ready_work() -> None:
 @pytest.mark.asyncio
 async def test_finite_prompt_batch_fails_before_mutation_at_queue_byte_limit() -> None:
     collector = _FiniteCollector()
-    queue = ContinuousRolloutQueue(max_items=2, max_bytes=1)
+    queue = ScoredRolloutQueue(max_items=2, max_bytes=1)
     producer = _producer(
         collector,
         queue,
@@ -651,7 +651,7 @@ async def test_finite_prompt_batch_fails_after_one_slot_exhausts_retry_budget() 
             raise RuntimeError(f"deterministic failure for {prompt}")
 
     collector = _AlwaysFailCollector()
-    queue = ContinuousRolloutQueue(max_items=2)
+    queue = ScoredRolloutQueue(max_items=2)
     producer = _producer(
         collector,
         queue,
@@ -675,7 +675,7 @@ async def test_finite_prompt_batch_fails_after_one_slot_exhausts_retry_budget() 
 async def test_prompt_batch_drain_times_out_when_collect_never_returns() -> None:
     collector = _GatedCollector()
     collector.allow_generate.clear()
-    queue = ContinuousRolloutQueue(max_items=2)
+    queue = ScoredRolloutQueue(max_items=2)
     producer = _producer(
         collector,
         queue,
@@ -703,7 +703,7 @@ async def test_active_prompt_batch_fails_when_collect_is_cancelled() -> None:
             del prompts, kwargs
             raise asyncio.CancelledError
 
-    queue = ContinuousRolloutQueue(max_items=2)
+    queue = ScoredRolloutQueue(max_items=2)
     producer = _producer(_CancelledCollector(), queue)
 
     await producer.start()
@@ -726,7 +726,7 @@ async def test_invalid_producer_timeout_preserves_running_work(
 ) -> None:
     collector = _GatedCollector()
     collector.allow_generate.clear()
-    producer = _producer(collector, ContinuousRolloutQueue(max_items=2))
+    producer = _producer(collector, ScoredRolloutQueue(max_items=2))
     await producer.start()
     producer.admit_now()
     await asyncio.wait_for(collector.generation_started.wait(), 5.0)
@@ -765,7 +765,7 @@ async def test_producer_stop_does_not_wait_forever_for_cancel_suppression() -> N
             return await super().generate_rollout(super().request_builder.build(prompts, **kwargs))
 
     collector = _CancellationResistantCollector()
-    producer = _producer(collector, ContinuousRolloutQueue(max_items=2))
+    producer = _producer(collector, ScoredRolloutQueue(max_items=2))
 
     await producer.start()
     producer.admit_now()
@@ -787,7 +787,7 @@ async def test_drain_prompt_batch_waits_for_generation_and_reward() -> None:
     collector = _GatedCollector()
     collector.allow_generate.clear()
     collector.allow_score.clear()
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     producer = _producer(collector, queue)
 
     await producer.start()
@@ -837,7 +837,7 @@ async def test_late_reward_finishes_before_version_bump_under_draining() -> None
     # Generation finishes immediately; reward is the late phase still running
     # when the barrier opens.
     collector.allow_score.clear()
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     lifecycle = _Lifecycle(collector, version=1)
     producer = _producer(collector, queue, lifecycle=lifecycle, max_stale=0)
 
@@ -896,7 +896,7 @@ async def test_items_carry_policy_version_captured_at_submission() -> None:
     """A version bump mid-flight must not relabel an already-submitted group."""
     collector = _GatedCollector()
     collector.allow_generate.clear()
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     lifecycle = _Lifecycle(collector, version=1)
     # max_stale=1 so the mid-flight bump to v2 keeps the group inside the
     # freshness window (staleness 1 <= 1); this test pins version *stamping*,
@@ -926,7 +926,7 @@ async def test_prompt_batch_fails_when_group_is_stale_at_receipt() -> None:
     """An active prompt batch cannot recover after its fixed version expires."""
     collector = _GatedCollector()
     collector.allow_generate.clear()
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     lifecycle = _Lifecycle(collector, version=1)
     producer = _producer(collector, queue, lifecycle=lifecycle, max_stale=0)
 
@@ -953,7 +953,7 @@ async def test_prompt_batch_fails_when_group_is_past_stale_window() -> None:
     max_stale=1 a two-version-old group is still dropped."""
     collector = _GatedCollector()
     collector.allow_generate.clear()
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     lifecycle = _Lifecycle(collector, version=1)
     producer = _producer(collector, queue, lifecycle=lifecycle, max_stale=1)
 
@@ -982,8 +982,8 @@ def _item(
     *,
     batch_id: int = 0,
     attempt: int = 1,
-) -> ContinuousRolloutItem:
-    return ContinuousRolloutItem(
+) -> ScoredRollout:
+    return ScoredRollout(
         batch_id=batch_id,
         group_slot=group_slot,
         rollout_policy_version=version,
@@ -993,7 +993,7 @@ def _item(
     )
 
 
-def _consumer(queue: ContinuousRolloutQueue, max_stale: int) -> ContinuousRolloutConsumer:
+def _consumer(queue: ScoredRolloutQueue, max_stale: int) -> ContinuousRolloutConsumer:
     return ContinuousRolloutConsumer(
         queue=queue,
         staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
@@ -1042,7 +1042,7 @@ async def _collect_iteration(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ready_count", [0, 1])
 async def test_consumer_timeout_identifies_incomplete_batch_amid_prefetch(ready_count) -> None:
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     for slot in range(ready_count):
         queue.put(_item(group_slot=slot, version=1, batch_id=7))
     for slot in range(2):
@@ -1068,7 +1068,7 @@ async def test_consumer_timeout_identifies_incomplete_batch_amid_prefetch(ready_
 @pytest.mark.asyncio
 async def test_consumer_consumes_stale_items_within_bound() -> None:
     """max_stale=1 lets the trainer consume one-version-old groups."""
-    queue = ContinuousRolloutQueue(max_items=8)
+    queue = ScoredRolloutQueue(max_items=8)
     queue.put(_item(group_slot=0, version=1))
     queue.put(_item(group_slot=1, version=1))
 
@@ -1088,7 +1088,7 @@ async def test_consumer_consumes_stale_items_within_bound() -> None:
 @pytest.mark.asyncio
 async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
     """A finite batch fails instead of dropping slots it cannot regenerate."""
-    queue = ContinuousRolloutQueue(max_items=8)
+    queue = ScoredRolloutQueue(max_items=8)
     queue.put(_item(group_slot=0, version=1))
     queue.put(_item(group_slot=1, version=1))
 
@@ -1105,7 +1105,7 @@ async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
 @pytest.mark.asyncio
 async def test_consumer_waits_instead_of_combining_distinct_batches() -> None:
     """One iteration must come from exactly one finite prompt batch."""
-    queue = ContinuousRolloutQueue(max_items=8)
+    queue = ScoredRolloutQueue(max_items=8)
     queue.put(_item(group_slot=0, version=1, batch_id=0))
     queue.put(_item(group_slot=1, version=1, batch_id=1))
 
@@ -1124,7 +1124,7 @@ async def test_consumer_waits_instead_of_combining_distinct_batches() -> None:
 @pytest.mark.asyncio
 async def test_iteration_carries_batch_identity_gauges() -> None:
     """batch_id/max_attempt thread from the ready items into the metric row."""
-    queue = ContinuousRolloutQueue(max_items=8)
+    queue = ScoredRolloutQueue(max_items=8)
     queue.put(_item(group_slot=0, version=1, batch_id=3))
     queue.put(_item(group_slot=1, version=1, batch_id=3, attempt=2))
 
@@ -1158,7 +1158,7 @@ def test_item_ages_never_go_negative_under_a_skewed_clock(
 
 @pytest.mark.asyncio
 async def test_consumer_rejects_duplicate_group_slots() -> None:
-    queue = ContinuousRolloutQueue(max_items=2)
+    queue = ScoredRolloutQueue(max_items=2)
     queue.put(_item(group_slot=0, version=1))
     queue.put(_item(group_slot=0, version=1))
 
@@ -1173,7 +1173,7 @@ async def test_consumer_rejects_duplicate_group_slots() -> None:
 
 @pytest.mark.asyncio
 async def test_consumer_rejects_mixed_policy_versions() -> None:
-    queue = ContinuousRolloutQueue(max_items=2)
+    queue = ScoredRolloutQueue(max_items=2)
     queue.put(_item(group_slot=0, version=1))
     queue.put(_item(group_slot=1, version=2))
 
@@ -1188,7 +1188,7 @@ async def test_consumer_rejects_mixed_policy_versions() -> None:
 
 @pytest.mark.asyncio
 async def test_consumer_rejects_future_policy_version() -> None:
-    queue = ContinuousRolloutQueue(max_items=1)
+    queue = ScoredRolloutQueue(max_items=1)
     queue.put(_item(group_slot=0, version=2))
 
     with pytest.raises(RuntimeError, match="newer than the trainer policy"):
@@ -1216,7 +1216,7 @@ async def test_late_reward_batch_fails_under_non_draining_max_stale_0() -> None:
     ``consumer.validate_ready_versions`` after weight sync, then the same
     consumer's iteration selection during ``collect_iteration``.
     """
-    queue = ContinuousRolloutQueue(max_items=8)
+    queue = ScoredRolloutQueue(max_items=8)
     consumer = ContinuousRolloutConsumer(
         queue=queue,
         staleness=StalenessPolicy(max_stale_policy_versions=0),
@@ -1244,7 +1244,7 @@ async def test_late_reward_batch_fails_under_non_draining_max_stale_0() -> None:
 @pytest.mark.asyncio
 async def test_consumer_aggregates_item_phase_times() -> None:
     """Per-item collect timings sum into iteration.stats.as_metrics_dict()."""
-    queue = ContinuousRolloutQueue(max_items=8)
+    queue = ScoredRolloutQueue(max_items=8)
     queue.put(
         _item(
             group_slot=0,
@@ -1277,7 +1277,7 @@ async def test_split_generation_continues_while_reward_waits_and_stays_bounded()
     collector = _GatedCollector()
     collector.supports_reward_generation_overlap = True
     collector.allow_score.clear()
-    queue = ContinuousRolloutQueue(max_items=6)
+    queue = ScoredRolloutQueue(max_items=6)
     producer = _producer(collector, queue, prompts=[f"p{i}" for i in range(6)])
     await producer.start()
     try:
@@ -1313,7 +1313,7 @@ async def test_split_reward_retry_reuses_generation_and_exhaustion_is_terminal()
             raise ValueError("reward is unavailable")
 
     collector = FailingReward()
-    queue = ContinuousRolloutQueue(max_items=1)
+    queue = ScoredRolloutQueue(max_items=1)
     producer = _producer(collector, queue, prompts=["p0"])
     await producer.start()
     try:
@@ -1332,7 +1332,7 @@ async def test_split_shutdown_releases_queued_and_scoring_receipts() -> None:
     collector = _GatedCollector()
     collector.supports_reward_generation_overlap = True
     collector.allow_score.clear()
-    queue = ContinuousRolloutQueue(max_items=3)
+    queue = ScoredRolloutQueue(max_items=3)
     producer = _producer(collector, queue, prompts=["p0", "p1", "p2"])
     await producer.start()
     await _wait_until(lambda: producer.stage_stats()["unscored_items"] == 2)
@@ -1352,7 +1352,7 @@ async def test_split_invalid_generated_or_scored_receipt_never_regenerates(failu
 
     collector = WrongCount() if failure == "count" else _GatedCollector()
     collector.supports_reward_generation_overlap = True
-    queue = ContinuousRolloutQueue(max_items=1)
+    queue = ScoredRolloutQueue(max_items=1)
     producer = _producer(collector, queue, prompts=["p0"])
     if failure == "bytes":
         producer._group_byte_ceiling = 1
@@ -1371,7 +1371,7 @@ async def test_split_drain_keeps_weight_barrier_waiting_for_reward() -> None:
     collector = _GatedCollector()
     collector.supports_reward_generation_overlap = True
     collector.allow_score.clear()
-    queue = ContinuousRolloutQueue(max_items=2)
+    queue = ScoredRolloutQueue(max_items=2)
     producer = _producer(collector, queue, prompts=["p0", "p1"])
     await producer.start()
     drain = None
@@ -1395,7 +1395,7 @@ def test_split_rejects_collectors_without_verified_overlap_capability() -> None:
     with pytest.raises(ValueError, match="nonblocking reward scoring"):
         ContinuousRolloutProducer(
             lifecycle=_Lifecycle(_GatedCollector()),
-            queue=ContinuousRolloutQueue(max_items=1),
+            queue=ScoredRolloutQueue(max_items=1),
             staleness=StalenessPolicy(max_stale_policy_versions=1),
             settings=replace(_settings(), split_generation_reward=True),
         )
@@ -1406,7 +1406,7 @@ def test_split_rejects_collectors_without_verified_overlap_capability() -> None:
 async def test_consumer_waits_for_named_head_even_when_prefetch_is_ready(
     preview_version: int,
 ) -> None:
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     next_items = [_item(group_slot=i, version=preview_version, batch_id=1) for i in range(2)]
     for item in next_items:
         queue.put(item)
@@ -1450,7 +1450,7 @@ async def test_consumer_waits_for_named_head_even_when_prefetch_is_ready(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("slots", [[-1, 0], [0, 2]])
 async def test_consumer_rejects_wrong_slots_without_removing_receipts(slots) -> None:
-    queue = ContinuousRolloutQueue(max_items=2)
+    queue = ScoredRolloutQueue(max_items=2)
     for slot in slots:
         queue.put(_item(group_slot=slot, version=1, batch_id=0))
     with pytest.raises(RuntimeError, match="invalid group slots"):
@@ -1465,7 +1465,7 @@ async def test_consumer_rejects_wrong_slots_without_removing_receipts(slots) -> 
 
 @pytest.mark.asyncio
 async def test_consumer_rejects_leftover_prior_batch_at_named_demand() -> None:
-    queue = ContinuousRolloutQueue(max_items=2)
+    queue = ScoredRolloutQueue(max_items=2)
     queue.put(_item(group_slot=0, version=1, batch_id=0))
     queue.put(_item(group_slot=0, version=1, batch_id=1))
     with pytest.raises(RuntimeError, match="already consumed batch"):
@@ -1482,7 +1482,7 @@ async def test_consumer_rejects_leftover_prior_batch_at_named_demand() -> None:
 async def test_producer_limits_early_preview_to_two_batches_and_keeps_slot_identity() -> None:
     collector = _GatedCollector()
     collector.supports_reward_generation_overlap = True
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     producer = _producer(collector, queue, prompts=["a", "b"])
     producer.append_prompt_batch(["c", "d"], group_size=2, runtime_debug=False)
     with pytest.raises(RuntimeError, match="exactly one current batch"):
@@ -1531,7 +1531,7 @@ async def test_failed_preview_preserves_current_until_head_advances() -> None:
 
     collector = FailedPreview()
     collector.allow_score.clear()
-    queue = ContinuousRolloutQueue(max_items=2)
+    queue = ScoredRolloutQueue(max_items=2)
     producer = _producer(collector, queue, prompts=["current"])
     producer.append_prompt_batch(["bad"], group_size=2, runtime_debug=False)
     await producer.start()
@@ -1574,7 +1574,7 @@ async def test_terminal_runtime_failure_in_preview_still_stops_current() -> None
 
     collector = BrokenFleet()
     collector.allow_score.clear()
-    queue = ContinuousRolloutQueue(max_items=2)
+    queue = ScoredRolloutQueue(max_items=2)
     producer = _producer(collector, queue, prompts=["current"])
     producer.append_prompt_batch(["bad"], group_size=2, runtime_debug=False)
     await producer.start()
@@ -1590,7 +1590,7 @@ async def test_terminal_runtime_failure_in_preview_still_stops_current() -> None
 
 @pytest.mark.asyncio
 async def test_consumer_polling_respects_remaining_wait_budget():
-    consumer = _consumer(ContinuousRolloutQueue(max_items=8), max_stale=1)
+    consumer = _consumer(ScoredRolloutQueue(max_items=8), max_stale=1)
     # The outer guard prevents a regression from sleeping for the ten-second
     # polling interval. Only the consumer's own timeout has this message.
     with pytest.raises(TimeoutError, match="continuous rollout consumer timed out"):
@@ -1610,7 +1610,7 @@ async def test_consumer_polling_respects_remaining_wait_budget():
 @pytest.mark.parametrize("field", ["wait_timeout_s", "poll_interval_s"])
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), 0.0, -1.0])
 async def test_consumer_rejects_invalid_wait_settings(field, value):
-    consumer = _consumer(ContinuousRolloutQueue(max_items=8), max_stale=1)
+    consumer = _consumer(ScoredRolloutQueue(max_items=8), max_stale=1)
     settings = {"wait_timeout_s": 1.0, "poll_interval_s": 0.001, field: value}
     with pytest.raises(ValueError, match=field):
         await consumer.collect_iteration(
@@ -1624,7 +1624,7 @@ async def test_consumer_rejects_invalid_wait_settings(field, value):
 @pytest.mark.parametrize("group_size", [True, 2.5, "2", 0, -1])
 def test_producer_rejects_invalid_group_size_before_collection(group_size) -> None:
     collector = _FiniteCollector()
-    queue = ContinuousRolloutQueue(max_items=4)
+    queue = ScoredRolloutQueue(max_items=4)
     with pytest.raises(ValueError, match="group_size"):
         _producer(collector, queue, group_size=group_size)
     assert collector.calls == []
@@ -1634,7 +1634,7 @@ def test_producer_rejects_invalid_group_size_before_collection(group_size) -> No
 @pytest.mark.asyncio
 @pytest.mark.parametrize("prompts,group_size", [([], 2), (["next"], 2.5)])
 async def test_invalid_replacement_preserves_completed_batch(prompts, group_size) -> None:
-    queue = ContinuousRolloutQueue(max_items=2)
+    queue = ScoredRolloutQueue(max_items=2)
     producer = _producer(_FiniteCollector(), queue)
     await producer.start()
     try:

@@ -2,7 +2,7 @@
 
 The trainer's asyncio loop must remain free to run synchronous forward/backward
 work without starving rollout admission and completion harvesting.  This module
-owns the continuous producer, queue, consumer, and every asynchronous runtime
+owns the continuous producer, queue, consumer, and every asynchronous controller
 operation on one dedicated thread/event loop.  The trainer side communicates
 only through ``concurrent.futures.Future`` command boundaries.
 """
@@ -19,7 +19,7 @@ from typing import Any
 
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
-from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
+from vrl.rollouts.orchestration.continuous.scored_queue import ScoredRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
@@ -61,7 +61,7 @@ class _InstalledPromptBatch:
         return True
 
 
-class _ContinuousOwnerRuntime:
+class _ContinuousRolloutController:
     """Continuous pipeline state that is touched only by the owner loop."""
 
     def __init__(
@@ -78,7 +78,7 @@ class _ContinuousOwnerRuntime:
             max_stale_policy_versions=settings.max_stale_policy_versions,
         )
 
-        self.queue: ContinuousRolloutQueue | None = None
+        self.queue: ScoredRolloutQueue | None = None
         self.consumer: ContinuousRolloutConsumer | None = None
         self.producer: ContinuousRolloutProducer | None = None
         self._installed_prompt_batch: _InstalledPromptBatch | None = None
@@ -249,7 +249,7 @@ class _ContinuousOwnerRuntime:
         return await self._run_command(operation)
 
     async def reset(self) -> None:
-        """Clear continuous queue/producer state without touching the runtime."""
+        """Clear continuous queue/producer state without touching the controller."""
 
         async def operation() -> None:
             await self._stop_pipeline()
@@ -257,7 +257,7 @@ class _ContinuousOwnerRuntime:
         await self._run_command(operation)
 
     async def shutdown(self) -> None:
-        """Cancel owner commands, stop production, and close its runtime once."""
+        """Cancel owner commands, stop production, and close its controller once."""
 
         if self._runtime_closed:
             return
@@ -301,7 +301,7 @@ class _ContinuousOwnerRuntime:
     async def _fail(self, error: BaseException) -> None:
         if self._terminal_error is None:
             self._terminal_error = error
-        # Stop admission before runtime cleanup.  RayGenerationRuntime also
+        # Stop admission before controller cleanup.  RayGenerationRuntime also
         # quarantines itself on a partial worker update; closing the collector
         # here covers generic runtimes and makes subsequent commands fail closed.
         try:
@@ -361,11 +361,11 @@ class _ContinuousOwnerRuntime:
         # The trainer exported this immutable CPU snapshot before crossing the
         # owner boundary. Worker ACK validation happens inside the weight-sync
         # stack before push_prepared_weights publishes the committed version.
-        # None means the persistent runtime already owns initialized weights.
+        # None means the persistent controller already owns initialized weights.
         if initial_weights is not None:
             await self.lifecycle.push_prepared_weights(initial_weights, stats)
 
-        self.queue = ContinuousRolloutQueue(
+        self.queue = ScoredRolloutQueue(
             max_items=len(prompts),
             max_bytes=self.max_ready_bytes,
         )
@@ -438,7 +438,7 @@ class _ContinuousOwnerRuntime:
             )
 
 
-class ContinuousRolloutOwner:
+class ContinuousRolloutThread:
     """Thread/event-loop facade used by ``ContinuousRolloutSchedule``."""
 
     def __init__(
@@ -454,7 +454,7 @@ class ContinuousRolloutOwner:
         self._stopped = threading.Event()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._runtime: _ContinuousOwnerRuntime | None = None
+        self._controller: _ContinuousRolloutController | None = None
         self._bootstrap_error: BaseException | None = None
         self._shutdown_future: concurrent.futures.Future[None] | None = None
         self._closed = False
@@ -468,9 +468,9 @@ class ContinuousRolloutOwner:
         initial_weights: Any,
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
-        runtime, loop = self._ensure_thread()
+        controller, loop = self._ensure_thread()
         future = asyncio.run_coroutine_threadsafe(
-            runtime.next_iteration(
+            controller.next_iteration(
                 list(prompts),
                 group_size=group_size,
                 runtime_debug=runtime_debug,
@@ -482,9 +482,9 @@ class ContinuousRolloutOwner:
         return await self._await_command(future)
 
     async def commit_weights(self, prepared_weights: Any) -> RolloutStats:
-        runtime, loop = self._ensure_thread()
+        controller, loop = self._ensure_thread()
         future = asyncio.run_coroutine_threadsafe(
-            runtime.commit_weights(prepared_weights),
+            controller.commit_weights(prepared_weights),
             loop,
         )
         return await self._await_command(future)
@@ -493,8 +493,8 @@ class ContinuousRolloutOwner:
         with self._state_lock:
             if self._thread is None:
                 return
-        runtime, loop = self._ensure_thread()
-        future = asyncio.run_coroutine_threadsafe(runtime.reset(), loop)
+        controller, loop = self._ensure_thread()
+        future = asyncio.run_coroutine_threadsafe(controller.reset(), loop)
         future.result(timeout=_OWNER_STOP_TIMEOUT_S)
 
     async def shutdown(self) -> None:
@@ -503,13 +503,13 @@ class ContinuousRolloutOwner:
         if already_closed:
             await self._wait_until_stopped()
             return
-        runtime, loop = self._ensure_thread()
+        controller, loop = self._ensure_thread()
         with self._state_lock:
             future = self._shutdown_future
             if future is None:
                 future = concurrent.futures.Future()
                 loop.call_soon_threadsafe(
-                    loop.create_task, self._shutdown_runtime(runtime, loop, future)
+                    loop.create_task, self._shutdown_controller(controller, loop, future)
                 )
                 self._shutdown_future = future
         await self._await_command(future)
@@ -523,16 +523,16 @@ class ContinuousRolloutOwner:
         # of trainer-side cancellation; wrap_future alone propagates cancellation.
         return await asyncio.shield(asyncio.wrap_future(future))
 
-    async def _shutdown_runtime(
+    async def _shutdown_controller(
         self,
-        runtime: _ContinuousOwnerRuntime,
+        controller: _ContinuousRolloutController,
         loop: asyncio.AbstractEventLoop,
         future: concurrent.futures.Future[None],
     ) -> None:
         """Own cleanup and publish its result independently of shutdown waiters."""
 
         try:
-            await runtime.shutdown()
+            await controller.shutdown()
         except BaseException as error:
             with self._state_lock:
                 self._shutdown_future = None
@@ -558,7 +558,7 @@ class ContinuousRolloutOwner:
 
     def _ensure_thread(
         self,
-    ) -> tuple[_ContinuousOwnerRuntime, asyncio.AbstractEventLoop]:
+    ) -> tuple[_ContinuousRolloutController, asyncio.AbstractEventLoop]:
         with self._state_lock:
             if self._closed:
                 raise RuntimeError("continuous rollout owner is closed")
@@ -575,24 +575,24 @@ class ContinuousRolloutOwner:
             raise RuntimeError(
                 "continuous rollout owner failed to start"
             ) from self._bootstrap_error
-        runtime = self._runtime
+        controller = self._controller
         loop = self._loop
-        if runtime is None or loop is None:  # pragma: no cover - guarded by ready
-            raise RuntimeError("continuous rollout owner started without a runtime")
-        return runtime, loop
+        if controller is None or loop is None:  # pragma: no cover - guarded by ready
+            raise RuntimeError("continuous rollout owner started without a controller")
+        return controller, loop
 
     def _thread_main(self) -> None:
         loop: asyncio.AbstractEventLoop | None = None
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            runtime = _ContinuousOwnerRuntime(
+            controller = _ContinuousRolloutController(
                 lifecycle=self._lifecycle,
                 settings=self._settings,
             )
             with self._state_lock:
                 self._loop = loop
-                self._runtime = runtime
+                self._controller = controller
             self._ready.set()
             loop.run_forever()
         except BaseException as error:  # bootstrap failures must reach the caller
@@ -611,4 +611,4 @@ class ContinuousRolloutOwner:
             self._stopped.set()
 
 
-__all__ = ["ContinuousRolloutOwner"]
+__all__ = ["ContinuousRolloutThread"]

@@ -9,9 +9,9 @@ import torch
 
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
+from vrl.rollouts.orchestration.continuous.scored_queue import ScoredRolloutQueue
 from vrl.rollouts.orchestration.continuous.types import (
-    ContinuousRolloutItem,
+    ScoredRollout,
 )
 from vrl.trajectory import build_ar_discrete_trajectory, trajectory_tensor_bytes
 
@@ -23,12 +23,12 @@ def _item(
     samples: int = 2,
     nbytes: int = 0,
     batch_id: int = 0,
-) -> ContinuousRolloutItem:
+) -> ScoredRollout:
     batch = RolloutBatch(
         rewards=torch.zeros(samples),
         group_ids=torch.zeros(samples, dtype=torch.long),
     )
-    return ContinuousRolloutItem(
+    return ScoredRollout(
         batch_id=batch_id,
         group_slot=group_slot,
         rollout_policy_version=version,
@@ -42,7 +42,7 @@ def _item(
     "field, replacement", [("nbytes", 100), ("batch_id", 5), ("rollout_policy_version", 9)]
 )
 def test_ready_receipt_fields_cannot_change_after_admission(field, replacement) -> None:
-    queue = ContinuousRolloutQueue(max_items=1)
+    queue = ScoredRolloutQueue(max_items=1)
     item = _item(group_slot=0, version=1, nbytes=4)
     queue.put(item)
     with pytest.raises(FrozenInstanceError):
@@ -53,11 +53,11 @@ def test_ready_receipt_fields_cannot_change_after_admission(field, replacement) 
 
 def test_rejects_negative_byte_limit() -> None:
     with pytest.raises(ValueError, match="max_bytes"):
-        ContinuousRolloutQueue(max_items=1, max_bytes=-1)
+        ScoredRolloutQueue(max_items=1, max_bytes=-1)
 
 
 def test_item_limit_can_grow_but_cannot_discard_resident_items() -> None:
-    queue = ContinuousRolloutQueue(max_items=1)
+    queue = ScoredRolloutQueue(max_items=1)
     queue.set_item_limit(2)
     assert queue.max_items == 2
 
@@ -71,7 +71,7 @@ def test_item_limit_can_grow_but_cannot_discard_resident_items() -> None:
 
 def test_snapshot_and_remove_are_pure_container_ops() -> None:
     """snapshot() reads FIFO order; remove() drops by identity and fixes bytes."""
-    queue = ContinuousRolloutQueue(max_items=8)
+    queue = ScoredRolloutQueue(max_items=8)
     queue.put(_item(group_slot=0, version=1, nbytes=4))
     queue.put(_item(group_slot=1, version=1, nbytes=6))
     snap = queue.snapshot()
@@ -83,7 +83,7 @@ def test_snapshot_and_remove_are_pure_container_ops() -> None:
 
 
 def test_item_count_overflow_fails_before_mutation() -> None:
-    queue = ContinuousRolloutQueue(max_items=2)
+    queue = ScoredRolloutQueue(max_items=2)
     queue.put(_item(group_slot=0, version=1))
     queue.put(_item(group_slot=1, version=1))
 
@@ -95,7 +95,7 @@ def test_item_count_overflow_fails_before_mutation() -> None:
 
 
 def test_byte_overflow_fails_before_mutation() -> None:
-    queue = ContinuousRolloutQueue(max_items=100, max_bytes=10)
+    queue = ScoredRolloutQueue(max_items=100, max_bytes=10)
     queue.put(_item(group_slot=0, version=1, nbytes=6))
 
     with pytest.raises(ValueError, match="byte limit"):
@@ -176,7 +176,7 @@ def test_stats_shape() -> None:
     """``stats()`` reports ready items and ready bytes under exactly those keys (the metrics
     contract), bytes summed from the items' ``nbytes``.
     """
-    queue = ContinuousRolloutQueue(max_items=8)
+    queue = ScoredRolloutQueue(max_items=8)
     queue.put(_item(group_slot=0, version=1, nbytes=4))
     stats = queue.stats()
     assert stats["ready_items"] == 1.0
@@ -185,7 +185,7 @@ def test_stats_shape() -> None:
 
 @pytest.mark.parametrize("nbytes", [-1, 0.5, float("nan"), True, "4"])
 def test_invalid_item_size_leaves_queue_unchanged(nbytes) -> None:
-    queue = ContinuousRolloutQueue(max_items=2, max_bytes=8)
+    queue = ScoredRolloutQueue(max_items=2, max_bytes=8)
     queue.put(_item(0, 1, nbytes=4))
     with pytest.raises(ValueError, match="nbytes"):
         queue.put(_item(1, 1, nbytes=nbytes))

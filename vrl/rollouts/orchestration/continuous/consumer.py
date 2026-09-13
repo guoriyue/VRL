@@ -14,12 +14,12 @@ import time
 import torch
 
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
+from vrl.rollouts.orchestration.continuous.scored_queue import ScoredRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
-    ContinuousRolloutItem,
     ContinuousRolloutProducerState,
     ContinuousRolloutSettings,
+    ScoredRollout,
 )
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.rollouts.stats import RolloutStats
@@ -33,7 +33,7 @@ class ContinuousRolloutConsumer:
     def __init__(
         self,
         *,
-        queue: ContinuousRolloutQueue,
+        queue: ScoredRolloutQueue,
         staleness: StalenessPolicy,
         settings: ContinuousRolloutSettings,
     ) -> None:
@@ -193,7 +193,7 @@ class ContinuousRolloutConsumer:
         prompt_batch_id: int,
         expected_group_count: int,
         current_policy_version: int | None,
-    ) -> list[ContinuousRolloutItem] | None:
+    ) -> list[ScoredRollout] | None:
         """Pop one complete, distinct-group, homogeneous-version batch."""
 
         # expected_group_count == len(prompts); the owner already rejected empty prompt
@@ -233,7 +233,7 @@ class ContinuousRolloutConsumer:
     def _build_iteration(
         self,
         *,
-        items: list[ContinuousRolloutItem],
+        items: list[ScoredRollout],
         current_policy_version: int | None,
         queue_wait_s: float,
         ready_groups_at_demand: int,
