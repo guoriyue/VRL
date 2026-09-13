@@ -13,6 +13,7 @@ single pinned device when ``device_map`` is unset.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,14 @@ class QwenVLVideoJudge:
     """Load a Qwen-VL judge and score one (prompt, video) pair per call."""
 
     family: str = "Qwen-VL judge"
+    # The rubric turn and the fixed-format score line. A judge whose output is
+    # "<axis>: <1-5 integer>" per axis declares these and inherits the message
+    # builder and the integer parser; the public score keys are the axes plus
+    # ``overall`` (their mean).
+    system_prompt: str = ""
+    user_template: str = ""
+    score_regex: re.Pattern[str] | None = None
+    score_axes: tuple[str, ...] = ()
 
     def __init__(self, worker_config: Mapping[str, Any], *, model_root: Path) -> None:
         self.worker_config = dict(worker_config)
@@ -100,12 +109,58 @@ class QwenVLVideoJudge:
     def _messages(self, video_path: str, prompt: str) -> list[dict[str, Any]]:
         """The chat turns for one judgement (system rubric + video + user text)."""
 
-        raise NotImplementedError
+        return [
+            {"role": "system", "content": self.system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    self._video_content(video_path),
+                    {"type": "text", "text": self.user_template.format(prompt=prompt)},
+                ],
+            },
+        ]
 
     def _parse(self, decoded: str, generated: Any, generated_ids: list[int]) -> dict[str, float]:
         """Public scores from the judge's decoded text (and, optionally, its logits)."""
 
-        raise NotImplementedError
+        del generated, generated_ids
+        parsed = self.parse_integer_scores(decoded)
+        if parsed is None:
+            raise ValueError(
+                f"{self.family} produced no parseable score line; "
+                f"output head was: {decoded[:200]!r}",
+            )
+        return self.normalize_scores(*parsed)
+
+    @classmethod
+    def parse_integer_scores(cls, text: str) -> tuple[int, ...] | None:
+        """Extract the 1-5 integer per ``score_axes`` from the judge's text, or None."""
+
+        if cls.score_regex is None:
+            raise NotImplementedError(f"{cls.family} declares no score_regex")
+        match = cls.score_regex.search(text)
+        if match is None:
+            return None
+        scores = tuple(int(match.group(i + 1)) for i in range(len(cls.score_axes)))
+        if any(not (1 <= value <= 5) for value in scores):
+            return None
+        return scores
+
+    @classmethod
+    def normalize_scores(cls, *values: float) -> dict[str, float]:
+        """Map the axes to the public score keys plus their mean ``overall``.
+
+        This dict is the public scoring contract: only the documented keys, so
+        a config cannot select an undocumented upstream key as ``score_key``.
+        """
+
+        if len(values) != len(cls.score_axes):
+            raise ValueError(
+                f"{cls.family} expects {len(cls.score_axes)} axis scores, got {len(values)}",
+            )
+        scores = {axis: float(value) for axis, value in zip(cls.score_axes, values, strict=True)}
+        scores["overall"] = sum(scores.values()) / len(cls.score_axes)
+        return scores
 
     def _generate_kwargs(self) -> dict[str, Any]:
         """The decoding recipe; greedy by default."""

@@ -64,6 +64,10 @@ class VideoScore2Model(QwenVLVideoJudge):
     """Load VideoScore2 and score one (prompt, video) pair per call."""
 
     family = "VideoScore2"
+    system_prompt = VIDEOSCORE2_SYSTEM_PROMPT
+    user_template = VIDEOSCORE2_USER_TEMPLATE
+    score_regex = VIDEOSCORE2_SCORE_REGEX
+    score_axes = ("visual_quality", "text_alignment", "physical_common_sense")
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         # Continuous expected-value scoring (default) vs upstream integer parsing.
@@ -89,21 +93,6 @@ class VideoScore2Model(QwenVLVideoJudge):
             **load_kwargs,
         )
 
-    def _messages(self, video_path: str, prompt: str) -> list[dict[str, Any]]:
-        return [
-            {"role": "system", "content": VIDEOSCORE2_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    self._video_content(video_path),
-                    {
-                        "type": "text",
-                        "text": VIDEOSCORE2_USER_TEMPLATE.format(prompt=prompt),
-                    },
-                ],
-            },
-        ]
-
     def _generate_kwargs(self) -> dict[str, Any]:
         # Greedy decoding makes this judge degenerate on real video: it
         # repeats "</multi-dimensional analysis></summary>" until
@@ -123,14 +112,14 @@ class VideoScore2Model(QwenVLVideoJudge):
         }
 
     def _parse(self, decoded: str, generated: Any, generated_ids: list[int]) -> dict[str, float]:
-        hard = _parse_integer_scores(decoded)
+        hard = self.parse_integer_scores(decoded)
         if hard is None:
             raise ValueError(
                 "VideoScore2 produced no parseable score line; "
                 f"output head was: {decoded[:200]!r}",
             )
         if not self.soft_scores:
-            return _normalize_scores(*hard)
+            return self.normalize_scores(*hard)
 
         step_logits = [step[0] for step in generated.scores]
         soft = _soft_scores_from_generation(
@@ -139,19 +128,7 @@ class VideoScore2Model(QwenVLVideoJudge):
             self.digit_token_ids,
             tokenizer=self.tokenizer,
         )
-        return _normalize_scores(*_merge_soft_with_hard(soft, hard))
-
-
-def _parse_integer_scores(text: str) -> tuple[int, int, int] | None:
-    """Extract the three 1-5 integer scores from generated text (upstream regex)."""
-
-    match = VIDEOSCORE2_SCORE_REGEX.search(text)
-    if match is None:
-        return None
-    scores = tuple(int(match.group(i)) for i in (1, 2, 3))
-    if any(not (1 <= value <= 5) for value in scores):
-        return None
-    return scores  # type: ignore[return-value]
+        return self.normalize_scores(*_merge_soft_with_hard(soft, hard))
 
 
 # Soft may drift from its greedy digit at most this far before it is treated
@@ -161,7 +138,7 @@ _SOFT_HARD_TOLERANCE = 1.0
 
 def _merge_soft_with_hard(
     soft: Mapping[str, float | None],
-    hard: tuple[int, int, int],
+    hard: tuple[int, ...],
 ) -> tuple[float, float, float]:
     """Soft may only refine its hard integer, never contradict it.
 
@@ -307,26 +284,8 @@ def _expected_digit_value(logits: Any, digit_token_ids: Mapping[int, int]) -> fl
     return float((probs * values).sum().item())
 
 
-def _normalize_scores(
-    visual_quality: float,
-    text_alignment: float,
-    physical_common_sense: float,
-) -> dict[str, float]:
-    """Map the three axes to the public score keys plus their mean ``overall``.
-
-    This dict is the public scoring contract: it carries only the documented
-    keys, so a config cannot select an undocumented upstream key as ``score_key``.
-    """
-
-    visual_quality = float(visual_quality)
-    text_alignment = float(text_alignment)
-    physical_common_sense = float(physical_common_sense)
-    return {
-        "visual_quality": visual_quality,
-        "text_alignment": text_alignment,
-        "physical_common_sense": physical_common_sense,
-        "overall": (visual_quality + text_alignment + physical_common_sense) / 3.0,
-    }
-
+# Kept as module-level names for the parsing tests and any external caller.
+_parse_integer_scores = VideoScore2Model.parse_integer_scores
+_normalize_scores = VideoScore2Model.normalize_scores
 
 __all__ = ["VideoScore2Model"]

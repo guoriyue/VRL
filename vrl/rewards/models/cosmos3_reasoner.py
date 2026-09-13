@@ -49,6 +49,15 @@ class Cosmos3ReasonerRewardModel(QwenVLVideoJudge):
     """Load the Cosmos3 reasoner (Qwen3-VL) and judge one (prompt, video) pair."""
 
     family = "Cosmos3 reasoner judge"
+    system_prompt = COSMOS3_SYSTEM_PROMPT
+    user_template = COSMOS3_USER_TEMPLATE
+    score_regex = COSMOS3_SCORE_REGEX
+    score_axes = (
+        "task_success",
+        "contact_realism",
+        "temporal_consistency",
+        "physical_plausibility",
+    )
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         # Generator tower is a separate diffusion model; only the reasoner judges
@@ -91,68 +100,9 @@ class Cosmos3ReasonerRewardModel(QwenVLVideoJudge):
 
         return Qwen3VLForConditionalGeneration.from_pretrained(str(self.model_root), **load_kwargs)
 
-    def _messages(self, video_path: str, prompt: str) -> list[dict[str, Any]]:
-        return [
-            {"role": "system", "content": COSMOS3_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    self._video_content(video_path),
-                    {
-                        "type": "text",
-                        "text": COSMOS3_USER_TEMPLATE.format(prompt=prompt),
-                    },
-                ],
-            },
-        ]
 
-    def _parse(self, decoded: str, generated: Any, generated_ids: list[int]) -> dict[str, float]:
-        del generated, generated_ids
-        parsed = _parse_integer_scores(decoded)
-        if parsed is None:
-            raise ValueError(
-                "Cosmos3 reasoner produced no parseable score line; "
-                f"output head was: {decoded[:200]!r}",
-            )
-        return _normalize_scores(*parsed)
-
-
-def _parse_integer_scores(text: str) -> tuple[int, int, int, int] | None:
-    """Extract the four 1-5 integer axes from the judge's generated text."""
-
-    match = COSMOS3_SCORE_REGEX.search(text)
-    if match is None:
-        return None
-    scores = tuple(int(match.group(i)) for i in (1, 2, 3, 4))
-    if any(not (1 <= value <= 5) for value in scores):
-        return None
-    return scores  # type: ignore[return-value]
-
-
-def _normalize_scores(
-    task_success: float,
-    contact_realism: float,
-    temporal_consistency: float,
-    physical_plausibility: float,
-) -> dict[str, float]:
-    """Map the four axes to the public score keys plus their mean ``overall``.
-
-    This dict is the public scoring contract: only the documented keys, so a
-    config cannot select an undocumented upstream key as ``score_key``.
-    """
-
-    task_success = float(task_success)
-    contact_realism = float(contact_realism)
-    temporal_consistency = float(temporal_consistency)
-    physical_plausibility = float(physical_plausibility)
-    return {
-        "task_success": task_success,
-        "contact_realism": contact_realism,
-        "temporal_consistency": temporal_consistency,
-        "physical_plausibility": physical_plausibility,
-        "overall": (task_success + contact_realism + temporal_consistency + physical_plausibility)
-        / 4.0,
-    }
-
+# Kept as module-level names for the parsing tests and any external caller.
+_parse_integer_scores = Cosmos3ReasonerRewardModel.parse_integer_scores
+_normalize_scores = Cosmos3ReasonerRewardModel.normalize_scores
 
 __all__ = ["Cosmos3ReasonerRewardModel"]
