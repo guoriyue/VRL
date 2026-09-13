@@ -1336,3 +1336,63 @@ do not bypass these production limitations. A complete multi-GPU recipe needs
 a supported lifecycle/orchestration path, not merely a checkpoint override.
 All commands exited and no Ray/reward service remained. No GPU job or claim was
 created during this turn; the broad hardware objective remains incomplete.
+
+### Native FSDP parking and real update equivalence
+
+Candidate 260b7d19 adds a real four-GPU controlled unit test to the existing
+FSDP CUDA parking coverage. Two identical mixed-precision policies use native
+adapter-only FSDP, BF16 frozen bases and FP32 adapters. One stays resident; the
+other parks/restores between backward and optimizer steps. Across three updates,
+all local model/reference parameters, live gradients, Adam moments/counters,
+native EMA and temporary EMA weights match exactly. Parameter identities and
+original device placements survive, including originally CPU optimizer scalars
+and EMA temporary copies. Repeated park/restore calls are idempotent. Both the
+old CUDA residency test and new exact-update control passed in 13.12s. This uses
+unit policies and no GradScaler, not actual Cosmos training performance.
+
+A separate actual Cosmos probe then reused the original eight real trajectories
+and initial adapter weights from cosmos_native_collector_real_group. It used
+four native FSDP ranks, shard_trainable_only=true, precision_policy=none, no
+CPU-offload policy, default attention/Linear behavior, IEEE and gradient
+checkpointing. Each rank processed its two disjoint samples at timestep 10;
+whole-eight-group advantages and native optimizer settings were unchanged.
+All eight log-prob errors were exactly zero under the existing 1e-3 limit.
+
+Before the update, each rank parked and restored 2,809 parameter/gradient/EMA
+tensors with exact local value checks. After native AdamW and one native EMA
+update, the same check covered 3,929 parameter/Adam/EMA tensors. All visited
+tensor storage was on CPU while parked and returned to its original device;
+model parameter object identities were retained. The real-model probe has no
+reference model or GradScaler. It does not measure complete allocator reclamation
+or prove that a full generation worker fits while this trainer is parked.
+
+The actual update produced 560 finite gradient tensors and changed 280 initially
+zero-B-adapter-dependent trainable tensors. Full FSDP gradients and optimizer
+state were reconstructed collectively. Native optimizer FQN keys were converted
+to the verified matching parameter order for the independent CPU DDP comparison;
+hyperparameters and step counters were required to match. Results versus the
+preserved native DP4 reference, at unchanged limits:
+
+| Quantity | Measured difference | Existing limit |
+| --- | ---: | ---: |
+| Gradient relative L2 | 7.895697e-11 | 1e-4 |
+| Update relative L2 | 3.328797e-10 | 1e-4 |
+| Parameter maximum absolute | 2.910383e-11 | 1e-6 |
+| Adam first-moment relative L2 | 8.511615e-11 | 1e-4 |
+| Adam second-moment relative L2 | 1.140178e-11 | 2e-4 |
+
+All gates passed. This is a real single-slice update and two real state residency
+cycles, not a complete PPO cadence, Cosmos next-update continuation, live Ray
+generation/training handoff or quality claim. Rank0 diagnostic wall was 53.537678s
+including parking, readback and state gathering, excluding initial model loading;
+do not compare it directly to earlier native DP training-only timing. Peak CUDA
+allocated memory was 14,846,795,776 bytes per rank. Each parking cycle's recorded
+wall also includes readback/copy verification, so it is not pure transfer latency.
+
+Evidence under cosmos_real_fsdp_parking_update: executed_probe.py,
+executed_native_comparison.py, pre-step full gradients per rank, transitions,
+eight parking receipts, update.pt, result.json and native_comparison.json.
+GPU unit tests, real torchrun and CPU comparator exited 0. Fresh compute inventory
+was empty; all four GPU claims released. FSDP's existing lifecycle is now a
+verified numerical candidate for full integration without enabling unsupported
+DDP parking or the failed fixed-compute CP path.
