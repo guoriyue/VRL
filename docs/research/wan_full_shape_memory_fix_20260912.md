@@ -3,6 +3,12 @@
 Status: **real-weight, full-shape forward/backward diagnostic passed;
 real rollout training update remains open**.
 
+The subsequent full-size real run passed generation, both reward services and
+multiple replay/backward timesteps without the original OOM, but simultaneous
+Ray SIGTERM interrupted it before the optimizer update. It is not an end-to-end
+pass. See `wan_full_physics_cpu_checkpoint_interruption_20260912.md` for exact
+scope, termination evidence and released hardware ownership.
+
 Implementation candidate: `382d0825` in `/home/ubuntu/VRL-mgpu-integration`.
 Shared dependencies unchanged. Torch 2.12.0+cu130, Diffusers 0.38.0 and isolated
 Transformers 5.13.0. Three L40S policy GPUs; no reward service or rollout worker
