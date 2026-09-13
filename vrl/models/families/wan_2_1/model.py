@@ -853,6 +853,7 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
         self.transformer_2 = transformer_2
         self._scheduler = scheduler
         self._device = device
+        self._pipeline_offload = None
         self._boundary_ratio = boundary_ratio
         self._trainable_transformer_names = normalize_wan_trainable_transformers(
             trainable_transformers,
