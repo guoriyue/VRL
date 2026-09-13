@@ -759,3 +759,14 @@ not establish real text conditioning, full20-step sampling/VAE/video/reward
 integration, Ray lifecycle, EMA adapter exports, production DP-aware config
 construction, compile parity, learning quality or multi-GPU throughput.
 Those remaining integration and original sprint gates stay open.
+
+## Real full-sequence conditioning prerequisite
+
+Candidate435c8fa2 subsequently ran the production rollout builder with real
+text encoder/VAE at512x512/93f,20 CPS steps,no-CFG. Two complete clips pass
+explicit1e-3 replay checks with actual errors0, and export byte-identical
+MP4s. Real conditioning is retained for CP integration. A measured root-disk
+load bottleneck was addressed by copying and byte-verifying missing components
+into NVMe; the subsequent complete run takes88.1s including load. Visual
+quality remains unaccepted. Details and precise limits in
+`docs/research/cosmos_real_sequence_20260913.md`; not CP training acceptance.
