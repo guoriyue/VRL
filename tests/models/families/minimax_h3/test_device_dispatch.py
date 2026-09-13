@@ -205,7 +205,10 @@ def test_partitioned_conditioner_native_prompt_and_four_device_forward(tmp_path)
     from tests.models.families.minimax_h3.test_model_loading import _build
     from tests.models.steps.denoise.fixtures import stamp_model_precision
     from vrl.models.families.minimax_h3.model import MiniMaxH3Model
-    from vrl.models.families.minimax_h3.placement import load_partitioned_text_encoder
+    from vrl.models.families.minimax_h3.placement import (
+        load_partitioned_text_encoder,
+        park_partitioned_text_encoder,
+    )
 
     assert torch.cuda.device_count() >= 4
     fixture = _model()
@@ -265,6 +268,48 @@ def test_partitioned_conditioner_native_prompt_and_four_device_forward(tmp_path)
         torch.testing.assert_close(
             actual_output["noise_pred"], expected_output["noise_pred"], atol=1e-3, rtol=1e-3
         )
+        encoder = components.text_encoder
+        saved_map = dict(encoder.hf_device_map)
+        saved_tensors = {
+            name: (tensor.device, tensor.dtype, tensor.detach().cpu().clone())
+            for name, tensor in list(encoder.named_parameters()) + list(encoder.named_buffers())
+        }
+        for inject_error in (False, True):
+            try:
+                with park_partitioned_text_encoder(encoder):
+                    assert encoder.hf_device_map is None
+                    assert all(
+                        t.device.type == "cpu"
+                        for t in list(encoder.parameters()) + list(encoder.buffers())
+                    )
+                    assert all(not hasattr(module, "_hf_hook") for module in encoder.modules())
+                    with pytest.raises(ValueError, match="GPU-only"):
+                        with park_partitioned_text_encoder(encoder):
+                            pytest.fail("Nested parking must be rejected")
+                    try:
+                        components.vae.to("cuda:2")
+                        components.audio_vae.to("cuda:3")
+                        video = model.decode_latents(state.latents)
+                        waveform, _ = model.decode_audio(state.audio_rows)
+                        assert torch.isfinite(video).all() and torch.isfinite(waveform).all()
+                        if inject_error:
+                            raise RuntimeError("injected decode-stage failure")
+                    finally:
+                        components.vae.to("cpu")
+                        components.audio_vae.to("cpu")
+            except RuntimeError as error:
+                assert inject_error and str(error) == "injected decode-stage failure"
+            else:
+                assert not inject_error
+            assert encoder.hf_device_map == saved_map
+            for name, tensor in list(encoder.named_parameters()) + list(encoder.named_buffers()):
+                owner, dtype, value = saved_tensors[name]
+                assert tensor.device == owner and tensor.dtype == dtype
+                torch.testing.assert_close(tensor.cpu(), value, atol=0, rtol=0)
+            restored = model.encode_prompt("a wooden block", max_sequence_length=8)
+            torch.testing.assert_close(
+                restored["prompt_embeds"], actual["prompt_embeds"], atol=0, rtol=0
+            )
     hook.remove()
 
 

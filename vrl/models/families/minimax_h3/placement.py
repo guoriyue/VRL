@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import torch
@@ -118,3 +120,33 @@ def load_partitioned_text_encoder(
     )
     encoder.requires_grad_(False)
     return encoder.eval()
+
+
+@contextmanager
+def park_partitioned_text_encoder(encoder: Any) -> Iterator[None]:
+    """Exclusively park a frozen resident encoder; restore its map even on errors.
+
+    Callers must finish and release VAE GPU work before leaving this context.
+    Concurrent encoding and nested parking are unsupported.
+    """
+    from accelerate import dispatch_model
+    from accelerate.hooks import remove_hook_from_module
+
+    mapping = getattr(encoder, "hf_device_map", None)
+    if not mapping or any(type(device) is not int or device < 0 for device in mapping.values()):
+        raise ValueError("H3 encoder parking requires an explicit GPU-only device map")
+    if encoder.training or any(p.requires_grad for p in encoder.parameters()):
+        raise ValueError("H3 encoder parking requires a frozen eval-mode encoder")
+    tensors = list(encoder.parameters()) + list(encoder.buffers())
+    if not tensors or any(t.device.type != "cuda" for t in tensors):
+        raise ValueError("H3 encoder parking requires resident CUDA parameters and buffers")
+    mapping = dict(mapping)
+    root_device = tensors[0].device.index
+    del tensors
+    try:
+        remove_hook_from_module(encoder, recurse=True)
+        encoder.hf_device_map = None
+        encoder.to("cpu")
+        yield
+    finally:
+        dispatch_model(encoder, device_map=mapping, main_device=root_device, force_hooks=True)
