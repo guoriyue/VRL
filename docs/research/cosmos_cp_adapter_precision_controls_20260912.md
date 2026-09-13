@@ -344,3 +344,26 @@ sufficient remedy and is not promoted to production. Existing cotangent
 differences and other local backward paths remain. No acceptance threshold
 changed. Both jobs are terminal (failed attempt exit 1, corrected exit 0),
 fresh compute inventory is empty, and GPUs 0-1 are released.
+
+## Q/K normalization input precision control
+
+Inspection of the installed Diffusers RMSNorm shows an FP32 variance branch
+while the original input also participates directly in normalization. The
+diagnostic `--fp32-qk-norm-input` passes FP32 inputs to the unchanged vendor
+forward in all self/cross Q/K norms, then casts outputs back. Both reference
+and CP receive this change. Parameter storage is unchanged; this is not a
+claim that the original implementation is mathematically incorrect.
+
+With full-shape conditioning and actual CPS loss, BF16 aggregate parameter
+gradient relative L2 is 0.0261260. Block-26 CFG-call-0 cross-key norm output
+gradient error is 0.00325701 and input error is 0.0132187. The local input
+error is lower than the preceding unmodified trace's 0.0212226, but the global
+discrepancy remains substantial. FP32 aggregate error is 2.41754e-5. Traced
+BF16 forward outputs and final reference/CP outputs match exactly. This does
+not compare the modified reference tensor directly against the old reference.
+
+Evidence: `cosmos_cp_fp32_norm_input_l40s/rank-{0,1}.json` and adjacent log.
+Both rank reports match; job exits 0 and fresh compute inventory is empty.
+GPUs 0-1 are released. No production fix or acceptance pass is claimed.
+Precision changes to normalization alone have not resolved the remaining
+backward mismatch, so further work must retain the full gradient comparison.
