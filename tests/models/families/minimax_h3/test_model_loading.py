@@ -29,6 +29,26 @@ pytest.importorskip("diffusers.modular_pipelines.minimax_h3")
 _PATH = "MiniMaxAI/MiniMax-H3"
 
 
+@pytest.mark.parametrize("devices", [(), (0, 1), (-1,), (True,), ("cuda:0",)])
+def test_partitioned_map_rejects_invalid_block_ownership(devices):
+    from vrl.models.families.minimax_h3.placement import transformer_device_map
+
+    with pytest.raises(ValueError):
+        transformer_device_map(
+            build_tiny_minimax_h3_transformer(), root_device=0, block_devices=devices
+        )
+
+
+def test_partitioned_map_is_complete_and_nonoverlapping():
+    from vrl.models.families.minimax_h3.placement import transformer_device_map
+
+    transformer = build_tiny_minimax_h3_transformer()
+    mapping = transformer_device_map(transformer, root_device=0, block_devices=(1,))
+    assert mapping["proj_out"] == mapping["audio_proj_out"] == mapping["norm_out"] == 0
+    for name, _ in list(transformer.named_parameters()) + list(transformer.named_buffers()):
+        assert sum(name == key or name.startswith(key + ".") for key in mapping) == 1
+
+
 def _build(*, rollout: bool, num_steps: int | None = None, device: str = "cuda:0") -> ModelBuild:
     return ModelBuild(
         model_name_or_path=_PATH,
@@ -40,6 +60,25 @@ def _build(*, rollout: bool, num_steps: int | None = None, device: str = "cuda:0
         rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.bfloat16) if rollout else None,
         sampling_config={"num_steps": num_steps} if num_steps is not None else None,
     )
+
+
+@pytest.mark.parametrize("invalid", ["full", "compile", "cpu", "implicit_cuda"])
+def test_partitioned_loader_rejects_unverified_modes_before_loading(monkeypatch, invalid):
+    from dataclasses import replace
+
+    from diffusers import MiniMaxH3Transformer3DModel
+
+    from vrl.models.families.minimax_h3.placement import load_partitioned_transformer
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Invalid placement must fail before config or weight loading")
+
+    monkeypatch.setattr(MiniMaxH3Transformer3DModel, "load_config", forbidden)
+    config = {"use_lora": invalid != "full", "torch_compile": {"enable": invalid == "compile"}}
+    device = {"cpu": "cpu", "implicit_cuda": "cuda"}.get(invalid, "cuda:0")
+    build = replace(_build(rollout=False, device=device), model_config=config)
+    with pytest.raises(ValueError):
+        load_partitioned_transformer(build, (0, 1))
 
 
 class _FakeModularPipeline:

@@ -13,6 +13,7 @@ the flow-convention subclass. The generic recipe loads exactly one scheduler.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from vrl.generation.bindings.full_sequence_denoise import (
@@ -33,7 +34,9 @@ DEFAULT_FPS = 24
 DEFAULT_MAX_SEQUENCE_LENGTH = 512
 
 
-def build_minimax_h3_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
+def build_minimax_h3_replay_runtime_bundle(
+    build: ModelBuild, *, block_devices: tuple[int, ...] | None = None
+) -> RuntimeBundle:
     """Transformer + the two H3 schedulers; no VAE, no conditioner."""
 
     from diffusers import MiniMaxH3Scheduler
@@ -46,7 +49,15 @@ def build_minimax_h3_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     from vrl.models.steps.denoise.build import assemble_replay_bundle
 
     logger.info("Building minimax_h3 replay runtime bundle from %s", build.model_name_or_path)
-    transformer = load_diffusers_transformer(build, "MiniMaxH3Transformer3DModel")
+    if block_devices is None:
+        transformer = load_diffusers_transformer(build, "MiniMaxH3Transformer3DModel")
+    else:
+        from vrl.models.families.minimax_h3.placement import load_partitioned_transformer
+
+        transformer = load_partitioned_transformer(build, block_devices)
+        # Native PEFT preparation must not collapse the dispatched base onto
+        # the root device. This build is private to the explicit caller.
+        build = replace(build, defer_trainable_device_move=True)
     load_kwargs = build.pretrained_kwargs
     scheduler = build_flow_scheduler_class().from_pretrained(
         build.model_name_or_path,

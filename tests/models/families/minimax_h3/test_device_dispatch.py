@@ -10,6 +10,7 @@ from accelerate import dispatch_model
 from tests.models.families.minimax_h3.test_backbone_parity import _model, _sampling_state
 from tests.models.steps.denoise.fixtures import TINY_MINIMAX_H3_PATCH_SIZE
 from vrl.models.families.minimax_h3.model import patchify_video_latents
+from vrl.models.families.minimax_h3.placement import transformer_device_map
 
 pytest.importorskip("diffusers.modular_pipelines.minimax_h3")
 
@@ -48,10 +49,7 @@ def test_cross_device_blocks_preserve_joint_outputs_and_gradients(mixed):
     reference = copy.deepcopy(transformer).to("cuda:0")
     # Keep packing projections and selection heads on the root device. Only
     # complete transformer blocks migrate, so functional indexing stays local.
-    device_map = {
-        name: 0 for name, _ in transformer.named_children() if name != "transformer_blocks"
-    }
-    device_map.update({"transformer_blocks.0": 0, "transformer_blocks.1": 1})
+    device_map = transformer_device_map(transformer, root_device=0, block_devices=(0, 1))
     split = dispatch_model(
         transformer,
         device_map=device_map,
@@ -94,3 +92,103 @@ def test_cross_device_blocks_preserve_joint_outputs_and_gradients(mixed):
         p.grad is not None and p.grad.abs().sum() > 0
         for p in split.transformer_blocks[1].parameters()
     )
+
+
+@pytest.mark.skipif(
+    os.environ.get("VRL_H3_DISPATCH_CUDA") != "1",
+    reason="Requires an explicit two-GPU hardware reservation",
+)
+def test_partitioned_replay_loads_local_shards_and_keeps_native_lora_on_owners(tmp_path):
+    from dataclasses import replace
+
+    from diffusers import MiniMaxH3Transformer3DModel
+
+    from tests.models.families.minimax_h3.test_model_loading import _build
+    from vrl.models.families.minimax_h3.runtime import build_minimax_h3_replay_runtime_bundle
+
+    fixture = _model()
+    state = _sampling_state(fixture)
+    source = MiniMaxH3Transformer3DModel.from_config(
+        dict(fixture.transformer.config), num_layers=2
+    )
+    source.save_pretrained(tmp_path / "transformer", max_shard_size="50KB")
+    fixture.scheduler.save_pretrained(tmp_path / "scheduler")
+    fixture.audio_scheduler.save_pretrained(tmp_path / "audio_scheduler")
+    build = replace(
+        _build(rollout=False, num_steps=3),
+        model_name_or_path=str(tmp_path),
+        revision=None,
+        model_config={
+            "use_lora": True,
+            "lora": {
+                "rank": 2,
+                "alpha": 4,
+                "target_modules": ["to_q", "to_k", "to_v", "to_out.0"],
+            },
+        },
+    )
+    reference = build_minimax_h3_replay_runtime_bundle(build)
+    split = build_minimax_h3_replay_runtime_bundle(build, block_devices=(0, 1))
+    assert build.defer_trainable_device_move is False
+    for name, parameter in reference.model.transformer.named_parameters():
+        if "lora_B" in name:
+            torch.nn.init.normal_(parameter, std=0.01)
+    split.model.transformer.load_state_dict(reference.model.transformer.state_dict(), strict=True)
+    owners = {name: p.device for name, p in split.model.transformer.named_parameters()}
+    assert {device.index for device in owners.values()} == {0, 1}
+    assert all(
+        p.dtype == torch.float32 for p in split.model.transformer.parameters() if p.requires_grad
+    )
+    kwargs = {
+        "hidden_states": patchify_video_latents(state.latents, TINY_MINIMAX_H3_PATCH_SIZE),
+        "audio_hidden_states": state.audio_rows,
+        "encoder_hidden_states": state.prompt_embeds,
+        "timestep": state.layout.row_timestep_plan[0][0],
+        "timestep_indices": state.layout.row_timestep_plan[0][1],
+        "return_dict": False,
+        **state.layout.transformer_kwargs(),
+    }
+    kwargs = {
+        k: v.detach().to("cuda:0") if isinstance(v, torch.Tensor) else v for k, v in kwargs.items()
+    }
+    expected = reference.model.transformer(**kwargs)
+    actual = split.model.transformer(**kwargs)
+    for left, right in zip(actual, expected, strict=True):
+        torch.testing.assert_close(left, right, atol=1e-3, rtol=1e-3)
+    sum(x.float().square().mean() for x in expected).backward()
+    sum(x.float().square().mean() for x in actual).backward()
+    reference_parameters = dict(reference.model.transformer.named_parameters())
+    nonzero = 0
+    remote_nonzero = 0
+    for name, parameter in split.model.transformer.named_parameters():
+        assert parameter.device == owners[name]
+        other = reference_parameters[name]
+        assert (parameter.grad is None) == (other.grad is None)
+        if parameter.grad is not None:
+            assert torch.isfinite(parameter.grad).all()
+            torch.testing.assert_close(
+                parameter.grad.to("cuda:0"), other.grad, atol=1e-3, rtol=1e-3
+            )
+            nonzero += int(parameter.grad.abs().sum() > 0)
+            remote_nonzero += int(parameter.device.index == 1 and parameter.grad.abs().sum() > 0)
+    assert nonzero > 0
+    assert remote_nonzero > 0
+    before = {
+        name: p.detach().clone()
+        for name, p in split.model.transformer.named_parameters()
+        if p.requires_grad
+    }
+    for bundle in (reference, split):
+        optimizer = torch.optim.AdamW(
+            [p for p in bundle.model.transformer.parameters() if p.requires_grad], lr=1e-4
+        )
+        optimizer.step()
+    changed_devices = set()
+    for name, parameter in split.model.transformer.named_parameters():
+        assert parameter.device == owners[name]
+        torch.testing.assert_close(
+            parameter.to("cuda:0"), reference_parameters[name], atol=1e-3, rtol=1e-3
+        )
+        if name in before and not torch.equal(parameter, before[name]):
+            changed_devices.add(parameter.device.index)
+    assert changed_devices == {0, 1}
