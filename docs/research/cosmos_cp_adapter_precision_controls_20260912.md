@@ -389,3 +389,27 @@ Evidence: `cosmos_replicated_baseline_l40s/rank-{0,1}.json` and adjacent log.
 Torchrun exits 0, fresh compute inventory is empty and GPUs 0-1 are released.
 No production changes. CP numerical acceptance remains open; the unsharded
 control is not a substitute for sequence parallelism or its memory targets.
+
+## Full-shape projection control
+
+`--full-shape-projections` differentiably gathers local inputs before self
+Q/K/V, self output projection, cross Q/output projection and the full FF
+module, then selects each rank's token slice. Cross K/V stay replicated.
+Full-shape conditioning remains enabled. Self-attention itself still uses
+local Q and gathered K/V; replicated cross-attention still has local Q.
+This intentionally repeats full projection work and is not a memory solution.
+
+Both FP32 and BF16 now have exact matching block forward outputs, final
+outputs and scalar logprob. FP32 aggregate gradient relative L2 is
+2.44532e-6, down from about 2.4e-5 in earlier own-loss controls. BF16 aggregate
+gradient relative L2 remains 0.0251599. Restoring projection shapes therefore
+does not resolve the low-precision backward discrepancy. Parameter gradients
+still arise from different partial-cotangent/reduction paths; identical forward
+shapes alone do not imply identical backward operands.
+
+Evidence: `cosmos_cp_fullshape_projections_l40s/rank-{0,1}.json` and adjacent
+log. Both ranks' complete reports match; torchrun exits 0 and fresh compute
+inventory is empty. GPUs 0-1 are released. No production/runtime/dependency
+changes or acceptance pass. Further isolation must distinguish attention
+backward from replicated partial-cotangent arithmetic, not accept FP32 or
+forward agreement as sufficient evidence for BF16 training.
