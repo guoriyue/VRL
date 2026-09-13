@@ -349,3 +349,87 @@ def test_decode_uses_vae_owner_and_returns_outputs_to_latent_owner(vae_device):
     )
     assert model.pipeline.vae.device == model.pipeline.audio_vae.device == torch.device(vae_device)
     assert model.pipeline.vae.dtype == model.pipeline.audio_vae.dtype == torch.float32
+
+
+@pytest.mark.skipif(
+    os.environ.get("VRL_H3_FOUR_GPU") != "1",
+    reason="Requires an explicit four-GPU hardware reservation",
+)
+def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from diffusers import ModularPipeline
+
+    from tests.models.families.minimax_h3.test_backbone_parity import _rollout
+    from tests.models.families.minimax_h3.test_model_loading import _build
+    from vrl.models.families.minimax_h3.partitioned_generation import (
+        H3GenerationPlacement,
+        build_partitioned_h3_generation_runtime_bundle,
+    )
+
+    components = _model().pipeline
+    components.transformer.save_pretrained(tmp_path / "transformer", max_shard_size="50KB")
+    components.text_encoder.save_pretrained(tmp_path / "text_encoder", max_shard_size="20KB")
+    calls = []
+    # Only modular metadata/small-component loading is substituted; both large
+    # component loaders read real local shards and all component execution is real.
+    small = SimpleNamespace(
+        **{
+            name: getattr(components, name)
+            for name in (
+                "vae",
+                "audio_vae",
+                "tokenizer",
+                "processor",
+                "scheduler",
+                "audio_scheduler",
+            )
+        },
+        load_components=lambda **kwargs: calls.append(kwargs),
+    )
+    monkeypatch.setattr(ModularPipeline, "from_pretrained", lambda *args, **kwargs: small)
+    build = replace(
+        _build(rollout=True, num_steps=3),
+        model_name_or_path=str(tmp_path),
+        revision=None,
+        model_config={
+            "use_lora": True,
+            "lora": {
+                "rank": 2,
+                "alpha": 4,
+                "target_modules": ["to_q", "to_k", "to_v", "to_out.0"],
+            },
+        },
+    )
+    placement = H3GenerationPlacement((1,), 2, (3, 2), 2, 3)
+    bundle = build_partitioned_h3_generation_runtime_bundle(build, placement)
+    model = bundle.model
+    model.pipeline.text_encoder_layer = 1
+    assert build.defer_trainable_device_move is False
+    assert set(calls[0]["names"]) == {
+        "vae",
+        "audio_vae",
+        "tokenizer",
+        "processor",
+        "scheduler",
+        "audio_scheduler",
+    }
+    assert calls[0]["torch_dtype"] == torch.float32
+    assert bundle.loads_full_generation_modules
+    assert {p.device.index for p in model.transformer.parameters()} == {0, 1}
+    assert {p.device.index for p in model.pipeline.text_encoder.parameters()} == {2, 3}
+    with torch.no_grad():
+        state, _, predictions = _rollout(model)
+        assert len(predictions) == 3 and all(torch.isfinite(p).all() for p in predictions)
+        before = model.encode_prompt("a wooden block", max_sequence_length=8)["prompt_embeds"]
+        video = model.decode_latents(state.latents)
+        waveform, rate = model.decode_audio(model.final_audio_rows(state))
+        after = model.encode_prompt("a wooden block", max_sequence_length=8)["prompt_embeds"]
+        torch.testing.assert_close(after, before, atol=0, rtol=0)
+    assert video.shape == (1, 3, 8, 16, 16) and waveform.shape[0] == 2 and rate == 100
+    assert torch.isfinite(video).all() and torch.isfinite(waveform).all()
+    assert model.pipeline.vae.device.type == model.pipeline.audio_vae.device.type == "cpu"
+    assert {p.device.index for p in model.pipeline.text_encoder.parameters()} == {2, 3}
+    with pytest.raises(RuntimeError, match="whole-component"):
+        model.move_frozen_components("cuda:0")

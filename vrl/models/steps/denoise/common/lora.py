@@ -30,6 +30,8 @@ class LoraModelMixin:
     # Wan overrides to True: empty training adapters must initially preserve
     # base Wan output.
     _lora_default_init_weights: Any = "gaussian"
+    # Explicit model-parallel families have already placed the frozen base.
+    _lora_preserve_device_placement: bool = False
 
     def _lora_transformer(self) -> Any:
         """The trainable transformer to wrap.
@@ -66,7 +68,8 @@ class LoraModelMixin:
         # transform owns the parameters.
         rollout = getattr(build, "rollout", None)
         defer_device_move = bool(
-            getattr(build, "defer_trainable_device_move", False)
+            self._lora_preserve_device_placement
+            or getattr(build, "defer_trainable_device_move", False)
             or (
                 rollout is not None
                 and getattr(getattr(build, "precision", None), "quantization", None)
