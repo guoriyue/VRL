@@ -15,7 +15,7 @@ from vrl.generation.ray.session import RayGenerationSession
 from vrl.ray.actor_group import RayActorHandle
 
 
-class _RemoteCall:
+class _FakeRemoteMethod:
     def __init__(self, value: Any) -> None:
         self.value = value
         self.calls = 0
@@ -27,9 +27,9 @@ class _RemoteCall:
 
 class _Actor:
     def __init__(self, worker_id: str) -> None:
-        self.sleep = _RemoteCall(_parking_snapshot(worker_id))
-        self.wake = _RemoteCall(None)
-        self.release_policy = _RemoteCall(None)
+        self.sleep = _FakeRemoteMethod(_parking_snapshot(worker_id))
+        self.wake = _FakeRemoteMethod(None)
+        self.release_policy = _FakeRemoteMethod(None)
 
 
 class _Executor:

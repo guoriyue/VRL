@@ -87,7 +87,7 @@ def test_cancel_failure_is_attached_without_replacing_root_error() -> None:
     ]
 
 
-class _RemoteCall:
+class _FakeRemoteMethod:
     def __init__(self, ref: Any) -> None:
         self.ref = ref
 
@@ -97,8 +97,8 @@ class _RemoteCall:
 
 class _StartupActor:
     def __init__(self, startup_ref: Any) -> None:
-        self.load_policy = _RemoteCall(startup_ref)
-        self.worker_metadata = _RemoteCall(object())
+        self.load_policy = _FakeRemoteMethod(startup_ref)
+        self.worker_metadata = _FakeRemoteMethod(object())
 
 
 class _RemoteWorkerClass:
@@ -203,7 +203,7 @@ def test_capability_timeout_is_not_downgraded_to_safe_false() -> None:
     refs = [object(), object()]
     actors = [
         SimpleNamespace(
-            supports_versioned_trainable_state=_RemoteCall(ref),
+            supports_versioned_trainable_state=_FakeRemoteMethod(ref),
         )
         for ref in refs
     ]

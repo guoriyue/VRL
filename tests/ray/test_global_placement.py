@@ -587,7 +587,7 @@ def test_probe_timeout_cancels_refs_kills_actors_and_removes_placement(
     class _GetTimeoutError(TimeoutError):
         pass
 
-    class _RemoteCall:
+    class _FakeRemoteMethod:
         def __init__(self, ref):
             self.ref = ref
 
@@ -598,7 +598,7 @@ def test_probe_timeout_cancels_refs_kills_actors_and_removes_placement(
         def __init__(self):
             ref = object()
             refs.append(ref)
-            self.gpus = _RemoteCall(ref)
+            self.gpus = _FakeRemoteMethod(ref)
 
     class _RemoteProbe:
         def options(self, **_kwargs):

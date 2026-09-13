@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 import torch
 
-from tests.generation.ray._helpers import RemoteFace
+from tests.generation.ray._helpers import FakeRayActor
 from vrl.generation.execution.batch_placement import (
     DeviceAssignment,
     DistributedGenerationPlan,
@@ -169,7 +169,7 @@ def _executor(
             [
                 RayActorHandle(
                     worker_id=worker.worker_id,
-                    actor=RemoteFace(worker, "execute_batch"),
+                    actor=FakeRayActor(worker, "execute_batch"),
                 ),
             ],
         )
@@ -341,7 +341,7 @@ async def test_stale_slot_routes_to_graceful_discard_not_failure() -> None:
                 [
                     RayActorHandle(
                         worker_id=worker.worker_id,
-                        actor=RemoteFace(worker, "execute_batch"),
+                        actor=FakeRayActor(worker, "execute_batch"),
                     ),
                 ],
             ),
@@ -442,7 +442,7 @@ def _routing_executor(batches, workers, *, pipelined):
             [
                 RayActorHandle(
                     worker_id=w.worker_id,
-                    actor=RemoteFace(
+                    actor=FakeRayActor(
                         w,
                         "execute_batch",
                         "execute_request_pipelined",

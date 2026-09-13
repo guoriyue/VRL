@@ -68,7 +68,7 @@ class GatedRef:
         return wait().__await__()
 
 
-class _RemoteCall:
+class _FakeRemoteMethod:
     """One synchronous method wearing Ray's ``.remote()`` submission face."""
 
     def __init__(self, call: Any) -> None:
@@ -83,7 +83,7 @@ class _RemoteCall:
             return ResolvedRef(error)
 
 
-class RemoteFace:
+class FakeRayActor:
     """A synchronous test worker wearing the Ray actor method face.
 
     Production submits every engine call as ``actor.<method>.remote(...)`` and
@@ -97,7 +97,7 @@ class RemoteFace:
 
     def __init__(self, worker: Any, *methods: str) -> None:
         self._worker = worker
-        self._remote = {name: _RemoteCall(getattr(worker, name)) for name in methods}
+        self._remote = {name: _FakeRemoteMethod(getattr(worker, name)) for name in methods}
 
     def __getattr__(self, name: str) -> Any:
         remote = self.__dict__["_remote"]

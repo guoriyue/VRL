@@ -18,7 +18,7 @@ import torch
 
 import vrl.generation.execution.worker as worker_module
 from tests.generation.execution._helpers import launch_contract
-from tests.generation.ray._helpers import RemoteFace
+from tests.generation.ray._helpers import FakeRayActor
 from vrl.generation.execution.batch_memory import (
     AffinePeakFit,
 )
@@ -341,7 +341,7 @@ def _probe_worker(
         [
             RayActorHandle(
                 worker_id=worker_id,
-                actor=RemoteFace(
+                actor=FakeRayActor(
                     SimpleNamespace(probe_batch_size=probe),
                     "probe_batch_size",
                 ),
