@@ -1,6 +1,15 @@
 # SPRINT: Video context parallel — 训练侧 CP 解锁 predict2_5 双卡 replay
 
-**Date**: 2026-07-13  **Status**: **PARKED — requires a real 2-GPU host or CI runner**.
+**Date**: 2026-07-13  **Status**: **OPEN — hardware available; full-model P0 and P1 incomplete**.
+
+2026-09-12 hardware prerequisite update: a two-L40S native PyTorch CP
+attention probe passes a fixed synthetic SDE-logprob 1e-3 limit in FP32 and
+BF16 (errors 0 and 1.90735e-6). The BF16 attention max error is 0.00390625;
+this is not full-network or real Cosmos replay parity. No production CP
+adapter/mesh integration exists yet, and P0/P1 remain open. Evidence and
+limitations: `../../research/video_cp_primitive_l40s_20260912.md`. The probe
+uses no Ray; both processes are terminal and GPUs released. The historical
+lack-of-hardware blocker no longer applies, but the sprint is not completed.
 **来源**: FlashDreams 引擎评审教训 ②——它的多卡故事只有上下文并行且总共
 157 行（`core/distributed/context_parallel.py:32-157`：token 维
 `split_inputs_cp`/`cat_outputs_cp` + ring attention 组），证明视频 DiT 的
