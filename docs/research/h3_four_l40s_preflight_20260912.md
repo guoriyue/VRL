@@ -565,3 +565,51 @@ state, later timesteps, full trajectory storage, or released checkpoint
 loading. Do not extrapolate the one-step timing into a measured full-video
 latency or speedup. End-to-end four-card released-model capacity, training,
 quality and controlled performance remain unverified.
+
+## 2026-09-13: full-size four-device LoRA backward and update capacity
+
+Executed the complete random 33B H3 DiT at the same native 768x1344 / 124-frame,
+38,222-token geometry with native rank-32/alpha-64 Q/K/V/out LoRA, FP32
+trainables and upstream gradient checkpointing. The 50 transformer blocks
+were assigned contiguously across GPUs 0-3 as 13/12/13/12 blocks. Packing,
+refinement and heads stayed on GPU 0. The frozen random base and original RoPE
+buffer preservation follow the full-sized forward probe above.
+
+The family `apply_lora` path adds 83,492,864 trainable parameters. Total
+base-plus-adapter count is 33,206,485,760; 100,715,008 parameters are FP32
+(base exceptions plus adapters). LoRA B is nonzero (normal std 0.001).
+One full forward, backward and AdamW update at learning rate 1e-4 completed:
+
+| Measurement | Result |
+| --- | ---: |
+| Forward, including synchronization/finite check | 21.241211 s |
+| Backward and synchronization | 63.300922 s |
+| AdamW step and synchronization | 0.215474 s |
+| Measured section including verification | 84.935519 s |
+| Finite/nonzero gradient tensors | 416 / 416 |
+| Devices with changed trainable parameters | 0, 1, 2, 3 |
+| GPU 0 peak allocated / reserved | 36.952368 / 40.513672 GiB |
+| GPU 1 peak allocated / reserved | 33.255756 / 37.314453 GiB |
+| GPU 2 peak allocated / reserved | 34.850025 / 37.921875 GiB |
+| GPU 3 peak allocated / reserved | 33.255756 / 37.314453 GiB |
+
+The loss is mean squared video noise prediction (0.00486577), solely to
+exercise autograd and optimizer allocation. It is not the GRPO objective,
+uses no reward, and says nothing about model learning. The probe records the
+first schedule step only, not accumulated multi-step training. It retains CPU
+copies of trainables to verify the update. Peak counters span forward,
+backward, optimizer and verification without executor stage resets.
+
+Evidence directory:
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_fullshape_random_training_capacity`, with
+`executed_probe.py` and `result.json`. Original RoPE restoration is exact.
+Process exited 0; fresh compute inventory empty, all four GPUs released.
+
+This is actual full-size training capacity, not a tiny substitute, but still
+uses random base/adapter weights and synthetic conditioning. It excludes the
+encoder, VAEs, rollout trajectory storage, reward, gradient accumulation,
+trainer/checkpoint recovery and released-weight loading. Serial block model
+parallelism naturally has one active compute stage at a time; utilization
+snapshots showed this and do not establish a speedup. A phased policy would
+have to release or park other components before this four-device train phase.
+Released-model and end-to-end training/quality/performance gates remain open.
