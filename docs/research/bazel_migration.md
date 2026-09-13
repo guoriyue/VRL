@@ -27,7 +27,7 @@
 - [ ] 真实生成与训练步骤测试通过，非 CPU/mock 替代。
 - [ ] Reward 服务集成测试通过。
 - [ ] Ray、torchrun、跨节点产物交付与解释器选择明确并验证。
-- [ ] 普通 lint/配置/单元测试不下载所有模型权重。
+- [x] 普通 lint/配置/单元测试不下载所有模型权重。
 - [ ] 干净 checkout 验证，无原有 venv、隐式 CUDA_HOME 依赖。
 - [ ] CI、文档、运行入口迁移；已替代旧流程删除。
 
@@ -104,3 +104,31 @@ CPU 目标无需 --config=cuda；GPU 测试标记 manual，普通 //... 不运�
   aquery 确认 `nvcc 13.0.88`，ldd 确认 `libcudart.so.13` 来自 Bazel external。
 
 标签说明：pip hub 里的包是 `@pypi//<pkg>` 或 `@pypi//<pkg>:pkg`，不是 `@pypi//:<pkg>`。
+
+## VRL 库、测试与入口阶段（2026-09-12）
+
+已通过（全部 `CUDA_VISIBLE_DEVICES=""`，清除 `CUDA_HOME`/`VIRTUAL_ENV`/`PYTHONPATH`）：
+- `//:vrl`：`vrl/**` 源码 + 预设 YAML/资产；依赖是 `@pypi` hub 的 `all_requirements`，
+  即 uv.lock main profile（core + cosmos + reward + reward-service + data + test + lint）
+  的闭包，不在 BUILD 里重复任何版本或包名。
+- `//third_party:vendored`：用 `imports` 替代 `pip install -e third_party`，
+  条目与 `third_party/pyproject.toml` 的 `where` 一一对应。
+- `//tests:*_tests`：每个测试包一个 lane，`-m 'not e2e and not slow_test'`，
+  与 `make verify` 相同的选择；`//tests:config_tests` 不加标记过滤。
+  15 个 lane 共约 3,700 个测试通过；`datasets/` 里已跟踪的 manifest 作为 runfiles。
+- `//:config_lint`、`//:dead_flags`、`//tools/lint:ruff_check`：三个 lint 门。
+  ruff 二进制来自锁定的 wheel（`<repo>/bin/ruff`），不是宿主安装。
+- `bazel run //:vrl_train -- --help`、`bazel run //:vrl_reward_service -- --help`。
+
+发现并处理：
+- `tests/` 各包互相 import fixtures 甚至 test 模块，所以 `//tests:support` 带整棵树，
+  每个 lane 只运行传入的文件。
+- 测试直接 import `cloudpickle`，原来只是 .venv 里顺带装了（vllm/tilelang 的依赖）；
+  已加入 pyproject `test` 组并重新 `uv lock`（只新增 2 行）。
+- `tests/models/test_sequence_parallel.py` 调用了已改签名的 `destroy_rank_process_group()`，
+  在 .venv 下同样失败；已修。
+- ruff 门发现 `vrl/models/precision.py`、`vrl/nn/modules/ar_decoder.py` 未格式化；已修。
+- uv 导出 repo rule 需要 `ctx.watch` 锁文件，否则 uv.lock 改动后不重新导出。
+
+未做：GPU 路径（Triton、生成、训练步）、vLLM/videoeval/CountGD 独立环境、
+Ray/torchrun 解释器、CI。

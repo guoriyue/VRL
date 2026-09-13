@@ -144,4 +144,4 @@ def test_install_requires_a_multi_rank_group() -> None:
         with pytest.raises(ValueError, match="rank group of >= 2"):
             install_sd3_sequence_parallel(object(), dist.group.WORLD)
     finally:
-        destroy_rank_process_group()
+        destroy_rank_process_group(dist.group.WORLD)

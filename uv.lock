@@ -6887,6 +6887,7 @@ lint = [
 ]
 test = [
     { name = "aiohttp" },
+    { name = "cloudpickle" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "python-levenshtein" },
@@ -6942,6 +6943,7 @@ provides-extras = ["cosmos", "reward", "reward-service", "data", "detection", "o
 lint = [{ name = "ruff", specifier = ">=0.4.0" }]
 test = [
     { name = "aiohttp", specifier = ">=3.10.0" },
+    { name = "cloudpickle", specifier = ">=3.0.0" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
     { name = "python-levenshtein", specifier = ">=0.27.0" },

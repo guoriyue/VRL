@@ -1,0 +1,26 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "ruff_bin",
+    srcs = ["__init__.py", "_ruff_bin.py", "//tools:__init__.py"],
+    data = ["@pypi//ruff:data"],
+    deps = ["@pypi//ruff"],
+)
+
+# bazel run //tools/lint:ruff -- check vrl   (runs in the workspace directory)
+py_binary(
+    name = "ruff",
+    srcs = ["ruff.py"],
+    deps = [":ruff_bin"],
+)
+
+# bazel test //tools/lint:ruff_check   (lint + format check over tracked sources)
+py_test(
+    name = "ruff_check",
+    size = "medium",
+    srcs = ["ruff_check.py"],
+    data = ["//:python_sources"],
+    deps = [":ruff_bin"],
+)

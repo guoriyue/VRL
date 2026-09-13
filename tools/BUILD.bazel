@@ -1,0 +1,8 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["__init__.py"])
+
+filegroup(
+    name = "python_sources",
+    srcs = glob(["**/*.py"]),
+)

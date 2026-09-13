@@ -1,0 +1,40 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# The vendored submodules that third_party/pyproject.toml exposes as importable
+# packages. `imports` replaces that editable install: each entry is one
+# submodule's un-packaged source root, exactly the `where` list there.
+py_library(
+    name = "vendored",
+    srcs = glob(
+        [
+            "joyai_echo/ltx-core/src/ltx_core/**/*.py",
+            "joyai_echo/ltx-pipelines/src/ltx_pipelines/**/*.py",
+            "joyai_echo/ltx-distillation/src/ltx_distillation/**/*.py",
+            "videophy/videocon/training/pipeline_video/mplug_owl_video/**/*.py",
+            "CausVid/causvid/**/*.py",
+            "vdn-minimax-h3/src/**/*.py",
+        ],
+        allow_empty = True,
+    ),
+    data = glob(
+        [
+            "joyai_echo/ltx-core/src/ltx_core/**/*.yaml",
+            "joyai_echo/ltx-core/src/ltx_core/**/*.json",
+            "CausVid/causvid/**/*.yaml",
+            "CausVid/causvid/**/*.json",
+            "vdn-minimax-h3/src/**/*.yaml",
+            "vdn-minimax-h3/src/**/*.json",
+        ],
+        allow_empty = True,
+    ),
+    imports = [
+        "joyai_echo/ltx-core/src",
+        "joyai_echo/ltx-pipelines/src",
+        "joyai_echo/ltx-distillation/src",
+        "videophy/videocon/training/pipeline_video",
+        "CausVid",
+        "vdn-minimax-h3",
+    ],
+)

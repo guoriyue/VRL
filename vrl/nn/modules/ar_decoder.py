@@ -428,7 +428,7 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
                     self.kernels.make_flash_attention_impl(
                         num_heads=num_heads,
                         head_size=head_dim,
-                        scale=float(getattr(attention, "scaling", head_dim ** -0.5)),
+                        scale=float(getattr(attention, "scaling", head_dim**-0.5)),
                         num_kv_heads=self._num_key_value_heads(attention),
                         sliding_window=self._sliding_window_for_layer(layer),
                         kv_cache_dtype=self.config.cache_dtype,

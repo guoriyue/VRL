@@ -1,0 +1,75 @@
+load("@rules_python//python:defs.bzl", "py_library")
+load("//tools/pytest:defs.bzl", "vrl_pytest")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "python_sources",
+    srcs = glob(["**/*.py"]),
+)
+
+# Every test module and fixture. Test packages import each other's fixtures
+# and even test modules (tests.config.test_load_all_experiments), so each
+# lane carries the whole tree and runs only the files it is given.
+py_library(
+    name = "support",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "build/**",
+            "e2e/**",
+            "toolchains/**",
+        ],
+    ),
+    data = glob(["**/fixtures/**"], exclude = ["**/*.py"], allow_empty = True),
+    deps = ["//:vrl"],
+)
+
+# CPU lanes mirror `make verify`: the CUDA mask keeps optional GPU tests from
+# borrowing a developer GPU just because one is visible.
+CPU_ENV = {"CUDA_VISIBLE_DEVICES": ""}
+
+NOT_SLOW = ["-m", "'not e2e and not slow_test'"]
+
+vrl_pytest(
+    name = "config_tests",
+    size = "large",
+    srcs = glob(["config/**/*.py"]),
+    data = ["//datasets:manifests"],
+    env = CPU_ENV,
+)
+
+vrl_pytest(
+    name = "root_tests",
+    size = "medium",
+    srcs = ["test_logging.py", "test_runtime_errors.py"],
+    env = CPU_ENV,
+)
+
+# One lane per top-level test package. `srcs` globs conftest/helpers too, so
+# package-local fixtures stay importable.
+[
+    vrl_pytest(
+        name = lane + "_tests",
+        size = "enormous",
+        srcs = glob([lane + "/**/*.py"]),
+        args = NOT_SLOW,
+        data = ["//datasets:manifests"] + extra_data,
+        env = CPU_ENV,
+    )
+    for lane, extra_data in [
+        ("algorithms", []),
+        ("data", []),
+        ("generation", []),
+        ("math", []),
+        ("models", []),
+        ("nn", []),
+        ("ray", []),
+        ("rewards", []),
+        ("rollouts", []),
+        ("scripts", []),
+        ("trainers", []),
+        ("trajectory", []),
+        ("utils", []),
+    ]
+]

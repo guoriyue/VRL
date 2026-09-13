@@ -1,15 +1,67 @@
-load("@rules_python//python:defs.bzl", "py_library")
+load("@pypi//:requirements.bzl", "all_requirements")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# Dependency-free first slice; heavier libraries get explicit targets as migrated.
+exports_files(["pyproject.toml", "uv.lock"])
+
+# The VRL package with its config presets and bundled assets. Runtime
+# dependencies are the main uv.lock profile (see MODULE.bazel): the hub is
+# generated from the lock, so nothing here repeats a version.
 py_library(
-    name = "validation",
-    srcs = [
-        "vrl/__init__.py",
-        "vrl/utils/__init__.py",
-        "vrl/utils/validation.py",
+    name = "vrl",
+    srcs = glob(["vrl/**/*.py"]),
+    data = glob(
+        [
+            "vrl/**/*.yaml",
+            "vrl/**/*.md",
+            "vrl/**/*.json",
+            "vrl/**/*.pth",
+        ],
+        allow_empty = True,
+        exclude = ["vrl/**/__pycache__/**"],
+    ),
+    deps = all_requirements + ["//third_party:vendored"],
+)
+
+py_binary(
+    name = "vrl_train",
+    srcs = ["vrl/scripts/train.py"],
+    main = "vrl/scripts/train.py",
+    deps = [":vrl"],
+)
+
+py_binary(
+    name = "vrl_reward_service",
+    srcs = ["vrl/rewards/service/server.py"],
+    main = "vrl/rewards/service/server.py",
+    deps = [":vrl"],
+)
+
+# Lint gates. They read sources from runfiles, so the tracked tree is data.
+filegroup(
+    name = "python_sources",
+    srcs = glob(["vrl/**/*.py"]) + [
+        "pyproject.toml",
+        "//tests:python_sources",
+        "//tools:python_sources",
     ],
 )
 
-exports_files(["pyproject.toml", "uv.lock"])
+py_test(
+    name = "config_lint",
+    size = "medium",
+    srcs = ["vrl/config/lint.py"],
+    main = "vrl/config/lint.py",
+    env = {"CUDA_VISIBLE_DEVICES": ""},
+    deps = [":vrl"],
+)
+
+py_test(
+    name = "dead_flags",
+    size = "medium",
+    srcs = ["vrl/scripts/lint/dead_flags.py"],
+    main = "vrl/scripts/lint/dead_flags.py",
+    data = [":python_sources"],
+    deps = [":vrl"],
+)

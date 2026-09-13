@@ -114,7 +114,8 @@ class ModulePrecisionTrace:
             "kind": "snapshot",
             "phase": phase,
             "modules": {
-                name: self._module_state(module, recurse=True) for name, module in self.modules.items()
+                name: self._module_state(module, recurse=True)
+                for name, module in self.modules.items()
             },
         }
         self.events.append(event)
@@ -176,7 +177,9 @@ class ModulePrecisionTrace:
             }
         )
 
-    def _record_forward_exit(self, name: str, _module: Any, _args: Any, _kwargs: Any, output: Any) -> None:
+    def _record_forward_exit(
+        self, name: str, _module: Any, _args: Any, _kwargs: Any, output: Any
+    ) -> None:
         self.events.append(
             {
                 "kind": "forward_exit",
@@ -194,10 +197,14 @@ class ModulePrecisionTrace:
         try:
             for name, module in self.modules.items():
                 self._handles.append(
-                    module.register_forward_pre_hook(partial(self._record_forward_enter, name), with_kwargs=True)
+                    module.register_forward_pre_hook(
+                        partial(self._record_forward_enter, name), with_kwargs=True
+                    )
                 )
                 self._handles.append(
-                    module.register_forward_hook(partial(self._record_forward_exit, name), with_kwargs=True)
+                    module.register_forward_hook(
+                        partial(self._record_forward_exit, name), with_kwargs=True
+                    )
                 )
         except BaseException:
             self.__exit__(None, None, None)

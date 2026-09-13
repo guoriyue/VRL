@@ -93,6 +93,7 @@ third_party/*
 # importable packages (so vrl/ needs no sys.path injection). Its generated
 # *.egg-info stays ignored by the third_party/* rule. See third_party/README.md.
 !third_party/pyproject.toml
+!third_party/BUILD.bazel
 !third_party/README.md
 
 # All Python virtualenvs live under one parent dir (one ignore entry covers all)

@@ -62,9 +62,12 @@ uv_exports(
     uv = "@uv_export_tool//:uv",
     interpreter = "@python_3_12_13_host//:python",
     profiles = {
-        "main": ["--extra", "cosmos", "--extra", "reward", "--group", "test"],
-        "tests": ["--only-group", "test"],
-        "lint": ["--only-group", "lint"],
+        # The trainer/reward runtime plus the test and lint groups, so one hub
+        # serves libraries, tests and lint without duplicate package copies.
+        "main": [
+            "--extra", "cosmos", "--extra", "reward", "--extra", "reward-service",
+            "--extra", "data", "--group", "test", "--group", "lint",
+        ],
         "vllm": ["--extra", "ar-vllm"],
         "videoeval": ["--extra", "videoeval"],
     },

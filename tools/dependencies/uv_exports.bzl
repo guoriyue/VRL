@@ -1,6 +1,10 @@
 """Adapt the existing uv lock to rules_python without resolving dependencies."""
 
 def _uv_exports_impl(ctx):
+    # Re-export whenever the lock, the project file or the fix-up script changes;
+    # symlinking alone does not register their contents as inputs.
+    for label in (ctx.attr.project, ctx.attr.lock, ctx.attr.restore_extras):
+        ctx.watch(label)
     ctx.symlink(ctx.attr.project, "pyproject.toml")
     ctx.symlink(ctx.attr.lock, "uv.lock")
     for name, options in ctx.attr.profiles.items():

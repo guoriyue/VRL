@@ -1,0 +1,7 @@
+package(default_visibility = ["//visibility:public"])
+
+# Tracked prompt manifests that experiment presets reference by relative path.
+filegroup(
+    name = "manifests",
+    srcs = glob(["**"], exclude = ["BUILD.bazel"]),
+)
