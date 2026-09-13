@@ -756,3 +756,49 @@ Executed source, per-trial receipts and final JSON are retained in
 Process exited 0, fresh compute inventory empty, all GPU claims released.
 Full DiT/encoder/VAE simultaneous runtime residency, audio decode, released
 weights and end-to-end generation/training remain separate open gates.
+
+## 2026-09-13: full-size composed DiT, encoder and video decode capacity
+
+A single process retained the full random 33.123B DiT on GPUs 0/1 and full
+random 33.357B conditioner on GPUs 2/3 while running the full video VAE on
+GPU 3 for decode. Both large models stayed resident throughout. The VAE
+returned to CPU between decode calls; this is not permanent VAE residency.
+
+Unlike the separate component probes, an actual `[1,512,5120]` embedding from
+the full conditioner (512 repeated synthetic token IDs, selected hidden state
+50) was copied to the DiT root and used by native `forward_step`. Native
+`MiniMaxH3FlowScheduler.step` advanced the video latent once at the first of
+40 scheduled steps, and the runtime decoded that updated latent while the
+DiT remained allocated. Native video geometry is 768x1344 with 124 frames.
+
+| Composed measurement | Result |
+| --- | ---: |
+| Conditioned native DiT forward | 18.898932 s |
+| Updated-latent decode including VAE transfers | 23.047333 s |
+| GPU 0 peak allocated | 41,069,434,368 bytes (38.249 GiB) |
+| GPU 1 peak allocated | 38,425,149,952 bytes (35.786 GiB) |
+| GPU 2 peak allocated | 35,805,049,344 bytes (33.346 GiB) |
+| GPU 3 peak allocated | 45,509,258,240 bytes (42.384 GiB) |
+
+Largest reserved bytes by device were 44,507,856,896 / 42,058,383,360 /
+35,861,299,200 / 47,085,256,704. GPU 3 has little remaining physical headroom;
+do not infer larger-batch capacity. Peaks cover the composed forward, decode
+and validation and include retained prerequisite-probe tensors. Timings are
+synchronized but exclude validation; no comparison or speedup is claimed.
+
+Prediction, updated latent and decoded `[1,3,124,768,1344]` video are finite.
+The post-decode conditioner embedding matches the original exactly, component
+device ownership remains intact, and the VAE is back on CPU. Audio rows are
+part of the native DiT forward, but there is no audio VAE or decoded audio.
+No released weights, semantic prompt, LoRA, backward, complete denoising,
+reward, training or quality claim follows from this capacity result.
+
+Final result and all three executed sources:
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_composed_random_capacity`.
+Prerequisite receipts are in `h3_composed_random_dit_stage` and
+`h3_composed_random_encoder_stage`. The latter copied an old scope string
+mentioning ABBA and no DiT; its actual source and single trial show one
+keep-encoder decode with the DiT already resident. That stale auxiliary
+description is not evidence for an ABBA comparison; the composed final result
+describes this run's scope. Process exited 0; fresh compute inventory empty,
+all four GPUs released. Released-weight and complete runtime gates stay open.
