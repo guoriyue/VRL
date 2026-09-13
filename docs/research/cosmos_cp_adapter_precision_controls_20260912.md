@@ -315,3 +315,32 @@ Both rank reports match. Evidence:
 `cosmos_cp_attention_internal_l40s/rank-{0,1}.json` and adjacent log.
 Torchrun exits 0; fresh compute inventory empty and GPUs 0-1 released.
 Production runtime, dependencies and acceptance thresholds remain unchanged.
+
+## Cross-key cotangent ordering control
+
+`--sync-cross-key-cotangent` averages each replicated cross-attention norm_k
+output cotangent across ranks in FP32, casts back to the original gradient
+dtype, and then runs local normalization backward. Final parameter gradients
+are still summed. For identical replicated states, averaging before the
+local Jacobian and summing the resulting parameter gradients preserves the
+real-arithmetic total; this diagnostic does not establish bitwise equivalence
+or support higher-order differentiation.
+
+The first attempt failed in the newly added hook because cloning preserved
+a noncontiguous layout rejected by NCCL. Evidence remains at
+`cosmos_cp_crosskey_cotangent_l40s` with its adjacent log; it is not a model
+capacity failure. Explicit contiguous-format cloning fixes that probe error.
+
+The corrected run, `cosmos_cp_crosskey_cotangent_contiguous_l40s`, completes
+both dtypes with matching rank reports. BF16 block-26 CFG-call-0 norm_k output
+gradient relative L2 is 0.00356277 and its input gradient error is 0.0148262,
+versus 0.00304969 and 0.0212226 in the preceding control. However aggregate
+parameter-gradient relative L2 is 0.0274953, versus 0.0271407 before, so there
+is no demonstrated global improvement. FP32 aggregate error is 2.41074e-5.
+Traced BF16 forward values still match exactly.
+
+This ordering change reduces part of one local discrepancy, but is not a
+sufficient remedy and is not promoted to production. Existing cotangent
+differences and other local backward paths remain. No acceptance threshold
+changed. Both jobs are terminal (failed attempt exit 1, corrected exit 0),
+fresh compute inventory is empty, and GPUs 0-1 are released.
