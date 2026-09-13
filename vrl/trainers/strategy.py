@@ -461,6 +461,7 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         precision_policy: str,
         reshard_after_forward: bool,
         cpu_offload: bool,
+        shard_trainable_only: bool = False,
     ) -> None:
         self.context = context
         self.collectives = collectives if collectives is not None else TrainingCollectives(context)
@@ -468,6 +469,9 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         self._precision_policy = precision_policy
         self._reshard_after_forward = reshard_after_forward
         self._cpu_offload = cpu_offload
+        self._shard_trainable_only = shard_trainable_only
+        if shard_trainable_only and precision_policy != "none":
+            raise ValueError("shard_trainable_only requires precision_policy='none'")
         self._mesh: Any | None = None  # built on first prepare_model (needs a live PG)
 
     def _ensure_mesh(self) -> Any:
@@ -491,23 +495,29 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         prepared_handles: list[tuple[str, nn.Module, Any, torch.dtype]] = []
         for name, handle, writer in handles:
             parameter_dtype = getattr(handle, "dtype", None)
-            if parameter_dtype is None:
-                parameter_dtypes = {parameter.dtype for parameter in handle.parameters()}
-                if not parameter_dtypes:
-                    raise ValueError(f"FSDP trainable handle {name!r} has no parameters")
-                if len(parameter_dtypes) != 1:
-                    raise ValueError(
-                        f"FSDP trainable handle {name!r} has mixed parameter dtypes; "
-                        "declare its target dtype explicitly before preparation",
-                    )
-                parameter_dtype = parameter_dtypes.pop()
-            elif not isinstance(parameter_dtype, torch.dtype):
-                raise TypeError(f"FSDP trainable handle {name!r} dtype must be a torch.dtype")
-            normalize_fsdp_parameter_dtype(
-                handle,
-                parameter_dtype,
-                allow_cast=self._precision_policy == "actor",
-            )
+            if self._shard_trainable_only:
+                dtypes = {p.dtype for p in handle.parameters() if p.requires_grad}
+                if len(dtypes) != 1:
+                    raise ValueError("trainable-only FSDP requires one trainable parameter dtype")
+                parameter_dtype = next(iter(dtypes))
+            else:
+                if parameter_dtype is None:
+                    parameter_dtypes = {parameter.dtype for parameter in handle.parameters()}
+                    if not parameter_dtypes:
+                        raise ValueError(f"FSDP trainable handle {name!r} has no parameters")
+                    if len(parameter_dtypes) != 1:
+                        raise ValueError(
+                            f"FSDP trainable handle {name!r} has mixed parameter dtypes; "
+                            "declare its target dtype explicitly before preparation",
+                        )
+                    parameter_dtype = parameter_dtypes.pop()
+                elif not isinstance(parameter_dtype, torch.dtype):
+                    raise TypeError(f"FSDP trainable handle {name!r} dtype must be a torch.dtype")
+                normalize_fsdp_parameter_dtype(
+                    handle,
+                    parameter_dtype,
+                    allow_cast=self._precision_policy == "actor",
+                )
             prepared_handles.append((name, handle, writer, parameter_dtype))
         # Create the process group + bind this rank's cuda device up front, exactly
         # like DDPStrategy. init_device_mesh would lazily auto-init a default group,
@@ -529,6 +539,11 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
                 ),
                 reshard_after_forward=self._reshard_after_forward,
                 cpu_offload=self._cpu_offload,
+                ignored_params=(
+                    {p for p in handle.parameters() if not p.requires_grad}
+                    if self._shard_trainable_only
+                    else None
+                ),
             )
             writer(wrapped)
         return model
@@ -881,6 +896,7 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
             precision_policy=fsdp.precision_policy,
             reshard_after_forward=fsdp.reshard_after_forward,
             cpu_offload=fsdp.cpu_offload,
+            shard_trainable_only=fsdp.shard_trainable_only,
         )
     if configured_strategy == "ddp":
         if training.ddp is None:

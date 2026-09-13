@@ -151,6 +151,7 @@ def apply_fsdp(
     mp_policy: Any,
     reshard_after_forward: bool = True,
     cpu_offload: bool = False,
+    ignored_params: set[nn.Parameter] | None = None,
 ) -> nn.Module:
     """Shard ``handle`` in place with FSDP2 and return it.
 
@@ -166,6 +167,8 @@ def apply_fsdp(
     from torch.distributed.fsdp import CPUOffloadPolicy, fully_shard
 
     offload_kwargs = {"offload_policy": CPUOffloadPolicy()} if cpu_offload else {}
+    if ignored_params is not None:
+        offload_kwargs["ignored_params"] = ignored_params
 
     # Only the root module casts forward inputs to the compute dtype; inner blocks
     # receive already-cast activations, so re-casting them is wasted work.

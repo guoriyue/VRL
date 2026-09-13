@@ -528,6 +528,7 @@ async def _run_global_std_streaming_update(
         spool_stats = RolloutStats()
         metadata = []
         sizes = []
+        batch_counts = []
         paths = []
         group_offset = 0
         for index, prompts in enumerate(microbatches):
@@ -566,6 +567,7 @@ async def _run_global_std_streaming_update(
                 )
                 offset += count
             sizes.append(offset)
+            batch_counts.append(len(iteration.batches))
             group_offset += unique.numel()
             path = Path(spool) / f"{index}.pt"
             with spool_stats.phase("advantage.spool_write"):
@@ -579,10 +581,31 @@ async def _run_global_std_streaming_update(
             reward_stats = _global_reward_stats(torch.cat([batch.rewards for batch in metadata]))
         slices = torch.split(advantages, sizes)
         group_advantages = torch.split(advantages, [batch.rewards.numel() for batch in metadata])
-        effective_groups = sum(
+        surviving = [
             not trainer.config.drop_zero_advantage or bool(nonzero_advantage_mask(values).any())
             for values in group_advantages
-        )
+        ]
+        effective_groups = sum(surviving)
+        dist = torch.distributed
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            # Averaged rank gradients match the global group mean only with
+            # balanced denominators. Also reject rank-local empty microbatches
+            # before the legacy unanimous-skip path can discard a peer's data.
+            counts = []
+            offset = 0
+            for count in batch_counts:
+                counts.append(sum(surviving[offset : offset + count]))
+                offset += count
+            device = trainer.device if dist.get_backend() == "nccl" else "cpu"
+            lower = torch.tensor(counts, dtype=torch.long, device=device)
+            upper = lower.clone()
+            dist.all_reduce(lower, op=dist.ReduceOp.MIN)
+            dist.all_reduce(upper, op=dist.ReduceOp.MAX)
+            if not torch.equal(lower, upper):
+                raise ValueError(
+                    "distributed global_std streaming requires equal surviving group counts "
+                    "per microbatch across ranks; uneven filtering is not supported"
+                )
         del metadata
 
         def prepared():

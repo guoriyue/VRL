@@ -70,6 +70,7 @@ def _fsdp_strategy(
         precision_policy=config.precision_policy,
         reshard_after_forward=config.reshard_after_forward,
         cpu_offload=config.cpu_offload,
+        shard_trainable_only=config.shard_trainable_only,
     )
 
 
@@ -161,6 +162,21 @@ def test_mixed_precision_policy_actor_requires_resolved_parameter_dtype() -> Non
 def test_mixed_precision_policy_rejects_unknown() -> None:
     with pytest.raises(ValueError, match="precision_policy"):
         mixed_precision_policy("fp8")
+
+
+def test_trainable_only_fsdp_requires_native_precision() -> None:
+    with pytest.raises(ValueError, match="requires precision_policy='none'"):
+        _fsdp_strategy(_cpu_fsdp_context(), shard_trainable_only=True)
+
+
+def test_build_strategy_preserves_trainable_only_fsdp() -> None:
+    config = _strategy_config(
+        "fsdp",
+        strategy_config={"shard_trainable_only": True, "precision_policy": "none"},
+    )
+    strategy = build_strategy(config, _cpu_fsdp_context())
+    assert isinstance(strategy, FSDPStrategy)
+    assert strategy._shard_trainable_only
 
 
 def test_apply_fsdp_casts_only_root_forward_inputs(monkeypatch) -> None:

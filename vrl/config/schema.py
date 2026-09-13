@@ -585,6 +585,10 @@ class FSDPConfig(ConfigBase):
     # lets timestep-routed multi-root models materialize only the active expert.
     cpu_offload: bool = False
 
+    # Replicate frozen parameters in their native dtype; shard only adapters.
+    # Requires precision_policy=none to retain the original training arithmetic.
+    shard_trainable_only: bool = False
+
 
 class DDPConfig(ConfigBase):
     """distributed.training.ddp: the one DDP knob ``build_strategy`` reads.

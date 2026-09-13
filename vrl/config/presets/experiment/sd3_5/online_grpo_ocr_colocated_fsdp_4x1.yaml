@@ -1,0 +1,38 @@
+# Same four physical GPUs alternate rollout and synchronous adapter training.
+# Launch with torchrun --standalone --nproc-per-node=4 -m vrl.scripts.train.
+# Frozen BF16 weights are replicated; FP32 LoRA weights are sharded in native
+# precision. This is adapter-only FSDP, not DDP or eight physical GPUs.
+defaults:
+  - /experiment/sd3_5/online_grpo_ocr_dedicated_3x1
+
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 4
+    fsdp:
+      precision_policy: none
+      shard_trainable_only: true
+  resources:
+    visible_devices: auto
+    trainer:
+      devices: auto
+    rollout:
+      devices: auto
+      gpu_pool: trainer
+
+rollout:
+  # Per rank: 2 groups x 16 samples. Globally: 8 groups / 128 samples.
+  prompts_per_batch: 2
+
+actor:
+  gradient_accumulation_steps: 2
+
+model:
+  torch_compile:
+    enable: false
+
+trainer:
+  output_dir: outputs/sd3_5_ocr_colocated_fsdp_4x1
+  total_epochs: 2
+  save_freq: 1
