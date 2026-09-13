@@ -10,6 +10,15 @@ adapter/mesh integration exists yet, and P0/P1 remain open. Evidence and
 limitations: `../../research/video_cp_primitive_l40s_20260912.md`. The probe
 uses no Ray; both processes are terminal and GPUs released. The historical
 lack-of-hardware blocker no longer applies, but the sprint is not completed.
+
+Full tiny-network follow-up exposes a native-CP BF16 backward risk despite the
+primitive logprob result: output relative L2 0.00383, worst parameter-gradient
+relative L2 0.72176. The allowed full-K/V-gather baseline gives identical BF16
+output and worst gradient relative L2 0.00481 on the same two-block Cosmos
+network. Prefer that baseline for further numerical investigation; no
+production tolerance or P0 pass follows from finite gradients. A separate
+short-sequence native-CP shape failure remains preserved. See
+`../../research/cosmos_cp_network_diagnostic_20260912.md`.
 **来源**: FlashDreams 引擎评审教训 ②——它的多卡故事只有上下文并行且总共
 157 行（`core/distributed/context_parallel.py:32-157`：token 维
 `split_inputs_cp`/`cat_outputs_cp` + ring attention 组），证明视频 DiT 的
