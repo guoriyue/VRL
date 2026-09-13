@@ -83,3 +83,33 @@ log under the same NVMe root. This crosses the full-shape scalar diagnostic
 gate, not full trajectory, reward, update/resume or gradient-equivalence
 acceptance. Both rank jobs terminate and torchrun exits 0; fresh GPU inventory
 is empty, GPUs 0-1 released. Runtime and thresholds unchanged.
+
+## Matching unsharded family baseline (September 13)
+
+`cosmos_fullshape_replicated_baseline_l40s` changes only the preceding
+full-shape numerical probe's method from Ulysses to replicated. Same latent
+and text shapes, nonzero adapters, padded linears, FP32 LoRA, CFG5, CPS
+action, GPU checkpoint and efficient SDPA. Comparison loss is still divided
+by two and comparison parameter gradients summed across ranks. This isolates
+the effect of removing sequence/head sharding, not a throughput comparison.
+
+| Precision | Rank 0 aggregate gradient relative L2 | Rank 1 |
+| --- | ---: | ---: |
+| FP32 | 3.48174e-6 | 3.46183e-6 |
+| BF16 | 0.0295807 | 0.0285717 |
+
+Both ranks have exact output/logprob agreement and all 280 A plus 280 B
+gradients nonzero. Unsharded backward comparison therefore exhibits sizeable
+variation at this shape. The preceding 0.03435-0.03507 CP discrepancy cannot
+be attributed wholly to CP. Relative L2 norms cannot be subtracted to infer
+an isolated CP contribution; neither measurement proves training parity.
+The appropriate next control is deterministic backward execution on both
+paths, with unsupported deterministic operations failing explicitly.
+
+Frozen script snapshot for both full-shape family runs:
+`/mnt/nvme/outputs/wan22_i2v_cache/cosmos_fullshape_probe_38cc13de.py`, SHA256
+`38cc13de1b36977b43259c099484c6826bc8d7654dc78c90f5e671db35f3e6af`.
+The snapshot matches the source used by these jobs byte-for-byte. Evidence
+is rank JSON and adjacent log under the baseline directory in the same root.
+Torchrun exits 0, fresh compute inventory is empty, GPUs 0-1 released.
+Runtime worktree remains clean; no production settings or thresholds changed.
