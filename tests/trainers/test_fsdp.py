@@ -227,6 +227,42 @@ def test_normalize_fsdp_parameter_dtype_rejects_mixed_native_policy() -> None:
         )
 
 
+def test_native_fsdp_preserves_frozen_float32_parameters() -> None:
+    net = ToyTransformer().to(dtype=torch.bfloat16)
+    net.head.to(dtype=torch.float32).requires_grad_(False)
+    with torch.no_grad():
+        for parameter in net.head.parameters():
+            parameter.add_(0.000123)
+    before = [parameter.detach().clone() for parameter in net.head.parameters()]
+    pointers = [parameter.data_ptr() for parameter in net.head.parameters()]
+
+    normalize_fsdp_parameter_dtype(net, torch.bfloat16, allow_cast=False)
+
+    assert {p.dtype for p in net.parameters() if p.requires_grad} == {torch.bfloat16}
+    for parameter, expected, pointer in zip(net.head.parameters(), before, pointers, strict=True):
+        assert parameter.dtype == torch.float32 and parameter.data_ptr() == pointer
+        assert torch.equal(parameter, expected)
+
+
+def test_actor_fsdp_still_casts_frozen_float32_parameters() -> None:
+    net = ToyTransformer().to(dtype=torch.bfloat16)
+    net.head.to(dtype=torch.float32).requires_grad_(False)
+
+    normalize_fsdp_parameter_dtype(net, torch.bfloat16, allow_cast=True)
+
+    assert {parameter.dtype for parameter in net.parameters()} == {torch.bfloat16}
+
+
+def test_native_fsdp_still_rejects_frozen_nonfloating_parameters() -> None:
+    net = ToyTransformer().to(dtype=torch.bfloat16)
+    net.register_parameter(
+        "integer", torch.nn.Parameter(torch.tensor([1], dtype=torch.int64), requires_grad=False)
+    )
+
+    with pytest.raises(ValueError, match="non-floating parameters"):
+        normalize_fsdp_parameter_dtype(net, torch.bfloat16, allow_cast=False)
+
+
 def test_build_fsdp_mesh_rejects_2d_hsdp() -> None:
     with pytest.raises(ValueError, match="1D"):
         build_fsdp_mesh(_cpu_fsdp_context(), ["dp_replicate", "dp_shard"])
@@ -653,6 +689,33 @@ def test_fsdp_actor_prepare_normalizes_mixed_sources_before_first_forward(
     output = policy.transformer(torch.randn(2, 4, dtype=torch.bfloat16))
 
     assert output.dtype is torch.bfloat16
+
+
+def test_native_fsdp_uses_trainable_dtype_when_first_parameter_is_frozen(
+    cpu_process_group,
+) -> None:
+    class MixedNativeToy(torch.nn.Module):
+        _no_split_modules = ("Linear",)
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.frozen_scale = torch.nn.Parameter(torch.tensor([1.000123]), requires_grad=False)
+            self.blocks = torch.nn.ModuleList([torch.nn.Linear(4, 4, dtype=torch.bfloat16)])
+
+        def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+            return self.blocks[0](inputs) * self.frozen_scale.squeeze(0)
+
+    model = MixedNativeToy()
+    inputs = torch.randn(2, 4, dtype=torch.bfloat16)
+    expected = model(inputs).detach().clone()
+    scale = model.frozen_scale.detach().clone()
+    policy = FakePolicy(model)
+
+    _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
+
+    assert torch.equal(policy.transformer(inputs), expected)
+    assert policy.transformer.frozen_scale.dtype == torch.float32
+    assert torch.equal(policy.transformer.frozen_scale.full_tensor(), scale)
 
 
 def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(

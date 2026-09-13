@@ -502,6 +502,12 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
                     raise ValueError("trainable-only FSDP requires one trainable parameter dtype")
                 parameter_dtype = next(iter(dtypes))
             else:
+                if self._precision_policy == "none":
+                    # A leading frozen FP32 norm does not determine the LoRA
+                    # gradient group's dtype; native FSDP preserves both.
+                    dtypes = {p.dtype for p in handle.parameters() if p.requires_grad}
+                    if len(dtypes) == 1:
+                        parameter_dtype = next(iter(dtypes))
                 if parameter_dtype is None:
                     parameter_dtypes = {parameter.dtype for parameter in handle.parameters()}
                     if not parameter_dtypes:
