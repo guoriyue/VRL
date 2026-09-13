@@ -139,6 +139,53 @@ def write_tiny_sana_snapshot(path: Path) -> Path:
     return path
 
 
+def tiny_sana_online_config(
+    tmp_path: Path, *, prompts: tuple[str, ...] = ("a cat",), overrides: tuple[str, ...] = ()
+) -> Any:
+    """The SANA aesthetic online-GRPO preset resolved onto a tiny local snapshot.
+
+    Writes the snapshot and a one-row-per-prompt manifest under ``tmp_path`` and
+    returns the merged config: fp32 on CPU, a GPU-less rollout fleet
+    (``distributed.resources.rollout.num_gpus=0``), 32x32 two-step sampling and
+    a two-sample rollout batch. Pair it with ``TinySanaPipeline.install`` so the
+    real family loader serves the tiny pipeline for ``model.path``.
+    """
+
+    import json
+
+    snapshot = write_tiny_sana_snapshot(tmp_path / "sana-snapshot")
+    manifest = tmp_path / "prompts.jsonl"
+    manifest.write_text(
+        "".join(json.dumps({"prompt": prompt}) + "\n" for prompt in prompts),
+        encoding="utf-8",
+    )
+    from vrl.config.loading import load_config
+
+    return load_config(
+        "experiment/sana/online_grpo_aesthetic",
+        overrides=[
+            f"model.path={snapshot}",
+            "model.revision=null",
+            "model.use_lora=false",
+            "model.torch_compile.enable=false",
+            f"data.manifest={manifest}",
+            f"trainer.output_dir={tmp_path / 'run'}",
+            "trainer.total_epochs=1",
+            "precision.training.dtype=fp32",
+            "precision.rollout.dtype=fp32",
+            "sampling.width=32",
+            "sampling.height=32",
+            "sampling.num_steps=2",
+            "rollout.n_samples_per_prompt=2",
+            "rollout.prompts_per_batch=1",
+            "rollout.samples_per_generation_batch=2",
+            "actor.training_microbatch_size=2",
+            "distributed.resources.rollout.num_gpus=0",
+            *overrides,
+        ],
+    )
+
+
 COSMOS25_TINY_LORA = {"rank": 2, "alpha": 2, "target_modules": ["to_q", "to_k", "to_v"]}
 COSMOS25_TINY_SAMPLING = {
     "width": 32,
@@ -296,6 +343,7 @@ __all__ = [
     "TinySanaPipeline",
     "build_official_sana_scheduler",
     "cosmos25_eval_config",
+    "tiny_sana_online_config",
     "write_prompt_manifest",
     "write_tiny_cosmos25_snapshot",
     "write_tiny_sana_snapshot",

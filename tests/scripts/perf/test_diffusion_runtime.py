@@ -8,71 +8,49 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from tests.scripts.eval.fixtures import TinySanaPipeline, write_tiny_sana_snapshot
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
+from vrl.models.families.sana.model import SanaModel
 from vrl.scripts.perf.common.diffusion_runtime import (
     build_runtime,
     prepare_sampling_state,
 )
 
 
-def test_build_runtime_hands_the_resolved_build_to_the_family_rollout_builder(
-    monkeypatch,
-) -> None:
-    """The registry entry is ``build_runtime``'s only exit.
+def test_build_runtime_returns_the_family_rollout_bundle(monkeypatch, tmp_path) -> None:
+    """``build_runtime`` is registry resolve + family build with no projection of
+    its own: on the tiny SANA snapshot it yields the real family model at the
+    caller's precision, loaded once."""
 
-    ``resolve_model_build`` must receive the caller's own ``(root, device,
-    precision)`` objects, and ``build_rollout`` must receive exactly what the
-    resolver returned — the function adds no projection of its own.
-    """
-    import vrl.models.families.registry as families
-
+    snapshot = write_tiny_sana_snapshot(tmp_path / "sana-snapshot")
+    pipeline = TinySanaPipeline()
+    pipeline.install(monkeypatch, snapshot)
     root = parse_config(
         OmegaConf.create(
             {
                 "model": {
-                    "family": "sd3_5",
-                    "path": "unit-checkpoint",
+                    "family": "sana",
+                    "path": str(snapshot),
+                    "revision": None,
                     "use_lora": False,
                 },
                 "precision": {
                     "float32_precision": "ieee",
                     "training": {"dtype": "fp32"},
+                    "rollout": {"dtype": "fp32"},
                 },
             },
         ),
     )
     precision = PrecisionPolicy.from_section(root.precision)
-    device = torch.device("cpu")
-    resolved_build = object()
-    runtime = object()
-    calls: dict[str, object] = {}
 
-    def resolve_build(
-        actual_root,
-        actual_device,
-        *,
-        precision,
-    ):
-        calls["resolver"] = (actual_root, actual_device, precision)
-        return resolved_build
+    bundle = build_runtime(root, torch.device("cpu"), precision=precision)
 
-    def build_bundle(actual_build):
-        calls["builder"] = actual_build
-        return runtime
-
-    entry = SimpleNamespace(
-        family="sd3_5",
-        resolve_model_build=resolve_build,
-        build_rollout=build_bundle,
-    )
-    monkeypatch.setattr(families, "get_model_family_entry", lambda _family: entry)
-
-    assert build_runtime(root, device, precision=precision) is runtime
-    assert calls == {
-        "resolver": (root, device, precision),
-        "builder": resolved_build,
-    }
+    assert isinstance(bundle.model, SanaModel)
+    assert bundle.model.pipeline is pipeline
+    assert pipeline.loads == 1
+    assert bundle.model.transformer.dtype is torch.float32
 
 
 @pytest.mark.parametrize(
