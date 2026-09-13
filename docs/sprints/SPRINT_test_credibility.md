@@ -560,3 +560,48 @@ reds are the 8 upstream ones listed in the plan (deselected).
 - `tests/e2e/test_real_checkpoint_rl.py` real-weights lane (needs cached Hub
   checkpoints); the identity/resume theorems that the plan proposed folding
   there are instead real on the tiny SANA run above.
+
+## Night sprint batches 2-4 (2026-09-13): Ray fakes, no-counterpart labels, private seams
+
+### Batch 2 - Ray fakes (no code change; verdicts)
+
+Four files still carry Ray doubles after earlier sprints:
+- `tests/generation/ray/test_health_monitor.py` (`_FakeRay`): pause / stop /
+  resume epoch theorems on the monitor's own state machine; the wire (a real
+  `ray.get(timeout=)` expiring against a blocked actor, `RayActorError` after
+  the fleet is killed) is pinned by the real twin
+  `test_real_wedged_worker_times_out_and_the_fleet_really_dies`. Kept.
+- `tests/generation/ray/test_weight_sync.py` (`_FakeRay.put`, `ResolvedRef` /
+  `NeverRef` / `GatedRef`): the "one put shared by N workers" ledger has no
+  real-side observable; deref across a process boundary, wrong-version acks
+  and the cancel path have four `slow_test` real-cluster twins in the same
+  file. Kept.
+- `tests/generation/ray/test_oom_split.py` and
+  `tests/generation/execution/test_batch_memory_shadow.py` (`FakeRayActor`):
+  a synchronous worker wearing the `.remote()` face so the real executor
+  dispatch path runs; assertions are OOM-split / request-id / planner logic,
+  not scheduling. `test_real_multirank_nonprimary_failure_reaches_driver`
+  is the real twin. Kept.
+
+### Batch 3 - the 39 no-counterpart doubles (commit `b2ce830b`)
+
+Made real: `test_jrdb_import` and `test_setup::test_video_world_targets_rows_*`
+(real mp4 encode + read-back of frame count and the per-episode fps), and
+the five `test_sana_aesthetic_checkpoint_eval` main-path tests (real tiny
+snapshot, real `checkpoint-25`, real identity, real generation; only Hub
+`snapshot_download` and `_score_images` stay doubles - the label now says so).
+
+Held on reading (label true): danbooru HTTP (2), byte-exact probe arithmetic
+on a faked `mem_get_info` (5), multi-node Ray topology (17), PickScore
+revision plumbing on a local dir (2), nvtx depth unobservable in-process (3).
+
+### Batch 4 - private-name patches (commit above)
+
+`run_command=` on `CodexImageQARewardModel`, public `cumem_allocator`, public
+`source_head_revision`; `_embed` runs for real on an `nn.Embedding`. Remaining
+underscore patches are internal spies/stops that are not external boundaries
+(`_compose_grid`, `_generate_all`, `_build_executor`, `_tokenize_prompts`,
+`_build_ar_runner`, `_generate_one`, `_score_images`, `_materialize_model_snapshot`)
+and were left as they are; `_materialize_model_snapshot` and `_generate_one`
+are Hub / subprocess boundaries that a later pass could give the same
+public-keyword shape.
