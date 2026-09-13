@@ -1,0 +1,14 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# bazel build --build_python_zip //tools/delivery:node_probe
+#   -> bazel-bin/tools/delivery/node_probe.zip ; copy to a node and run
+#      `python3 node_probe.zip` (any host python3 unpacks it; the bundled
+#      3.12.13 interpreter runs it).
+py_binary(
+    name = "node_probe",
+    srcs = ["__init__.py", "node_probe.py", "node_rank.py", "//tools:__init__.py"],
+    main = "node_probe.py",
+    deps = ["//:vrl"],
+)
