@@ -1070,3 +1070,65 @@ trained parameter delivery and in-place verification on four real receivers.
 No new video was generated, so fresh rollout/replay correctness, reward/quality,
 production scheduling, restored-worker rollout initialization and continuous
 queue/version retention behavior remain separate open gates.
+
+## Fresh trained two-worker rollout, reward and independent replay passed
+
+A bounded native collector restored the real step-four checkpoint and exported
+its trained policy on CPU. All 560 trainable tensors differed from the original
+untrained adapter snapshot. Native placement preflight and physical probes
+confirmed rollout workers on GPUs 1/2 and reward on GPU 3; GPU 0 was reserved
+as the trainer role but no GPU trainer ran during collection. The private Ray
+session used /mnt/nvme/ray, not the near-full root filesystem.
+
+Native weight sync installed collection version 1 on the fresh fleet. This
+version number is fleet-local, not training global_step. The collector generated
+eight new 512x512, 93-frame videos with 20 CPS steps, guidance 1.0 and noise 0.7
+for the original block-sliding prompt. Runtime receipts prove four samples per
+worker, eight unique batch keys and version 1 throughout, with physical GPU
+IDs 1 and 2. After generation, both active workers independently verified their
+full installed parameter content against the sender snapshot and returned
+version 1. The file initial_trainable_state.pt in this output means the trained
+policy at collection start, not zero-initialized LoRA.
+
+Collection took 286.722211 seconds: generation phase 248.959041 seconds,
+reward phase 37.722631 seconds, measured generation/reward overlap 0.0.
+Executor dispatch wall was 248.728 seconds; each worker ran four approximately
+62-second clips. Reward used the pinned full Kling checkpoint on GPU 3;
+batch inference was 2.882527 seconds and artifact materialization 7.098953
+seconds, with cold-load costs in the larger reward phase. Existing TF5 base
+Qwen key warnings preceded the native full reward checkpoint strict remapped
+load; they are not evidence of an adapter-only reward model being accepted.
+
+These are bounded phase observations, not a controlled one-worker-versus-two
+speedup result: the earlier one-worker run used different policy weights.
+The zero overlap and reserved idle trainer GPU must not be described as a
+continuous four-GPU pipeline. Reward outputs were finite and are retained in
+result.json; their means are not a controlled quality comparison or evidence
+of improved learning.
+
+CPU artifact audit passed native trajectory validation, eight distinct sample
+IDs, all finite tensors/rewards, twenty steps and CPU-only serialized storage.
+Estimated payload was 2,893,025,280 bytes. Additional JSON assertions checked
+all worker assignments, physical GPU IDs, batch-key uniqueness and versions.
+Ray collection/readback exited 0 and fresh compute/Ray process inventories
+were empty before replay started.
+
+Four new independent replay processes then loaded the trained collection
+snapshot with native parameter readback. Each replayed two disjoint samples
+in reverse timestep order, using the actual saved observations, actions and
+prompt embeddings. No DDP/CP or optimizer was involved. All **160 distinct
+sample/step pairs** passed: maximum log-prob difference 0.0 and ratio deviation
+0.0 under the unchanged 1e-3 limit. Coverage includes the terminal transition,
+not 160 nondegenerate stochastic transitions. Per-process measured replay
+regions were 101.395516-101.748304 seconds, excluding loading; peak allocated
+memory was 7,739,583,488 bytes each. The independent CPU coverage audit passed.
+
+Evidence under the NVMe output root: cosmos_trained_collector_preflight,
+cosmos_trained_collector_real_group (executed source, trained policy, trajectory,
+native result, artifact audit and its source), and
+cosmos_trained_independent_replay (executed replay/audit sources, per-rank
+transitions/results and audit.json). Replay launch and all CPU audits exited 0;
+fresh compute inventory empty, all four GPUs released. This establishes a
+trained-checkpoint -> native multi-worker generation/reward -> independent
+replay chain. Production iterator continuation, live trainer-to-worker loop,
+continuous queue recovery, full recipe and quality acceptance remain open.
