@@ -11,12 +11,18 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 import vrl.models.families.registry as model_families
-from tests.scripts.eval.fixtures import build_official_sana_scheduler
-from vrl.config.precision import RolePrecision
+from tests.scripts.eval.fixtures import (
+    TinySanaPipeline,
+    build_official_sana_scheduler,
+    write_tiny_sana_snapshot,
+)
+from tests.trainers._checkpoint_helpers import _Trainer
+from vrl.config.precision import PrecisionPolicy, RolePrecision
 from vrl.models import checkpoint_identity
-from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.families.sana.model import SanaModel
 from vrl.scripts.eval import sana_checkpoint_compare as checkpoint_compare
 from vrl.scripts.eval import sana_inference
+from vrl.trainers.checkpointing import load_resolved_run_config, save_training_checkpoint
 
 SANA_PRECISION = RolePrecision(
     dtype="fp16",
@@ -35,54 +41,23 @@ def _effective_ieee_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-class _FakePipeline:
-    def __init__(self, events: list[str]) -> None:
-        self.text_encoder = SimpleNamespace(dtype=torch.bfloat16)
-        self.vae = SimpleNamespace(dtype=torch.float32)
-        self.scheduler = None
-        self.events = events
-        self.current = False
-        self.calls: list[dict] = []
+def _real_model(*, precision: RolePrecision = SANA_PRECISION) -> SanaModel:
+    """A real ``SanaModel`` over tiny real modules at SANA's native dtype boundary."""
 
-    def __call__(self, **kwargs):
-        assert torch.is_inference_mode_enabled()
-        assert not torch.is_autocast_enabled("cpu")
-        assert "complex_human_instruction" not in kwargs
-        self.events.append("generate:current" if self.current else "generate:base")
-        self.calls.append(
-            {
-                **kwargs,
-                "scheduler": self.scheduler,
-                "generator_seed": kwargs["generator"].initial_seed(),
-            },
-        )
-        color = (200, 10, 20) if self.current else (10, 20, 200)
-        image = Image.new("RGB", (kwargs["width"], kwargs["height"]), color=color)
-        return SimpleNamespace(images=[image])
+    pipeline = TinySanaPipeline()
+    model = SanaModel(pipeline=pipeline, device=torch.device("cpu"))
+    model.transformer.half()
+    pipeline.text_encoder.to(torch.bfloat16)
+    model.precision = precision
+    return model
 
 
-class _FakeModel:
-    def __init__(
-        self,
-        events: list[str],
-        *,
-        transformer_dtype: torch.dtype = torch.float16,
-        precision: RolePrecision = SANA_PRECISION,
-    ) -> None:
-        self.transformer = SimpleNamespace(dtype=transformer_dtype)
-        self.pipeline = _FakePipeline(events)
-        self.precision = precision
-
-    def eval(self):
-        return self
-
-
-def _config(*, policy_dtype: str = "fp16") -> object:
+def _config(*, policy_dtype: str = "fp16", path: str = "test/sana") -> object:
     return OmegaConf.create(
         {
             "model": {
                 "family": "sana",
-                "path": "test/sana",
+                "path": path,
                 "revision": None,
                 "use_lora": False,
                 "lora": None,
@@ -98,6 +73,20 @@ def _config(*, policy_dtype: str = "fp16") -> object:
             },
         },
     )
+
+
+def _real_build(run_dir: Path):
+    """The real registry entry's build and identity for the run's resolved config."""
+
+    _, root = load_resolved_run_config(run_dir)
+    entry = model_families.get_model_family_entry("sana")
+    build = entry.resolve_model_build(
+        root,
+        torch.device("cpu"),
+        precision=PrecisionPolicy.from_section(root.precision),
+        for_rollout=True,
+    )
+    return entry, build, checkpoint_identity.resolve_checkpoint_model_identity(build)
 
 
 def _checkpoint(tmp_path: Path, **meta_overrides) -> SimpleNamespace:
@@ -149,74 +138,44 @@ def test_run_rejects_structurally_invalid_family_before_checkpoint_lookup(
         )
 
 
-def test_run_generates_base_before_strict_restore_and_current(
-    monkeypatch,
-    tmp_path,
-) -> None:
+def test_run_generates_base_before_strict_restore_and_current(monkeypatch, tmp_path) -> None:
+    """The real sana entry, loader, bundle, checkpoint restore and scheduler load.
+
+    Only the HF pipeline load and diffusers' denoising call are doubles. The
+    checkpoint is saved by ``save_training_checkpoint`` from the same tiny
+    transformer with every weight set to 1.0, so the restore is observable in
+    the weights: the first image must be painted while the transformer still
+    holds its base weights, the second after ``restore_model_checkpoint``
+    replaced them.
+    """
+
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    OmegaConf.save(_config(), run_dir / "resolved_config.yaml")
-    checkpoint = _checkpoint(run_dir)
-    events: list[str] = []
-    model = _FakeModel(events)
-    bundle = SimpleNamespace(
-        model=model,
-        trainable_modules={"transformer": model.transformer},
-        precision=SANA_PRECISION,
-    )
-    expected_bundle = bundle
-    build = ModelBuild(
-        model_name_or_path="test/sana",
-        revision=None,
-        device="cpu",
-        parameter_dtype=torch.float16,
+    snapshot = write_tiny_sana_snapshot(tmp_path / "sana-snapshot")
+    OmegaConf.save(_config(path=str(snapshot)), run_dir / "resolved_config.yaml")
+    pipeline = TinySanaPipeline()
+    pipeline.install(monkeypatch, snapshot)
+
+    entry, build, identity = _real_build(run_dir)
+    bundle = entry.build_rollout(build)
+    assert bundle.model.pipeline is pipeline
+    base_state = {name: value.clone() for name, value in pipeline.transformer.state_dict().items()}
+    with torch.no_grad():
+        for parameter in pipeline.transformer.parameters():
+            parameter.fill_(1.0)
+    save_training_checkpoint(
+        run_dir / "checkpoint-final",
+        trainer=_Trainer(),
+        bundle=bundle,
         family="sana",
-        precision=SANA_PRECISION,
-        model_config={},
+        progress={"next_epoch": 1},
+        rng_state={},
+        model_identity=identity,
     )
-    schedulers: list[object] = []
+    pipeline.transformer.load_state_dict(base_state)
+    assert pipeline.holds() == "base"
+    checkpoint_file = run_dir / "checkpoint-final" / "checkpoint.pt"
 
-    def fake_load_checkpoint(path):
-        assert Path(path) == run_dir / "checkpoint-final"
-        events.append("read:checkpoint")
-        return checkpoint
-
-    def fake_restore(
-        actual_checkpoint,
-        *,
-        bundle: object,
-        family: str,
-        expected_model_identity: dict,
-        strict: bool,
-    ):
-        assert actual_checkpoint is checkpoint
-        assert bundle is expected_bundle
-        assert family == "sana"
-        assert expected_model_identity == SANA_IDENTITY
-        assert strict is True
-        events.append("load:strict")
-        model.pipeline.current = True
-
-    def fake_load_scheduler(actual_build):
-        assert actual_build is build
-        scheduler = build_official_sana_scheduler()
-        schedulers.append(scheduler)
-        sana_inference.require_scheduler(scheduler)
-        return scheduler
-
-    entry = SimpleNamespace(
-        resolve_model_build=lambda *args, **kwargs: build,
-        build_rollout=lambda value: bundle,
-    )
-    monkeypatch.setattr(checkpoint_compare.TrainingCheckpoint, "load", fake_load_checkpoint)
-    monkeypatch.setattr(checkpoint_compare, "restore_model_checkpoint", fake_restore)
-    monkeypatch.setattr(
-        checkpoint_identity,
-        "resolve_checkpoint_model_identity",
-        lambda actual_build: SANA_IDENTITY,
-    )
-    monkeypatch.setattr(model_families, "get_model_family_entry", lambda family: entry)
-    monkeypatch.setattr(checkpoint_compare, "load_official_scheduler", fake_load_scheduler)
     result = checkpoint_compare.run_comparison(
         checkpoint_compare.build_parser().parse_args(
             [
@@ -234,25 +193,27 @@ def test_run_generates_base_before_strict_restore_and_current(
         ),
     )
 
-    assert events == [
-        "generate:base",
-        "read:checkpoint",
-        "load:strict",
-        "generate:current",
-    ]
+    # Order witnessed by the weights: base image first, restored weights second,
+    # and the restore was the strict full-parameter one (every weight is 1.0).
+    assert [call["weights"] for call in pipeline.calls] == ["base", "restored"]
+    assert pipeline.fingerprint() == float(
+        sum(parameter.numel() for parameter in pipeline.transformer.parameters())
+    )
+    schedulers = [call["scheduler"] for call in pipeline.calls]
     assert len(schedulers) == 2
     assert schedulers[0] is not schedulers[1]
-    assert [call["scheduler"] for call in model.pipeline.calls] == schedulers
-    assert [call["generator_seed"] for call in model.pipeline.calls] == [20260712, 20260712]
-    assert all(call["negative_prompt"] == "" for call in model.pipeline.calls)
-    assert all(call["use_resolution_binning"] is True for call in model.pipeline.calls)
-    assert all(call["max_sequence_length"] == 300 for call in model.pipeline.calls)
+    for scheduler in schedulers:
+        sana_inference.require_scheduler(scheduler)
+    assert [call["generator_seed"] for call in pipeline.calls] == [20260712, 20260712]
+    assert all(call["negative_prompt"] == "" for call in pipeline.calls)
+    assert all(call["use_resolution_binning"] is True for call in pipeline.calls)
+    assert all(call["max_sequence_length"] == 300 for call in pipeline.calls)
 
     base_path = Path(result["base"])
     current_path = Path(result["current"])
     side_by_side_path = Path(result["side_by_side"])
-    assert Image.open(base_path).getpixel((0, 0)) == (10, 20, 200)
-    assert Image.open(current_path).getpixel((0, 0)) == (200, 10, 20)
+    assert Image.open(base_path).getpixel((0, 0)) == TinySanaPipeline.BASE_COLOR
+    assert Image.open(current_path).getpixel((0, 0)) == TinySanaPipeline.RESTORED_COLOR
     assert Image.open(side_by_side_path).size == (20, 8)
 
     evaluation_record = json.loads(Path(result["evaluation_record"]).read_text(encoding="utf-8"))
@@ -264,9 +225,7 @@ def test_run_generates_base_before_strict_restore_and_current(
     assert evaluation_record["checkpoint"]["meta"]["uses_lora"] is False
     assert (
         evaluation_record["checkpoint"]["sha256"]
-        == hashlib.sha256(
-            checkpoint.checkpoint_path.read_bytes(),
-        ).hexdigest()
+        == hashlib.sha256(checkpoint_file.read_bytes()).hexdigest()
     )
     for name, path in (
         ("base", base_path),
@@ -303,29 +262,11 @@ def test_run_refuses_to_mix_artifacts_with_an_existing_comparison(
 def test_run_rejects_meta_identity_before_model_construction(monkeypatch, tmp_path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    OmegaConf.save(_config(), run_dir / "resolved_config.yaml")
+    snapshot = write_tiny_sana_snapshot(tmp_path / "sana-snapshot")
+    OmegaConf.save(_config(path=str(snapshot)), run_dir / "resolved_config.yaml")
     _checkpoint(run_dir, model_identity={"schema": "wrong/v1"})
-    build = SimpleNamespace()
-    built = False
-
-    def fail_if_built(_build):
-        nonlocal built
-        built = True
-        raise AssertionError("model construction must not run")
-
-    monkeypatch.setattr(
-        model_families,
-        "get_model_family_entry",
-        lambda family: SimpleNamespace(
-            resolve_model_build=lambda *args, **kwargs: build,
-            build_rollout=fail_if_built,
-        ),
-    )
-    monkeypatch.setattr(
-        checkpoint_identity,
-        "resolve_checkpoint_model_identity",
-        lambda actual_build: SANA_IDENTITY,
-    )
+    pipeline = TinySanaPipeline()
+    pipeline.install(monkeypatch, snapshot)
 
     with pytest.raises(ValueError, match="metadata model identity mismatch"):
         checkpoint_compare.run_comparison(
@@ -334,42 +275,24 @@ def test_run_rejects_meta_identity_before_model_construction(monkeypatch, tmp_pa
             ),
         )
 
-    assert built is False
+    assert pipeline.loads == 0
 
 
 def test_run_rejects_model_source_drift_before_generation(monkeypatch, tmp_path) -> None:
+    """A model directory that changes under the loader is caught before any image."""
+
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    OmegaConf.save(_config(), run_dir / "resolved_config.yaml")
-    _checkpoint(run_dir)
-    build = object()
-    built = False
-    identities = iter(
-        (
-            SANA_IDENTITY,
-            {"schema": "vrl.model-identity/v1", "sources": {"main": "changed"}},
-        ),
-    )
+    snapshot = write_tiny_sana_snapshot(tmp_path / "sana-snapshot")
+    OmegaConf.save(_config(path=str(snapshot)), run_dir / "resolved_config.yaml")
+    _, _, identity = _real_build(run_dir)
+    _checkpoint(run_dir, model_identity=identity)
+    pipeline = TinySanaPipeline()
 
-    def build_bundle(actual_build):
-        nonlocal built
-        assert actual_build is build
-        built = True
-        return SimpleNamespace(model=object())
+    def mutate_snapshot() -> None:
+        (snapshot / "extra-weights.bin").write_bytes(b"drift")
 
-    monkeypatch.setattr(
-        model_families,
-        "get_model_family_entry",
-        lambda family: SimpleNamespace(
-            resolve_model_build=lambda *args, **kwargs: build,
-            build_rollout=build_bundle,
-        ),
-    )
-    monkeypatch.setattr(
-        checkpoint_identity,
-        "resolve_checkpoint_model_identity",
-        lambda actual_build: next(identities) if actual_build is build else None,
-    )
+    pipeline.install(monkeypatch, snapshot, on_load=mutate_snapshot)
 
     with pytest.raises(
         RuntimeError,
@@ -381,7 +304,8 @@ def test_run_rejects_model_source_drift_before_generation(monkeypatch, tmp_path)
             ),
         )
 
-    assert built is True
+    assert pipeline.loads == 1
+    assert pipeline.calls == []
     assert not (run_dir / "sana_checkpoint_compare").exists()
 
 
@@ -464,12 +388,11 @@ def test_model_precision_snapshot_records_materialized_dtypes(
     record_key,
     expected,
 ) -> None:
-    model = _FakeModel([])
+    model = _real_model()
     owner = model
-    parts = target.split(".")
-    for part in parts[:-1]:
+    for part in target.split(".")[:-1]:
         owner = getattr(owner, part)
-    setattr(owner, parts[-1], value)
+    owner.to(value)
 
     actual = checkpoint_compare._model_precision_snapshot(model)
 
@@ -477,7 +400,7 @@ def test_model_precision_snapshot_records_materialized_dtypes(
 
 
 def test_model_precision_snapshot_records_native_configured_boundary() -> None:
-    actual = checkpoint_compare._model_precision_snapshot(_FakeModel([]))
+    actual = checkpoint_compare._model_precision_snapshot(_real_model())
 
     assert actual["transformer"] == "float16"
     assert actual["prompt_encoder"] == "bfloat16"
@@ -490,8 +413,7 @@ def test_model_precision_snapshot_records_native_configured_boundary() -> None:
 
 
 def test_model_precision_snapshot_records_configured_outer_autocast() -> None:
-    model = _FakeModel(
-        [],
+    model = _real_model(
         precision=RolePrecision(
             dtype="fp16",
             float32_precision="ieee",
@@ -542,7 +464,7 @@ def test_generation_preserves_device_autocast_query_failure(monkeypatch) -> None
 
 
 def test_generation_rejects_an_active_outer_autocast() -> None:
-    model = _FakeModel([])
+    model = _real_model()
 
     with (
         torch.autocast("cpu", dtype=torch.bfloat16),

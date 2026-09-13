@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +10,12 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 
-from tests.scripts.eval.fixtures import build_official_sana_scheduler
+from tests.scripts.eval.fixtures import (
+    TinySanaPipeline,
+    build_official_sana_scheduler,
+    write_tiny_sana_snapshot,
+)
+from tests.trainers._checkpoint_helpers import _Trainer
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
@@ -18,6 +24,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.scripts.eval import sana_aesthetic_checkpoint_eval as checkpoint_eval
 from vrl.scripts.eval import sana_aesthetic_report as sana_report
 from vrl.scripts.eval import sana_inference
+from vrl.trainers.checkpointing import save_training_checkpoint
 from vrl.utils.artifacts import sha256_file
 
 SANA_PRECISION = RolePrecision(
@@ -893,115 +900,11 @@ def test_official_generation_rejects_sampling_drift() -> None:
         )
 
 
-def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
-    monkeypatch,
-    tmp_path,
-) -> None:
-    import vrl.models.families.registry as model_families
-    import vrl.utils.media as media
-
-    events: list[str] = []
-
-    class FakeModel:
-        state = "base"
-        precision = SANA_PRECISION
-
-        def eval(self):
-            return self
-
-    model = FakeModel()
-    bundle = SimpleNamespace(
-        model=model,
-        precision=SANA_PRECISION,
-    )
-    expected_bundle = bundle
-    entry = SimpleNamespace(
-        resolve_model_build=lambda *args, **kwargs: object(),
-        build_rollout=lambda build: bundle,
-    )
-    monkeypatch.setattr(
-        model_families,
-        "get_model_family_entry",
-        lambda _family: entry,
-    )
-    monkeypatch.setattr(
-        checkpoint_eval.TrainingCheckpoint,
-        "load",
-        lambda path: (
-            events.append(f"read:{Path(path).name.split('-')[-1]}")
-            or SimpleNamespace(
-                payload={"family": "sana"},
-                meta={"uses_lora": False},
-                next_epoch=int(Path(path).name.split("-")[-1]),
-            )
-        ),
-    )
-
-    def fake_restore(
-        checkpoint,
-        *,
-        bundle: object,
-        family: str,
-        expected_model_identity: dict,
-        strict: bool,
-    ):
-        assert bundle is expected_bundle
-        assert family == "sana"
-        assert expected_model_identity == SANA_IDENTITY
-        assert strict is True
-        model.state = f"checkpoint-{checkpoint.next_epoch}"
-        events.append(f"load:{checkpoint.next_epoch}")
-
-    def fake_generate(model_arg, **kwargs):
-        del kwargs
-        assert model_arg is model
-        events.append(f"generate:{model.state}")
-        return [object(), object()]
-
-    def fake_write_png(image, path):
-        del image
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"png")
-
-    monkeypatch.setattr(checkpoint_eval, "restore_model_checkpoint", fake_restore)
-    monkeypatch.setattr(checkpoint_eval, "generate_prompt_images", fake_generate)
-    monkeypatch.setattr(checkpoint_eval, "load_official_scheduler", lambda build: object())
-    monkeypatch.setattr(media, "write_png", fake_write_png)
-    materialized_identity = {"schema": "local", "sources": {"main": "stable"}}
-    identity_calls: list[object] = []
-
-    def resolve_materialized_identity(build):
-        identity_calls.append(build)
-        return materialized_identity
-
-    monkeypatch.setattr(
-        checkpoint_identity,
-        "resolve_checkpoint_model_identity",
-        resolve_materialized_identity,
-    )
-    first_checkpoint = tmp_path / "checkpoint-25"
-    targets = [
-        checkpoint_eval.CheckpointTarget("baseline", -1, None, None, None),
-        checkpoint_eval.CheckpointTarget(
-            "checkpoint-25",
-            25,
-            first_checkpoint,
-            "hash-25",
-            1,
-        ),
-        checkpoint_eval.CheckpointTarget(
-            "checkpoint-50",
-            50,
-            tmp_path / "checkpoint-50",
-            "hash-50",
-            1,
-        ),
-    ]
-
+def _sana_root(snapshot: Path):
     root = checkpoint_eval.parse_config(
         OmegaConf.create(
             {
-                "model": {"family": "sana", "path": "unit-checkpoint"},
+                "model": {"family": "sana", "path": str(snapshot)},
                 "precision": {
                     "float32_precision": "ieee",
                     "training": {"dtype": "fp32"},
@@ -1009,91 +912,102 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
             },
         ),
     )
-    precision = checkpoint_eval.PrecisionPolicy.from_section(root.precision)
+    return root, checkpoint_eval.PrecisionPolicy.from_section(root.precision)
+
+
+def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Real sana entry, rollout bundle and strict restores over a tiny model.
+
+    Two real checkpoints are saved from the same transformer with distinct
+    weight fills, so every image carries a witness of which weights painted it:
+    the base images must come before any checkpoint is read, and each
+    checkpoint's images after its own strict restore.
+    """
+
+    import vrl.models.families.registry as model_families
+
+    snapshot = write_tiny_sana_snapshot(tmp_path / "sana-snapshot")
+    pipeline = TinySanaPipeline()
+    pipeline.install(monkeypatch, snapshot)
+    root, precision = _sana_root(snapshot)
+    entry = model_families.get_model_family_entry("sana")
+    build = entry.resolve_model_build(
+        root, torch.device("cpu"), precision=precision, for_rollout=True
+    )
+    identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
+    bundle = entry.build_rollout(build)
+    base_state = {name: value.clone() for name, value in pipeline.transformer.state_dict().items()}
+
+    targets = [checkpoint_eval.CheckpointTarget("baseline", -1, None, None, None)]
+    for epoch, fill in ((25, 1.0), (50, 2.0)):
+        with torch.no_grad():
+            for parameter in pipeline.transformer.parameters():
+                parameter.fill_(fill)
+        pipeline.label_weights(f"checkpoint-{epoch}")
+        path = tmp_path / f"checkpoint-{epoch}"
+        save_training_checkpoint(
+            path,
+            trainer=_Trainer(),
+            bundle=bundle,
+            family="sana",
+            progress={"next_epoch": epoch},
+            rng_state={},
+            model_identity=identity,
+        )
+        targets.append(
+            checkpoint_eval.CheckpointTarget(f"checkpoint-{epoch}", epoch, path, None, None)
+        )
+    pipeline.transformer.load_state_dict(base_state)
+    assert pipeline.holds() == "base"
+
     generated = checkpoint_eval._generate_images(
         root,
         precision,
         targets,
         ["fox"],
         output_dir=tmp_path / "eval",
-        sampling={},
+        sampling=dict(sana_inference.SANA_EVAL_SAMPLING_CONFIG),
         device=torch.device("cpu"),
-        expected_model_identity=SANA_IDENTITY,
+        expected_model_identity=identity,
     )
 
-    assert len(generated) == 6
-    assert len(identity_calls) == 2
-    assert identity_calls[0] is identity_calls[1]
-    assert events == [
-        "generate:base",
-        "read:25",
-        "load:25",
-        "generate:checkpoint-25",
-        "read:50",
-        "load:50",
-        "generate:checkpoint-50",
+    assert [call["weights"] for call in pipeline.calls] == [
+        "base",
+        "checkpoint-25",
+        "checkpoint-50",
     ]
+    assert [image.checkpoint_label for image in generated] == [
+        "baseline",
+        "baseline",
+        "checkpoint-25",
+        "checkpoint-25",
+        "checkpoint-50",
+        "checkpoint-50",
+    ]
+    for image in generated:
+        assert image.path.is_file()
+        assert image.image_sha256 == hashlib.sha256(image.path.read_bytes()).hexdigest()
+    for scheduler in (call["scheduler"] for call in pipeline.calls):
+        sana_inference.require_scheduler(scheduler)
 
 
 def test_generate_images_rejects_materialized_source_drift_before_generation(
     monkeypatch,
     tmp_path,
 ) -> None:
-    import vrl.models.families.registry as model_families
+    """A model directory that changes under the loader is caught before any image."""
 
-    build = object()
-    built = False
-    generated = False
+    snapshot = write_tiny_sana_snapshot(tmp_path / "sana-snapshot")
+    pipeline = TinySanaPipeline()
 
-    class FakeModel:
-        def eval(self):
-            return self
+    def mutate_snapshot() -> None:
+        (snapshot / "extra-weights.bin").write_bytes(b"drift")
 
-    def build_rollout(actual_build):
-        nonlocal built
-        assert actual_build is build
-        built = True
-        return SimpleNamespace(model=FakeModel())
-
-    entry = SimpleNamespace(
-        resolve_model_build=lambda *args, **kwargs: build,
-        build_rollout=build_rollout,
-    )
-    monkeypatch.setattr(
-        model_families,
-        "get_model_family_entry",
-        lambda _family: entry,
-    )
-    identities = iter(
-        (
-            {"schema": "local", "sources": {"main": "before"}},
-            {"schema": "local", "sources": {"main": "after"}},
-        ),
-    )
-    monkeypatch.setattr(
-        checkpoint_identity,
-        "resolve_checkpoint_model_identity",
-        lambda actual_build: next(identities) if actual_build is build else None,
-    )
-
-    def fail_if_generated(*args, **kwargs):
-        del args, kwargs
-        nonlocal generated
-        generated = True
-        raise AssertionError("generation must not run after local source drift")
-
-    monkeypatch.setattr(checkpoint_eval, "generate_prompt_images", fail_if_generated)
-    root = checkpoint_eval.parse_config(
-        OmegaConf.create(
-            {
-                "model": {"family": "sana", "path": "unit-checkpoint"},
-                "precision": {
-                    "float32_precision": "ieee",
-                    "training": {"dtype": "fp32"},
-                },
-            },
-        ),
-    )
+    pipeline.install(monkeypatch, snapshot, on_load=mutate_snapshot)
+    root, precision = _sana_root(snapshot)
 
     with pytest.raises(
         RuntimeError,
@@ -1101,17 +1015,17 @@ def test_generate_images_rejects_materialized_source_drift_before_generation(
     ):
         checkpoint_eval._generate_images(
             root,
-            checkpoint_eval.PrecisionPolicy.from_section(root.precision),
+            precision,
             [checkpoint_eval.CheckpointTarget("baseline", -1, None, None, None)],
             ["fox"],
             output_dir=tmp_path / "eval",
-            sampling={},
+            sampling=dict(sana_inference.SANA_EVAL_SAMPLING_CONFIG),
             device=torch.device("cpu"),
-            expected_model_identity=SANA_IDENTITY,
+            expected_model_identity={"schema": "unused"},
         )
 
-    assert built is True
-    assert generated is False
+    assert pipeline.loads == 1
+    assert pipeline.calls == []
 
 
 @pytest.mark.parametrize(
