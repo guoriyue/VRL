@@ -734,3 +734,50 @@ native rollout/training precision. The matched fixed CP/DP proof remains only
 within its explicit compute contract. Full native DP training semantics versus
 single-device accumulation, production integration and full-recipe quality
 remain required; these diagnostic slices do not close them.
+
+## Native DP4 versus single-device accumulation: real-slice parity passed
+
+The native control was run with `SingleProcessStrategy` on GPU 0, accumulating
+all eight saved real samples at timestep 10 with each loss divided by eight.
+The reference DP4 arm has two disjoint samples/rank with loss divided by two
+and DDP averaging across four ranks. Both use the same complete eight-sample
+advantages, initial adapter, released backbone, checkpointing, native Linear,
+LoRA autocast, default SDPA, strict deterministic IEEE and native optimizer
+boundary. No fixed-compute overrides or regenerated trajectories were used.
+
+All eight saved-rollout log-probs matched exactly. The single-device gradient
+norm was 0.0008508932078, identical to the reported DP4 norm; 560 gradient
+tensors were captured and 280 trainable tensors changed. The unchanged parity
+limits passed for all captured gradients, updates, parameters and Adam moments:
+
+| Single-device vs native DP4 | Relative L2 | Max absolute error |
+| --- | ---: | ---: |
+| Gradients | 8.5849871e-11 | 2.8421709e-14 |
+| Updates | 3.3058375e-10 | 2.9103830e-11 |
+| Parameters | 7.7877419e-13 | 2.9103830e-11 |
+| Adam first moments | 9.5091321e-11 | 3.5527137e-15 |
+| Adam second moments | 2.8007779e-11 | 2.6469780e-23 |
+
+Advantages and optimizer parameter groups matched exactly, and all optimizer
+step counters were one. Relative errors use DP4 as the denominator. This
+establishes native data-parallel accumulation equivalence within the original
+tolerances for this real group and single selected timestep, not bitwise
+equivalence or the entire multi-timestep, multi-epoch online training recipe.
+
+Single-device measured region was 140.464884 seconds and peak allocated memory
+15,063,064,576 bytes. Original DP4 was 36.435179 seconds; its independent repeat
+was 36.454606 seconds. Observed phase speedup is approximately 3.85x for equal
+eight-sample work, using four GPUs versus one. The regions include forward,
+backward, optimizer and diagnostic capture; DP4 also performs replica checks
+and distributed collection. They exclude initial model/data loading, rollout,
+reward and production weight synchronization. This is not an end-to-end speedup
+or a statistically qualified benchmark; single-device has one observation.
+
+Evidence: `/mnt/nvme/outputs/wan22_i2v_cache/cosmos_real_native_single_update`,
+including executed probe/comparison sources, transition/pre-step receipts,
+`update.pt`, execution result and passed `native_comparison.json`. GPU process
+and CPU comparison exited 0, fresh compute inventory empty; GPU 0 released.
+No other GPUs were claimed by this arm. Prefer this native DP path for the next
+full-recipe semantic/integration checks; the fixed-compute CP contract is still
+experimental. Full update cadence, streaming/global advantage normalization,
+weight synchronization, recovery, EMA and quality remain separate open gates.
