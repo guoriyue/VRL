@@ -36,7 +36,7 @@ Predict2.5 rollout 打开 `model.torch_compile.enable=true`**。
 ## 2. 实测瓶颈（512p/93f/20-step，6 步 profile）
 
 工具：`vrl/scripts/perf/generation_bottleneck_profile.py`（torch.profiler + dmon，复用
-仓库 `gemm_projection_breakdown.py` 的 profiler 模式）。
+仓库 `profile_linear_projections.py` 的 profiler 模式）。
 
 | 指标 | eager | compiled(default) |
 |---|---|---|
@@ -82,7 +82,7 @@ elementwise 时间、dmon MEM%、稳态 s/video** 为准，别看 compiled 的�
 ## 5. 参考
 
 - 工具：`vrl/scripts/perf/generation_bottleneck_profile.py`、复用核心
-  `vrl/scripts/perf/gemm_projection_breakdown.py`
+  `vrl/scripts/perf/profile_linear_projections.py`
 - compile 入口：`vrl/models/diffusion/cosmos/predict2_5/model.py:245` `torch_compile_transformer`
 - forward 路径：`forward_step`（用 `self.transformer`）→ `vrl/generation/diffusion/executor.py:680` `run_denoise_steps`
 - trace：`outputs/perf/gen_eager.json`、`outputs/perf/gen_compiled.json`（perfetto.dev 打开）

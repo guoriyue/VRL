@@ -2,7 +2,7 @@
 
 import pytest
 
-from vrl.scripts.perf.gemm_projection_breakdown import PROJECTION_ORDER, Breakdown
+from vrl.scripts.perf.profile_linear_projections import PROJECTION_ORDER, Breakdown
 
 
 @pytest.mark.parametrize("device_kind", ["cpu", "cuda"])
@@ -35,19 +35,19 @@ def test_report_preserves_measured_total_when_zero(device_kind, duration):
     ],
 )
 def test_profile_rejects_invalid_counts_before_forward(field, value):
-    from vrl.scripts.perf.gemm_projection_breakdown import profile_projection_gemms
+    from vrl.scripts.perf.profile_linear_projections import profile_linear_projections
 
     def forward():
         pytest.fail("invalid profiling counts must fail before model execution")
 
     with pytest.raises(ValueError, match=field):
-        profile_projection_gemms(None, forward, **{field: value})
+        profile_linear_projections(None, forward, **{field: value})
 
 
 def test_profile_executes_exact_warmup_and_active_counts():
     import torch
 
-    from vrl.scripts.perf.gemm_projection_breakdown import profile_projection_gemms
+    from vrl.scripts.perf.profile_linear_projections import profile_linear_projections
 
     model = torch.nn.Sequential(torch.nn.Linear(2, 2))
     inputs = torch.ones(1, 2)
@@ -57,7 +57,7 @@ def test_profile_executes_exact_warmup_and_active_counts():
         calls.append(None)
         return model(inputs)
 
-    report = profile_projection_gemms(model, forward, warmup=0, active=2)
+    report = profile_linear_projections(model, forward, warmup=0, active=2)
     assert len(calls) == 2
     assert report.calls["other"] == 2
 
@@ -66,7 +66,7 @@ def test_profile_executes_exact_warmup_and_active_counts():
 def test_event_time_fallback_preserves_explicit_zero(device_time, expected):
     from types import SimpleNamespace
 
-    from vrl.scripts.perf.gemm_projection_breakdown import _event_self_us
+    from vrl.scripts.perf.profile_linear_projections import _event_self_us
 
     event = SimpleNamespace(
         self_cpu_time_total=1.0, self_device_time_total=device_time, self_cuda_time_total=9.0
@@ -78,7 +78,7 @@ def test_event_time_fallback_preserves_explicit_zero(device_time, expected):
 def test_instrumentation_restores_forward_ownership(failure_stage):
     import torch
 
-    from vrl.scripts.perf.gemm_projection_breakdown import instrument_projection_gemms
+    from vrl.scripts.perf.profile_linear_projections import instrument_linear_projections
 
     linear = torch.nn.Linear(2, 2)
     failure = RuntimeError("profiling failed")
@@ -91,7 +91,7 @@ def test_instrumentation_restores_forward_ownership(failure_stage):
 
     assert "forward" not in linear.__dict__
     try:
-        with instrument_projection_gemms(Model()):
+        with instrument_linear_projections(Model()):
             assert "forward" in linear.__dict__
             if failure_stage == "body":
                 raise failure
@@ -105,7 +105,7 @@ def test_instrumentation_restores_forward_ownership(failure_stage):
 def test_instrumentation_restores_existing_forward_override():
     import torch
 
-    from vrl.scripts.perf.gemm_projection_breakdown import instrument_projection_gemms
+    from vrl.scripts.perf.profile_linear_projections import instrument_linear_projections
 
     linear = torch.nn.Linear(2, 2)
 
@@ -113,6 +113,6 @@ def test_instrumentation_restores_existing_forward_override():
         return value
 
     linear.forward = original
-    with instrument_projection_gemms(linear):
+    with instrument_linear_projections(linear):
         assert linear.forward is not original
     assert linear.forward is original

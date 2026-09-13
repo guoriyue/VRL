@@ -97,7 +97,7 @@ fp8 不是 drop-in dtype（bf16/fp16 有原生自动 dispatch 的 GEMM，fp8 没
 
 1. **正确性**：`fp8_rollout_drift_probe.py` 换真实 DiT 跑,`ratio_dev` 分布落在 auto correction 可控范围;默认 catastrophic drift guard 不报灾难。
 2. **修正联动**：确认 auto 派生的 TIS/RS 指标合理（`tis_clip_fraction` / `rs_seq_masked_fraction` 不是大面积截）。只有长期异常时才用 expert `trainer.precision_correction` override 校准。
-3. **吞吐**：`vrl/scripts/perf/gemm_projection_breakdown.py` / `compile_benchmark.py` 量 rollout 段实际加速,再按 colocated 串行 Amdahl 折端到端（先测 rollout 占 cycle 比例）。
+3. **吞吐**：`vrl/scripts/perf/profile_linear_projections.py` / `compile_benchmark.py` 量 rollout 段实际加速,再按 colocated 串行 Amdahl 折端到端（先测 rollout 占 cycle 比例）。
 4. **Guard**: an FP8 live run uses
    `precision.rollout.quantization.format=fp8`. The family-level zero-swap guard
    and worker-side scheme-identity `QuantizedLinear` backstop are both implemented; a builder
@@ -113,4 +113,4 @@ fp8 不是 drop-in dtype（bf16/fp16 有原生自动 dispatch 的 GEMM，fp8 没
 - [[SPRINT_fullparam_and_fp8_precision]]（父 sprint,§3 是本 sprint 的来源）
 - [[SPRINT_gemm_utilization]]（`done/`,profiler / compile 测量工具的出处）
 - `vrl/scripts/perf/fp8_rollout_drift_probe.py`（fp8 GEMM + 漂移测量参考实现）
-- `vrl/scripts/perf/gemm_projection_breakdown.py`、`compile_benchmark.py`（吞吐测量工具）
+- `vrl/scripts/perf/profile_linear_projections.py`、`compile_benchmark.py`（吞吐测量工具）

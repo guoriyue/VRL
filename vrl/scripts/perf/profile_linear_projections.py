@@ -24,16 +24,16 @@ the synthetic CPU path is a self-test and relative sanity check.
 
 Usage:
     # Real numbers (needs the cosmos extra / torchvision on the GPU box):
-    python -m vrl.scripts.perf.gemm_projection_breakdown --family cosmos-predict2 --device cuda
+    python -m vrl.scripts.perf.profile_linear_projections --family cosmos-predict2 --device cuda
 
     # CPU self-test (no torchvision needed for sd3_5 / wan_2_1):
-    python -m vrl.scripts.perf.gemm_projection_breakdown --family sd3_5 --device cpu
+    python -m vrl.scripts.perf.profile_linear_projections --family sd3_5 --device cpu
 
     # Or wire the reusable core into a REAL training/rollout forward:
-    from vrl.scripts.perf.gemm_projection_breakdown import (
-        profile_projection_gemms,
+    from vrl.scripts.perf.profile_linear_projections import (
+        profile_linear_projections,
     )
-    bd = profile_projection_gemms(real_model.transformer, run_one_denoise_step, device=dev)
+    bd = profile_linear_projections(real_model.transformer, run_one_denoise_step, device=dev)
     print(bd.to_text())
 """
 
@@ -61,8 +61,8 @@ __all__ = [
     "apply_qkv_fusion",
     "build_synthetic_inputs",
     "classify_linear",
-    "instrument_projection_gemms",
-    "profile_projection_gemms",
+    "instrument_linear_projections",
+    "profile_linear_projections",
 ]
 
 # Stable category order for counters and equal-time report rows. Classification
@@ -196,7 +196,7 @@ class Breakdown:
 
 
 @contextmanager
-def instrument_projection_gemms(model: nn.Module) -> Iterator[dict[str, list[str]]]:
+def instrument_linear_projections(model: nn.Module) -> Iterator[dict[str, list[str]]]:
     """Wrap every ``nn.Linear.forward`` in a ``projgemm/<category>`` profiler range.
 
     Yields the category -> sorted FQN list mapping (so the report can show exactly
@@ -248,7 +248,7 @@ def _event_self_us(event: Any, *, cuda: bool) -> tuple[float, float]:
     return device_us, cpu_us
 
 
-def profile_projection_gemms(
+def profile_linear_projections(
     model: nn.Module,
     forward_fn: Callable[[], Any],
     *,
@@ -278,7 +278,7 @@ def profile_projection_gemms(
         activities.append(torch.profiler.ProfilerActivity.CUDA)
 
     with (
-        instrument_projection_gemms(model) as category_fqns,
+        instrument_linear_projections(model) as category_fqns,
         torch.profiler.profile(activities=activities, record_shapes=False) as prof,
     ):
         for _ in range(active):
@@ -382,7 +382,7 @@ def main() -> None:
 
     if args.fuse_qkv:
         apply_qkv_fusion(model, args.family)
-    bd = profile_projection_gemms(
+    bd = profile_linear_projections(
         model, forward_fn, device=device, warmup=args.warmup, active=args.active
     )
     print(bd.to_text())

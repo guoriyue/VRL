@@ -2,7 +2,7 @@
 
 WHY: GPU util=100% does NOT prove peak FLOPS — a bandwidth-bound kernel (attention
 materializing an O(n^2) matrix, an oversized elementwise/copy) can pin util at 100%
-while wasting the SMs. ``gemm_projection_breakdown.py`` splits *GEMM* time only; this
+while wasting the SMs. ``profile_linear_projections.py`` splits *GEMM* time only; this
 tool profiles the WHOLE denoise forward and reports two useful observations:
 
   1. Which kernels own the device time? (full top-N by self CUDA time, GEMM + attention
@@ -11,7 +11,7 @@ tool profiles the WHOLE denoise forward and reports two useful observations:
      supporting counters, not a compute-vs-memory roofline classification.
 
 HOW: reuses the repo torch.profiler pattern (ProfilerActivity.CUDA + key_averages,
-same as gemm_projection_breakdown / compile_benchmark). Kernels are bucketed by name
+same as profile_linear_projections / compile_benchmark). Kernels are bucketed by name
 into gemm / attention / norm-elementwise / reduction / copy-memset / other so the
 compute-vs-bandwidth split is legible without Nsight Compute (which isn't installed).
 

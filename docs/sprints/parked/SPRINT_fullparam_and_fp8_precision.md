@@ -71,4 +71,4 @@ capacity gate；不得重复实现已经存在的 `_scaled_mm` 路径。
 
 ## 相关
 - [[SPRINT_gemm_utilization]]（`done/`，父 sprint）
-- `vrl/scripts/perf/gemm_projection_breakdown.py`、`vrl/scripts/perf/compile_benchmark.py`（已落地的测量工具）
+- `vrl/scripts/perf/profile_linear_projections.py`、`vrl/scripts/perf/compile_benchmark.py`（已落地的测量工具）
