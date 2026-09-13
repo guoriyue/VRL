@@ -781,3 +781,107 @@ No other GPUs were claimed by this arm. Prefer this native DP path for the next
 full-recipe semantic/integration checks; the fixed-compute CP contract is still
 experimental. Full update cadence, streaming/global advantage normalization,
 weight synchronization, recovery, EMA and quality remain separate open gates.
+
+## Native OnlineTrainer full cached-group cadence: setup and scope
+
+The external `cosmos_native_trainer_probe.py` connects the saved real group to
+`OnlineTrainer.collect_training_batch` through its prepared-iteration input,
+then calls the actual `train_on_rollout_batch`. It uses the native algorithm
+and evaluator factory, DDPStrategy, optimizer construction, mandatory first
+update parity gate and EMA. No replacement loss, timestep loop, optimizer
+boundary or precision override is installed in the trainer.
+
+CPU preflight passed: the actual cached eight-sample group has finite rewards
+and nonzero full-group advantages; samples 0/1, 2/3, 4/5, 6/7 are assigned to
+ranks 0-3. Full-group advantages are computed before slicing and supplied to
+collection. Native timestep selection is [0,2,4,6,8,10,12,14,16,18], with four
+PPO epochs and replay batch size one: 80 training evaluations per rank and
+four optimizer boundaries. First-step diagnostics can add no-grad evaluations.
+EMA remains enabled with decay 0.9 and update interval one.
+
+This is explicit sample sharding of one cached group, not the production
+prompt-group dispatcher. Each local slice is treated as one two-sample batch;
+DDP averaging recovers the full-group loss for this balanced arrangement.
+Prepared full-group reward statistics are supplied, but local group-size and
+prompt-count metrics do not represent a production global prompt batch.
+There is no collector or weight syncer: the native post-training schedule hook
+has no weights to push. It does not test live rollout, rewards, queue behavior,
+version synchronization, recovery, production ownership or quality. This
+cached configuration has global_std=false and no SFT regularizer; it is not
+the entire paper recipe or a real-GPU global_std streaming acceptance.
+
+While the GPU integration ran, existing CPU-only streaming regressions were
+rerun from unchanged candidate 435c8fa2: test_streaming_global_std.py and
+test_fsdp_streaming_equivalence.py, 12 passed in 11.34 seconds. These cover
+streaming/full-batch advantage, gradient and Adam agreement and four-process
+Gloo behavior including rejection of uneven post-filter group counts. They
+are not GPU FSDP/Cosmos proofs. CPU checks overlapped the GPU run, so its time
+is an execution receipt, not an isolated performance benchmark.
+
+Preflight evidence: cosmos_native_trainer_preflight/preflight.json under the
+NVMe output root. The first torchrun launch exited 2 in argument parsing before
+starting workers because --run was an ambiguous launcher abbreviation. A --
+separator before the script corrected command dispatch without changing the
+experiment. The subsequent run uses cosmos_native_trainer_full_ppo; completion
+must be established from its final artifacts and independent audit below.
+
+## Native OnlineTrainer cached-group cadence: execution and audits passed
+
+The unchanged native trainer completed all four configured PPO epochs on the
+ten selected timesteps. All ranks reached four optimizer boundaries, each
+capturing 560 finite post-clip gradient tensors. At the end, all trainable
+parameters were exactly equal across four ranks. Native trainer state recorded
+step=1, global_step=4, all 560 Adam states at step four, and EMA num_updates=4
+with 560 finite shadows. Nonzero gradient tensor counts by update were
+280, 560, 560, 560. No training-quality inference follows from those counts.
+
+The mandatory initial global replay gate recorded finite=true and maximum
+log-prob difference 0.0. Its native configured limit was 0.01; the actual zero
+also satisfies the earlier diagnostic 0.001 limit. No tolerance was changed
+for this run. Subsequent policy log-prob changes were finite, as expected when
+replaying fixed old actions after weight updates. The rank-0 aggregate maximum
+over the training call was 0.000171456486; this is not an independent final-step
+replay comparison or a quality measure. Rank-local loss/reward-component and
+advantage metrics must not be presented as global batch metrics for this
+explicit sample-sharded harness (see scope above).
+
+| Rank-0 optimizer boundary | Cumulative seconds |
+| --- | ---: |
+| First | 351.827761 |
+| Second | 700.426706 |
+| Third | 1048.986795 |
+| Fourth | 1397.490415 |
+
+Training-call elapsed time was 1397.785117 seconds (23.30 minutes), including
+native initial checks and gradient capture but excluding model/data setup and
+final snapshot serialization/audit. Peak allocated memory was 15,665,102,848
+bytes/rank. Repeated spot checks showed all four GPUs at 100% utilization with
+stable approximately 18GB process residency. No end-to-end or isolated speedup
+claim: CPU regression/audit preparation overlapped this correctness run.
+
+Independent CPU artifact audit passed: exact boundary sequences on four ranks,
+finite gradients/parameters/moments/EMA, optimizer and EMA counts, and the actual
+zero-error global replay record. A second CPU audit reconstructed four unfused
+AdamW updates from the saved post-clip gradients and native hyperparameters,
+then reconstructed the native EMA warmup/lerp history. Comparison to the GPU
+final snapshot passed its predeclared limits:
+
+| CPU reconstruction vs GPU final state | Relative L2 | Max absolute error |
+| --- | ---: | ---: |
+| Parameters | 5.1765096e-9 | 7.4505806e-9 |
+| EMA | 4.3095946e-9 | 1.4901161e-8 |
+| Adam first moments | 2.1534541e-7 | 6.8212103e-13 |
+| Adam second moments | 1.2921403e-5 | 4.0115480e-18 |
+
+Limits: parameter/EMA maximum absolute error 1e-6, Adam first-moment relative
+L2 1e-4 and second-moment relative L2 2e-4. This checks application of captured
+gradients and EMA history, not independently computed full-recipe gradients,
+fresh-process recovery or production weight synchronization.
+
+Evidence under `cosmos_native_trainer_full_ppo`: executed GPU probe and both
+CPU audits, four gradient snapshots, per-rank boundary records, native debug
+gate, final_state.pt, result.json, artifact_audit.json and optimizer_replay.json.
+GPU job and both CPU audits exited 0. Fresh compute inventory empty; all four
+GPU claims released. Production group dispatch, live rollout/reward/weight
+sync, real-GPU global_std streaming, full checkpoint recovery and quality
+remain open. Fixed-compute CP remains experimental and was not used here.
