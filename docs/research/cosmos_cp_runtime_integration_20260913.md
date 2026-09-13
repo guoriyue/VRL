@@ -3,8 +3,9 @@
 Status: OPEN. Production-candidate primitives, self-attention processor and
 opt-in model-level sharding are implemented. Fixed-row Linear compute resolves
 the retained small-model CUDA regression below. Released-weight fixed-action
-CPS validation now has exact output/logprob but nonzero gradient differences
-(see below). Training integration remains absent. This does not close
+CPS validation with head-sharded cross-attention now has exact output/logprob
+and gradient relative L2 2.2244e-6 (see below). Training integration remains
+absent. This does not close
 the original context-parallel sprint or the four-L40S hardware goal.
 
 ## Isolation and commits
@@ -255,3 +256,70 @@ DDP averages parameter gradients whereas this probe SUMs after dividing the
 replicated loss; integrating both without accounting for that distinction
 would scale gradients incorrectly. No configuration-only CP enablement is
 claimed or installed.
+
+## Head-sharded cross-attention: 60676789
+
+The processor is now named `CosmosContextParallelAttnProcessor`. Optional
+`cross_attention=True` exchanges local query tokens for local heads, while
+replicated text K/V are sliced by head. The resulting full-token attention
+output is exchanged back to local query tokens. Key-only broadcast masks are
+supported; query-dependent masks, RoPE on cross-attention and image context
+are rejected. Replicated text gradients and parameter gradients still need
+CP SUM at the caller boundary.
+
+The model context accepts `shard_cross_attention=True`; its default remains
+False for the prior local-query control. The validated full-shape candidate
+must explicitly enable this option. Processor restoration includes both
+attention modules. This changes no existing runtime loader automatically.
+
+### Unit validation
+
+- CPU attention/model suite: 8 passed, 7 skipped, 71.08 seconds.
+- Two-L40S NCCL suite: 7 passed, 8 deselected, 46.95 seconds.
+- Actual Diffusers self/cross-attention output, local query gradients,
+  CP-summed text gradients and all used parameter gradients; key-mask and
+  checkpoint variants. Multi-block tests exercise cross-head sharding with
+  the fixed-row compute contract and existing tolerances.
+- Ruff and whitespace checks pass. Commit made before the full-weight run;
+  runtime stayed unchanged while the job ran.
+
+### Same-input full-shape result
+
+Evidence root:
+`/mnt/nvme/outputs/wan22_i2v_cache/cosmos_candidate_crossheads_fullshape_cps_l40s`
+with both rank JSON reports, frozen `probe_source.py` and adjacent `.log`.
+Snapshot SHA256:
+`5cd541339ec691a7a341049d0b59dd5e770a0c51b7db9190488c127ee7c7418b`.
+
+Same released revision, full latent/text geometry, BF16 base, native adapters,
+nonzero B seed, FP32 LoRA, fixed64 Linear compute, deterministic environment,
+checkpoint, CFG5/index18 and fixed-action CPS objective as the preceding run.
+The additional `--runtime-cross-attention` flag enables the new path. No
+gradient tolerance was loosened and no weights/inputs were changed.
+
+Both ranks report:
+
+| Measure | Local-query cross-attention | Head-sharded cross-attention |
+| --- | ---: | ---: |
+| Output max absolute error | 0 | 0 |
+| CPS log-prob max absolute error | 0 | 0 |
+| Global gradient relative L2 | 1.6143085017e-4 | 2.2243869835e-6 |
+| Worst tensor gradient relative L2 | .0200619791 | 4.9922809922e-6 |
+| Finite/nonzero LoRA gradient tensors | 560 | 560 |
+
+The new worst tensor is block26 cross-attention Q LoRA A, max absolute error
+2.3201926491e-16. The previous ~2% cross-K outliers are no longer present.
+The new global gradient result matches the earlier deterministic per-block
+diagnostic result numerically, but now uses model-level token sharding across
+the block stack and the candidate runtime helpers.
+
+This controlled result supports using head-sharded cross-attention instead
+of local-query cross-attention for the validated compute contract. It is not
+bitwise gradient equality, a full rollout/replay trajectory, an optimizer or
+online update, nor a throughput/capacity benchmark. The original broader
+training, EMA, checkpoint/resume and compile gates remain open.
+
+Both processes exited0, fresh GPU compute inventory empty, GPUs0-1 released.
+Frozen integration runtime and shared dependencies remain unchanged. Next
+required work is strategy/data ownership integration and actual trainer
+update/resume with the validated attention/precision contract.
