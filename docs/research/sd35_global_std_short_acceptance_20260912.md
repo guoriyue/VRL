@@ -138,3 +138,38 @@ Evidence: `comparison_four_arm.json`, `summarize_four_arm.py`,
 the controlled output root. Original three-arm artifacts remain unchanged.
 The short comparison is complete, GPUs are released and the old queue remains
 user-stopped. Further learning tests require a separate matched evaluation plan.
+
+## Interpretation: when dedicated rollout/training pools help
+
+Model size alone does not determine whether disaggregation wins. For a fixed
+GPU budget, splitting trades fewer GPUs per stage for persistent residency,
+independent stage parallelism, and (with asynchronous scheduling) overlap.
+Strict scheduling does not gain that inter-update overlap just by separating
+the pools. Asynchronous overlap also requires an explicitly accepted policy-lag
+contract; throughput does not establish equivalent learning behavior.
+
+This SD3.5 result points to a training bottleneck in the tested 3+1 allocation:
+dedicated strict replay + backward took 391.860 s on one trainer GPU, versus
+131.039 s on rank 0 of the four-trainer phased arm. Dedicated continuous hid
+some collection, but it could not remove the one-GPU training bottleneck.
+This does not prove that every dedicated split loses: 2+2 and dynamically
+rebalanced pools were not measured.
+
+Dedicated pools can be useful when generation and training service rates can
+be balanced, rollout latency is large or variable, role-switching costs are
+substantial, or the stages benefit from different parallelism/hardware. More
+GPUs may make it easier to provision both stages adequately. Larger models can
+increase switching costs, but can also make splitting a small fixed pool worse
+by leaving too few GPUs or too little memory for either stage. They are neither
+a necessary nor a sufficient condition for a dedicated-pool speedup.
+
+For context, [verl's V1 asynchronous trainer documentation](https://verl.readthedocs.io/en/latest/advance/v1_async_trainer.html)
+describes avoiding switch/offload costs with separate pools and lending idle
+trainer resources to rollout when a fixed allocation is imbalanced. That is
+external architectural guidance, not measured evidence for this SD3.5 runtime.
+
+Working choice for this four-L40S recipe: retain phased four-rollout/four-trainer
+execution as the fastest short-tested deployment. Keep the global workload,
+precision, CPU reward budget, update semantics and timing boundaries explicit
+in future comparisons. Do not infer a model-size threshold or start another
+GPU experiment from this interpretation alone.
