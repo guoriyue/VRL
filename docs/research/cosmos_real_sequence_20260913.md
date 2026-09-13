@@ -1165,3 +1165,36 @@ must beat the batched baseline, not just the extra per-group-call overhead.
 Keep policy, prompts, seeds, sample count, generation parameters, reward model,
 warmup and timing boundaries fixed; measure actual overlap and validate outputs.
 Do not force the capability flag or claim these CPU checks removed GPU bubbles.
+
+### Real HTTP reward capability admitted
+
+On unchanged candidate 435c8fa2, an owned native Kling HTTP service was launched
+with CUDA_VISIBLE_DEVICES=3, pinned reward revision
+4f26600130683e6f1de9f5d463887f28e8ef995c, BF16 and min_frame_pixels=200704.
+The client had CUDA_VISIBLE_DEVICES empty and never initialized CUDA. Service
+isolation is operator-attested and enforced by the mask; the wire protocol
+does not independently verify physical GPU UUIDs. No generator was running.
+
+The actual saved Cosmos collector configuration and lifecycle were resolved,
+and its native collector was constructed with the HTTP-backed reward runtime.
+Overlap capability was false before preflight and true after native service
+preflight, with nonblocking scoring and accepted isolation. No capability
+property was overridden. This verifies admission, not actual concurrent work.
+
+Two real HTTP requests scored the SHA-256-verified historical Wan reference
+video through native MP4 materialization and Kling motion_quality. Both scores
+were exactly -0.6127294366809066, matching the preserved historical in-process
+runtime component score for that same source and reward setup. This is not a
+fresh local-versus-HTTP controlled comparison or a Cosmos quality result.
+First-call wall was 36.454959 seconds including lazy service model loading;
+second-call wall was 1.017598 seconds, including 0.707802 seconds artifact
+materialization and 0.305766 seconds reported model inference. These are two
+observations, not a confidence interval or generation speedup benchmark.
+
+Artifacts were cleaned after both calls. Client and service exited 0, followed
+by empty GPU compute and reward-service process inventories; GPU 3 released.
+Native service CPU regressions passed 55 tests in 0.88 seconds. Evidence:
+cosmos_http_reward_capability/{result.json,service.yaml,service.log,executed_probe.py}
+under the NVMe output root. The service was shut down, not left listening.
+The next real gate remains two-or-more-group equal-work A/B/C generation and
+reward scheduling, using the same service across warmup and measured arms.
