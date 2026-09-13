@@ -575,3 +575,47 @@ and direct comparison against the uninterrupted checkpoint-2, including model,
 Adam, EMA, RNG, reward vectors and full-precision training metrics. That resume
 comparison remains open; checkpoint existence and state completeness alone do
 not prove it.
+
+## 2026-09-13: fresh two-rank native FP32 checkpoint continuation passes
+
+Candidate `21ae2051` completed a fresh `torchrun --nproc-per-node=2` native
+continuation from `wan22_fp32_native_baseline/checkpoint-1` to epoch 2. Output
+`wan22_fp32_native_resumed` is separate from the uninterrupted baseline. A
+structured config comparison confirmed only strict-resume settings and output
+paths differ; the public FP32 LoRA option, FSDP none, batch 2, full_cpu GC,
+320x320/17f/10-step sampling, nine replay steps and real Kling reward are
+unchanged. Both ranks logged `start_epoch=1`, and only epoch 1 appears in the
+resumed metrics. Actual generation and reward were rerun, not cached.
+
+The native process exited 0, both rank verdicts report success, and the
+independent comparison verified native artifact manifests before checking the
+checkpoint contents. `wan22_fp32_native_resume_compare.py` exited 0 with no
+numerical tolerance and no mismatches:
+
+- All 1280 owned model tensors exactly equal uninterrupted checkpoint-2.
+- All 5120 trainer tensors exactly equal, including Adam moments/steps and EMA.
+- Six Torch RNG tensors plus Python/NumPy/named-generator state exactly equal
+  across both ranks; progress and model identity match.
+- The entire full-precision epoch-1 metric row matches, including zero replay
+  difference and zero clip fraction with finite nonzero gradient norm.
+- All four complete Kling reward vectors match as a multiset; UUIDs and rank
+  completion order are intentionally not treated as sample identity.
+- Each run's final checkpoint model/trainer state equals its checkpoint-2.
+
+FSDP optimizer restore represents Adam `betas` as a list where the uninterrupted
+save uses a tuple. The comparator checks the ordered pair's values exactly and
+records this sole container representation difference; it does not silently
+generalize list/tuple equivalence to other checkpoint state.
+
+Resumed rank phase times were 290.499/290.562s versus uninterrupted warm
+234.015/234.353s, with cold generation-worker and reward construction. These
+are lifecycle observations, not a multi-GPU speed comparison. All GPU compute
+processes exited and claims were released. Executed preparation, launch and
+comparison scripts are retained in the resumed output; authoritative receipt
+is `wan22_fp32_native_resumed/resume_comparison.json`.
+
+This closes fresh-process two-rank continuation for the bounded native public
+FP32 T2V recipe. It does not close full-size I2V, arbitrary batch geometry,
+four-rank throughput, long-run quality, or the broader multi-family hardware
+goal. Next scaling comparisons must keep this accepted numerical configuration
+and fixed global work, rather than compare unrelated rewards or cold/warm runs.
