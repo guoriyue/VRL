@@ -138,10 +138,13 @@ def main(argv: list[str] | None = None) -> None:
                     f"distributed.resources.visible_devices=[{int(selected_cuda)}]",
                 ],
             )
-        result = run_config(cfg)
+        # Keep the writer and the trainer's return value apart: rebinding
+        # ``result`` here used to make every ``result.write`` below call the
+        # trainer's coroutine / None instead of the writer.
+        outcome = run_config(cfg)
         received_signal: signal.Signals | None = None
-        if inspect.isawaitable(result):
-            received_signal = asyncio.run(_run_async_trainer(result))
+        if inspect.isawaitable(outcome):
+            received_signal = asyncio.run(_run_async_trainer(outcome))
     except BaseException as exc:
         result.write(error=exc)
         raise
