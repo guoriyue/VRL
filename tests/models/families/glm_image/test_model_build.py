@@ -136,6 +136,12 @@ def test_batch_context_keeps_replay_shape_and_sampling_provenance_only(
     ids = torch.tensor([[1, 2]], dtype=torch.long)
     mask = torch.ones_like(ids)
     model = SimpleNamespace(
+        # A real embedding table (id -> [id]) so the executor's own _embed runs.
+        language_model=SimpleNamespace(
+            get_input_embeddings=lambda: torch.nn.Embedding.from_pretrained(
+                torch.arange(4096).float().unsqueeze(-1)
+            )
+        ),
         config=SimpleNamespace(
             temperature=0.9,
             top_p=0.75,
@@ -158,7 +164,6 @@ def test_batch_context_keeps_replay_shape_and_sampling_provenance_only(
 
     model.encode_generation_prompts = encode_generation_prompts
     executor = GlmImageBatchExecutor(model)
-    monkeypatch.setattr(executor, "_embed", lambda token_ids: token_ids.unsqueeze(-1).float())
     request = GenerationRequest(
         request_id="req",
         family="glm_image",

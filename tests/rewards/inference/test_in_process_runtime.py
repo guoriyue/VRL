@@ -121,7 +121,7 @@ class _LazyTorchModel(TorchRewardModel):
     def _load_module(self) -> torch.nn.Module:
         import vrl.utils.cuda_memory as cuda_memory_mod
 
-        allocator = cuda_memory_mod._cumem_allocator()
+        allocator = cuda_memory_mod.cumem_allocator()
         self.load_scopes.append(bool(allocator and getattr(allocator, "building", False)))
         return torch.nn.Identity()
 
@@ -188,7 +188,7 @@ async def test_sleep_offload_uses_cumem_pool(monkeypatch) -> None:
     import vrl.utils.cuda_memory as cuda_memory_mod
 
     allocator = _FakeCumemAllocator()
-    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
+    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: allocator)
     runtime = InProcessRewardScorer(
         {
             "sleep_offload": True,
@@ -217,7 +217,7 @@ async def test_sleep_offload_materializes_lazy_model_inside_cumem_pool(monkeypat
     import vrl.utils.cuda_memory as cuda_memory_mod
 
     allocator = _FakeCumemAllocator()
-    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
+    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: allocator)
     runtime = InProcessRewardScorer(
         {
             "sleep_offload": True,
@@ -239,7 +239,7 @@ async def test_dedicated_runtime_keeps_lazy_model_outside_cumem_pool(monkeypatch
     import vrl.utils.cuda_memory as cuda_memory_mod
 
     allocator = _FakeCumemAllocator()
-    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
+    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: allocator)
     runtime = InProcessRewardScorer(
         {"model_factory": f"{__name__}:_lazy_torch_factory"},
     )
@@ -257,7 +257,7 @@ async def test_failed_pooled_preparation_rolls_back_before_retry(monkeypatch) ->
     import vrl.utils.cuda_memory as cuda_memory_mod
 
     allocator = _FakeCumemAllocator()
-    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
+    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: allocator)
     _FLAKY_PREPARE_CALLS["count"] = 0
     runtime = InProcessRewardScorer(
         {
@@ -302,7 +302,7 @@ async def test_reward_memory_parking_retries_after_sleep_failure(monkeypatch) ->
             super().sleep(offload_tags=offload_tags)
 
     allocator = _FlakyAllocator()
-    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
+    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: allocator)
     runtime = InProcessRewardScorer(
         {
             "sleep_offload": True,
@@ -329,7 +329,7 @@ async def test_dedicated_reward_runtime_stays_resident(monkeypatch) -> None:
     import vrl.utils.cuda_memory as cuda_memory_mod
 
     allocator = _FakeCumemAllocator()
-    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
+    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: allocator)
     runtime = InProcessRewardScorer(
         {"model_factory": f"{__name__}:_immovable_factory"},
     )
@@ -363,7 +363,7 @@ async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
     """Without vLLM a parking reward fails loud instead of faking a CPU park."""
     import vrl.utils.cuda_memory as cuda_memory_mod
 
-    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: None)
+    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: None)
     runtime = InProcessRewardScorer(
         {
             "device": "cuda:0",

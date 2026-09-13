@@ -112,6 +112,12 @@ def test_chunk_sampling_uses_request_overrides_then_model_defaults(
     ids = torch.tensor([[1, 2]], dtype=torch.long)
     mask = torch.ones_like(ids)
     model = SimpleNamespace(
+        # A real embedding table (id -> [id]) so the executor's own _embed runs.
+        language_model=SimpleNamespace(
+            get_input_embeddings=lambda: torch.nn.Embedding.from_pretrained(
+                torch.arange(4096).float().unsqueeze(-1)
+            )
+        ),
         config=SimpleNamespace(
             guidance_scale=6.25,
             temperature=0.45,
@@ -136,7 +142,6 @@ def test_chunk_sampling_uses_request_overrides_then_model_defaults(
 
     model.encode_generation_prompts = encode_generation_prompts
     executor = Emu3BatchExecutor(model)
-    monkeypatch.setattr(executor, "_embed", lambda token_ids: token_ids.unsqueeze(-1).float())
     request = GenerationRequest(
         request_id="req",
         family="emu3",

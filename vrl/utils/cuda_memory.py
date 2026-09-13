@@ -27,14 +27,15 @@ CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT = (
 )
 
 
-def _cumem_allocator() -> Any | None:
+def cumem_allocator() -> Any | None:
     """Return the process-wide vLLM CuMemAllocator, or None when unavailable.
 
     None on a CPU box or when vLLM is not importable. The allocator is a
     per-process singleton; callers hold a :class:`CumemPool` tagged handle
     rather than the raw allocator. Tags control backup/discard during one
-    process-wide sleep; they do not isolate sleep operations. Single mock point
-    for tests.
+    process-wide sleep; they do not isolate sleep operations. This is the
+    public vLLM boundary seam: tests replace this function to hand
+    :class:`CumemPool` a fake allocator instead of touching CUDA.
     """
 
     try:
@@ -83,7 +84,7 @@ class CumemPool:
         slowdown that only appears to release GPU memory.
         """
 
-        allocator = _cumem_allocator()
+        allocator = cumem_allocator()
         if allocator is None:
             return None
         return cls(allocator, tag if tag else f"cumem-{next(cls._tags)}")

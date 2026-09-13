@@ -585,7 +585,7 @@ def _preflight_local_installation(
         raise FileNotFoundError(
             f"MAGI-1 official entry point is missing: {config.entry_path}",
         )
-    actual_revision = _source_head_revision(config.source_path)
+    actual_revision = source_head_revision(config.source_path)
     if actual_revision != config.source_revision:
         raise RuntimeError(
             "MAGI-1 source checkout revision mismatch: expected "
@@ -821,7 +821,13 @@ def _resolve_weight_components(
     return checkpoint, t5, vae
 
 
-def _source_head_revision(source_path: Path) -> str:
+def source_head_revision(source_path: Path) -> str:
+    """Revision of the MAGI-1 runtime source: packaged digest, or ``git rev-parse``.
+
+    The git subprocess is the external boundary; tests replace this function
+    to pin a revision without a checkout.
+    """
+
     if not (source_path / ".git").exists():
         actual_digest = runtime_source_tree_sha256(
             source_path,
@@ -911,4 +917,5 @@ __all__ = [
     "magi_subprocess_environment",
     "normalize_magi_1_model_build",
     "prepare_magi_runtime_config",
+    "source_head_revision",
 ]

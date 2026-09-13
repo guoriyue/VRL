@@ -21,7 +21,7 @@ import re
 import shlex
 import subprocess
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
@@ -139,7 +139,17 @@ class CodexImageQARewardModel:
     metadata-derived target.
     """
 
-    def __init__(self, worker_config: Mapping[str, Any]) -> None:
+    def __init__(
+        self,
+        worker_config: Mapping[str, Any],
+        *,
+        run_command: Callable[..., str] | None = None,
+    ) -> None:
+        # The judge subprocess is the external boundary; ``run_command`` lets a
+        # caller (tests) answer the CLI without spawning it. It receives the
+        # rendered command plus ``stdin_text`` / ``output_path`` / ``workdir``
+        # and returns the judge's text, exactly as ``_run_codex`` does.
+        self.run_command = self._run_codex if run_command is None else run_command
         cfg = dict(worker_config)
         command = cfg.get("command")
         if command is None:
@@ -439,7 +449,7 @@ class CodexImageQARewardModel:
                 output_schema_path=output_schema_path,
                 prompt=group.prompt,
             )
-            output_text = self._run_command(
+            output_text = self.run_command(
                 command,
                 stdin_text=prompt_text if self.pass_prompt_stdin else "",
                 output_path=output_path,
@@ -601,7 +611,7 @@ class CodexImageQARewardModel:
                 output_schema_path=output_schema_path,
                 prompt=group.prompt,
             )
-            output_text = self._run_command(
+            output_text = self.run_command(
                 command,
                 stdin_text=prompt_text if self.pass_prompt_stdin else "",
                 output_path=output_path,
@@ -850,7 +860,7 @@ class CodexImageQARewardModel:
                 output_schema_path=output_schema_path,
                 prompt=group.prompt,
             )
-            output_text = self._run_command(
+            output_text = self.run_command(
                 command,
                 stdin_text=prompt_text if self.pass_prompt_stdin else "",
                 output_path=output_path,
@@ -918,7 +928,7 @@ class CodexImageQARewardModel:
                 output_schema_path=output_schema_path,
                 prompt=prompt,
             )
-            output_text = self._run_command(
+            output_text = self.run_command(
                 command,
                 stdin_text=prompt_text if self.pass_prompt_stdin else "",
                 output_path=output_path,
@@ -943,7 +953,7 @@ class CodexImageQARewardModel:
                 output_schema_path=output_schema_path,
                 prompt=prompt,
             )
-            output_text = self._run_command(
+            output_text = self.run_command(
                 command,
                 stdin_text=prompt_text if self.pass_prompt_stdin else "",
                 output_path=output_path,
@@ -980,7 +990,7 @@ class CodexImageQARewardModel:
             )
         return prompt
 
-    def _run_command(
+    def _run_codex(
         self,
         command: list[str],
         *,

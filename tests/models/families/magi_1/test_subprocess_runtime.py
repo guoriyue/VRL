@@ -21,10 +21,10 @@ from vrl.models.families.magi_1.model import (
     MAGI_1_SUPPORTED_SOURCE_REVISION,
     Magi1SubprocessConfig,
     Magi1SubprocessModel,
-    _source_head_revision,
     magi_subprocess_environment,
     normalize_magi_1_model_build,
     prepare_magi_runtime_config,
+    source_head_revision,
 )
 from vrl.models.families.magi_1.runtime import (
     Magi1BatchExecutor,
@@ -289,7 +289,7 @@ def test_runtime_bundle_has_no_trainable_state_and_replay_fails(
     config, _ = _installation(tmp_path)
     monkeypatch.setattr(
         magi_model,
-        "_source_head_revision",
+        "source_head_revision",
         lambda source_path: MAGI_1_SUPPORTED_SOURCE_REVISION,
     )
     bundle = build_magi_1_runtime_bundle(_build(config, rollout=True))
@@ -315,7 +315,7 @@ def test_disabled_compile_is_accepted_but_enabled_compile_fails_early(
     config, _ = _installation(tmp_path)
     monkeypatch.setattr(
         magi_model,
-        "_source_head_revision",
+        "source_head_revision",
         lambda source_path: MAGI_1_SUPPORTED_SOURCE_REVISION,
     )
     disabled = _build(config, rollout=True)
@@ -391,7 +391,7 @@ def test_executor_calls_generation_model_one_sample_at_a_time(
     config, _ = _installation(tmp_path)
     monkeypatch.setattr(
         magi_model,
-        "_source_head_revision",
+        "source_head_revision",
         lambda source_path: MAGI_1_SUPPORTED_SOURCE_REVISION,
     )
     model = Magi1SubprocessModel(config)
@@ -435,7 +435,7 @@ def test_executor_uses_prompt_major_flat_seed_indices(
     config, _ = _installation(tmp_path)
     monkeypatch.setattr(
         magi_model,
-        "_source_head_revision",
+        "source_head_revision",
         lambda source_path: MAGI_1_SUPPORTED_SOURCE_REVISION,
     )
     model = Magi1SubprocessModel(config)
@@ -478,7 +478,7 @@ def test_source_revision_mismatch_fails_before_generation(
     config, _ = _installation(tmp_path)
     monkeypatch.setattr(
         magi_model,
-        "_source_head_revision",
+        "source_head_revision",
         lambda source_path: "f" * 40,
     )
 
@@ -507,7 +507,7 @@ def test_packaged_source_without_git_uses_audited_runtime_digest(
         packaged / "example" / "assets" / "special_tokens.npz",
     )
 
-    assert _source_head_revision(packaged) == MAGI_1_SUPPORTED_SOURCE_REVISION
+    assert source_head_revision(packaged) == MAGI_1_SUPPORTED_SOURCE_REVISION
 
     entry = packaged / "inference" / "pipeline" / "entry.py"
     entry.write_text(
@@ -515,7 +515,7 @@ def test_packaged_source_without_git_uses_audited_runtime_digest(
         encoding="utf-8",
     )
     with pytest.raises(RuntimeError, match="packaged runtime source digest mismatch"):
-        _source_head_revision(packaged)
+        source_head_revision(packaged)
 
 
 def test_model_revision_is_forwarded_to_weight_snapshot(
@@ -527,7 +527,7 @@ def test_model_revision_is_forwarded_to_weight_snapshot(
     config, _ = _installation(tmp_path)
     monkeypatch.setattr(
         magi_model,
-        "_source_head_revision",
+        "source_head_revision",
         lambda source_path: MAGI_1_SUPPORTED_SOURCE_REVISION,
     )
     snapshot = tmp_path / "snapshot"
@@ -592,7 +592,7 @@ def test_bad_source_preflight_prevents_weight_download(
     build.revision = "immutable-weight-sha"
     monkeypatch.setattr(
         magi_model,
-        "_source_head_revision",
+        "source_head_revision",
         lambda source_path: "f" * 40,
     )
 

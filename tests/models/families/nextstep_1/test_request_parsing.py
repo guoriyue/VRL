@@ -287,6 +287,12 @@ def test_batch_context_keeps_only_flow_replay_parameters(
         return torch.zeros(1, 3, 2, 2)
 
     model = SimpleNamespace(
+        # A real embedding table (id -> [id]) so the executor's own _embed runs.
+        language_model=SimpleNamespace(
+            get_input_embeddings=lambda: torch.nn.Embedding.from_pretrained(
+                torch.arange(4096).float().unsqueeze(-1)
+            )
+        ),
         processor=SimpleNamespace(pad_token_id=0),
         device=torch.device("cpu"),
         decode_image_tokens=decode_image_tokens,
@@ -299,7 +305,6 @@ def test_batch_context_keeps_only_flow_replay_parameters(
         "_tokenize_prompts",
         lambda prompts, *, max_text_length: (ids, mask),
     )
-    monkeypatch.setattr(executor, "_embed", lambda token_ids: token_ids.unsqueeze(-1).float())
     monkeypatch.setattr(executor, "_build_ar_runner", lambda request: object())
     monkeypatch.setattr(nextstep_runtime, "TokenAutoregressiveLoop", _FakeLoop)
     request = GenerationRequest(

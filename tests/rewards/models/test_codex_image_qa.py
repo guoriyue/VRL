@@ -32,7 +32,7 @@ def _render(command: list[str], tmp_path: Path) -> list[str]:
     )
 
 
-def _reference_model(tmp_path: Path) -> CodexImageQARewardModel:
+def _reference_model(tmp_path: Path, *, run_command=None) -> CodexImageQARewardModel:
     return CodexImageQARewardModel(
         {
             "command": ["unused-judge"],
@@ -46,10 +46,11 @@ def _reference_model(tmp_path: Path) -> CodexImageQARewardModel:
             "max_concurrency": 1,
             "tile_size": 64,
         },
+        run_command=run_command,
     )
 
 
-def _binary_guard_model() -> CodexImageQARewardModel:
+def _binary_guard_model(*, run_command=None) -> CodexImageQARewardModel:
     return CodexImageQARewardModel(
         {
             "command": ["unused-judge"],
@@ -62,6 +63,7 @@ def _binary_guard_model() -> CodexImageQARewardModel:
             "max_concurrency": 1,
             "tile_size": 64,
         },
+        run_command=run_command,
     )
 
 
@@ -266,7 +268,7 @@ def test_binary_guard_scores_two_true_order_reversals(
         return next(responses)
 
     monkeypatch.setattr(codex_image_qa, "_compose_grid", compose_grid)
-    monkeypatch.setattr(model, "_run_command", run_command)
+    model.run_command = run_command
 
     scores = model.score_batch(artifacts)
 
@@ -471,7 +473,7 @@ def test_exact_count_compares_typed_target_with_two_observed_counts(
         return next(responses)
 
     monkeypatch.setattr(codex_image_qa, "_compose_grid", compose_grid)
-    monkeypatch.setattr(model, "_run_command", run_command)
+    model.run_command = run_command
 
     scores = model.score_batch(artifacts)
 
@@ -519,7 +521,7 @@ def test_binary_guard_propagates_judge_failures(
         del stdin_text, output_path, workdir
         raise RuntimeError("judge failed")
 
-    monkeypatch.setattr(model, "_run_command", fail_command)
+    model.run_command = fail_command
 
     with pytest.raises(RuntimeError, match="judge failed"):
         model.score_batch(artifacts)
@@ -551,7 +553,7 @@ def test_reference_listwise_scores_one_complete_group_with_mirrored_order(
         return next(responses)
 
     monkeypatch.setattr(codex_image_qa, "_compose_grid", compose_grid)
-    monkeypatch.setattr(model, "_run_command", run_command)
+    model.run_command = run_command
 
     scores = model.score_batch(artifacts)
 
@@ -588,11 +590,7 @@ def test_reference_listwise_neutralizes_an_order_sensitive_group(
             _reference_response(["tie"] * 8),
         ],
     )
-    monkeypatch.setattr(
-        model,
-        "_run_command",
-        lambda _command, *, stdin_text, output_path, workdir: next(responses),
-    )
+    model.run_command = lambda _command, *, stdin_text, output_path, workdir: next(responses)
 
     scores = model.score_batch(artifacts)
 
