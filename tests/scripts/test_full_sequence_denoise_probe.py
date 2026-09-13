@@ -9,6 +9,24 @@ from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.generation import full_sequence_denoise_probe as generate
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "-1"])
+def test_replay_tolerance_rejects_invalid_values(value):
+    import argparse
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        generate._nonnegative_finite(value)
+
+
+@pytest.mark.parametrize("pred,lp", [(float("nan"), 0), (0, float("inf")), (0, 0.002)])
+def test_replay_guard_fails_closed(pred, lp):
+    with pytest.raises(SystemExit, match="FAIL"):
+        generate._check_replay_errors(pred, lp, pred_atol=1e-3, lp_atol=1e-3)
+
+
+def test_replay_guard_accepts_threshold_boundary():
+    generate._check_replay_errors(1e-3, 0, pred_atol=1e-3, lp_atol=1e-3)
+
+
 def test_generate_rejects_non_full_sequence_denoise_family_before_build(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
