@@ -12,6 +12,9 @@ reward:
     ocr: 1.0
   kwargs:
     ocr:
+      # Select ocr_match for a 0/1 full-text match with no partial credit.
+      # For videos it is the success fraction across all sampled frames.
+      score_key: ocr
       # Keep the historical Flow-GRPO OCR model family unless an experiment
       # pre-registers a qualified engine as part of its reward semantics.
       engine_profile: flow_grpo_compat

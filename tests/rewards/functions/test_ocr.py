@@ -207,6 +207,43 @@ def test_column_lines_do_not_silently_truncate_to_the_shorter_column() -> None:
         _extract_ocr_lines([{"rec_texts": ["ab", "cd"], "rec_scores": [1.0]}])
 
 
+@_ENGINE_PROTOCOLS
+@pytest.mark.asyncio
+async def test_match_score_requires_full_text_and_counts_failed_video_frames(engine_cls) -> None:
+    import torch
+
+    reward = OCRReward(device="cpu", score_key="ocr_match")
+    reward._engine = engine_cls(["Hello World", "Hello Word", "XHello World", ""])
+    image = torch.zeros(3, 64, 64)
+    sample = _make_ocr_sample("HELLO WORLD", video_tensor=image)
+    assert [await reward.score(sample) for _ in range(4)] == [1.0, 0.0, 0.0, 0.0]
+    reward._engine = engine_cls(["Hello World", "Hello Word"])
+    video = _make_ocr_sample("HELLO WORLD", video_tensor=torch.zeros(3, 8, 64, 64))
+    assert await reward.score(video) == pytest.approx(0.5)
+    assert await reward.score(_make_ocr_sample("", video_tensor=image)) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_match_score_preserves_duplicate_guard_and_debug_evidence(tmp_path: Path) -> None:
+    import torch
+
+    reward = OCRReward(
+        score_key="ocr_match",
+        text_selection="best_contiguous_lines",
+        substring_full_credit=False,
+        near_duplicate_min_similarity=0.5,
+        debug_dir=str(tmp_path),
+    )
+    reward._engine = _PaddleOCR3x([["HELLO WORLD", "HELLO WORLD"]])
+    sample = _make_ocr_sample("HELLO WORLD", video_tensor=torch.zeros(3, 64, 64))
+    assert await reward.score(sample) == 0.0
+    record = json.loads(next(tmp_path.glob("*.json")).read_text())
+    assert record["aggregate_score"] == 0.5
+    assert record["aggregate_match_score"] == 0.0
+    with pytest.raises(ValueError, match="score_key"):
+        OCRReward(score_key="typo")
+
+
 @pytest.mark.asyncio
 async def test_image_ocr_can_require_the_complete_recognized_string() -> None:
     """Exact-text curricula must not reward a target buried in junk text."""
@@ -346,6 +383,79 @@ async def test_ocr_duplicate_policy_excludes_every_line_in_selected_span() -> No
     sample = _make_ocr_sample("WHIZBANG", video_tensor=torch.zeros(3, 64, 64))
 
     assert await reward.score(sample) == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("extra", "expected"),
+    [
+        ("ANNIIVERSARY", 0.5),
+        ("PHILHARMONIC", 0.5),
+        ("OPEN DAILY", 1.0),
+        (("ANNIIVERSARY", 0.49), 1.0),
+    ],
+)
+async def test_ocr_duplicate_policy_detects_repeated_wrapped_target_line(
+    extra: str | tuple[str, float],
+    expected: float,
+) -> None:
+    import torch
+
+    reward = OCRReward(
+        device="cpu",
+        text_selection="best_contiguous_lines",
+        substring_full_credit=False,
+        near_duplicate_min_similarity=0.5,
+    )
+    reward._engine = _PaddleOCR2x([["PHILHARMONIC", "ANNIVERSARY", extra]])
+    sample = _make_ocr_sample(
+        "PHILHARMONIC ANNIVERSARY",
+        video_tensor=torch.zeros(3, 64, 64),
+    )
+    assert await reward.score(sample) == pytest.approx(expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("prefix", "extra"), [("THE", "TIME"), ("A", "AT")])
+async def test_ocr_duplicate_policy_does_not_discount_insertions_for_short_fragments(
+    prefix: str,
+    extra: str,
+) -> None:
+    import torch
+
+    reward = OCRReward(
+        device="cpu",
+        text_selection="best_contiguous_lines",
+        substring_full_credit=False,
+        near_duplicate_min_similarity=0.5,
+    )
+    reward._engine = _PaddleOCR2x([[prefix, "PHILHARMONIC ANNIVERSARY", extra]])
+    sample = _make_ocr_sample(
+        f"{prefix} PHILHARMONIC ANNIVERSARY",
+        video_tensor=torch.zeros(3, 64, 64),
+    )
+    assert await reward.score(sample) == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selected_second", ["ANNIIVERSARY", "ANNVERSARY", "ANNXVERSARY", "ANNIVERSAR"]
+)
+async def test_ocr_duplicate_policy_aligns_misspelled_selected_line(selected_second: str) -> None:
+    import torch
+
+    reward = OCRReward(
+        device="cpu",
+        text_selection="best_contiguous_lines",
+        substring_full_credit=False,
+        near_duplicate_min_similarity=0.5,
+    )
+    reward._engine = _PaddleOCR2x([["PHILHARMONIC", selected_second, "ANNIVERSARY"]])
+    sample = _make_ocr_sample(
+        "PHILHARMONIC ANNIVERSARY",
+        video_tensor=torch.zeros(3, 64, 64),
+    )
+    assert await reward.score(sample) == pytest.approx((1 - 1 / 23) / 2)
 
 
 def test_ocr_policy_fails_closed() -> None:

@@ -8,8 +8,10 @@ intentionally discards.
 
 The PaddleOCR engine is lazy-loaded and injectable via ``worker_config["engine"]``
 (or by assigning ``model._engine`` directly) so tests can supply a fake engine.
-Returns the optimization score under ``ocr`` plus raw/duplicate audit values;
-drive it with ``score_key="ocr"``.
+Returns edit similarity under ``ocr`` and the fraction of sampled frames with
+an exact selected-text match under ``ocr_match``, plus raw/duplicate audit values.
+Exact matching uses the same lowercase/ASCII-space normalization and configured
+extra-line/duplicate guards, but never grants substring credit.
 """
 
 from __future__ import annotations
@@ -134,11 +136,11 @@ class OCRRewardModel:
 
         target_text_raw = str(artifact.metadata.get("target_text", ""))
         if not target_text_raw:
-            return {"ocr": 0.0, "ocr_raw": 0.0, "ocr_near_duplicate_count": 0.0}
+            return {"ocr": 0.0, "ocr_match": 0.0, "ocr_raw": 0.0, "ocr_near_duplicate_count": 0.0}
 
         target_text = normalize_ocr_text(target_text_raw)
         if not target_text:
-            return {"ocr": 0.0, "ocr_raw": 0.0, "ocr_near_duplicate_count": 0.0}
+            return {"ocr": 0.0, "ocr_match": 0.0, "ocr_raw": 0.0, "ocr_near_duplicate_count": 0.0}
 
         self._ensure_loaded()
         output = artifact.as_media()
@@ -181,6 +183,7 @@ class OCRRewardModel:
         target_len = len(target_text)
         frame_rewards: list[float] = []
         frame_raw_rewards: list[float] = []
+        match_frame_count = 0
         # Start below the valid reward range so an all-zero sample still keeps
         # its first frame for reward-hacking audits.
         best_reward: float = -1.0
@@ -208,6 +211,14 @@ class OCRRewardModel:
                 frame_rewards.append(decision.reward)
             if decision.raw_reward > 0:
                 frame_raw_rewards.append(decision.raw_reward)
+            # Unlike the compatibility mean over positive frames, exact-match
+            # success includes failed frames in its denominator. One readable
+            # frame must not give an otherwise incorrect video full credit.
+            match_frame_count += (
+                normalize_ocr_text(decision.selected_text) == target_text
+                and not decision.rejected_extra_line_indices
+                and not decision.near_duplicate_line_indices
+            )
             if decision.reward > best_reward:
                 best_reward = decision.reward
                 best_frame = frame
@@ -222,6 +233,7 @@ class OCRRewardModel:
         raw_score_value = (
             sum(frame_raw_rewards) / len(frame_raw_rewards) if frame_raw_rewards else 0.0
         )
+        match_score_value = match_frame_count / len(frames) if frames else 0.0
 
         if self._debug_dir is not None and best_frame is not None:
             self._dump_debug_frame(
@@ -237,10 +249,12 @@ class OCRRewardModel:
                 best_frame_score=max(best_reward, 0.0),
                 aggregate_raw_score=raw_score_value,
                 aggregate_score=score_value,
+                aggregate_match_score=match_score_value,
             )
 
         return {
             "ocr": float(score_value),
+            "ocr_match": float(match_score_value),
             "ocr_raw": float(raw_score_value),
             "ocr_near_duplicate_count": float(len(best_near_duplicate_line_indices)),
         }
@@ -260,6 +274,7 @@ class OCRRewardModel:
         best_frame_score: float,
         aggregate_raw_score: float,
         aggregate_score: float,
+        aggregate_match_score: float,
     ) -> None:
         """Save best frame + metadata to debug_dir. Failure is non-fatal."""
         idx = self._debug_counter
@@ -302,6 +317,7 @@ class OCRRewardModel:
                         "best_frame_score": best_frame_score,
                         "aggregate_raw_score": aggregate_raw_score,
                         "aggregate_score": aggregate_score,
+                        "aggregate_match_score": aggregate_match_score,
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -539,6 +555,46 @@ def _near_duplicate_line_indices(
     if threshold is None:
         return ()
     selected = frozenset(selected_line_indices or ())
+    from Levenshtein import opcodes
+
+    # Align the selected span to the target before recovering wrapped lines:
+    # an OCR misspelling must not itself become a reference for duplicates.
+    normalized_selected = [normalize_ocr_text(lines[index].text) for index in sorted(selected)]
+    selected_text = "".join(normalized_selected)
+    alignment = opcodes(selected_text, target_text)
+    fragments: set[str] = set()
+    start = 0
+    for normalized in normalized_selected:
+        end = start + len(normalized)
+        target_parts: list[str] = []
+        has_match = False
+        for operation, source_start, source_end, target_start, target_end in alignment:
+            left, right = max(start, source_start), min(end, source_end)
+            if operation == "equal" and left < right:
+                has_match = True
+                target_parts.append(
+                    target_text[
+                        target_start + left - source_start : target_start + right - source_start
+                    ]
+                )
+            elif operation == "replace" and left < right:
+                source_width = source_end - source_start
+                target_width = target_end - target_start
+                target_parts.append(
+                    target_text[
+                        target_start
+                        + (left - source_start) * target_width // source_width : target_start
+                        + (right - source_start) * target_width // source_width
+                    ]
+                )
+            elif operation == "insert" and (
+                start <= source_start < end or (start < end == source_start == len(selected_text))
+            ):
+                target_parts.append(target_text[target_start:target_end])
+        fragment = "".join(target_parts)
+        if has_match and fragment and fragment != target_text:
+            fragments.add(fragment)
+        start = end
     duplicates: list[int] = []
     for index, line in enumerate(lines):
         if (
@@ -549,6 +605,11 @@ def _near_duplicate_line_indices(
             continue
         normalized_line = normalize_ocr_text(line.text)
         similarity = 1.0 - min(distance(normalized_line, target_text), target_len) / target_len
+        for fragment in fragments:
+            similarity = max(
+                similarity,
+                1.0 - distance(normalized_line, fragment) / len(fragment),
+            )
         if similarity >= threshold:
             duplicates.append(index)
     return tuple(duplicates)

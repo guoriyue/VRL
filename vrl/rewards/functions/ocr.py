@@ -50,7 +50,10 @@ class OCRReward(InferenceRewardFunction):
         exclusive_alphanumeric_lines: bool = False,
         extra_line_min_confidence: float = 0.5,
         near_duplicate_min_similarity: float | None = None,
+        score_key: str = "ocr",
     ) -> None:
+        if score_key not in {"ocr", "ocr_match"}:
+            raise ValueError("OCR score_key must be 'ocr' or 'ocr_match'")
         # Build eagerly so debug_dir creation fires now and tests can inject a
         # fake engine via ``reward._engine`` (proxied to the model below).
         # ``device`` stays in the RewardFunction constructor contract, while
@@ -70,7 +73,7 @@ class OCRReward(InferenceRewardFunction):
         self._model = model
         super().__init__(
             reward_name="ocr",
-            score_key="ocr",
+            score_key=score_key,
             scorer=InProcessRewardScorer(model=model),
         )
 
