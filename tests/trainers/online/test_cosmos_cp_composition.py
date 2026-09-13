@@ -2,10 +2,12 @@
 
 import asyncio
 import copy
+import os
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -22,7 +24,7 @@ from vrl.models.families.cosmos.predict2_5.model import (
     CosmosPredict25SamplingState,
 )
 from vrl.models.interfaces.runtime import ModelBuild
-from vrl.models.precision import fixed_row_linear_compute
+from vrl.models.precision import apply_float32_precision, fixed_row_linear_compute
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.denoise.sde_logprob import DiffusionSDELogProbEvaluator
 from vrl.rollouts.orchestration.strict_on_policy import ContextParallelStrictRolloutSchedule
@@ -51,19 +53,20 @@ class _Collector(CollectorControlFake):
         self.versions.append(kwargs.get("policy_version"))
         count = kwargs["group_size"]
         model = self.model
-        latents = torch.randn(count, 4, 3, 4, 4)
+        device = model.device
+        latents = torch.randn(count, 4, 3, 4, 4, device=device)
         state = CosmosPredict25SamplingState(
             latents=latents,
             timesteps=model.scheduler.timesteps,
             scheduler=model.scheduler,
-            prompt_embeds=torch.randn(count, 3, 32),
+            prompt_embeds=torch.randn(count, 3, 32, device=device),
             negative_prompt_embeds=None,
             guidance_scale=1.0,
             do_cfg=False,
             cond_latent=torch.zeros_like(latents),
-            cond_mask=torch.zeros(count, 1, 3, 4, 4),
-            cond_indicator=torch.zeros(count, 1, 3, 1, 1),
-            padding_mask=torch.zeros(1, 1, 4, 4),
+            cond_mask=torch.zeros(count, 1, 3, 4, 4, device=device),
+            cond_indicator=torch.zeros(count, 1, 3, 1, 1, device=device),
+            padding_mask=torch.zeros(1, 1, 4, 4, device=device),
             height=32,
             width=32,
             num_frames=9,
@@ -143,13 +146,24 @@ class _Syncer:
         self.collector.generation_runtime.current_policy_version += 1
 
 
-def _worker(rank, rendezvous, root):
+def _worker(rank, rendezvous, root, cuda=False):
     torch.set_num_threads(1)
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+    torch.use_deterministic_algorithms(True)
+    apply_float32_precision("ieee")
+    if cuda:
+        torch.cuda.set_device(rank)
+    device = torch.device("cuda", rank) if cuda else torch.device("cpu")
+    rollout_device = torch.device("cuda", 2) if cuda and rank == 0 else torch.device("cpu")
     dist.init_process_group(
-        "gloo", init_method=rendezvous, rank=rank, world_size=2, timeout=timedelta(seconds=120)
+        "nccl" if cuda else "gloo",
+        init_method=rendezvous,
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=120),
     )
     strategy = ContextParallelStrategy(
-        DistributedTrainingContext("context_parallel", rank, 2, torch.device("cpu")), cp_size=2
+        DistributedTrainingContext("context_parallel", rank, 2, device), cp_size=2
     )
     trainer = None
     try:
@@ -175,10 +189,10 @@ def _worker(rank, rendezvous, root):
             sigma_max=200,
             sigma_min=0.01,
         )
-        scheduler.set_timesteps(4)
+        scheduler.set_timesteps(4, device=device)
         precision = RolePrecision(dtype="fp32", float32_precision="ieee", outer_autocast=False)
         model = CosmosPredict25ReplayModel(
-            transformer=transformer, scheduler=scheduler, device=torch.device("cpu")
+            transformer=transformer.to(device), scheduler=scheduler, device=device
         )
         model.precision = precision
         model.apply_lora(
@@ -186,7 +200,7 @@ def _worker(rank, rendezvous, root):
                 model_name_or_path="tiny-cosmos",
                 revision="test",
                 family="cosmos-predict2.5",
-                device=torch.device("cpu"),
+                device=device,
                 parameter_dtype=torch.float32,
                 precision=precision,
                 model_config={
@@ -199,13 +213,15 @@ def _worker(rank, rendezvous, root):
                 },
             )
         )
+        rollout_scheduler = UniPCMultistepScheduler.from_config(scheduler.config)
+        rollout_scheduler.set_timesteps(4, device=rollout_device)
         rollout = CosmosPredict25Model(
             pipeline=SimpleNamespace(
-                transformer=copy.deepcopy(model.transformer),
-                scheduler=copy.deepcopy(scheduler),
-                device=torch.device("cpu"),
+                transformer=copy.deepcopy(model.transformer).to(rollout_device),
+                scheduler=rollout_scheduler,
+                device=rollout_device,
             ),
-            device=torch.device("cpu"),
+            device=rollout_device,
         )
         rollout.precision = precision
         collector = _Collector(rollout)
@@ -219,7 +235,7 @@ def _worker(rank, rendezvous, root):
             evaluator=DiffusionSDELogProbEvaluator(scheduler, noise_level=0.7, sde_type="cps"),
             model=model,
             strategy=strategy,
-            device="cpu",
+            device=device,
             weight_syncer=syncer,
             sync_state_getter=lambda: {
                 name: p.detach().cpu().clone()
@@ -246,6 +262,8 @@ def _worker(rank, rendezvous, root):
             assert metrics.grad_norm > 0
             assert metrics.initial_replay.finite
             assert metrics.initial_replay.logprob_abs_diff_max <= 1e-3
+        assert next(model.parameters()).device == device
+        assert next(rollout.parameters()).device == rollout_device
         assert trainer.state.step == 2
         assert trainer.state.global_step >= 2
         assert any(
@@ -268,3 +286,12 @@ def _worker(rank, rendezvous, root):
 
 def test_native_cosmos_cp_online_step(tmp_path):
     mp.spawn(_worker, args=((tmp_path / "gloo").as_uri(), str(tmp_path)), nprocs=2, join=True)
+
+
+@pytest.mark.distributed
+def test_native_cosmos_cp_online_step_disjoint_cuda(tmp_path):
+    if torch.cuda.device_count() < 3:
+        pytest.skip("requires two training GPUs and one disjoint rollout GPU")
+    mp.spawn(
+        _worker, args=((tmp_path / "nccl").as_uri(), str(tmp_path), True), nprocs=2, join=True
+    )
