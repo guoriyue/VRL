@@ -885,3 +885,36 @@ GPU job and both CPU audits exited 0. Fresh compute inventory empty; all four
 GPU claims released. Production group dispatch, live rollout/reward/weight
 sync, real-GPU global_std streaming, full checkpoint recovery and quality
 remain open. Fixed-compute CP remains experimental and was not used here.
+
+## Fresh four-rank strict trainer state restoration passed
+
+A new torchrun launch rebuilt the released backbone and native DDP trainer
+in four fresh processes, loaded the trained adapter through native validation,
+load and readback APIs, then called OnlineTrainer.load_state_dict(strict=True)
+on the saved four-update trainer state. No model or optimizer update ran.
+
+Each rank exported its restored state and recursively compared every tensor,
+shape, dtype, dictionary key, sequence type and scalar metadata against the
+saved snapshot. All 560 trainable model tensors and 2240 trainer tensors were
+exactly equal on every rank. Optimizer identity manifests and hyperparameters
+matched; trainer step=1, global_step=4 and EMA num_updates=4 were preserved.
+Final trainable replicas also matched across ranks by direct broadcast/compare.
+
+Before loading, the probe deliberately marked rollout weights initialized,
+replay parity passed, and precision guard not pending. Strict loading correctly
+reset these to false, false and true respectively. Thus a restored process
+does not inherit stale rollout-sync or replay-admission readiness.
+
+The timed load/readback/replica-comparison region was 0.740620-0.741820 seconds
+across ranks, excluding backbone construction, input loading and process start.
+This is not a complete restart latency or a full recovery performance result.
+Evidence: `/mnt/nvme/outputs/wan22_i2v_cache/cosmos_native_trainer_fresh_restore`,
+including the executed probe and imported setup source, four rank receipts
+and result.json. GPU process exited 0, fresh compute inventory empty; all four
+GPUs released. Candidate remained unchanged.
+
+This verifies fresh-process state rehydration, not uninterrupted-versus-resumed
+future training equivalence. The source snapshot did not capture process RNG,
+recipe progress, data iterator or live rollout runtime state. Generic checkpoint
+writer/loader integration, per-rank RNG continuation, next-update equivalence
+and worker synchronization remain required for complete recovery acceptance.
