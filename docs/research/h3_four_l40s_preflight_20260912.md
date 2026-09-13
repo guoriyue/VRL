@@ -516,3 +516,52 @@ explicitly to new reports; this run used root 0 as the command records. All
 jobs terminal, fresh compute inventory empty, all GPU claims released. No
 released weights downloaded; deployment/name confirmations and full-size
 correctness, quality and fair performance gates remain open.
+
+## 2026-09-13: full 33B DiT, native geometry, actual CUDA capacity
+
+Executed the complete pinned-config H3 transformer, not a tiny model:
+33,122,992,896 parameters, 50 blocks, 56 heads, 512 text tokens and native
+768x1344 / 124-frame geometry. Inputs use `[1,24,37,48,84]` video latents,
+414 stereo audio rows and 38,222 packed tokens. The first 25 blocks reside on
+GPU 0, the remaining 25 on GPU 1; packing/refinement/heads remain on GPU 0.
+
+No released weights were used. Parameters were allocated directly on their
+owners from a meta model and initialized randomly (matrices normal std 0.001,
+one-dimensional weights one, biases zero). BF16 base storage retains the H3
+FP32 exceptions: 17,222,144 FP32 parameters. The final run preserves the
+original computed RoPE buffers before any dtype conversion and verifies their
+exact restoration. This is a real full-sized compute/capacity probe, not a
+trained-model or quality result.
+
+Final artifact directory:
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_fullshape_random_capacity_native_rope`.
+It retains `executed_probe.py` and `result.json`. Using native H3 replay layout
+and `forward_step`, no-grad, BF16/IEEE and no outer autocast, the first forward
+of a 40-step schedule completed with finite output:
+
+| Measurement | Result |
+| --- | ---: |
+| Random allocation/initialization and input preparation | 2.967937 s |
+| One first-step DiT forward including final finite check | 18.869078 s |
+| GPU 0 peak allocated | 38.204157 GiB |
+| GPU 1 peak allocated | 35.786210 GiB |
+| GPU 0 peak reserved | 41.283203 GiB |
+| GPU 1 peak reserved | 39.169922 GiB |
+| Prediction standard deviation | 0.0697621 |
+
+Peak counters were reset immediately before this forward and not reset within
+it, unlike the general executor's stage counters. A preliminary successful
+run had the same memory readings and 18.869842 s timing, but preserved RoPE
+only after an unnecessary BF16 round trip; retain it as preliminary evidence
+at `h3_fullshape_random_capacity_precision`. The earlier first attempt at
+`h3_fullshape_random_capacity` allocated the complete model but failed before
+compute because the standalone shell lacked its required precision contract.
+All attempts are terminal; final successful process exited 0. Fresh GPU
+compute inventory empty and GPUs 0-1 released.
+
+This establishes that this full-size DiT forward can fit on two L40S cards.
+It does not include the 32B conditioner, either VAE, LoRA, backward or optimizer
+state, later timesteps, full trajectory storage, or released checkpoint
+loading. Do not extrapolate the one-step timing into a measured full-video
+latency or speedup. End-to-end four-card released-model capacity, training,
+quality and controlled performance remain unverified.
