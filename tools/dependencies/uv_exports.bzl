@@ -31,15 +31,19 @@ def _uv_exports_impl(ctx):
     if result.return_code:
         fail("restoring exported extras failed:\n{}".format(result.stderr))
     # Distributions built from source by a `rust_wheel` repository replace
-    # their exported line with the built wheel's file URL and hash.
+    # their exported line with the built wheel's file URL and hash -- only in
+    # the profiles that pin the built version. A profile pinning another
+    # version (the main stack's tokenizers for transformers 5 vs. VBench's
+    # 0.13.3) keeps its PyPI line.
     for name, wheel_repo in ctx.attr.built_wheels.items():
-        line = _built_wheel_line(ctx, name, wheel_repo)
+        line, version = _built_wheel_line(ctx, name, wheel_repo)
         for profile in ctx.attr.profiles:
             result = ctx.execute([
                 ctx.path(ctx.attr.interpreter),
                 ctx.path(ctx.attr.replace_requirement),
                 profile + ".txt",
                 name,
+                version,
                 line,
             ])
             if result.return_code:
@@ -70,16 +74,21 @@ uv_exports = repository_rule(
 )
 
 def _built_wheel_line(ctx, name, wheel_repo):
+    """The requirement line for a built wheel, and the version it carries.
+
+    Wheel filenames are `{name}-{version}-{python}-{abi}-{platform}.whl`.
+    """
     digest = ctx.read(Label(wheel_repo + "//:wheel.sha256")).strip()
     filename = ctx.read(Label(wheel_repo + "//:wheel.name")).strip()
     path = ctx.path(Label(wheel_repo + "//:wheel/" + filename))
-    return "{} @ file://{} --hash=sha256:{}".format(name, path, digest)
+    version = filename.split("-")[1]
+    return "{} @ file://{} --hash=sha256:{}".format(name, path, digest), version
 
 def _requirements_with_built_wheels_impl(ctx):
     """A hashed requirements file plus the wheels Bazel built from source."""
     ctx.watch(ctx.attr.requirements)
     text = ctx.read(ctx.attr.requirements)
-    lines = [_built_wheel_line(ctx, name, repo) for name, repo in ctx.attr.built_wheels.items()]
+    lines = [_built_wheel_line(ctx, name, repo)[0] for name, repo in ctx.attr.built_wheels.items()]
     ctx.file("requirements.txt", text.rstrip("\n") + "\n" + "\n".join(lines) + "\n")
     ctx.file("BUILD.bazel", 'exports_files(["requirements.txt"])\n')
 
