@@ -457,3 +457,62 @@ checkpoint, not full-size released weights, collector/trainer contracts,
 optimizer/recovery semantics for this trajectory, quality or performance.
 The test co-resides separate tiny rollout and replay models on GPUs 0-1;
 released-model replication would require its own memory/scheduling design.
+
+## 2026-09-13: standalone local generation probe and MP4
+
+Added `python -m vrl.scripts.generation.partitioned_h3_probe`. It requires an
+existing local checkpoint, a new output directory, prompt and explicit
+geometry/step count. It derives contiguous layer ownership from checkpoint
+configs, uses the existing H3 rank-32/alpha-64 LoRA preset and VAE tiling, and
+runs one production executor batch. Outputs include MP4, JSON timings/memory
+counters and optional serialized trajectory. It neither starts training nor
+selects a public Ray strategy. Full-size default block ownership is a balanced
+count heuristic, not a capacity guarantee.
+
+The first standalone attempt failed before model loading because CUDA peak
+counters were reset before the allocators had been initialized. Initializing
+each device before measurement fixed that. The next attempt exposed an actual
+builder bug absent from prior tests: populated rollout-only generation-memory
+policy was carried into the component's replay-only loading build. The helper
+now clears that field only in its temporary replay loading slice; the original
+rollout retains tiling. Unified generation regression tests now enable tiling.
+Both failed output directories are retained, not presented as successful runs.
+
+Successful offline CLI artifacts:
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_standalone_probe_memoryfix`.
+Input is the retained tiny native modular directory from the executor/replay
+test. DiT block on GPU 1 with root on GPU 0; encoder layers on GPUs 2 and 3;
+selected tiny hidden state 1, text cap 8, 16x16, 8 frames, 3 steps, seed 42.
+Native rank-32 LoRA and VAE tiling were active. Process exited 0:
+
+- Load: 3.188846 seconds; generation: 0.872050 seconds.
+- Stage counters: encode 0.411656, prepare 0.001893, denoise 0.168102,
+  decode 0.290205 seconds.
+- Independent MP4 read verified 8 RGB frames at 16x16 and 24 fps; decoded
+  pixel standard deviation 23.9333. This is nonblank output, not model quality.
+- `trajectory.pt` and `result.json` retained. JSON explicitly warns that the
+  executor resets current-device peak counters at stage boundaries; its
+  post-executor counters are not guaranteed whole-generation high-water marks.
+  Load peaks and executor stage memory are reported separately. These tiny
+  measurements are not estimates of released H3 capacity or throughput.
+
+Reproduce from the H3 candidate, using a new output directory:
+
+```bash
+env CUDA_VISIBLE_DEVICES=0,1,2,3 HF_HUB_OFFLINE=1 \
+  PYTHONPATH=/mnt/nvme/venvs/h3-runtime-overlay:/mnt/nvme/venvs/transformers-5.13-overlay:/home/ubuntu/VRL-h3-l40s \
+  /home/ubuntu/VRL/.venv/bin/python -m vrl.scripts.generation.partitioned_h3_probe \
+  --path /mnt/nvme/outputs/wan22_i2v_cache/h3_executor_replay_metrics_pytest/test_unified_partitioned_gener0 \
+  --output /mnt/nvme/outputs/wan22_i2v_cache/h3_standalone_repeat \
+  --prompt 'a wooden block slides across a table' \
+  --policy-root 0 --policy-devices 1 --encoder-devices 2 3 \
+  --encoder-layer 1 --max-text-tokens 8 \
+  --height 16 --width 16 --frames 8 --steps 3 --save-trajectory
+```
+
+H3 and probe partitioning regressions: **56 passed in 7.28 seconds**, exit 0.
+Ruff, formatting and diff checks passed. The CLI subsequently adds policy root
+explicitly to new reports; this run used root 0 as the command records. All
+jobs terminal, fresh compute inventory empty, all GPU claims released. No
+released weights downloaded; deployment/name confirmations and full-size
+correctness, quality and fair performance gates remain open.
