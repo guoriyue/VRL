@@ -1182,7 +1182,7 @@ class OnlineTrainer:
 
     def _sample_batch_train_indices(
         self,
-        sample_batch: _TrainingGenerationSampleBatch,
+        sample_batch: _TrainingMicrobatch,
         default_indices: list[int],
         selection: str,
     ) -> list[int]:
