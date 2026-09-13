@@ -37,6 +37,10 @@ model:
 precision:
   float32_precision: ieee
 
+actor:
+  # Full512p93f replay requires activation recomputation on48GB cards.
+  gradient_checkpointing: full
+
 rollout:
   prompts_per_batch: 8
   trajectory_storage:
