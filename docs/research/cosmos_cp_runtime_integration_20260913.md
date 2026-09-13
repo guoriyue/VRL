@@ -1,9 +1,9 @@
 # Cosmos CP runtime integration candidate
 
-Status: OPEN. Production-candidate primitives and self-attention processor are
-implemented and tested, but model-level sharding and training integration are
-not installed. This does not close the original context-parallel sprint or the
-four-L40S hardware goal.
+Status: OPEN. Production-candidate primitives, self-attention processor and
+opt-in model-level sharding are implemented. Training integration is absent,
+and one model-level CUDA numerical regression remains failing. This does not
+close the original context-parallel sprint or the four-L40S hardware goal.
 
 ## Isolation and commits
 
@@ -86,3 +86,52 @@ env CUDA_VISIBLE_DEVICES=0,1 PYTHONPATH=/home/ubuntu/VRL-cosmos-cp \
 Prior full-shape numerical and DiT-only timing evidence remains in
 `cosmos_cp_480p_capacity_20260912.md`; it used diagnostic installation and
 does not automatically validate this new processor or a complete trainer.
+
+## Model-level candidate: 558a3342
+
+`vrl/models/families/cosmos/context_parallel.py` installs explicit, reversible
+hooks. Tokens remain sharded throughout the block stack; the final output
+projection is gathered once for the native unpatchify. Hooks bind the actual
+forward signatures, including native checkpoint positional arguments. Each
+block receives local RoPE, per-token timestep/conditioning and optional
+positional/residual tensors. Text conditioning remains replicated and uses
+the ordinary cross-attention. ControlNet projection blocks are rejected.
+
+The context must remain installed through backward. It does not create groups
+or automatically divide loss/reduce gradients. A replicated full-output loss
+must be divided by CP size before backward; parameter gradients are then
+SUM-reduced across CP. Tests also SUM the replicated input/text gradients to
+compare them with the reference. This is not yet wired to an online strategy.
+
+### Tests and a retained failure
+
+Two-layer actual Cosmos models use three frames so a two-rank token boundary
+crosses a frame. Four configurations cross learnable-position enabled/disabled
+with text-projection enabled/disabled. Each exercises ordinary and native
+checkpoint forward/backward, global and per-frame timesteps, full output,
+input/text gradients, every used parameter gradient, duplicate-install
+rejection and restoration to ordinary unsharded forward.
+
+- CPU model/attention/exchange suite: **10 passed, 6 skipped**, 39.21 seconds.
+- Two-L40S model NCCL matrix: **3 passed, 1 failed, 4 deselected**, 28.98 seconds.
+- The target pinned Predict2.5 configuration has `extra_pos_embed_type=null`
+  and `use_crossattn_projection=true`; the corresponding tiny FP32 model case
+  passes. This is not released-weight/BF16/replay evidence.
+- Failing case: no text projection, zero-initialized learnable position,
+  checkpoint enabled, per-frame timestep. Parameter
+  `learnable_pos_embed.pos_emb_h` has one mismatching element of 256:
+  absolute difference 0.625, relative difference 6.545102223753929e-5,
+  at index `(0,10)`, versus atol 2e-5 / rtol 5e-5. The same case failed before
+  the configuration matrix was expanded. It remains an ordinary failing test,
+  not skipped, xfailed or given a relaxed tolerance.
+- Adding text projection changes initialization and passes even with learned
+  positions; that does **not** explain or resolve the original failure.
+- No strict deterministic/padded-Linear production precision policy has been
+  installed yet. Do not attribute the mismatch solely to CP without controls.
+- Ruff and whitespace checks pass. All test sessions exited; fresh GPU process
+  inventory empty. Frozen integration runtime and dependencies unchanged.
+
+Next: integrate the previously validated deterministic/Linear/LoRA compute
+contract, investigate the retained positional-gradient failure, then validate
+actual family replay and strategy gradient semantics. Original full online
+update/resume/EMA/capacity gates remain open.
