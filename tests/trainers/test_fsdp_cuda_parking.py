@@ -28,7 +28,8 @@ def _worker(rank, port):
         shard_trainable_only=True,
     )
     try:
-        model = strategy.prepare_model(_Policy().to(device))
+        model = strategy.prepare_model(_Policy())
+        assert all(getattr(p, "_local_tensor", p).device == device for p in model.parameters())
         parameters = [p for p in model.parameters() if p.requires_grad]
         optimizer = torch.optim.AdamW(parameters, lr=0.01)
         ema = SimpleNamespace(

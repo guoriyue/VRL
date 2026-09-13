@@ -530,6 +530,10 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         init_training_process_group(self.context, backend=backend)
         mesh = self._ensure_mesh()
         for _name, handle, writer, parameter_dtype in prepared_handles:
+            if self._shard_trainable_only:
+                # fully_shard does not place ignored frozen parameters. The
+                # replay loader may have staged the entire transformer on CPU.
+                handle.to(device=self.context.device)
             wrapped = apply_fsdp(
                 handle,
                 mesh=mesh,
