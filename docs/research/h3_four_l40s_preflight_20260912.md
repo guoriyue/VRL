@@ -318,3 +318,35 @@ This is device-correct decode, not full-size VAE capacity evidence. The released
 FP32 video VAE may not fit beside a 31 GiB conditioner partition; a staged
 conditioner parking/restoration policy and unified generation builder remain
 necessary. No released weights or production training queue were started.
+
+## 2026-09-13: staged conditioner parking and restoration
+
+Added explicit `park_partitioned_text_encoder` in the H3 placement module.
+This exclusive context requires a frozen eval-mode encoder with resident CUDA
+parameters/buffers and an explicit GPU-only map. It removes Accelerate hooks,
+clears the active map and moves the encoder to CPU. Its `finally` block
+reinstalls the original dispatch map and execution hooks. Nested parking is
+rejected. Callers must finish VAE work and move the VAEs off the vacated GPUs
+before leaving the context; no concurrent prompt encoding is supported.
+
+The four-device random-weight test now executes both normal and injected
+decode-error paths. During parking it verifies every encoder parameter/buffer
+is CPU-resident and Accelerate hooks are absent. The video VAE moves to GPU 2
+and audio VAE to GPU 3, decodes finite outputs from GPU 0 latents, and returns
+to CPU before the encoder is restored. Both paths verify the original map,
+all parameter/buffer device assignments, dtypes and tensor values exactly.
+Subsequent native H3 prompt encoding matches the pre-parking embedding exactly.
+The injected error is observed rather than silently swallowed by the context.
+
+Full H3 family suite with both GPU opt-ins: **40 passed in 6.41 seconds**,
+exit 0. Artifacts:
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_park_restore_pytest`.
+Use the documented four-device environment to reproduce the family suite.
+Ruff, formatting and diff checks passed. All jobs terminal; fresh compute
+inventory empty, all four GPUs released.
+
+This closes the tested tiny staged component lifecycle, not a unified
+generation-entry or trainer lifecycle gate. Real 32B encoder transfer latency,
+host-memory peak, full VAE activation capacity and restoration under allocator
+failure remain unmeasured. Full released-weight generation, quality and fair
+performance comparisons remain open; no released weights were downloaded.
