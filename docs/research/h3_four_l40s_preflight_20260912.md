@@ -613,3 +613,51 @@ parallelism naturally has one active compute stage at a time; utilization
 snapshots showed this and do not establish a speedup. A phased policy would
 have to release or park other components before this four-device train phase.
 Released-model and end-to-end training/quality/performance gates remain open.
+
+## 2026-09-13: full video VAE and full conditioner capacity
+
+Two separate full-sized random-component probes completed. Neither uses
+released checkpoint weights, and they were not run co-resident.
+
+**Video VAE:** pinned native config, 2,603,868,984 parameters in FP32, native
+FP16 CUDA decode autocast, default 256x256 spatial tiles with 64-pixel overlap.
+The family decode path maps `[1,24,37,48,84]` latents to finite
+`[1,3,124,768,1344]` video on physical GPU 2. Total decode/verification took
+17.578567 seconds; peak allocated 14,671,320,064 bytes (13.663 GiB), reserved
+16,546,529,280 bytes (15.410 GiB). Output range 0.40455-0.48660 and standard
+deviation 0.03263 only establish finite nonconstant output, not quality.
+Exact script, retrieved config and JSON are retained at
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_fullsize_random_vae_capacity`.
+
+**Conditioner:** pinned full Qwen3-VL config, 33,357,390,064 parameters, BF16
+weights with original rotary buffers retained, 32 decoder layers on each of
+physical GPUs 2 and 3. The native H3 prompt helper reads hidden state 50 for
+512 repeated synthetic token IDs. A genuine fixture processor supplies only
+text modality IDs; this is not a real semantic prompt test. The vision module
+and LM head are resident, but not executed by the text-only conditioning path.
+
+| Conditioner measurement | Result |
+| --- | ---: |
+| Initial encode | 0.520157 s |
+| Park full encoder to CPU | 34.654304 s |
+| Restore original GPU map | 12.986275 s |
+| Encode after restore | 0.184645 s |
+| Restored embedding max absolute difference | 0 |
+| GPU 2 peak allocated | 35,799,806,464 bytes |
+| GPU 3 peak allocated | 31,476,191,232 bytes |
+| GPU 2 allocated while parked | 13,762,560 bytes |
+| GPU 3 allocated while parked | 8,519,680 bytes |
+
+The parked readings include retained output/helper tensors; they are not zero
+because the pre-parking embedding is retained for comparison. Parking plus
+restoration costs about 47.64 seconds in this probe, much more than encoding
+itself. This is direct evidence of a transfer-induced idle interval, not a
+GPU compute stall. No pinned-host optimization or repeat transfer benchmark
+has been established. Exact source/JSON are retained at
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_fullsize_random_encoder_capacity`.
+
+Both jobs exited 0. Fresh compute inventory empty, all claims released.
+Next useful placement check is co-resident decode on the less-loaded encoder
+GPU, which may avoid these transfers; separate peak measurements cannot prove
+that it fits. Full four-component co-residency, real checkpoint loading,
+generation/quality and end-to-end controlled performance remain unverified.
