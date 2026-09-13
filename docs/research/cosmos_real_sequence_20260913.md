@@ -1681,3 +1681,74 @@ new fixed-version uninterrupted baseline and checkpoint branch. Historical
 unseeded worker states are unavailable and must not be fabricated. These fixes
 do not close full recipe, quality, continuous queue recovery or end-to-end
 performance acceptance.
+
+### Actual fresh-process native four-card resume passed
+
+Clean candidate7bf2b579 now passes the actual uninterrupted-versus-resumed online
+comparison, using its fixed request RNG and reward-construction isolation. This
+does not reuse the historical unseeded baseline.
+
+`cosmos_native_resume_baseline` runs two complete bounded native CLI iterations,
+saving checkpoint1 before continuing uninterrupted through iteration2. After all
+baseline processes exit, a new four-rank torchrun invocation restores that exact
+checkpoint1 with trainer.resume_strict=true and start_epoch=1, and runs only
+iteration2 into `cosmos_native_resume_resumed`. All worker/driver processes and
+reward models in the resumed arm are fresh. Both use the same actual309-prompt
+VideoPhy data, pinned Cosmos/Kling weights, strict colocated FSDP configuration
+and reduced integration workload: global8 newly generated/scored samples per
+iteration,512p93f20CPS, one PPO pass and one trained timestep. Baseline generates
+sixteen clips; the resumed branch generates eight more. No cached rollout is
+injected and no recipe/schedule/restore method is replaced by a probe wrapper.
+
+The new baseline passes the full preceding integration audit: both nonzero
+updates,1120 finite owned tensors,560 Adam/EMA states and correct counters,
+native sampler RNG transition, sixteen scoring/decode receipts, persistent
+four-worker operation and verified artifact seal. All four baseline verdicts
+are success and torchrun exits0 before the resumed arm starts.
+
+`cosmos_native_resume_compare.py` independently loads both arms' checkpoints and
+verifies their native artifact seals and success verdicts. At checkpoint2:
+
+- All1120 owned model tensors are exactly equal, including560 default and560
+  frozen previous adapter tensors. Model identities and progress agree.
+- All2240 trainer tensors are exactly equal: Adam states/counters and EMA;
+  optimizer parameter manifests and hyperparameter values agree. Both Adam and
+  EMA update counts are2. Final checkpoint states match checkpoint2 within each
+  arm as well.
+- All twelve Torch RNG tensors (CPU, rank-local CUDA and named prompt generator
+  on each of four ranks) and all Python/NumPy RNG states are exactly equal.
+- The complete full-precision iteration2 metrics row is identical, including
+  reward_mean=-4.55644416809082,reward_std=0.531242847442627,
+  grad_norm=1.5087657629919704e-05 and pre-update log-prob maximum difference0.
+- All eight complete per-video reward score vectors match exactly as a multiset,
+  not merely their mean. Artifact UUIDs and rank completion order are expected
+  to differ, so they are not used as cross-run identities. Native successful
+  scoring releases temporary MP4s; no raw-video/retained-trajectory hash equality
+  or new full20-transition independent replay claim is made.
+
+One representation difference is explicitly retained: baseline Adam betas is
+the tuple(0.9,0.999), restored betas is the list[0.9,0.999]. Installed Adam reads
+this as beta1,beta2; both values match exactly. The initial type-strict comparator
+reported this single container difference and exited2, with every tensor/RNG/
+metric/reward comparison already passing. Its report/source are preserved as
+`resume_comparison_strict_container.json` and
+`executed_strict_container_comparison.py`. The final comparator canonicalizes
+only this documented ordered pair, records the representation difference, and
+requires exact numerical equality everywhere. Final `resume_comparison.json`
+passes with mismatch_count0, exit0. No floating-point tolerance was introduced
+or widened; checkpoint pickle bytes/container types are not claimed identical.
+
+Observed phase totals for uninterrupted iteration2 are about171s/rank, versus
+258-259s for the fresh resumed iteration. The latter rebuilds generation/reward
+models; these observations quantify restart overhead for this one workload,
+not a controlled multi-GPU speedup or steady-state performance comparison.
+
+Evidence in both output roots includes native config/run evidence, checkpoint
+and metrics artifacts, reward/phase logs and executed launch scripts; adjacent
+console logs preserve all four explicit start_epoch=1 restore messages. Baseline
+has `acceptance_audit.json` and executed audit, resumed has both comparison
+reports/sources. Both torchrun jobs, baseline audit, numeric comparison and
+inspection processes are terminal; fresh compute and Ray inventories empty,
+GPU0-3 released. This closes actual fresh-process strict online continuation for
+the bounded workload. Full recipe, controlled throughput, quality, broader
+topologies and continuous queue recovery remain separate open requirements.
