@@ -1613,3 +1613,71 @@ GPU0-3 released. This closes the bounded actual-loop/reward/new-data update and
 persistent-worker integration gate. Fresh-process checkpoint continuation, full
 recipe/workload acceptance, controlled end-to-end performance and quality remain
 open. No old queue or unbounded training was launched.
+
+### Resume RNG ownership fixes before the fresh-process comparison
+
+Candidate `7bf2b579` fixes two concrete gaps discovered while preparing strict
+fresh-process continuation. No additional full video training was launched in
+this step; the preceding two-epoch integration remains valid, but it is not an
+exact continuation reference for the new request-seeding policy.
+
+First, GenerationRequestBuilder previously left an unspecified seed unset. Actual
+Cosmos initial latents then used worker-local Python randomness and the denoise
+loop used worker-local Torch randomness. The trainer checkpoint captures neither
+remote worker stream. Reconstructing a fresh Ray fleet therefore cannot reproduce
+the historical unseeded rollout merely by restoring driver RNG.
+
+The collector request adapter now draws a63-bit seed from the driver's Python
+RNG when the effective sampling seed is absent orNone, and carries it on the
+native generation request. Explicit integer seeds, including0, retain their
+override precedence and consume no driver RNG. A per-request explicitNone asks
+for a fresh driver draw. Config objects remain unchanged. This applies at the
+collector boundary; direct generation clients still own their seed policy.
+Existing generation seed/sample-offset handling is not changed.
+
+Three newly added absent/None tests failed before the fix. The complete request
+test file passes afterward; collector/runtime/orchestration regression368passed,
+1skipped. The real native checkpoint1 supplies four rank RNG states to
+`cosmos_checkpoint_request_seed_audit.py`: each fresh builder reproduces three
+future request seeds and the subsequent Python RNG state exactly, and the four
+ranks' first seeds differ. This proves request RNG ownership, not reconstruction
+of the previous unseeded videos or complete training continuation.
+
+Second, actual pinned Kling cold construction through native InProcessRewardScorer
+on CPU changed both Python and TorchCPU RNG; NumPy remained unchanged. A resumed
+process rebuilding the reward model could consequently diverge from a resident
+process reusing it, even after checkpoint RNG restoration. The observation uses
+the full released reward checkpoint, not a toy loader or inferred behavior.
+
+Synchronous reward factory import/build and pooled lazy preparation now preserve
+driver Python, NumPy, TorchCPU and already-initialized CUDA RNG streams, including
+the failure path. The context does not initialize CUDA just to capture a state.
+Existing CuMem construction, cleanup, memory gates and scoring stay unchanged;
+the scope is cold construction, not a claim that arbitrary stochastic scoring or
+concurrent external threads are isolated.
+
+Five new CPU tests fail before and pass after the fix, covering pooled/unpooled
+factories, repeated activation and factory/preparation exceptions. Native runtime
+tests17passed1skipped before adding the explicit CUDA cases. Repeating the real
+Kling CPU construction after the fix preserves all three CPU RNG streams exactly
+and never initializes CUDA. Two explicit hardware tests additionally consume
+random draws on all four initialized GPU streams and verify exact restoration
+on both successful and exceptional construction scope exit. Both pass in0.63s.
+
+Final combined rewards/rollouts/checkpoint regression:971passed,11skipped in
+36.33s. The skipped hardware/optional tests are not claimed as passing; the two
+CUDA RNG cases above were separately run with all four visible GPUs. Candidate
+worktree is clean after commit. Main experiment evidence includes:
+
+- `cosmos_checkpoint_request_seed_audit/result.json` and executed source.
+- `cosmos_reward_construction_rng_before/result.json` and adjacent console log:
+  Python=false,TorchCPU=false,NumPy=true for unchanged-state checks.
+- `cosmos_reward_construction_rng_after/result.json` and adjacent console log:
+  all unchanged-state checks true. Both actual-model probe sources preserved.
+
+All CPU probes/tests and the CUDA test process exited; fresh compute inventory
+empty and GPUs0-3 released. Exact fresh-process online continuation now needs a
+new fixed-version uninterrupted baseline and checkpoint branch. Historical
+unseeded worker states are unavailable and must not be fabricated. These fixes
+do not close full recipe, quality, continuous queue recovery or end-to-end
+performance acceptance.
