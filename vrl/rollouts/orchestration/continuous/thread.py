@@ -35,7 +35,7 @@ _OWNER_STOP_TIMEOUT_S = 30.0
 
 
 @dataclass(frozen=True, slots=True)
-class _InstalledPromptBatch:
+class _SubmittedPromptBatch:
     """Owner-side identity of one producer batch awaiting trainer consumption."""
 
     prompts: tuple[Any, ...]
@@ -46,15 +46,15 @@ class _InstalledPromptBatch:
 
         if len(self.prompts) != len(presented_prompts):
             return False
-        for installed_prompt, presented_prompt in zip(
+        for submitted_prompt, presented_prompt in zip(
             self.prompts,
             presented_prompts,
             strict=True,
         ):
-            if installed_prompt is presented_prompt:
+            if submitted_prompt is presented_prompt:
                 continue
             try:
-                if not bool(installed_prompt == presented_prompt):
+                if not bool(submitted_prompt == presented_prompt):
                     return False
             except (TypeError, ValueError, RuntimeError):
                 return False
@@ -81,7 +81,7 @@ class _ContinuousRolloutController:
         self.queue: ScoredRolloutQueue | None = None
         self.consumer: ContinuousRolloutConsumer | None = None
         self.producer: ContinuousRolloutProducer | None = None
-        self._installed_prompt_batch: _InstalledPromptBatch | None = None
+        self._submitted_prompt_batch: _SubmittedPromptBatch | None = None
 
         self._command_lock = asyncio.Lock()
         self._active_commands: set[asyncio.Task[Any]] = set()
@@ -118,22 +118,22 @@ class _ContinuousRolloutController:
                     initial_weights=initial_weights,
                     stats=startup_stats,
                 )
-            elif self._installed_prompt_batch is None:
+            elif self._submitted_prompt_batch is None:
                 self._set_prompt_batch(
                     prompts,
                     group_size=group_size,
                     runtime_debug=runtime_debug,
                 )
-            elif not self._installed_prompt_batch.matches_presented_prompts(prompts):
+            elif not self._submitted_prompt_batch.matches_presented_prompts(prompts):
                 raise RuntimeError(
                     "continuous prefetch prompt batch does not match the next prompts "
                     "presented by the trainer",
                 )
-            elif self._installed_prompt_batch.group_size != group_size:
+            elif self._submitted_prompt_batch.group_size != group_size:
                 raise RuntimeError(
                     "continuous prefetch group size does not match the batch "
                     "presented by the trainer: "
-                    f"expected={self._installed_prompt_batch.group_size}, "
+                    f"expected={self._submitted_prompt_batch.group_size}, "
                     f"requested={group_size}",
                 )
             assert self.consumer is not None
@@ -141,7 +141,7 @@ class _ContinuousRolloutController:
             current_policy_version = self.lifecycle.current_policy_version()
             batch_id = self.producer.current_batch_id
             prefetch_next_batch_early = self.settings.split_generation_reward
-            prefetched_prompt_batch: _InstalledPromptBatch | None = None
+            prefetched_prompt_batch: _SubmittedPromptBatch | None = None
             if prefetch_next_batch_early and next_prompts is not None:
                 self.producer.append_prompt_batch(
                     next_prompts,
@@ -150,7 +150,7 @@ class _ContinuousRolloutController:
                 )
                 assert self.queue is not None
                 self.queue.set_item_limit(len(prompts) + len(next_prompts))
-                prefetched_prompt_batch = _InstalledPromptBatch(tuple(next_prompts), group_size)
+                prefetched_prompt_batch = _SubmittedPromptBatch(tuple(next_prompts), group_size)
                 self.producer.admit_now()
 
             iteration = await self.consumer.collect_iteration(
@@ -161,11 +161,11 @@ class _ContinuousRolloutController:
                 poll_interval_s=self.settings.queue_poll_interval_s,
                 producer_state=self.producer.state,
             )
-            self._installed_prompt_batch = None
+            self._submitted_prompt_batch = None
             prefetch_next_batch_requested = float(next_prompts is not None)
             if prefetch_next_batch_early:
                 self.producer.consume_prompt_batch(batch_id)
-                self._installed_prompt_batch = prefetched_prompt_batch
+                self._submitted_prompt_batch = prefetched_prompt_batch
                 assert self.queue is not None
                 self.queue.set_item_limit(1 if next_prompts is None else len(next_prompts))
             elif next_prompts is not None:
@@ -205,7 +205,7 @@ class _ContinuousRolloutController:
             runtime_debug=runtime_debug,
         )
         self.queue.set_item_limit(len(prompts))
-        self._installed_prompt_batch = _InstalledPromptBatch(
+        self._submitted_prompt_batch = _SubmittedPromptBatch(
             prompts=tuple(prompts),
             group_size=group_size,
         )
@@ -379,7 +379,7 @@ class _ContinuousRolloutController:
             group_size=group_size,
             runtime_debug=runtime_debug,
         )
-        self._installed_prompt_batch = _InstalledPromptBatch(
+        self._submitted_prompt_batch = _SubmittedPromptBatch(
             prompts=tuple(prompts),
             group_size=group_size,
         )
@@ -397,7 +397,7 @@ class _ContinuousRolloutController:
         self.producer = None
         self.queue = None
         self.consumer = None
-        self._installed_prompt_batch = None
+        self._submitted_prompt_batch = None
 
     def _attach_producer_metrics(self, iteration: RolloutIteration) -> None:
         if self.producer is None:
