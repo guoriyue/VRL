@@ -11,10 +11,10 @@ import torch.multiprocessing as mp
 from diffusers.models.transformers.transformer_cosmos import CosmosTransformerBlock
 from torch.utils.checkpoint import checkpoint
 
-from vrl.models.families.cosmos import CosmosContextParallelSelfAttnProcessor
+from vrl.models.families.cosmos import CosmosContextParallelAttnProcessor
 
 
-def _worker(rank, rendezvous, cuda):
+def _worker(rank, rendezvous, cuda, cross=False):
     torch.set_num_threads(1)
     if cuda:
         torch.cuda.set_device(rank)
@@ -28,9 +28,12 @@ def _worker(rank, rendezvous, cuda):
     )
     try:
         torch.manual_seed(481)
-        reference = CosmosTransformerBlock(4, 8, 32).attn1.to(device)
+        block = CosmosTransformerBlock(4, 8, 32)
+        reference = (block.attn2 if cross else block.attn1).to(device)
         candidate = copy.deepcopy(reference)
-        candidate.set_processor(CosmosContextParallelSelfAttnProcessor(dist.group.WORLD))
+        candidate.set_processor(
+            CosmosContextParallelAttnProcessor(dist.group.WORLD, cross_attention=cross)
+        )
         for use_rope, recompute in product((False, True), repeat=2):
             reference.zero_grad(set_to_none=True)
             candidate.zero_grad(set_to_none=True)
@@ -38,16 +41,31 @@ def _worker(rank, rendezvous, cuda):
             local = full.detach().chunk(2, dim=1)[rank].requires_grad_()
             weights = torch.randn_like(full)
             phases = torch.randn(12, 4, device=device).repeat(1, 2)
-            rope = (phases.cos(), phases.sin()) if use_rope else None
+            rope = (phases.cos(), phases.sin()) if use_rope and not cross else None
             local_rope = tuple(t.chunk(2, dim=0)[rank] for t in rope) if rope else None
+            context = torch.randn(2, 5, 32, device=device, requires_grad=True) if cross else None
+            local_context = context.detach().clone().requires_grad_() if cross else None
+            mask = (
+                torch.ones(2, 1, 1, 5, device=device, dtype=torch.bool)
+                if cross and use_rope
+                else None
+            )
+            if mask is not None:
+                mask[..., -1] = False
+            reference_kwargs = dict(
+                image_rotary_emb=rope, encoder_hidden_states=context, attention_mask=mask
+            )
+            candidate_kwargs = dict(
+                image_rotary_emb=local_rope,
+                encoder_hidden_states=local_context,
+                attention_mask=mask,
+            )
             if recompute:
-                expected = checkpoint(reference, full, image_rotary_emb=rope, use_reentrant=False)
-                actual = checkpoint(
-                    candidate, local, image_rotary_emb=local_rope, use_reentrant=False
-                )
+                expected = checkpoint(reference, full, **reference_kwargs, use_reentrant=False)
+                actual = checkpoint(candidate, local, **candidate_kwargs, use_reentrant=False)
             else:
-                expected = reference(full, image_rotary_emb=rope)
-                actual = candidate(local, image_rotary_emb=local_rope)
+                expected = reference(full, **reference_kwargs)
+                actual = candidate(local, **candidate_kwargs)
             torch.testing.assert_close(
                 actual, expected.chunk(2, dim=1)[rank], atol=2e-6, rtol=2e-5
             )
@@ -56,6 +74,9 @@ def _worker(rank, rendezvous, cuda):
             torch.testing.assert_close(
                 local.grad, full.grad.chunk(2, dim=1)[rank], atol=2e-6, rtol=2e-5
             )
+            if cross:
+                dist.all_reduce(local_context.grad)
+                torch.testing.assert_close(local_context.grad, context.grad, atol=2e-6, rtol=2e-5)
             for (name, parameter), (other_name, other) in zip(
                 reference.named_parameters(), candidate.named_parameters(), strict=True
             ):
@@ -67,19 +88,21 @@ def _worker(rank, rendezvous, cuda):
         dist.destroy_process_group()
 
 
-def test_cosmos_cp_attention_cpu(tmp_path):
-    mp.spawn(_worker, args=((tmp_path / "gloo").as_uri(), False), nprocs=2, join=True)
+@pytest.mark.parametrize("cross", [False, True])
+def test_cosmos_cp_attention_cpu(tmp_path, cross):
+    mp.spawn(_worker, args=((tmp_path / "gloo").as_uri(), False, cross), nprocs=2, join=True)
 
 
 @pytest.mark.distributed
-def test_cosmos_cp_attention_nccl(tmp_path):
+@pytest.mark.parametrize("cross", [False, True])
+def test_cosmos_cp_attention_nccl(tmp_path, cross):
     if torch.cuda.device_count() < 2:
         pytest.skip("requires two CUDA devices")
-    mp.spawn(_worker, args=((tmp_path / "nccl").as_uri(), True), nprocs=2, join=True)
+    mp.spawn(_worker, args=((tmp_path / "nccl").as_uri(), True, cross), nprocs=2, join=True)
 
 
 @pytest.mark.parametrize("kwarg", ["encoder_hidden_states", "attention_mask"])
 def test_cosmos_cp_attention_rejects_unsupported_inputs(kwarg):
-    processor = CosmosContextParallelSelfAttnProcessor(None)
+    processor = CosmosContextParallelAttnProcessor(None)
     with pytest.raises(ValueError, match="unmasked self-attention"):
         processor(None, None, **{kwarg: torch.zeros(1)})

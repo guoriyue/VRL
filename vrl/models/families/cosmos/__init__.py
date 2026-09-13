@@ -53,18 +53,20 @@ class CosmosReplayForward:
         return int(timestep_idx)
 
 
-class CosmosContextParallelSelfAttnProcessor:
-    """Cosmos self-attention over equal, contiguous token shards.
+class CosmosContextParallelAttnProcessor:
+    """Cosmos attention over equal, contiguous query-token shards.
 
     The caller supplies local RoPE positions and identical collective order on
-    the explicit CP group. Cross-attention and masked attention are deliberately
-    unsupported. Parameter gradients must be summed over CP by the strategy;
+    the explicit CP group. Optional text cross-attention uses replicated context
+    and local heads; image context and query-dependent masks are unsupported.
+    Parameter gradients must be summed over CP by the strategy;
     these exchanges account only for activation gradients. This processor does
     not install token splitting, precision policy, or gradient synchronization.
     """
 
-    def __init__(self, group: Any):
+    def __init__(self, group: Any, *, cross_attention: bool = False):
         self.group = group
+        self.cross_attention = cross_attention
 
     def __call__(
         self,
@@ -82,12 +84,24 @@ class CosmosContextParallelSelfAttnProcessor:
             context_parallel_tokens_to_heads,
         )
 
-        if encoder_hidden_states is not None or attention_mask is not None:
+        if not self.cross_attention and (
+            encoder_hidden_states is not None or attention_mask is not None
+        ):
             raise ValueError("Cosmos CP processor supports only unmasked self-attention")
+        if self.cross_attention:
+            if encoder_hidden_states is None or isinstance(encoder_hidden_states, tuple):
+                raise ValueError("Cosmos CP cross-attention requires a replicated text tensor")
+            if image_rotary_emb is not None:
+                raise ValueError("Cosmos CP cross-attention does not apply RoPE")
+            if attention_mask is not None and (
+                attention_mask.ndim != 4 or attention_mask.shape[1:3] != (1, 1)
+            ):
+                raise ValueError("Cosmos CP cross-attention requires a broadcast key-only mask")
+        context = encoder_hidden_states if self.cross_attention else hidden_states
 
         query = attn.to_q(hidden_states).unflatten(2, (attn.heads, -1)).transpose(1, 2)
-        key = attn.to_k(hidden_states).unflatten(2, (attn.heads, -1)).transpose(1, 2)
-        value = attn.to_v(hidden_states).unflatten(2, (attn.heads, -1)).transpose(1, 2)
+        key = attn.to_k(context).unflatten(2, (attn.heads, -1)).transpose(1, 2)
+        value = attn.to_v(context).unflatten(2, (attn.heads, -1)).transpose(1, 2)
         query, key = attn.norm_q(query), attn.norm_k(key)
         if image_rotary_emb is not None:
             query = apply_rotary_emb(
@@ -97,15 +111,22 @@ class CosmosContextParallelSelfAttnProcessor:
 
         key = key.repeat_interleave(query.size(3) // key.size(3), dim=3)
         value = value.repeat_interleave(query.size(3) // value.size(3), dim=3)
-        query, key, value = (
-            context_parallel_tokens_to_heads(tensor, group=self.group)
-            for tensor in (query, key, value)
-        )
+        query = context_parallel_tokens_to_heads(query, group=self.group)
+        if self.cross_attention:
+            import torch.distributed as dist
+
+            world, rank = dist.get_world_size(self.group), dist.get_rank(self.group)
+            key, value = (tensor.chunk(world, dim=1)[rank].contiguous() for tensor in (key, value))
+        else:
+            key, value = (
+                context_parallel_tokens_to_heads(tensor, group=self.group)
+                for tensor in (key, value)
+            )
         output = dispatch_attention_fn(
             query.transpose(1, 2),
             key.transpose(1, 2),
             value.transpose(1, 2),
-            attn_mask=None,
+            attn_mask=attention_mask,
             dropout_p=0.0,
             is_causal=False,
         ).transpose(1, 2)
@@ -115,7 +136,7 @@ class CosmosContextParallelSelfAttnProcessor:
 
 
 __all__ = [
-    "CosmosContextParallelSelfAttnProcessor",
+    "CosmosContextParallelAttnProcessor",
     "CosmosReplayForward",
     "NoOpCosmosSafetyChecker",
     "no_safety_checker",

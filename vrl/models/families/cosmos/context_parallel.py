@@ -5,12 +5,12 @@ from inspect import signature
 
 import torch.distributed as dist
 
-from vrl.models.families.cosmos import CosmosContextParallelSelfAttnProcessor
+from vrl.models.families.cosmos import CosmosContextParallelAttnProcessor
 from vrl.trainers.distributed import context_parallel_gather_tokens
 
 
 @contextmanager
-def cosmos_context_parallel(transformer, *, group):
+def cosmos_context_parallel(transformer, *, group, shard_cross_attention=False):
     """Keep block activations sharded and return replicated full model outputs.
 
     Keep this context active through backward, including checkpoint recompute.
@@ -28,12 +28,16 @@ def cosmos_context_parallel(transformer, *, group):
     if not blocks:
         raise ValueError("Cosmos CP requires transformer blocks")
     for block in blocks:
-        if isinstance(block.attn1.processor, CosmosContextParallelSelfAttnProcessor):
+        if isinstance(block.attn1.processor, CosmosContextParallelAttnProcessor):
             raise ValueError("Cosmos CP is already installed")
         if block.attn1.heads % world:
             raise ValueError("Cosmos attention heads must be divisible by CP size")
         if block.before_proj is not None or block.after_proj is not None:
             raise ValueError("Cosmos CP does not support ControlNet projection blocks")
+        if shard_cross_attention and (block.img_context or block.attn2.heads % world):
+            raise ValueError(
+                "Cosmos CP cross-attention requires text-only context and divisible heads"
+            )
 
     def split(tensor, dim):
         if tensor.shape[dim] == 0 or tensor.shape[dim] % world:
@@ -79,7 +83,12 @@ def cosmos_context_parallel(transformer, *, group):
     try:
         for index, block in enumerate(blocks):
             processors.append((block.attn1, block.attn1.processor))
-            block.attn1.set_processor(CosmosContextParallelSelfAttnProcessor(group))
+            block.attn1.set_processor(CosmosContextParallelAttnProcessor(group))
+            if shard_cross_attention:
+                processors.append((block.attn2, block.attn2.processor))
+                block.attn2.set_processor(
+                    CosmosContextParallelAttnProcessor(group, cross_attention=True)
+                )
             handles.append(
                 block.register_forward_pre_hook(block_hook(block, index == 0), with_kwargs=True)
             )

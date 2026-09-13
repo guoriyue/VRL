@@ -71,7 +71,9 @@ def _worker(rank, rendezvous, cuda, extra_pos, cross_projection, fixed_rows=True
             expected = reference(full, timestep, text).sample
             weight = torch.randn_like(expected)
             (expected * weight).sum().backward()
-            with cosmos_context_parallel(candidate, group=dist.group.WORLD):
+            with cosmos_context_parallel(
+                candidate, group=dist.group.WORLD, shard_cross_attention=True
+            ):
                 with (
                     pytest.raises(ValueError, match="already installed"),
                     cosmos_context_parallel(candidate, group=dist.group.WORLD),
