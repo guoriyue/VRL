@@ -1462,3 +1462,67 @@ not simultaneous four-card training and generation. Reward integration, persiste
 worker reuse across repeated phases, independent replay of these new clips,
 next real update, production sampler/checkpoint continuation and full recipe/quality
 remain open. No old training queue was restarted.
+
+### Exact next update after real generation handoff
+
+The next-update boundary above is now verified for the same cached-group
+single-slice training workload. Candidate remains unchanged at `260b7d19`.
+Two fresh, sequential four-rank FSDP processes start from the original initial
+LoRA state and each perform two native updates, using identical real eight-sample
+cached trajectories, whole-group advantages, two samples/rank, step10, fused
+AdamW and EMA updated at both boundaries. Native replay and compute precision
+remain unchanged. These are two single-slice optimizer updates, not two complete
+four-PPO-epoch recipe iterations.
+
+- Resident control does not park or generate between the two updates.
+- Handoff arm exports update-one weights, parks all four live trainers, starts
+  four rank-local native Ray generation workers, generates one full512p93f20-step
+  video per GPU, verifies actual active weights, offloads and shuts down the
+  workers, restores trainer state, and then performs update two.
+- Both arms retain the same cached training samples for update two, deliberately
+  isolating the handoff's effect. The newly generated clips are not used as
+  training input and no reward model is invoked.
+
+`cosmos_fsdp_next_update_compare.py` completed with exit0 and exact tensor equality
+for both updates: all560 full raw gradients on each of four ranks, all560 full
+post-clip gradients, all560 trainable parameters, all560 Adam states including
+first/second moments and step counters, and all560 local EMA tensors on every
+rank. Advantages, optimizer hyperparameters, per-sample log-prob changes and
+gradient norms are also identical. The Adam/EMA counters are1 then2. Update two
+changes all560 trainable tensors and has gradient norm0.001040710019879043 in
+both arms. Exact equality is required, with no relaxed comparison tolerance.
+
+The initial policy's replay gate remains zero difference for all eight samples.
+On update two the policy has changed, so log-probs need not match the old rollout;
+instead their per-sample changes must match between the two arms, which they do.
+The separate first-update comparison against native DDP remains established by
+the preceding experiment; this experiment compares FSDP resident versus handoff.
+
+All four generation outputs pass native trajectory validation, finite-value and
+CPU-storage checks, and contain nonuniform uint8 video tensors
+`[1,3,93,512,512]`. Physical assignments0..3, active policy version1 and20 denoise
+steps are verified. Generation weights equal the first update's exported weights
+exactly. Generation times by rank are62.101692,61.924316,62.037643,61.954151 seconds.
+Each trainer's3929 parked tensors, original devices and parameter identities
+restore exactly before the subsequent forward/backward.
+
+Diagnostic elapsed times are79.695327 seconds for the resident arm and269.014156
+seconds for the handoff arm, excluding initial model setup. The latter performs
+additional generation, cold worker startup/cleanup, state movement and validation.
+These are different workloads, not a speed comparison or an estimate of
+persistent-worker steady-state throughput. Observed generation GPU utilization
+was98-100%; all four parents remained alive with1084MiB each while parked.
+
+Evidence under `/mnt/nvme/outputs/wan22_i2v_cache/`:
+
+- `cosmos_fsdp_next_update_control`: both update/result files, per-rank raw
+  gradients/EMA and preserved executed parent source; adjacent parent log.
+- `cosmos_fsdp_next_update_handoff`: same two-update evidence, all four child
+  outputs/logs, native parking receipts, exported generation weights,
+  `comparison.json`, and preserved parent/child/comparator sources; adjacent log.
+
+Both torchrun arms, all generation children and CPU comparator exited0. Fresh
+compute-process and Ray/child inventories are empty; all four GPUs released.
+This closes real-model subsequent-update equivalence across a real generation
+handoff. Fresh-data/reward training, persistent-worker reuse, complete production
+loop/checkpoint/sampler continuation, full recipe and quality remain open.
