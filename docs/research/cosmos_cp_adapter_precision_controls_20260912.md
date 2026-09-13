@@ -434,3 +434,35 @@ residual mechanism, not a blanket equivalence pass or a proven kernel bug.
 Evidence: `cosmos_cp_fullshape_sdpa_l40s/rank-{0,1}.json` and adjacent log.
 Both rank reports match; torchrun exits 0 and fresh compute inventory is empty.
 GPUs 0-1 are released. Production code, dependencies and thresholds unchanged.
+
+## Full-cotangent ordering isolation
+
+`--average-full-cotangents` adds one intervention to the preceding full-shape
+conditioning/projection/SDPA control: before selecting local output tokens,
+register a hook on each full output to sum its cotangents across ranks in
+FP32, divide by two, and cast back. Each replicated operation then receives
+the same averaged full cotangent rather than a different sparse partial one.
+The final parameter SUM remains unchanged. The CLI requires all three
+full-shape controls, preventing a misleading partial configuration.
+
+Both FP32 and BF16 now show exact zero error for final outputs, scalar
+logprob, all 56 block forward outputs, all block output gradients and aggregate
+parameter gradients. Both rank reports match. The preceding otherwise-matched
+full-shape control had BF16 aggregate error 0.0252042 and FP32 3.19938e-7.
+
+This directly supports partial-cotangent backward/reduction arithmetic as the
+source of the residual discrepancy in this controlled setup. It is stronger
+evidence than merely changing attention backends or forward shapes, but does
+not identify one faulty kernel or establish behavior for other shapes. The
+hook is a first-order diagnostic, not a higher-order-autograd implementation.
+
+Crucially, the control repeats full sequence projection and attention work on
+both ranks and adds communication. It has no demonstrated CP memory benefit
+and is NOT a production remedy, P1 pass, or full training acceptance. The next
+engineering decision must preserve real sequence-sharding savings while
+addressing gradient precision; copying this redundant control into runtime
+would substitute a different outcome for the original hardware objective.
+
+Evidence: `cosmos_cp_full_cotangents_l40s/rank-{0,1}.json` and adjacent log.
+Torchrun exits 0, fresh compute inventory is empty and GPUs 0-1 are released.
+Production runtime and acceptance thresholds remain unchanged.
