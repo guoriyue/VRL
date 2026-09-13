@@ -1301,3 +1301,38 @@ The next production continuation test needs a genuine online-recipe checkpoint
 with its real sampler stream and data sequence. Model-only warm start from the
 trained weights is a distinct new-run operation, not exact continuation of a
 data stream that this probe checkpoint never recorded.
+
+### RNG admission moved ahead of expensive production startup
+
+Candidate 30e11971 factors topology and required-name checks into the side-effect-
+free validate_rng_state API, reused by restore_rng_state. The online recipe now
+checks every saved rank for prompt_generator immediately after model-identity
+compatibility, before prompt loading, model materialization or Ray construction.
+Every process checks every rank, so a missing peer stream is detected locally
+before peers proceed into expensive startup. This validates topology and required
+name presence, not every possible malformed RNG tensor encoding.
+
+Production-entry regression tests use the existing lifecycle fakes to prove
+failure before prompt/model/Ray work both for one rank and for a missing rank-3
+stream observed by rank 0. A separate positive test proves preflight does not
+apply a valid saved process RNG. Existing resume fixture checkpoints now contain
+real captured prompt-generator states rather than relying on empty RNG trees.
+The final CPU suite passed 186 tests, with 3 CUDA cases skipped, in 52.76s;
+the final three focused admission tests passed in 0.75s. Ruff and diff checks
+passed. No CUDA regression was rerun or claimed in this CPU-only change.
+
+The separate actual step-four checkpoint probe accepted all four valid probe
+streams, rejected all four missing prompt_generator requests, and left the CPU
+RNG unchanged without CUDA initialization. Evidence is
+cosmos_checkpoint_rng_preflight/{result.json,executed_probe.py}. This real-file
+preflight and the fake-entry lifecycle tests have distinct scopes; neither is
+a completed production training/resume run.
+
+Inspection also reconfirmed the native DDP integration boundaries:
+DDPStrategy.validate_training_state_parking rejects shared-GPU phase switching,
+while run_online_recipe rejects multi-rank disjoint rollout ownership because
+each rank would launch the same global Ray plan. Standalone DDP numerical tests
+do not bypass these production limitations. A complete multi-GPU recipe needs
+a supported lifecycle/orchestration path, not merely a checkpoint override.
+All commands exited and no Ray/reward service remained. No GPU job or claim was
+created during this turn; the broad hardware objective remains incomplete.
