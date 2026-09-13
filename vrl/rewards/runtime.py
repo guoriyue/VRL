@@ -22,7 +22,7 @@ import random
 import time
 import traceback
 from collections.abc import Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import Any
 
 from vrl.config.reward_inference import (
@@ -240,6 +240,14 @@ def _preserve_driver_rng_during_model_build():
         np.random.set_state(numpy_state)
 
 
+def _reward_device_scope(worker_config: Mapping[str, Any]) -> Any:
+    import torch
+
+    configured_device = worker_config.get("device")
+    device = torch.device(configured_device) if configured_device is not None else None
+    return torch.cuda.device(device) if device is not None and device.type == "cuda" else nullcontext()
+
+
 def _build_prepared_model_in_pool(
     pool: CumemPool,
     factory: Any,
@@ -253,7 +261,8 @@ def _build_prepared_model_in_pool(
     in the caller or traceback would leave its tensors live during cleanup.
     """
 
-    with pool.building():
+    # PyTorch's pool scope captures the current device, not arbitrary .to() targets.
+    with _reward_device_scope(worker_config), pool.building():
         model = factory(worker_config)
         prepare = getattr(model, "prepare_for_inference", None)
         if callable(prepare):
@@ -317,7 +326,8 @@ class InProcessRewardScorer:
 
         self._ensure_model()
         if self._pool is not None:
-            self._pool.wake()
+            with _reward_device_scope(self._launch.component_config):
+                self._pool.wake()
 
     async def park_memory(self) -> None:
         """Park reward pages and release cached CUDA memory; safe to retry."""
@@ -334,7 +344,8 @@ class InProcessRewardScorer:
         if not pool.asleep:
             # CumemPool marks itself asleep only after allocator.sleep returns.
             # A failure therefore leaves this branch retryable on the next call.
-            pool.sleep()
+            with _reward_device_scope(self._launch.component_config):
+                pool.sleep()
         self._release_cuda_memory_for_parking()
 
     def _ensure_model(self) -> Any:
@@ -365,7 +376,8 @@ class InProcessRewardScorer:
                         traceback.clear_frames(load_error.__traceback__)
                         try:
                             self._release_cuda_memory_for_parking()
-                            pool.close()
+                            with _reward_device_scope(self._launch.component_config):
+                                pool.close()
                         except BaseException as cleanup_error:
                             raise RuntimeError(
                                 "reward model preparation and CuMem cleanup both failed: "
@@ -386,7 +398,8 @@ class InProcessRewardScorer:
             return []
         model = self._ensure_model()
         if self._pool is not None:
-            self._pool.wake()
+            with _reward_device_scope(self._launch.component_config):
+                self._pool.wake()
         # CuMem's model-building scope is one-shot. Execution uses the normal
         # allocator; park_memory's physical baseline gate rejects any lazy
         # long-lived CUDA allocation that survives scoring.
@@ -446,11 +459,12 @@ class InProcessRewardScorer:
         # dropping the model so freeing the tensors actually returns the
         # pool's memory instead of leaking offloaded copies.
         pool = self._pool
-        if pool is not None:
-            pool.wake()
-        self._model = None
-        if pool is not None:
-            pool.close()
+        with _reward_device_scope(self._launch.component_config) if pool is not None else nullcontext():
+            if pool is not None:
+                pool.wake()
+            self._model = None
+            if pool is not None:
+                pool.close()
         # Dedicated CUDA rewards use torch's caching allocator rather than a
         # CuMem pool. Dropping the model alone leaves those physical pages
         # reserved in this long-lived driver process, so terminal cleanup must

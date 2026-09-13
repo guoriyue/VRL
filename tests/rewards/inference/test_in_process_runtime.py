@@ -18,6 +18,46 @@ from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT, gpu_process
 
 
 @pytest.mark.gpu
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.environ.get('WM_RUN_REAL_MODEL_TESTS') != '1', reason='explicit CUDA pool gate')
+async def test_reward_pool_captures_noncurrent_cuda_device(monkeypatch):
+    import vrl.rewards.runtime as runtime_module
+
+    if torch.cuda.device_count() < 2:
+        pytest.skip('requires two CUDA devices')
+    original = torch.cuda.current_device()
+    torch.cuda.set_device(0)
+
+    class Model:
+        def __init__(self, config):
+            self.value = torch.full((1024 * 1024,), 3.0, device=config['device'])
+
+        def prepare_for_inference(self):
+            self.lazy = torch.full_like(self.value, 7.0)
+
+    monkeypatch.setattr(runtime_module, 'import_from_path', lambda _: Model)
+    runtime = InProcessRewardScorer({'device': 'cuda:1', 'sleep_offload': True,
+                                    'model_factory': 'test:factory',
+                                    'memory_parking_residual_bytes_limit': CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT})
+    try:
+        await runtime.activate()
+        assert torch.cuda.current_device() == 0
+        pool = runtime._pool
+        assert pool is not None
+        owned = [data for data in pool._allocator.pointer_to_data.values() if data.tag == pool.tag]
+        assert owned, 'target-device model allocations escaped the CuMem pool'
+        await runtime.park_memory()
+        assert torch.cuda.current_device() == 0
+        await runtime.activate()
+        assert torch.equal(runtime._model.value.cpu(), torch.full((1024 * 1024,), 3.0))
+        assert torch.equal(runtime._model.lazy.cpu(), torch.full((1024 * 1024,), 7.0))
+    finally:
+        await runtime.shutdown()
+        assert torch.cuda.current_device() == 0
+        torch.cuda.set_device(original)
+
+
+@pytest.mark.gpu
 @pytest.mark.skipif(os.environ.get('WM_RUN_REAL_MODEL_TESTS') != '1', reason='explicit CUDA RNG gate')
 @pytest.mark.parametrize('raises', [False, True])
 def test_reward_build_scope_preserves_all_initialized_cuda_rngs(raises):
