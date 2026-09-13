@@ -556,3 +556,42 @@ Next: compose the explicit CP strategy and strict owner with a real trainer
 step, DP-aware sample ownership, valid trajectories and the existing runtime
 construction path. Full-weight online update/checkpoint/resume/EMA acceptance
 and public configuration enablement remain unproven and required.
+
+## Complete native CPU training composition: 1ec7ea10
+
+`tests/trainers/online/test_cosmos_cp_composition.py` now constructs a real
+`OnlineTrainer` and executes two complete `step` calls across two CPU/Gloo
+CP ranks. It combines the explicit strategy, strict owner adapter, shared
+rollout files and group RNG boundary, rather than invoking only a trainer
+method on a minimal carrier.
+
+The model is a config-initialized tiny actual Cosmos transformer with native
+default/previous LoRA setup. A separate unsharded rollout model performs real
+family `forward_step` and CPS sampling. Typed diffusion trajectories contain
+the actual observations/actions/old log-probs and family replay tensors.
+`DiffusionSDELogProbEvaluator` and native `GRPO` perform replay and optimization;
+neither the evaluator nor algorithm is replaced by a fake. The collector
+controls are local test doubles, conditioning is synthetic and rewards are
+the controlled values `[0,1]`. No real encoder, VAE, reward service or Ray
+worker is involved.
+
+The owner performs initial weight publication, collects once per trainer
+step, and publishes after each update. The second collection observes policy
+version2 after the first collection used version1. Followers perform no
+collection or weight publication. Both steps have positive gradient norms,
+finite initial replay with max log-prob difference <= the existing1e-3
+guard, advance optimizer progress and change trainable parameters. All model
+parameters are exactly equal across CP peers after the two steps.
+
+Combined native composition + existing trainer split regression:
+**14 passed**, 15.00 seconds. Ruff and whitespace checks pass. All test
+processes exited. This milestone uses CPU only; no GPU job/claim was made,
+and frozen integration runtime/shared dependencies remain unchanged.
+
+Scope remains small-model FP32, CFG1, two recorded CPS transitions from a
+four-step scheduler, one prompt/two samples, synthetic rewards. This is not
+released-weight/480p/33f online acceptance, a GPU owner-placement test,
+quality improvement, full checkpoint/resume/EMA proof, or a throughput result.
+Configuration dispatch is still closed. Next: GPU composition with actual
+disjoint placement, then released-weight online update and native distributed
+checkpoint/resume/EMA validation under the original sprint requirements.
