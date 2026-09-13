@@ -19,9 +19,9 @@
 
 - [x] 固定 Bazel 9.2.0、rules_python 2.3.3、Python 3.12.13；首个 sandbox 导入测试通过。
 - [x] 从唯一依赖来源生成 Bazel 所需锁，避免手工双份版本。
-- [ ] 分离主模型、vLLM、MAGI-1、CountGD 依赖目标。
+- [ ] 分离主模型、vLLM、MAGI-1、CountGD 依赖目标。（主模型、vLLM 已分离；videoeval 受阻；MAGI-1、CountGD 未做）
 - [ ] 固定 CUDA Toolkit、宿主编译器、Torch ABI、GPU 架构；真实扩展编译及执行。
-- [ ] 显式处理 Triton/JIT 编译依赖与缓存；驱动作为运行平台要求。
+- [x] 显式处理 Triton/JIT 编译依赖与缓存；驱动作为运行平台要求。
 - [ ] 外部源码版本与补丁进入构建输入。
 - [ ] CountGD 权重与依赖进入 Bazel，评分/服务等价性通过后删除旧安装器。
 - [ ] 真实生成与训练步骤测试通过，非 CPU/mock 替代。
@@ -132,3 +132,27 @@ CPU 目标无需 --config=cuda；GPU 测试标记 manual，普通 //... 不运�
 
 未做：GPU 路径（Triton、生成、训练步）、vLLM/videoeval/CountGD 独立环境、
 Ray/torchrun 解释器、CI。
+
+## 独立依赖栈与真实 GPU lane（2026-09-12）
+
+已通过：
+- `@pypi_vllm` hub：uv.lock 的 `ar-vllm` extra + test 组（vllm 0.21.0 锁定 torch 2.11.0，
+  与主栈同一 torch，隔离的是 flashinfer/依赖闭包与 ABI 约束）。`//:vrl_vllm` 用
+  `tools/python/defs.bzl::vrl_library` 把同一份源码接到这个 hub。
+- `bazel test --config=gpu //tests:gpu_tests`（主 hub，`-m gpu`）：34 个真实 GPU 测试
+  通过，含 Triton JIT 内核 `fused_linear_logprob`、fp4/fp8 量化内核。Triton 缓存与
+  Inductor 缓存由 `tools/pytest/main.py` 指到 `TEST_TMPDIR`；ptxas 来自 triton wheel，
+  `libcuda.so` 来自宿主驱动（执行平台要求，不是构建输入）。
+- `bazel test --config=gpu //tests:gpu_vllm_tests`（vLLM hub）：33 个通过、0 跳过，
+  含 Janus/NextStep vLLM paged-attention 对照 HF 单步、真实 vLLM ops、fp8 block kernel、
+  CuMem 停车（`test_real_cumem_parking_with_another_process_allocation` 真实启动另一
+  进程占显存）。
+- `.bazelrc`：`precompile=force_disabled`（同一测试树对多个 hub 构建，.pyc 输出会冲突）；
+  `--config=gpu` 只筛 `gpu` 标签并透传设备可见性。
+
+受阻：
+- videoeval（VBench 0.1.5 → transformers 4.33.2 → tokenizers 0.13.3）没有 cp312 wheel，
+  rules_python 只能走 `pip wheel` 源码构建，需要非受管 Rust 工具链。未建 hub；
+  `uv.lock` 里的 profile 保留。可选出路：rules_rust 驱动 maturin，或 vbench 升级。
+- MAGI-1：官方 requirements 需要 flash-attn 2.4.2 + flashinfer cu124/torch2.4 源码构建，
+  与 uv.lock 无交集（README 已要求用户自建 `third_party/MAGI-1/.venv`）。未建 hub。

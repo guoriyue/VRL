@@ -1,27 +1,23 @@
 load("@pypi//:requirements.bzl", "all_requirements")
-load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+load("@pypi_vllm//:requirements.bzl", vllm_requirements = "all_requirements")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load("//tools/python:defs.bzl", "vrl_library")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["pyproject.toml", "uv.lock"])
 
-# The VRL package with its config presets and bundled assets. Runtime
-# dependencies are the main uv.lock profile (see MODULE.bazel): the hub is
-# generated from the lock, so nothing here repeats a version.
-py_library(
+# The VRL package against the main uv.lock profile (model runtime + rewards).
+# Hubs are generated from the lock, so nothing here repeats a version.
+vrl_library(
     name = "vrl",
-    srcs = glob(["vrl/**/*.py"]),
-    data = glob(
-        [
-            "vrl/**/*.yaml",
-            "vrl/**/*.md",
-            "vrl/**/*.json",
-            "vrl/**/*.pth",
-        ],
-        allow_empty = True,
-        exclude = ["vrl/**/__pycache__/**"],
-    ),
-    deps = all_requirements + ["//third_party:vendored"],
+    requirements = all_requirements,
+)
+
+# The same sources against the vLLM stack (memory parking, paged attention).
+vrl_library(
+    name = "vrl_vllm",
+    requirements = vllm_requirements,
 )
 
 py_binary(

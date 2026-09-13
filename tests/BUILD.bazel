@@ -10,19 +10,31 @@ filegroup(
 
 # Every test module and fixture. Test packages import each other's fixtures
 # and even test modules (tests.config.test_load_all_experiments), so each
-# lane carries the whole tree and runs only the files it is given.
+# lane carries the whole tree and runs only the files it is given. One
+# support library per dependency hub.
+TEST_TREE = glob(
+    ["**/*.py"],
+    exclude = [
+        "build/**",
+        "e2e/**",
+        "toolchains/**",
+    ],
+)
+
+TEST_FIXTURE_FILES = glob(["**/fixtures/**"], exclude = ["**/*.py"], allow_empty = True)
+
 py_library(
     name = "support",
-    srcs = glob(
-        ["**/*.py"],
-        exclude = [
-            "build/**",
-            "e2e/**",
-            "toolchains/**",
-        ],
-    ),
-    data = glob(["**/fixtures/**"], exclude = ["**/*.py"], allow_empty = True),
+    srcs = TEST_TREE,
+    data = TEST_FIXTURE_FILES,
     deps = ["//:vrl"],
+)
+
+py_library(
+    name = "support_vllm",
+    srcs = TEST_TREE,
+    data = TEST_FIXTURE_FILES,
+    deps = ["//:vrl_vllm"],
 )
 
 # CPU lanes mirror `make verify`: the CUDA mask keeps optional GPU tests from
@@ -73,3 +85,31 @@ vrl_pytest(
         ("utils", []),
     ]
 ]
+
+# Real-GPU lanes: opt in with `bazel test --config=gpu`; they need a visible
+# NVIDIA device and run the `gpu` marker only. The vLLM lane exercises CuMem
+# memory parking from the isolated vLLM stack.
+GPU_TAGS = ["gpu", "manual", "no-remote", "exclusive"]
+
+vrl_pytest(
+    name = "gpu_tests",
+    size = "enormous",
+    srcs = TEST_TREE,
+    args = ["-m", "'gpu and not e2e and not slow_test'"],
+    data = ["//datasets:manifests"],
+    tags = GPU_TAGS,
+)
+
+vrl_pytest(
+    name = "gpu_vllm_tests",
+    size = "enormous",
+    srcs = glob([
+        "utils/**/*.py",
+        "generation/execution/**/*.py",
+        "generation/bindings/token_autoregressive/**/*.py",
+        "nn/**/*.py",
+    ]),
+    args = ["-m", "gpu"],
+    support = ":support_vllm",
+    tags = GPU_TAGS,
+)

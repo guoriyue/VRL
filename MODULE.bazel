@@ -68,8 +68,9 @@ uv_exports(
             "--extra", "cosmos", "--extra", "reward", "--extra", "reward-service",
             "--extra", "data", "--group", "test", "--group", "lint",
         ],
-        "vllm": ["--extra", "ar-vllm"],
-        "videoeval": ["--extra", "videoeval"],
+        # Conflicting stacks each carry the test group so their lanes need no
+        # second hub for pytest.
+        "vllm": ["--extra", "ar-vllm", "--group", "test"],
     },
 )
 
@@ -80,4 +81,16 @@ pip.parse(
     requirements_lock = "@python_locks//:main.txt",
     target_platforms = ["linux_x86_64"],
 )
-use_repo(pip, "pypi")
+
+# Dependency sets pyproject.toml declares as conflicting with the main stack.
+# Each is its own hub from the same uv.lock; a target picks exactly one.
+pip.parse(
+    hub_name = "pypi_vllm",
+    python_version = "3.12.13",
+    requirements_lock = "@python_locks//:vllm.txt",
+    target_platforms = ["linux_x86_64"],
+)
+# Not a hub yet: the videoeval extra (VBench 0.1.5 -> transformers 4.33.2 ->
+# tokenizers 0.13.3) ships no CPython 3.12 wheel and would need a Rust source
+# build; see docs/research/bazel_migration.md.
+use_repo(pip, "pypi", "pypi_vllm")

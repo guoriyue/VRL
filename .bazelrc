@@ -4,3 +4,10 @@ test --test_output=errors
 
 # Opt-in Blackwell lane; CPU-only targets do not need a GPU.
 build:cuda --@rules_cuda//cuda:archs=compute_120:sm_120
+
+# GPU test lanes are manual; --config=gpu runs them on a host with a visible device.
+test:gpu --test_tag_filters=gpu --test_env=NVIDIA_VISIBLE_DEVICES --test_env=CUDA_VISIBLE_DEVICES
+
+# The same test tree is built against several dependency hubs; precompiled
+# .pyc outputs would collide and buy nothing for these targets.
+build --@rules_python//python/config_settings:precompile=force_disabled

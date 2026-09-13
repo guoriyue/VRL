@@ -2,7 +2,7 @@
 
 load("@rules_python//python:defs.bzl", "py_test")
 
-def vrl_pytest(name, srcs, deps = [], data = [], args = [], env = {}, **kwargs):
+def vrl_pytest(name, srcs, deps = [], data = [], args = [], env = {}, support = "//tests:support", **kwargs):
     """Run the given test files with pytest under the workspace configuration.
 
     Args:
@@ -12,6 +12,7 @@ def vrl_pytest(name, srcs, deps = [], data = [], args = [], env = {}, **kwargs):
         data: extra runtime files.
         args: extra pytest arguments, e.g. ["-m", "not slow_test"].
         env: environment for the test action; CPU lanes pass CUDA_VISIBLE_DEVICES="".
+        support: the tests support library, which fixes the dependency hub.
         **kwargs: forwarded to py_test (size, timeout, tags, ...).
     """
     test_files = [s for s in srcs if s.endswith(".py") and "/test_" in ("/" + s)]
@@ -19,7 +20,7 @@ def vrl_pytest(name, srcs, deps = [], data = [], args = [], env = {}, **kwargs):
         name = name,
         srcs = srcs + ["//tools/pytest:main.py"],
         main = "//tools/pytest:main.py",
-        deps = deps + ["//tools/pytest:main", "//tests:support"],
+        deps = deps + ["//tools/pytest:main", support],
         data = data + ["//:pyproject.toml"],
         args = args + ["$(location %s)" % s for s in test_files],
         env = env,
