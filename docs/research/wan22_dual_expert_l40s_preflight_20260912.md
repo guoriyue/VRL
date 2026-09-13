@@ -171,3 +171,39 @@ before resuming training. Native policy also changes gradient reduction dtype,
 so tiny forward equality alone cannot close single-card training semantics.
 Independent all-step replay, controlled resume, full-size I2V and quality gates
 remain open. The stopped SD3 queue must not be restarted.
+
+## Replay fixture capture exposed a separate reward-device defect
+
+On 2026-09-13, a standalone native collector was prepared to save one two-sample
+group and initial dual-expert LoRA for controlled replay. CPU preflight passed
+with trainer device 0, dedicated rollout device 1 and reward sharing device 1.
+The first attempt, `wan22_replay_fixture_real`, exited before generation because
+the script omitted the schedule-owned `runtime.activate()` call. Its source
+and log are retained. This was a harness admission error, not an OOM.
+
+The corrected `wan22_replay_fixture_active` attempt generated both real videos
+in 69.035 seconds and entered real Kling scoring, but reward parking failed.
+Both attempts ran candidate `4c527cb1`, exited 1 and cleaned up their owned Ray
+sessions. Neither produced `rollout_batches.pt`; initial weights alone are not
+a usable replay fixture. `wan22_replay_fixture_audit.py` is prepared but has
+not run successfully because its required trajectory artifact is absent.
+
+A two-GPU small-tensor regression reproduced the problem: with current CUDA
+device 0 and configured reward device 1, CuMem captured no model allocations.
+Binding only construction captured the allocations but sleep then failed with
+a CUDA invalid-argument error. Pool construction, sleep, wake and terminal
+release all require the configured device context.
+
+Candidate `96bcac9c` adds that scoped context to the in-process reward lifecycle,
+restoring the caller's current device after each operation. No parking threshold
+or dependency was changed. The real two-GPU regression now passes (4.76 seconds),
+including eager and lazy model allocations, physical parking validation under
+the existing standard CUDA residual allowance, exact values after wake and
+terminal cleanup. CPU reward regression: 413 passed, 8 skipped in 8.56 seconds.
+Ruff and diff checks passed. The CPU residual-boundary mock now also mocks the
+CUDA device context; production CUDA admission was not weakened for that test.
+
+All GPU and Ray process inventories were empty after testing. Full Kling
+parking must still be rechecked on the corrected candidate while completing
+the fixture capture; the Wan replay/gradient matrix remains pending. This
+reward lifecycle defect is separate from the previously observed replay drift.
