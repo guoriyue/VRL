@@ -1,6 +1,34 @@
 # SPRINT：engine / worker 抽象 + 多卡引擎全量支持
 
-状态：**P1–P6 已完成（P6 于 2026-09-12 在 4×L40S 上执行，结果见 §P6 结果）**。
+状态：**P1–P5 已完成；P6 硬件测量已执行，原始数值验收仍未通过**。
+
+### Acceptance audit (2026-09-12)
+
+This status correction preserves the hardware results below but supersedes
+the earlier claim that all P6 gates passed. Current authoritative artifacts:
+
+- `outputs/sp_acceptance/compare_retry.json`: BF16 decoded-image comparison
+  explicitly reports `passed=false` at absolute tolerance 0.02, max error
+  0.4823529720 and mismatch fraction 0.0700229034. A small FP32 single-forward
+  error does not establish full FP32 denoise/image equivalence or close this
+  BF16 decoded-image gate.
+- `outputs/sp_online/2x1/metrics.full_precision.csv`: five updates, all
+  pre-update replay errors and clip fractions exactly zero.
+- `outputs/sp_online/1x2/resolved_config.yaml`: the completed diagnostic used
+  `trainer.replay_parity.max_abs_logprob_diff=0.02`, not the original 0.01.
+  Its five CSV replay errors are 0.0088166930, 0.0106220059, 0.0067229867,
+  0.0054761693 and 0.0043174252. Epoch 1 violates the original criterion;
+  the separate first attempt also failed before an update. The success
+  verdict only establishes completion under the relaxed configuration.
+- The completed 1x2 run has pre-update clip fractions 0.39236-0.44618. These
+  are not evidence of an anomaly-free matched learning comparison. Preserve
+  timing evidence, but do not infer convergence equivalence from reward means.
+
+Remaining P6 work: resolve or explicitly redesign the unmatched rollout/replay
+numerics, then validate under the original criteria with per-rank memory and
+matched timing evidence. A proposed new tolerance requires separate justification
+and acceptance, not retrospective relabeling. This audit launched no GPU work.
+
 实施记录：P1 = `5fbb1470`（num_engines 键 + RolloutRuntimeSection）；
 P2 = `6d0f716d`（GenerationRankActor 协议、RayGenerationEngine 组合体、driver
 全链改单位、BundleLayout 引擎分组、N=2/3 假件单测、reward 双子改名）；
