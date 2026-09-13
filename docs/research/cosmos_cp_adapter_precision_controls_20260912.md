@@ -466,3 +466,39 @@ would substitute a different outcome for the original hardware objective.
 Evidence: `cosmos_cp_full_cotangents_l40s/rank-{0,1}.json` and adjacent log.
 Torchrun exits 0, fresh compute inventory is empty and GPUs 0-1 are released.
 Production runtime and acceptance thresholds remain unchanged.
+
+## Head sharding and FP32 LoRA compute
+
+The `ulysses` diagnostic exchanges token shards for head shards around the
+existing PyTorch SDPA. Each rank computes full-sequence attention for half
+the heads, then exchanges outputs back to token shards. Self Q/K/V use
+differentiable gathers; cross K/V are replicated and selected by head. Unlike
+the preceding redundant controls, this does not duplicate full attention.
+Local projections remain local; full-shape conditioning is retained.
+
+With ordinary adapter compute, BF16 block forward outputs and block output
+gradients match exactly, while aggregate parameter-gradient relative L2 is
+0.0140628. FP32 aggregate error is 2.39318e-5. Evidence:
+`cosmos_ulysses_diagnostic_l40s/rank-{0,1}.json` and adjacent log.
+
+A second control uses `--fp32-lora-compute` on both reference and parallel
+models: only PEFT LoRA A/B linear calls disable autocast and receive FP32
+inputs. Existing FP32 adapter storage is asserted, not silently changed.
+The base remains BF16, attention remains head-sharded, and no full-projection,
+full-SDPA or full-cotangent averaging control is enabled.
+
+BF16 aggregate parameter-gradient relative L2 falls to 4.54649e-7, with exact
+matching block forwards, final output, scalar logprob and block output
+gradients. FP32 aggregate error remains 2.39318e-5. Both rank reports match.
+Evidence: `cosmos_ulysses_fp32_lora_l40s/rank-{0,1}.json` and adjacent log.
+
+This is a viable direction for further engineering, not completed acceptance.
+The actual family initialization has zero LoRA B and hence zero initial
+LoRA A gradients; trained/nonzero adapters remain untested. The prototype
+also still gathers outputs between blocks and uses gather-based exchanges,
+so full-resolution peak memory, efficient lifecycle integration, actual
+optimizer updates and resume must be measured before deployment. The new
+LoRA compute contract must be consistent between rollout and replay.
+
+Both jobs exit 0 and fresh compute inventory is empty; GPUs 0-1 are released.
+No production code, dependency or acceptance threshold changed.
