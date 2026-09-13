@@ -897,7 +897,7 @@ def test_fsdp_parking_rolls_every_rank_back_when_one_peer_fails() -> None:
 
     strategy = _fsdp_strategy(_cpu_fsdp_context())
     # This rank parks cleanly; the agreement reports that a peer did not.
-    strategy.all_ranks_succeeded = lambda succeeded: False
+    strategy.collectives.succeeded = lambda succeeded: False
 
     model = nn.Linear(4, 4)
     state = TrainingMemoryState(

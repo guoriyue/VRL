@@ -374,7 +374,7 @@ class _TrainingMicrobatch:
         for batch, adv in zip(batches, advantages, strict=True):
             sample_batches.extend(cls.from_prompt_group(batch, adv, training_microbatch_size))
 
-        target_count = strategy.all_ranks_max_int(len(sample_batches))
+        target_count = strategy.collectives.max_int(len(sample_batches))
         if target_count == len(sample_batches):
             return sample_batches
         if target_count <= 0:
@@ -408,8 +408,8 @@ def _distributed_parity_verdict(
 ) -> tuple[bool, float, bool]:
     """Return one rank-consistent parity verdict for every training process."""
 
-    finite = strategy.all_ranks_true(local_finite)
-    max_abs_diff = strategy.all_ranks_max_float(
+    finite = strategy.collectives.all_true(local_finite)
+    max_abs_diff = strategy.collectives.max_float(
         local_max_abs_diff if local_finite else float("inf"),
     )
     return finite, max_abs_diff, finite and max_abs_diff <= limit
@@ -434,7 +434,7 @@ def _distributed_initial_replay_stats(
     weighted_active_clip_fraction = (
         local.active_clip_fraction * weight if has_local_measurements else 0.0
     )
-    clip_total, active_clip_total, total_weight = strategy.all_ranks_sum(
+    clip_total, active_clip_total, total_weight = strategy.collectives.sum(
         [weighted_clip_fraction, weighted_active_clip_fraction, weight],
     )
     clip_fraction = clip_total / total_weight if total_weight > 0 else 0.0
@@ -444,14 +444,14 @@ def _distributed_initial_replay_stats(
     # exist precisely so an all-filtered rank still runs matching collectives.
     # Whether ANY rank measured something is the gate's decision (it skips a
     # globally empty first update), not a per-rank finiteness verdict.
-    finite = strategy.all_ranks_true(local.finite or not has_local_measurements)
+    finite = strategy.collectives.all_true(local.finite or not has_local_measurements)
     if not has_local_measurements:
         local_max_abs_diff = 0.0
     elif local.finite:
         local_max_abs_diff = local.logprob_abs_diff_max
     else:
         local_max_abs_diff = float("inf")
-    max_abs_diff = strategy.all_ranks_max_float(
+    max_abs_diff = strategy.collectives.max_float(
         local_max_abs_diff,
     )
     return (
@@ -1310,7 +1310,7 @@ class OnlineTrainer:
         # (see all_ranks_true). Called once per microbatch on every rank, in
         # lockstep with the fixed gradient-accumulation count, so this collective
         # is balanced.
-        if not self._strategy.all_ranks_true(bool(batch.batches)):
+        if not self._strategy.collectives.all_true(bool(batch.batches)):
             return
         self._update_had_training_work = True
         uses_evaluator = self.algorithm.uses_evaluator
@@ -1460,7 +1460,7 @@ class OnlineTrainer:
         # Unanimous across ranks (see all_ranks_true): a backward fires
         # cross-rank collectives, so the skip must be agreed or the ranks that did
         # vs. did not run backward deadlock. Called once per step on every rank.
-        if not self._strategy.all_ranks_true(bool(filtered_batches)):
+        if not self._strategy.collectives.all_true(bool(filtered_batches)):
             logger.info(
                 "step %d: all batches filtered (zero advantages) on this or a peer "
                 "rank; skipping backward",
@@ -1866,15 +1866,17 @@ class OnlineTrainer:
         )
         if record is not None:
             worst = dict(record.get("worst_stats") or {})
-            worst["logprob_abs_diff_max"] = self._strategy.all_ranks_max_float(
+            worst["logprob_abs_diff_max"] = self._strategy.collectives.max_float(
                 float(worst.get("logprob_abs_diff_max", 0.0))
             )
-            worst["ratio_abs_dev_max"] = self._strategy.all_ranks_max_float(
+            worst["ratio_abs_dev_max"] = self._strategy.collectives.max_float(
                 float(worst.get("ratio_abs_dev_max", 0.0))
             )
-            worst["finite"] = self._strategy.all_ranks_true(bool(worst.get("finite", True)))
+            worst["finite"] = self._strategy.collectives.all_true(bool(worst.get("finite", True)))
             record["worst_stats"] = worst
-            record["violated"] = not self._strategy.all_ranks_true(not bool(record["violated"]))
+            record["violated"] = not self._strategy.collectives.all_true(
+                not bool(record["violated"])
+            )
             # Fail on every rank; warn and persist evidence only on the writer.
             if record["mode"] == "fail" or self._strategy.context.is_primary:
                 enforce_precision_drift(record, logger=logger)

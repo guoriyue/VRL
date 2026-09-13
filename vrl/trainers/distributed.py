@@ -15,7 +15,7 @@ layer (``fully_shard`` wrapping + DTensor full-state export) lives in
 ``vrl/trainers/strategy.py`` build_strategy. The online recipe supports the
 symmetric colocated torchrun path for ``ddp`` and ``fsdp``: each rank owns its
 local rollout/training device and the strategy layer handles cross-rank gradient
-coordination. Scalar reductions live on the strategy that owns these process groups.
+coordination. TrainingCollectives provides communication over those groups.
 """
 
 from __future__ import annotations
@@ -264,3 +264,80 @@ def run_on_primary_rank(
     torch.distributed.broadcast_object_list(failure_message, src=0, device=context.device)
     if failure_message[0] is not None:
         raise RuntimeError(f"{description} failed on rank 0: {failure_message[0]}") from failure
+
+
+class TrainingCollectives:
+    """Rank communication shared by one trainer and its training strategy.
+
+    The strategy initializes and closes the process groups. Resolve those live
+    groups at each call because construction precedes model preparation. A
+    single-process context never joins another runtime's distributed group.
+    """
+
+    def __init__(self, context: DistributedTrainingContext) -> None:
+        self.context = context
+
+    def _reduce_values(
+        self,
+        values: list[int] | list[float],
+        *,
+        dtype: torch.dtype,
+        op: Any,
+        group: Any = None,
+    ) -> list[Any]:
+        """Reduce on the selected group's backend, using this rank's device."""
+        dist = torch.distributed
+        if not self.context.distributed or not (
+            dist.is_available() and dist.is_initialized() and dist.get_world_size(group) > 1
+        ):
+            return values
+        device = self.context.device if dist.get_backend(group) == "nccl" else "cpu"
+        tensor = torch.tensor(values, dtype=dtype, device=device)
+        dist.all_reduce(tensor, op=op, group=group)
+        return tensor.tolist()
+
+    def max_int(self, value: int) -> int:
+        return int(
+            self._reduce_values([value], dtype=torch.int64, op=torch.distributed.ReduceOp.MAX)[0]
+        )
+
+    def max_float(self, value: float) -> float:
+        return float(
+            self._reduce_values([value], dtype=torch.float64, op=torch.distributed.ReduceOp.MAX)[0]
+        )
+
+    def sum(self, values: list[float]) -> list[float]:
+        return self._reduce_values(values, dtype=torch.float64, op=torch.distributed.ReduceOp.SUM)
+
+    def all_true(self, value: bool) -> bool:
+        return bool(
+            self._reduce_values(
+                [int(value)], dtype=torch.int32, op=torch.distributed.ReduceOp.MIN
+            )[0]
+        )
+
+    def succeeded(self, succeeded: bool) -> bool:
+        # Parking may unmap GPU pools on slower peers. Use the CPU coordination
+        # group so this agreement cannot launch a NCCL kernel during that window.
+        return bool(
+            self._reduce_values(
+                [int(succeeded)],
+                dtype=torch.int64,
+                op=torch.distributed.ReduceOp.MIN,
+                group=cpu_coordination_group(),
+            )[0]
+        )
+
+    def barrier(self) -> None:
+        import torch.distributed as dist
+
+        if self.context.distributed and dist.is_initialized():
+            dist.barrier()
+
+    def coordination_barrier(self) -> None:
+        """Wait on the CPU coordination group without launching GPU kernels."""
+        if not self.context.distributed:
+            return
+        group = cpu_coordination_group()
+        if group is not None:
+            torch.distributed.barrier(group=group)

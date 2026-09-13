@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -411,7 +412,7 @@ def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path
         def export_checkpoint_state(self, bundle):
             return export_checkpoint_state(bundle)
 
-        all_ranks_succeeded = staticmethod(bool)
+        collectives = SimpleNamespace(succeeded=bool)
 
     source = _Bundle()
     save_training_checkpoint(
@@ -458,7 +459,7 @@ def test_save_training_checkpoint_routes_export_through_strategy(tmp_path) -> No
             self.calls.append(bundle)
             return {"module": {"weight": torch.full((1, 1), 9.0)}}
 
-        all_ranks_succeeded = staticmethod(bool)
+        collectives = SimpleNamespace(succeeded=bool)
 
     strategy = _SpyStrategy()
     bundle = _Bundle()  # module weight is the Linear default, never 9.0
@@ -489,7 +490,7 @@ def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) 
             self.calls.append(bundle)
             return {"module": {"weight": torch.full((1, 1), 7.0)}}
 
-        all_ranks_succeeded = staticmethod(bool)
+        collectives = SimpleNamespace(succeeded=bool)
 
     class _CheckpointTrainer(_Trainer):
         def checkpoint_state_dict(self):
@@ -529,6 +530,7 @@ def test_save_training_checkpoint_non_primary_gathers_but_writes_nothing(tmp_pat
 
     class _SpyStrategy:
         def __init__(self) -> None:
+            self.collectives = SimpleNamespace(succeeded=self._agree_success)
             self.calls: list[object] = []
             # rank1 of 2: "not primary" only exists in a multi-rank world, and a
             # multi-rank strategy owes the checkpoint a rank-agreement seam.
@@ -538,7 +540,7 @@ def test_save_training_checkpoint_non_primary_gathers_but_writes_nothing(tmp_pat
             self.calls.append(bundle)
             return {"module": {"weight": torch.full((1, 1), 9.0)}}
 
-        def all_ranks_succeeded(self, succeeded):
+        def _agree_success(self, succeeded):
             return succeeded
 
     strategy = _SpyStrategy()
@@ -569,13 +571,14 @@ def test_primary_checkpoint_publication_failure_reraises_after_rank_agreement(
 
     class _Strategy:
         def __init__(self) -> None:
+            self.collectives = SimpleNamespace(succeeded=self._agree_success)
             self.context = _context(world_size=2)
             self.agreements = []
 
         def export_checkpoint_state(self, bundle):
             return export_checkpoint_state(bundle)
 
-        def all_ranks_succeeded(self, succeeded):
+        def _agree_success(self, succeeded):
             self.agreements.append(succeeded)
             return succeeded
 
@@ -602,13 +605,14 @@ def test_primary_checkpoint_publication_failure_reraises_after_rank_agreement(
 def test_non_primary_receives_primary_checkpoint_publication_failure(tmp_path) -> None:
     class _Strategy:
         def __init__(self) -> None:
+            self.collectives = SimpleNamespace(succeeded=self._agree_success)
             self.context = _context(rank=1, world_size=2)
             self.agreements = []
 
         def export_checkpoint_state(self, bundle):
             return export_checkpoint_state(bundle)
 
-        def all_ranks_succeeded(self, succeeded):
+        def _agree_success(self, succeeded):
             self.agreements.append(succeeded)
             if len(self.agreements) == 6:
                 return False
@@ -1074,7 +1078,7 @@ def test_training_checkpoint_restores_raw_weights_when_ema_gather_fails(tmp_path
                 raise RuntimeError("EMA gather failed")
             return export_checkpoint_state(bundle)
 
-        all_ranks_succeeded = staticmethod(bool)
+        collectives = SimpleNamespace(succeeded=bool)
 
     module = _ExportModule(1, 1, bias=False)
     bundle = _Bundle(module)
@@ -1149,6 +1153,7 @@ def test_peer_ema_swap_failure_rolls_back_before_second_export(tmp_path) -> None
 
     class _AgreementStrategy:
         def __init__(self) -> None:
+            self.collectives = SimpleNamespace(succeeded=self._agree_success)
             self.context = _context(world_size=2)
             self.exported_weights = []
             self.agreements = []
@@ -1158,7 +1163,7 @@ def test_peer_ema_swap_failure_rolls_back_before_second_export(tmp_path) -> None
             self.exported_weights.append(float(state["module"]["weight"].item()))
             return state
 
-        def all_ranks_succeeded(self, succeeded):
+        def _agree_success(self, succeeded):
             self.agreements.append(succeeded)
             if len(self.agreements) == 7:
                 return False
@@ -1197,13 +1202,14 @@ def test_peer_ema_swap_failure_propagates_local_rollback_failure(monkeypatch, tm
 
     class _AgreementStrategy:
         def __init__(self) -> None:
+            self.collectives = SimpleNamespace(succeeded=self._agree_success)
             self.context = _context(world_size=2)
             self.agreements = []
 
         def export_checkpoint_state(self, bundle):
             return export_checkpoint_state(bundle)
 
-        def all_ranks_succeeded(self, succeeded):
+        def _agree_success(self, succeeded):
             self.agreements.append(succeeded)
             if len(self.agreements) == 7:
                 return False
@@ -1253,6 +1259,7 @@ def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path
 
     class _Strategy:
         def __init__(self) -> None:
+            self.collectives = SimpleNamespace(succeeded=self._agree_success)
             self.context = _context(world_size=2)
             self.export_calls = 0
             self.agreements = []
@@ -1261,7 +1268,7 @@ def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path
             self.export_calls += 1
             return export_checkpoint_state(bundle)
 
-        def all_ranks_succeeded(self, succeeded):
+        def _agree_success(self, succeeded):
             self.agreements.append(succeeded)
             if len(self.agreements) in {2, 3}:
                 return False
@@ -1300,6 +1307,7 @@ def test_non_primary_joins_ema_artifact_gather_and_restores_raw_weights(tmp_path
 
     class _GatherStrategy:
         def __init__(self) -> None:
+            self.collectives = SimpleNamespace(succeeded=self._agree_success)
             self.states = []
             self.context = _context(rank=1, world_size=2)
 
@@ -1308,7 +1316,7 @@ def test_non_primary_joins_ema_artifact_gather_and_restores_raw_weights(tmp_path
             self.states.append(float(state["module"]["weight"].item()))
             return state
 
-        def all_ranks_succeeded(self, succeeded):
+        def _agree_success(self, succeeded):
             return succeeded
 
     module = _ExportModule(1, 1, bias=False)

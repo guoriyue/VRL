@@ -955,7 +955,7 @@ def save_training_checkpoint(
     if not isinstance(model_identity, dict) or not model_identity:
         raise ValueError("model_identity must be a non-empty dict")
     is_primary = True if strategy is None else strategy.context.is_primary
-    all_ranks_succeeded = bool if strategy is None else strategy.all_ranks_succeeded
+    all_ranks_succeeded = bool if strategy is None else strategy.collectives.succeeded
     adapter_sources: dict[str, _AdapterCheckpointSource] = {}
     ema_has_updates = False
     setup_failure: BaseException | None = None

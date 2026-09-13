@@ -32,7 +32,7 @@ from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
 from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-from vrl.trainers.distributed import DistributedTrainingContext
+from vrl.trainers.distributed import DistributedTrainingContext, TrainingCollectives
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import (
     OnlineTrainer,
@@ -80,7 +80,11 @@ def _run_rank(rank: int, world_size: int, port: int, local_flags: list[bool], q:
     os.environ["MASTER_PORT"] = str(port)
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
     try:
-        agreed = _rank_strategy().all_ranks_true(local_flags[rank])
+        collectives = _rank_strategy().collectives
+        agreed = collectives.all_true(local_flags[rank])
+        assert collectives.succeeded(local_flags[rank]) is agreed
+        # A local strategy must not join this already-live distributed group.
+        assert SingleProcessStrategy().collectives.all_true(local_flags[rank]) is local_flags[rank]
         q.put((rank, agreed))
     finally:
         dist.destroy_process_group()
@@ -111,8 +115,8 @@ def test_skip_backward_decision_is_unanimous(local_flags: list[bool], expected: 
 
 
 def test_falls_back_to_local_without_process_group() -> None:
-    assert _rank_strategy().all_ranks_true(True) is True
-    assert _rank_strategy().all_ranks_true(False) is False
+    assert _rank_strategy().collectives.all_true(True) is True
+    assert _rank_strategy().collectives.all_true(False) is False
 
 
 def test_zero_weight_initial_replay_is_fully_neutral() -> None:
@@ -245,8 +249,8 @@ def test_parity_verdict_is_rank_consistent() -> None:
 
 def test_replay_planner_pads_to_global_slot_count(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        SingleProcessStrategy,
-        "all_ranks_max_int",
+        TrainingCollectives,
+        "max_int",
         lambda self, value: 8,
     )
 

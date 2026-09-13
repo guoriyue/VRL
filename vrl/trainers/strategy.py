@@ -23,7 +23,7 @@ from torch import nn
 
 from vrl.trainers.distributed import (
     DistributedTrainingContext,
-    cpu_coordination_group,
+    TrainingCollectives,
     init_training_process_group,
     shutdown_training_process_group,
 )
@@ -175,29 +175,7 @@ class Strategy(Protocol):
         """Restore the state previously parked by ``park_training_state``."""
         ...
 
-    def barrier(self) -> None:
-        """Synchronize all training ranks (no-op for single process)."""
-        ...
-
-    def all_ranks_max_int(self, value: int) -> int:
-        """Maximum scalar across training ranks."""
-        ...
-
-    def all_ranks_max_float(self, value: float) -> float:
-        """Maximum scalar across training ranks."""
-        ...
-
-    def all_ranks_true(self, value: bool) -> bool:
-        """Whether every training rank reports true."""
-        ...
-
-    def all_ranks_sum(self, values: list[float]) -> list[float]:
-        """Sum aligned statistics across training ranks in one collective."""
-        ...
-
-    def all_ranks_succeeded(self, succeeded: bool) -> bool:
-        """Agree whether rank-local work succeeded before a collective stage."""
-        ...
+    collectives: TrainingCollectives
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         """Release resources, restoring parked GPU state only when ownership is safe."""
@@ -347,67 +325,12 @@ class _TrainingStateParking:
 class _ProcessGroupStrategy:
     """Shared behavior of strategies that own a torch process group.
 
-    barrier / cross-rank success reduction / process-group shutdown were
-    character-identical between FSDP and DDP; one home, next to the other
-    implementation mixins in this file.
+    Keep DDP/FSDP process-group teardown identical. Communication operations
+    belong to the shared TrainingCollectives instance.
     """
 
     context: DistributedTrainingContext
-
-    def _reduce_values(
-        self,
-        values: list[int] | list[float],
-        *,
-        dtype: torch.dtype,
-        op: Any,
-        group: Any = None,
-    ) -> list[Any]:
-        """Reduce on the selected group's backend, using this rank's device."""
-        dist = torch.distributed
-        if not (dist.is_available() and dist.is_initialized() and dist.get_world_size(group) > 1):
-            return values
-        device = self.context.device if dist.get_backend(group) == "nccl" else "cpu"
-        tensor = torch.tensor(values, dtype=dtype, device=device)
-        dist.all_reduce(tensor, op=op, group=group)
-        return tensor.tolist()
-
-    def all_ranks_max_int(self, value: int) -> int:
-        return int(
-            self._reduce_values([value], dtype=torch.int64, op=torch.distributed.ReduceOp.MAX)[0]
-        )
-
-    def all_ranks_max_float(self, value: float) -> float:
-        return float(
-            self._reduce_values([value], dtype=torch.float64, op=torch.distributed.ReduceOp.MAX)[0]
-        )
-
-    def all_ranks_sum(self, values: list[float]) -> list[float]:
-        return self._reduce_values(values, dtype=torch.float64, op=torch.distributed.ReduceOp.SUM)
-
-    def all_ranks_true(self, value: bool) -> bool:
-        return bool(
-            self._reduce_values(
-                [int(value)], dtype=torch.int32, op=torch.distributed.ReduceOp.MIN
-            )[0]
-        )
-
-    def all_ranks_succeeded(self, succeeded: bool) -> bool:
-        # Parking may unmap GPU pools on slower peers. Use the CPU coordination
-        # group so this agreement cannot launch a NCCL kernel during that window.
-        return bool(
-            self._reduce_values(
-                [int(succeeded)],
-                dtype=torch.int64,
-                op=torch.distributed.ReduceOp.MIN,
-                group=cpu_coordination_group(),
-            )[0]
-        )
-
-    def barrier(self) -> None:
-        import torch.distributed as dist
-
-        if dist.is_initialized():
-            dist.barrier()
+    collectives: TrainingCollectives
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         del restore_parked
@@ -487,12 +410,21 @@ class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy):
     does. ``context`` defaults to a rank0/world1 identity.
     """
 
-    def __init__(self, context: DistributedTrainingContext | None = None) -> None:
+    def __init__(
+        self,
+        context: DistributedTrainingContext | None = None,
+        *,
+        collectives: TrainingCollectives | None = None,
+    ) -> None:
         self.context = context or DistributedTrainingContext(
             strategy="single_process",
             rank=0,
             world_size=1,
             device=torch.device("cpu"),
+        )
+
+        self.collectives = (
+            collectives if collectives is not None else TrainingCollectives(self.context)
         )
 
     def prepare_model(self, model: Any) -> Any:
@@ -517,24 +449,6 @@ class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy):
         from vrl.trainers.weight_sync import build_trainable_state_sync_getter, to_cpu_snapshot
 
         return to_cpu_snapshot(build_trainable_state_sync_getter(bundle)())
-
-    def barrier(self) -> None:
-        return None
-
-    def all_ranks_max_int(self, value: int) -> int:
-        return value
-
-    def all_ranks_max_float(self, value: float) -> float:
-        return value
-
-    def all_ranks_true(self, value: bool) -> bool:
-        return value
-
-    def all_ranks_sum(self, values: list[float]) -> list[float]:
-        return values
-
-    def all_ranks_succeeded(self, succeeded: bool) -> bool:
-        return succeeded
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         if self._parked_training_state is not None and restore_parked:
@@ -705,12 +619,14 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
         self,
         context: DistributedTrainingContext,
         *,
+        collectives: TrainingCollectives | None = None,
         mesh_dims: list[str],
         precision_policy: str,
         reshard_after_forward: bool,
         cpu_offload: bool,
     ) -> None:
         self.context = context
+        self.collectives = collectives if collectives is not None else TrainingCollectives(context)
         self._mesh_dims = list(mesh_dims)
         self._precision_policy = precision_policy
         self._reshard_after_forward = reshard_after_forward
@@ -967,14 +883,14 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
         # the phase lease; see the 2026-08-16 Xid 79 postmortem.
         if self.context.device.type == "cuda":
             torch.cuda.synchronize(self.context.device)
-        _cpu_coordination_barrier()
+        self.collectives.coordination_barrier()
 
         failure: BaseException | None = None
         try:
             self._park_training_state_locally(state)
         except BaseException as error:
             failure = error
-        if not self.all_ranks_succeeded(failure is None):
+        if not self.collectives.succeeded(failure is None):
             if failure is None:
                 # A peer failed while this rank parked cleanly. Undo locally so
                 # the whole world is resident again, and say why.
@@ -1012,9 +928,11 @@ class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
         self,
         context: DistributedTrainingContext,
         *,
+        collectives: TrainingCollectives | None = None,
         find_unused_parameters: bool,
     ) -> None:
         self.context = context
+        self.collectives = collectives if collectives is not None else TrainingCollectives(context)
         self._find_unused_parameters = find_unused_parameters
 
     def prepare_model(self, model: Any) -> Any:
@@ -1129,8 +1047,9 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
             f"config={configured_strategy!r}, context={context.strategy!r}",
         )
 
+    collectives = TrainingCollectives(context)
     if configured_strategy == "single_process":
-        return SingleProcessStrategy(context)
+        return SingleProcessStrategy(context, collectives=collectives)
     if configured_strategy == "fsdp":
         from vrl.models.interfaces.runtime import torch_compile_for_role
 
@@ -1148,6 +1067,7 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
         fsdp = training.fsdp
         return FSDPStrategy(
             context,
+            collectives=collectives,
             mesh_dims=fsdp.mesh,
             precision_policy=fsdp.precision_policy,
             reshard_after_forward=fsdp.reshard_after_forward,
@@ -1158,21 +1078,12 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
             raise AssertionError("typed ddp config was not resolved")
         return DDPStrategy(
             context,
+            collectives=collectives,
             find_unused_parameters=training.ddp.find_unused_parameters,
         )
     raise AssertionError(
         f"typed config admitted unknown training strategy {configured_strategy!r}"
     )
-
-
-def _cpu_coordination_barrier() -> None:
-    """Barrier on the CPU coordination group; no-op without one."""
-
-    import torch.distributed as dist
-
-    group = cpu_coordination_group()
-    if group is not None:
-        dist.barrier(group=group)
 
 
 __all__ = [
