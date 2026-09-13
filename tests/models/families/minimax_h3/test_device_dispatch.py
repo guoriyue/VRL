@@ -448,6 +448,9 @@ def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path):
         },
     )
     executor = MiniMaxH3BatchExecutor(model)
+    for name, parameter in model.transformer.named_parameters():
+        if "lora_B" in name:
+            torch.nn.init.normal_(parameter, std=0.01)
     result = executor.forward_batch(
         request, GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1)
     )
@@ -459,3 +462,64 @@ def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path):
     assert "audio_rows_by_step" in result.replay_tensors
     assert model.pipeline.vae.device.type == model.pipeline.audio_vae.device.type == "cpu"
     assert {p.device.index for p in model.pipeline.text_encoder.parameters()} == {2, 3}
+    from vrl.math.denoise.flow_matching import sde_step_with_logprob
+    from vrl.models.families.minimax_h3.runtime import build_minimax_h3_replay_runtime_bundle
+
+    replay = build_minimax_h3_replay_runtime_bundle(
+        replace(build, rollout=None), block_devices=(1,)
+    )
+    replay.model.transformer.load_state_dict(model.transformer.state_dict(), strict=True)
+    params = executor.parse_sampling_params(request)
+    replay_tensors = {name: tensor.to("cuda:0") for name, tensor in result.replay_tensors.items()}
+    replayed_log_probs = []
+    logprob_errors = []
+    ratio_errors = []
+    for index in reversed(range(result.log_probs.shape[1])):
+        observation = result.observations[:, index].to("cuda:0")
+        restored = replay.model.restore_eval_state(
+            replay_tensors, result.context, observation, index
+        )
+        prediction = replay.model.forward_step(restored, index)["noise_pred"]
+        rescored = sde_step_with_logprob(
+            restored.scheduler,
+            prediction,
+            result.timesteps[:, index].to("cuda:0"),
+            observation,
+            prev_sample=result.actions[:, index].to("cuda:0"),
+            noise_level=params.sde.noise_level,
+            sde_type=params.sde.sde_type,
+            step_index=index,
+        ).log_prob
+        assert torch.isfinite(rescored).all()
+        old = result.log_probs[:, index].to("cuda:0")
+        torch.testing.assert_close(rescored, old, atol=1e-3, rtol=0)
+        torch.testing.assert_close((rescored - old).exp(), torch.ones_like(old), atol=1e-3, rtol=0)
+        replayed_log_probs.append(rescored)
+        logprob_errors.append(float((rescored - old).detach().abs().max()))
+        ratio_errors.append(float(((rescored - old).exp() - 1).detach().abs().max()))
+    (-torch.stack(replayed_log_probs).mean()).backward()
+    gradients = [
+        p.grad
+        for p in replay.model.transformer.parameters()
+        if p.requires_grad and p.grad is not None
+    ]
+    assert gradients and all(torch.isfinite(gradient).all() for gradient in gradients)
+    assert any(gradient.abs().sum() > 0 for gradient in gradients)
+    import json
+
+    (tmp_path / "executor_replay_metrics.json").write_text(
+        json.dumps(
+            {
+                "steps": len(replayed_log_probs),
+                "logprob_max_abs": max(logprob_errors),
+                "ratio_max_abs_from_one": max(ratio_errors),
+                "absolute_tolerance": 1e-3,
+                "gradient_tensors": len(gradients),
+                "nonzero_gradient_tensors": sum(
+                    int(gradient.abs().sum() > 0) for gradient in gradients
+                ),
+                "scope": "Tiny random checkpoint, native executor and independent partitioned replay; no reward or trainer update.",
+            },
+            indent=2,
+        )
+    )
