@@ -32,8 +32,7 @@ from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
 from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-from vrl.trainers.distributed import all_ranks_true
-from vrl.trainers.online import trainer as trainer_module
+from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import (
     OnlineTrainer,
@@ -44,6 +43,7 @@ from vrl.trainers.online.trainer import (
     _ReplayMetrics,
     _TrainingMicrobatch,
 )
+from vrl.trainers.strategy import DDPStrategy, SingleProcessStrategy
 
 # (rank0_has_work, rank1_has_work) -> the agreed result both ranks must return.
 _CASES = {
@@ -51,6 +51,20 @@ _CASES = {
     "one_rank_empty": ([True, False], False),
     "both_empty": ([False, False], False),
 }
+
+
+def _rank_strategy():
+    if not dist.is_initialized():
+        return SingleProcessStrategy()
+    return DDPStrategy(
+        DistributedTrainingContext(
+            strategy="ddp",
+            rank=dist.get_rank(),
+            world_size=dist.get_world_size(),
+            device=torch.device("cpu"),
+        ),
+        find_unused_parameters=False,
+    )
 
 
 def _rollout_batch(sample_count: int) -> RolloutBatch:
@@ -66,7 +80,7 @@ def _run_rank(rank: int, world_size: int, port: int, local_flags: list[bool], q:
     os.environ["MASTER_PORT"] = str(port)
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
     try:
-        agreed = all_ranks_true(local_flags[rank], torch.device("cpu"))
+        agreed = _rank_strategy().all_ranks_true(local_flags[rank])
         q.put((rank, agreed))
     finally:
         dist.destroy_process_group()
@@ -97,8 +111,8 @@ def test_skip_backward_decision_is_unanimous(local_flags: list[bool], expected: 
 
 
 def test_falls_back_to_local_without_process_group() -> None:
-    assert all_ranks_true(True, torch.device("cpu")) is True
-    assert all_ranks_true(False, torch.device("cpu")) is False
+    assert _rank_strategy().all_ranks_true(True) is True
+    assert _rank_strategy().all_ranks_true(False) is False
 
 
 def test_zero_weight_initial_replay_is_fully_neutral() -> None:
@@ -110,7 +124,7 @@ def test_zero_weight_initial_replay_is_fully_neutral() -> None:
             finite=False,
         ),
         local_weight=0.0,
-        device=torch.device("cpu"),
+        strategy=_rank_strategy(),
     )
 
     assert has_measurements is False
@@ -126,13 +140,13 @@ def _run_parity_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None
             local_finite=True,
             local_max_abs_diff=(0.1, 0.9)[rank],
             limit=0.5,
-            device=torch.device("cpu"),
+            strategy=_rank_strategy(),
         )
         nonfinite_result = _distributed_parity_verdict(
             local_finite=(rank == 0),
             local_max_abs_diff=(0.1, 0.9)[rank],
             limit=1.0,
-            device=torch.device("cpu"),
+            strategy=_rank_strategy(),
         )
         initial_replay, initial_has_measurements = _distributed_initial_replay_stats(
             InitialReplayStats(
@@ -141,7 +155,7 @@ def _run_parity_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None
                 logprob_abs_diff_max=(0.1, 0.9)[rank],
             ),
             local_weight=(1.0, 3.0)[rank],
-            device=torch.device("cpu"),
+            strategy=_rank_strategy(),
         )
         mixed_aggregate = _ReplayMetrics()
         if rank == 0:
@@ -162,14 +176,14 @@ def _run_parity_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None
         mixed_rank_replay, mixed_has_measurements = _distributed_initial_replay_stats(
             mixed_local,
             local_weight=mixed_weight,
-            device=torch.device("cpu"),
+            strategy=_rank_strategy(),
         )
 
         empty_local, empty_weight = _ReplayMetrics().initial_replay_snapshot()
         empty_rank_replay, empty_has_measurements = _distributed_initial_replay_stats(
             empty_local,
             local_weight=empty_weight,
-            device=torch.device("cpu"),
+            strategy=_rank_strategy(),
         )
         q.put(
             (
@@ -231,22 +245,22 @@ def test_parity_verdict_is_rank_consistent() -> None:
 
 def test_replay_planner_pads_to_global_slot_count(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        trainer_module,
+        SingleProcessStrategy,
         "all_ranks_max_int",
-        lambda value, device: 8,
+        lambda self, value: 8,
     )
 
     rank0_chunks = _TrainingMicrobatch.plan_balanced(
         [_rollout_batch(8)],
         [torch.ones(8)],
         training_microbatch_size=1,
-        device=torch.device("cpu"),
+        strategy=_rank_strategy(),
     )
     rank1_chunks = _TrainingMicrobatch.plan_balanced(
         [_rollout_batch(3)],
         [torch.ones(3)],
         training_microbatch_size=1,
-        device=torch.device("cpu"),
+        strategy=_rank_strategy(),
     )
 
     assert len(rank0_chunks) == 8
@@ -275,7 +289,7 @@ def _run_replay_planner_rank(
             [_rollout_batch(sample_count)],
             [torch.ones(sample_count)],
             training_microbatch_size=1,
-            device=torch.device("cpu"),
+            strategy=_rank_strategy(),
         )
         q.put(
             (
@@ -356,6 +370,10 @@ def _run_replay_loop_rank(
         _stamp_model_precision(model)
         with torch.no_grad():
             model.weight.fill_(1.0)
+        strategy = _rank_strategy()
+        # This test records replay/backward calls on a tiny model; keep real
+        # rank reductions without wrapping that recording fixture in DDP.
+        strategy.prepare_model = lambda model: model
         trainer = OnlineTrainer(
             algorithm=_Algorithm(),
             collector=CollectorControlFake(),
@@ -371,6 +389,7 @@ def _run_replay_loop_rank(
                 debug=DebugConfig(),
             ),
             device="cpu",
+            strategy=strategy,
         )
 
         def _record_backward(loss: torch.Tensor) -> None:

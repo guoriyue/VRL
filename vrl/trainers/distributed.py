@@ -15,8 +15,7 @@ layer (``fully_shard`` wrapping + DTensor full-state export) lives in
 ``vrl/trainers/strategy.py`` build_strategy. The online recipe supports the
 symmetric colocated torchrun path for ``ddp`` and ``fsdp``: each rank owns its
 local rollout/training device and the strategy layer handles cross-rank gradient
-coordination. Scalar max and boolean agreement reductions also live here so
-trainer code shares the same backend/device handling.
+coordination. Scalar reductions live on the strategy that owns these process groups.
 """
 
 from __future__ import annotations
@@ -265,43 +264,3 @@ def run_on_primary_rank(
     torch.distributed.broadcast_object_list(failure_message, src=0, device=context.device)
     if failure_message[0] is not None:
         raise RuntimeError(f"{description} failed on rank 0: {failure_message[0]}") from failure
-
-
-def _all_reduce_scalar(
-    value: float,
-    *,
-    dtype: torch.dtype,
-    op: Any,
-    device: torch.device,
-) -> float:
-    """One scalar collective (nccl needs the tensor on the rank's GPU)."""
-
-    dist = torch.distributed
-    if not (dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1):
-        return value
-    tensor = torch.tensor([value], dtype=dtype)
-    if dist.get_backend() == "nccl":
-        tensor = tensor.to(device)
-    dist.all_reduce(tensor, op=op)
-    return tensor.item()
-
-
-def all_ranks_max_int(value: int, device: torch.device) -> int:
-    """Return the maximum integer value across training ranks."""
-
-    op = torch.distributed.ReduceOp.MAX
-    return int(_all_reduce_scalar(int(value), dtype=torch.int64, op=op, device=device))
-
-
-def all_ranks_max_float(value: float, device: torch.device) -> float:
-    """Return the maximum float across ranks without changing single-rank runs."""
-
-    op = torch.distributed.ReduceOp.MAX
-    return float(_all_reduce_scalar(float(value), dtype=torch.float64, op=op, device=device))
-
-
-def all_ranks_true(value: bool, device: torch.device) -> bool:
-    """Return True only when every training rank reports True (MIN over {0,1})."""
-
-    op = torch.distributed.ReduceOp.MIN
-    return bool(_all_reduce_scalar(int(bool(value)), dtype=torch.int32, op=op, device=device))

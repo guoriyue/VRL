@@ -53,7 +53,6 @@ from vrl.trainers.diagnostics import (
     tensor_stats,
     trainable_state_digest,
 )
-from vrl.trainers.distributed import all_ranks_max_float, all_ranks_max_int, all_ranks_true
 from vrl.trainers.online.config import TrainerConfig
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.online.precision_guard import (
@@ -361,7 +360,7 @@ class _TrainingMicrobatch:
         batches: list[RolloutBatch],
         advantages: list[torch.Tensor],
         training_microbatch_size: int,
-        device: torch.device,
+        strategy: Strategy,
     ) -> list[_TrainingMicrobatch]:
         """Plan replay execution slots with equal slot counts across ranks.
 
@@ -375,7 +374,7 @@ class _TrainingMicrobatch:
         for batch, adv in zip(batches, advantages, strict=True):
             sample_batches.extend(cls.from_prompt_group(batch, adv, training_microbatch_size))
 
-        target_count = all_ranks_max_int(len(sample_batches), device)
+        target_count = strategy.all_ranks_max_int(len(sample_batches))
         if target_count == len(sample_batches):
             return sample_batches
         if target_count <= 0:
@@ -405,14 +404,13 @@ def _distributed_parity_verdict(
     local_finite: bool,
     local_max_abs_diff: float,
     limit: float,
-    device: torch.device,
+    strategy: Strategy,
 ) -> tuple[bool, float, bool]:
     """Return one rank-consistent parity verdict for every training process."""
 
-    finite = all_ranks_true(local_finite, device)
-    max_abs_diff = all_ranks_max_float(
+    finite = strategy.all_ranks_true(local_finite)
+    max_abs_diff = strategy.all_ranks_max_float(
         local_max_abs_diff if local_finite else float("inf"),
-        device,
     )
     return finite, max_abs_diff, finite and max_abs_diff <= limit
 
@@ -421,7 +419,7 @@ def _distributed_initial_replay_stats(
     local: InitialReplayStats,
     *,
     local_weight: float,
-    device: torch.device,
+    strategy: Strategy,
 ) -> tuple[InitialReplayStats, bool]:
     """Resolve the global snapshot and whether any rank measured replay."""
 
@@ -436,42 +434,25 @@ def _distributed_initial_replay_stats(
     weighted_active_clip_fraction = (
         local.active_clip_fraction * weight if has_local_measurements else 0.0
     )
-    dist = torch.distributed
-    distributed = dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
-    if distributed:
-        totals = torch.tensor(
-            [
-                weighted_clip_fraction,
-                weighted_active_clip_fraction,
-                weight,
-            ],
-            dtype=torch.float64,
-        )
-        if dist.get_backend() == "nccl":
-            totals = totals.to(device)
-        dist.all_reduce(totals, op=dist.ReduceOp.SUM)
-        total_weight = float(totals[2].item())
-        clip_fraction = float(totals[0].item()) / total_weight if total_weight > 0 else 0.0
-        active_clip_fraction = float(totals[1].item()) / total_weight if total_weight > 0 else 0.0
-    else:
-        total_weight = weight
-        clip_fraction = local.clip_fraction if total_weight > 0 else 0.0
-        active_clip_fraction = local.active_clip_fraction if total_weight > 0 else 0.0
+    clip_total, active_clip_total, total_weight = strategy.all_ranks_sum(
+        [weighted_clip_fraction, weighted_active_clip_fraction, weight],
+    )
+    clip_fraction = clip_total / total_weight if total_weight > 0 else 0.0
+    active_clip_fraction = active_clip_total / total_weight if total_weight > 0 else 0.0
 
     # A rank with nothing to measure is neutral, not a failure: dummy batches
     # exist precisely so an all-filtered rank still runs matching collectives.
     # Whether ANY rank measured something is the gate's decision (it skips a
     # globally empty first update), not a per-rank finiteness verdict.
-    finite = all_ranks_true(local.finite or not has_local_measurements, device)
+    finite = strategy.all_ranks_true(local.finite or not has_local_measurements)
     if not has_local_measurements:
         local_max_abs_diff = 0.0
     elif local.finite:
         local_max_abs_diff = local.logprob_abs_diff_max
     else:
         local_max_abs_diff = float("inf")
-    max_abs_diff = all_ranks_max_float(
+    max_abs_diff = strategy.all_ranks_max_float(
         local_max_abs_diff,
-        device,
     )
     return (
         InitialReplayStats(
@@ -1267,7 +1248,7 @@ class OnlineTrainer:
             batches,
             advantages,
             training_microbatch_size,
-            self.device,
+            self._strategy,
         ):
             group_batch = move_training_batch_to_device(
                 sample_batch.batch,
@@ -1329,7 +1310,7 @@ class OnlineTrainer:
         # (see all_ranks_true). Called once per microbatch on every rank, in
         # lockstep with the fixed gradient-accumulation count, so this collective
         # is balanced.
-        if not all_ranks_true(bool(batch.batches), self.device):
+        if not self._strategy.all_ranks_true(bool(batch.batches)):
             return
         self._update_had_training_work = True
         uses_evaluator = self.algorithm.uses_evaluator
@@ -1479,7 +1460,7 @@ class OnlineTrainer:
         # Unanimous across ranks (see all_ranks_true): a backward fires
         # cross-rank collectives, so the skip must be agreed or the ranks that did
         # vs. did not run backward deadlock. Called once per step on every rank.
-        if not all_ranks_true(bool(filtered_batches), self.device):
+        if not self._strategy.all_ranks_true(bool(filtered_batches)):
             logger.info(
                 "step %d: all batches filtered (zero advantages) on this or a peer "
                 "rank; skipping backward",
@@ -1570,7 +1551,7 @@ class OnlineTrainer:
                 local_finite=_local_parity_finite,
                 local_max_abs_diff=_local_parity_max,
                 limit=_parity_limit,
-                device=self.device,
+                strategy=self._strategy,
             )
             logger.info(
                 "DEBUG first-step log-prob diff: mean=%.6f max=%.6f | "
@@ -1885,23 +1866,15 @@ class OnlineTrainer:
         )
         if record is not None:
             worst = dict(record.get("worst_stats") or {})
-            worst["logprob_abs_diff_max"] = all_ranks_max_float(
-                float(worst.get("logprob_abs_diff_max", 0.0)),
-                self.device,
+            worst["logprob_abs_diff_max"] = self._strategy.all_ranks_max_float(
+                float(worst.get("logprob_abs_diff_max", 0.0))
             )
-            worst["ratio_abs_dev_max"] = all_ranks_max_float(
-                float(worst.get("ratio_abs_dev_max", 0.0)),
-                self.device,
+            worst["ratio_abs_dev_max"] = self._strategy.all_ranks_max_float(
+                float(worst.get("ratio_abs_dev_max", 0.0))
             )
-            worst["finite"] = all_ranks_true(
-                bool(worst.get("finite", True)),
-                self.device,
-            )
+            worst["finite"] = self._strategy.all_ranks_true(bool(worst.get("finite", True)))
             record["worst_stats"] = worst
-            record["violated"] = not all_ranks_true(
-                not bool(record["violated"]),
-                self.device,
-            )
+            record["violated"] = not self._strategy.all_ranks_true(not bool(record["violated"]))
             # Fail on every rank; warn and persist evidence only on the writer.
             if record["mode"] == "fail" or self._strategy.context.is_primary:
                 enforce_precision_drift(record, logger=logger)
@@ -1922,7 +1895,7 @@ class OnlineTrainer:
         resolved, has_measurements = _distributed_initial_replay_stats(
             local,
             local_weight=local_weight,
-            device=self.device,
+            strategy=self._strategy,
         )
         correction = getattr(self.algorithm, "precision_correction", None)
         intentional_correction = correction is not None and (

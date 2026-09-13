@@ -179,6 +179,22 @@ class Strategy(Protocol):
         """Synchronize all training ranks (no-op for single process)."""
         ...
 
+    def all_ranks_max_int(self, value: int) -> int:
+        """Maximum scalar across training ranks."""
+        ...
+
+    def all_ranks_max_float(self, value: float) -> float:
+        """Maximum scalar across training ranks."""
+        ...
+
+    def all_ranks_true(self, value: bool) -> bool:
+        """Whether every training rank reports true."""
+        ...
+
+    def all_ranks_sum(self, values: list[float]) -> list[float]:
+        """Sum aligned statistics across training ranks in one collective."""
+        ...
+
     def all_ranks_succeeded(self, succeeded: bool) -> bool:
         """Agree whether rank-local work succeeded before a collective stage."""
         ...
@@ -338,10 +354,54 @@ class _ProcessGroupStrategy:
 
     context: DistributedTrainingContext
 
-    def all_ranks_succeeded(self, succeeded: bool) -> bool:
-        """Reduce a per-rank success flag to one answer shared by every rank."""
+    def _reduce_values(
+        self,
+        values: list[int] | list[float],
+        *,
+        dtype: torch.dtype,
+        op: Any,
+        group: Any = None,
+    ) -> list[Any]:
+        """Reduce on the selected group's backend, using this rank's device."""
+        dist = torch.distributed
+        if not (dist.is_available() and dist.is_initialized() and dist.get_world_size(group) > 1):
+            return values
+        device = self.context.device if dist.get_backend(group) == "nccl" else "cpu"
+        tensor = torch.tensor(values, dtype=dtype, device=device)
+        dist.all_reduce(tensor, op=op, group=group)
+        return tensor.tolist()
 
-        return _distributed_all_ranks_succeeded(self.context, succeeded)
+    def all_ranks_max_int(self, value: int) -> int:
+        return int(
+            self._reduce_values([value], dtype=torch.int64, op=torch.distributed.ReduceOp.MAX)[0]
+        )
+
+    def all_ranks_max_float(self, value: float) -> float:
+        return float(
+            self._reduce_values([value], dtype=torch.float64, op=torch.distributed.ReduceOp.MAX)[0]
+        )
+
+    def all_ranks_sum(self, values: list[float]) -> list[float]:
+        return self._reduce_values(values, dtype=torch.float64, op=torch.distributed.ReduceOp.SUM)
+
+    def all_ranks_true(self, value: bool) -> bool:
+        return bool(
+            self._reduce_values(
+                [int(value)], dtype=torch.int32, op=torch.distributed.ReduceOp.MIN
+            )[0]
+        )
+
+    def all_ranks_succeeded(self, succeeded: bool) -> bool:
+        # Parking may unmap GPU pools on slower peers. Use the CPU coordination
+        # group so this agreement cannot launch a NCCL kernel during that window.
+        return bool(
+            self._reduce_values(
+                [int(succeeded)],
+                dtype=torch.int64,
+                op=torch.distributed.ReduceOp.MIN,
+                group=cpu_coordination_group(),
+            )[0]
+        )
 
     def barrier(self) -> None:
         import torch.distributed as dist
@@ -460,6 +520,18 @@ class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy):
 
     def barrier(self) -> None:
         return None
+
+    def all_ranks_max_int(self, value: int) -> int:
+        return value
+
+    def all_ranks_max_float(self, value: float) -> float:
+        return value
+
+    def all_ranks_true(self, value: bool) -> bool:
+        return value
+
+    def all_ranks_sum(self, values: list[float]) -> list[float]:
+        return values
 
     def all_ranks_succeeded(self, succeeded: bool) -> bool:
         return succeeded
@@ -1101,34 +1173,6 @@ def _cpu_coordination_barrier() -> None:
     group = cpu_coordination_group()
     if group is not None:
         dist.barrier(group=group)
-
-
-def _distributed_all_ranks_succeeded(
-    context: DistributedTrainingContext,
-    succeeded: bool,
-) -> bool:
-    """Reduce one rank-local outcome through the strategy process group.
-
-    Prefers the CPU coordination group: this flag is exchanged inside park/wake
-    windows, where a NCCL all-reduce would run a GPU kernel on a card whose
-    cumem pools were just unmapped while slower peers are still unmapping.
-    """
-
-    import torch.distributed as dist
-
-    if not dist.is_initialized():
-        return succeeded
-    group = cpu_coordination_group()
-    if group is not None:
-        flag = torch.tensor([1 if succeeded else 0])
-        dist.all_reduce(flag, op=dist.ReduceOp.MIN, group=group)
-        return bool(flag.item())
-    flag = torch.tensor(
-        [1 if succeeded else 0],
-        device=context.device if context.device.type == "cuda" else None,
-    )
-    dist.all_reduce(flag, op=dist.ReduceOp.MIN)
-    return bool(flag.item())
 
 
 __all__ = [
