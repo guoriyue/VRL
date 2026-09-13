@@ -13,7 +13,7 @@ from vrl.trajectory.types import (
     TrajectorySegment,
     TrajectoryTensor,
 )
-from vrl.trajectory.views import RewardView
+from vrl.trajectory.views import RewardInputSpec
 
 # The core role triple a trainable segment must have exactly one of each.
 # Single ordered source of truth: the uniqueness check (below) and the
@@ -91,23 +91,23 @@ class TrajectoryValidator:
             )
 
         for view_key, view in batch.reward_views.items():
-            if not isinstance(view, RewardView):
-                self._fail(f"reward_views[{view_key!r}] must be a RewardView")
+            if not isinstance(view, RewardInputSpec):
+                self._fail(f"reward_views[{view_key!r}] must be a RewardInputSpec")
             if view_key != view.name:
-                self._fail(f"RewardView key {view_key!r} does not match name={view.name!r}")
+                self._fail(f"RewardInputSpec key {view_key!r} does not match name={view.name!r}")
             self.validate_reward_view(view)
 
         self._reject_runtime_state(batch.context, "TrajectoryBatch.context")
         return batch
 
-    def validate_reward_view(self, view: RewardView) -> RewardView:
+    def validate_reward_view(self, view: RewardInputSpec) -> RewardInputSpec:
         """Validate that a reward view only references known trajectory tensors."""
 
         refs = self._ensure_tensor_refs()
         for ref in view.tensor_refs:
             if ref not in refs:
-                self._fail(f"RewardView {view.name!r} references unknown tensor {ref!r}")
-        self._reject_runtime_state(view.metadata, f"RewardView {view.name!r}.metadata")
+                self._fail(f"RewardInputSpec {view.name!r} references unknown tensor {ref!r}")
+        self._reject_runtime_state(view.metadata, f"RewardInputSpec {view.name!r}.metadata")
         return view
 
     def _validate_segment(

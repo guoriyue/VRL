@@ -30,7 +30,7 @@ from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import CollectorRequest, GenerationRequestBuilder
 from vrl.rollouts.stats import RolloutStats
 from vrl.trajectory import (
-    RewardView,
+    RewardInputSpec,
     TrajectoryReader,
     TrajectoryStoragePolicy,
     build_ar_discrete_trajectory,
@@ -828,7 +828,7 @@ def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
     )
     output = asyncio.run(_Runtime().generate(request))
     assert output.trajectory is not None
-    output.trajectory.reward_views["alternate"] = RewardView(
+    output.trajectory.reward_views["alternate"] = RewardInputSpec(
         name="alternate",
         metadata={"output_ref": "GenerationOutput.output"},
     )
@@ -893,7 +893,7 @@ def test_reward_output_rejects_missing_or_unsupported_output_ref(
     )
     output = asyncio.run(_Runtime().generate(request))
     assert output.trajectory is not None
-    output.trajectory.reward_views["image"] = RewardView(
+    output.trajectory.reward_views["image"] = RewardInputSpec(
         name="image",
         value_range="tanh",
         metadata=metadata,

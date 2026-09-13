@@ -44,13 +44,13 @@ if TYPE_CHECKING:
     from vrl.trajectory.validation import TrajectoryValidationError as TrajectoryValidationError
     from vrl.trajectory.validation import TrajectoryValidator as TrajectoryValidator
     from vrl.trajectory.validation import tensor_ref as tensor_ref
-    from vrl.trajectory.views import RewardView as RewardView
+    from vrl.trajectory.views import RewardInputSpec as RewardInputSpec
 
 _PUBLIC_EXPORTS = {
     "AxisKind": ("vrl.trajectory.types", "AxisKind"),
     "DistributionKind": ("vrl.trajectory.types", "DistributionKind"),
     "ReplayInput": ("vrl.trajectory.types", "ReplayInput"),
-    "RewardView": ("vrl.trajectory.views", "RewardView"),
+    "RewardInputSpec": ("vrl.trajectory.views", "RewardInputSpec"),
     "SegmentModality": ("vrl.trajectory.types", "SegmentModality"),
     "TensorRole": ("vrl.trajectory.types", "TensorRole"),
     "TrajectoryAxis": ("vrl.trajectory.types", "TrajectoryAxis"),

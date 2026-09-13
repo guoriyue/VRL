@@ -29,7 +29,7 @@ import torch
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import move_training_batch_to_device
-from vrl.rollouts.collector.core import GeneratedPromptGroup, RewardCollectionMode
+from vrl.rollouts.collector.core import RewardCollectionMode, RolloutGenerationResult
 from vrl.rollouts.orchestration.continuous.generated_capacity import GeneratedRolloutCapacity
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
@@ -542,7 +542,7 @@ class ContinuousRolloutProducer:
             ):
                 generation_started = time.perf_counter()
                 unscored = await self.lifecycle.collector.generate_rollout(request)
-                receipt = GeneratedPromptGroup(
+                receipt = RolloutGenerationResult(
                     unscored, prompt_indices, generation_started, time.perf_counter()
                 )
                 generated = True

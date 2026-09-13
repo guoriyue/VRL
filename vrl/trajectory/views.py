@@ -11,8 +11,8 @@ RewardValueRange = Literal["unit", "tanh"]
 
 
 @dataclass(frozen=True, slots=True)
-class RewardView:
-    """Names the trajectory facts a reward function should read."""
+class RewardInputSpec:
+    """Declare the output references and pixel range consumed by reward scoring."""
 
     name: str
     tensor_refs: tuple[str, ...] = ()
@@ -24,15 +24,15 @@ class RewardView:
 
     def __post_init__(self) -> None:
         if not self.name:
-            raise ValueError("RewardView.name must be non-empty")
+            raise ValueError("RewardInputSpec.name must be non-empty")
         if self.value_range not in {"unit", "tanh"}:
             raise ValueError(
-                f"RewardView.value_range must be 'unit' or 'tanh', got {self.value_range!r}",
+                f"RewardInputSpec.value_range must be 'unit' or 'tanh', got {self.value_range!r}",
             )
-        validate_string_tuple("RewardView.tensor_refs", self.tensor_refs)
+        validate_string_tuple("RewardInputSpec.tensor_refs", self.tensor_refs)
 
 
 __all__ = [
+    "RewardInputSpec",
     "RewardValueRange",
-    "RewardView",
 ]

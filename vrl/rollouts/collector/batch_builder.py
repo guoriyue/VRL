@@ -103,7 +103,7 @@ class TrajectoryRolloutBatchBuilder:
         if view.tensor_refs:
             if len(view.tensor_refs) != 1:
                 raise RuntimeError(
-                    f"RewardView {view.name!r} must expose exactly one tensor_ref "
+                    f"RewardInputSpec {view.name!r} must expose exactly one tensor_ref "
                     "for collector reward scoring",
                 )
             ref = view.tensor_refs[0]
@@ -112,13 +112,13 @@ class TrajectoryRolloutBatchBuilder:
                 reward_output = self.trajectory.segments[segment_name].tensors[tensor_name].value
             except KeyError as exc:
                 raise RuntimeError(
-                    f"RewardView references unknown trajectory tensor {ref!r}",
+                    f"RewardInputSpec references unknown trajectory tensor {ref!r}",
                 ) from exc
         elif view.metadata.get("output_ref") == "GenerationOutput.output":
             reward_output = self.output.output
         else:
             raise RuntimeError(
-                f"RewardView {view.name!r} has no tensor_refs and no supported output_ref",
+                f"RewardInputSpec {view.name!r} has no tensor_refs and no supported output_ref",
             )
 
         if isinstance(reward_output, torch.Tensor) and reward_output.dtype == torch.uint8:

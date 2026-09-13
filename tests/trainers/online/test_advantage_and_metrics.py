@@ -247,14 +247,14 @@ class TestAdvantageAndMetrics:
 
         from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
         from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
-        from vrl.trainers.online.trainer import _ReplayMetrics, _ReplaySampleBatch
+        from vrl.trainers.online.trainer import _ReplayMetrics, _TrainingMicrobatch
 
         batch = _diffusion_rollout_batch(
             rewards=torch.zeros(10),
             group_ids=torch.zeros(10, dtype=torch.long),
             num_steps=1,
         )
-        batches = _ReplaySampleBatch.from_prompt_group(
+        batches = _TrainingMicrobatch.from_prompt_group(
             batch, torch.ones(10), samples_per_replay_batch=8
         )
         assert [batch.loss_weight for batch in batches] == pytest.approx([0.8, 0.2])

@@ -306,8 +306,12 @@ class _ReplayMetrics:
 
 
 @dataclass(frozen=True, slots=True)
-class _ReplaySampleBatch:
-    """One replay slice with its advantages and full-group loss contribution."""
+class _TrainingMicrobatch:
+    """One training microbatch: existing rollout data, advantages, and loss weight.
+
+    This wraps a RolloutBatch slice; it does not introduce a new trajectory format.
+    Dummy entries balance distributed execution without contributing loss.
+    """
 
     batch: RolloutBatch
     advantages: torch.Tensor
@@ -320,7 +324,7 @@ class _ReplaySampleBatch:
         batch: RolloutBatch,
         advantages: torch.Tensor,
         samples_per_replay_batch: int,
-    ) -> list[_ReplaySampleBatch]:
+    ) -> list[_TrainingMicrobatch]:
         """Split a prompt group using the validated plan; zero keeps it whole.
 
         Slice weights preserve the original full-group loss contribution.
@@ -338,7 +342,7 @@ class _ReplaySampleBatch:
         if slice_size <= 0 or slice_size >= batch_size:
             return [cls(batch=batch, advantages=advantages, loss_weight=1.0)]
 
-        batches: list[_ReplaySampleBatch] = []
+        batches: list[_TrainingMicrobatch] = []
         for start in range(0, batch_size, slice_size):
             stop = min(start + slice_size, batch_size)
             selector = torch.arange(start, stop, device=batch.rewards.device)
@@ -358,7 +362,7 @@ class _ReplaySampleBatch:
         advantages: list[torch.Tensor],
         samples_per_replay_batch: int,
         device: torch.device,
-    ) -> list[_ReplaySampleBatch]:
+    ) -> list[_TrainingMicrobatch]:
         """Plan replay execution slots with equal slot counts across ranks.
 
         Local zero-advantage filtering can leave different ranks with different
@@ -367,7 +371,7 @@ class _ReplaySampleBatch:
         when only some slots carry training signal.
         """
 
-        sample_batches: list[_ReplaySampleBatch] = []
+        sample_batches: list[_TrainingMicrobatch] = []
         for batch, adv in zip(batches, advantages, strict=True):
             sample_batches.extend(cls.from_prompt_group(batch, adv, samples_per_replay_batch))
 
@@ -1259,7 +1263,7 @@ class OnlineTrainer:
         cfg = self.config
         loss_scale = int(total_groups) * len(train_indices)
         samples_per_replay_batch = cfg.batch_plan.samples_per_replay_batch
-        for sample_batch in _ReplaySampleBatch.plan_balanced(
+        for sample_batch in _TrainingMicrobatch.plan_balanced(
             batches,
             advantages,
             samples_per_replay_batch,
@@ -1339,7 +1343,7 @@ class OnlineTrainer:
             cfg.timestep_selection,
         )
         samples_per_replay_batch = cfg.batch_plan.samples_per_replay_batch
-        first_batch = _ReplaySampleBatch.from_prompt_group(
+        first_batch = _TrainingMicrobatch.from_prompt_group(
             batch.batches[0],
             batch.advantages[0],
             samples_per_replay_batch,
@@ -1520,7 +1524,7 @@ class OnlineTrainer:
         # (using first filtered batch so memory footprint is bounded).
         first_step_debug_record: dict[str, Any] | None = None
         precision_metadata = self._precision_metadata()
-        first_debug_batch = _ReplaySampleBatch.from_prompt_group(
+        first_debug_batch = _TrainingMicrobatch.from_prompt_group(
             filtered_batches[0],
             filtered_advs[0],
             samples_per_replay_batch,

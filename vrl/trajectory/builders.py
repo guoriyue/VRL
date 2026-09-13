@@ -20,7 +20,7 @@ from vrl.trajectory.validation import (
     tensor_ref,
     validate_shape_prefix,
 )
-from vrl.trajectory.views import RewardView
+from vrl.trajectory.views import RewardInputSpec
 
 # Sentinel marking a context value that cannot be serialized into a trajectory
 # record; it is dropped rather than stored.
@@ -124,7 +124,7 @@ def build_diffusion_trajectory(
         },
         primary_segment="denoise",
         reward_views={
-            reward_modality: RewardView(
+            reward_modality: RewardInputSpec(
                 name=reward_modality,
                 value_range="unit",
                 metadata={"output_ref": "GenerationOutput.output"},
@@ -288,7 +288,7 @@ def build_chunk_autoregressive_denoise_trajectory(
         },
         primary_segment="denoise",
         reward_views={
-            reward_modality: RewardView(
+            reward_modality: RewardInputSpec(
                 name=reward_modality,
                 value_range="unit",
                 metadata={"output_ref": "GenerationOutput.output"},
@@ -356,7 +356,7 @@ def build_chunk_autoregressive_generation_trajectory(
         },
         primary_segment=None,
         reward_views={
-            reward_modality: RewardView(
+            reward_modality: RewardInputSpec(
                 name=reward_modality,
                 tensor_refs=(tensor_ref("generated_chunks", "output"),),
                 value_range="unit",
@@ -460,7 +460,7 @@ def build_ar_discrete_trajectory(
         },
         primary_segment="image_tokens",
         reward_views={
-            "image": RewardView(
+            "image": RewardInputSpec(
                 name="image",
                 value_range="tanh",
                 metadata={"output_ref": "GenerationOutput.output"},
@@ -573,7 +573,7 @@ def build_ar_continuous_trajectory(
         segments=segments,
         primary_segment="image_tokens",
         reward_views={
-            "image": RewardView(
+            "image": RewardInputSpec(
                 name="image",
                 value_range="tanh",
                 metadata={"output_ref": "GenerationOutput.output"},
@@ -686,7 +686,7 @@ def build_ar_multisegment_trajectory(
         segments=trajectory_segments,
         primary_segment=primary_segment,
         reward_views={
-            "image": RewardView(
+            "image": RewardInputSpec(
                 name="image",
                 value_range="tanh",
                 metadata={"output_ref": "GenerationOutput.output"},

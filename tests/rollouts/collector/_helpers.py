@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.collector.core import GeneratedPromptGroup, RolloutCollector
+from vrl.rollouts.collector.core import RolloutCollector, RolloutGenerationResult
 from vrl.rollouts.stats import RolloutStats
 
 
@@ -58,7 +58,7 @@ class PromptCollectionFake:
 
     def finish_scored_prompt_groups(
         self,
-        generated_groups: list[GeneratedPromptGroup],
+        generated_groups: list[RolloutGenerationResult],
         batches: list[RolloutBatch],
         stats: RolloutStats,
     ) -> list[RolloutBatch]:

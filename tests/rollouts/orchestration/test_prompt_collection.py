@@ -13,9 +13,9 @@ from tests.rollouts.collector._helpers import PromptCollectionFake
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.core import (
-    GeneratedPromptGroup,
     PromptCollectionCleanupError,
     RewardCollectionMode,
+    RolloutGenerationResult,
 )
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.stats import RolloutStats
@@ -720,14 +720,14 @@ async def test_generation_handoff_is_demand_driven_and_never_scores() -> None:
     )
     first_request, first_indices = next(groups)
     assert collector.events == []
-    first = GeneratedPromptGroup(
+    first = RolloutGenerationResult(
         await collector.generate_rollout(first_request), first_indices, 0.0, 0.0
     )
     assert first.prompt_indices == [0]
     assert first.completed_at >= first.started_at
     assert collector.events == ["generate:plain"]
     second_request, second_indices = next(groups)
-    second = GeneratedPromptGroup(
+    second = RolloutGenerationResult(
         await collector.generate_rollout(second_request), second_indices, 0.0, 0.0
     )
     assert second.prompt_indices == [1]

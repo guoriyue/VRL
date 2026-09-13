@@ -15,7 +15,7 @@ from vrl.generation.types import GenerationSampleRow
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
-    from vrl.trajectory.views import RewardView
+    from vrl.trajectory.views import RewardInputSpec
 
 AxisKind = Literal[
     "sample",
@@ -51,7 +51,7 @@ def validate_string_tuple(name: str, values: tuple[str, ...]) -> None:
     """Raise ValueError if any element of ``values`` is not a non-empty string.
 
     Guards the ``tensor_refs`` tuples that name tensors inside a segment — here
-    for ``ReplayInput`` and in ``vrl.trajectory.views`` for ``RewardView``. An
+    for ``ReplayInput`` and in ``vrl.trajectory.views`` for ``RewardInputSpec``. An
     empty or non-string ref would only fail much later, at resolve time, with no
     pointer back to the record that declared it.
     """
@@ -155,7 +155,7 @@ class TrajectoryBatch:
     axes: dict[str, TrajectoryAxis]
     segments: dict[str, TrajectorySegment]
     primary_segment: str | None = None
-    reward_views: dict[str, RewardView] = field(default_factory=dict)
+    reward_views: dict[str, RewardInputSpec] = field(default_factory=dict)
     # Batch-shared replay metadata; sample-aligned values belong in segment tensors.
     context: dict[str, Any] = field(default_factory=dict)
 

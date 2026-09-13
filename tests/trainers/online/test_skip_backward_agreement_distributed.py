@@ -42,7 +42,7 @@ from vrl.trainers.online.trainer import (
     _distributed_initial_replay_stats,
     _distributed_parity_verdict,
     _ReplayMetrics,
-    _ReplaySampleBatch,
+    _TrainingMicrobatch,
 )
 
 # (rank0_has_work, rank1_has_work) -> the agreed result both ranks must return.
@@ -236,13 +236,13 @@ def test_replay_planner_pads_to_global_slot_count(monkeypatch: pytest.MonkeyPatc
         lambda value, device: 8,
     )
 
-    rank0_chunks = _ReplaySampleBatch.plan_balanced(
+    rank0_chunks = _TrainingMicrobatch.plan_balanced(
         [_rollout_batch(8)],
         [torch.ones(8)],
         samples_per_replay_batch=1,
         device=torch.device("cpu"),
     )
-    rank1_chunks = _ReplaySampleBatch.plan_balanced(
+    rank1_chunks = _TrainingMicrobatch.plan_balanced(
         [_rollout_batch(3)],
         [torch.ones(3)],
         samples_per_replay_batch=1,
@@ -271,7 +271,7 @@ def _run_replay_planner_rank(
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
     try:
         sample_count = local_counts[rank]
-        batches = _ReplaySampleBatch.plan_balanced(
+        batches = _TrainingMicrobatch.plan_balanced(
             [_rollout_batch(sample_count)],
             [torch.ones(sample_count)],
             samples_per_replay_batch=1,

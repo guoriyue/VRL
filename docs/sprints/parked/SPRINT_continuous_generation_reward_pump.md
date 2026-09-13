@@ -208,7 +208,7 @@ Stage baseline 的 identity/timing 已落地；四 L4 硬件验证仍未完成�
 - 已提取 `generate_prompt_groups()`：只执行 generation，逐组交付 receipt，
   保留 plain prompt 合批、PromptExample metadata/overrides 和全局 prompt indices。
   原 `collect_prompt_groups()` 已使用同一路径，strict/serial 的打分行为保持。
-- `GeneratedPromptGroup` 是生成到打分的实际交付记录；包含产物、重映射索引和本地时间，
+- `RolloutGenerationResult` 是生成到打分的实际交付记录；包含产物、重映射索引和本地时间，
   不携带算法名单或能力声明。它与 collector、trainer-ready queue 的边界各有消费者。
 - 验证包括既有 collection/continuous 回归，以及停止读取后不生成下一组、
   不自动启动 reward 的阶段交付测试。

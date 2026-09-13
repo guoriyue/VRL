@@ -104,8 +104,8 @@ class PromptCollectionCleanupError(RuntimeError):
 
 
 @dataclass(slots=True)
-class GeneratedPromptGroup:
-    """Generation receipt retained until scoring and prompt remapping finish.
+class RolloutGenerationResult:
+    """Unscored rollout plus original prompt indices and local generation timings.
 
     Both schedules use this handoff so deferred scoring preserves example
     metadata and the original prompt indices without reconstructing requests.
@@ -507,7 +507,7 @@ class RolloutCollector:
         collection_started = time.perf_counter()
         reward_intervals: list[tuple[float, float]] = []
 
-        generated_groups: list[GeneratedPromptGroup] = []
+        generated_groups: list[RolloutGenerationResult] = []
         scored_batches: list[RolloutBatch] = []
         # The collector combines topology and reward-runtime execution semantics.
         # Only its capability may enable per-group collection: the acceptance
@@ -556,7 +556,7 @@ class RolloutCollector:
             score_task = None
             accept_single_batch(await task)
 
-        async def record_generated(group: GeneratedPromptGroup) -> None:
+        async def record_generated(group: RolloutGenerationResult) -> None:
             nonlocal score_task
             generated_groups.append(group)
             unscored = group.unscored
@@ -586,7 +586,7 @@ class RolloutCollector:
             ):
                 started = time.perf_counter()
                 unscored = await self.generate_rollout(request)
-                generated = GeneratedPromptGroup(
+                generated = RolloutGenerationResult(
                     unscored, prompt_indices, started, time.perf_counter()
                 )
                 await record_generated(generated)
@@ -648,7 +648,7 @@ class RolloutCollector:
 
     def finish_scored_prompt_groups(
         self,
-        generated_groups: list[GeneratedPromptGroup],
+        generated_groups: list[RolloutGenerationResult],
         batches: list[RolloutBatch],
         stats: RolloutStats,
     ) -> list[RolloutBatch]:
@@ -682,10 +682,10 @@ class RolloutCollector:
 
 
 __all__ = [
-    "GeneratedPromptGroup",
     "PromptCollectionCleanupError",
     "RewardCollectionMode",
     "RolloutCollector",
     "RolloutEvaluation",
+    "RolloutGenerationResult",
     "UnscoredRollout",
 ]
