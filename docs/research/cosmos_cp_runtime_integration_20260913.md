@@ -669,3 +669,93 @@ export, real text/VAE/reward pipeline, Ray owner recovery, changed topology,
 compile behavior or performance claim is established here. The next hardware
 gate remains released-weight online composition and recovery using the pinned
 Cosmos checkpoint, followed by production construction/config acceptance.
+
+## Released-weight native online recovery: 9ea0adff
+
+The opt-in `tests/trainers/online/cosmos_cp_released_probe.py` executes the
+same native composition harness with the pinned released Cosmos Predict2.5
+2B transformer and scheduler. Both control and fresh resume jobs completed
+with exit0 on the four-L40S host. Artifacts are retained at:
+
+`/mnt/nvme/outputs/wan22_i2v_cache/cosmos_native_online_recovery_l40s`
+
+### Actual workload
+
+- Model revision `0d37c7498f54cee3c599d438d895a0a4a8608064`, local files only.
+- BF16 base, native FP32 default/previous LoRA, rank32/alpha64, Q/K/V/output
+  and feed-forward targets. Previous adapter remains frozen.
+- Strict deterministic IEEE compute, fixed64 Linear rows, head-sharded
+  cross-attention, CP2 training on GPUs0-1, disjoint local rollout on GPU2.
+- Training activation checkpointing enabled. GPU3 reserved because native
+  checkpoint RNG capture visits all visible devices, not for model compute.
+- 480x832/33f latent geometry: two samples with latent shape
+  `[2,16,9,60,104]`, synthetic text `[2,512,100352]`, CFG5.
+- Two recorded CPS transitions from the start of the released 20-step UniPC
+  schedule. This is a truncated training trajectory, not a finished video.
+- Synthetic rewards `[0,1]`, native GRPO, lr1e-4; EMA decay0.9/interval1.
+- Control runs updates1-2 and saves native checkpoint1. New processes restore
+  checkpoint1 strictly and repeat update2. No concurrent GPU job or code edit
+  occurred during either run.
+
+### Results
+
+| Execution | Seconds per native step, rank0 | Initial replay max abs | Gradient norm | Training peak allocated, each rank |
+| --- | ---: | ---: | ---: | ---: |
+| Control update1 | 461.3430 | 5.96046448e-8 | 5.77731153e-5 | 9,361,716,224 bytes |
+| Control update2 | 453.8359 | 0 | 4.54964211e-5 | 9,729,004,544 bytes |
+| Fresh resume update2 | 464.0159 | 0 | 4.54964211e-5 | 9,729,004,544 bytes |
+
+Rollout peak allocated is 8,740,684,800 bytes. Training maximum is about
+9.06 GiB/rank and rollout about8.14 GiB; these are PyTorch allocated peaks,
+not total nvidia-smi process memory. The training peak is below32 GiB for
+this checkpointed configuration. No single-card OOM/unlock or speedup claim
+follows: a previous checkpointed single-card diagnostic also fitted.
+Timings include the native step's collection/replay/update/publication but
+exclude initial loading, checkpoint writes and final comparison artifacts.
+There is no matched single-card timing control in this experiment.
+
+Both resume-rank JSON files report `assertions_passed: true`, written only
+after exact comparison with the saved corresponding control-rank tree.
+Complete model state, optimizer state/parameter manifest, EMA shadows and
+update count, trainer progress, leader actions and future CPU/CUDA/Python/
+NumPy random draws are tensor-exact. CP model parameters are also exact
+between peers after updates. Actions have shape `[2,2,16,9,60,104]` and FP32
+storage. Native weight publication is exercised between control collections
+and after fresh restore before resumed collection.
+
+The native checkpoint is918,661,309 bytes and contains560 optimizer entries,
+560 EMA tensors with one update, and both ranks' RNG trees. CPU inspection
+found1120 finite optimizer moment tensors,560 nonzero after update1 (the
+zero-initialized LoRA B makes A's first gradient zero). The control update2
+snapshot has all1120 moments nonzero and finite, global_step2 and EMA updates2.
+No standalone adapter/EMA artifact export was requested; checkpoint metadata's
+`uses_lora: false` reflects the absent export descriptors, not the actual
+native LoRA training setup described above.
+
+### Reproduction and limits
+
+Run from the candidate worktree with `CUDA_VISIBLE_DEVICES=0,1,2,3` and
+`PYTHONPATH=/mnt/nvme/venvs/transformers-5.13-overlay:/home/ubuntu/VRL-cosmos-cp`:
+
+```bash
+/home/ubuntu/VRL/.venv/bin/python -m tests.trainers.online.cosmos_cp_released_probe \
+  --model-path /mnt/nvme/hf/huggingface/hub/models--nvidia--Cosmos-Predict2.5-2B/snapshots/0d37c7498f54cee3c599d438d895a0a4a8608064 \
+  --output /mnt/nvme/outputs/wan22_i2v_cache/NEW_EMPTY_OUTPUT \
+  --phase control
+```
+
+After control exits successfully, repeat with the same output and
+`--phase resume`. Control refuses nonempty output directories. The probe
+is an explicit test harness, not a public runtime/config entry point.
+
+Small-model composition/split regression after generalizing the harness:
+15 passed,2 skipped in37.95s. Ruff and whitespace checks pass. Candidate
+worktree clean after commit; frozen integration worktree remains clean and
+unchanged. Fresh compute inventory after resume was empty; GPUs0-3 released.
+
+This establishes released-weight, full-latent-shape native online updates
+and exact fresh-process recovery with EMA under controlled inputs. It does
+not establish real text conditioning, full20-step sampling/VAE/video/reward
+integration, Ray lifecycle, EMA adapter exports, production DP-aware config
+construction, compile parity, learning quality or multi-GPU throughput.
+Those remaining integration and original sprint gates stay open.
