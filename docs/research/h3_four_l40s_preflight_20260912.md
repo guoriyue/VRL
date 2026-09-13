@@ -350,3 +350,48 @@ generation-entry or trainer lifecycle gate. Real 32B encoder transfer latency,
 host-memory peak, full VAE activation capacity and restoration under allocator
 failure remain unmeasured. Full released-weight generation, quality and fair
 performance comparisons remain open; no released weights were downloaded.
+
+## 2026-09-13: unified explicit generation bundle
+
+Added `partitioned_generation.py` with `H3GenerationPlacement`, a staged H3
+model subclass, and `build_partitioned_h3_generation_runtime_bundle`. This
+explicit Python entry reuses the shared generation-bundle builder and its
+native LoRA/memory passes. It loads DiT and encoder with the validated maps,
+loads only the remaining small components through the modular pipeline, and
+keeps both VAEs on CPU until their decode call. Video/audio decode automatically
+parks the encoder, moves the relevant VAE onto an encoder device, returns the
+VAE to CPU, and restores the encoder. Whole-frozen-component moves are rejected.
+
+Placement rejects policy/encoder overlap, VAEs outside the encoder device set,
+invalid CUDA indices, empty ownership, non-LoRA, compile, quantization and
+generic pipeline offload. The default family/registry path is unchanged; this
+entry is not yet selected by public config or Ray.
+
+The first construction attempt correctly hit the `ModelBuild` rule that
+`defer_trainable_device_move` is replay-only. That rule remains unchanged.
+Instead, the shared LoRA mixin now has a default-false protected device-preserve
+hook, enabled only by the explicitly partitioned H3 generation subclass. The
+original rollout build and its policy semantics remain intact.
+
+Verification:
+
+- Four-GPU H3 suite before adding the CPU placement guards: **41 passed in
+  6.75 seconds**, exit 0. The new integration case loads real local random DiT
+  and encoder shards, uses native LoRA preparation and a three-step family
+  test denoise loop, and calls automatic video/audio decode. Outputs are finite,
+  native shapes/rate hold, VAEs return to CPU, encoder ownership is restored,
+  and subsequent prompt embeddings are exact. The tiny fixture explicitly uses
+  intermediate layer 1 instead of released-model layer 50.
+- Additional CPU placement guards plus shared LoRA, FP8-build ordering, Wan
+  LoRA and Cosmos LoRA regression tests: **32 passed in 4.35 seconds**, exit 0.
+- Ruff, formatting and diff checks passed.
+
+The integration test substitutes modular metadata/small-component loading
+with real already-constructed tiny components; DiT/encoder checkpoint loaders
+and all component execution are real. It does not yet test native modular
+metadata from disk, the production executor/collector, a complete released
+trajectory, or MP4 output. Artifacts are under
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_unified_generation_rolefix_pytest`.
+All jobs terminal, fresh compute inventory empty, all GPUs released. Released
+weights, full geometry/peak memory, production ownership and controlled timing
+remain open; no H3 download or long queue was started.
