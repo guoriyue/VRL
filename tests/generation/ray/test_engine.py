@@ -215,7 +215,7 @@ async def test_generation_combiner_retains_nonprimary_error_payload(failure):
     bad = GenerationBatchResult(
         "request", "r1", good.batch, output=None, error=failure, stale_slot=failure == "stale"
     )
-    engine = _engine([], {"r0": _Ref(good), "r1": _Ref(bad)})
+    engine = _engine([], {"r0": ResolvedRef(good), "r1": ResolvedRef(bad)})
     result = await engine.remote(
         "execute_batch", combine=RayGenerationExecutor._select_batch_rank_result
     )("payload")
@@ -254,7 +254,9 @@ async def test_pipeline_combiner_retains_nonprimary_oom_payload():
         ),
     )
     bad = PipelinedRequestOutOfMemory("r", "r1", "CUDA out of memory")
-    engine = _engine([], {"r0": _Ref(good), "r1": _Ref(bad)}, method="execute_request_pipelined")
+    engine = _engine(
+        [], {"r0": ResolvedRef(good), "r1": ResolvedRef(bad)}, method="execute_request_pipelined"
+    )
     result = await engine.remote(
         "execute_request_pipelined", combine=RayGenerationExecutor._select_request_rank_result
     )("payload")

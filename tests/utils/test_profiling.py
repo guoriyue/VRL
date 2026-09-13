@@ -7,6 +7,7 @@ asserts the trace/summary/manifest trust triad. The nvtx tests carry a
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
