@@ -1,0 +1,44 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load("@vrl_pypi_magi_1//:requirements.bzl", magi_requirements = "all_requirements")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["requirements.in", "requirements.txt"])
+
+# The MAGI-1 dedicated interpreter: point model.python_executable at the
+# built launcher (bazel-bin/third_party/magi_1/python). Its runfiles venv
+# carries the official stack from requirements.txt plus the source-built
+# flash-attn; the upstream source tree stays the submodule (model.source_path).
+py_binary(
+    name = "python",
+    srcs = ["//tools/magi_1:python.py", "//tools/magi_1:__init__.py", "//tools:__init__.py"],
+    main = "//tools/magi_1:python.py",
+    deps = magi_requirements + ["//tools/python:nvidia_preload"],
+)
+
+# bazel test //third_party/magi_1:preflight_test  (manual: builds the MAGI-1
+# stack including flash-attn from source; no weights, no GPU kernels run)
+py_test(
+    name = "preflight_test",
+    size = "large",
+    srcs = ["//tools/magi_1:preflight_test.py"],
+    main = "//tools/magi_1:preflight_test.py",
+    data = [
+        ":python",
+        "//third_party:magi_1_source",
+    ],
+    tags = ["manual", "external", "no-sandbox"],
+    deps = [
+        "//:vrl",
+        "@rules_python//python/runfiles",
+    ],
+)
+
+# bazel build --build_python_zip //third_party/magi_1:flash_attn_probe ; run the
+# zip on an sm_80/sm_90 host to exercise the Bazel-built extension on a GPU.
+py_binary(
+    name = "flash_attn_probe",
+    srcs = ["//tools/magi_1:flash_attn_probe.py", "//tools/magi_1:__init__.py", "//tools:__init__.py"],
+    main = "//tools/magi_1:flash_attn_probe.py",
+    deps = magi_requirements + ["//tools/python:nvidia_preload"],
+)

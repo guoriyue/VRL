@@ -33,10 +33,7 @@ def _uv_exports_impl(ctx):
     # Distributions built from source by a `rust_wheel` repository replace
     # their exported line with the built wheel's file URL and hash.
     for name, wheel_repo in ctx.attr.built_wheels.items():
-        digest = ctx.read(Label(wheel_repo + "//:wheel.sha256")).strip()
-        filename = ctx.read(Label(wheel_repo + "//:wheel.name")).strip()
-        path = ctx.path(Label(wheel_repo + "//:wheel/" + filename))
-        line = "{} @ file://{} --hash=sha256:{}".format(name, path, digest)
+        line = _built_wheel_line(ctx, name, wheel_repo)
         for profile in ctx.attr.profiles:
             result = ctx.execute([
                 ctx.path(ctx.attr.interpreter),
@@ -69,5 +66,28 @@ uv_exports = repository_rule(
             default = {},
             doc = "distribution name -> repository name of the rust_wheel that built it",
         ),
+    },
+)
+
+def _built_wheel_line(ctx, name, wheel_repo):
+    digest = ctx.read(Label(wheel_repo + "//:wheel.sha256")).strip()
+    filename = ctx.read(Label(wheel_repo + "//:wheel.name")).strip()
+    path = ctx.path(Label(wheel_repo + "//:wheel/" + filename))
+    return "{} @ file://{} --hash=sha256:{}".format(name, path, digest)
+
+def _requirements_with_built_wheels_impl(ctx):
+    """A hashed requirements file plus the wheels Bazel built from source."""
+    ctx.watch(ctx.attr.requirements)
+    text = ctx.read(ctx.attr.requirements)
+    lines = [_built_wheel_line(ctx, name, repo) for name, repo in ctx.attr.built_wheels.items()]
+    ctx.file("requirements.txt", text.rstrip("\n") + "\n" + "\n".join(lines) + "\n")
+    ctx.file("BUILD.bazel", 'exports_files(["requirements.txt"])\n')
+
+requirements_with_built_wheels = repository_rule(
+    implementation = _requirements_with_built_wheels_impl,
+    attrs = {
+        "requirements": attr.label(mandatory = True, allow_single_file = True),
+        "built_wheels": attr.string_dict(mandatory = True),
+        "interpreter": attr.label(allow_single_file = True),
     },
 )

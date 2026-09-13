@@ -188,3 +188,50 @@ py_library(
 )
 """,
 )
+
+# MAGI-1's official stack (torch 2.4.0/cu124, transformers 4.42.3, flashinfer)
+# from third_party/magi_1/requirements.txt, with flash-attn 2.4.2 built from
+# its locked sdist against that exact torch by a pinned CUDA 12.4.1 nvcc.
+# flash-attn 2.4.2 emits sm_80/sm_90 SASS only: it runs on Ampere/Ada/Hopper
+# hosts, not on Blackwell.
+cuda_wheel = use_repo_rule("//tools/dependencies:cuda_wheel.bzl", "cuda_wheel")
+cuda_wheel(
+    name = "flash_attn_2_4_2_wheel",
+    sdist_urls = ["https://files.pythonhosted.org/packages/4e/2f/a8d5495cd020e70474095107f0519a11fdff81a2a6cc15755feb1e19b027/flash_attn-2.4.2.tar.gz"],
+    sdist_sha256 = "eb822a8c4219b610e9d734cbc8cd9ee4547f27433815a2b90dc1462766feefc1",
+    sdist_filename = "flash_attn-2.4.2.tar.gz",
+    cuda_components = {
+        "nvcc": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvcc/linux-x86_64/cuda_nvcc-linux-x86_64-12.4.131-archive.tar.xz 7ffba1ada0e4b8c17e451ac7a60d386aa2642ecd08d71202a0b100c98bd74681",
+        "cudart": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-12.4.127-archive.tar.xz 0483bff9a36e7a44465db3cd42874f6f70f019297dcf803fbefcbf58d7448c8f",
+        "cccl": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cccl/linux-x86_64/cuda_cccl-linux-x86_64-12.4.127-archive.tar.xz e1636f27a142d24e73dfd831c54bbf5575b498fd5900648d7372fae46f824fdf",
+        # torch's ATen/cuda headers include the math-library headers.
+        "cublas": "https://developer.download.nvidia.com/compute/cuda/redist/libcublas/linux-x86_64/libcublas-linux-x86_64-12.4.5.8-archive.tar.xz c267c4d2cd42065ae2c30ca41a43ddce4e0ecc5484de23f299e3c397b5506eda",
+        "cusparse": "https://developer.download.nvidia.com/compute/cuda/redist/libcusparse/linux-x86_64/libcusparse-linux-x86_64-12.3.1.170-archive.tar.xz 21b7e5c3afd8c3e761471c644b8bbf36cd528dd0f9d274becbeb09b79dd9bec5",
+        "cufft": "https://developer.download.nvidia.com/compute/cuda/redist/libcufft/linux-x86_64/libcufft-linux-x86_64-11.2.1.3-archive.tar.xz 0963b4b57fb7fe9217e97b494159ff4719f1abdc407b2dc215d71bae0576bb02",
+        "curand": "https://developer.download.nvidia.com/compute/cuda/redist/libcurand/linux-x86_64/libcurand-linux-x86_64-10.3.5.147-archive.tar.xz f3752abef1ffae7bc9180bd9885905e971cc9c28d7f4d5860731a012e07638a3",
+        "cusolver": "https://developer.download.nvidia.com/compute/cuda/redist/libcusolver/linux-x86_64/libcusolver-linux-x86_64-11.6.1.9-archive.tar.xz 0a35a16e3bc02ba6fe0393e916da087bac079eb998a01666c79533db4f0d37f6",
+        "nvrtc": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvrtc/linux-x86_64/cuda_nvrtc-linux-x86_64-12.4.127-archive.tar.xz b5e7a984fcf05d3123684d7926e595306d31fbf99f9b19e9a0d268a02fc75827",
+        "cupti": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cupti/linux-x86_64/cuda_cupti-linux-x86_64-12.4.127-archive.tar.xz 232f4677a30335f4bafcd4a42b61d4cb65060680067e0dce32966d663f4224ac",
+        "profiler_api": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_profiler_api/linux-x86_64/cuda_profiler_api-linux-x86_64-12.4.127-archive.tar.xz fa11c08e39ab35453e07dd5012adc0767408955431fc4acdf64ca4cdd7692646",
+    },
+    requirements = "//third_party/magi_1:requirements.txt",
+    build_requirements = ["ninja==1.11.1.1", "packaging==24.2", "setuptools==75.8.0", "wheel==0.45.1"],
+    max_jobs = "8",
+    interpreter = "@python_3_12_13_host//:python",
+)
+
+magi_1_requirements = use_repo_rule("//tools/dependencies:uv_exports.bzl", "requirements_with_built_wheels")
+magi_1_requirements(
+    name = "magi_1_locks",
+    requirements = "//third_party/magi_1:requirements.txt",
+    interpreter = "@python_3_12_13_host//:python",
+    built_wheels = {"flash-attn": "@flash_attn_2_4_2_wheel"},
+)
+
+pip.parse(
+    hub_name = "vrl_pypi_magi_1",
+    python_version = "3.12.13",
+    requirements_lock = "@magi_1_locks//:requirements.txt",
+    target_platforms = ["linux_x86_64"],
+)
+use_repo(pip, "vrl_pypi_magi_1")

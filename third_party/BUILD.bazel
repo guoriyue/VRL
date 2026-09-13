@@ -38,3 +38,10 @@ py_library(
         "vdn-minimax-h3",
     ],
 )
+
+# The MAGI-1 official source tree (model.source_path), reached by the
+# adapter's subprocess; the dedicated interpreter is //third_party/magi_1:python.
+filegroup(
+    name = "magi_1_source",
+    srcs = glob(["MAGI-1/**"], exclude = ["MAGI-1/.git/**", "MAGI-1/.venv/**"], allow_empty = True),
+)

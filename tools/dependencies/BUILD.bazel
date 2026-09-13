@@ -1,1 +1,1 @@
-exports_files(["uv_exports.bzl", "rust_wheel.bzl", "restore_export_extras.py", "replace_requirement.py"])
+exports_files(["uv_exports.bzl", "rust_wheel.bzl", "cuda_wheel.bzl", "restore_export_extras.py", "replace_requirement.py"])
