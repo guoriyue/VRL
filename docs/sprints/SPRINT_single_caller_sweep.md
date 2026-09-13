@@ -111,3 +111,13 @@ rest are kept with the reason.
 blocked. About 105 functions inlined across 30 commits; every commit ran the
 affected packages and the full suite stayed at its one known environmental
 failure (the vLLM paged-attention test).
+
+## Status (2026-09-13): inline commits dropped at the rebase re-plan
+
+The 20 "inline N single-caller splits" commits this ledger records were
+dropped when the branch was re-planned onto upstream `f6cfbaa4`: upstream's
+own cleanup (490 commits) had moved most of the touched helpers onto their
+owning types or removed them, and its convention now reads "inline single-use
+helpers when that improves readability, not on invocation count alone"
+(CLAUDE.md). The rows above stay as the record of what was examined and why;
+the code changes they describe are not on the branch.
