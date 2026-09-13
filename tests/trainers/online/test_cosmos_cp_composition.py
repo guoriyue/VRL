@@ -2,8 +2,10 @@
 
 import asyncio
 import copy
+import json
 import os
 import random
+import time
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -47,8 +49,9 @@ from vrl.trajectory import build_diffusion_trajectory
 
 
 class _Collector(CollectorControlFake):
-    def __init__(self, model):
+    def __init__(self, model, *, released=False):
         self.model = model
+        self.released = released
         self.calls = 0
         self.versions = []
         self.generation_runtime = SimpleNamespace(
@@ -64,29 +67,40 @@ class _Collector(CollectorControlFake):
         count = kwargs["group_size"]
         model = self.model
         device = model.device
-        latents = torch.randn(count, 4, 3, 4, 4, device=device)
+        channels, frames, height, width = (16, 9, 60, 104) if self.released else (4, 3, 4, 4)
+        tokens, text_dim = (512, 100352) if self.released else (3, 32)
+        dtype = torch.bfloat16 if self.released else torch.float32
+        latents = torch.randn(count, channels, frames, height, width, device=device, dtype=dtype)
+        embeds = torch.randn(count, tokens, text_dim, device=device, dtype=dtype)
         state = CosmosPredict25SamplingState(
             latents=latents,
             timesteps=model.scheduler.timesteps,
             scheduler=model.scheduler,
-            prompt_embeds=torch.randn(count, 3, 32, device=device),
-            negative_prompt_embeds=None,
-            guidance_scale=1.0,
-            do_cfg=False,
+            prompt_embeds=embeds,
+            negative_prompt_embeds=torch.randn_like(embeds) if self.released else None,
+            guidance_scale=5.0 if self.released else 1.0,
+            do_cfg=self.released,
             cond_latent=torch.zeros_like(latents),
-            cond_mask=torch.zeros(count, 1, 3, 4, 4, device=device),
-            cond_indicator=torch.zeros(count, 1, 3, 1, 1, device=device),
-            padding_mask=torch.zeros(1, 1, 4, 4, device=device),
-            height=32,
-            width=32,
-            num_frames=9,
+            cond_mask=torch.zeros(count, 1, frames, height, width, device=device, dtype=dtype),
+            cond_indicator=torch.zeros(count, 1, frames, 1, 1, device=device, dtype=dtype),
+            padding_mask=torch.zeros(1, 1, height, width, device=device, dtype=dtype),
+            height=height * 8,
+            width=width * 8,
+            num_frames=(frames - 1) * 4 + 1,
             fps=16,
         )
         context = model.export_batch_context(state)
         replay = model.export_replay_tensors(state)
         observations, actions, logprobs, times = [], [], [], []
-        with torch.no_grad(), fixed_row_linear_compute(model.transformer):
+        branches = [
+            module
+            for name, module in model.transformer.named_modules()
+            if isinstance(module, torch.nn.Linear) and (".lora_A." in name or ".lora_B." in name)
+        ]
+        with torch.no_grad(), fixed_row_linear_compute(model.transformer, fp32_modules=branches):
             for index in range(2):
+                if self.released:
+                    print(f"rollout collection={self.calls} transition={index} start", flush=True)
                 prediction = model.forward_step(state, index)["noise_pred"]
                 time = model.scheduler.timesteps[index].expand(count)
                 draw = sde_step_with_logprob(
@@ -157,7 +171,7 @@ class _Syncer:
         self.collector.generation_runtime.current_policy_version += 1
 
 
-def _worker(rank, rendezvous, root, cuda=False, phase=None):
+def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None):
     torch.set_num_threads(1)
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     torch.use_deterministic_algorithms(True)
@@ -183,53 +197,78 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None):
     trainer = None
     try:
         torch.manual_seed(31)
-        transformer = CosmosTransformer3DModel(
-            in_channels=5,
-            out_channels=4,
-            num_attention_heads=2,
-            attention_head_dim=16,
-            num_layers=1,
-            mlp_ratio=2,
-            text_embed_dim=32,
-            adaln_lora_dim=8,
-            max_size=(4, 16, 16),
-            patch_size=(1, 2, 2),
-            concat_padding_mask=True,
-            extra_pos_embed_type=None,
+        if released_model:
+            assert cuda
+            print(f"rank={rank} phase={phase} load={released_model}", flush=True)
+        transformer = (
+            CosmosTransformer3DModel.from_pretrained(
+                released_model,
+                subfolder="transformer",
+                torch_dtype=torch.bfloat16,
+                local_files_only=True,
+            )
+            if released_model
+            else CosmosTransformer3DModel(
+                in_channels=5,
+                out_channels=4,
+                num_attention_heads=2,
+                attention_head_dim=16,
+                num_layers=1,
+                mlp_ratio=2,
+                text_embed_dim=32,
+                adaln_lora_dim=8,
+                max_size=(4, 16, 16),
+                patch_size=(1, 2, 2),
+                concat_padding_mask=True,
+                extra_pos_embed_type=None,
+            )
         )
-        scheduler = UniPCMultistepScheduler(
-            prediction_type="flow_prediction",
-            use_flow_sigmas=True,
-            use_karras_sigmas=True,
-            sigma_max=200,
-            sigma_min=0.01,
+        scheduler = (
+            UniPCMultistepScheduler.from_pretrained(
+                released_model,
+                subfolder="scheduler",
+                local_files_only=True,
+            )
+            if released_model
+            else UniPCMultistepScheduler(
+                prediction_type="flow_prediction",
+                use_flow_sigmas=True,
+                use_karras_sigmas=True,
+                sigma_max=200,
+                sigma_min=0.01,
+            )
         )
-        scheduler.set_timesteps(4, device=device)
-        precision = RolePrecision(dtype="fp32", float32_precision="ieee", outer_autocast=False)
+        scheduler.set_timesteps(20 if released_model else 4, device=device)
+        precision = RolePrecision(
+            dtype="bf16" if released_model else "fp32",
+            float32_precision="ieee",
+            outer_autocast=bool(released_model),
+        )
         model = CosmosPredict25ReplayModel(
             transformer=transformer.to(device), scheduler=scheduler, device=device
         )
         model.precision = precision
         model.apply_lora(
             ModelBuild(
-                model_name_or_path="tiny-cosmos",
-                revision="test",
+                model_name_or_path=released_model or "tiny-cosmos",
+                revision=Path(released_model).name if released_model else "test",
                 family="cosmos-predict2.5",
                 device=device,
-                parameter_dtype=torch.float32,
+                parameter_dtype=torch.bfloat16 if released_model else torch.float32,
                 precision=precision,
                 model_config={
                     "use_lora": True,
                     "lora": {
-                        "rank": 2,
-                        "alpha": 4,
-                        "target_modules": ["to_q", "to_k", "to_v", "to_out.0"],
+                        "rank": 32 if released_model else 2,
+                        "alpha": 64 if released_model else 4,
+                        "target_modules": ["to_q", "to_k", "to_v", "to_out.0"]
+                        + (["ff.net.0.proj", "ff.net.2"] if released_model else []),
                     },
                 },
             )
         )
         rollout_scheduler = UniPCMultistepScheduler.from_config(scheduler.config)
-        rollout_scheduler.set_timesteps(4, device=rollout_device)
+        rollout_scheduler.set_timesteps(20 if released_model else 4, device=rollout_device)
         rollout = CosmosPredict25Model(
             pipeline=SimpleNamespace(
                 transformer=copy.deepcopy(model.transformer).to(rollout_device),
@@ -239,7 +278,10 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None):
             device=rollout_device,
         )
         rollout.precision = precision
-        collector = _Collector(rollout)
+        if released_model:
+            model.transformer.enable_gradient_checkpointing()
+            model.transformer.train()
+        collector = _Collector(rollout, released=bool(released_model))
         syncer = _Syncer(collector)
         before = {
             name: p.detach().clone() for name, p in model.named_parameters() if p.requires_grad
@@ -263,7 +305,7 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None):
                 drop_zero_advantage=False,
                 optim=OptimConfig(lr=1e-4),
                 ema=EMAConfig(enable=phase is not None, decay=0.9, update_interval=1),
-                train_precision="no",
+                train_precision="bf16" if released_model else "no",
                 output_dir=str(Path(root) / f"rank-{rank}"),
             ),
         )
@@ -280,7 +322,11 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None):
             precision=precision,
             loads_full_generation_modules=False,
         )
-        identity = {"schema": "tiny-cosmos-cp-composition/v1"}
+        identity = (
+            {"schema": "released-cosmos-cp-composition/v1", "checkpoint": released_model}
+            if released_model
+            else {"schema": "tiny-cosmos-cp-composition/v1"}
+        )
         checkpoint_dir = Path(root) / "checkpoint-1"
         if phase == "resume":
             checkpoint = TrainingCheckpoint.load(checkpoint_dir)
@@ -296,11 +342,35 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None):
             assert trainer.state.step == 1
             assert trainer._ema.has_updates
         updates = 1 if phase == "resume" else 2
+        measurements = []
+        if released_model:
+            torch.cuda.reset_peak_memory_stats(device)
+            if rank == 0:
+                torch.cuda.reset_peak_memory_stats(rollout_device)
         for index in range(updates):
+            started = time.perf_counter()
+            if released_model:
+                print(
+                    f"rank={rank} phase={phase} update={trainer.state.step + 1} start", flush=True
+                )
             metrics = asyncio.run(trainer.step(["controlled text"]))
             assert metrics.grad_norm > 0
             assert metrics.initial_replay.finite
             assert metrics.initial_replay.logprob_abs_diff_max <= 1e-3
+            if released_model:
+                torch.cuda.synchronize(device)
+                measurement = {
+                    "step": trainer.state.step,
+                    "seconds": time.perf_counter() - started,
+                    "grad_norm": metrics.grad_norm,
+                    "replay_max_abs": metrics.initial_replay.logprob_abs_diff_max,
+                    "training_peak_allocated": torch.cuda.max_memory_allocated(device),
+                    "rollout_peak_allocated": torch.cuda.max_memory_allocated(rollout_device)
+                    if rank == 0
+                    else None,
+                }
+                measurements.append(measurement)
+                print(json.dumps({"rank": rank, "phase": phase, **measurement}), flush=True)
             if phase == "control" and index == 0:
                 assert trainer._ema.has_updates
                 save_training_checkpoint(
@@ -354,6 +424,20 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None):
             else:
                 reference = torch.load(reference_path, map_location="cpu", weights_only=False)
                 _require_equal_tensor_tree(reference, outcome, label="fresh-process resume")
+        if released_model:
+            (Path(root) / f"{phase}-rank-{rank}.json").write_text(
+                json.dumps(
+                    {
+                        "phase": phase,
+                        "rank": rank,
+                        "model": released_model,
+                        "measurements": measurements,
+                        "assertions_passed": True,
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
     finally:
         if trainer is not None:
             asyncio.run(trainer.rollout_schedule.shutdown())
