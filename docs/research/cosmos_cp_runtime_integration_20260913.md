@@ -4,8 +4,9 @@ Status: OPEN. Production-candidate primitives, self-attention processor and
 opt-in model-level sharding are implemented. Fixed-row Linear compute resolves
 the retained small-model CUDA regression below. Released-weight fixed-action
 CPS validation with head-sharded cross-attention now has exact output/logprob
-and gradient relative L2 2.2244e-6 (see below). Training integration remains
-absent. This does not close
+and gradient relative L2 2.2244e-6 (see below). An explicit strategy now reaches
+the trainer optimizer boundary; online recipe/data integration remains absent.
+This does not close
 the original context-parallel sprint or the four-L40S hardware goal.
 
 ## Isolation and commits
@@ -368,3 +369,57 @@ online update, checkpoint/resume, reward or advantage test. The helpers are
 not yet invoked by a selectable training strategy or online data path. Next
 integration must connect group-aware replay ownership, precision contexts,
 accumulation boundaries and checkpoint handling before opening a config gate.
+
+## Explicit CP strategy: 60829dc1
+
+`ContextParallelStrategy` is now implemented in the existing strategy module,
+but intentionally absent from schema/config dispatch. It can be supplied
+explicitly to the trainer interface only by an orchestrator that already owns
+group-consistent replay inputs and DP-aware sampling.
+
+Preparation validates one Cosmos transformer with FP32 trainable parameters,
+initializes/validates the process group, creates DP x CP groups, broadcasts
+initial parameters and buffers from rank0, and installs fixed-row Linear,
+FP32 LoRA branches and self/cross-head sharding. CUDA requires strict
+deterministic IEEE compute and a supported cuBLAS workspace setting; efficient
+SDPA remains selected through backward/checkpoint recomputation. Rollout must
+separately use the same precision contract without replay CP hooks.
+
+`backward` divides replicated full-output loss by CP size. At the existing
+trainer `clip_grad_norm` boundary, accumulated gradients are CP-SUM/DP-mean
+reduced once before clipping. Even when clipping is disabled, the trainer
+calls this boundary with infinity. FP16 GradScaler and shared-GPU state
+parking fail explicitly. FP32-master parameter substitution is not supported:
+the clip list must match the prepared trainable parameters. Shutdown removes
+execution hooks/contexts and closes process groups.
+
+Checkpoint/optimizer state uses the existing unsharded strategy implementation;
+rollout export uses the existing trainable-state snapshot helper. The strategy
+is included in all structural-interface and shared-method ownership tests.
+
+### Actual trainer boundary, not a complete online loop
+
+New `test_context_parallel_strategy.py` builds actual tiny Cosmos transformers
+on four ranks (DP2 x CP2), deliberately perturbs initial candidate weights
+by rank and verifies broadcast restores equality. Two AdamW updates each
+accumulate two microbatches. It invokes the real
+`OnlineTrainer._clip_and_step` on a minimal state carrier, comparing clip
+norms, updated parameters and every optimizer-state tensor with a full-batch
+unsharded reference. Export/load optimizer state is checked by exact tensor
+tree equality. Duplicate preparation, unsupported scaler/parking and hook
+cleanup are covered.
+
+- Four-L40S NCCL: **1 passed, 1 deselected**, 10.72 seconds.
+- Initial combined CPU strategy/DDP/MRO regression: **34 passed, 1 skipped**,
+  9.02 seconds.
+- Expanded MRO/interface matrix including CP: **28 passed**, .23 seconds.
+- Ruff and whitespace checks passed. All jobs terminal, fresh GPU process
+  inventory empty, GPUs0-3 released. Runtime frozen during GPU tests; shared
+  integration runtime and dependencies unchanged.
+
+This test does not construct the full OnlineTrainer collector/algorithm loop,
+save a distributed training checkpoint, or exercise reward, advantage/filtered
+batch semantics, EMA, rollout synchronization or full-weight updates. The
+public online recipe still uses physical-rank data ownership and must not be
+enabled for CP by merely adding a strategy string. Those integration and
+original full online acceptance gates remain required next work.
