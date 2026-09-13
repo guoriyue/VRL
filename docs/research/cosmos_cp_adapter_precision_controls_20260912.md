@@ -59,3 +59,24 @@ Fresh compute inventory is empty and GPUs 0-1 are released. No Ray or long
 experiment was started. Next diagnosis should isolate forward/gradient kernel
 path differences under sequence sharding, not retune adapter dtype or accept
 scalar logprob agreement as sufficient training semantics evidence.
+
+## Shared-output-cotangent isolation
+
+A further pinned-weight control preserves the actual adapter construction and
+CFG5/low-sigma setup, but supplies the reference branch's retained output
+gradient to the CP output backward. It does NOT use the CP branch's changed
+logprob-loss derivative. Both ranks agree: aggregate gradient relative L2 is
+1.06094e-5 in FP32 and 0.103606 in BF16, versus 0.412917 for BF16 when each
+branch differentiates its own fixed-action loss.
+
+This indicates that the loss-derivative change amplifies part of the observed
+gradient discrepancy. It does not prove a collective backward bug: the two
+branches' internal forward activations can still differ, even with identical
+output cotangents, and their Jacobians are evaluated along those different
+numerical paths. BF16 family output relative L2 remains 0.0439753 in this CFG
+stress case. No gradient-equivalence pass or production tolerance is implied.
+
+Evidence: `cosmos_cp_shared_cotangent_cfg5_l40s/rank-{0,1}.json` and adjacent
+log under the same NVMe root. Script option `--shared-output-cotangent` marks
+the altered diagnostic backward explicitly. Torchrun and both ranks exited 0;
+fresh GPU inventory is empty and GPUs 0-1 are released. Runtime unchanged.
