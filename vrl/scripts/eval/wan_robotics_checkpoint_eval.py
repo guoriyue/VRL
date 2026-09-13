@@ -41,7 +41,7 @@ from vrl.trainers.checkpointing import (
     load_checkpoint_state,
     load_resolved_run_config,
 )
-from vrl.trainers.data import PromptExample, load_prompt_dataset_index
+from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
 from vrl.utils.artifacts import resolve_artifact_path, sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import read_jsonl, write_json, write_jsonl

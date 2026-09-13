@@ -14,8 +14,8 @@ from typing import Any
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
-from vrl.trajectory import TrajectoryBatch, TrajectorySegment, TrajectoryTensor
 from vrl.trajectory.device import move_value_to_device
+from vrl.trajectory.types import TrajectoryBatch, TrajectorySegment, TrajectoryTensor
 
 
 @dataclass(slots=True)

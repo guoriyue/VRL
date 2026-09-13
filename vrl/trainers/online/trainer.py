@@ -1114,7 +1114,7 @@ class OnlineTrainer:
             # policy action.
             return self._sde_window_indices(batch)
 
-        from vrl.trajectory import TrajectoryReader
+        from vrl.trajectory.reader import TrajectoryReader
 
         reader = TrajectoryReader.from_batch(batch)
         primary_segment = reader.primary_trainable_segment_name()
@@ -1157,7 +1157,7 @@ class OnlineTrainer:
         requests and iso-temporal grouping is already broken upstream.
         """
 
-        from vrl.trajectory import TrajectoryReader
+        from vrl.trajectory.reader import TrajectoryReader
 
         replay = TrajectoryReader.from_batch(batch).replay_tensor_dict("denoise")
         window = replay.get("sde_window")
@@ -1972,7 +1972,7 @@ class OnlineTrainer:
 
         from vrl.math.denoise.flow_matching import diffusion_pretraining_pair
         from vrl.trainers.data.sft_latents import CleanTargetRef
-        from vrl.trajectory import TrajectoryReader
+        from vrl.trajectory.reader import TrajectoryReader
 
         assert self._sft_latents is not None  # ctor validated
         reward_metadata = group_batch.context.get("reward_metadata", {})

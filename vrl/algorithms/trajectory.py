@@ -70,7 +70,7 @@ class AlgorithmAdapter:
                 )
             import torch
 
-            from vrl.trajectory import TrajectoryReader
+            from vrl.trajectory.reader import TrajectoryReader
 
             replay_tensors = TrajectoryReader.from_batch(batch).replay_tensor_dict()
             available = sorted(

@@ -4,7 +4,8 @@ import pytest
 import torch
 
 from vrl.generation.types import GenerationRequest
-from vrl.trajectory import TrajectoryReader, build_diffusion_trajectory
+from vrl.trajectory.builders import build_diffusion_trajectory
+from vrl.trajectory.reader import TrajectoryReader
 
 
 @pytest.fixture

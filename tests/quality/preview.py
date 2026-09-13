@@ -91,7 +91,7 @@ def generate_rollout_preview(
     )
     from vrl.models.interfaces.replay import require_runtime_model
     from vrl.rollouts.collector.config import RolloutCollectorConfig
-    from vrl.trainers.data import load_prompt_examples_from_config
+    from vrl.trainers.data.prompts import load_prompt_examples_from_config
     from vrl.utils.config import import_from_path, to_builtin_deep
 
     validated = require_training_config(cfg)

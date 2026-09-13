@@ -11,11 +11,11 @@ from PIL import Image
 from vrl.config.schema import DataConfig
 from vrl.scripts.data import bootstrap, setup, video_world
 from vrl.scripts.data.danbooru import assets as danbooru_assets
-from vrl.trainers.data import load_prompt_dataset_index, load_prompt_examples_from_config
 from vrl.trainers.data.artifacts import (
     resolve_prompt_example_references,
     resolve_required_reference_images_,
 )
+from vrl.trainers.data.prompts import load_prompt_dataset_index, load_prompt_examples_from_config
 from vrl.utils.json_files import write_jsonl
 
 

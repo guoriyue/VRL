@@ -14,7 +14,7 @@ def test_default_generation_composes_model_without_training_recipe(
 ) -> None:
     from vrl.models.families import registry
     from vrl.scripts.eval import _device
-    from vrl.trainers import data
+    from vrl.trainers.data import prompts as data
 
     class GenerationBoundaryReached(Exception):
         pass

@@ -28,7 +28,7 @@ from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
-from vrl.trajectory import TrajectoryBatch
+from vrl.trajectory.types import TrajectoryBatch
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
 
 # torch's allocator wire format, pinned against the real allocator by

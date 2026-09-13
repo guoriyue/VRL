@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 
 from vrl.scripts.data import setup as setup_cli
-from vrl.trainers.data import PromptExample, load_prompt_dataset_index
 from vrl.trainers.data.artifacts import (
     DatasetFileReport,
     resolve_prompt_example_references,
 )
+from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
 from vrl.utils.artifacts import ArtifactManifestError, resolve_artifact_path
 
 

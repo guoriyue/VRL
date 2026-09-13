@@ -59,7 +59,7 @@ class DiffusionSDELogProbEvaluator(ReplayEvaluatorBase):
         if signal_request is None:
             signal_request = SignalRequest()
 
-        from vrl.trajectory import TrajectoryReader
+        from vrl.trajectory.reader import TrajectoryReader
 
         reader = TrajectoryReader.from_batch(batch)
 

@@ -22,7 +22,7 @@ from vrl.models.interfaces import (
     RolloutBuildOptions,
     RuntimeBundle,
 )
-from vrl.trajectory import TrajectoryBatch
+from vrl.trajectory.types import TrajectoryBatch
 
 
 class _TinyRuntimeModel:

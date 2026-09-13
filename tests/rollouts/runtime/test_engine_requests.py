@@ -8,7 +8,7 @@ from vrl.generation import GenerationInput
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
-from vrl.trajectory import TrajectoryStoragePolicy
+from vrl.trajectory.storage import TrajectoryStoragePolicy
 
 
 def test_engine_request_builder_reads_resolved_request_sampling() -> None:

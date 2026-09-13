@@ -5,12 +5,12 @@ from pathlib import Path
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
-from vrl.trainers.data import load_prompt_dataset_index
 from vrl.trainers.data.artifacts import (
     resolve_prompt_example_artifacts,
     resolve_prompt_example_references,
     resolve_required_reference_images_,
 )
+from vrl.trainers.data.prompts import load_prompt_dataset_index
 
 
 def _write_reference_manifest(root: Path) -> Path:

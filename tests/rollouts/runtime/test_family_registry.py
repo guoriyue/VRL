@@ -35,7 +35,7 @@ from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
-from vrl.trajectory import TrajectoryStoragePolicy
+from vrl.trajectory.storage import TrajectoryStoragePolicy
 from vrl.utils.config import import_from_path
 
 

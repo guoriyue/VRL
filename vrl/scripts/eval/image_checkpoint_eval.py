@@ -39,7 +39,7 @@ from vrl.utils.json_files import write_json
 if TYPE_CHECKING:
     from vrl.run import ResolvedModel
     from vrl.trainers.checkpointing import CheckpointTarget
-    from vrl.trainers.data import PromptExample
+    from vrl.trainers.data.prompts import PromptExample
 
 logger = logging.getLogger(__name__)
 
@@ -454,7 +454,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     from vrl.run import resolve_model
     from vrl.scripts.eval._device import resolve_eval_device
     from vrl.trainers.checkpointing import validate_checkpoint_meta_compatibility
-    from vrl.trainers.data import load_prompt_dataset_index
+    from vrl.trainers.data.prompts import load_prompt_dataset_index
 
     if (
         args.samples_per_prompt < 1

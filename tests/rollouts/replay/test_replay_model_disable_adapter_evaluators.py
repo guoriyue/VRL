@@ -16,11 +16,8 @@ from vrl.rollouts.evaluators.token.continuous_token_logprob import (
 )
 from vrl.rollouts.evaluators.token.token_logprob import TokenLogProbEvaluator
 from vrl.rollouts.evaluators.types import SignalRequest
-from vrl.trajectory import (
-    TrajectoryReader,
-    build_ar_continuous_trajectory,
-    build_ar_discrete_trajectory,
-)
+from vrl.trajectory.builders import build_ar_continuous_trajectory, build_ar_discrete_trajectory
+from vrl.trajectory.reader import TrajectoryReader
 
 _PRECISION = RolePrecision(
     dtype="fp32",

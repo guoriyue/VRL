@@ -19,7 +19,8 @@ from vrl.rollouts.collector.batch_builder import (
     TrajectoryRolloutBatchBuilder,
 )
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.trajectory import TrajectoryReader, build_ar_multisegment_trajectory
+from vrl.trajectory.builders import build_ar_multisegment_trajectory
+from vrl.trajectory.reader import TrajectoryReader
 
 
 def _sample_rows() -> list[GenerationSampleRow]:

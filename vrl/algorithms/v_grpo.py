@@ -161,7 +161,7 @@ class VGRPO:
 
         import torch
 
-        from vrl.trajectory import TrajectoryReader
+        from vrl.trajectory.reader import TrajectoryReader
 
         cfg = self.config
         replay_tensors = TrajectoryReader.from_batch(batch).replay_tensor_dict("denoise")

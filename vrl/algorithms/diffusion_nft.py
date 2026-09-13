@@ -163,7 +163,7 @@ class DiffusionNFT:
 
         import torch
 
-        from vrl.trajectory import TrajectoryReader
+        from vrl.trajectory.reader import TrajectoryReader
 
         cfg = self.config
         advantage_scale = float(cfg.advantage_scale)

@@ -2,7 +2,7 @@
 
 import pytest
 
-from vrl.trajectory import TrajectoryAxis
+from vrl.trajectory.types import TrajectoryAxis
 
 
 @pytest.mark.parametrize("length", [True, False, 2.0, 2.5, "2", -1])
@@ -31,7 +31,7 @@ def test_axis_preserves_unknown_empty_and_positive_lengths(length) -> None:
 
 @pytest.mark.parametrize("role", ["old_log_probs", "", None, 1])
 def test_tensor_rejects_unknown_role(role) -> None:
-    from vrl.trajectory import TrajectoryTensor
+    from vrl.trajectory.types import TrajectoryTensor
 
     with pytest.raises(ValueError, match=r"TrajectoryTensor.role"):
         TrajectoryTensor("value", [1], ("sample",), role)
@@ -47,7 +47,7 @@ def test_tensor_rejects_unknown_role(role) -> None:
     ],
 )
 def test_segment_rejects_unknown_schema_values(field, value) -> None:
-    from vrl.trajectory import TrajectorySegment
+    from vrl.trajectory.types import TrajectorySegment
 
     kwargs = dict(
         name="output", modality="latent", distribution="gaussian", trainable=False, tensors={}
@@ -58,7 +58,7 @@ def test_segment_rejects_unknown_schema_values(field, value) -> None:
 
 
 def test_segment_preserves_explicit_custom_distribution() -> None:
-    from vrl.trajectory import TrajectorySegment
+    from vrl.trajectory.types import TrajectorySegment
 
     segment = TrajectorySegment(
         name="output", modality="mixed", distribution="custom", trainable=False, tensors={}

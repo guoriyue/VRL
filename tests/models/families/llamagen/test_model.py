@@ -15,7 +15,8 @@ from tests.models.families.llamagen.fixtures import (
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import TrajectoryReader, build_ar_discrete_trajectory
+from vrl.trajectory.builders import build_ar_discrete_trajectory
+from vrl.trajectory.reader import TrajectoryReader
 
 
 def _request(samples: int = 2) -> GenerationRequest:

@@ -27,8 +27,8 @@ class TestTrainableState:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+        from vrl.trainers.online.trainer import OnlineTrainer
 
         collect_seen_sync_counts: list[int] = []
 
@@ -135,8 +135,8 @@ class TestTrainableState:
         import torch.nn as nn
 
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+        from vrl.trainers.online.trainer import OnlineTrainer
 
         class _Algorithm(_EvaluatorAlgorithmFake):
             class _Config:

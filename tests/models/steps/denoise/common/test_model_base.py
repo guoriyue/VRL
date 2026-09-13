@@ -29,7 +29,7 @@ from vrl.models.interfaces import ReplayResult
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 from vrl.models.steps.denoise import DiffusionModelBase
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import build_diffusion_trajectory
+from vrl.trajectory.builders import build_diffusion_trajectory
 
 
 class _AdapterTransformer(nn.Linear):

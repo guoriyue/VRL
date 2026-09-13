@@ -54,16 +54,13 @@ from vrl.trainers.checkpointing import (
     save_training_checkpoint,
     validate_checkpoint_compatibility,
 )
-from vrl.trainers.data import (
-    PromptBatchSampler,
-    PromptExample,
-    load_prompt_examples_from_config,
-    resolve_prompt_example_references,
-)
+from vrl.trainers.data.artifacts import resolve_prompt_example_references
+from vrl.trainers.data.prompt_sampler import PromptBatchSampler
+from vrl.trainers.data.prompts import PromptExample, load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, run_on_primary_rank
 from vrl.trainers.metrics_io import OnlineMetricsCSV
-from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan
+from vrl.trainers.online.trainer import OnlineTrainer
 from vrl.trainers.strategy import Strategy, build_strategy
 from vrl.trainers.trace import TrainingRunTrace
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer

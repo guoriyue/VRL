@@ -29,8 +29,8 @@ from vrl.trainers.core.types import (
     OptimConfig,
     RolloutOrchestrationConfig,
 )
-from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+from vrl.trainers.online.trainer import OnlineTrainer
 
 
 class _Collector(CollectorControlFake):

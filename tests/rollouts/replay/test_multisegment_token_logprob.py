@@ -17,7 +17,7 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.token.multi_segment_token_logprob import (
     MultiSegmentTokenLogProbEvaluator,
 )
-from vrl.trajectory import build_ar_multisegment_trajectory
+from vrl.trajectory.builders import build_ar_multisegment_trajectory
 
 _PRECISION = RolePrecision(
     dtype="fp32",

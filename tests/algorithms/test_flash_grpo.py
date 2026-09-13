@@ -222,7 +222,7 @@ def test_sde_window_selection_refuses_partial_timestep_fraction() -> None:
 def _denoise_batch(replay_tensors: dict) -> object:
     from vrl.generation import GenerationRequest, GenerationSampleRow
     from vrl.rollouts.batch import RolloutBatch
-    from vrl.trajectory import build_diffusion_trajectory
+    from vrl.trajectory.builders import build_diffusion_trajectory
 
     request = GenerationRequest(
         request_id="req",
@@ -259,21 +259,21 @@ def _denoise_batch(replay_tensors: dict) -> object:
 
 
 def test_sde_window_indices_read_the_recorded_window() -> None:
-    from vrl.trainers.online import OnlineTrainer
+    from vrl.trainers.online.trainer import OnlineTrainer
 
     batch = _denoise_batch({"sde_window": torch.tensor([[2, 3], [2, 3]])})
     assert OnlineTrainer._sde_window_indices(batch) == [2]
 
 
 def test_sde_window_indices_require_the_recording() -> None:
-    from vrl.trainers.online import OnlineTrainer
+    from vrl.trainers.online.trainer import OnlineTrainer
 
     with pytest.raises(ValueError, match="sde_window"):
         OnlineTrainer._sde_window_indices(_denoise_batch({}))
 
 
 def test_sde_window_indices_reject_mixed_windows() -> None:
-    from vrl.trainers.online import OnlineTrainer
+    from vrl.trainers.online.trainer import OnlineTrainer
 
     batch = _denoise_batch({"sde_window": torch.tensor([[2, 3], [1, 2]])})
     with pytest.raises(ValueError, match="differs across rows"):

@@ -24,7 +24,7 @@ from tests.algorithms.test_diffusion_nft import (
 )
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.algorithms.v_grpo import VGRPO, VGRPOConfig
-from vrl.trainers.online import OnlineTrainer
+from vrl.trainers.online.trainer import OnlineTrainer
 
 
 def _batch(*, timestep: float | tuple[float, ...] = 500.0, seed: int = 1234):

@@ -38,7 +38,7 @@ from vrl.ray.actor_pool import (
     RayActorJob,
 )
 from vrl.ray.operation_deadline import RayOperationTimeout
-from vrl.trajectory import TrajectoryBatch
+from vrl.trajectory.types import TrajectoryBatch
 
 # Carried by the tests that actually drive `_FakeRef`/`_FakeWorker`; the planner
 # and argument-validation tests below use no double, so a module-level pytestmark

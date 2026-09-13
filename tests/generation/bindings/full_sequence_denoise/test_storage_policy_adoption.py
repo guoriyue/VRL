@@ -14,7 +14,8 @@ from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
-from vrl.trajectory import TrajectoryReader, TrajectoryStoragePolicy
+from vrl.trajectory.reader import TrajectoryReader
+from vrl.trajectory.storage import TrajectoryStoragePolicy
 
 
 def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:

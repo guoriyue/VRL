@@ -30,7 +30,7 @@ from vrl.trainers.checkpointing import (
     is_complete_checkpoint,
     read_checkpoint_meta,
 )
-from vrl.trainers.data import load_prompt_dataset_index
+from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
 
@@ -545,7 +545,7 @@ def _erase_meaningless_spelling(
 
     from vrl.config.algorithm import resolve_kl_reward_coef
     from vrl.config.schema import RolloutRuntimeSection
-    from vrl.trajectory import TrajectoryStoragePolicy
+    from vrl.trajectory.storage import TrajectoryStoragePolicy
 
     def storage_policy(value: Any) -> Any:
         """Resolve a storage block without hiding unknown keys."""

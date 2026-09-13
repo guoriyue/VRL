@@ -19,7 +19,8 @@ from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.families.emu3.model import emu3_grid_token_num
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import TrajectoryReader, build_ar_discrete_trajectory
+from vrl.trajectory.builders import build_ar_discrete_trajectory
+from vrl.trajectory.reader import TrajectoryReader
 
 HEIGHT, WIDTH = 2, 3
 TOTAL = emu3_grid_token_num(HEIGHT, WIDTH)  # 11

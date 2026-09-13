@@ -41,7 +41,7 @@ from vrl.rollouts.orchestration.continuous.types import (
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.stats import RolloutStats
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
-from vrl.trajectory import trajectory_tensor_bytes
+from vrl.trajectory.storage import trajectory_tensor_bytes
 from vrl.utils.deadline import require_timeout
 
 _CPU = torch.device("cpu")

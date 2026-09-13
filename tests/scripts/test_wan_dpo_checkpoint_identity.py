@@ -12,7 +12,7 @@ import vrl.models.families.registry as registry
 import vrl.ray.resources as ray_resources
 import vrl.trainers.activation_checkpointing as activation_checkpointing
 import vrl.trainers.checkpointing as checkpointing
-import vrl.trainers.data as trainer_data
+import vrl.trainers.data.preferences as trainer_data
 import vrl.trainers.offline as offline
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config

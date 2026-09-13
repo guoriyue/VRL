@@ -34,13 +34,11 @@ from vrl.trainers.core.types import (
     OptimConfig,
     PrecisionDriftGuardConfig,
 )
-from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-from vrl.trajectory import (
-    TrajectoryReader,
-    TrajectoryTensor,
-    build_chunk_autoregressive_denoise_trajectory,
-)
+from vrl.trainers.online.trainer import OnlineTrainer
+from vrl.trajectory.builders import build_chunk_autoregressive_denoise_trajectory
+from vrl.trajectory.reader import TrajectoryReader
+from vrl.trajectory.types import TrajectoryTensor
 
 
 class _Algorithm(_EvaluatorAlgorithmFake):

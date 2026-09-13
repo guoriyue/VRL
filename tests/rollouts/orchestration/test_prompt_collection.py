@@ -19,8 +19,8 @@ from vrl.rollouts.collector.core import (
 )
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.stats import RolloutStats
-from vrl.trainers.data import PromptExample
-from vrl.trajectory import build_ar_discrete_trajectory
+from vrl.trainers.data.prompts import PromptExample
+from vrl.trajectory.builders import build_ar_discrete_trajectory
 
 
 def prepare_training_batches(*, collector, stats: RolloutStats | None = None, **kwargs):

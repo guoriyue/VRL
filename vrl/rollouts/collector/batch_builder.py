@@ -20,10 +20,8 @@ from vrl.generation import GenerationOutput
 from vrl.rewards import RewardSample
 from vrl.rewards.types import REWARD_GROUP_ID_METADATA_KEY
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import (
-    TrajectorySegment,
-    TrajectoryStoragePolicy,
-)
+from vrl.trajectory.storage import TrajectoryStoragePolicy
+from vrl.trajectory.types import TrajectorySegment
 
 
 @dataclass(slots=True)

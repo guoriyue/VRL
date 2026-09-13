@@ -29,13 +29,13 @@ from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import CollectorRequest, GenerationRequestBuilder
 from vrl.rollouts.stats import RolloutStats
-from vrl.trajectory import (
-    RewardInputSpec,
-    TrajectoryReader,
-    TrajectoryStoragePolicy,
+from vrl.trajectory.builders import (
     build_ar_discrete_trajectory,
     build_chunk_autoregressive_denoise_trajectory,
 )
+from vrl.trajectory.reader import TrajectoryReader
+from vrl.trajectory.storage import TrajectoryStoragePolicy
+from vrl.trajectory.views import RewardInputSpec
 
 
 class _RequestBuilder:

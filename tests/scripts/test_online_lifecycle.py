@@ -19,7 +19,7 @@ from vrl.models import checkpoint_identity
 from vrl.models.families.semantics import PolicySemantics
 from vrl.models.interfaces import ReplayResult
 from vrl.scripts.common import online
-from vrl.trainers.data import PromptExample
+from vrl.trainers.data.prompts import PromptExample
 from vrl.trainers.online.config import OnlineBatchPlan
 
 ray = pytest.importorskip("ray")

@@ -15,7 +15,7 @@ from vrl.models.steps.denoise import DiffusionModelBase
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import move_training_batch_to_device
 from vrl.rollouts.evaluators.denoise.sde_logprob import DiffusionSDELogProbEvaluator
-from vrl.trajectory import build_diffusion_trajectory
+from vrl.trajectory.builders import build_diffusion_trajectory
 
 _PRECISION = RolePrecision(
     dtype="fp32",

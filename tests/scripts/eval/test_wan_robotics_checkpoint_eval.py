@@ -11,7 +11,7 @@ from omegaconf import OmegaConf
 
 from vrl.models import checkpoint_identity
 from vrl.scripts.eval import wan_robotics_checkpoint_eval as checkpoint_eval
-from vrl.trainers.data import PromptExample
+from vrl.trainers.data.prompts import PromptExample
 
 
 def _example(

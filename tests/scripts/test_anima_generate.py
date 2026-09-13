@@ -10,7 +10,7 @@ from PIL import Image
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
 from vrl.scripts.families.cosmos.anima import generate
-from vrl.trainers.data import PromptExample
+from vrl.trainers.data.prompts import PromptExample
 
 
 def _minimal_generate_config():

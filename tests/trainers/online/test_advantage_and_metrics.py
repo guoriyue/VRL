@@ -32,8 +32,8 @@ class TestAdvantageAndMetrics:
 
         from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+        from vrl.trainers.online.trainer import OnlineTrainer
 
         class _Algorithm(_EvaluatorAlgorithmFake):
             required_signal_keys = ("log_prob", "old_log_prob")
@@ -308,9 +308,9 @@ class TestAdvantageAndMetrics:
         from vrl.generation import GenerationRequest, GenerationSampleRow
         from vrl.rollouts.batch import RolloutBatch
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-        from vrl.trajectory import build_ar_discrete_trajectory
+        from vrl.trainers.online.trainer import OnlineTrainer
+        from vrl.trajectory.builders import build_ar_discrete_trajectory
 
         class _Algorithm(_EvaluatorAlgorithmFake):
             required_signal_keys: tuple[str, ...] = ()

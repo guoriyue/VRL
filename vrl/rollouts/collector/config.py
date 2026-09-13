@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from vrl.config.algorithm import resolve_kl_reward_coef
 from vrl.config.schema import generation_request_rollout_fields
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
-from vrl.trajectory import TrajectoryStoragePolicy
+from vrl.trajectory.storage import TrajectoryStoragePolicy
 
 if TYPE_CHECKING:
     from vrl.config.schema import RootConfig

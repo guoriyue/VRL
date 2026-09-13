@@ -6,10 +6,8 @@ import pytest
 import torch
 
 from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.trajectory import (
-    TrajectoryStoragePolicy,
-    build_ar_discrete_trajectory,
-)
+from vrl.trajectory.builders import build_ar_discrete_trajectory
+from vrl.trajectory.storage import TrajectoryStoragePolicy
 
 
 def test_default_storage_policy_returns_original_batch() -> None:

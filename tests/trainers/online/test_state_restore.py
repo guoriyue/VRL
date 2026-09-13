@@ -327,8 +327,8 @@ def _make_resume_trainer(
     import torch.nn as nn
 
     from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-    from vrl.trainers.online import OnlineTrainer
     from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+    from vrl.trainers.online.trainer import OnlineTrainer
 
     model = nn.Linear(1, 1, bias=False)
     with torch.no_grad():

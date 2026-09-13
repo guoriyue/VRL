@@ -23,7 +23,8 @@ from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
     from vrl.generation.steps.denoise.config import DenoiseRequestOptions
-    from vrl.trajectory import TrajectoryBatch, TrajectoryStoragePolicy
+    from vrl.trajectory.storage import TrajectoryStoragePolicy
+    from vrl.trajectory.types import TrajectoryBatch
 
 
 @dataclass(slots=True)
@@ -268,7 +269,7 @@ class GenerationOutput:
     runtime_debug: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
-        from vrl.trajectory import TrajectoryBatch
+        from vrl.trajectory.types import TrajectoryBatch
 
         if not isinstance(self.trajectory, TrajectoryBatch):
             raise TypeError("GenerationOutput.trajectory must be a TrajectoryBatch")

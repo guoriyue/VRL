@@ -17,7 +17,7 @@ from vrl.generation.types import (
     GenerationRequest,
     GenerationSampleRow,
 )
-from vrl.trajectory import (
+from vrl.trajectory.builders import (
     build_chunk_autoregressive_denoise_trajectory,
     build_chunk_autoregressive_generation_trajectory,
 )

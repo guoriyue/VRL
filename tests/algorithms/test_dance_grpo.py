@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import torch
 
-from vrl.trainers.online import OnlineTrainer
+from vrl.trainers.online.trainer import OnlineTrainer
 
 _pick = OnlineTrainer._train_timestep_indices
 

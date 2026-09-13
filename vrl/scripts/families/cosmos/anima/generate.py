@@ -29,7 +29,7 @@ from vrl.scripts.eval.denoise_generation import (
     generate_images,
 )
 from vrl.scripts.families.cosmos.anima.generation_protocol import ANIMA_GENERATION_SCHEMA
-from vrl.trainers.data import PromptExample, load_prompt_dataset_index
+from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import write_jsonl
 

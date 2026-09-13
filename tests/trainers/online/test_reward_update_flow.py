@@ -25,9 +25,9 @@ class TestRewardUpdateFlow:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.data import PromptExample
-        from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.data.prompts import PromptExample
         from vrl.trainers.online.config import TrainerConfig
+        from vrl.trainers.online.trainer import OnlineTrainer
 
         captured_kwargs: list[dict] = []
         captured_inputs: list = []
@@ -140,8 +140,8 @@ class TestRewardUpdateFlow:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import TrainerConfig
+        from vrl.trainers.online.trainer import OnlineTrainer
 
         collect_calls: list[list[str]] = []
         evaluate_batch_sizes: list[int] = []
@@ -254,8 +254,8 @@ class TestRewardUpdateFlow:
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.scripts.common.online import _run_streaming_optimizer_update
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import TrainerConfig
+        from vrl.trainers.online.trainer import OnlineTrainer
 
         collect_calls: list[list[str]] = []
         after_step_calls: list[int] = []
@@ -582,8 +582,8 @@ class TestRewardUpdateFlow:
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.scripts.common.online import _run_streaming_optimizer_update
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import TrainerConfig
+        from vrl.trainers.online.trainer import OnlineTrainer
 
         recorded_grads: list[float] = []
 
@@ -699,8 +699,8 @@ class TestRewardUpdateFlow:
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.scripts.common.online import _run_streaming_optimizer_update
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import TrainerConfig
+        from vrl.trainers.online.trainer import OnlineTrainer
 
         class _Algorithm(_EvaluatorAlgorithmFake):
             required_signal_keys = ("log_prob",)
@@ -812,9 +812,9 @@ def test_training_microbatch_size_splits_backward_and_preserves_gradient(monkeyp
     from vrl.algorithms.types import TrainStepMetrics
     from vrl.scripts.common.online import _run_streaming_optimizer_update
     from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-    from vrl.trainers.online import OnlineTrainer
     from vrl.trainers.online import trainer as trainer_module
     from vrl.trainers.online.config import TrainerConfig
+    from vrl.trainers.online.trainer import OnlineTrainer
 
     device_move_sizes: list[int] = []
     original_move_training_batch_to_device = trainer_module.move_training_batch_to_device
@@ -1091,7 +1091,7 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         remap_group_ids_,
         select_batch,
     )
-    from vrl.trajectory import build_ar_discrete_trajectory
+    from vrl.trajectory.builders import build_ar_discrete_trajectory
 
     request = GenerationRequest(
         request_id="req",

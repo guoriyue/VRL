@@ -33,7 +33,7 @@ from vrl.models.families.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.families.janus_pro.runner import JanusProARModelRunner
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.token.build import token_model_config_base
-from vrl.trajectory import build_ar_multisegment_trajectory
+from vrl.trajectory.builders import build_ar_multisegment_trajectory
 from vrl.utils.cuda_memory import cuda_peak_allocated_mb
 
 

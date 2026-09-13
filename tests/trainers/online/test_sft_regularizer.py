@@ -16,9 +16,8 @@ from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.trainers.core.types import EMAConfig, OptimConfig
-from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-from vrl.trainers.online.trainer import _ReplayMetrics
+from vrl.trainers.online.trainer import OnlineTrainer, _ReplayMetrics
 
 _B, _T = 2, 4
 _LATENT = (3, 2, 2)

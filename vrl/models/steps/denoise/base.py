@@ -262,7 +262,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
     ) -> tuple[dict[str, Any], dict[str, Any], Any]:
         """Resolve only the current denoise step's replay tensors on model device."""
 
-        from vrl.trajectory import TrajectoryReader
+        from vrl.trajectory.reader import TrajectoryReader
 
         device = self.device
         reader = TrajectoryReader.from_batch(batch)

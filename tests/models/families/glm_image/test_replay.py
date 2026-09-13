@@ -14,7 +14,8 @@ from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.families.glm_image.model import glm_image_token_num
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import TrajectoryReader, build_ar_discrete_trajectory
+from vrl.trajectory.builders import build_ar_discrete_trajectory
+from vrl.trajectory.reader import TrajectoryReader
 
 # 128x192 target -> large 4x6 (24 tokens) + preview 13x19 (247 tokens).
 HEIGHT, WIDTH = 128, 192

@@ -155,7 +155,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         save_training_checkpoint,
         validate_checkpoint_compatibility,
     )
-    from vrl.trainers.data import PickAPicPreferenceDataset, PreferenceBatch
+    from vrl.trainers.data.preferences import PickAPicPreferenceDataset, PreferenceBatch
     from vrl.trainers.metrics_io import MetricsCSV
     from vrl.trainers.offline import OfflineDPOTrainer
 

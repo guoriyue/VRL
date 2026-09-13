@@ -24,7 +24,7 @@ from vrl.generation.types import (
     GenerationRequest,
     GenerationSampleRow,
 )
-from vrl.trajectory import build_diffusion_trajectory
+from vrl.trajectory.builders import build_diffusion_trajectory
 
 if TYPE_CHECKING:
     from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionBatchResult

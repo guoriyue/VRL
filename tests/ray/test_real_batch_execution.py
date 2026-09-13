@@ -31,7 +31,7 @@ from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
-from vrl.trajectory import TrajectoryBatch
+from vrl.trajectory.types import TrajectoryBatch
 
 pytestmark = pytest.mark.slow_test
 

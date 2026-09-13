@@ -15,7 +15,7 @@ from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEPar
 from vrl.generation.steps.denoise.loop import DenoiseTrajectoryBuffers
 from vrl.generation.types import GenerationRequest
 from vrl.math.denoise.flow_matching import SDEStepResult
-from vrl.trajectory import TrajectoryStoragePolicy
+from vrl.trajectory.storage import TrajectoryStoragePolicy
 
 
 def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> None:

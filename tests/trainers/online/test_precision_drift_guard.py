@@ -321,8 +321,8 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
     from vrl.algorithms.types import TrainStepMetrics
     from vrl.rollouts.evaluators.base import Evaluator
     from vrl.trainers.core.types import EMAConfig, OptimConfig
-    from vrl.trainers.online import OnlineTrainer
     from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+    from vrl.trainers.online.trainer import OnlineTrainer
 
     class _Algorithm(_EvaluatorAlgorithmFake):
         required_signal_keys: tuple[str, ...] = ()

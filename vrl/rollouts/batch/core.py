@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import torch
 
-    from vrl.trajectory import TrajectoryBatch
+    from vrl.trajectory.types import TrajectoryBatch
 
 
 @dataclass
@@ -43,7 +43,7 @@ class RolloutBatch:
         This preserves the queue's admission heuristic, not allocator/RSS
         measurement. Shared batch context and Python object overhead are excluded.
         """
-        from vrl.trajectory import trajectory_tensor_bytes
+        from vrl.trajectory.storage import trajectory_tensor_bytes
 
         return trajectory_tensor_bytes(
             {

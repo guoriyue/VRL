@@ -163,7 +163,7 @@ def main(argv: list[str] | None = None) -> None:
     from vrl.models.families.registry import (
         get_model_family_entry,
     )
-    from vrl.trainers.data import load_prompt_examples_from_config
+    from vrl.trainers.data.prompts import load_prompt_examples_from_config
     from vrl.trainers.data.sft_latents import save_sft_latents
 
     cfg = load_config(f"experiment/{args.experiment}", overrides=args.overrides)

@@ -50,7 +50,7 @@ class TokenLogProbEvaluator(ReplayEvaluatorBase):
         model, ref_model = self._require_models(model, ref_model)
         request = signal_request or SignalRequest()
 
-        from vrl.trajectory import TrajectoryReader
+        from vrl.trajectory.reader import TrajectoryReader
 
         action_ids: torch.Tensor = TrajectoryReader.from_batch(batch).role_value(
             "image_tokens",

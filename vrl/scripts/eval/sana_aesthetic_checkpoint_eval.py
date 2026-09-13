@@ -44,7 +44,7 @@ from vrl.trainers.checkpointing import (
     restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
-from vrl.trainers.data import load_prompt_dataset_index
+from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
 

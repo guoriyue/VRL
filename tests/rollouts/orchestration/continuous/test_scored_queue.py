@@ -13,7 +13,8 @@ from vrl.rollouts.orchestration.continuous.scored_queue import ScoredRolloutQueu
 from vrl.rollouts.orchestration.continuous.types import (
     ScoredRollout,
 )
-from vrl.trajectory import build_ar_discrete_trajectory, trajectory_tensor_bytes
+from vrl.trajectory.builders import build_ar_discrete_trajectory
+from vrl.trajectory.storage import trajectory_tensor_bytes
 
 
 def _item(

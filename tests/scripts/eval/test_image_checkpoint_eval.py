@@ -12,7 +12,7 @@ from PIL import Image
 
 from vrl.rewards.types import REWARD_GROUP_ID_METADATA_KEY, RewardOutput
 from vrl.scripts.eval import image_checkpoint_eval as checkpoint_eval
-from vrl.trainers.data import PromptExample
+from vrl.trainers.data.prompts import PromptExample
 
 
 def _checkpoint(path, epoch, *, uses_lora=False):

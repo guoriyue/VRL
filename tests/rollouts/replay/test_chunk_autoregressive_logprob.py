@@ -15,7 +15,7 @@ from vrl.rollouts.evaluators.denoise import (
     ChunkAutoregressiveDenoiseLogProbEvaluator,
 )
 from vrl.rollouts.evaluators.types import SignalRequest
-from vrl.trajectory import build_chunk_autoregressive_denoise_trajectory
+from vrl.trajectory.builders import build_chunk_autoregressive_denoise_trajectory
 
 
 def test_grouped_evaluator_flattens_policy_axes_and_replays_reference_once() -> None:

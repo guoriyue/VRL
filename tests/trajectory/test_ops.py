@@ -6,7 +6,8 @@ import pytest
 import torch
 
 from vrl.generation.types import GenerationRequest
-from vrl.trajectory import TrajectoryBatch, build_ar_discrete_trajectory
+from vrl.trajectory.builders import build_ar_discrete_trajectory
+from vrl.trajectory.types import TrajectoryBatch
 
 
 def _axis_lengths(trajectory: TrajectoryBatch) -> dict[str, int]:

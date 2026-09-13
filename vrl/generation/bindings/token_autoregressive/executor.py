@@ -281,7 +281,7 @@ class ARDiscreteBatchGatherer:
     ) -> GenerationOutput:
         """Pack prompt/sample AR batches back into the canonical GenerationOutput."""
 
-        from vrl.trajectory import build_ar_discrete_trajectory
+        from vrl.trajectory.builders import build_ar_discrete_trajectory
 
         layout = ARRequestLayout()
         fields = (

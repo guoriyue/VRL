@@ -10,7 +10,7 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import ReplayEvaluatorBase
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
-from vrl.trajectory import TrajectoryReader
+from vrl.trajectory.reader import TrajectoryReader
 
 
 class ChunkAutoregressiveDenoiseLogProbEvaluator(ReplayEvaluatorBase):

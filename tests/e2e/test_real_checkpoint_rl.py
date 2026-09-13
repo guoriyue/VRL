@@ -40,7 +40,7 @@ from vrl.scripts.common.factory import (
 )
 from vrl.trainers.data.prompts import PromptExample
 from vrl.trainers.diagnostics import trainable_state_digest
-from vrl.trainers.online import OnlineTrainer
+from vrl.trainers.online.trainer import OnlineTrainer
 from vrl.utils.config import import_from_path
 
 RUN_REAL_ENV = "WM_RUN_REAL_MODEL_TESTS"
@@ -959,7 +959,7 @@ def _synthetic_diffusion_replay_batch(
 ) -> Any:
     from vrl.math.denoise.flow_matching import sde_step_with_logprob
     from vrl.rollouts.batch import RolloutBatch
-    from vrl.trajectory import build_diffusion_trajectory
+    from vrl.trajectory.builders import build_diffusion_trajectory
 
     num_steps = max(1, int(cfg.sampling.num_steps))
     height = int(cfg.sampling.height)

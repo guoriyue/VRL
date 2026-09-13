@@ -240,7 +240,7 @@ async def test_pipeline_combiner_retains_nonprimary_oom_payload():
     from vrl.generation.execution.types import PipelinedRequestOutOfMemory
     from vrl.generation.ray.executor import RayGenerationExecutor
     from vrl.generation.types import GenerationOutput
-    from vrl.trajectory import TrajectoryBatch
+    from vrl.trajectory.types import TrajectoryBatch
 
     good = GenerationOutput(
         output=[],

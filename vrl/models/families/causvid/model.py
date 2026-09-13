@@ -456,7 +456,7 @@ class _CausVidPolicyModel(LoraModelMixin, DiffusionModelBase):
 
         self.reject_replay_timestep_selection(timestep_idx)
         self.reject_unsupported_replay_segments(request)
-        from vrl.trajectory import TrajectoryReader
+        from vrl.trajectory.reader import TrajectoryReader
 
         replay = TrajectoryReader.from_batch(batch).replay_tensor_dict(
             "denoise",

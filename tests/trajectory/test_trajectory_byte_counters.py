@@ -5,7 +5,8 @@ from __future__ import annotations
 import torch
 
 from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.trajectory import build_ar_discrete_trajectory, trajectory_tensor_bytes
+from vrl.trajectory.builders import build_ar_discrete_trajectory
+from vrl.trajectory.storage import trajectory_tensor_bytes
 
 
 def test_byte_counter_counts_trajectory_tensor_leaves() -> None:

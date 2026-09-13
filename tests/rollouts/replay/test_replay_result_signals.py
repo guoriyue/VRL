@@ -9,7 +9,7 @@ from tests.rollouts.replay._helpers import janus_request, janus_sample_rows
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
-from vrl.trajectory import build_ar_discrete_trajectory
+from vrl.trajectory.builders import build_ar_discrete_trajectory
 
 
 def _discrete_batch() -> tuple[RolloutBatch, torch.Tensor, torch.Tensor]:
@@ -182,7 +182,7 @@ def test_signal_builder_rejects_mismatched_trajectory_mask() -> None:
 
 @pytest.mark.parametrize("step_dim", [0, 1])
 def test_signal_builder_selects_declared_denoise_axis(step_dim: int) -> None:
-    from vrl.trajectory import TrajectoryAxis
+    from vrl.trajectory.types import TrajectoryAxis
 
     batch, old_log_prob, token_mask = _discrete_batch()
     trajectory = batch.trajectory

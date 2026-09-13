@@ -80,7 +80,7 @@ def test_unscored_payload_estimate_counts_dataclass_media_without_alias_duplicat
     import torch
     from PIL import Image
 
-    from vrl.trajectory import trajectory_tensor_bytes
+    from vrl.trajectory.storage import trajectory_tensor_bytes
 
     @dataclass
     class Receipt:

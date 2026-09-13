@@ -25,8 +25,8 @@ def _make_parity_boundary_trainer(
 
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
     from vrl.trainers.core.types import EMAConfig, OptimConfig
-    from vrl.trainers.online import OnlineTrainer
     from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+    from vrl.trainers.online.trainer import OnlineTrainer
 
     class _Algorithm(_EvaluatorAlgorithmFake):
         precision_correction = PrecisionCorrectionConfig()
@@ -97,8 +97,8 @@ class TestDiagnostics:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+        from vrl.trainers.online.trainer import OnlineTrainer
 
         class _Algorithm(_EvaluatorAlgorithmFake):
             required_signal_keys = ("log_prob",)
@@ -311,8 +311,8 @@ class TestDiagnostics:
             OptimConfig,
             PrecisionDriftGuardConfig,
         )
-        from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+        from vrl.trainers.online.trainer import OnlineTrainer
 
         class _Algorithm(_EvaluatorAlgorithmFake):
             required_signal_keys = ("log_prob",)
@@ -543,7 +543,7 @@ class TestDiagnostics:
 def test_precision_metadata_preserves_model_query_failure(source):
     from types import SimpleNamespace
 
-    from vrl.trainers.online import OnlineTrainer
+    from vrl.trainers.online.trainer import OnlineTrainer
 
     failure = RuntimeError("model dtype query failed")
 
@@ -561,7 +561,7 @@ def test_precision_metadata_keeps_parameterless_model_dtype_unknown():
 
     import torch.nn as nn
 
-    from vrl.trainers.online import OnlineTrainer
+    from vrl.trainers.online.trainer import OnlineTrainer
 
     trainer = SimpleNamespace(
         model=nn.Module(),
@@ -580,8 +580,8 @@ def test_precision_metadata_preserves_role_execution_policy(math_dtype, token):
 
     import torch
 
-    from vrl.trainers.online import OnlineTrainer
     from vrl.trainers.online.precision_guard import resolve_guard_mode
+    from vrl.trainers.online.trainer import OnlineTrainer
 
     trainer = SimpleNamespace(
         model=torch.nn.Module(),

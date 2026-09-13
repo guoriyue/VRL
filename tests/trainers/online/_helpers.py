@@ -9,7 +9,7 @@ import torch
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import build_diffusion_trajectory
+from vrl.trajectory.builders import build_diffusion_trajectory
 
 DEFAULT_PRECISION = RolePrecision(
     dtype="fp32",
