@@ -529,3 +529,56 @@ including executed source, all rank transition/pre-step receipts, `update.pt`,
 and CPU comparison exited 0; fresh GPU inventory empty, all four GPUs released.
 Full recipe, checkpoint recovery, EMA, quality, original native-compute parity
 and production throughput gates remain open.
+
+## Ordinary native-compute control: update equivalence fails
+
+The same native DDP4 harness reran the eight real samples at timestep 10 with
+ordinary Linear/autocast and default SDPA selection, removing the fixed-row,
+explicit FP32-LoRA and efficient-SDPA overrides as one combined change. Model,
+initial adapter, full-group advantages, deterministic IEEE setting, sample
+ownership, gradient checkpointing, optimizer and artifact capture stayed the
+same. This ordinary-native update itself completed successfully: all eight
+saved-rollout log-prob differences were exactly 0, the four updated replicas
+matched exactly, 560 gradients were captured and 280 trainable tensors changed.
+Gradient norm was 0.0008508932078.
+
+**Cross-contract update equivalence failed by a large margin.** The independent
+comparison retained exactly the previously declared thresholds; neither
+failure was relabeled as a pass:
+
+| Comparison to ordinary native DP4 | Gradient relative L2 | Update relative L2 | Parameter max abs |
+| --- | ---: | ---: | ---: |
+| Fixed-compute CP2 | 0.5258839531 | 0.5617156138 | 1.9938813e-4 |
+| Fixed-compute unsharded DP4 | 0.5258839531 | 0.5617156139 | 1.9938814e-4 |
+
+Adam first/second moment relative L2 differences were approximately 0.525884
+and 0.626079. Limits remain 1e-4 for gradient/update/first moment, 2e-4 for
+second moment, and 1e-6 parameter max absolute error. These are relative L2
+differences, not percentages of incorrect tensor elements. Comparing actual
+updates (subtracting the common initial state) prevents unchanged adapter
+values from concealing the discrepancy.
+
+The matched DP4-versus-DP4 result isolates the **combined compute-contract
+change**, not CP token partitioning. It does not identify which of fixed-row
+GEMM shape, FP32 LoRA execution or attention backend is responsible, nor which
+contract gives better learning/quality. The earlier CP-to-fixed-reference
+agreement remains valid, but must not be generalized to ordinary native
+training. Small saved-rollout log-prob drift did not guarantee gradient or
+optimizer equivalence in this real group.
+
+Native DP4 measured region was 36.435179 seconds versus fixed-compute DP4
+288.514487 seconds, using the same device count and diagnostic capture scope.
+This is one single-time-slice observation per arm, not an end-to-end or
+confidence-qualified benchmark. Native peak allocated memory was
+15,429,804,032 bytes per rank. Do not deploy/promote the fixed CP contract as
+a semantics-preserving or performance-improving replacement for native mode.
+Next diagnostic: isolate the individual compute overrides with the same saved
+group, without changing tolerances or regenerating videos.
+
+Evidence: `cosmos_real_native_dp4_update` under the NVMe output root, with
+executed GPU source, native update/pre-step/transition artifacts, `result.json`
+(`passed` execution only), and **failed** `cp_comparison.json` and
+`fixed_comparison.json` with their executed comparison scripts. Torchrun exited
+0; both parity comparisons exited 2 as intended on threshold failure. Fresh
+GPU inventory empty, all four GPUs released. Full recipe, native-compatible
+CP update semantics, recovery, EMA and quality gates remain open.
