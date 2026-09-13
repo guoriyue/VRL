@@ -7,8 +7,9 @@ Batch size one still differs. Gradient/update equivalence and controlled resume
 remain open; historical diagnostics and the latest matrix follow below.
 
 Latest gradient gate: matched-batch real one/two-rank gradients differ by
-0.403% relative L2 and are not accepted under the fixed 1e-4 gate. See the
-final section; exact forward replay did not close training equivalence.
+0.403% relative L2 and are not accepted under the fixed 1e-4 gate. Independent
+contribution capture now reproduces both results exactly using their respective
+BF16 accumulation orders. A distributed higher-precision fix remains unverified.
 
 ## Reproducible artifacts
 
@@ -347,3 +348,59 @@ All GPU/runtime and CPU audit sessions are terminal, and fresh GPU/Ray process
 inventories are empty. Next isolate per-microbatch gradient reduction versus
 cross-microbatch accumulation, then rerun the correctly wrapped distributed
 optimizer and controlled resume only after the gradient gate passes.
+
+## Exact reconstruction of the BF16 discrepancy
+
+On the same clean candidate `52a7cf44`, `wan22_gradient_contributions.py`
+replayed the unchanged four-sample fixture with one-rank FSDP, frozen FP32
+preservation, two-row chunks and full_cpu checkpointing. It cleared gradients
+between each backward and saved all 18 independent contributions: nine steps
+times two chunks, each with 640 finite BF16 trainable gradients for the active
+expert. Loss divisor remained 18, exactly as in the previous single-rank arm.
+Every pre-update log probability remained exact. No optimizer was constructed
+or stepped. The capture finished in 254.645 seconds excluding setup and exited
+zero, with an empty GPU compute inventory afterward.
+
+`wan22_gradient_rounding_audit.py` checked all step/chunk coverage and then
+reconstructed four sums on CPU from those actual captured tensors:
+
+- BF16 sequential accumulation in the previous single-rank order.
+- BF16 pairwise rank averaging followed by accumulation in the previous
+  two-rank order. Contributions are doubled for the two-rank loss divisor nine,
+  summed and halved to model rank averaging.
+- The same sequential and pairwise orders with FP32 additions.
+
+Results in `wan22_gradient_contributions/rounding_audit.json`:
+
+| Comparison | Relative L2 | Maximum absolute | Exact tensors |
+| --- | ---: | ---: | ---: |
+| Reconstructed BF16 sequential vs actual single rank | 0 | 0 | 1280/1280 |
+| Reconstructed BF16 paired vs actual two ranks | 0 | 0 | 1280/1280 |
+| Actual single vs two ranks | 0.0040335740695426345 | 1.52587890625e-05 | 640/1280 |
+| FP32 sequential vs paired simulation | 1.0627227236804594e-10 | 1.8189894035458565e-12 | 688/1280 |
+
+Thus BF16 summation order is sufficient to reproduce the entire observed
+cross-rank gradient discrepancy in this fixed experiment. This is stronger than
+attributing it from dtype inspection or similar error magnitudes. It does not
+establish a reward/quality regression or a different mathematical GRPO objective.
+
+The installed Torch 2.12 FSDP implementation also shows the relevant boundary:
+`_fully_shard/_fsdp_collectives.py` converts reduced gradients back to
+`orig_dtype` before adding to existing sharded gradients (lines 687 and 722 in
+this environment). Therefore changing reduction dtype alone does not guarantee
+FP32 cross-microbatch accumulation for BF16 trainables. The FP32 master optimizer
+currently receives source gradients after that accumulation, too late to undo
+the earlier rounding.
+
+The FP32 arithmetic simulation is **not a distributed implementation test**.
+Next evaluate a supported higher-precision trainable/gradient path on both
+single and multiple ranks, while retaining exact forward replay and verifying
+the actual native optimizer wrapper. Such a change intentionally changes the
+old single-rank BF16 numerical result as well; compare like-configured arms and
+do not relabel it as bitwise preservation of the old BF16 baseline. Keep public
+defaults unchanged until the runtime, updated rollout delivery and controlled
+resume have passed their own gates.
+
+Both capture and CPU audit sessions are terminal, executed scripts are copied
+into the NVMe output directory, and GPU0 is released. No shared runtime code,
+model weights, optimizer defaults or acceptance thresholds changed this turn.
