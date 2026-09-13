@@ -143,3 +143,38 @@ The earlier 1.86x capacity timing did NOT use strict deterministic mode and
 must not be presented as throughput for this final numerical configuration.
 Re-measure performance and memory after production integration. Torchrun
 exits 0, fresh compute inventory empty; GPUs 0-1 released. Runtime unchanged.
+
+## Native optimizer/checkpoint continuation (September 13)
+
+Full-shape BF16 deterministic family/CPS gradients now drive the repository's
+`build_optimizer` factory (fused AdamW, OptimConfig lr 1e-4 and its defaults),
+with gradient clipping at 1.0. First gradient norm is 9.69262e-6 and all 560
+trainable tensors change. Single-reference versus two-rank updated parameter
+relative L2 is 1.26901e-9. This compares parameter values, not relative update
+deltas, and does not demonstrate reward improvement.
+
+The probe uses native `save_training_checkpoint`, `TrainingCheckpoint.load`,
+`restore_training_checkpoint`, owned-state export and RNG capture/restore.
+Its minimal state carrier stores optimizer/progress; it is not OnlineTrainer
+and does not include EMA, the online optimizer manifest or rollout state.
+Each rank publishes to its own diagnostic checkpoint directory, not the
+production distributed writer topology.
+
+After step 1, the saved optimizer has 560 entries and 1,120 nonzero Adam moment
+tensors on each rank. The probe then computes a fresh second CPS gradient and
+update, snapshots the result, creates a new optimizer, strictly restores step
+1 model/optimizer/RNG, and recomputes the same second update. Native exact-tree
+checks pass for owned model state and optimizer/progress; second-step loss is
+also tensor-exact. Both ranks report success. This is real optimizer-state
+continuation, not reusing saved gradients or merely loading a file.
+
+Evidence: `cosmos_fullshape_optimizer_resume_l40s/rank-{0,1}.json`, adjacent
+log and `bfloat16/checkpoint-rank-{0,1}/checkpoint.pt` under the NVMe root.
+Immutable `probe_source.py` in the run directory has SHA256
+`34ea6064e271e546e16f63de67bc6819c1831102644b2f86bb93fed64cfcd16d`.
+Torchrun exits 0, fresh compute inventory empty; GPUs 0-1 released.
+
+The fixed-action CPS objective still has synthetic conditioning, no reward,
+advantage computation, online loop or generated trajectory. Production CP
+mesh/lifecycle integration, complete GRPO/EMA acceptance and final-config
+performance remain open. Do not label this as completion of the full sprint.
