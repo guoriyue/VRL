@@ -56,16 +56,10 @@ class _CpuPolicy:
 
 @dataclass
 class _Bundle:
-    """Driver-bundle stand-in for the CUDA-ownership checks these tests cover.
-
-    ``loads_full_generation_modules`` defaults to the replay answer so the
-    colocated-RAM guard stays out of the way; the guard has its own tests in
-    ``tests/trainers/test_memory_guards.py``.
-    """
+    """Driver-bundle stand-in for the CUDA-ownership checks these tests cover."""
 
     model: Any
     trainable_modules: dict[str, Any]
-    loads_full_generation_modules: bool = False
 
 
 _TEST_MODEL_IDENTITY = {"schema": "test"}

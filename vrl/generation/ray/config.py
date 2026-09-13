@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 import math
-import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -18,10 +17,7 @@ from vrl.ray.resources import (
     ResolvedDistributedResources,
 )
 from vrl.utils.config import to_builtin_deep
-from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
-
-logger = init_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +144,6 @@ class RayGenerationConfig:
             if index is not None:
                 devices.add(index)
         self._validate_driver_cuda_ownership(devices)
-        self._validate_colocated_replay_memory(driver_bundle)
         return self
 
     def _validate_driver_cuda_ownership(self, driver_cuda_devices: set[int]) -> None:
@@ -185,37 +180,6 @@ class RayGenerationConfig:
                 f"{rollout_devices}, but the resolved rollout lifecycle is not on_demand. "
                 "Shared trainer/rollout GPUs must hand ownership over between phases.",
             )
-
-    def _validate_colocated_replay_memory(self, bundle: Any) -> None:
-        """Warn or fail when trainer and Ray worker both own full generation state.
-
-        This guard does not implement a family-specific minimal replay loader. It
-        makes the risk explicit and provides a strict mode for CI or future recipes
-        once those loaders exist.
-        """
-
-        # colocated already implies a non-empty rollout device set (it is the
-        # trainer/rollout intersection), so no separate GPU-fleet check needed.
-        if not self.resources.colocated:
-            return
-        if not bundle.loads_full_generation_modules:
-            return
-
-        message = (
-            "trainer bundle declares loads_full_generation_modules=true while "
-            "colocated Ray rollout is enabled; host RAM can contain the trainer "
-            "generation model plus a rollout worker generation model. Implement a "
-            "family-specific minimal replay loader before enabling strict guard."
-        )
-        strict = os.environ.get("VRL_STRICT_REPLAY_MEMORY_GUARD", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-        if strict:
-            raise ValueError(message)
-        logger.warning(message)
 
     @staticmethod
     def _get_device(obj: Any) -> Any | None:

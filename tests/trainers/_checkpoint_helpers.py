@@ -79,7 +79,6 @@ def _export_bundle(model) -> RuntimeBundle:
         scheduler=None,
         raw_handle=None,
         precision=_EXPORT_PRECISION,
-        loads_full_generation_modules=False,
         adapter_roots=model.adapter_roots,
     )
 

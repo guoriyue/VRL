@@ -53,7 +53,6 @@ def build_magi_1_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
         scheduler=None,
         raw_handle=model,
         precision=build.precision,
-        loads_full_generation_modules=True,
     )
 
 

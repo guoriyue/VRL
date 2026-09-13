@@ -449,13 +449,6 @@ class RuntimeBundle:
     the complete role on ``model`` for replay algorithms that call the
     transformer outside the family ``forward_step`` wrapper.
 
-    ``loads_full_generation_modules`` is true when the bundle owns
-    generation-only modules such as prompt encoders, VAE/VQ decoders, or a full
-    pipeline object. Rollout workers own that full generation state for
-    sampling/decoding; trainers own only the modules needed to replay recorded
-    trajectory actions. Consumed by the colocated-RAM guard in
-    ``RayGenerationConfig.validate_driver_state`` to size host memory.
-
     ``adapter_roots`` maps checkpoint root name to the module holding that
     root's PEFT adapter, which is not always the root itself (token families
     register the wrapper but attach LoRA to ``language_model`` inside it).
@@ -469,7 +462,6 @@ class RuntimeBundle:
     scheduler: Any
     raw_handle: Any
     precision: RolePrecision
-    loads_full_generation_modules: bool
     adapter_roots: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

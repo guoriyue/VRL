@@ -117,7 +117,6 @@ def build_token_family_bundle(
         scheduler=None,
         raw_handle=None if replay else model,
         precision=build.precision,
-        loads_full_generation_modules=not replay,
         adapter_roots=model.adapter_roots,
     )
 

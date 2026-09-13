@@ -135,7 +135,6 @@ def test_runtime_bundle_exposes_model_contract() -> None:
         scheduler=None,
         raw_handle=None,
         precision=RolePrecision("fp32", "ieee", outer_autocast=False),
-        loads_full_generation_modules=False,
     )
 
     assert bundle.model is model

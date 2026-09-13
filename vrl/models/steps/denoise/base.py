@@ -759,8 +759,6 @@ class DiffusersReplayModelBase(ReplayRolloutStubs):
     transformer swap, and the scheduler/raw_handle accessors. A family
     overrides only where it genuinely differs (flux/mochi/pixart_sigma
     re-standardize their replay scheduler in ``prepare_replay``).
-    ``Cosmos3ReplayModel`` stays on ``ReplayRolloutStubs`` directly — it wraps a
-    pipeline SHELL, not a bare transformer, and reads ``self.pipeline``.
     """
 
     def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:

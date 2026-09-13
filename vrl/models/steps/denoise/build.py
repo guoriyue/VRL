@@ -82,7 +82,6 @@ def build_denoise_runtime_bundle(
         scheduler=model.scheduler,
         raw_handle=model.raw_handle,
         precision=build.precision,
-        loads_full_generation_modules=True,
         adapter_roots=model.adapter_roots,
     )
 
@@ -90,14 +89,8 @@ def build_denoise_runtime_bundle(
 def assemble_replay_bundle(
     model: object,
     build: ModelBuild,
-    *,
-    loads_full_generation_modules: bool = False,
 ) -> RuntimeBundle:
-    """Apply shared training knobs and declare the replay model's residency.
-
-    Most replay models own only policy modules. A family retaining generation
-    components must declare them for the colocated memory guard.
-    """
+    """Apply shared training knobs to a replay model and assemble its bundle."""
 
     build.require_replay()
     if build.use_lora:
@@ -116,7 +109,6 @@ def assemble_replay_bundle(
         scheduler=model.scheduler,
         raw_handle=None,
         precision=build.precision,
-        loads_full_generation_modules=loads_full_generation_modules,
         adapter_roots=model.adapter_roots,
     )
 

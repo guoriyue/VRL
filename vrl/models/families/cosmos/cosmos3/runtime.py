@@ -7,11 +7,9 @@ interleaved joint sequence and returns a 3-tuple of lists, which does not fit
 ``Cosmos3Model.forward_step`` (see model.py). A runner would be a thin no-op layer
 with no protocol boundary, so it is intentionally omitted.
 
-NOTE — replay bundle loads a FULL pipeline, not a transformer-only minimal model:
-the replay model needs the pipeline's ``_prepare_text_segment`` /
-``_prepare_vision_segment`` to rebuild the step-invariant packed_static. A
-transformer-only "option B" (persist+replay the packed-static index tensors)
-is the memory optimization follow-up; correctness comes first.
+Replay loads the transformer and scheduler directly. Upstream segment builders
+consume stored token IDs and latents plus the VAE's configuration-only temporal
+compression factor; no generation pipeline or VAE weights are retained.
 """
 
 from __future__ import annotations
@@ -32,20 +30,11 @@ logger = init_logger(__name__)
 
 
 def build_cosmos3_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
-    from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model, Cosmos3ReplayModel
-
-    logger.info("Building cosmos3 replay runtime bundle from %s", build.model_name_or_path)
-    # Reuse from_build's pipeline loader, then wrap pipeline-shell in the replay model
-    # (it needs the segment builders to rebuild packed_static at recompute time).
-    driver = Cosmos3Model.from_build(build)
-    model = Cosmos3ReplayModel(
-        pipeline_shell=driver.pipeline,
-        scheduler=driver.scheduler,
-        device=build.device,
-    )
+    from vrl.models.families.cosmos.cosmos3.model import Cosmos3ReplayModel
     from vrl.models.steps.denoise.build import assemble_replay_bundle
 
-    return assemble_replay_bundle(model, build, loads_full_generation_modules=True)
+    logger.info("Building cosmos3 replay runtime bundle from %s", build.model_name_or_path)
+    return assemble_replay_bundle(Cosmos3ReplayModel.from_build(build), build)
 
 
 class Cosmos3BatchExecutor(DiffusionBatchExecutorBase):

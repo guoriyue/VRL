@@ -385,7 +385,6 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
         ),
     )
 
-    assert bundle.loads_full_generation_modules is False
     assert loaded_builds
     if family == "sana":
         assert loaded_builds[-1].parameter_dtype is torch.float16
@@ -504,7 +503,6 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
         _build(family="wan_2_1_i2v"),
     )
 
-    assert bundle.loads_full_generation_modules is False
     assert isinstance(bundle.model, WanI2VReplayModel)
 
 
@@ -543,7 +541,6 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
         ),
     )
 
-    assert bundle.loads_full_generation_modules is False
     # Primary first (generic ctor), then the prepare_replay late-load.
     assert loaded_subfolders == ["transformer", "transformer_2"]
     assert set(bundle.trainable_modules) == {"transformer_2"}
@@ -585,7 +582,6 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
         ),
     )
 
-    assert bundle.loads_full_generation_modules is False
     assert bundle.raw_handle is None
     assert callable(bundle.model.diffusion_nft_prepare_transformer_input)
     with pytest.raises(RuntimeError, match="pipeline"):
@@ -617,7 +613,6 @@ def test_anima_replay_builder_uses_only_transformer_checkpoint(
         ),
     )
 
-    assert bundle.loads_full_generation_modules is False
     assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"transformer"}
     with pytest.raises(RuntimeError, match="pipeline"):
@@ -768,7 +763,6 @@ def test_ar_replay_builders_return_minimal_bundles(
         _build(family=family, use_lora=use_lora),
     )
 
-    assert bundle.loads_full_generation_modules is False
     assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"model"}
 
@@ -800,5 +794,4 @@ def test_ar_rollout_builders_follow_registry_descriptors(
         ),
     )
 
-    assert bundle.loads_full_generation_modules is True
     assert bundle.raw_handle is bundle.model

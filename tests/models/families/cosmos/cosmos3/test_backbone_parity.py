@@ -70,19 +70,19 @@ def _model(**vae_stats: float) -> Cosmos3Model:
     return model
 
 
-def test_replay_bundle_declares_retained_generation_modules(monkeypatch) -> None:
+def test_minimal_replay_loads_without_vae_weights_and_matches_rollout(tmp_path) -> None:
     from vrl.config.precision import RolePrecision
     from vrl.models.families.cosmos.cosmos3.runtime import build_cosmos3_replay_runtime_bundle
     from vrl.models.interfaces.runtime import ModelBuild
 
     pipeline = build_tiny_cosmos3_pipeline()
-    monkeypatch.setattr(
-        Cosmos3Model,
-        "from_build",
-        classmethod(lambda cls, build: cls(pipeline=pipeline, device=build.device)),
-    )
+    pipeline.transformer.save_pretrained(tmp_path / "transformer")
+    pipeline.scheduler.save_pretrained(tmp_path / "scheduler")
+    pipeline.vae.save_config(tmp_path / "vae")
+    # No VAE weights, tokenizer or model_index.json: a full pipeline loader
+    # cannot load this checkpoint. Replay must use only component loaders.
     build = ModelBuild(
-        model_name_or_path="local-test",
+        model_name_or_path=str(tmp_path),
         revision=None,
         device="cpu",
         parameter_dtype=torch.float32,
@@ -90,12 +90,30 @@ def test_replay_bundle_declares_retained_generation_modules(monkeypatch) -> None
         precision=RolePrecision("fp32", "ieee"),
         model_config={"use_lora": False},
     )
-
     bundle = build_cosmos3_replay_runtime_bundle(build)
-
-    assert bundle.model._pipeline is pipeline
-    assert next(bundle.model._pipeline.vae.parameters()).numel() > 0
-    assert bundle.loads_full_generation_modules is True
+    replay = bundle.model
+    rollout = Cosmos3Model(pipeline=pipeline, device=torch.device("cpu"))
+    stamp_model_precision(rollout)
+    stamp_model_precision(replay)
+    state = _sampling_state(rollout)
+    replay.set_num_steps(_NUM_STEPS)
+    restored = replay.restore_eval_state(
+        {
+            "cond_input_ids": (state.cond_input_ids,),
+            "uncond_input_ids": (state.uncond_input_ids,),
+            "vision_condition_mask": state.vision_condition_mask,
+        },
+        rollout.export_batch_context(state),
+        state.latents,
+        0,
+    )
+    with torch.no_grad():
+        expected = rollout.forward_step(state, 0)["noise_pred"]
+    actual = replay.forward_step(restored, 0)["noise_pred"]
+    torch.testing.assert_close(actual, expected)
+    actual.square().mean().backward()
+    assert any(parameter.grad is not None for parameter in replay.transformer.parameters())
+    assert replay.generation_memory_targets() == {}
 
 
 def _sampling_state(
@@ -201,7 +219,8 @@ def test_replay_model_sets_its_own_scheduler_through_the_shared_set_num_steps() 
 
     pipe = build_tiny_cosmos3_pipeline()
     replay = Cosmos3ReplayModel(
-        pipeline_shell=pipe,
+        transformer=pipe.transformer,
+        vae_scale_factor_temporal=pipe.vae_scale_factor_temporal,
         scheduler=UniPCMultistepScheduler(),
         device=torch.device("cpu"),
     )
