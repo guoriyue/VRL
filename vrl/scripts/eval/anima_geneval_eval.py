@@ -126,10 +126,10 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def load_rows(manifest: str | Path) -> list[EvalRow]:
-    from vrl.trainers.data import load_prompt_manifest
+    from vrl.trainers.data.prompts import load_prompt_dataset_index
 
     rows: list[EvalRow] = []
-    for index, example in enumerate(load_prompt_manifest(manifest)):
+    for index, example in enumerate(load_prompt_dataset_index(manifest)):
         spec = example.metadata.get("geneval")
         if not isinstance(spec, Mapping) or not spec.get("tag"):
             raise ValueError(f"{manifest}: row {index} lacks metadata.geneval with a tag")

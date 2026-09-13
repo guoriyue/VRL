@@ -156,10 +156,10 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def load_rows(manifest: str | Path) -> list[EvalRow]:
-    from vrl.trainers.data import load_prompt_manifest
+    from vrl.trainers.data.prompts import load_prompt_dataset_index
 
     rows: list[EvalRow] = []
-    for index, example in enumerate(load_prompt_manifest(manifest)):
+    for index, example in enumerate(load_prompt_dataset_index(manifest)):
         raw_tags = example.metadata.get("adherence_tags")
         if not isinstance(raw_tags, (list, tuple)) or not raw_tags:
             raise ValueError(f"{manifest}: row {index} lacks a non-empty metadata.adherence_tags")
