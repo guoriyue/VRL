@@ -1,99 +1,53 @@
-"""The Wan DPO entrypoint resolves its model through the family registry and
-refuses non-T2V families before any runtime side effect."""
+"""The Wan DPO entrypoint trains the registry-built model under the config it was
+given: family aliases resolve, non-T2V families are refused before any side
+effect, and ``actor.gradient_checkpointing`` reaches the real transformer."""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+import csv
+import math
 
 import pytest
 
-from vrl.config.loading import load_config
-from vrl.config.schema import RootConfig
+from tests.scripts._wan_dpo_helpers import install_local_pickapic, spy_wan_from_build, tiny_dpo_run
 from vrl.scripts.families.wan_2_1.train_dpo import train_wan_2_1_dpo
+from vrl.trainers.activation_checkpointing import selective_checkpoint_func
+from vrl.trainers.checkpointing import read_checkpoint_meta
 
 
 @pytest.mark.parametrize("family", ["wan_2_1", "wan"])
-def test_offline_dpo_builds_its_full_model_through_the_family_registry(
-    monkeypatch: pytest.MonkeyPatch,
-    family: str,
-) -> None:
-    cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
-    cfg.model.family = family
-    captured: dict[str, object] = {}
+def test_offline_dpo_trains_the_registry_model_end_to_end(monkeypatch, tmp_path, family) -> None:
+    """One real DPO step on the tiny snapshot: the alias resolves to ``wan_2_1``,
+    the loss is finite, and both checkpoints carry the canonical family."""
 
-    class _ReachedRegistryBoundary(RuntimeError):
-        pass
+    install_local_pickapic(monkeypatch)
+    cfg = tiny_dpo_run(tmp_path, family=family)
 
-    class _Entry:
-        family = "wan_2_1"
+    train_wan_2_1_dpo(cfg)
 
-        def resolve_model_build(
-            self,
-            root: RootConfig,
-            device: object,
-            *,
-            precision: object,
-            for_rollout: bool,
-            precision_role: str,
-        ) -> object:
-            captured.update(
-                root=root,
-                device=device,
-                precision=precision,
-                for_rollout=for_rollout,
-                precision_role=precision_role,
-            )
-            raise _ReachedRegistryBoundary
-
-    import vrl.models.families.registry as registry
-    import vrl.ray.resources as ray_resources
-
-    def _entry_for(family: str) -> _Entry:
-        captured["family"] = family
-        return _Entry()
-
-    monkeypatch.setattr(
-        registry,
-        "get_model_family_entry",
-        _entry_for,
-    )
-    monkeypatch.setattr(
-        ray_resources.ResolvedDistributedResources,
-        "from_root",
-        classmethod(lambda _cls, _cfg, **_kwargs: SimpleNamespace(trainer_torch_device="cpu")),
-    )
-    monkeypatch.setattr(ray_resources, "format_distributed_resource_plan", lambda _plan: "")
-
-    with pytest.raises(_ReachedRegistryBoundary):
-        train_wan_2_1_dpo(cfg)
-
-    assert captured["family"] == "wan_2_1"
-    assert captured["for_rollout"] is True
-    assert captured["precision_role"] == "training"
+    run = tmp_path / "run"
+    with (run / "metrics.csv").open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [row["step"] for row in rows] == ["0"]
+    assert math.isfinite(float(rows[0]["loss"]))
+    for name in ("checkpoint-1", "checkpoint-final"):
+        meta = read_checkpoint_meta(run / name)
+        assert meta["family"] == "wan_2_1"
+        assert meta["uses_lora"] is False
+        assert meta["next_step"] == 1
 
 
 @pytest.mark.parametrize("family", ["wan_2_1_i2v", "sd3_5"])
 def test_offline_dpo_rejects_non_t2v_wan_family_before_runtime_side_effects(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
     family: str,
 ) -> None:
-    cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
-    cfg.model.family = family
+    cfg = tiny_dpo_run(tmp_path, family=family)
     if family == "sd3_5":
         del cfg.sampling.num_frames
-    calls: list[str] = []
-
-    import vrl.trainers.checkpointing as checkpointing
-
-    def unexpected_checkpoint(*_args: object, **_kwargs: object) -> object:
-        calls.append("checkpoint")
-        raise AssertionError("checkpoint loading must not run before the Wan DPO family guard")
-
-    monkeypatch.setattr(
-        checkpointing.TrainingCheckpoint,
-        "load_for_resume",
-        unexpected_checkpoint,
-    )
+    dataset_calls = install_local_pickapic(monkeypatch)
+    built = spy_wan_from_build(monkeypatch)
 
     with pytest.raises(
         ValueError,
@@ -101,7 +55,8 @@ def test_offline_dpo_rejects_non_t2v_wan_family_before_runtime_side_effects(
     ):
         train_wan_2_1_dpo(cfg)
 
-    assert calls == []
+    assert built == []
+    assert dataset_calls == []
 
 
 @pytest.mark.parametrize(
@@ -114,79 +69,28 @@ def test_offline_dpo_rejects_non_t2v_wan_family_before_runtime_side_effects(
 )
 def test_offline_dpo_uses_shared_gradient_checkpointing_policy(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
     checkpointing: str,
     expected_mode: str,
 ) -> None:
-    cfg = load_config(
-        "experiment/wan_2_1/offline_dpo_pickapic",
-        overrides=[f"actor.gradient_checkpointing={checkpointing}"],
-    )
-    calls: list[dict[str, object]] = []
+    """The policy lands on the real transformer: off leaves it untouched, full
+    enables diffusers' default recompute, selective installs the SAC function."""
 
-    class _ReachedEncoderBoundary(RuntimeError):
-        pass
+    install_local_pickapic(monkeypatch)
+    cfg = tiny_dpo_run(tmp_path, overrides=[f"actor.gradient_checkpointing={checkpointing}"])
+    built = spy_wan_from_build(monkeypatch)
 
-    class _Transformer:
-        def enable_gradient_checkpointing(self, **kwargs: object) -> None:
-            calls.append(kwargs)
+    train_wan_2_1_dpo(cfg)
 
-    transformer = _Transformer()
-
-    class _Model:
-        pass
-
-    model = _Model()
-    model.transformer = transformer
-
-    class _Bundle:
-        def __init__(self) -> None:
-            self.raw_handle = object()
-            self.trainable_modules = {"transformer": transformer}
-
-    bundle = _Bundle()
-    bundle.model = model
-
-    class _Entry:
-        family = "wan_2_1"
-
-        def resolve_model_build(self, *args: object, **kwargs: object) -> object:
-            return SimpleNamespace(rollout=object())
-
-        def build_rollout(self, build: object) -> _Bundle:
-            return bundle
-
-    import vrl.models.checkpoint_identity as checkpoint_identity
-    import vrl.models.families.registry as registry
-    import vrl.ray.resources as ray_resources
-
-    monkeypatch.setattr(registry, "get_model_family_entry", lambda _family: _Entry())
-    monkeypatch.setattr(
-        checkpoint_identity,
-        "resolve_checkpoint_model_identity",
-        lambda _build: {"schema": "test"},
-    )
-    monkeypatch.setattr(
-        ray_resources.ResolvedDistributedResources,
-        "from_root",
-        classmethod(lambda _cls, _cfg, **_kwargs: SimpleNamespace(trainer_torch_device="cpu")),
-    )
-    monkeypatch.setattr(ray_resources, "format_distributed_resource_plan", lambda _plan: "")
-
-    def _stop_at_encoder(*args: object, **kwargs: object) -> None:
-        raise _ReachedEncoderBoundary
-
-    monkeypatch.setattr(
-        "vrl.scripts.families.wan_2_1.train_dpo.WanDPOEncoders",
-        _stop_at_encoder,
-    )
-
-    with pytest.raises(_ReachedEncoderBoundary):
-        train_wan_2_1_dpo(cfg)
-
-    if expected_mode == "off":
-        assert calls == []
+    (model,) = built
+    transformer = model.transformer
+    assert transformer.is_gradient_checkpointing is (expected_mode != "off")
+    funcs = {
+        block._gradient_checkpointing_func
+        for block in transformer.modules()
+        if getattr(block, "gradient_checkpointing", False)
+    }
+    if expected_mode == "selective":
+        assert funcs == {selective_checkpoint_func}
     elif expected_mode == "full":
-        assert calls == [{}]
-    else:
-        assert len(calls) == 1
-        assert callable(calls[0]["gradient_checkpointing_func"])
+        assert funcs and selective_checkpoint_func not in funcs

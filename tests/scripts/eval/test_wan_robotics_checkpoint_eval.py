@@ -3,14 +3,23 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import torch
 from omegaconf import OmegaConf
 
-from vrl.models import checkpoint_identity
+from tests.scripts.eval.fixtures import (
+    WAN_TINY_SAMPLING,
+    write_prompt_manifest,
+    write_tiny_wan_snapshot,
+)
+from tests.trainers._checkpoint_helpers import _Trainer
+from vrl.config.precision import PrecisionPolicy
+from vrl.config.schema import parse_config
+from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
+from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval import wan_robotics_checkpoint_eval as checkpoint_eval
+from vrl.trainers.checkpointing import save_training_checkpoint
 from vrl.trainers.data.prompts import PromptExample
 
 
@@ -239,89 +248,81 @@ def test_scoring_artifact_preserves_target_metadata(tmp_path: Path) -> None:
     assert [row["checkpoint_label"] for row in rows] == ["base", "reference"]
 
 
-def test_base_generation_never_reads_a_training_checkpoint(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    run_dir = tmp_path / "run"
-    run_dir.mkdir()
-    config_path = run_dir / "resolved_config.yaml"
-    config_path.write_text("model: {}\n", encoding="utf-8")
-    output_dir = tmp_path / "eval"
-    cfg = OmegaConf.create(
-        {
-            "model": {"family": "wan"},
-            "precision": {"float32_precision": "ieee", "training": {"dtype": "fp32"}},
-        },
-    )
-    target = checkpoint_eval.CheckpointTarget.base()
-    protocol = {
-        "selected_examples": [
+def _tiny_wan_run(tmp_path: Path) -> Path:
+    """A full-parameter Wan run directory: tiny snapshot, disjoint train/eval manifests,
+    and the resolved config ``_load_run`` reads -- everything the generator needs on disk."""
+
+    snapshot = write_tiny_wan_snapshot(tmp_path / "wan-snapshot")
+    train = write_prompt_manifest(
+        tmp_path / "manifests" / "train.jsonl",
+        [
             {
-                "row_index": 2,
-                "identity_sha256": "a" * 64,
-                "prompt": "Move the cup",
-                "target_video": "target.mp4",
-                "source_episode": "episode-2",
-                "source_video": "source.mp4",
+                "prompt": "move the cup",
+                "target_video": "targets/train.mp4",
+                "metadata": {
+                    "source_repo": "robot/data",
+                    "source_episode": "train-1",
+                    "source_video": "file-0.mp4",
+                    "source_frame_index": 0,
+                },
             },
         ],
-        "sampling": {
-            "fps": 15,
-            "width": 8,
-            "height": 8,
-            "num_frames": 2,
-            "num_steps": 1,
-            "max_sequence_length": 8,
-            "guidance_scale": 1.0,
-            "denoise_mode": "native",
-            "noise_level": 0.0,
-            "sde_type": "cps",
-        },
-    }
-
-    class FakeModel:
-        def eval(self):
-            return self
-
-    bundle = SimpleNamespace(model=FakeModel())
-    entry = SimpleNamespace(
-        family="wan_2_1",
-        resolve_model_build=lambda *args, **kwargs: object(),
-        build_rollout=lambda build: bundle,
     )
-    monkeypatch.setattr(checkpoint_eval, "_load_run", lambda path: (run_dir, cfg, config_path))
-    monkeypatch.setattr(checkpoint_eval, "_resolve_target", lambda *args: target)
-    monkeypatch.setattr(checkpoint_eval, "_build_protocol", lambda *args, **kwargs: protocol)
-    monkeypatch.setattr(checkpoint_eval, "get_model_family_entry", lambda family: entry)
-    # run.resolve_model resolves identity off the build; the fake entry returns a
-    # bare object(), so stub the resolver at its owning module (the seam-test pattern).
-    monkeypatch.setattr(
-        checkpoint_identity,
-        "resolve_checkpoint_model_identity",
-        lambda actual_build: {"schema": "test"},
+    evaluation = write_prompt_manifest(
+        tmp_path / "manifests" / "eval.jsonl",
+        [
+            {
+                "prompt": "pick up the bowl",
+                "target_video": "targets/eval.mp4",
+                "metadata": {
+                    "source_repo": "robot/data",
+                    "source_episode": "eval-1",
+                    "source_video": "file-1.mp4",
+                    "source_frame_index": 0,
+                },
+            },
+        ],
     )
-    monkeypatch.setattr(
-        checkpoint_eval.TrainingCheckpoint,
-        "load",
-        lambda path: pytest.fail("base generation must not read a checkpoint"),
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    OmegaConf.save(
+        OmegaConf.create(
+            {
+                "model": {
+                    "family": "wan",
+                    "path": str(snapshot),
+                    "revision": None,
+                    "use_lora": False,
+                    "torch_compile": {"enable": False},
+                },
+                "precision": {
+                    "float32_precision": "ieee",
+                    "training": {"dtype": "fp32"},
+                    "rollout": {"dtype": "fp32"},
+                },
+                "sampling": dict(WAN_TINY_SAMPLING),
+                "rollout": {"denoise_mode": "native", "noise_level": 0.0, "sde": {"type": "cps"}},
+                "data": {
+                    "loader": "prompt_manifest",
+                    "manifest": str(train),
+                    "eval_manifest": str(evaluation),
+                    "artifact_data_root": str(tmp_path),
+                    "task_type": "text2video",
+                    "preprocessing": {"format": "jsonl"},
+                    "sampler": {"type": "random_without_replacement"},
+                },
+            },
+        ),
+        run_dir / "resolved_config.yaml",
     )
-    monkeypatch.setattr(
-        checkpoint_eval,
-        "generate_one_video",
-        lambda *args, **kwargs: torch.rand(3, 2, 8, 8),
-    )
+    return run_dir
 
-    def fake_write_mp4(video, path, *, fps):
-        del video, fps
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"mp4")
 
-    monkeypatch.setattr(checkpoint_eval, "write_mp4", fake_write_mp4)
-    args = argparse.Namespace(
+def _generate_args(run_dir: Path, output_dir: Path, target: str) -> argparse.Namespace:
+    return argparse.Namespace(
         run_dir=run_dir,
         output_dir=output_dir,
-        target="base",
+        target=target,
         limit=1,
         samples_per_prompt=1,
         base_seed=100,
@@ -329,8 +330,96 @@ def test_base_generation_never_reads_a_training_checkpoint(
         device="cpu",
     )
 
-    result = checkpoint_eval.generate_shard(args)
 
-    assert result["target"] == "base"
-    assert result["videos"] == 1
-    assert (output_dir / "generation/base/generated.jsonl").is_file()
+def _save_epoch_checkpoint(run_dir: Path, *, epoch: int, fill: float) -> Path:
+    """A real full-parameter checkpoint of the run's model with every weight set to ``fill``."""
+
+    _run_dir, cfg, _config_path = checkpoint_eval._load_run(run_dir)
+    root = parse_config(cfg)
+    entry = get_model_family_entry("wan_2_1")
+    build = entry.resolve_model_build(
+        root,
+        torch.device("cpu"),
+        precision=PrecisionPolicy.from_section(root.precision),
+        for_rollout=True,
+    )
+    bundle = entry.build_rollout(build)
+    with torch.no_grad():
+        for parameter in bundle.trainable_modules["transformer"].parameters():
+            parameter.fill_(fill)
+    path = run_dir / f"checkpoint-{epoch}"
+    save_training_checkpoint(
+        path,
+        trainer=_Trainer(),
+        bundle=bundle,
+        family="wan_2_1",
+        progress={"completed_epoch": epoch, "next_epoch": epoch},
+        rng_state={},
+        model_identity=resolve_checkpoint_model_identity(build),
+    )
+    return path
+
+
+def test_base_generation_never_reads_a_training_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``--target base`` runs the real resolve -> build -> generate -> mp4 chain on the
+    snapshot weights, with the checkpoint loader as a red line."""
+
+    run_dir = _tiny_wan_run(tmp_path)
+    monkeypatch.setattr(
+        checkpoint_eval.TrainingCheckpoint,
+        "load",
+        classmethod(lambda _cls, path: pytest.fail("base generation must not read a checkpoint")),
+    )
+
+    result = checkpoint_eval.generate_shard(_generate_args(run_dir, tmp_path / "eval", "base"))
+
+    shard = tmp_path / "eval" / "generation" / "base"
+    assert result == {
+        "output_dir": str(shard),
+        "protocol_sha256": result["protocol_sha256"],
+        "target": "base",
+        "videos": 1,
+    }
+    (row,) = [json.loads(line) for line in (shard / "generated.jsonl").read_text().splitlines()]
+    video = Path(row["path"])
+    assert video.is_file() and row["sha256"] == checkpoint_eval.sha256_file(video)
+    assert row["prompt"] == "pick up the bowl"
+    provenance = json.loads((shard / "provenance.json").read_text())
+    assert provenance["target"] == {
+        "label": "base",
+        "epoch": 0,
+        "path": None,
+        "checkpoint_loaded": False,
+        "checkpoint_meta": {},
+    }
+
+
+def test_checkpoint_target_generates_with_the_loaded_weights(tmp_path: Path) -> None:
+    """A numbered target loads the real checkpoint into the real bundle: the same
+    seed grid renders a different video than base only because the weights changed."""
+
+    run_dir = _tiny_wan_run(tmp_path)
+    _save_epoch_checkpoint(run_dir, epoch=1, fill=0.25)
+
+    base = checkpoint_eval.generate_shard(_generate_args(run_dir, tmp_path / "eval", "base"))
+    trained = checkpoint_eval.generate_shard(_generate_args(run_dir, tmp_path / "eval", "1"))
+
+    assert trained["target"] == "checkpoint-1"
+    assert trained["protocol_sha256"] == base["protocol_sha256"]
+
+    def shard_row(result):
+        (row,) = [
+            json.loads(line)
+            for line in (Path(result["output_dir"]) / "generated.jsonl").read_text().splitlines()
+        ]
+        return row
+
+    base_row, trained_row = shard_row(base), shard_row(trained)
+    assert base_row["seed"] == trained_row["seed"]
+    assert base_row["sha256"] != trained_row["sha256"]
+    provenance = json.loads((Path(trained["output_dir"]) / "provenance.json").read_text())
+    assert provenance["target"]["checkpoint_loaded"] is True
+    assert provenance["target"]["epoch"] == 1

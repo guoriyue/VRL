@@ -207,12 +207,97 @@ def cosmos25_eval_config(snapshot: Path, **sampling: Any) -> Any:
     )
 
 
+WAN_TINY_SAMPLING: dict[str, Any] = {
+    "width": 32,
+    "height": 32,
+    "num_frames": 1,
+    "num_steps": 2,
+    "fps": 4,
+    "max_sequence_length": 8,
+    "guidance_scale": 1.0,
+    "negative_prompt": "",
+}
+
+
+def write_tiny_wan_snapshot(path: Path) -> Path:
+    """A real on-disk Wan-2.1 T2V model directory ``WanPipeline.from_pretrained`` loads.
+
+    Every component is the genuine class the family reads: a word-level
+    ``PreTrainedTokenizerFast``, a one-layer ``UMT5EncoderModel`` emitting the
+    tiny transformer's ``text_dim``, the tiny ``WanTransformer3DModel`` and
+    ``AutoencoderKLWan``, and a flow ``UniPCMultistepScheduler``. Saved through
+    ``WanPipeline.save_pretrained`` so ``model_index.json`` and the topology
+    ``normalize_wan_model_build`` reads (``boundary_ratio`` / ``expand_timesteps``)
+    come from diffusers itself, not from a hand-written file.
+    """
+
+    from diffusers import UniPCMultistepScheduler, WanPipeline
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast, UMT5Config, UMT5EncoderModel
+
+    from tests.models.steps.denoise.fixtures import (
+        TINY_WAN_TEXT_DIM,
+        build_tiny_wan_transformer,
+        build_tiny_wan_vae,
+    )
+
+    specials = ["<pad>", "</s>", "<unk>"]
+    words = ["a", "the", "cat", "cup", "bowl", "move", "pick", "up", "robot", "arm"]
+    vocab = {token: index for index, token in enumerate([*specials, *words])}
+    core = Tokenizer(models.WordLevel(vocab, unk_token="<unk>"))
+    core.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=core,
+        pad_token="<pad>",
+        eos_token="</s>",
+        unk_token="<unk>",
+    )
+    torch.manual_seed(0)
+    text_encoder = UMT5EncoderModel(
+        UMT5Config(
+            vocab_size=len(vocab),
+            d_model=TINY_WAN_TEXT_DIM,
+            d_kv=4,
+            d_ff=16,
+            num_layers=1,
+            num_heads=2,
+            relative_attention_num_buckets=4,
+            dropout_rate=0.0,
+        ),
+    )
+    WanPipeline(
+        tokenizer=tokenizer,
+        text_encoder=text_encoder,
+        transformer=build_tiny_wan_transformer(),
+        vae=build_tiny_wan_vae(),
+        scheduler=UniPCMultistepScheduler(
+            prediction_type="flow_prediction",
+            use_flow_sigmas=True,
+            flow_shift=3.0,
+        ),
+    ).save_pretrained(path)
+    return path
+
+
+def write_prompt_manifest(path: Path, rows: list[dict[str, Any]]) -> Path:
+    """One JSONL prompt manifest in the shape ``load_prompt_dataset_index`` reads."""
+
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    return path
+
+
 __all__ = [
     "COSMOS25_TINY_LORA",
     "COSMOS25_TINY_SAMPLING",
+    "WAN_TINY_SAMPLING",
     "TinySanaPipeline",
     "build_official_sana_scheduler",
     "cosmos25_eval_config",
+    "write_prompt_manifest",
     "write_tiny_cosmos25_snapshot",
     "write_tiny_sana_snapshot",
+    "write_tiny_wan_snapshot",
 ]

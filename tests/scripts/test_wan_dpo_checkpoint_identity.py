@@ -1,321 +1,94 @@
-"""Wan DPO checkpoint identity must gate and follow the whole training run."""
+"""Wan DPO checkpoint identity must gate and follow the whole training run.
+
+Every test drives ``train_wan_2_1_dpo`` on the real tiny snapshot: the identity
+is the real local-directory hash, the checkpoint is a real ``checkpoint.pt``,
+and resume goes through the real validate -> restore -> save chain.
+"""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+import csv
+from pathlib import Path
 
 import pytest
-import torch.utils.data
 
-import vrl.models.checkpoint_identity as checkpoint_identity
-import vrl.models.families.registry as registry
-import vrl.ray.resources as ray_resources
-import vrl.trainers.activation_checkpointing as activation_checkpointing
-import vrl.trainers.checkpointing as checkpointing
-import vrl.trainers.data.preferences as trainer_data
-import vrl.trainers.offline as offline
-from vrl.config.loading import load_config
-from vrl.config.schema import parse_config
+from tests.scripts._wan_dpo_helpers import install_local_pickapic, spy_wan_from_build, tiny_dpo_run
+from tests.scripts.eval.fixtures import write_tiny_wan_snapshot
 from vrl.scripts.families.wan_2_1.train_dpo import train_wan_2_1_dpo
+from vrl.trainers.checkpointing import TrainingCheckpoint, read_checkpoint_meta
 
 
-def _install_pre_model_fakes(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    entry: object,
-    checkpoint: object,
-) -> None:
-    monkeypatch.setattr(registry, "get_model_family_entry", lambda _family: entry)
-    monkeypatch.setattr(
-        ray_resources.ResolvedDistributedResources,
-        "from_root",
-        classmethod(lambda _cls, _cfg, **_kwargs: SimpleNamespace(trainer_torch_device="cpu")),
-    )
-    monkeypatch.setattr(ray_resources, "format_distributed_resource_plan", lambda _plan: "")
-    monkeypatch.setattr(
-        checkpointing.TrainingCheckpoint,
-        "load_for_resume",
-        lambda _resume: checkpoint,
-    )
+def _metric_steps(run: Path) -> list[str]:
+    with (run / "metrics.csv").open(encoding="utf-8") as handle:
+        return [row["step"] for row in csv.DictReader(handle)]
 
 
-def test_matching_identity_gates_model_and_threads_restore_and_saves(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
-) -> None:
-    cfg = load_config(
-        "experiment/wan_2_1/offline_dpo_pickapic",
-        overrides=[
-            "model.use_lora=false",
-            "trainer.max_train_steps=1",
-            "trainer.checkpointing_steps=1",
-            "trainer.log_interval=1",
-            f"trainer.output_dir={tmp_path}",
-        ],
-    )
-    identity = {"schema": "test"}
-    checkpoint = SimpleNamespace(
-        checkpoint_dir=tmp_path / "resume",
-        next_step=0,
-        rng_state={},
-    )
-    build = SimpleNamespace(rollout=object())
-    transformer = object()
-    events: list[str] = []
+def test_matching_identity_restores_progress_and_keeps_saving_it(monkeypatch, tmp_path) -> None:
+    install_local_pickapic(monkeypatch)
+    train_wan_2_1_dpo(tiny_dpo_run(tmp_path))
+    run = tmp_path / "run"
+    first = read_checkpoint_meta(run / "checkpoint-1")
+    assert first["model_identity"]["sources"]  # the real local snapshot hash
 
-    class _Scheduler:
-        config = SimpleNamespace(num_train_timesteps=1000)
-
-        def set_timesteps(self, count: int, *, device: object) -> None:
-            assert count == 1000
-            assert str(device) == "cpu"
-
-    bundle = SimpleNamespace(
-        model=SimpleNamespace(transformer=transformer),
-        raw_handle=SimpleNamespace(scheduler=_Scheduler()),
-        trainable_modules={"transformer": transformer},
-    )
-
-    class _Entry:
-        family = "wan_2_1"
-
-        def resolve_model_build(self, *args: object, **kwargs: object) -> object:
-            del args, kwargs
-            events.append("resolve_build")
-            return build
-
-        def build_rollout(self, actual_build: object) -> object:
-            assert actual_build is build
-            events.append("build_model")
-            return bundle
-
-    class _Trainer:
-        global_step = 1
-
-        def step(self, batch: object) -> SimpleNamespace:
-            assert batch == "batch"
-            return SimpleNamespace(
-                loss=0.0,
-                raw_model_loss=0.0,
-                raw_ref_loss=0.0,
-                model_diff=0.0,
-                ref_diff=0.0,
-                implicit_acc=0.0,
-                sft_loss=0.0,
-                grad_norm=0.0,
-            )
-
-    parse_config(cfg)
-    _install_pre_model_fakes(
-        monkeypatch,
-        entry=_Entry(),
-        checkpoint=checkpoint,
-    )
-
-    def _resolve_identity(actual_build: object) -> dict[str, str]:
-        assert actual_build is build
-        events.append("resolve_identity")
-        return identity
-
-    def _validate(
-        actual_checkpoint: object,
-        *,
-        family: str,
-        expected_model_identity: dict[str, object],
-        strict: bool,
-    ) -> None:
-        assert actual_checkpoint is checkpoint
-        assert family == "wan_2_1"
-        assert expected_model_identity is identity
-        assert strict is True
-        events.append("validate")
-
-    def _restore(actual_checkpoint: object, **kwargs: object) -> None:
-        assert actual_checkpoint is checkpoint
-        assert kwargs["expected_model_identity"] is identity
-        events.append("restore")
-
-    def _save(path: object, **kwargs: object) -> None:
-        assert kwargs["model_identity"] is identity
-        events.append(f"save:{path.name}")
-
-    monkeypatch.setattr(
-        checkpoint_identity,
-        "resolve_checkpoint_model_identity",
-        _resolve_identity,
-    )
-    monkeypatch.setattr(checkpointing, "validate_checkpoint_compatibility", _validate)
-    monkeypatch.setattr(checkpointing, "restore_training_checkpoint", _restore)
-    monkeypatch.setattr(checkpointing, "restore_rng_state", lambda _state: None)
-    monkeypatch.setattr(checkpointing, "save_resolved_config", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        "vrl.trainers.metrics_io.MetricsCSV",
-        lambda *_args, **_kwargs: SimpleNamespace(append=lambda _row: None),
-    )
-    monkeypatch.setattr(checkpointing, "capture_rng_state", lambda: {})
-    monkeypatch.setattr(checkpointing, "save_training_checkpoint", _save)
-    monkeypatch.setattr(
-        activation_checkpointing,
-        "enable_transformer_gradient_checkpointing",
-        lambda *_args, **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        trainer_data.PickAPicPreferenceDataset,
-        "from_hub",
-        lambda **_kwargs: events.append("load_dataset") or ["sample"],
-    )
-    monkeypatch.setattr(torch.utils.data, "DataLoader", lambda *_args, **_kwargs: ["batch"])
-    monkeypatch.setattr(offline, "OfflineDPOTrainer", lambda **_kwargs: _Trainer())
-    monkeypatch.setattr(
-        "vrl.scripts.families.wan_2_1.train_dpo.WanDPOEncoders",
-        lambda *_args, **_kwargs: SimpleNamespace(encode_pixels=object(), encode_text=object()),
-    )
-
-    train_wan_2_1_dpo(cfg)
-
-    assert events == [
-        "resolve_build",
-        "resolve_identity",
-        "validate",
-        "build_model",
-        "resolve_identity",
-        "load_dataset",
-        "restore",
-        "save:checkpoint-1",
-        "save:checkpoint-final",
-    ]
-
-
-def test_identity_mismatch_stops_before_model_and_dataset(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
-    checkpoint = object()
-    build = SimpleNamespace(rollout=object())
-    identity = {"schema": "test"}
-    events: list[str] = []
-
-    class _Entry:
-        family = "wan_2_1"
-
-        def resolve_model_build(self, *args: object, **kwargs: object) -> object:
-            del args, kwargs
-            events.append("resolve_build")
-            return build
-
-        def build_rollout(self, actual_build: object) -> object:
-            del actual_build
-            events.append("build_model")
-            raise AssertionError("model construction must not run after identity mismatch")
-
-    parse_config(cfg)
-    _install_pre_model_fakes(
-        monkeypatch,
-        entry=_Entry(),
-        checkpoint=checkpoint,
-    )
-
-    def _resolve_identity(actual_build: object) -> dict[str, str]:
-        assert actual_build is build
-        events.append("resolve_identity")
-        return identity
-
-    def _reject(
-        actual_checkpoint: object,
-        *,
-        family: str,
-        expected_model_identity: dict[str, object],
-        strict: bool,
-    ) -> None:
-        assert actual_checkpoint is checkpoint
-        assert family == "wan_2_1"
-        assert expected_model_identity is identity
-        assert strict is True
-        events.append("validate")
-        raise ValueError("checkpoint model identity mismatch")
-
-    monkeypatch.setattr(
-        checkpoint_identity,
-        "resolve_checkpoint_model_identity",
-        _resolve_identity,
-    )
-    monkeypatch.setattr(checkpointing, "validate_checkpoint_compatibility", _reject)
-    monkeypatch.setattr(
-        trainer_data.PickAPicPreferenceDataset,
-        "from_hub",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            AssertionError("dataset loading must not run after identity mismatch"),
+    train_wan_2_1_dpo(
+        tiny_dpo_run(
+            tmp_path,
+            overrides=[
+                f"trainer.resume_from={run / 'checkpoint-1'}",
+                "trainer.max_train_steps=2",
+            ],
         ),
     )
 
-    with pytest.raises(ValueError, match="checkpoint model identity mismatch"):
-        train_wan_2_1_dpo(cfg)
+    # The resumed run logged only step 1 and its checkpoints continue the
+    # restored trainer: global_step 2 is impossible for a fresh trainer that ran
+    # one step, so it proves the restore threaded through the optimizer state.
+    assert _metric_steps(run) == ["0", "1"]
+    for name in ("checkpoint-2", "checkpoint-final"):
+        checkpoint = TrainingCheckpoint.load(run / name)
+        assert checkpoint.next_step == 2
+        assert checkpoint.payload["trainer"]["global_step"] == 2
+        assert checkpoint.meta["model_identity"] == first["model_identity"]
 
-    assert events == ["resolve_build", "resolve_identity", "validate"]
+
+def test_identity_mismatch_stops_before_model_and_dataset(monkeypatch, tmp_path) -> None:
+    install_local_pickapic(monkeypatch)
+    train_wan_2_1_dpo(tiny_dpo_run(tmp_path))
+    checkpoint = tmp_path / "run" / "checkpoint-1"
+    other = write_tiny_wan_snapshot(tmp_path / "other-snapshot")
+    (other / "provenance.txt").write_text("a different model directory", encoding="utf-8")
+    dataset_calls = install_local_pickapic(monkeypatch)
+    built = spy_wan_from_build(monkeypatch)
+
+    with pytest.raises(ValueError, match="model identity mismatch"):
+        train_wan_2_1_dpo(
+            tiny_dpo_run(
+                tmp_path,
+                overrides=[f"model.path={other}", f"trainer.resume_from={checkpoint}"],
+            ),
+        )
+
+    assert built == []
+    assert dataset_calls == []
 
 
-def test_source_change_during_model_load_stops_before_dataset(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
-    checkpoint = object()
-    build = SimpleNamespace(rollout=object())
-    identities = iter(({"source": "before"}, {"source": "after"}))
-    events: list[str] = []
+def test_source_change_during_model_load_stops_before_dataset(monkeypatch, tmp_path) -> None:
+    install_local_pickapic(monkeypatch)
+    train_wan_2_1_dpo(tiny_dpo_run(tmp_path))
+    checkpoint = tmp_path / "run" / "checkpoint-1"
+    snapshot = tmp_path / "wan-snapshot"
+    dataset_calls = install_local_pickapic(monkeypatch)
 
-    class _Entry:
-        family = "wan_2_1"
+    def drift(_model) -> None:
+        (snapshot / "extra-weights.bin").write_bytes(b"drift")
 
-        def resolve_model_build(self, *args: object, **kwargs: object) -> object:
-            del args, kwargs
-            events.append("resolve_build")
-            return build
-
-        def build_rollout(self, actual_build: object) -> object:
-            assert actual_build is build
-            events.append("build_model")
-            return object()
-
-    parse_config(cfg)
-    _install_pre_model_fakes(
-        monkeypatch,
-        entry=_Entry(),
-        checkpoint=checkpoint,
-    )
-
-    def _resolve_identity(actual_build: object) -> dict[str, str]:
-        assert actual_build is build
-        events.append("resolve_identity")
-        return next(identities)
-
-    def _validate(*args: object, **kwargs: object) -> None:
-        del args, kwargs
-        events.append("validate")
-
-    monkeypatch.setattr(
-        checkpoint_identity,
-        "resolve_checkpoint_model_identity",
-        _resolve_identity,
-    )
-    monkeypatch.setattr(checkpointing, "validate_checkpoint_compatibility", _validate)
-    monkeypatch.setattr(
-        trainer_data.PickAPicPreferenceDataset,
-        "from_hub",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            AssertionError("dataset loading must not run after checkpoint source changes"),
-        ),
-    )
+    built = spy_wan_from_build(monkeypatch, on_built=drift)
 
     with pytest.raises(
         RuntimeError,
         match="model checkpoint source changed during Wan DPO bundle construction",
     ):
-        train_wan_2_1_dpo(cfg)
+        train_wan_2_1_dpo(tiny_dpo_run(tmp_path, overrides=[f"trainer.resume_from={checkpoint}"]))
 
-    assert events == [
-        "resolve_build",
-        "resolve_identity",
-        "validate",
-        "build_model",
-        "resolve_identity",
-    ]
+    assert len(built) == 1
+    assert dataset_calls == []
