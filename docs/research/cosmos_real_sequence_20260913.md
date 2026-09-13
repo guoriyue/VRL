@@ -434,3 +434,48 @@ The corrected run uses a new `cosmos_real_cp_single_slice_update_captured`
 directory and must retain this failed artifact unchanged. Torchrun exited 1,
 the CPU regression exited 0, and fresh GPU inventory was empty; GPUs 0/1
 released. Full unsharded gradient/optimizer parity and full recipe remain open.
+
+## Corrected real CP single-slice update and artifact audit
+
+The corrected probe completed the unchanged eight-sample group at timestep
+10, with one whole-group advantage calculation and eight `loss/8` microbatch
+backwards through the native CP strategy. It captured gradients through the
+validated optimizer pre-hook and saved each rank's raw accumulated gradients
+before the native reduction/clip/update boundary. Original failed receipts
+remain unchanged.
+
+All eight pre-update log-prob errors match the failed run's receipts; maximum
+is 4.0829182e-6 at the fixed 1e-3 threshold. Both ranks' predictions matched
+exactly. Native gradient norm was 0.0008163046441, and the optimizer stepped.
+560 gradient tensors were captured, 280 were nonzero and 280 trainable tensors
+changed. All updated trainable parameters matched exactly across the two
+ranks. Zero gradients on the other initial LoRA branch are not a missing-
+gradient failure: all 560 gradients and optimizer entries were present.
+
+An independent CPU audit loaded the saved files and verified eight distinct
+sample indices at timestep 10, identical complete advantage vectors across
+ranks, finite gradients/updated weights/Adam moments, 560 optimizer entries
+each at step 1, and the recorded changed-parameter count. For every gradient,
+the two saved raw rank gradients were summed and the native clipping factor
+applied; their result matched the captured post-clip gradient exactly (maximum
+absolute difference 0; declared audit tolerances 1e-8 absolute/1e-5 relative).
+The measured norm is below max_norm=1, so clipping did not reduce this update.
+This checks saved CP reduction accounting, not an unsharded reference gradient.
+
+Measured region including backward, update and artifact checks/saving took
+770.363525 seconds. Each rank's peak allocated memory was 10,225,359,872 bytes.
+This includes diagnostic snapshot and capture work and is not production
+throughput. No new rollout, reward call, EMA or second update was performed.
+
+Evidence: `cosmos_real_cp_single_slice_update_captured` under the NVMe output
+root, including both executed scripts, eight transition receipts, final result,
+independent `artifact_audit.json`, per-rank `pre_step_rank_*.pt` and `update.pt`
+(updated trainables, optimizer state, post-clip gradients and advantages).
+The GPU torchrun and CPU audit exited 0, probe PIDs are absent and fresh GPU
+compute inventory empty; GPUs 0/1 released.
+
+This passes the **real whole-group, single-time-slice CP update boundary**.
+It does not pass the complete multi-timestep/four-PPO-epoch recipe, matched
+unsharded gradient/optimizer equivalence, checkpoint recovery, EMA, learning
+quality or production performance. Those gates remain open; the captured
+artifacts provide the fixed reference for the next unsharded comparison.
