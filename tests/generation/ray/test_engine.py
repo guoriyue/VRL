@@ -99,7 +99,7 @@ async def test_partial_submission_cancels_owned_refs_and_reports_terminal_failur
     from vrl.runtime_errors import TerminalRuntimeError
 
     calls = []
-    refs = {"r0": _Ref(), "r1": _Ref(), "r2": _Ref()}
+    refs = {"r0": ResolvedRef(None), "r1": ResolvedRef(None), "r2": ResolvedRef(None)}
     engine = _engine(calls, refs, method=method)
     failure = RuntimeError("rank submission failed")
     cancelled = []

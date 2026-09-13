@@ -319,9 +319,7 @@ def apply_rollout_optimizations(
         if not optimization.enabled(build):
             continue
         result = optimization.apply(model, build)
-        logger.info(
-            "rollout pass %s: applied=%s (%s)", result.name, result.applied, result.detail
-        )
+        logger.info("rollout pass %s: applied=%s (%s)", result.name, result.applied, result.detail)
     if not seam_done and before_compile is not None:
         before_compile()  # no replacing pass registered at all
 

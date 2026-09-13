@@ -150,6 +150,8 @@ def test_both_checkpoint_paths_snapshot_away_from_the_live_shadow(is_primary: bo
     else:
         # Non-primary ranks join the gather and keep nothing.
         assert sharded is None
+
+
 @pytest.mark.parametrize("failure", ["count", "device_copy"])
 def test_failed_ema_restore_preserves_live_state(failure) -> None:
     ema = EMAWeights([_single_param(10.0)], decay=0.9, device=torch.device("cpu"))

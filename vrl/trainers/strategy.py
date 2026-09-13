@@ -492,8 +492,6 @@ class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy):
         return float(nn.utils.clip_grad_norm_(parameters, max_norm))
 
 
-
-
 def _module_device(module: Any, fallback: torch.device) -> torch.device:
     """Record the single restore destination used by module-level parking.
 

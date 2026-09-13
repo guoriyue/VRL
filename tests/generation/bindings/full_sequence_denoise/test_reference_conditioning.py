@@ -100,7 +100,7 @@ def test_encode_and_prepare_share_the_loaded_reference(tmp_path, monkeypatch, fa
         batch=_batch(0),
     )
     encoded = executor.encode_prompt_for_batch(**arguments)
-    batch_encoded = executor.build_batch_encoded(encoded=encoded, **arguments)
+    batch_encoded = executor.expand_conditioning_to_batch(encoded=encoded, **arguments)
     prepare = executor.build_prepare_kwargs(encoded=encoded, **arguments)
 
     assert opens == [path]

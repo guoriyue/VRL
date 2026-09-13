@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -186,7 +187,7 @@ def test_flatten_all_frozen_module_fails_fast() -> None:
 
 def test_flatten_reads_live_weights_rather_than_an_earlier_snapshot() -> None:
     """Rollout sync must ship what the trainer holds now, not what it held before."""
-    bundle = _Bundle()
+    bundle = SimpleNamespace(trainable_modules={"adapter": torch.nn.Linear(2, 1, bias=False)})
     modules = require_trainable_modules(bundle)
 
     state = flatten_trainable_module_state(modules)

@@ -352,7 +352,7 @@ def test_trainer_uses_already_gathered_drift_record_without_more_collectives(
     def unexpected_reduce(*args, **kwargs):
         raise AssertionError("the guard already gathered and selected the rank record")
 
-    monkeypatch.setattr(trainer_module, "_all_reduce_scalar", unexpected_reduce)
+    monkeypatch.setattr(trainer._strategy.collectives, "_reduce_values", unexpected_reduce)
     assert trainer._check_initial_precision_drift(batch, [0, 1]) is record
     saved = json.loads((tmp_path / "training_debug.jsonl").read_text())
     assert saved == record
