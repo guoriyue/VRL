@@ -536,3 +536,42 @@ batch updated replay, not arbitrary batch-size invariance, checkpoint resume,
 full-size I2V, end-to-end scaling or quality. All compute processes exited;
 fresh GPU inventory empty and claims released. Next controlled checkpoint
 continuation should retain matching batch geometry and the public FP32 option.
+
+## 2026-09-13: native public FP32 two-update checkpoint baseline
+
+Candidate `21ae2051` completed the real two-rank native online entrypoint,
+`torchrun --nproc-per-node=2 -m vrl.scripts.train`, with the public FP32 LoRA
+option. Output `wan22_fp32_native_baseline` preserves the preparation and launch
+scripts, resolved config, run evidence, full-precision metrics, reward artifacts
+and checkpoint-1/checkpoint-2/checkpoint-final. The process exited 0 and fresh
+GPU compute inventory was empty afterward.
+
+Workload: two updates, four global samples each (two per rank), original
+320x320/17f/10-step T2V geometry, both actual 14B experts and all nine configured
+replay steps. Generation/replay batch sizes both 2, FSDP precision policy none,
+full_cpu activation checkpointing, IEEE arithmetic, real Kling reward, EMA
+interval 1 and checkpoint after every update. The replay-parity gate is 1e-8,
+tightened from the old diagnostic's 0.01; neither model nor numerical gates
+were relaxed. This is not full-size I2V or a long quality experiment.
+
+Both updates have exactly zero `pre_update_logprob_abs_diff_max` and
+`pre_update_clip_fraction`, and finite nonzero gradient norms. Rank phase times
+were 332.105/332.047s for the first update and 234.015/234.353s for the second.
+These exclude initial runtime construction and some checkpoint/shutdown work;
+they are observations of this baseline, not a single-versus-multirank speedup.
+
+`wan22_fp32_native_checkpoint_audit.py` exited 0. Each checkpoint contains 1280
+FP32 trainable tensors, 1280 Adam states with finite FP32 first/second moments,
+1280 FP32 EMA tensors, matching step/global-step/EMA update counters and valid
+two-rank RNG state including prompt generators and rank-local CUDA RNG. Already
+FP32 trainables correctly use native Adam without a separate FP32-master
+wrapper. All 1280 model tensors differ between checkpoint-1 and checkpoint-2.
+Receipt: `wan22_fp32_native_baseline/checkpoint_audit.json`.
+
+Additional checkpoint and identity regression suites passed: 147 tests in
+4.13s. No runtime code was edited during execution. All GPU claims released.
+The baseline is ready for a fresh-process checkpoint-1 continuation to epoch 2
+and direct comparison against the uninterrupted checkpoint-2, including model,
+Adam, EMA, RNG, reward vectors and full-precision training metrics. That resume
+comparison remains open; checkpoint existence and state completeness alone do
+not prove it.
