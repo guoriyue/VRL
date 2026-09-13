@@ -714,3 +714,45 @@ Artifacts: `/mnt/nvme/outputs/wan22_i2v_cache/h3_keep_encoder_cleanup_fixed_pyte
 Ruff and diff checks passed. All jobs terminal; fresh compute inventory empty.
 This connects the capacity result to runtime behavior but does not measure a
 full-size end-to-end speedup or verify released-weight generation/quality.
+
+## 2026-09-13: controlled full-size runtime decode timing
+
+Candidate `17b6f460` was exercised with the same full random conditioner and
+video VAE, identical fixed latents, native 768x1344/124f geometry and native
+tiling. The actual `PartitionedH3GenerationModel.decode_latents` path includes
+VAE CPU-to-GPU and GPU-to-CPU transfers in both policies. Conditioner ownership
+is 32/32 layers on GPUs 2/3; video VAE decodes on GPU 3; input/output are on
+GPU 0. DiT and audio VAE are absent. This is a decode-phase comparison, not
+complete generation or training throughput.
+
+| Execution order | Park encoder | Synchronized decode seconds |
+| --- | --- | ---: |
+| 1 | No | 23.310518 |
+| 2 | Yes | 69.011640 |
+| 3 | Yes | 66.715116 |
+| 4 | No | 21.643072 |
+
+Mean keep-encoder time is **22.476795s**, versus **67.863378s** with parking:
+45.386583s saved, 66.879% less elapsed time, or 3.019x for this phase only.
+ABBA ordering supplies two observations per policy but is not a confidence
+interval or a repeated end-to-end benchmark. Initial component allocation and
+encoding, output validation, repeat encoding and host comparison are outside
+the timed interval. GPU synchronization bounds each decode measurement.
+
+All four videos are finite and bitwise equal to the first output. After every
+decode, the encoder map is restored/unchanged and its embedding matches the
+initial embedding exactly; the video VAE is back on CPU. These checks verify
+the tested state transitions, not released-model output quality.
+
+Maximum keep-encoder allocated bytes across trials: GPU 0 4,238,409,728;
+GPU 2 35,805,618,688; GPU 3 45,508,533,248. The corresponding largest reserved
+values are 4,248,829,952 / 35,888,562,176 / 45,839,548,416. Peak counters include
+untimed validation/re-encoding after decode. CUDA cache clearing used the
+current device, not a per-device context, so reserved memory on other devices
+can include allocator history; these are not clean-process reserved peaks.
+
+Executed source, per-trial receipts and final JSON are retained in
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_fullsize_random_decode_policy_timing`.
+Process exited 0, fresh compute inventory empty, all GPU claims released.
+Full DiT/encoder/VAE simultaneous runtime residency, audio decode, released
+weights and end-to-end generation/training remain separate open gates.
