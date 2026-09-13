@@ -144,6 +144,45 @@ def create_context_parallel_groups(cp_size: int) -> ContextParallelGroups:
     )
 
 
+def synchronize_context_parallel_rng(
+    *, groups: ContextParallelGroups, device: torch.device
+) -> None:
+    """Copy a CP leader's process RNGs without touching other CUDA devices.
+
+    Call at the strict replay boundary after leader-only collection. Does not
+    alter explicit torch.Generator objects such as the prompt sampler. Matching
+    RNG state does not make differently shaped dropout/noise draws equivalent;
+    stochastic model operations need a separate sharding contract.
+    """
+    import random
+
+    import numpy as np
+    import torch.distributed as dist
+
+    device = torch.device(device)
+    if device.type == "cuda" and (
+        device.index is None or device.index != torch.cuda.current_device()
+    ):
+        raise ValueError("CP RNG synchronization requires the current rank-local CUDA device")
+    payload = [None]
+    if groups.cp_rank == 0:
+        payload[0] = {
+            "torch": torch.get_rng_state(),
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "cuda": torch.cuda.get_rng_state(device) if device.type == "cuda" else None,
+        }
+    dist.broadcast_object_list(
+        payload, src=dist.get_global_rank(groups.cp_group, 0), group=groups.cp_group, device=device
+    )
+    state = payload[0]
+    torch.set_rng_state(state["torch"])
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    if device.type == "cuda":
+        torch.cuda.set_rng_state(state["cuda"], device)
+
+
 def reduce_context_parallel_gradients(
     parameters: Iterable[torch.nn.Parameter], *, groups: ContextParallelGroups
 ) -> None:

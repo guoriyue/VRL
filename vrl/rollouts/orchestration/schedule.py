@@ -44,6 +44,8 @@ async def collect_context_parallel_iteration(
     import torch
     import torch.distributed as dist
 
+    from vrl.trainers.distributed import synchronize_context_parallel_rng
+
     directory = None
     message = [None]
     local_error = None
@@ -77,6 +79,12 @@ async def collect_context_parallel_iteration(
         dist.all_gather_object(errors, local_error)
         if any(error is not None for error in errors):
             raise RuntimeError(f"CP rollout sharing failed: {errors}")
+        device = (
+            torch.device("cuda", torch.cuda.current_device())
+            if dist.get_backend(groups.cp_group) == "nccl"
+            else torch.device("cpu")
+        )
+        synchronize_context_parallel_rng(groups=groups, device=device)
         return iteration
     finally:
         if directory is not None:

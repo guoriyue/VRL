@@ -1,10 +1,12 @@
 """CP peers receive one owned rollout; DP peers retain independent samples."""
 
 import asyncio
+import random
 from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
@@ -47,11 +49,23 @@ def _worker(rank, rendezvous, spool_dir, cuda):
         assert indices_by_rank[2] == indices_by_rank[3]
         assert set(indices_by_rank[0]).isdisjoint(indices_by_rank[2])
         calls = 0
+        seed = 100 + rank
+        torch.set_rng_state(torch.Generator().manual_seed(seed).get_state())
+        random.seed(seed)
+        np.random.seed(seed)
+        if cuda:
+            torch.cuda.manual_seed(seed)
+        sampler_state = sampler.generator.get_state().clone()
 
         async def collect():
             nonlocal calls
             calls += 1
             assert groups.cp_rank == 0
+            torch.rand(3)
+            random.random()
+            np.random.rand(3)
+            if cuda:
+                torch.rand(3, device=device)
             trajectory = TrajectoryBatch(
                 request_id=f"dp-{groups.dp_rank}",
                 family="cosmos-predict2.5",
@@ -77,11 +91,42 @@ def _worker(rank, rendezvous, spool_dir, cuda):
                 ]
             )
 
-        result = asyncio.run(
-            collect_context_parallel_iteration(
-                collect if groups.cp_rank == 0 else None, groups=groups, spool_dir=spool_dir
+        with (
+            patch(
+                "torch.cuda.get_rng_state_all", side_effect=AssertionError("foreign CUDA RNG read")
+            ),
+            patch(
+                "torch.cuda.set_rng_state_all",
+                side_effect=AssertionError("foreign CUDA RNG write"),
+            ),
+        ):
+            result = asyncio.run(
+                collect_context_parallel_iteration(
+                    collect if groups.cp_rank == 0 else None, groups=groups, spool_dir=spool_dir
+                )
             )
+        leader_seed = 100 + groups.dp_rank * 2
+        expected_cpu = torch.Generator().manual_seed(leader_seed)
+        torch.rand(3, generator=expected_cpu)
+        torch.testing.assert_close(
+            torch.randperm(16), torch.randperm(16, generator=expected_cpu), rtol=0, atol=0
         )
+        expected_python = random.Random(leader_seed)
+        expected_python.random()
+        assert random.random() == expected_python.random()
+        expected_numpy = np.random.RandomState(leader_seed)
+        expected_numpy.rand(3)
+        np.testing.assert_array_equal(np.random.rand(2), expected_numpy.rand(2))
+        if cuda:
+            expected_cuda = torch.Generator(device=device).manual_seed(leader_seed)
+            torch.rand(3, device=device, generator=expected_cuda)
+            torch.testing.assert_close(
+                torch.rand(5, device=device),
+                torch.rand(5, device=device, generator=expected_cuda),
+                rtol=0,
+                atol=0,
+            )
+        assert torch.equal(sampler.generator.get_state(), sampler_state)
         batch = result.batches[0]
         assert batch.context == {"indices": indices, "policy_version": 3}
         torch.testing.assert_close(batch.rewards, torch.tensor(indices, dtype=torch.float32))
