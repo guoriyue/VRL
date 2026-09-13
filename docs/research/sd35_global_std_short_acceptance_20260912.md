@@ -73,3 +73,68 @@ restart. The old script is guarded against further automatic launches. Original
 strict artifacts and `continuous.interrupted_11ep` are preserved. All acceptance
 processes exited and the GPU process inventory was empty after completion.
 Hardware is released; no new long experiment is queued by this acceptance.
+
+## Fourth arm: four rollout / four training ranks on the same GPUs
+
+Completed from candidate `75d69be2`, with the same shared Python environment.
+The same four physical GPUs alternate rank-local rollout and synchronous
+adapter-only FSDP training. This is not eight GPUs, DDP, or simultaneous
+rollout/training on each card. OCR runs on CPU, independently in each rank.
+Frozen BF16 transformer weights are replicated; FP32 LoRA weights are sharded.
+Each rank processes two groups with two accumulation microsteps, preserving
+the global eight groups / 128 samples. The four prompt slices reproduce the
+single-rank global draws for both updates. Other training settings are unchanged.
+
+| Deployment | Second update | Speedup over single |
+| --- | ---: | ---: |
+| Single GPU strict | 628.586 s | 1.00x |
+| Four GPUs, dedicated 3x1 strict | 519.956 s | 1.21x |
+| Four GPUs, dedicated 3x1 continuous | 479.876 s | 1.31x |
+| Four GPUs, phased 4x rollout / 4x FSDP training | **227.247 s** | **2.77x** |
+
+The fourth arm's first update was 243.825 s. Its second update is measured
+between the latest rank completion timestamps, including checkpoint-1 save,
+weight delivery, CPU/GPU handoffs and trajectory spooling. Throughput is
+0.5633 samples/s; speedup over dedicated strict is 2.2881x and over dedicated
+continuous is 2.1117x. There is still only one post-warmup observation per arm.
+This is an equal-global-work deployment comparison, not pure GPU-kernel scaling:
+four CPU OCR instances and torchrun's default OMP_NUM_THREADS=1 are also topology
+differences. Generated rollouts differ, and the historical user baseline remains
+unverified. No learning improvement is inferred from training rewards.
+
+Correctness and completion:
+
+- All four rank verdicts are success; torchrun exited 0. Each rank collected
+  32 samples and two groups per update. The balanced-survivor guard and rank-0
+  trained-group count confirm eight trained groups globally in both updates.
+- Global pre-update replay mismatch is exactly 0 in both updates. Gradient
+  norms are 0.0016626533 and 0.0026402727, finite and nonzero.
+- Final checkpoint is global_step=2, 383,105,789 bytes. Its 486 model tensors
+  and 1,944 trainer-state tensors are finite FP32; 12 RNG tensors are uint8.
+- Four-rank fixed-rollout CPU tests preserve gradient norms, updated adapters
+  and Adam state within tolerance. GPU toy tests cover CPU-loaded frozen-weight
+  placement and repeated parking/restoration of parameters, live gradients,
+  optimizer and EMA tensors, followed by further training. These tests do not
+  prove identical saved SD3.5 rollout gradients on hardware or an EMA refresh.
+- Uneven surviving-group counts across ranks fail explicitly. Arbitrary uneven
+  filtering is not supported, and these two updates did not trigger that guard.
+- Initial broad regression: 560 passed, 2 skipped. Parking regression: 300
+  passed. Final placement regression: 53 passed; four-GPU parking test passed.
+
+Rank-0 second-update phases: replay 80.302 s, backward 50.737 s, collection
+58.079 s, driver parking 23.679 s, rollout activation/offload 3.986/3.922 s,
+and driver restore 1.156 s. These are rank-local durations, not additive fleet
+maxima. Parking includes cross-rank coordination waits, not only transfer time;
+OCR varied from 13.010 to 38.272 s across ranks in this update.
+
+Two failed attempts are preserved: `colocated_fsdp.failed_parking` failed on
+cross-device DTensor storage conversion; `colocated_fsdp.failed_frozen_placement`
+failed because ignored frozen weights were left on CPU. Neither completed an
+optimizer update or contributes a timing result. The fixes remain in the
+candidate worktree; no shared runtime or dependency was changed under live jobs.
+
+Evidence: `comparison_four_arm.json`, `summarize_four_arm.py`,
+`launch_colocated_fsdp.sh`, `colocated_fsdp`, and `colocated_fsdp_torchrun` under
+the controlled output root. Original three-arm artifacts remain unchanged.
+The short comparison is complete, GPUs are released and the old queue remains
+user-stopped. Further learning tests require a separate matched evaluation plan.

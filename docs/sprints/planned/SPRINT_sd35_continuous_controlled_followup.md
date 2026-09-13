@@ -1,6 +1,6 @@
 # SD3.5 continuous: controlled follow-up
 
-Status: initial short hardware acceptance completed on 2026-09-12; GPUs released.
+Status: four-arm short hardware acceptance completed on 2026-09-12; GPUs released.
 See [results and remaining boundaries](../../research/sd35_global_std_short_acceptance_20260912.md).
 The user subsequently
 explicitly authorized stopping the old long queue and switching. Queue PID
@@ -72,6 +72,47 @@ Reward means from different training prompts are not a controlled comparison.
    prompts and seeds from matched starting weights and update budgets. Report
    paired OCR results; do not treat unrelated training reward means as proof
    of improvement or regression.
+
+## Fourth arm: shared four-GPU phased execution
+
+User-authorized short follow-up: the same four physical GPUs alternate four
+rank-local rollout workers and four synchronous training ranks; CPU OCR runs
+per rank. This is not eight GPUs or concurrent rollout/training on each card.
+Use native-precision adapter-only FSDP (BF16 frozen base replicated, FP32 LoRA
+sharded), since colocated DDP remains capability-gated. Global workload stays
+8 groups x 16 samples, with 2 groups and 2 accumulation microsteps per rank.
+The four rank-local prompt slices reproduce the single-rank global draw.
+
+- Candidate `11837577`: four-rank fixed-rollout CPU equivalence passed for
+  gradient norms, updated weights and Adam state. Unequal surviving group
+  counts across ranks fail explicitly; arbitrary uneven filtering is not
+  supported by this acceptance path.
+- Preflight regression: 560 passed, 2 skipped. First hardware attempt failed
+  during FSDP CUDA-to-CPU parking before any optimizer update, not SD3/OCR
+  scoring or a numerical parity verdict. Preserve `colocated_fsdp.failed_parking`.
+- A targeted parking correction moves local DTensor shards and refreshes FSDP
+  padded-storage references. Four-GPU toy parking, live gradients, Adam updates
+  and EMA tensor restoration passed. This is not an EMA refresh test.
+- The second attempt completed rollout but failed on the first replay forward:
+  FSDP leaves ignored frozen weights on the CPU when the model is CPU-staged.
+  `75d69be2` explicitly places the replicated transformer before sharding.
+  The GPU regression now starts from CPU-loaded weights and passed; 53 focused
+  CPU tests passed. Preserve `colocated_fsdp.failed_frozen_placement` separately.
+- Retry only the same two-update SD3.5 workload after regression checks. Require
+  all four rank verdicts, strict replay parity, 128 global trained samples per
+  update, checkpoint step 2 and full update-boundary timings before adding a
+  fourth timing result. Include rank-local CPU OCR and torchrun thread defaults
+  as topology differences; do not describe this as a pure GPU-kernel benchmark.
+
+Completed retry from `75d69be2`: all four ranks succeeded and torchrun exited 0.
+Both updates trained 128 global samples with zero replay mismatch; checkpoint
+global_step=2 and finite FP32 model/optimizer state were verified. First update
+243.825 s; second boundary-to-boundary 227.247 s including checkpoint-1 save.
+Initial speedup is 2.77x over single and 2.11x over dedicated continuous.
+`comparison_four_arm.json` and `summarize_four_arm.py` preserve/reproduce the
+evidence. This completes short topology acceptance, not learning evaluation,
+arbitrary uneven filtering, retained-slot weight activation or EMA refresh.
+No further GPU job is queued; the original long queue stays stopped.
 
 ## Completion evidence
 
