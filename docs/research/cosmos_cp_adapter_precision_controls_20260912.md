@@ -413,3 +413,24 @@ inventory is empty. GPUs 0-1 are released. No production/runtime/dependency
 changes or acceptance pass. Further isolation must distinguish attention
 backward from replicated partial-cotangent arithmetic, not accept FP32 or
 forward agreement as sufficient evidence for BF16 training.
+
+## Full-query SDPA control
+
+`--full-shape-sdpa` gathers Q before self- and cross-attention SDPA and selects
+rank-local outputs afterwards. Self K/V are gathered as before; cross K/V
+remain replicated. This is run together with full-shape projections and
+conditioning. It deliberately removes attention memory savings and cannot
+serve as a production CP solution.
+
+Both dtypes retain exact matching block outputs, final outputs and logprob.
+FP32 aggregate parameter-gradient relative L2 falls to 3.19938e-7, while BF16
+remains 0.0252042, essentially unchanged from 0.0251599 with local Q. Thus
+matching the SDPA Q shape does not resolve the BF16 discrepancy. The reference
+has full cotangents while each rank still computes from partial cotangents
+before combining gradients; full forward shapes do not eliminate that
+low-precision arithmetic distinction. This remains a hypothesis about the
+residual mechanism, not a blanket equivalence pass or a proven kernel bug.
+
+Evidence: `cosmos_cp_fullshape_sdpa_l40s/rank-{0,1}.json` and adjacent log.
+Both rank reports match; torchrun exits 0 and fresh compute inventory is empty.
+GPUs 0-1 are released. Production code, dependencies and thresholds unchanged.
