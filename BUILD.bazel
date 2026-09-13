@@ -1,5 +1,6 @@
 load("@vrl_pypi//:requirements.bzl", "all_requirements")
 load("@vrl_pypi_countgd//:requirements.bzl", countgd_requirements = "all_requirements")
+load("@vrl_pypi_videoeval//:requirements.bzl", videoeval_requirements = "all_requirements")
 load("@vrl_pypi_vllm//:requirements.bzl", vllm_requirements = "all_requirements")
 load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 load("//tools/python:defs.bzl", "vrl_library")
@@ -26,6 +27,21 @@ vrl_library(
 vrl_library(
     name = "vrl_countgd",
     requirements = countgd_requirements,
+)
+
+# The same sources against the VBench evaluation stack (transformers 4.33.2;
+# tokenizers 0.13.3 is built from source, see MODULE.bazel).
+vrl_library(
+    name = "vrl_videoeval",
+    requirements = videoeval_requirements,
+)
+
+# bazel run //:video_reward_suite -- ...   (fixed video-eval suite)
+py_binary(
+    name = "video_reward_suite",
+    srcs = ["vrl/scripts/eval/video_reward_suite.py"],
+    main = "vrl/scripts/eval/video_reward_suite.py",
+    deps = [":vrl_videoeval"],
 )
 
 # Shared-GPU topology: the model/reward stack plus vLLM's CuMem allocator for

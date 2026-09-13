@@ -32,3 +32,12 @@ py_test(
     main = "torchrun_test.py",
     deps = ["//:vrl"],
 )
+
+# The VBench stack: transformers 4.33.2 with a tokenizers wheel that Bazel
+# built from source (no CPython 3.12 wheel exists upstream).
+py_test(
+    name = "videoeval_stack_test",
+    size = "medium",
+    srcs = ["videoeval_stack_test.py"],
+    deps = ["//:vrl_videoeval"],
+)

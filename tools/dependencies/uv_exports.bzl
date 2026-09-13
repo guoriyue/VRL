@@ -3,7 +3,7 @@
 def _uv_exports_impl(ctx):
     # Re-export whenever the lock, the project file or the fix-up script changes;
     # symlinking alone does not register their contents as inputs.
-    for label in (ctx.attr.project, ctx.attr.lock, ctx.attr.restore_extras):
+    for label in (ctx.attr.project, ctx.attr.lock, ctx.attr.restore_extras, ctx.attr.replace_requirement):
         ctx.watch(label)
     ctx.symlink(ctx.attr.project, "pyproject.toml")
     ctx.symlink(ctx.attr.lock, "uv.lock")
@@ -30,6 +30,23 @@ def _uv_exports_impl(ctx):
     )
     if result.return_code:
         fail("restoring exported extras failed:\n{}".format(result.stderr))
+    # Distributions built from source by a `rust_wheel` repository replace
+    # their exported line with the built wheel's file URL and hash.
+    for name, wheel_repo in ctx.attr.built_wheels.items():
+        digest = ctx.read(Label(wheel_repo + "//:wheel.sha256")).strip()
+        filename = ctx.read(Label(wheel_repo + "//:wheel.name")).strip()
+        path = ctx.path(Label(wheel_repo + "//:wheel/" + filename))
+        line = "{} @ file://{} --hash=sha256:{}".format(name, path, digest)
+        for profile in ctx.attr.profiles:
+            result = ctx.execute([
+                ctx.path(ctx.attr.interpreter),
+                ctx.path(ctx.attr.replace_requirement),
+                profile + ".txt",
+                name,
+                line,
+            ])
+            if result.return_code:
+                fail("replacing {} in {}.txt failed:\n{}".format(name, profile, result.stderr))
     ctx.file("BUILD.bazel", "exports_files(glob([\"*.txt\"]))\n")
 
 uv_exports = repository_rule(
@@ -43,6 +60,14 @@ uv_exports = repository_rule(
             default = "//tools/dependencies:restore_export_extras.py",
             allow_single_file = True,
         ),
+        "replace_requirement": attr.label(
+            default = "//tools/dependencies:replace_requirement.py",
+            allow_single_file = True,
+        ),
         "profiles": attr.string_list_dict(mandatory = True),
+        "built_wheels": attr.string_dict(
+            default = {},
+            doc = "distribution name -> repository name of the rust_wheel that built it",
+        ),
     },
 )

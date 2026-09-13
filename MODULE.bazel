@@ -54,6 +54,24 @@ http_archive(
     strip_prefix = "uv-x86_64-unknown-linux-gnu",
     build_file_content = 'exports_files(["uv"])',
 )
+# tokenizers 0.13.3 (pinned by VBench's transformers 4.33.2) ships no CPython 3.12
+# wheel; build it from the locked sdist with a pinned Rust toolchain. The
+# `invalid_reference_casting` lint is a hard error on rustc >= 1.73 and the
+# 2023 sources trip it; it is allowed here, matching what the wheel's own
+# release-era compiler did.
+rust_wheel = use_repo_rule("//tools/dependencies:rust_wheel.bzl", "rust_wheel")
+rust_wheel(
+    name = "tokenizers_0_13_3_wheel",
+    sdist_urls = ["https://files.pythonhosted.org/packages/29/9c/936ebad6dd963616189d6362f4c2c03a0314cf2a221ba15e48dd714d29cf/tokenizers-0.13.3.tar.gz"],
+    sdist_sha256 = "2e546dbb68b623008a5442353137fbb0123d311a6d7ba52f2667c8862a75af2e",
+    sdist_filename = "tokenizers-0.13.3.tar.gz",
+    rust_urls = ["https://static.rust-lang.org/dist/rust-1.89.0-x86_64-unknown-linux-gnu.tar.xz"],
+    rust_sha256 = "c4f2796b10ee886001f0799bc40caea38746403a33c379d77878c4f4683f9b51",
+    rust_strip_prefix = "rust-1.89.0-x86_64-unknown-linux-gnu",
+    rustflags = "-A invalid_reference_casting",
+    interpreter = "@python_3_12_13_host//:python",
+)
+
 uv_exports = use_repo_rule("//tools/dependencies:uv_exports.bzl", "uv_exports")
 uv_exports(
     name = "python_locks",
@@ -61,6 +79,7 @@ uv_exports(
     lock = "//:uv.lock",
     uv = "@uv_export_tool//:uv",
     interpreter = "@python_3_12_13_host//:python",
+    built_wheels = {"tokenizers": "@tokenizers_0_13_3_wheel"},
     profiles = {
         # Every extra pyproject.toml lets compose in one environment, plus the
         # test and lint groups, so one hub serves libraries, tests and lint
@@ -73,6 +92,7 @@ uv_exports(
         # Conflicting stacks each carry the test group so their lanes need no
         # second hub for pytest.
         "vllm": ["--extra", "ar-vllm", "--group", "test"],
+        "videoeval": ["--extra", "videoeval", "--group", "test"],
     },
 )
 
@@ -92,10 +112,13 @@ pip.parse(
     requirements_lock = "@python_locks//:vllm.txt",
     target_platforms = ["linux_x86_64"],
 )
-# Not a hub yet: the videoeval extra (VBench 0.1.5 -> transformers 4.33.2 ->
-# tokenizers 0.13.3) ships no CPython 3.12 wheel and would need a Rust source
-# build; see docs/research/bazel_migration.md.
-use_repo(pip, "vrl_pypi", "vrl_pypi_vllm")
+pip.parse(
+    hub_name = "vrl_pypi_videoeval",
+    python_version = "3.12.13",
+    requirements_lock = "@python_locks//:videoeval.txt",
+    target_platforms = ["linux_x86_64"],
+)
+use_repo(pip, "vrl_pypi", "vrl_pypi_videoeval", "vrl_pypi_vllm")
 
 # CountGD reward: pinned upstream source (with the qualified torch-2 patch),
 # the Hugging Face Space assets, and its own dependency hub. These fetch only
