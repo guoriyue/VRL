@@ -63,22 +63,11 @@ def _cuda_time_ms(fn, iters: int, warmup: int, trials: int = 3) -> float:
     """
     import statistics
 
-    import torch
+    from vrl.scripts.perf.common.timing import cuda_mean_ms
 
     for _ in range(warmup):
         fn()
-    torch.cuda.synchronize()
-    means: list[float] = []
-    for _ in range(trials):
-        s = torch.cuda.Event(enable_timing=True)
-        e = torch.cuda.Event(enable_timing=True)
-        s.record()
-        for _ in range(iters):
-            fn()
-        e.record()
-        torch.cuda.synchronize()
-        means.append(s.elapsed_time(e) / iters)
-    return statistics.median(means)
+    return statistics.median(cuda_mean_ms(fn, iters=iters, warmup=0) for _ in range(trials))
 
 
 def measured_bf16_peak_tflops(size: int = 12288) -> float:

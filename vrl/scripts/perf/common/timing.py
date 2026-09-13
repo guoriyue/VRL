@@ -29,6 +29,26 @@ def cuda_mean_ms(
     return start.elapsed_time(end) / max(1, iters)
 
 
+def cuda_step_times_ms(
+    step_fn: Callable[[], object],
+    *,
+    iters: int,
+    device: torch.device | str | None = None,
+) -> list[float]:
+    """Per-call CUDA-event wall times for ``iters`` already-warm steps, in call order."""
+
+    times: list[float] = []
+    for _ in range(max(1, iters)):
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        step_fn()
+        end.record()
+        torch.cuda.synchronize(device)
+        times.append(float(start.elapsed_time(end)))
+    return times
+
+
 def cuda_median_ms(
     step_fn: Callable[[], object],
     *,
@@ -41,17 +61,7 @@ def cuda_median_ms(
     for _ in range(max(0, warmup)):
         step_fn()
     torch.cuda.synchronize(device)
-
-    times: list[float] = []
-    for _ in range(max(1, iters)):
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        start.record()
-        step_fn()
-        end.record()
-        torch.cuda.synchronize(device)
-        times.append(start.elapsed_time(end))
-    times.sort()
+    times = sorted(cuda_step_times_ms(step_fn, iters=iters, device=device))
     return times[len(times) // 2]
 
 

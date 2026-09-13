@@ -48,6 +48,7 @@ from vrl.nn.quantization import (
     nvfp4_available,
 )
 from vrl.scripts.perf.common.fp8_math import relative_l1_drift
+from vrl.scripts.perf.common.timing import cuda_step_times_ms
 
 
 def _parse_args() -> argparse.Namespace:
@@ -163,15 +164,7 @@ def _latency_and_memory(
         torch.cuda.synchronize()
         steady = torch.cuda.memory_allocated()
         torch.cuda.reset_peak_memory_stats()
-        samples: list[float] = []
-        for _ in range(max(1, iters)):
-            start = torch.cuda.Event(enable_timing=True)
-            end = torch.cuda.Event(enable_timing=True)
-            start.record()
-            step()
-            end.record()
-            end.synchronize()
-            samples.append(float(start.elapsed_time(end)))
+        samples = cuda_step_times_ms(step, iters=iters)
     finally:
         if gc_was_enabled:
             gc.enable()
