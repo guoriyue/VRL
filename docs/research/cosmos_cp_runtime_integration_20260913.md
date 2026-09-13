@@ -521,3 +521,38 @@ The shared-data interface now has a tested RNG boundary, but the live online
 recipe does not yet install it. Next required integration remains rollout
 owner lifecycle, group-aware orchestration/weight sync, and full online
 update/checkpoint/resume/EMA acceptance under the validated CP compute policy.
+
+## Explicit strict owner lifecycle: 44f6ad57
+
+`ContextParallelStrictRolloutSchedule` wraps one actual strict schedule per
+CP leader. Followers hold no collector/syncer owner. Collection uses the
+shared-spool and RNG boundary; post-training weight publication, reset and
+shutdown execute only on leaders, with results/errors agreed across CP and
+the complete DP x CP world. All ranks must invoke methods in the same order,
+and shut down the schedule before destroying strategy process groups.
+
+This adapter explicitly rejects any owner requiring trainer-state parking:
+rollout/reward GPUs must be disjoint from training GPUs. Owner weight snapshot
+getters must be rank-local unsharded exports, not DDP/FSDP collectives. The
+adapter remains absent from automatic schedule/config dispatch. It does not
+implement shared-GPU parking, continuous rollout or resource allocation.
+
+### Control-flow validation
+
+Four CPU/Gloo ranks use DP2 x CP2 with the real strict schedule and real
+`RolloutRuntimeCoordinator`, over recording collector/strategy/syncer fakes.
+Only leaders activate/offload collectors and publish weights. Followers make
+no owner calls. Collection produces empty batches in this control-flow test,
+not generated trajectories. A shared-GPU request on one leader propagates to
+all ranks; a weight-publication failure on one DP owner also propagates
+globally. Shutdown reaches each owned collector once.
+
+Owner lifecycle/strict failure/topology regression: **12 passed**, 2.50 seconds.
+Ruff import organization and whitespace checks passed. All CPU test sessions
+terminal; no GPU job or GPU claim was made in this milestone. Frozen runtime
+and shared dependencies remain unchanged.
+
+Next: compose the explicit CP strategy and strict owner with a real trainer
+step, DP-aware sample ownership, valid trajectories and the existing runtime
+construction path. Full-weight online update/checkpoint/resume/EMA acceptance
+and public configuration enablement remain unproven and required.
