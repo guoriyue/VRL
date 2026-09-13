@@ -19,6 +19,15 @@ network. Prefer that baseline for further numerical investigation; no
 production tolerance or P0 pass follows from finite gradients. A separate
 short-sequence native-CP shape failure remains preserved. See
 `../../research/cosmos_cp_network_diagnostic_20260912.md`.
+
+Pinned 28-layer Cosmos 2.5 weights now complete the same two-rank small-input
+gather-K/V diagnostic with original LoRA targets: FP32 output relative L2
+5.64e-7, BF16 0.00772; worst LoRA gradient relative L2 is 6.38e-6 / 0.05798.
+All 560 gradient tensors are finite, 280 initially nonzero. This reveals larger
+BF16 drift than the two-block probe; it is not original P0 acceptance. Real
+family CFG/replay and the training objective remain untested with CP. See
+`../../research/cosmos_cp_released_weights_20260912.md` for pinned cache,
+scope, artifacts and released GPU ownership.
 **来源**: FlashDreams 引擎评审教训 ②——它的多卡故事只有上下文并行且总共
 157 行（`core/distributed/context_parallel.py:32-157`：token 维
 `split_inputs_cp`/`cat_outputs_cp` + ring attention 组），证明视频 DiT 的
