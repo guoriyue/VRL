@@ -56,6 +56,7 @@ from vrl.trainers.checkpointing import (
     save_resolved_config,
     save_training_checkpoint,
     validate_checkpoint_compatibility,
+    validate_rng_state,
 )
 from vrl.trainers.data.artifacts import resolve_prompt_example_references
 from vrl.trainers.data.prompt_sampler import PromptBatchSampler
@@ -905,6 +906,17 @@ async def run_online_recipe(
         expected_model_identity=model_identity,
         strict=resume_config.strict,
     )
+    if resume_checkpoint is not None:
+        # Every process checks every rank before model/Ray construction so a
+        # missing peer stream cannot leave other ranks starting expensive work.
+        for rank in range(training_context.world_size):
+            validate_rng_state(
+                resume_checkpoint.rng_state,
+                rank=rank,
+                world_size=training_context.world_size,
+                strict=resume_config.strict,
+                generator_names=("prompt_generator",),
+            )
 
     examples = (
         load_prompt_examples_from_config(data_config)

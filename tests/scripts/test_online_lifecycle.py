@@ -480,6 +480,59 @@ async def test_checkpoint_identity_mismatch_stops_before_prompt_model_or_ray(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("world_size, missing_rank", [(1, 0), (4, 3)])
+async def test_missing_prompt_rng_stops_before_prompt_model_or_ray(
+    monkeypatch,
+    tmp_path,
+    world_size,
+    missing_rank,
+) -> None:
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+    rank_states = [
+        online.capture_rng_state(prompt_generator=torch.Generator()) for _ in range(world_size)
+    ]
+    rank_states[missing_rank]["generators"] = {"probe": torch.Generator().get_state()}
+    rng_state = (
+        rank_states[0]
+        if world_size == 1
+        else {
+            "world_size": world_size,
+            "by_rank": rank_states,
+        }
+    )
+    checkpoint = SimpleNamespace(rng_state=rng_state)
+    monkeypatch.setattr(online, "load_training_checkpoint_for_resume", lambda _resume: checkpoint)
+    monkeypatch.setattr(
+        online.DistributedTrainingContext,
+        "from_root",
+        classmethod(
+            lambda _cls, _cfg, **_kwargs: SimpleNamespace(
+                world_size=world_size, rank=0, device=torch.device("cpu")
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        online, "_require_supported_distributed_rollout_topology", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        online,
+        "build_strategy",
+        lambda *_args: SimpleNamespace(validate_training_state_parking=lambda: None),
+    )
+    monkeypatch.setattr(
+        online,
+        "load_prompt_examples_from_config",
+        lambda _cfg: (_ for _ in ()).throw(
+            AssertionError("manifest must not load before RNG admission")
+        ),
+    )
+    with pytest.raises(ValueError, match="missing requested generators: prompt_generator"):
+        await online.run_online_recipe(_cfg())
+    assert state["bundle_builds"] == state["owner_creates"] == state["launches"] == 0
+
+
+@pytest.mark.asyncio
 async def test_checkpoint_source_change_stops_after_model_before_ray_or_reward(
     monkeypatch,
     tmp_path,

@@ -1550,15 +1550,15 @@ def capture_rng_state(**generators: torch.Generator) -> dict[str, Any]:
     return state
 
 
-def restore_rng_state(
+def validate_rng_state(
     state: dict[str, Any] | None,
     *,
     rank: int = 0,
     world_size: int = 1,
     strict: bool = True,
-    **generators: torch.Generator,
-) -> None:
-    """Restore this training rank's process and named-generator RNG states.
+    generator_names: Sequence[str] = (),
+) -> dict[str, Any] | None:
+    """Check topology and requested stream names without changing any RNG state.
 
     Legacy single-process trees remain readable. Multi-rank strict resume
     requires every rank's tree and the same topology; non-strict legacy resume
@@ -1590,19 +1590,40 @@ def restore_rng_state(
     # Reject missing data-sampler streams before mutating any process RNG.
     named = state.get("generators", {}) if state else {}
     missing = sorted(
-        name for name in generators if not isinstance(named, dict) or name not in named
+        name for name in generator_names if not isinstance(named, dict) or name not in named
     )
     if missing:
         message = "checkpoint RNG state missing requested generators: " + ", ".join(missing)
         if strict:
             raise ValueError(message)
         logger.warning("%s; retaining current streams, resume is not equivalent", message)
+    return state
+
+
+def restore_rng_state(
+    state: dict[str, Any] | None,
+    *,
+    rank: int = 0,
+    world_size: int = 1,
+    strict: bool = True,
+    **generators: torch.Generator,
+) -> None:
+    """Restore this rank's process and requested named RNG streams after validation."""
+
+    state = validate_rng_state(
+        state,
+        rank=rank,
+        world_size=world_size,
+        strict=strict,
+        generator_names=tuple(generators),
+    )
     if not state:
         return
     if "torch" in state:
         torch.set_rng_state(state["torch"])
     if "cuda" in state and torch.cuda.is_available():
         torch.cuda.set_rng_state_all(state["cuda"])
+    named = state.get("generators", {})
     if isinstance(named, dict):
         for name, gen in generators.items():
             if name in named:
@@ -1806,5 +1827,6 @@ __all__ = [
     "save_training_checkpoint",
     "validate_checkpoint_compatibility",
     "validate_checkpoint_meta_compatibility",
+    "validate_rng_state",
     "write_checkpoint_meta",
 ]

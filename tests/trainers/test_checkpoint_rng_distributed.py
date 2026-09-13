@@ -17,6 +17,7 @@ from vrl.trainers.checkpointing import (
     capture_rng_state,
     restore_rng_state,
     save_training_checkpoint,
+    validate_rng_state,
 )
 from vrl.trainers.distributed import (
     DistributedTrainingContext,
@@ -190,6 +191,15 @@ def test_nonstrict_missing_generator_warns_and_preserves_missing_stream(caplog):
     assert torch.equal(prompt_generator.get_state(), before)
     assert torch.equal(other.get_state(), saved_other)
     assert "missing requested generators: prompt_generator" in caplog.text
+
+
+def test_rng_preflight_does_not_apply_valid_saved_state():
+    saved = capture_rng_state(prompt_generator=torch.Generator().manual_seed(12))
+    saved["torch"] = torch.Generator().manual_seed(987).get_state()
+    before = torch.get_rng_state().clone()
+    selected = validate_rng_state(saved, generator_names=("prompt_generator",))
+    assert selected is saved
+    assert torch.equal(torch.get_rng_state(), before)
 
 
 def test_nonstrict_legacy_rng_restore_warns(monkeypatch):
