@@ -9,7 +9,9 @@ remain open; historical diagnostics and the latest matrix follow below.
 Latest gradient gate: matched-batch real one/two-rank gradients differ by
 0.403% relative L2 and are not accepted under the fixed 1e-4 gate. Independent
 contribution capture now reproduces both results exactly using their respective
-BF16 accumulation orders. A distributed higher-precision fix remains unverified.
+BF16 accumulation orders. A subsequent real FP32-LoRA one/two-rank experiment
+passes gradient and first-update equivalence; public configuration, updated
+rollout delivery and controlled resume remain unverified for that path.
 
 ## Reproducible artifacts
 
@@ -404,3 +406,59 @@ resume have passed their own gates.
 Both capture and CPU audit sessions are terminal, executed scripts are copied
 into the NVMe output directory, and GPU0 is released. No shared runtime code,
 model weights, optimizer defaults or acceptance thresholds changed this turn.
+
+## Real FP32-LoRA distributed gradient and update pass
+
+The next controlled experiment ran on unchanged clean candidate `52a7cf44`,
+using `wan22_fp32_lora_gradient_probe.py`. After loading and verifying the same
+initial LoRA, the diagnostic explicitly cast only the 1,280 trainable tensors
+to FP32. Frozen parameter dtypes and storage pointers were asserted unchanged.
+The upcast initial values were readback-verified. This is a post-build diagnostic
+override recorded in the report, **not a public model-build option** or an
+implicit change to canonical model identity/defaults.
+
+Both one and two ranks used this same new numerical baseline: FSDP `none`,
+CPU parameter offload, IEEE math, replay batch two, full_cpu checkpointing,
+four fixed real samples, identical advantages and all nine bounded-recipe
+steps. One rank accumulated two chunks per step; two ranks each handled one
+of the same chunks. Both arms covered all 36 sample/step pairs with exact
+pre-update log probabilities. Native `OnlineTrainer._ensure_optimizer` and
+`_clip_and_step` performed the actual GPU-run update. Because trainable source
+parameters are already FP32, the correct native optimizer is ordinary AdamW
+with FP32 moments; there is no separate low-precision/master binding to omit.
+
+Both expert updates completed, with 640 changed trainable tensors across the
+two roots. Outputs `wan22_fp32_lora_single/` and `wan22_fp32_lora_two/` contain
+`raw_gradients.pt`, `update.pt`, per-rank transition receipts, result metadata
+and executed scripts. Both torchrun sessions exited zero before CPU comparison.
+
+`wan22_fp32_lora_compare.py` verifies identical advantages and optimizer
+hyperparameters, exact global sample/step coverage, zero replay errors, all
+1,280 FP32 trainable tensors, FQN-keyed Adam slots, finite state and step-one
+counters. It recomputes differences from saved tensors and passes the same
+unchanged thresholds used in the failed BF16 experiment:
+
+| Quantity | Relative L2 difference | Maximum absolute difference |
+| --- | ---: | ---: |
+| Pre-clip gradients | 1.0627227236804594e-10 | 1.8189894035458565e-12 |
+| Parameter update | 5.665924813117295e-10 | 6.730260793119669e-11 |
+| Adam first moment | 1.1011508792136078e-10 | 2.2737367544323206e-13 |
+| Adam second moment | 4.38071304300408e-12 | 1.0842021724855044e-19 |
+
+Summary: `wan22_fp32_lora_comparison.json`, status `passed`, audit exit zero.
+The gradient difference also equals the independently simulated FP32 addition
+order difference from the previous contribution audit. This closes the bounded
+real gradient/first-update comparison for this explicit FP32-LoRA experiment,
+not bitwise equality or preservation of the old single-rank BF16 rounding.
+
+Gradient norms were 0.033943140142922275 and 0.033943140142920436. Measured
+gradient-loop times were 257.582 and 151.220 seconds; times through state export
+were 264.171 and 159.267 seconds. These exclude model setup, generation and
+reward and are not end-to-end throughput or quality acceptance.
+
+All GPU compute inventory was empty after both runs, and GPUs0-1 are released.
+Next integrate an explicit family-owned precision option with checkpoint
+identity and strict dtype compatibility, then verify updated FP32 LoRA delivery
+to actual rollout workers and controlled checkpoint continuation. Keep existing
+defaults unchanged; the post-build diagnostic alone does not enable the native
+online recipe to construct this dtype consistently across trainer and workers.
