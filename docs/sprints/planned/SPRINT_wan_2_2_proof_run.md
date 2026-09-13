@@ -5,6 +5,20 @@
 Status: **PLANNED: T2V/I2V caches ready, awaiting the coordinated GPU queue**.
 This section supersedes the historical hardware/storage blockers below.
 
+Reward prerequisite update: the real pinned Kling VideoReward and
+VideoCon-Physics models now pass GPU scoring, combined production
+`MultiReward` execution, and isolated HTTP service execution on a dedicated
+L40S using the supported Transformers 5.13 overlay. The original 0.3/0.7
+objective is preserved. Two repeated HTTP calls match the in-process
+production scores exactly; the hot HTTP call takes 4.157 seconds for one
+existing full-size video. The first full-size Wan 2.1 attempt also obtained
+six real receipts from each service before failing in policy replay with
+OOM. This closes reward execution prerequisites, not reward calibration,
+Wan 2.2 expert switching, training, resume, or learning quality. See
+`../../research/wan_combined_physics_reward_20260912.md` and
+`../../research/wan_full_physics_l40s_attempt_20260912.md`. Historical reward
+failures below are retained as diagnostics and are superseded by this update.
+
 The four-L40S host has 372 GiB RAM and a mounted NVMe volume. The pinned
 `Wan-AI/Wan2.2-T2V-A14B-Diffusers` revision
 `5be7df9619b54f4e2667b2755bc6a756675b5cd7` is downloaded under
