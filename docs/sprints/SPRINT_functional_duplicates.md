@@ -181,11 +181,17 @@ What remains different is protocol, not code:
 
 ### Layered, not duplicated
 
-- Weight sync (`vrl/training/weight_sync/*`, four modules): transport,
-  planner, applier, orchestrator — one owner per concern.
-- Parking (three modules after `402f52ccb`/`6b723075e` consolidated the
-  CuMem backends): remaining split is rollout vs training state.
-- Deadline modules: config-level budget vs runtime enforcement.
+- Weight sync: `vrl/trainers/weight_sync.py` (trainer-side flatten and
+  send), `vrl/models/weight_utils.py` (receiver and version slots, documented
+  as the inverse), `vrl/generation/ray/weight_sync.py` (awaited version
+  coordination across Ray ranks). One owner per direction.
+- Parking: `vrl/models/parking.py` (the CuMem pool and model parking, after
+  `402f52ccb`/`6b723075e` merged the backends) and
+  `vrl/generation/execution/memory_parking.py` (rollout-side scheduling of
+  it). The remaining split is mechanism vs policy.
+- Deadlines: `vrl/utils/deadline.py` is the transport-neutral core;
+  `vrl/ray/operation_deadline.py` subclasses it with Ray cancellation, as
+  both docstrings state.
 - Reward function bindings: declarative registrations, one per reward.
 - `emu3._apply_lora` ≡ `glm_image._apply_lora`: both are two-line wrappers
   over `install_token_lora_adapter`; the shared function is the
@@ -208,6 +214,9 @@ pre-existing from the parking consolidation (`memory_parking.py` importing
    re-verification and a manifest schema bump; see above).
 2. A `(mean, std)` builder for Wan-style VAE statistics only if a numeric
    parity test against the diffusers pipeline is added first.
-3. `unified_reward_video.py` and `robotics_video_reward.py` were read but
-   not migrated onto `QwenVLVideoJudge`: they do not subclass it and parse
-   free-form judgements rather than a fixed score line.
+3. `vrl/rewards/models/unified_reward_video.py` does not subclass
+   `QwenVLVideoJudge` although it loads a Qwen-VL judge the same way: it
+   samples a fixed `num_frames` instead of `fps`, and `_parse_axis_scores`
+   reads declared score ranges (`x/10` style) and rescales them, so only the
+   loader/generate prelude would be shared. Worth doing once a real video
+   fixture covers its frame sampling.
