@@ -6,7 +6,6 @@ evaluation, or token-autoregressive generation.
 
 from __future__ import annotations
 
-import hashlib
 import importlib.metadata
 import math
 import platform
@@ -20,6 +19,7 @@ import torch
 
 from vrl.generation.types import DenoiseRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
+from vrl.models.source_integrity import runtime_source_tree_sha256
 from vrl.utils.media import to_pil_image
 
 if TYPE_CHECKING:
@@ -134,13 +134,7 @@ class GeneratorRuntimeIdentity:
     @classmethod
     def capture(cls) -> GeneratorRuntimeIdentity:
         package_root = Path(__file__).resolve().parents[2]
-        digest = hashlib.sha256()
-        for path in sorted(package_root.rglob("*.py")):
-            relative = path.relative_to(package_root).as_posix()
-            digest.update(relative.encode("utf-8"))
-            digest.update(b"\0")
-            digest.update(path.read_bytes())
-            digest.update(b"\0")
+        digest = runtime_source_tree_sha256(package_root, include_globs=("**/*.py",))
 
         versions: dict[str, str | None] = {}
         for package in ("torch", "diffusers", "transformers", "peft", "safetensors"):
@@ -151,7 +145,7 @@ class GeneratorRuntimeIdentity:
         return cls(
             python=platform.python_version(),
             packages=versions,
-            vrl_python_tree_sha256=digest.hexdigest(),
+            vrl_python_tree_sha256=digest,
         )
 
     @classmethod
