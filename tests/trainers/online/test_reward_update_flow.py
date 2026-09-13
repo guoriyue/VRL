@@ -226,7 +226,7 @@ class TestRewardUpdateFlow:
                 batch_plan=OnlineBatchPlan(
                     prompts_per_batch=1,
                     n_samples_per_prompt=2,
-                    samples_per_replay_batch=0,
+                    training_microbatch_size=0,
                 ),
                 timestep_fraction=1.0,
                 drop_zero_advantage=False,
@@ -801,7 +801,7 @@ class TestRewardUpdateFlow:
         )
 
 
-def test_samples_per_replay_batch_splits_backward_and_preserves_gradient(monkeypatch) -> None:
+def test_training_microbatch_size_splits_backward_and_preserves_gradient(monkeypatch) -> None:
     """The replay-only batch integer changes call shape without changing gradients."""
     import asyncio
 
@@ -878,7 +878,7 @@ def test_samples_per_replay_batch_splits_backward_and_preserves_gradient(monkeyp
             return _trajectory_signals(batch, log_prob, timestep_idx)
 
     def _make_trainer(
-        samples_per_replay_batch: int,
+        training_microbatch_size: int,
         *,
         streaming: bool,
     ) -> tuple[OnlineTrainer, list[int]]:
@@ -897,7 +897,7 @@ def test_samples_per_replay_batch_splits_backward_and_preserves_gradient(monkeyp
                     prompts_per_batch=1,
                     n_samples_per_prompt=4,
                     gradient_accumulation_steps=1 if streaming else 0,
-                    samples_per_replay_batch=samples_per_replay_batch,
+                    training_microbatch_size=training_microbatch_size,
                 ),
                 timestep_fraction=1.0,
                 drop_zero_advantage=False,
@@ -911,13 +911,13 @@ def test_samples_per_replay_batch_splits_backward_and_preserves_gradient(monkeyp
         return trainer, replay_calls
 
     def _run(
-        samples_per_replay_batch: int,
+        training_microbatch_size: int,
         *,
         streaming: bool,
     ) -> tuple[float, list[int], list[int]]:
         device_move_sizes.clear()
         trainer, replay_calls = _make_trainer(
-            samples_per_replay_batch,
+            training_microbatch_size,
             streaming=streaming,
         )
         recorded_grads: list[float] = []
@@ -945,15 +945,15 @@ def test_samples_per_replay_batch_splits_backward_and_preserves_gradient(monkeyp
         return recorded_grads[0], replay_calls, list(device_move_sizes)
 
     full_grad, full_calls, full_device_moves = _run(
-        samples_per_replay_batch=0,
+        training_microbatch_size=0,
         streaming=False,
     )
     legacy_split_grad, legacy_split_calls, legacy_split_device_moves = _run(
-        samples_per_replay_batch=2,
+        training_microbatch_size=2,
         streaming=False,
     )
     streaming_split_grad, streaming_split_calls, streaming_split_device_moves = _run(
-        samples_per_replay_batch=2,
+        training_microbatch_size=2,
         streaming=True,
     )
 
@@ -989,9 +989,9 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
         )
     streaming_messages = [record.getMessage() for record in caplog.records]
     assert any("streaming accumulation enabled" in msg for msg in streaming_messages)
-    assert any("microbatch_prompts=1" in msg for msg in streaming_messages)
+    assert any("collection_prompts=1" in msg for msg in streaming_messages)
     assert any("samples_per_generation_batch=2" in msg for msg in streaming_messages)
-    assert any("samples_per_replay_batch=1" in msg for msg in streaming_messages)
+    assert any("training_microbatch_size=1" in msg for msg in streaming_messages)
     assert any("target_samples_per_update=8" in msg for msg in streaming_messages)
 
     caplog.clear()
@@ -1003,7 +1003,7 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     legacy_messages = [record.getMessage() for record in caplog.records]
     assert any("legacy full-batch accumulation" in msg for msg in legacy_messages)
     assert any("samples_per_generation_batch=2" in msg for msg in legacy_messages)
-    assert any("samples_per_replay_batch=1" in msg for msg in legacy_messages)
+    assert any("training_microbatch_size=1" in msg for msg in legacy_messages)
     # The legacy path must emit a host-RAM residency WARNING. Assert the warning
     # level fired (the behavioral contract) rather than pinning its exact prose,
     # which a benign reword would redden with no real regression.
@@ -1033,7 +1033,7 @@ def test_global_std_streaming_divergence_warning(caplog) -> None:
 
     # global_std=true + 2 groups/microbatch (rbs=8, gas=4) -> warn (the sd3 case).
     assert _warns(_plan(8, 4), global_std=True)
-    # Exempt: microbatch_size=1 (gas=8 -> 1 group/microbatch; per-group == global).
+    # Exempt: prompts_per_collection=1 (gas=8 -> 1 group/microbatch; per-group == global).
     assert not _warns(_plan(8, 8), global_std=True)
     # Exempt: global_std=false (per-group std is streaming-equivalent).
     assert not _warns(_plan(8, 4), global_std=False)
@@ -1060,14 +1060,14 @@ def test_host_memory_budget_fail_fast(monkeypatch) -> None:
 
     # Over budget -> fail fast with an actionable message.
     _inject(0.95)
-    with pytest.raises(MemoryError, match=r"actor\.microbatch_size"):
-        online._check_host_memory_budget(0.9, microbatch_prompts=1, n_samples_per_prompt=8)
+    with pytest.raises(MemoryError, match=r"actor\.prompts_per_collection"):
+        online._check_host_memory_budget(0.9, collection_prompts=1, n_samples_per_prompt=8)
 
     # Exactly at / under budget -> pass (<= budget does not trip).
     _inject(0.90)
-    online._check_host_memory_budget(0.9, microbatch_prompts=1, n_samples_per_prompt=8)
+    online._check_host_memory_budget(0.9, collection_prompts=1, n_samples_per_prompt=8)
     _inject(0.50)
-    online._check_host_memory_budget(0.9, microbatch_prompts=1, n_samples_per_prompt=8)
+    online._check_host_memory_budget(0.9, collection_prompts=1, n_samples_per_prompt=8)
 
     # Unreadable host memory (used_fraction None) -> never raises (no false kill).
     monkeypatch.setattr(
@@ -1075,7 +1075,7 @@ def test_host_memory_budget_fail_fast(monkeypatch) -> None:
         "capture",
         lambda self: HostMemorySnapshot(rss_mb=None, available_mb=None, total_mb=None),
     )
-    online._check_host_memory_budget(0.9, microbatch_prompts=1, n_samples_per_prompt=8)
+    online._check_host_memory_budget(0.9, collection_prompts=1, n_samples_per_prompt=8)
 
 
 def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:

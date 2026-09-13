@@ -57,7 +57,7 @@ model:
 
 actor:
   # Each rank streams its one local prompt group as one replay slice.
-  microbatch_size: 1
+  prompts_per_collection: 1
 
 rollout:
   # Each rank draws its own disjoint prompt slice, so per-rank batch stays small

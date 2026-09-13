@@ -37,7 +37,7 @@ actor:
   # 24 prompt groups per update replay one group at a time on the single
   # trainer GPU (81-frame 480p sequences); streaming collect->backward->release
   # keeps only one group's activations resident.
-  microbatch_size: 1
+  prompts_per_collection: 1
   ppo_epochs: 1
   # Flash-GRPO trains on 51% of the 20 denoise steps per sample (its
   # config.train.timestep_fraction=0.51) — paper parity that also halves the

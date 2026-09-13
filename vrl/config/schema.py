@@ -520,11 +520,11 @@ class ActorSection(ConfigBase):
     max_norm: float | None = None
     timestep_selection: Literal["strided", "random", "stratified", "sde_window"] | None = None
     ppo_epochs: StrictInt | None = None
-    # OnlineBatchPlan inputs: the microstep count or the microbatch size (the
-    # size derives the count); the plan is bridged, not stored here.
+    # OnlineBatchPlan: accumulation divides prompts into collection batches;
+    # training_microbatch_size separately splits samples within each prompt group.
     gradient_accumulation_steps: StrictInt | None = None
-    microbatch_size: StrictInt | None = None
-    samples_per_replay_batch: StrictInt | None = None
+    prompts_per_collection: StrictInt | None = None
+    training_microbatch_size: StrictInt | None = None
     host_memory_budget_fraction: float | None = None
     # reader: vrl/trainers/activation_checkpointing.py (bool: true=full, false=off)
     gradient_checkpointing: Literal["off", "full", "selective"] | StrictBool | None = None

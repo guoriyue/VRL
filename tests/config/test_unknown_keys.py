@@ -109,9 +109,9 @@ def test_production_gate_is_closed() -> None:
 
 
 def test_online_update_memory_keys_are_owned_by_actor() -> None:
-    assert unknown_keys(OmegaConf.create({"actor": {"microbatch_size": 1}})) == []
-    assert unknown_keys(OmegaConf.create({"rollout": {"microbatch_size": 1}})) == [
-        "rollout.microbatch_size",
+    assert unknown_keys(OmegaConf.create({"actor": {"prompts_per_collection": 1}})) == []
+    assert unknown_keys(OmegaConf.create({"rollout": {"prompts_per_collection": 1}})) == [
+        "rollout.prompts_per_collection",
     ]
 
 
@@ -159,3 +159,16 @@ def test_all_experiment_configs_parse() -> None:
     from vrl.config.lint import experiment_parse_failures
 
     assert experiment_parse_failures() == {}
+
+
+def test_retired_actor_batch_names_are_unknown() -> None:
+    assert unknown_keys(
+        OmegaConf.create(
+            {
+                "actor": {
+                    "microbatch_size": 1,
+                    "samples_per_replay_batch": 2,
+                }
+            }
+        )
+    ) == ["actor.microbatch_size", "actor.samples_per_replay_batch"]

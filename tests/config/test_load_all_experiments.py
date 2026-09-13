@@ -972,7 +972,7 @@ def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
 
     assert built.root.rollout is not None
     assert built.root.rollout.samples_per_generation_batch == "auto"
-    assert built.trainer.batch_plan.samples_per_replay_batch == 1
+    assert built.trainer.batch_plan.training_microbatch_size == 1
 
 
 def test_luna_reward_overlay_changes_only_the_judge_command() -> None:

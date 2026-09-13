@@ -35,12 +35,12 @@ actor:
   ppo_epochs: 1
   timestep_fraction: 0.25
   timestep_selection: strided
-  samples_per_replay_batch: 1
+  training_microbatch_size: 1
   # One continuous batch contains all four prompt groups. The producer submits
   # them independently, allowing GPU 3 to score a completed group while GPUs
   # 1/2 generate the remaining groups. The next full batch is prefetched beside
   # GPU 0 replay, while each optimizer update remains exactly 16 trajectories.
-  microbatch_size: 4
+  prompts_per_collection: 4
 
 trainer:
   output_dir: outputs/wan_robotics_physics_4x_l4/continuous_run

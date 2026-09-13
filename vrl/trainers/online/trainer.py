@@ -323,7 +323,7 @@ class _TrainingMicrobatch:
         cls,
         batch: RolloutBatch,
         advantages: torch.Tensor,
-        samples_per_replay_batch: int,
+        training_microbatch_size: int,
     ) -> list[_TrainingMicrobatch]:
         """Split a prompt group using the validated plan; zero keeps it whole.
 
@@ -338,7 +338,7 @@ class _TrainingMicrobatch:
             )
         if batch_size <= 0:
             return []
-        slice_size = samples_per_replay_batch
+        slice_size = training_microbatch_size
         if slice_size <= 0 or slice_size >= batch_size:
             return [cls(batch=batch, advantages=advantages, loss_weight=1.0)]
 
@@ -360,7 +360,7 @@ class _TrainingMicrobatch:
         cls,
         batches: list[RolloutBatch],
         advantages: list[torch.Tensor],
-        samples_per_replay_batch: int,
+        training_microbatch_size: int,
         device: torch.device,
     ) -> list[_TrainingMicrobatch]:
         """Plan replay execution slots with equal slot counts across ranks.
@@ -373,7 +373,7 @@ class _TrainingMicrobatch:
 
         sample_batches: list[_TrainingMicrobatch] = []
         for batch, adv in zip(batches, advantages, strict=True):
-            sample_batches.extend(cls.from_prompt_group(batch, adv, samples_per_replay_batch))
+            sample_batches.extend(cls.from_prompt_group(batch, adv, training_microbatch_size))
 
         target_count = all_ranks_max_int(len(sample_batches), device)
         if target_count == len(sample_batches):
@@ -653,7 +653,7 @@ class OnlineTrainer:
                 "target on the single replay pass), so the clip/guard term is a no-op "
                 "and the run is equivalent to plain GRPO. Set actor.ppo_epochs>1 — which "
                 "needs the legacy full-batch path (actor.gradient_accumulation_steps=0 "
-                "and actor.microbatch_size=0, since streaming releases each microbatch "
+                "and actor.prompts_per_collection=0, since streaming releases each microbatch "
                 "and cannot replay it across epochs) — or use schedule_mode='continuous' "
                 "with continuous.max_stale_policy_versions>0 for an off-policy ratio."
             )
@@ -1262,11 +1262,11 @@ class OnlineTrainer:
 
         cfg = self.config
         loss_scale = int(total_groups) * len(train_indices)
-        samples_per_replay_batch = cfg.batch_plan.samples_per_replay_batch
+        training_microbatch_size = cfg.batch_plan.training_microbatch_size
         for sample_batch in _TrainingMicrobatch.plan_balanced(
             batches,
             advantages,
-            samples_per_replay_batch,
+            training_microbatch_size,
             self.device,
         ):
             group_batch = move_training_batch_to_device(
@@ -1342,11 +1342,11 @@ class OnlineTrainer:
             cfg.timestep_fraction,
             cfg.timestep_selection,
         )
-        samples_per_replay_batch = cfg.batch_plan.samples_per_replay_batch
+        training_microbatch_size = cfg.batch_plan.training_microbatch_size
         first_batch = _TrainingMicrobatch.from_prompt_group(
             batch.batches[0],
             batch.advantages[0],
-            samples_per_replay_batch,
+            training_microbatch_size,
         )[0]
         self._check_initial_precision_drift(first_batch.batch, train_indices)
         self._run_replay_pass(
@@ -1518,7 +1518,7 @@ class OnlineTrainer:
             cfg.timestep_selection,
         )
 
-        samples_per_replay_batch = cfg.batch_plan.samples_per_replay_batch
+        training_microbatch_size = cfg.batch_plan.training_microbatch_size
 
         # Debug first step: compare old vs fresh log-probs on first timestep
         # (using first filtered batch so memory footprint is bounded).
@@ -1527,7 +1527,7 @@ class OnlineTrainer:
         first_debug_batch = _TrainingMicrobatch.from_prompt_group(
             filtered_batches[0],
             filtered_advs[0],
-            samples_per_replay_batch,
+            training_microbatch_size,
         )[0]
         if cfg.debug.first_step and self.state.step == 0 and uses_evaluator:
             _dbg_batch = move_training_batch_to_device(

@@ -36,7 +36,7 @@ actor:
     lr: 1.0e-4   # LoRA needs ~1e-4; the paper's 1e-5 is for full-finetune.
   # One training group per streamed replay slice; the host guard checks that
   # slice before the remaining prompt groups are collected.
-  microbatch_size: 1
+  prompts_per_collection: 1
   host_memory_budget_fraction: 0.9
 
 trainer:
@@ -57,7 +57,7 @@ rollout:
   #    1B R1 (3 segments) 8 is the safe ceiling (matches the proven non-R1 run).
   #    Drop to 4-6 if replay OOMs.
   #  * prompts_per_batch = prompt groups per optimizer step (= gas, since
-  #    microbatch_size=1). With streaming this is GPU-memory-FREE: groups are
+  #    prompts_per_collection=1). With streaming this is GPU-memory-FREE: groups are
   #    collected/trained/released one at a time, only wall-clock grows. The
   #    ar_r1 base default rbs=1 means each update sees ONE prompt -> a very
   #    noisy gradient. 8 gives a real multi-prompt batch; raise toward the

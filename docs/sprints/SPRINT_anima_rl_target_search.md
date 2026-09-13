@@ -181,7 +181,7 @@ e^0.203 ≈ **1.22，偏离 22%**，而 `clip_ratio` 只有 0.003。这个数值
 | 1 | 1 | on | 0.0910 | ✗ 光对齐形状不够 |
 | **1** | **1** | **off** | — | **✓ 唯一通过** |
 
-- `actor.samples_per_replay_batch` 默认就是 1，所以原配置是 **generation 16 / replay 1
+- `actor.training_microbatch_size` 默认就是 1，所以原配置是 **generation 16 / replay 1
   的形状错配**。
 - 试图把 replay 提到 4 或 16 以匹配 generation：**两者都 CUDA OOM**（replay 要对每个
   去噪步反传）。因此 replay 被显存钉死在 1，generation 必须跟着降到 1。

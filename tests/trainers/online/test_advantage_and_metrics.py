@@ -255,7 +255,7 @@ class TestAdvantageAndMetrics:
             num_steps=1,
         )
         batches = _TrainingMicrobatch.from_prompt_group(
-            batch, torch.ones(10), samples_per_replay_batch=8
+            batch, torch.ones(10), training_microbatch_size=8
         )
         assert [batch.loss_weight for batch in batches] == pytest.approx([0.8, 0.2])
 

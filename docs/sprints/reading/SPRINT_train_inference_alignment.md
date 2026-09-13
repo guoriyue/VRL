@@ -104,7 +104,7 @@ CFG 也同源：两边都 `batched_cfg`，都 `torch.cat([uncond, cond])` 拼 2x
 
 ### 门 3：批不变性（batch-invariance）—— 已 live 的隐性漂移
 - 来源：Thinking Machines Lab《Defeating Nondeterminism in LLM Inference》（文章评论引用）—— 归约顺序 / batch size 不同会引入非确定性，即使同一套 forward。
-- 我们这里 live：采样的 `chunk_batch` 与训练的 `microbatch_size` 不同 → 同一 DiT 前向在不同 batch 形状下归约顺序可能不同，产生**精度一致时仍存在的**微小 logprob 漂移。当前被 drift guard 的 fp32 逐位断言掩盖（因为测试用同 batch）。
+- 我们这里 live：采样的 `chunk_batch` 与训练的 `prompts_per_collection` 不同 → 同一 DiT 前向在不同 batch 形状下归约顺序可能不同，产生**精度一致时仍存在的**微小 logprob 漂移。当前被 drift guard 的 fp32 逐位断言掩盖（因为测试用同 batch）。
 - 行动（小，可现在做）：在 `fp8_rollout_drift_probe` 加一个**变 batch 形状**的 parity case，量"同精度、不同 batch"下的 ratio_dev，确认是否在 TIS cap 之下；若显著则记录为已知项。
 
 ## 5. 一个可直接验证的结论（省 recompute）

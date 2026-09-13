@@ -139,7 +139,7 @@ flip 到 continuous 会撞下面的 gap:
   on-demand 路径 `runtime.py:87`),所以 raise (a) 不触发;再加 `require_separate_gpus:false` 短路 raise (b),
   **单卡 continuous 可合法启动**(见顶部更新)。
 - **Gap 3(sync streaming × continuous 接线未验证)**:cosmos 用同步 streaming microbatch
-  (`microbatch_size=1` → `gas = rollout_batch_size`)。`_run_streaming_optimizer_update`(`online.py:283`)
+  (`prompts_per_collection=1` → `gas = rollout_batch_size`)。`_run_streaming_optimizer_update`(`online.py:283`)
   每个 optimizer update 会多次调用 `collect_training_batch`，每次进入
   `rollout_schedule.next_iteration`(`trainer.py:439`)。continuous queue 设计是 policy-versioned ready
   rollout groups / iterations；需要验证这些重复 strict calls 是否都保持同一 optimizer target 的版本边界、

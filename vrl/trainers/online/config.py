@@ -30,7 +30,8 @@ class OnlineBatchPlan:
     prompts_per_batch: int
     n_samples_per_prompt: int
     gradient_accumulation_steps: int = 0
-    samples_per_replay_batch: int = 1
+    # Samples per training computation within one prompt group; zero keeps it whole.
+    training_microbatch_size: int = 1
     host_memory_budget_fraction: float = 0.0
 
     @classmethod
@@ -68,25 +69,25 @@ class OnlineBatchPlan:
             return parsed if parsed > 0 else None
 
         accumulation_steps = optional_non_negative_int("gradient_accumulation_steps")
-        microbatch_size = optional_non_negative_int("microbatch_size")
+        prompts_per_collection = optional_non_negative_int("prompts_per_collection")
 
         active_accumulation = int(accumulation_steps or 0)
-        active_microbatch = int(microbatch_size or 0)
-        if active_accumulation > 0 and active_microbatch > 0:
-            if active_accumulation * active_microbatch != prompts:
+        active_collection_prompts = int(prompts_per_collection or 0)
+        if active_accumulation > 0 and active_collection_prompts > 0:
+            if active_accumulation * active_collection_prompts != prompts:
                 raise ValueError(
-                    "actor.microbatch_size * actor.gradient_accumulation_steps "
+                    "actor.prompts_per_collection * actor.gradient_accumulation_steps "
                     f"must equal rollout.prompts_per_batch "
-                    f"({active_microbatch} * {active_accumulation} != {prompts}); "
+                    f"({active_collection_prompts} * {active_accumulation} != {prompts}); "
                     "set only one of them.",
                 )
-        elif active_microbatch > 0:
-            if prompts % active_microbatch != 0:
+        elif active_collection_prompts > 0:
+            if prompts % active_collection_prompts != 0:
                 raise ValueError(
-                    "actor.microbatch_size must evenly divide "
-                    f"rollout.prompts_per_batch ({prompts} % {active_microbatch} != 0)",
+                    "actor.prompts_per_collection must evenly divide "
+                    f"rollout.prompts_per_batch ({prompts} % {active_collection_prompts} != 0)",
                 )
-            active_accumulation = prompts // active_microbatch
+            active_accumulation = prompts // active_collection_prompts
 
         payload: dict[str, Any] = {
             "prompts_per_batch": prompts,
@@ -94,7 +95,7 @@ class OnlineBatchPlan:
         }
         if active_accumulation > 0:
             payload["gradient_accumulation_steps"] = active_accumulation
-        for name in ("samples_per_replay_batch", "host_memory_budget_fraction"):
+        for name in ("training_microbatch_size", "host_memory_budget_fraction"):
             value = None if actor is None else getattr(actor, name)
             if value is not None:
                 payload[name] = value
@@ -117,8 +118,8 @@ class OnlineBatchPlan:
             minimum=0,
         )
         require_int(
-            self.samples_per_replay_batch,
-            path="actor.samples_per_replay_batch",
+            self.training_microbatch_size,
+            path="actor.training_microbatch_size",
             minimum=0,
         )
         if accumulation_steps > 0 and prompts % accumulation_steps != 0:
@@ -144,7 +145,7 @@ class OnlineBatchPlan:
             raise ValueError(
                 "actor.host_memory_budget_fraction>0 requires streaming "
                 "accumulation (the guard checks host RAM per streamed microbatch); "
-                "set actor.microbatch_size (or actor.gradient_accumulation_steps) "
+                "set actor.prompts_per_collection (or actor.gradient_accumulation_steps) "
                 "so the optimizer-target batch is streamed. Got "
                 f"host_memory_budget_fraction={budget} with no streaming "
                 "(gradient_accumulation_steps=0).",
@@ -152,7 +153,7 @@ class OnlineBatchPlan:
         object.__setattr__(self, "host_memory_budget_fraction", budget)
 
     @property
-    def microbatch_size(self) -> int:
+    def prompts_per_collection(self) -> int:
         """Prompt groups held by one streaming slice, or the full unsplit batch."""
 
         if self.gradient_accumulation_steps == 0:
@@ -339,7 +340,7 @@ class TrainerConfig:
         if self.batch_plan.streaming and int(self.ppo_epochs) != 1:
             raise ValueError(
                 "actor.ppo_epochs must be 1 when streaming accumulation is on "
-                "(gradient_accumulation_steps>0 or microbatch_size>0): a "
+                "(gradient_accumulation_steps>0 or prompts_per_collection>0): a "
                 "released microbatch cannot be replayed across epochs "
                 f"(got ppo_epochs={self.ppo_epochs})",
             )

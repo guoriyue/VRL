@@ -129,7 +129,7 @@ batch |      ckpt |  fwd+bwd MFU | peak GB
 - helper 里对 `selective_checkpoint_func` 的 op 集合按家族校验：wan/cosmos 用的 attention backend 若不是 `aten._scaled_dot_product_*`（比如自定义 FA kernel），policy 的 MUST_SAVE 命中不到，要么补 op，要么对该家族回落 full 并 warn——**不要静默退化成 full 还报 selective**。
 
 ### P3 — 按 probe 结果重定 microbatch（兑现 MFU）
-- 对 selective 实测能放下更大 batch 的 recipe，按 [[SPRINT_training_mfu_compile]] §0 同样口径，用实测峰值显存重新评估 `microbatch_size` / `gradient_accumulation_steps`，把腾出的显存换成更大的有效 batch。
+- 对 selective 实测能放下更大 batch 的 recipe，按 [[SPRINT_training_mfu_compile]] §0 同样口径，用实测峰值显存重新评估 `prompts_per_collection` / `gradient_accumulation_steps`，把腾出的显存换成更大的有效 batch。
 - 多卡：selective 减少重算 = 减少要和 FSDP all-gather 重叠的计算量，对 comm-overlap 友好；但 FSDP recipe 仍受 `strategy.py` 对 compile 的硬门约束，selective 本身和 FSDP 正交可共存（Megatron/PyTorch 都这么做），单独验证。
 
 ## 5. 验收（finishing criteria）

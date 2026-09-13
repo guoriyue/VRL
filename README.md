@@ -335,3 +335,21 @@ recipe lives under `vrl/config/presets/experiment/` — browse it to see what ru
 - [`docs/MODEL_TAXONOMY.md`](docs/MODEL_TAXONOMY.md) — policy axes, current family profiles, and physical layout.
 - [`docs/ADDING_A_MODEL_FAMILY.md`](docs/ADDING_A_MODEL_FAMILY.md) — add a model module, registry descriptor, presets, and contract tests without forking the trainer.
 - [`docs/PRECISION.md`](docs/PRECISION.md) — base dtypes, selective FP8 quantization, protected diffusion math, and frozen rollout components.
+
+### Online training batch sizes
+
+- `rollout.prompts_per_batch`: planned prompt count for one online optimizer update.
+- `rollout.n_samples_per_prompt`: generated samples in each prompt group.
+- `actor.prompts_per_collection`: prompt groups collected together during streaming.
+  It derives `gradient_accumulation_steps` by dividing `prompts_per_batch`.
+- `actor.training_microbatch_size`: samples processed together within each prompt
+  group during training. Zero keeps the group whole; the default is one sample.
+
+For example, 4 prompts with 8 samples each plan 32 generated samples per update.
+Collecting 2 prompts at a time gives 2 collection batches; a training microbatch
+size of 2 splits each prompt group into four training computations. Filtering and
+distributed execution can change the number of contributing samples. These
+settings do not introduce a second independent `minibatch_size` parameter.
+
+The previous actor keys `microbatch_size` and `samples_per_replay_batch` are
+replaced by `prompts_per_collection` and `training_microbatch_size`, respectively.

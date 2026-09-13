@@ -249,7 +249,7 @@ def test_sana_family_defaults_to_native_fp16() -> None:
     assert built.trainer.train_precision == built.trainer.rollout_precision
     assert built.root.rollout is not None
     assert (
-        built.trainer.batch_plan.samples_per_replay_batch
+        built.trainer.batch_plan.training_microbatch_size
         == built.root.rollout.samples_per_generation_batch
     )
     assert build.parameter_dtype is torch.float16

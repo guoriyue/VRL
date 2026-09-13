@@ -54,7 +54,7 @@ rollout:
   # input conditions per optimizer update. Generation still streams with
   # samples_per_generation_batch=1 on limited memory.
   prompts_per_batch: 32
-  # NO streaming accumulation here (unlike the NFT sibling's microbatch_size=1):
+  # NO streaming accumulation here (unlike the NFT sibling's prompts_per_collection=1):
   # streaming releases each microbatch after its backward, and ppo_epochs=4
   # must replay every microbatch across epochs — the trainer validation rejects
   # the combination outright. The cost is holding all 32 groups' rollout

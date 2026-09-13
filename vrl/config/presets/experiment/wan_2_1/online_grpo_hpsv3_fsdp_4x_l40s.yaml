@@ -38,10 +38,10 @@ actor:
   # keeps GPU activations bounded regardless, and collecting the whole update
   # before one backward pass cuts phase park/wake transitions from 18 to 3 per
   # update. That is a stability requirement, not a tuning choice: at
-  # microbatch_size=1 the cumem map/unmap churn (~50 transitions) wedged all
+  # prompts_per_collection=1 the cumem map/unmap churn (~50 transitions) wedged all
   # four GPUs with driver Xid 154 "Node Reboot Required" (2026-08-16, attempt
   # 8 of this smoke).
-  microbatch_size: 6
+  prompts_per_collection: 6
   ppo_epochs: 1
   # Mechanism 1: train EXACTLY the rollout's stochastic step. The trained
   # subset is the recorded window, not a trainer-side draw, so

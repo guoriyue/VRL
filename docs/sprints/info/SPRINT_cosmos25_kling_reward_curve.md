@@ -1,7 +1,7 @@
 # SPRINT (info / measurement archive): Cosmos Predict2.5-2B + Kling GRPO/NFT reward run
 
 状态：measurement archive（`info/`）。这是一次单卡训练观测记录，**不是 action item**；保留下来供以后复查。
-日期：2026-06-16，单张 RTX 5090（32GB，host RAM 94GB），VRL @ `main`（含 `microbatch_size` streaming）。
+日期：2026-06-16，单张 RTX 5090（32GB，host RAM 94GB），VRL @ `main`（含 `prompts_per_collection` streaming）。
 
 ## TL;DR
 
@@ -9,7 +9,7 @@
 - **reward 在噪声内持平**（-5.12 ↔ -5.05 来回跳，无趋势），复现了 2026-06-13 的结论。`grad_norm ~0.05–0.12`（极小）= per-step 梯度太小这个根因。
 - **度量本身无法显示 learning**：每个 epoch 训练在 309 prompt 集里**轮换的 16 个不同 prompt** 上，所以 `reward_mean` 主要反映"这轮抽到哪些 prompt"的难度，而非策略变化。要判断学习必须用**固定 eval prompt 集**逐 epoch 打分（prior 也提过）。
 - **512p 视频 RL 装不进单张 32GB 卡**（policy + 同卡常驻的 ~5GB VideoReward）。OOM ladder 记录在下面。最终用 256p/49f 才跑起来。
-- 被验证为**好用**的：`microbatch_size` streaming 在真实 cosmos run 里端到端正确（gas 由 microbatch_size 派生、host-RAM guard 生效、每 epoch 一次 optimizer step、reward 真打分）。唯一的墙是 GPU 容量，不是这套代码。
+- 被验证为**好用**的：`prompts_per_collection` streaming 在真实 cosmos run 里端到端正确（gas 由 prompts_per_collection 派生、host-RAM guard 生效、每 epoch 一次 optimizer step、reward 真打分）。唯一的墙是 GPU 容量，不是这套代码。
 
 ## 运行配置
 
@@ -18,7 +18,7 @@ Entrypoint `vrl.scripts.diffusion.train:train_diffusion_online`, config
 
 ```
 rollout.prompts_per_batch=16
-actor.microbatch_size=1              # -> gradient_accumulation_steps 派生 = 16
+actor.prompts_per_collection=1              # -> gradient_accumulation_steps 派生 = 16
 rollout.n_samples_per_prompt=8
 actor.host_memory_budget_fraction=0.95
 sampling.width=256 sampling.height=256 sampling.num_frames=49 sampling.num_steps=20
@@ -73,7 +73,7 @@ resume 支持：`trainer.resume_from=<checkpoint dir>`（`vrl/trainers/checkpoin
 cd ~/Desktop/VRL && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 \
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python -u -m vrl.scripts.train \
   --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward \
-  rollout.prompts_per_batch=16 actor.microbatch_size=1 rollout.n_samples_per_prompt=8 \
+  rollout.prompts_per_batch=16 actor.prompts_per_collection=1 rollout.n_samples_per_prompt=8 \
   actor.host_memory_budget_fraction=0.95 \
   sampling.width=256 sampling.height=256 sampling.num_frames=49 sampling.num_steps=20 \
   trainer.total_epochs=50 trainer.save_freq=10 \
@@ -90,7 +90,7 @@ cd ~/Desktop/VRL && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES
 
 ## 关联
 
-- 本 run 验证了同步 `microbatch_size` streaming（见 `done/SPRINT_streaming_rollout_accumulation.md`、
+- 本 run 验证了同步 `prompts_per_collection` streaming（见 `done/SPRINT_streaming_rollout_accumulation.md`、
   `done/SPRINT_memory_budgeted_microbatch.md`）在真实 cosmos 上端到端可用；它不是 async overlap。
 - 复现 2026-06-13 "first trustworthy curve" 的持平结论。
 - 同类容量/配方坑点也记在个人 memory `project_cosmos_streaming_smoke.md`。

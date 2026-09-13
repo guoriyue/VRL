@@ -9,7 +9,7 @@
 
 ## 0. 核心决定
 
-不要把 `microbatch_size` 升级成 async pipeline item。
+不要把 `prompts_per_collection` 升级成 async pipeline item。
 
 当前 sync streaming path 已经是正确基线：
 
@@ -69,7 +69,7 @@ microbatch async 会把两个问题混在一起：
 这些仍然属于 sync mini/microbatch 主线，继续由已完成 sprint 维护：
 
 - `rollout.prompts_per_batch` 是 optimizer target prompt conditions。
-- `actor.microbatch_size` 是每次同步 collect/backward/release 的 prompt 条件数。
+- `actor.prompts_per_collection` 是每次同步 collect/backward/release 的 prompt 条件数。
 - `actor.gradient_accumulation_steps` 是同一 geometry 的 count 输入，不是另一个 batch target。
 - `rollout.samples_per_chunk` 控制生成侧 sample chunk；
   `actor.replay_samples_per_chunk` 独立控制 replay/backward sample chunk。
@@ -91,7 +91,7 @@ microbatch async 会把两个问题混在一起：
 - 不在 `_run_streaming_optimizer_update` 里做 bounded microbatch prefetch。
 - 不新增 `_PendingMicrobatch` / `RolloutMicrobatch` 作为跨模块 async 协议。
 - 不新增 `drain_for_microbatch()` 或把 continuous consumer 边界降到 microbatch。
-- 不把 `microbatch_size` 当成 rollout/train async scheduler 的 item size。
+- 不把 `prompts_per_collection` 当成 rollout/train async scheduler 的 item size。
 - 不为 microbatch prefetch 增加 `prefetch_ready_depth` / `collect_task_inflight` 等长期指标。
 - 不为了 prefetch 去重构 `collect_training_batch()`；如果以后需要重构，必须由真正 rollout/train async sprint 证明收益后再做。
 

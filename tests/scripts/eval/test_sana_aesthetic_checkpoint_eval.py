@@ -493,6 +493,9 @@ def test_historical_parity_threshold_normalizes_without_changing_frozen_identity
     canonical = load_config(sana_report.CANONICAL_CONFIG_NAME)
     historical = OmegaConf.to_container(canonical, resolve=True)
     historical["trainer"]["debug"].update(historical["trainer"].pop("replay_parity"))
+    historical["actor"]["samples_per_replay_batch"] = historical["actor"].pop(
+        "training_microbatch_size"
+    )
 
     assert sana_report._semantic_digest(historical) == sana_report.CANONICAL_PROTOCOL_SHA256
     normalized = sana_report.normalize_run_config(OmegaConf.create(historical))
@@ -1111,7 +1114,7 @@ def test_generate_images_rejects_materialized_source_drift_before_generation(
     [
         (("rollout",), "samples_per_chunk", "samples_per_generation_batch"),
         (("distributed", "rollout"), "chunk_placement_strategy", "batch_placement_strategy"),
-        (("actor",), "replay_samples_per_chunk", "samples_per_replay_batch"),
+        (("actor",), "replay_samples_per_chunk", "training_microbatch_size"),
     ],
 )
 def test_historical_config_rename_rejects_simultaneous_spellings(path, old, new):

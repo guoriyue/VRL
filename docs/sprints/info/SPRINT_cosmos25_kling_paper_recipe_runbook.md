@@ -52,7 +52,7 @@
 
 - **512p 单卡装不下**（policy + 同卡常驻 ~5GB VideoReward；512p/93f 峰值 ~28–31GB 还差几 GB）。单卡只能 256p；
   想要 ≥448p 的 native-res reward 需要给 reward 第二张卡。
-- `actor.microbatch_size=1` streaming 让 host RAM 只持有 ~1 组，所以 `rbs` 大小不再撑爆 host；GPU 峰值由
+- `actor.prompts_per_collection=1` streaming 让 host RAM 只持有 ~1 组，所以 `rbs` 大小不再撑爆 host；GPU 峰值由
   `rollout.samples_per_chunk=1`（单段视频前向）决定，与 `rbs` 无关。
 
 ---

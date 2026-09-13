@@ -96,6 +96,12 @@ def normalize_run_config(cfg: DictConfig) -> DictConfig:
     # additional parity settings must still invalidate the registered protocol.
     # Runtime validation below keeps the live shape and its mandatory gate.
     registered_shape = deepcopy(expected)
+    # Keep the registered identity while using the clearer live batch names.
+    registered_actor = _section(registered_shape, "actor")
+    if registered_actor is not None and "training_microbatch_size" in registered_actor:
+        registered_actor["samples_per_replay_batch"] = registered_actor.pop(
+            "training_microbatch_size"
+        )
     registered_trainer = _section(registered_shape, "trainer")
     parity = _section(registered_shape, "trainer", "replay_parity")
     if registered_trainer is not None and parity is not None:
@@ -563,7 +569,9 @@ def _erase_meaningless_spelling(
     for path, old, new in (
         (("rollout",), "samples_per_chunk", "samples_per_generation_batch"),
         (("distributed", "rollout"), "chunk_placement_strategy", "batch_placement_strategy"),
-        (("actor",), "replay_samples_per_chunk", "samples_per_replay_batch"),
+        (("actor",), "replay_samples_per_chunk", "training_microbatch_size"),
+        (("actor",), "samples_per_replay_batch", "training_microbatch_size"),
+        (("actor",), "microbatch_size", "prompts_per_collection"),
     ):
         renamed_section = _section(actual, *path)
         if isinstance(renamed_section, dict) and old in renamed_section:

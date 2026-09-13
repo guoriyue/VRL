@@ -358,7 +358,7 @@ def _log_rollout_memory_plan(
     prompts_per_batch = batch_plan.prompts_per_batch
     samples_per_prompt = batch_plan.n_samples_per_prompt
     target_samples = prompts_per_batch * samples_per_prompt
-    replay_width = batch_plan.samples_per_replay_batch
+    replay_width = batch_plan.training_microbatch_size
 
     def describe_batch_width(value: Any) -> str:
         if value == "auto":
@@ -370,18 +370,18 @@ def _log_rollout_memory_plan(
     replay_batch_text = describe_batch_width(replay_width)
     gas = batch_plan.gradient_accumulation_steps
     if batch_plan.streaming:
-        microbatch_prompts = batch_plan.microbatch_size
-        microbatch_samples = microbatch_prompts * samples_per_prompt
+        collection_prompts = batch_plan.prompts_per_collection
+        collection_samples = collection_prompts * samples_per_prompt
         logger.info(
             "Rollout memory plan: streaming accumulation enabled "
             "(prompts_per_batch=%d, gradient_accumulation_steps=%d, "
-            "microbatch_prompts=%d, microbatch_samples=%d, "
-            "samples_per_generation_batch=%s, samples_per_replay_batch=%s, "
+            "collection_prompts=%d, collection_samples=%d, "
+            "samples_per_generation_batch=%s, training_microbatch_size=%s, "
             "target_samples_per_update=%d)",
             prompts_per_batch,
             gas,
-            microbatch_prompts,
-            microbatch_samples,
+            collection_prompts,
+            collection_samples,
             generation_batch_text,
             replay_batch_text,
             target_samples,
@@ -391,7 +391,7 @@ def _log_rollout_memory_plan(
     logger.info(
         "Rollout memory plan: legacy full-batch accumulation "
         "(prompts_per_batch=%d, samples_per_generation_batch=%s, "
-        "samples_per_replay_batch=%s, "
+        "training_microbatch_size=%s, "
         "target_samples_per_update=%d)",
         prompts_per_batch,
         generation_batch_text,
@@ -403,7 +403,7 @@ def _log_rollout_memory_plan(
             "Legacy full-batch rollout accumulation is enabled; host RAM may hold "
             "up to %d prompt groups (%d samples) before backward. Set "
             "actor.gradient_accumulation_steps to a divisor of prompts_per_batch "
-            "to stream rollout microbatches and fail earlier on memory issues.",
+            "to stream rollout collection_batches and fail earlier on memory issues.",
             prompts_per_batch,
             target_samples,
         )
@@ -414,14 +414,14 @@ def _warn_global_std_streaming_divergence(
     *,
     global_std: bool,
 ) -> None:
-    """Warn when global_std advantage normalization is silently per-microbatch.
+    """Warn when global_std advantage normalization is silently per-collection batch.
 
     GRPO ``global_std=true`` normalizes advantages by the std across ALL prompt
     groups in the optimizer-target batch. Streaming accumulation computes
-    advantages per microbatch (collect_training_batch runs once per slice), so
-    with >1 group per microbatch the std is taken over the microbatch's groups
+    advantages per collection batch (collect_training_batch runs once per slice), so
+    with >1 group per collection batch the std is taken over the collection batch's groups
     only -- not the full batch -- and the gradient diverges from the full-batch
-    global-std intent. ``microbatch_size=1`` is exempt: one group per microbatch
+    global-std intent. ``prompts_per_collection=1`` is exempt: one group per collection batch
     makes per-group and "global" std identical. Surfaced, not blocked, because
     keeping global_std is an experiment-owner decision.
 
@@ -437,19 +437,19 @@ def _warn_global_std_streaming_divergence(
     if not global_std:
         return
     rbs = batch_plan.prompts_per_batch
-    groups_per_microbatch = batch_plan.microbatch_size
-    if groups_per_microbatch <= 1:
+    groups_per_collection = batch_plan.prompts_per_collection
+    if groups_per_collection <= 1:
         return
     logger.warning(
         "algorithm.global_std=true with streaming accumulation "
-        "(gradient_accumulation_steps=%d, %d prompt groups per microbatch): the "
-        "global-std advantage normalization is computed per microbatch, not over "
+        "(gradient_accumulation_steps=%d, %d prompt groups per collection_batch): the "
+        "global-std advantage normalization is computed per collection_batch, not over "
         "the full %d-group batch, so the gradient differs from the full-batch "
         "global-std intent. Set algorithm.global_std=false (per-group std, which "
-        "is streaming-equivalent), actor.microbatch_size=1 (one group per "
-        "microbatch), or drop streaming to keep the full-batch global std.",
+        "is streaming-equivalent), actor.prompts_per_collection=1 (one group per "
+        "collection_batch), or drop streaming to keep the full-batch global std.",
         gas,
-        groups_per_microbatch,
+        groups_per_collection,
         rbs,
     )
 
@@ -486,14 +486,14 @@ def _load_sft_latents_from_config(built: BuiltConfigs, family: str) -> dict[str,
 def _check_host_memory_budget(
     budget_fraction: float,
     *,
-    microbatch_prompts: int,
+    collection_prompts: int,
     n_samples_per_prompt: int,
 ) -> None:
-    """Fail fast if one streamed microbatch already pushes host RAM past budget.
+    """Fail fast if one streamed collection batch already pushes host RAM past budget.
 
-    Streaming accumulation holds ~one microbatch of rollout/replay tensors at a
+    Streaming accumulation holds ~one collection batch of rollout/replay tensors at a
     time, so if system memory is already over budget right after collecting the
-    first microbatch, a larger ``microbatch_size`` (or simply more
+    first collection batch, a larger ``prompts_per_collection`` (or simply more
     epochs) would only OOM later in the run. Raising now — with the measured
     snapshot — turns a delayed mid-run OOM into an immediate, actionable error.
     The guard uses system MemAvailable / MemTotal from /proc, so other processes
@@ -505,11 +505,11 @@ def _check_host_memory_budget(
     if used is None or used <= budget_fraction:
         return
     raise MemoryError(
-        f"Host RAM is at used={used:.1%} after collecting one streamed microbatch "
-        f"({microbatch_prompts} prompt group(s) x {n_samples_per_prompt} samples), "
+        f"Host RAM is at used={used:.1%} after collecting one streamed collection_batch "
+        f"({collection_prompts} prompt group(s) x {n_samples_per_prompt} samples), "
         f"above actor.host_memory_budget_fraction={budget_fraction:.1%} "
-        f"({snapshot}). One microbatch already does not fit the "
-        "host-RAM budget; reduce actor.microbatch_size to stream smaller "
+        f"({snapshot}). One collection_batch already does not fit the "
+        "host-RAM budget; reduce actor.prompts_per_collection to stream smaller "
         "slices, or lower rollout.n_samples_per_prompt / sample resolution if it is "
         "already 1.",
     )
@@ -522,24 +522,27 @@ async def _run_streaming_optimizer_update(
     batch_plan: OnlineBatchPlan,
     next_example_batch: list[Any] | None = None,
 ) -> Any:
-    """One optimizer update streamed over ``gradient_accumulation_steps`` microbatches.
+    """One optimizer update streamed over ``gradient_accumulation_steps`` collection batches.
 
-    Splits the ``prompts_per_batch`` prompts into microbatches and runs
+    Splits the ``prompts_per_batch`` prompts into collection batches and runs
     collect -> backward -> RELEASE for each before the next, so host RAM holds
-    ~one microbatch of rollout/replay tensors instead of the whole target batch
+    ~one collection batch of rollout/replay tensors instead of the whole target batch
     (the memory fix that lets bigger models train on limited GPUs). One
     optimizer.step / EMA / weight-sync / metric row per update; gradients
-    accumulate across microbatches with a global loss scale, so the update is
+    accumulate across collection batches with a global loss scale, so the update is
     gradient-equivalent to the legacy full-batch path.
 
-    When ``host_memory_budget_fraction`` > 0, the first collected microbatch is
+    When ``host_memory_budget_fraction`` > 0, the first collected collection batch is
     checked against the host-RAM budget and the run fails fast if it is already
     over budget (SPRINT_memory_budgeted_microbatch T2).
     """
     if not batch_plan.streaming:
         raise ValueError("_run_streaming_optimizer_update requires a streaming batch plan")
-    micro = batch_plan.microbatch_size
-    microbatches = [example_batch[k : k + micro] for k in range(0, len(example_batch), micro)]
+    collection_size = batch_plan.prompts_per_collection
+    collection_batches = [
+        example_batch[k : k + collection_size]
+        for k in range(0, len(example_batch), collection_size)
+    ]
     total_groups = batch_plan.prompts_per_batch
 
     trainer.begin_optimizer_update()
@@ -550,30 +553,30 @@ async def _run_streaming_optimizer_update(
     trained_prompt_num = 0
     group_size = float(batch_plan.n_samples_per_prompt)
     reward_component_values: dict[str, list[float]] = {}
-    for mb_index, microbatch in enumerate(microbatches):
-        if mb_index + 1 < len(microbatches):
-            next_prompts = microbatches[mb_index + 1]
+    for collection_index, collection_batch in enumerate(collection_batches):
+        if collection_index + 1 < len(collection_batches):
+            next_prompts = collection_batches[collection_index + 1]
         elif next_example_batch:
-            next_prompts = next_example_batch[:micro]
+            next_prompts = next_example_batch[:collection_size]
         else:
             next_prompts = None
         batch = await trainer.collect_training_batch(
-            microbatch,
+            collection_batch,
             next_prompts=next_prompts,
         )
         try:
-            # Host-RAM fail-fast on the first microbatch: one slice is the host
+            # Host-RAM fail-fast on the first collection batch: one slice is the host
             # peak under streaming, so if it is already over budget, stop now.
-            if batch_plan.host_memory_budget_fraction > 0.0 and mb_index == 0:
+            if batch_plan.host_memory_budget_fraction > 0.0 and collection_index == 0:
                 _check_host_memory_budget(
                     batch_plan.host_memory_budget_fraction,
-                    microbatch_prompts=len(microbatch),
+                    collection_prompts=len(collection_batch),
                     n_samples_per_prompt=batch_plan.n_samples_per_prompt,
                 )
             trainer.backward_on_training_batch(batch, total_groups=total_groups)
-            # Sample-count-weighted aggregation of this microbatch's pre-filter stats
-            # so the one metric row reflects ALL samples, not the last microbatch.
-            weight = max(1, len(microbatch) * batch_plan.n_samples_per_prompt)
+            # Sample-count-weighted aggregation of this collection batch's pre-filter stats
+            # so the one metric row reflects ALL samples, not the last collection batch.
+            weight = max(1, len(collection_batch) * batch_plan.n_samples_per_prompt)
             reward_mean_w += batch.pre_filter_reward_mean * weight
             reward_std_w += batch.pre_filter_reward_std * weight
             adv_mean_w += batch.pre_filter_adv_mean * weight
@@ -587,7 +590,7 @@ async def _run_streaming_optimizer_update(
                 reward_component_values.setdefault(name, []).extend(values)
             update_stats.merge(trainer._step_stats(batch.iteration, batch.timer))
         finally:
-            # Release this microbatch's rollout/replay tensors before the next,
+            # Release this collection batch's rollout/replay tensors before the next,
             # including exception paths where traceback locals can otherwise keep
             # large batches alive longer than needed.
             del batch
@@ -1036,7 +1039,7 @@ async def run_online_recipe(
             with profile_range("trainer.optimizer_update"):
                 if batch_plan.streaming:
                     # Streaming accumulation: split the optimizer-target batch into
-                    # microbatches collected/trained/released one at a time so host
+                    # collection batches collected/trained/released one at a time so host
                     # RAM does not have to hold the whole batch at once.
                     metrics = await _run_streaming_optimizer_update(
                         trainer,
