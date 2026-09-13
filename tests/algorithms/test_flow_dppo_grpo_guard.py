@@ -196,7 +196,11 @@ def test_flow_dppo_unit_variance_branch_has_no_std_dev_t_denominator() -> None:
     assert metrics.update.clip_fraction == pytest.approx(1.0)  # masked
 
 
-def test_flow_dppo_requires_old_prev_sample_mean() -> None:
+@pytest.mark.parametrize("algorithm", [FlowDPPO, GRPOGuard], ids=["flow_dppo", "grpo_guard"])
+def test_trust_region_algorithms_require_old_prev_sample_mean(algorithm) -> None:
+    """Both trust-region losses need the old mean; a recipe that forgot
+    ``return_prev_sample_mean`` fails loud instead of silently skipping the term."""
+
     n = 2
     sig = _signals(
         log_prob=torch.zeros(n),
@@ -207,7 +211,7 @@ def test_flow_dppo_requires_old_prev_sample_mean() -> None:
         dt=torch.ones(n, 1, 1, 1),
     )
     with pytest.raises(RuntimeError, match="return_prev_sample_mean"):
-        FlowDPPO().compute_loss(_input(sig, torch.ones(n)))
+        algorithm().compute_loss(_input(sig, torch.ones(n)))
 
 
 def test_flow_dppo_truncates_precision_weight_into_loss() -> None:
@@ -390,20 +394,6 @@ def test_grpo_guard_ratio_mean_increases_with_drift() -> None:
     _, m_small = algo.compute_loss(_input(small, adv))
     _, m_large = algo.compute_loss(_input(large, adv))
     assert m_large.kl_penalty > m_small.kl_penalty
-
-
-def test_grpo_guard_requires_old_prev_sample_mean() -> None:
-    n = 2
-    sig = _signals(
-        log_prob=torch.zeros(n),
-        old_log_prob=torch.zeros(n),
-        prev_sample_mean=torch.zeros(n, 1, 1, 1),
-        old_prev_sample_mean=None,
-        std_dev_t=torch.ones(n, 1, 1, 1),
-        dt=torch.ones(n, 1, 1, 1),
-    )
-    with pytest.raises(RuntimeError, match="return_prev_sample_mean"):
-        GRPOGuard().compute_loss(_input(sig, torch.ones(n)))
 
 
 # ============================================================ kind dispatch

@@ -24,10 +24,17 @@ def _resources(
     )
 
 
-def test_strict_shared_gpu_is_allowed() -> None:
+@pytest.mark.parametrize(
+    ("schedule_mode", "colocated"),
+    [("strict_on_policy", True), ("continuous", False)],
+)
+def test_supported_topologies_pass_validation(schedule_mode: str, colocated: bool) -> None:
+    """Strict on a shared GPU and continuous on disjoint GPUs are the two
+    supported pairings; validation is silent for both."""
+
     validate_rollout_schedule_topology(
-        SimpleNamespace(schedule_mode="strict_on_policy"),
-        _resources(colocated=True),
+        SimpleNamespace(schedule_mode=schedule_mode),
+        _resources(colocated=colocated),
     )
 
 
@@ -54,8 +61,6 @@ def test_continuous_trainer_reward_overlap_is_rejected() -> None:
             _resources(colocated=False, trainer_reward_handoff=True),
         )
 
-
-def test_continuous_disjoint_topology_is_allowed() -> None:
     validate_rollout_schedule_topology(
         SimpleNamespace(schedule_mode="continuous"),
         _resources(colocated=False),

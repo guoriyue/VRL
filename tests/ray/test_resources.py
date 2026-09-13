@@ -1193,46 +1193,19 @@ def test_reward_gpu_pool_rejects_unknown_value() -> None:
 # ── Symmetric colocated DDP (SPRINT_symmetric_colocated_ddp) ──
 
 
-def test_ddp_colocate_resolves_per_rank_local_single_gpu() -> None:
-    """Symmetric colocated DDP: each rank resolves only its LOCAL single GPU
-    (trainer + colocated rollout on it); world_size drives only the grad
-    all-reduce, NOT the per-rank GPU plan (ddp follows the single-GPU rule, not
-    fsdp's world-covering one)."""
+@pytest.mark.parametrize("strategy", ["ddp", "fsdp"])
+def test_multi_rank_colocate_resolves_per_rank_local_single_gpu(strategy: str) -> None:
+    """Symmetric colocated multi-rank training: each rank resolves only its LOCAL
+    single GPU (trainer + colocated rollout on it). world_size drives only the
+    collectives, NOT the per-rank GPU plan -- signaled by rollout.gpu_pool=trainer,
+    so fsdp's world-covering asymmetric trainer rule and the disjoint rule do not
+    apply (SPRINT_multi_gpu_training Phase 4)."""
     resolved = ResolvedDistributedResources.from_root(
         parse_config(
             OmegaConf.create(
                 {
                     "distributed": {
-                        "training": {"strategy": "ddp", "num_nodes": 2, "gpus_per_node": 1},
-                        "resources": {
-                            "visible_devices": [0],
-                            "trainer": {"num_gpus": 1},
-                            "rollout": {"gpu_pool": "trainer"},
-                        },
-                    },
-                },
-            )
-        ),
-    )
-
-    assert resolved.trainer_devices == (0,)
-    assert resolved.rollout_devices == (0,)  # colocated on the local GPU
-    assert resolved.colocated is True
-    assert resolved.lifecycle.rollout_mode == "on_demand"
-    assert resolved.cross_node is False  # per-rank-local: no shared Ray cluster
-
-
-def test_fsdp_colocate_resolves_per_rank_local_single_gpu() -> None:
-    """Symmetric colocated FSDP (SPRINT_multi_gpu_training Phase 4): like ddp, each
-    rank resolves only its LOCAL single GPU (trainer + colocated rollout on it),
-    NOT fsdp's world-covering asymmetric plan. Signaled by rollout.gpu_pool=trainer,
-    so the world-size trainer rule and the disjoint rule do not apply."""
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            OmegaConf.create(
-                {
-                    "distributed": {
-                        "training": {"strategy": "fsdp", "num_nodes": 2, "gpus_per_node": 1},
+                        "training": {"strategy": strategy, "num_nodes": 2, "gpus_per_node": 1},
                         "resources": {
                             "visible_devices": [0],
                             "trainer": {"num_gpus": 1},

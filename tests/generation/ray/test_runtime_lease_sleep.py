@@ -1028,9 +1028,14 @@ async def test_update_cleanup_failure_retains_session_for_retry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_health_failure_before_offload_preserves_root_and_force_kills(
+@pytest.mark.parametrize("transition", ["offload", "activate"])
+async def test_health_failure_before_lease_transition_preserves_root_and_force_kills(
     cleanup_ray: _CleanupRay,
+    transition: str,
 ) -> None:
+    """A health failure recorded before either lease transition is the error
+    that surfaces, the runtime terminates, and the fleet is force-killed."""
+
     health_failure = RolloutWorkerUnreachable(
         "rollout-0",
         0.5,
@@ -1042,32 +1047,7 @@ async def test_health_failure_before_offload_preserves_root_and_force_kills(
     runtime.lifecycle.fail(health_failure)
 
     with pytest.raises(RolloutWorkerUnreachable) as caught:
-        await runtime.offload()
-
-    assert caught.value is health_failure
-    assert runtime.lifecycle.failure is health_failure
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._session is None
-    assert actor.release_policy.calls == 0
-    assert cleanup_ray.killed == [actor]
-
-
-@pytest.mark.asyncio
-async def test_health_failure_before_reactivation_preserves_root_and_force_kills(
-    cleanup_ray: _CleanupRay,
-) -> None:
-    health_failure = RolloutWorkerUnreachable(
-        "rollout-0",
-        0.5,
-        TimeoutError("health probe timed out"),
-    )
-    session, actor = _failed_parking_session()
-    runtime = _on_demand_runtime()
-    runtime._session = session
-    runtime.lifecycle.fail(health_failure)
-
-    with pytest.raises(RolloutWorkerUnreachable) as caught:
-        await runtime.activate()
+        await getattr(runtime, transition)()
 
     assert caught.value is health_failure
     assert runtime.lifecycle.failure is health_failure

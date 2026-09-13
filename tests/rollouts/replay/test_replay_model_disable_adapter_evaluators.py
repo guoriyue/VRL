@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Iterator
 
+import pytest
 import torch
 
 from tests.rollouts.replay._helpers import janus_request, janus_sample_rows
@@ -161,34 +162,24 @@ def test_token_logprob_evaluator_applies_rollout_temperature() -> None:
     assert torch.allclose(signals.primary.log_prob, expected, atol=1e-6)
 
 
-def test_token_logprob_evaluator_uses_replay_model_disable_adapter() -> None:
-    """The token evaluator computes ``ref_log_prob`` inside the replay model's ``disable_adapter``
-    (exactly one call), and that adapter-off reference differs from the policy log-prob.
-    """
-    batch = _discrete_batch()
-    model = _DiscreteReplayModel()
+@pytest.mark.parametrize(
+    ("evaluator", "batch", "model_cls"),
+    [
+        (TokenLogProbEvaluator, _discrete_batch, _DiscreteReplayModel),
+        (ContinuousTokenLogProbEvaluator, _continuous_batch, _ContinuousReplayModel),
+    ],
+    ids=["token", "continuous_token"],
+)
+def test_logprob_evaluators_use_replay_model_disable_adapter(evaluator, batch, model_cls) -> None:
+    """Each token evaluator computes ``ref_log_prob`` inside the replay model's
+    ``disable_adapter`` (exactly one call), and that adapter-off reference differs
+    from the policy log-prob."""
 
-    signals = TokenLogProbEvaluator().evaluate(
+    model = model_cls()
+
+    signals = evaluator().evaluate(
         model,
-        batch,
-        signal_request=SignalRequest(need_ref=True),
-    )
-
-    assert model.disable_calls == 1
-    assert signals.primary.ref_log_prob is not None
-    assert not torch.equal(signals.primary.log_prob, signals.primary.ref_log_prob)
-
-
-def test_continuous_logprob_evaluator_uses_replay_model_disable_adapter() -> None:
-    """Same contract for the continuous-token evaluator: one ``disable_adapter`` call yields a
-    reference log-prob distinct from the policy's.
-    """
-    batch = _continuous_batch()
-    model = _ContinuousReplayModel()
-
-    signals = ContinuousTokenLogProbEvaluator().evaluate(
-        model,
-        batch,
+        batch(),
         signal_request=SignalRequest(need_ref=True),
     )
 

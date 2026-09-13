@@ -507,7 +507,36 @@ def test_chunk_sampling_uses_request_overrides_then_model_defaults(
     }
 
 
-def test_executor_rejects_request_grid_different_from_model_topology() -> None:
+@pytest.mark.parametrize(
+    ("sampling", "match"),
+    [
+        (
+            {
+                "image_token_num": 4,
+                "image_size": 32,
+                "max_text_length": LLAMAGEN_CAPTION_TOKEN_NUM,
+            },
+            r"image_token_num == model\.image_token_num \(16\); got 4",
+        ),
+        (
+            {
+                "image_token_num": 16,
+                "image_size": 32,
+                "max_text_length": LLAMAGEN_CAPTION_TOKEN_NUM,
+            },
+            r"image_size=64.*model\.image_token_num=16.*got 32",
+        ),
+        (
+            {"image_token_num": 16, "image_size": 64, "max_text_length": 80},
+            r"max_text_length == cls_token_num \(120\); got 80",
+        ),
+    ],
+    ids=["grid", "decode_size", "caption_length"],
+)
+def test_executor_rejects_request_topology_different_from_model(sampling, match) -> None:
+    """LlamaGen's grid, decode size and caption length are model topology, not
+    request knobs: a request that disagrees is refused naming the field."""
+
     executor = LlamaGenBatchExecutor(model=_executor_model(image_token_num=16))
     request = GenerationRequest(
         request_id="req",
@@ -515,75 +544,10 @@ def test_executor_rejects_request_grid_different_from_model_topology() -> None:
         task="ar_t2i",
         inputs=["draw text"],
         samples_per_prompt=1,
-        sampling={
-            "image_token_num": 4,
-            "image_size": 32,
-            "max_text_length": LLAMAGEN_CAPTION_TOKEN_NUM,
-        },
+        sampling=sampling,
     )
 
-    with pytest.raises(
-        ValueError,
-        match=r"image_token_num == model\.image_token_num \(16\); got 4",
-    ):
-        executor.prepare_batch_inputs(
-            request,
-            GenerationSampleBatch(
-                prompt_index=0,
-                sample_start=0,
-                sample_count=1,
-            ),
-        )
-
-
-def test_executor_rejects_decode_size_different_from_model_topology() -> None:
-    executor = LlamaGenBatchExecutor(model=_executor_model(image_token_num=16))
-    request = GenerationRequest(
-        request_id="req",
-        family="llamagen",
-        task="ar_t2i",
-        inputs=["draw text"],
-        samples_per_prompt=1,
-        sampling={
-            "image_token_num": 16,
-            "image_size": 32,
-            "max_text_length": LLAMAGEN_CAPTION_TOKEN_NUM,
-        },
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=r"image_size=64.*model\.image_token_num=16.*got 32",
-    ):
-        executor.prepare_batch_inputs(
-            request,
-            GenerationSampleBatch(
-                prompt_index=0,
-                sample_start=0,
-                sample_count=1,
-            ),
-        )
-
-
-def test_executor_rejects_caption_length_different_from_model_topology() -> None:
-    executor = LlamaGenBatchExecutor(model=_executor_model(image_token_num=16))
-    request = GenerationRequest(
-        request_id="req",
-        family="llamagen",
-        task="ar_t2i",
-        inputs=["draw text"],
-        samples_per_prompt=1,
-        sampling={
-            "image_token_num": 16,
-            "image_size": 64,
-            "max_text_length": 80,
-        },
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=r"max_text_length == cls_token_num \(120\); got 80",
-    ):
+    with pytest.raises(ValueError, match=match):
         executor.prepare_batch_inputs(
             request,
             GenerationSampleBatch(

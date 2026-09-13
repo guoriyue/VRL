@@ -51,40 +51,35 @@ def test_sft_latents_rejects_family_mismatch(tmp_path) -> None:
         load_sft_latents(shard, family="wan_2_1")
 
 
-def test_sft_latents_rejects_model_mismatch(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("saved", "loaded", "match"),
+    [
+        (
+            {"model_path": "nvidia/source", "model_revision": "main"},
+            {"model_path": "nvidia/training", "model_revision": "main"},
+            r"model\.path",
+        ),
+        (
+            {"model_path": "nvidia/model", "model_revision": "base"},
+            {"model_path": "nvidia/model", "model_revision": "post-trained"},
+            r"model\.revision",
+        ),
+    ],
+    ids=["path", "revision"],
+)
+def test_sft_latents_rejects_producer_model_mismatch(tmp_path, saved, loaded, match) -> None:
+    """A shard names the model that produced it; loading it for another
+    path or revision is refused by the field that differs."""
+
     shard = tmp_path / "sft.pt"
     save_sft_latents(
         shard,
         family="cosmos-predict2",
-        model_path="nvidia/source",
-        model_revision="main",
+        **saved,
         latents_by_target={"target.mp4": torch.zeros(1)},
     )
-    with pytest.raises(ValueError, match=r"model\.path"):
-        load_sft_latents(
-            shard,
-            family="cosmos-predict2",
-            model_path="nvidia/training",
-            model_revision="main",
-        )
-
-
-def test_sft_latents_rejects_model_revision_mismatch(tmp_path) -> None:
-    shard = tmp_path / "sft.pt"
-    save_sft_latents(
-        shard,
-        family="cosmos-predict2.5",
-        model_path="nvidia/model",
-        model_revision="base",
-        latents_by_target={"target.mp4": torch.zeros(1)},
-    )
-    with pytest.raises(ValueError, match=r"model\.revision"):
-        load_sft_latents(
-            shard,
-            family="cosmos-predict2.5",
-            model_path="nvidia/model",
-            model_revision="post-trained",
-        )
+    with pytest.raises(ValueError, match=match):
+        load_sft_latents(shard, family="cosmos-predict2", **loaded)
 
 
 def test_sft_latents_missing_file_names_the_producer(tmp_path) -> None:
