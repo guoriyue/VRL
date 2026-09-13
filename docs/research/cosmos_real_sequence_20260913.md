@@ -220,3 +220,63 @@ private Ray launch, weight sync, generation, reward and typed-batch saving.
 That execution branch has NOT yet been run or validated. No actors, model
 weights, reward scoring or trajectories were produced by these preflights.
 Both processes exited 0 and a fresh GPU compute inventory was empty.
+
+## Real native Ray collector: one complete eight-sample group
+
+The preflighted script's `--run` branch completed against candidate `435c8fa2`.
+CPU replay materialization created the native rank-32/alpha-64 initial adapter;
+the production Ray syncer pushed policy version 1 before collection. A private
+Ray cluster probed physical bundle ownership `(0,2,3)` and loaded the real
+Cosmos rollout worker on GPU 2. Real Kling reward ran on GPU 3. No CP trainer
+or optimizer was launched, and GPU 1 was unused.
+
+One actual prompt group produced eight distinct sample identities, each with
+512x512/93f video and all 20 CPS denoising transitions. Native collector output
+contains real rewards and genuine prompt embeddings, not synthetic conditioning
+or injected reward values. Every chunk receipt identifies GPU 2 and policy 1.
+
+| Native phase | Seconds |
+| --- | ---: |
+| Generation wall, eight samples | 492.601006 |
+| Reward wall, one batched call | 37.171434 |
+| Total measured collect call | 529.812738 |
+| Generation/reward overlap | 0 |
+
+Per-sample worker execution was approximately 61-62 seconds; native stage
+receipts show about 50.5 seconds denoising and 9.2 seconds video decode per
+sample. Warm prompt encoding was about 0.039 seconds. Queue waits rise with
+sample index because this bounded baseline intentionally used one generation
+worker. GPU snapshots were 100% busy during generation, with about 25.9 GiB
+visible memory use. These timings do not establish multi-GPU speedup.
+
+The reward wall includes lazy model loading. Reported inference was 2.863248s
+for the batch and artifact materialization 6.621385s; these submetrics do not
+sum to the cold reward wall. Rewards in sample order:
+`[-2.443425, -2.946535, -3.793725, -4.589759, -3.887390, -3.915669,
+-3.734280, -3.280910]`. All are finite and nonconstant; no quality threshold or
+learning improvement is implied. The same full strict-loaded Kling checkpoint
+and Transformers key-layout caveat documented above apply.
+
+Independent CPU artifact audit passed the production trajectory validator,
+eight unique sample IDs with sample indices 0-7, one reward group, 20-step axis
+and finiteness of every segment tensor. A custom deserialization location
+callback required every original serialized storage tag to be `cpu`, rather
+than hiding device placement with forced CPU mapping. Observations and actions
+are FP32 `[8,20,16,24,64,64]`; old log-probabilities are FP32 `[8,20]`; actual
+prompt embeddings are BF16 `[8,512,100352]`. Estimated payload is
+2,893,025,280 bytes. This is not independent model replay parity yet.
+
+Evidence directory: `cosmos_native_collector_real_group` under the NVMe output
+root, including `initial_trainable_state.pt`, `rollout_batches.pt`,
+`result.json`, `artifact_audit.json`, resolved configuration, both executed
+scripts, reward debug receipts and copied Ray logs. This retained group is the
+input for the next real-conditioned replay/CP gate; do not regenerate it just
+to recreate the same acceptance workload.
+
+The private Ray session used `/tmp/ray` on the >95%-full root filesystem and
+emitted repeated capacity warnings. Its directory was only about 920 KiB when
+checked; no spill failure occurred. Future launches should set `RAY_TMPDIR`
+to NVMe before Ray initialization. Both collector and artifact audit exited 0;
+owned driver/worker/raylet PIDs are absent, fresh compute inventory empty,
+and GPUs 0/2/3 released. Complete CP updates, controlled distributed throughput,
+checkpoint/EMA/quality and full paper workload remain open.
