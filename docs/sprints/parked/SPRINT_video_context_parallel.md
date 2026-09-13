@@ -118,6 +118,14 @@ remain unverified. Evidence in the same precision controls report.
 
 ## 验证
 
+2026-09-12 capacity preflight: pinned DiT at 480x832/33f latent shape with
+GPU-only checkpointing and tiled projections completes forward/backward at
+8.998 GB allocated per CP rank versus 11.220 GB single rank. Single rank also
+fits; historical OOM is not reproduced. One-step DiT timing is 28.71s versus
+53.36s, not sustained training throughput. Synthetic conditioning and squared
+output loss do not close the replay/GRPO/resume acceptance below. See
+`../../research/cosmos_cp_480p_capacity_20260912.md`.
+
 - P0 数值门（上）；P1 显存门（上）。
 - 2 卡 480p 33f 真实 GRPO 单 epoch dry-run：first-step logprob round-trip
   check 过 drift guard；grad_norm 非零；ckpt save/resume 一致。
