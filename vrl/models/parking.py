@@ -61,7 +61,7 @@ class ModelParking:
                     for name, tensor in (*model.named_parameters(), *model.named_buffers())
                 }
         self._seen_tensors.update(id(tensor) for tensor in self.module_tensors(model))
-        model.to("cpu")
+        self._move_module(model, "cpu")
         move_frozen = getattr(model, "move_frozen_components", None)
         if callable(move_frozen):
             move_frozen("cpu")
@@ -86,6 +86,29 @@ class ModelParking:
                 self.park_tensors(child)
 
     @staticmethod
+    def _move_module(model: Any, device: Any) -> None:
+        import torch
+        from torch.distributed.fsdp import FSDPModule
+
+        fsdp_modules = (
+            [child for child in model.modules() if isinstance(child, FSDPModule)]
+            if isinstance(model, torch.nn.Module)
+            else []
+        )
+        if not fsdp_modules:
+            model.to(device)
+            return
+        # Keep DTensor wrappers and move only owned storage across phase handoffs.
+        for child in fsdp_modules:
+            child.reshard()
+        for tensor in ModelParking.module_tensors(model):
+            ModelParking._move_tensor(tensor, torch.device(device))
+        for child in fsdp_modules:
+            for group in child._get_fsdp_state()._fsdp_param_groups:
+                for parameter in group.fsdp_params:
+                    parameter.reset_sharded_param()
+
+    @staticmethod
     def tensor_device(tensor: torch.Tensor) -> torch.device:
         """Return the local storage device, including for an FSDP shard."""
         import torch
@@ -108,7 +131,7 @@ class ModelParking:
         failures: list[BaseException] = []
         for model, device in self._modules:
             try:
-                model.to(device)
+                self._move_module(model, device)
             except BaseException as error:
                 failures.append(error)
             move_frozen = getattr(model, "move_frozen_components", None)
