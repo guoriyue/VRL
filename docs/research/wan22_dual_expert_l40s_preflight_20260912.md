@@ -684,3 +684,55 @@ without initializing CUDA. This proves loaded-value equivalence, not successful
 four-rank capacity or a measured peak-memory reduction. Next rerun the same
 four-card work in a distinct output directory and inspect the full lifecycle
 before proceeding to the matching single-card arm.
+
+## 2026-09-13: resumed four-rank mmap trial still exceeds host budget
+
+After the user resumed hardware work, clean candidate `9145b2af` restarted the
+interrupted arm in `wan22_fair_throughput_four_mmap_resumed`. This is a fresh
+initialization, not checkpoint resume. Only artifact destinations changed from
+the interrupted YAML; the two-update, eight-global-sample workload and 95% host
+memory protection remained unchanged.
+
+All eight initial samples were generated and have complete Kling reward rows.
+The trainer then rejected the collected microbatch at 97.1% host memory used,
+before an optimizer update. The process exited 1 after 295.623 seconds and all
+GPU processes cleared. The 282 memory samples reached a minimum available
+11,598,450,688 bytes and maximum per-GPU usage 7,245,725,696 bytes. Generation
+samples showed all four GPUs above 90% utilization; GPU capacity/utilization
+does not establish sufficient host-memory capacity. This run supplies no
+accepted update timing or speedup. The matching single-card arm remains unrun.
+
+An isolated production-contract Kling load/score/park probe on GPU 0 completed
+with exact repeated scores after wake. RSS rose from 2,719,739,904 bytes after
+scoring to 8,982,016,000 after parking. Python collection changed nothing;
+`malloc_trim(0)` reduced RSS to 8,866,664,448 bytes, only 115,351,552 bytes less.
+CuMem reported 4.69 GiB of live CPU backup for this one reward instance. Simple
+libc trimming is therefore not evidence of a solution for the four-rank gap.
+
+Evidence: `kling_host_memory_probe_contract/result.json`, including Linux
+smaps snapshots and the exact score `-0.7310919522992985`. Two earlier isolated
+probe attempts omitted the registry-derived parking residual allowance and
+failed a zero-byte residual check; those are probe construction failures, not
+new production regressions. The successful probe uses the reward class's
+declared allowance, as `MultiReward` does, without changing the host budget.
+
+Next distinguish PyTorch's pinned-host allocator cache from active backups,
+then reduce demonstrated residency/duplication before another four-rank run.
+No blind retry, budget increase, reduced sample count or reward change is
+accepted as an equivalent throughput comparison.
+
+The follow-up `kling_host_memory_probe_pinned/result.json` also exited 0 with
+exact repeated scores. While the model was parked, the pinned allocator owned
+6,262,095,887 bytes; `torch.accelerator.memory.empty_host_cache()` released only
+15 bytes and RSS was effectively unchanged. After shutdown, the same API
+released all remaining cached blocks and RSS dropped from 8,904,523,776 to
+2,642,427,904 bytes. This distinguishes required parked backup storage from
+post-shutdown cache: clearing an idle cache cannot discard the live backup.
+The runtime's reported `active_bytes.current` counter accumulated across cycles
+and exceeded owned bytes, so it is not used as evidence of live byte size.
+Use owned bytes, explicit release results, RSS and CuMem backup reports together.
+
+The next capacity change must address cross-phase resident copies or owner
+lifetime, with numerical equivalence and reload overhead measured explicitly.
+Do not add unconditional cache-clearing calls based on this isolated probe:
+they did not recover the needed memory while the model remained parked.
