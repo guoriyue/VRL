@@ -532,3 +532,32 @@ Evidence under the same NVMe root:
 `cosmos_ulysses_nonzero_fullproj_l40s/rank-{0,1}.json`, with adjacent logs.
 Both jobs exit 0 (finite diagnostic status is not gradient equivalence), fresh
 compute inventory is empty, and GPUs 0-1 are released. Production unchanged.
+
+## Fixed-token LoRA tiling and shape counterexample
+
+`--lora-token-tile 64` flattens token dimensions and applies each FP32 LoRA
+linear in fixed blocks of at most 64 rows before restoring its original
+shape. Both reference and CP use this rule. Base projections remain local
+and unchanged; attention is head-sharded, full-shape conditioning retained.
+There is no full projection gather or duplicate full attention. Both cases
+use nonzero B std 1e-3, seed 73, and actual CPS loss at CFG5/step18.
+
+At 128 global tokens (64 per rank), BF16 final output/logprob and block
+output gradients match exactly; aggregate parameter-gradient relative L2 is
+6.91681e-8. Both A/B branches have 280 nonzero gradient tensors. FP32 aggregate
+error is 2.35108e-5. Evidence: `cosmos_ulysses_tiled_lora_l40s` rank JSON/log.
+
+The required larger-shape follow-up uses spatial size 32 instead of 16,
+giving 512 global tokens (256 per rank). Despite the same aligned tile size,
+BF16 aggregate gradient error rises to 0.289658, final output max error is
+0.4375, and maximum block output-gradient relative L2 is 0.277504. Scalar
+logprob error remains 1.22655e-6. FP32 aggregate error is 2.55157e-5. Both A/B
+branches again have 280 nonzero gradients. Evidence:
+`cosmos_ulysses_tiled_512tokens_l40s` rank JSON/log.
+
+This counterexample prevents promoting the 128-token result as general
+training parity. LoRA tiling alone does not stabilize the entire model's
+shape-dependent numerical path; unchanged base projections and other
+operators remain to be considered. No tolerance or workload is reduced to
+hide the failure. Both rank reports match in each run, both jobs exit 0,
+fresh GPU inventory is empty and GPUs 0-1 are released. Production unchanged.
