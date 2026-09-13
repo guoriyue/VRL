@@ -238,3 +238,51 @@ Still open: full-sized checkpoint execution, actual rank-32 policy, encoder
 pair and VAE placement, full native generation/replay, trainer lifecycle,
 checkpoint recovery, quality, and controlled throughput. The tiny local shard
 test does not prove released H3 peak memory or real video generation.
+
+## 2026-09-13: partitioned conditioner and four-device connection
+
+The candidate's family-owned placement module now provides explicit Qwen3-VL
+decoder-layer mapping and a frozen conditioner loader. It derives maps from a
+meta skeleton, loads local/native checkpoint shards directly to owners using
+the rollout prompt dtype, and keeps the complete encoder frozen in eval mode.
+Embedding, vision, norm and head modules stay on the encoder root; decoder
+layers receive individually specified, non-overlapping device assignments.
+No whole-encoder `.to()` follows the dispatched load.
+
+Final H3 family suite with both CUDA opt-ins: **38 passed in 5.78 seconds**, exit
+0. New four-device test stores the tiny real Qwen3-VL model in local 20 KB
+safetensor shards and loads its two decoder layers across GPUs 2 and 3. It
+uses the H3 family's actual `encode_prompt`, which reads the encoder's internal
+model and intermediate hidden states rather than its top-level LM forward.
+The first decoder layer is deliberately on GPU 3, and an execution hook
+confirms that layer actually runs there. The selected intermediate embedding
+crosses back to the DiT root on GPU 0.
+
+Against identical weights with an unsharded encoder on GPU 2 and unsharded
+DiT on GPU 0:
+
+- Partitioned prompt embeddings pass `atol=rtol=1e-3`; repeated partitioned
+  encoding is tensor-exact and executes the remote decoder layer again.
+- A real tiny H3 DiT with its block on GPU 1 and packing/heads on GPU 0 consumes
+  that conditioning through native sampling preparation and `forward_step`.
+  Initial video latents are identical; finite video noise predictions pass
+  `atol=rtol=1e-3`.
+- Map tests reject incorrect layer counts, negative/string/bool devices and
+  verify exactly one owner for every encoder parameter and buffer.
+
+Local artifacts:
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_four_device_final_pytest`.
+Reproduction uses `CUDA_VISIBLE_DEVICES=0,1,2,3`, `VRL_H3_FOUR_GPU=1` and
+`VRL_H3_DISPATCH_CUDA=1` with the documented overlay environment, running
+`python -m pytest tests/models/families/minimax_h3 -q` from the candidate.
+An initial fixture preparation failed because deep-copying the audio VAE's
+weight-norm tensors is unsupported; independently constructing components and
+strictly copying encoder/DiT state fixed the fixture before successful runs.
+
+Ruff, formatting and diff checks passed. All processes terminal; fresh compute
+inventory empty, all four GPUs released. This is random-weight component
+connection, not full-size model execution, parallel speedup, full generation,
+audio decode or training acceptance. VAEs stayed on CPU and were not decoded
+by the new four-device test. A unified generation loader and its component
+offload/restore lifecycle, full geometry, released weights, quality and timing
+remain open. No H3 weights downloaded while deployment confirmation is pending.
