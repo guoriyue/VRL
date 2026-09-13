@@ -18,9 +18,11 @@ This module imports the CUDA parking utilities; the contract modules
 from __future__ import annotations
 
 import asyncio
+import random
 import time
 import traceback
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from typing import Any
 
 from vrl.config.reward_inference import (
@@ -221,6 +223,23 @@ class RewardFunctionRuntime:
             self.lifecycle.finish_shutdown()
 
 
+@contextmanager
+def _preserve_driver_rng_during_model_build():
+    """Keep synchronous cold construction from changing trainer resume streams."""
+    import numpy as np
+    import torch
+
+    python_state = random.getstate()
+    numpy_state = np.random.get_state()
+    devices = list(range(torch.cuda.device_count())) if torch.cuda.is_initialized() else []
+    try:
+        with torch.random.fork_rng(devices=devices):
+            yield
+    finally:
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
+
+
 def _build_prepared_model_in_pool(
     pool: CumemPool,
     factory: Any,
@@ -320,42 +339,43 @@ class InProcessRewardScorer:
 
     def _ensure_model(self) -> Any:
         if self._model is None:
-            factory_path = self._launch.model_factory
-            if not factory_path:
-                raise ValueError(
-                    "InProcessRewardScorer requires worker_config.model_factory "
-                    "(import path to a RewardModel factory) or an explicit model",
-                )
-            factory = import_from_path(factory_path)
-            if self._launch.sleep_offload:
-                pool = CumemPool.require()
-                # Build inside the pool so every CUDA allocation the factory
-                # makes (from_pretrained, .to(device), buffers) is tagged and
-                # sleep/wake can release/restore it wholesale.
-                try:
-                    model = _build_prepared_model_in_pool(
-                        pool,
-                        factory,
-                        self._launch.component_config,
+            with _preserve_driver_rng_during_model_build():
+                factory_path = self._launch.model_factory
+                if not factory_path:
+                    raise ValueError(
+                        "InProcessRewardScorer requires worker_config.model_factory "
+                        "(import path to a RewardModel factory) or an explicit model",
                     )
-                except BaseException as load_error:
-                    # Commit neither half of a failed model/pool build. Dropping
-                    # traceback-held helper locals first lets terminal pool close
-                    # release partial CUDA allocations before a future retry.
-                    traceback.clear_frames(load_error.__traceback__)
+                factory = import_from_path(factory_path)
+                if self._launch.sleep_offload:
+                    pool = CumemPool.require()
+                    # Build inside the pool so every CUDA allocation the factory
+                    # makes (from_pretrained, .to(device), buffers) is tagged and
+                    # sleep/wake can release/restore it wholesale.
                     try:
-                        self._release_cuda_memory_for_parking()
-                        pool.close()
-                    except BaseException as cleanup_error:
-                        raise RuntimeError(
-                            "reward model preparation and CuMem cleanup both failed: "
-                            f"load={load_error!r}; cleanup={cleanup_error!r}",
-                        ) from cleanup_error
-                    raise
-                self._pool = pool
-                self._model = model
-            else:
-                self._model = factory(self._launch.component_config)
+                        model = _build_prepared_model_in_pool(
+                            pool,
+                            factory,
+                            self._launch.component_config,
+                        )
+                    except BaseException as load_error:
+                        # Commit neither half of a failed model/pool build. Dropping
+                        # traceback-held helper locals first lets terminal pool close
+                        # release partial CUDA allocations before a future retry.
+                        traceback.clear_frames(load_error.__traceback__)
+                        try:
+                            self._release_cuda_memory_for_parking()
+                            pool.close()
+                        except BaseException as cleanup_error:
+                            raise RuntimeError(
+                                "reward model preparation and CuMem cleanup both failed: "
+                                f"load={load_error!r}; cleanup={cleanup_error!r}",
+                            ) from cleanup_error
+                        raise
+                    self._pool = pool
+                    self._model = model
+                else:
+                    self._model = factory(self._launch.component_config)
         return self._model
 
     async def score_batch(

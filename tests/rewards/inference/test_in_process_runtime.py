@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import math
 import os
+import random
 import weakref
 
+import numpy as np
 import pytest
 import torch
 
@@ -13,6 +15,80 @@ from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceReques
 from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import InProcessRewardScorer
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT, gpu_process_used_bytes
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(os.environ.get('WM_RUN_REAL_MODEL_TESTS') != '1', reason='explicit CUDA RNG gate')
+@pytest.mark.parametrize('raises', [False, True])
+def test_reward_build_scope_preserves_all_initialized_cuda_rngs(raises):
+    from vrl.rewards.runtime import _preserve_driver_rng_during_model_build
+
+    assert torch.cuda.is_available()
+    for device in range(torch.cuda.device_count()):
+        torch.rand(8, device=f'cuda:{device}')
+    before = torch.cuda.get_rng_state_all()
+    try:
+        with _preserve_driver_rng_during_model_build():
+            for device in range(torch.cuda.device_count()):
+                torch.rand(16, device=f'cuda:{device}')
+            if raises:
+                raise RuntimeError('construction failed')
+    except RuntimeError as error:
+        assert raises and str(error) == 'construction failed'
+    after = torch.cuda.get_rng_state_all()
+    assert len(before) == len(after) == torch.cuda.device_count()
+    assert all(torch.equal(a, b) for a, b in zip(before, after, strict=True))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('pooled', 'failure'), [
+    (False, None), (False, 'factory'), (True, None),
+    (True, 'factory'), (True, 'prepare'),
+])
+async def test_reward_construction_preserves_driver_rng(monkeypatch, pooled, failure):
+    import vrl.rewards.runtime as runtime_mod
+    import vrl.utils.cuda_memory as cuda_memory_mod
+
+    def consume():
+        random.random()
+        np.random.random()
+        torch.rand(3)
+
+    class Model:
+        def prepare_for_inference(self):
+            consume()
+            if failure == 'prepare':
+                raise RuntimeError('prepare failed')
+
+    def factory(config):
+        consume()
+        if failure == 'factory':
+            raise RuntimeError('factory failed')
+        return Model()
+
+    monkeypatch.setattr(runtime_mod, 'import_from_path', lambda _: factory)
+    if pooled:
+        allocator = _FakeCumemAllocator()
+        monkeypatch.setattr(cuda_memory_mod, '_cumem_allocator', lambda: allocator)
+    runtime = InProcessRewardScorer({'model_factory': 'test:factory', 'sleep_offload': pooled})
+    before = (random.getstate(), np.random.get_state(), torch.get_rng_state().clone())
+    try:
+        if failure:
+            with pytest.raises(RuntimeError, match=f'{failure} failed'):
+                await runtime.activate()
+        else:
+            await runtime.activate()
+            await runtime.activate()
+        assert random.getstate() == before[0]
+        after_np = np.random.get_state()
+        assert after_np[0] == before[1][0] and after_np[2:] == before[1][2:]
+        assert np.array_equal(after_np[1], before[1][1])
+        assert torch.equal(torch.get_rng_state(), before[2])
+    finally:
+        await runtime.shutdown()
+        random.setstate(before[0])
+        np.random.set_state(before[1])
+        torch.set_rng_state(before[2])
 
 
 class _SumMediaModel:
