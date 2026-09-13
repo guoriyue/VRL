@@ -561,3 +561,34 @@ shape-dependent numerical path; unchanged base projections and other
 operators remain to be considered. No tolerance or workload is reduced to
 hide the failure. Both rank reports match in each run, both jobs exit 0,
 fresh GPU inventory is empty and GPUs 0-1 are released. Production unchanged.
+
+## Fixed-token base projections with local conditioning
+
+`--linear-token-tile 64` applies row tiling to every torch Linear in both
+models, including base projections and FP32 LoRA calls. The vendor linear
+operator, parameter values/dtypes and outer precision contract remain in
+use. This replaces shape-dependent full/local GEMM row counts with matching
+tile sizes. It changes the reference compute schedule too, so it must become
+a consistent rollout/replay contract if adopted, not a replay-only patch.
+
+On the preserved 512-token nonzero-B workload, head sharding plus FP32 LoRA
+and tiled linears produces exact matching final output, scalar logprob and
+all block output gradients. Aggregate parameter-gradient relative L2 is
+1.71896e-7 for FP32 and 1.71483e-7 for BF16. Both 280 A and 280 B gradients
+are nonzero. Evidence: `cosmos_ulysses_tiled_linears_l40s` rank JSON/log.
+
+A second run removes `--full-shape-conditioning`: AdaLN projection inputs
+remain local, with no full-sequence conditioning gathers. Both rank reports
+and the numerical metrics above remain identical. Evidence:
+`cosmos_ulysses_local_tiled_l40s` rank JSON/log. No full-projection, full-SDPA
+or full-cotangent controls are enabled; attention work remains head-sharded.
+
+This resolves the tested 512-token counterexample without restoring full
+projection computation, but is still not production acceptance. The probe
+gathers between blocks and exchanges heads with gather-based collectives;
+64-token tiling adds launch overhead. Other sizes, shard/tile boundaries,
+full-resolution peak memory, a real update and resume remain required.
+The next work should test those conditions, not repeat this same passing case.
+
+Both jobs exit 0 with matching rank reports and fresh compute inventory is
+empty. GPUs 0-1 are released. Production runtime and thresholds unchanged.

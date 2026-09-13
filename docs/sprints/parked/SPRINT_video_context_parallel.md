@@ -72,6 +72,16 @@ attention 走 ring（或先 allgather-attention 起步），使 predict2_5 480p 
 
 ## KILL-gate（顺序执行，任一 FAIL 即停）
 
+2026-09-12 follow-up candidate: tiling all Linear calls into fixed 64-token
+rows on both reference and CP, with FP32 LoRA compute and head-sharded SDPA,
+gives exact output/logprob/block-gradient agreement at 512 tokens with
+nonzero adapters. Aggregate gradient relative L2 is 1.72e-7 in both FP32 and
+BF16, including local AdaLN conditioning (no full conditioning gather).
+This supersedes neither the recorded failures nor the gates below. The
+compute schedule must match rollout/replay; tiling overhead, unaligned
+shards, full-resolution memory, production integration and update/resume
+remain unverified. Evidence in the same precision controls report.
+
 - **P0（CPU/单卡可做）数值等价性**：CP=2 的 ring-attention 前向 vs 单卡前向，
   同权重同输入，logprob 差异必须落在 precision_drift_guard 现行阈值内
   （1e-3 量级）。ring 的分块 softmax 数值路径与单卡不同——这是本 sprint
