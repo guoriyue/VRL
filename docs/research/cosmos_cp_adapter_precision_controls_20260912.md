@@ -502,3 +502,33 @@ LoRA compute contract must be consistent between rollout and replay.
 
 Both jobs exit 0 and fresh compute inventory is empty; GPUs 0-1 are released.
 No production code, dependency or acceptance threshold changed.
+
+## Nonzero adapter counterexample
+
+`--lora-b-std 0.001` initializes only trainable default LoRA B tensors with
+Gaussian values from a separate CUDA generator seeded 73 before copying the
+reference model. Frozen previous tensors are not modified. Inputs retain
+their previous RNG sequence. This is synthetic nonzero state, not a trained
+checkpoint. Both 280 A and 280 B tensor gradients must be nonzero.
+
+With head-sharded attention, full-shape conditioning and FP32 LoRA compute,
+BF16 aggregate gradient relative L2 rises to 0.271963. Final output max error
+is 0.3046875 and maximum block-output gradient relative L2 is 0.284492.
+Scalar logprob error remains only 1.34725e-6, below the unchanged scalar gate.
+FP32 aggregate gradient error is 2.69586e-5. Both A/B branches have 280 nonzero
+gradients and both rank reports match. Thus the zero-B near-exact result
+does not establish semantics after adapters become nonzero.
+
+A same-state follow-up adds full-shape projections/FF while retaining head
+sharding. Final output/logprob errors return to zero in both dtypes. BF16
+aggregate gradient error falls to 0.0188638 but does not vanish; maximum block
+output-gradient relative L2 is 0.0137955. FP32 aggregate error is 2.32860e-6.
+Both A/B branches again have 280 nonzero gradients and both ranks match.
+This restores redundant projection work, so it is an isolation control, not
+an efficient production fix. No trained-adapter or optimizer acceptance follows.
+
+Evidence under the same NVMe root:
+`cosmos_ulysses_nonzero_lora_l40s/rank-{0,1}.json` and
+`cosmos_ulysses_nonzero_fullproj_l40s/rank-{0,1}.json`, with adjacent logs.
+Both jobs exit 0 (finite diagnostic status is not gradient equivalence), fresh
+compute inventory is empty, and GPUs 0-1 are released. Production unchanged.

@@ -56,6 +56,16 @@ ddp_2x1，单卡 replay 结构性放不下（activations 峰值），compile liv
 
 ## 目标
 
+2026-09-12 nonzero-adapter acceptance warning: differentiable head sharding
+with FP32 LoRA compute gives BF16 gradient relative L2 4.55e-7 only at the
+family's zero-B initialization. Seeded nonzero B (std 1e-3) raises it to
+0.271963 despite scalar logprob error 1.35e-6. Restoring full projection
+shapes removes forward error but leaves gradient error 0.0188638 and repeats
+projection work. Do not promote the initial-state result as training parity.
+Both A/B gradient branches are exercised. Original P0/P1 and training/resume
+requirements below remain unchanged. Detailed evidence:
+`../../research/cosmos_cp_adapter_precision_controls_20260912.md`.
+
 训练/replay 前向支持 2 卡上下文并行：单个样本的 token 序列切到 2 卡、
 attention 走 ring（或先 allgather-attention 起步），使 predict2_5 480p 33f
 的 replay 单步在 2×32GB 上跑通，logprob 契约不破。
