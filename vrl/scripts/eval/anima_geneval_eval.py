@@ -26,6 +26,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from vrl.utils.json_files import write_json
+
 logger = logging.getLogger(__name__)
 
 _SCORE_BATCH = 16
@@ -116,9 +118,7 @@ def main(argv: list[str] | None = None) -> None:
             "detection_threshold": args.detection_threshold,
         }
     )
-    (out_dir / "geneval_report.json").write_text(
-        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    write_json(out_dir / "geneval_report.json", report)
     print(format_summary(report))
     if args.compare:
         base = json.loads(Path(args.compare).read_text(encoding="utf-8"))

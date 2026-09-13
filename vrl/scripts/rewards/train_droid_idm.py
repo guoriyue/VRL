@@ -24,6 +24,7 @@ from pathlib import Path
 import torch
 
 from vrl.rewards.models.idm_action_following import FramePairIDM, frame_pairs_from_clip
+from vrl.utils.artifacts import atomic_file
 from vrl.utils.json_files import read_jsonl
 from vrl.utils.media import read_video_frames
 
@@ -107,7 +108,8 @@ def load_pair_dataset(
         )[:n]
         cursor += n
     pairs, actions = pairs[:cursor], actions[:cursor]
-    torch.save({"pairs": pairs, "actions": actions, "image_size": image_size}, cache)
+    with atomic_file(cache, binary=True) as handle:
+        torch.save({"pairs": pairs, "actions": actions, "image_size": image_size}, handle)
     print(f"cached {tuple(pairs.shape)} -> {cache}", flush=True)
     return pairs, actions
 
@@ -184,19 +186,20 @@ def main(argv: list[str] | None = None) -> None:
             eval_mse = float(torch.nn.functional.mse_loss(model(eval_x_dev), eval_z_dev))
         if eval_mse < best_eval:
             best_eval = eval_mse
-            torch.save(
-                {
-                    "state_dict": {k: v.cpu() for k, v in model.state_dict().items()},
-                    "action_mean": action_mean,
-                    "action_std": action_std,
-                    "action_dim": action_dim,
-                    "width": args.width,
-                    "image_size": args.image_size,
-                    "train_pairs": int(train_x.shape[0]),
-                    "eval_mse_z": eval_mse,
-                },
-                args.out,
-            )
+            with atomic_file(args.out, binary=True) as handle:
+                torch.save(
+                    {
+                        "state_dict": {k: v.cpu() for k, v in model.state_dict().items()},
+                        "action_mean": action_mean,
+                        "action_std": action_std,
+                        "action_dim": action_dim,
+                        "width": args.width,
+                        "image_size": args.image_size,
+                        "train_pairs": int(train_x.shape[0]),
+                        "eval_mse_z": eval_mse,
+                    },
+                    handle,
+                )
         if epoch % 10 == 0 or epoch == args.epochs - 1:
             print(
                 f"epoch {epoch:4d}  train_mse_z {sum(losses) / len(losses):.4f}  "

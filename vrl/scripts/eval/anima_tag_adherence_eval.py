@@ -38,6 +38,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from PIL import Image
 
+from vrl.utils.json_files import write_json
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BASELINE = "outputs/nsfw_compliance_base200/baseline_c_adherence.json"
@@ -145,9 +147,7 @@ def main(argv: list[str] | None = None) -> None:
             ),
         }
     )
-    (out_dir / "tag_adherence_report.json").write_text(
-        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    write_json(out_dir / "tag_adherence_report.json", report)
     baseline_path = Path(args.baseline)
     baseline = (
         json.loads(baseline_path.read_text(encoding="utf-8")) if baseline_path.is_file() else None
