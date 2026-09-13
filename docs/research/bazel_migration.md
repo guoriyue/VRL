@@ -18,7 +18,7 @@
 下列所有项目完成并验证之前，整体目标保持进行中。
 
 - [x] 固定 Bazel 9.2.0、rules_python 2.3.3、Python 3.12.13；首个 sandbox 导入测试通过。
-- [ ] 从唯一依赖来源生成 Bazel 所需锁，避免手工双份版本。
+- [x] 从唯一依赖来源生成 Bazel 所需锁，避免手工双份版本。
 - [ ] 分离主模型、vLLM、MAGI-1、CountGD 依赖目标。
 - [ ] 固定 CUDA Toolkit、宿主编译器、Torch ABI、GPU 架构；真实扩展编译及执行。
 - [ ] 显式处理 Triton/JIT 编译依赖与缓存；驱动作为运行平台要求。
@@ -82,3 +82,25 @@ CPU 目标无需 --config=cuda；GPU 测试标记 manual，普通 //... 不运�
 - LLVM 18 官方 Linux 包要求未声明的 libtinfo.so.5，未在宿主机安装补救；
   改用 CUDA 支持的 LLVM 19 发行包。
 - NVCC x86 拒绝 libc++，明确选择 sysroot 的 libstdc++。
+
+## Python 依赖阶段（2026-09-12）
+
+已通过：
+- `uv.lock` 仍是唯一权威；`tools/dependencies/uv_exports.bzl` 用 Bazel 下载的固定 uv 0.10.2
+  按 profile（main/tests/lint/vllm/videoeval）`uv export --frozen` 生成 requirements，
+  仓库里不再保存第二份版本表。
+- uv 导出会丢掉跨包 extras（`cuda-toolkit[cublas,...]` → `cuda-toolkit`），导致 torch
+  拿不到 NVIDIA 运行库。`tools/dependencies/restore_export_extras.py` 用 uv.lock 已记录的
+  依赖边把 extras 补回导出行；只复制锁中的事实。运行它的解释器是 rules_python 管理的
+  `@python_3_12_13_host`。
+- rules_python 2.3.3 原生 `pip.parse(uv_lock=)` 在本仓库不可用：锁含互斥 extras，
+  `extra ==` 标记无法求值（已实测）。
+- CUDA Toolkit 从 12.8.1 改为 13.0.2：uv.lock 的 torch 2.11.0 轮子绑定 cu130
+  （`nvidia-cuda-runtime 13.0.96`），12.8 的 nvcc 与之 ABI 不匹配。CUDA 13 需要额外
+  `crt`、`nvvm`、`culibos` 组件；宿主驱动 580.x 满足 CUDA 13。
+- `bazel test //tests/build:torch_cuda_test`：沙箱内 torch `2.11.0+cu130` 导入并在
+  RTX 5090 上执行矩阵乘；15 个 nvidia-* 包来自 `@pypi`，无 `.venv`、`CUDA_HOME`。
+- `bazel test --config=cuda //tests/toolchains:cuda_execution_test` 在 13.0.2 上重新通过；
+  aquery 确认 `nvcc 13.0.88`，ldd 确认 `libcudart.so.13` 来自 Bazel external。
+
+标签说明：pip hub 里的包是 `@pypi//<pkg>` 或 `@pypi//<pkg>:pkg`，不是 `@pypi//:<pkg>`。

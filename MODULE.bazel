@@ -7,6 +7,7 @@ python.toolchain(
     is_default = True,
     python_version = "3.12.13",
 )
+use_repo(python, "python_3_12_13_host")
 
 bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "rules_cuda", version = "0.3.0")
@@ -36,10 +37,44 @@ register_toolchains("@llvm_toolchain//:all")
 cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
 cuda.redist_json(
     name = "cuda_redist",
-    version = "12.8.1",
-    sha256 = "249e28a83008d711d5f72880541c8be6253f6d61608461de4fcb715554a6cf17",
-    components = ["cccl", "cudart", "nvcc"],
+    version = "13.0.2",
+    sha256 = "fce66717a81c510ffeb89ecc3e79849ab34af3b80139f750876d9033e31d71c2",
+    components = ["cccl", "crt", "cudart", "culibos", "nvcc", "nvvm"],
 )
 cuda.toolkit(name = "cuda")
 use_repo(cuda, "cuda")
 register_toolchains("@cuda//toolchain:nvcc-local-toolchain")
+
+# Export the authoritative uv lock with a managed, checksummed tool.
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+http_archive(
+    name = "uv_export_tool",
+    urls = ["https://github.com/astral-sh/uv/releases/download/0.10.2/uv-x86_64-unknown-linux-gnu.tar.gz"],
+    sha256 = "6aa4576c31f791c0b9d4739e256d07358d45e7535695287fec03cf6839e25512",
+    strip_prefix = "uv-x86_64-unknown-linux-gnu",
+    build_file_content = 'exports_files(["uv"])',
+)
+uv_exports = use_repo_rule("//tools/dependencies:uv_exports.bzl", "uv_exports")
+uv_exports(
+    name = "python_locks",
+    project = "//:pyproject.toml",
+    lock = "//:uv.lock",
+    uv = "@uv_export_tool//:uv",
+    interpreter = "@python_3_12_13_host//:python",
+    profiles = {
+        "main": ["--extra", "cosmos", "--extra", "reward", "--group", "test"],
+        "tests": ["--only-group", "test"],
+        "lint": ["--only-group", "lint"],
+        "vllm": ["--extra", "ar-vllm"],
+        "videoeval": ["--extra", "videoeval"],
+    },
+)
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "pypi",
+    python_version = "3.12.13",
+    requirements_lock = "@python_locks//:main.txt",
+    target_platforms = ["linux_x86_64"],
+)
+use_repo(pip, "pypi")

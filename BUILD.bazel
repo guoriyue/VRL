@@ -11,3 +11,5 @@ py_library(
         "vrl/utils/validation.py",
     ],
 )
+
+exports_files(["pyproject.toml", "uv.lock"])

@@ -5,3 +5,12 @@ py_test(
     srcs = ["python_toolchain_test.py"],
     deps = ["//:validation"],
 )
+
+# Real-GPU check that the pinned torch wheel and its NVIDIA runtime libraries
+# come from the lock, not from a developer venv or a system CUDA install.
+py_test(
+    name = "torch_cuda_test",
+    srcs = ["torch_cuda_test.py"],
+    deps = ["@pypi//torch"],
+    tags = ["gpu", "manual", "no-remote"],
+)
