@@ -33,37 +33,43 @@ DEFAULT_FPS = 24
 DEFAULT_MAX_SEQUENCE_LENGTH = 512
 
 
-def build_minimax_h3_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
-    """Transformer + the two H3 schedulers; no VAE, no conditioner."""
+def load_h3_replay_components(build: ModelBuild) -> dict[str, Any]:
+    """Transformer + the two H3 schedulers as ``MiniMaxH3ReplayModel`` kwargs.
+
+    Shared with VDN-H3, whose replay model is the same construction plus the
+    hybrid-attention graft applied afterwards.
+    """
 
     from diffusers import MiniMaxH3Scheduler
 
-    from vrl.models.families.minimax_h3.model import (
-        MiniMaxH3ReplayModel,
-        build_flow_scheduler_class,
-    )
+    from vrl.models.families.minimax_h3.model import build_flow_scheduler_class
     from vrl.models.loader import load_diffusers_transformer
+
+    load_kwargs = build.pretrained_kwargs
+    return {
+        "transformer": load_diffusers_transformer(build, "MiniMaxH3Transformer3DModel"),
+        "scheduler": build_flow_scheduler_class().from_pretrained(
+            build.model_name_or_path,
+            subfolder="scheduler",
+            **load_kwargs,
+        ),
+        "audio_scheduler": MiniMaxH3Scheduler.from_pretrained(
+            build.model_name_or_path,
+            subfolder="audio_scheduler",
+            **load_kwargs,
+        ),
+        "device": build.device,
+    }
+
+
+def build_minimax_h3_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
+    """Transformer + the two H3 schedulers; no VAE, no conditioner."""
+
+    from vrl.models.families.minimax_h3.model import MiniMaxH3ReplayModel
     from vrl.models.steps.denoise.build import assemble_replay_bundle
 
     logger.info("Building minimax_h3 replay runtime bundle from %s", build.model_name_or_path)
-    transformer = load_diffusers_transformer(build, "MiniMaxH3Transformer3DModel")
-    load_kwargs = build.pretrained_kwargs
-    scheduler = build_flow_scheduler_class().from_pretrained(
-        build.model_name_or_path,
-        subfolder="scheduler",
-        **load_kwargs,
-    )
-    audio_scheduler = MiniMaxH3Scheduler.from_pretrained(
-        build.model_name_or_path,
-        subfolder="audio_scheduler",
-        **load_kwargs,
-    )
-    model = MiniMaxH3ReplayModel(
-        transformer=transformer,
-        scheduler=scheduler,
-        audio_scheduler=audio_scheduler,
-        device=build.device,
-    )
+    model = MiniMaxH3ReplayModel(**load_h3_replay_components(build))
     num_steps = build.num_steps
     if num_steps is not None:
         model.set_num_steps(num_steps)
@@ -116,4 +122,5 @@ __all__ = [
     "DEFAULT_NUM_FRAMES",
     "MiniMaxH3BatchExecutor",
     "build_minimax_h3_replay_runtime_bundle",
+    "load_h3_replay_components",
 ]
