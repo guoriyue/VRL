@@ -118,6 +118,15 @@ remain unverified. Evidence in the same precision controls report.
 
 ## 验证
 
+2026-09-13 full-shape numerical milestone: strict deterministic algorithms,
+fixed cuBLAS workspace, padded local Linear tiles, FP32 LoRA and head-sharded
+attention give zero family output/CPS logprob error at 480x832/33f with
+nonzero adapters and GPU checkpoint. Aggregate gradient relative L2 is
+2.24e-6 FP32 / 2.22e-6 BF16, identical rank reports. This one-step synthetic
+conditioning test does not close the real trajectory/update/resume or
+production integration requirements below. Earlier capacity timing used
+nondeterministic mode; final-configuration performance must be remeasured.
+
 2026-09-12 capacity preflight: pinned DiT at 480x832/33f latent shape with
 GPU-only checkpointing and tiled projections completes forward/backward at
 8.998 GB allocated per CP rank versus 11.220 GB single rank. Single rank also

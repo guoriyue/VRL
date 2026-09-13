@@ -113,3 +113,33 @@ The snapshot matches the source used by these jobs byte-for-byte. Evidence
 is rank JSON and adjacent log under the baseline directory in the same root.
 Torchrun exits 0, fresh compute inventory is empty, GPUs 0-1 released.
 Runtime worktree remains clean; no production settings or thresholds changed.
+
+## Strict deterministic full-shape comparison (September 13)
+
+Enable `torch.use_deterministic_algorithms(True)` (not warn-only), disable
+cuDNN benchmarking, and launch with `CUBLAS_WORKSPACE_CONFIG=:4096:8` before
+CUDA initialization. The diagnostic rejects missing workspace configuration.
+Preserve the full shape, nonzero adapters, local padded linears, FP32 LoRA,
+head sharding, actual family CPS loss, CFG5 and GPU checkpoint. Neither
+checkpoint validation nor unsupported-operator checks are bypassed.
+
+Both ranks' complete case reports now match. FP32 aggregate parameter-gradient
+relative L2 is 2.24143e-6 and BF16 is 2.22439e-6. Final family output and CPS
+logprob max errors are exactly zero in both precisions. All 280 A and 280 B
+gradient tensors remain nonzero. This eliminates the previously observed
+percent-level drift in this controlled deterministic configuration; it does
+not prove which individual nondeterministic kernel contributed each error.
+
+Evidence: `cosmos_fullshape_deterministic_cp_l40s/rank-{0,1}.json` and adjacent
+log. Immutable `probe_source.py` in that run directory has SHA256
+`19457906ab7ecc1685308959d01300084331f317810ea731938e5644950860b1`.
+Reports explicitly record deterministic mode and workspace configuration.
+Stage logs distinguish load, reference/comparison forward/backward and case
+completion, avoiding opaque waits in subsequent diagnostics.
+
+This is full-shape one-step numerical evidence, not a generated trajectory,
+real reward/GRPO update, checkpoint/resume or production mesh integration.
+The earlier 1.86x capacity timing did NOT use strict deterministic mode and
+must not be presented as throughput for this final numerical configuration.
+Re-measure performance and memory after production integration. Torchrun
+exits 0, fresh compute inventory empty; GPUs 0-1 released. Runtime unchanged.
