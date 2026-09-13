@@ -129,3 +129,42 @@ tokens, while preserving gradients and separating this from attention changes.
 No production code, dependency or acceptance threshold changed. The frozen
 runtime worktree remains clean. Fresh compute inventory is empty; the
 per-block-trace GPU claim is released.
+
+## Full-shape conditioning control
+
+The diagnostic flag `--full-shape-conditioning` restores full sequence shapes
+only for linear_1 and linear_2 in every block's norm1/norm2/norm3. Each
+projection differentiably gathers its input, applies the unchanged projection,
+then selects the rank-local token slice. Attention remains local-Q/full-KV;
+this is deliberately redundant diagnostic work, not a production memory or
+throughput optimization. Both ranks still sum replicated parameter gradients.
+
+With the actual family adapters, CFG5, step 18 and shared output cotangent,
+BF16 family output and scalar logprob now match exactly. All first-block
+submodule traces also match exactly. Aggregate parameter-gradient relative
+L2 falls from 0.103061 in the prior traced control to 0.0278607, but does not
+vanish. FP32 aggregate gradient relative L2 is 1.01486e-5 and output relative
+L2 is 2.96771e-6. Both ranks' reports match and the job exits 0.
+
+This intervention supports conditioning projection shape as a source of the
+observed forward discrepancy in this particular synthetic case. Exact final
+output is not proof that every later internal activation matches, and the
+remaining backward discrepancy still prevents declaring training equivalence.
+No tolerance changed. Evidence:
+`cosmos_cp_fullshape_conditioning_l40s/rank-{0,1}.json` and adjacent log under
+the same NVMe root. Runtime and shared dependencies remain unchanged.
+
+A follow-up removes `--shared-output-cotangent` and differentiates each
+branch's actual fixed-action CPS logprob loss. BF16 output and logprob still
+match exactly; aggregate gradient relative L2 is 0.0264940, compared with
+0.412917 in the native-adapter control without full-shape conditioning.
+FP32 aggregate gradient relative L2 is 2.39874e-5. Both ranks match, the job
+exits 0, and its evidence is
+`cosmos_cp_fullshape_conditioning_ownloss_l40s/rank-{0,1}.json` plus log.
+Different backward reductions can still round differently; this result does
+not identify the remaining error's source. Next work should isolate backward
+paths with matched forward activations before production CP integration.
+
+Both jobs are terminal and fresh compute inventory is empty. GPUs 0-1 are
+released. This is a two-rank small-input diagnosis, not full-resolution P1,
+a training update, or a four-GPU throughput acceptance.
