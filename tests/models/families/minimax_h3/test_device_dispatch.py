@@ -392,6 +392,7 @@ def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path):
     assert (tmp_path / "modular_model_index.json").is_file()
     build = replace(
         _build(rollout=True, num_steps=3),
+        generation_memory={"vae_decode": {"tiling": True}},
         model_name_or_path=str(tmp_path),
         revision=None,
         model_config={
@@ -466,7 +467,7 @@ def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path):
     from vrl.models.families.minimax_h3.runtime import build_minimax_h3_replay_runtime_bundle
 
     replay = build_minimax_h3_replay_runtime_bundle(
-        replace(build, rollout=None), block_devices=(1,)
+        replace(build, rollout=None, generation_memory=None), block_devices=(1,)
     )
     replay.model.transformer.load_state_dict(model.transformer.state_dict(), strict=True)
     params = executor.parse_sampling_params(request)

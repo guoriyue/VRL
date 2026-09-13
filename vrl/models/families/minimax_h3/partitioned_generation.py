@@ -78,7 +78,7 @@ class PartitionedH3GenerationModel(MiniMaxH3Model):
 
         placement.validate(build)
         transformer = load_partitioned_transformer(
-            replace(build, rollout=None), placement.transformer_blocks
+            replace(build, rollout=None, generation_memory=None), placement.transformer_blocks
         )
         encoder = load_partitioned_text_encoder(
             build, root_device=placement.encoder_root, layer_devices=placement.encoder_layers
