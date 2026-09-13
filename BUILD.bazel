@@ -1,0 +1,13 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# Dependency-free first slice; heavier libraries get explicit targets as migrated.
+py_library(
+    name = "validation",
+    srcs = [
+        "vrl/__init__.py",
+        "vrl/utils/__init__.py",
+        "vrl/utils/validation.py",
+    ],
+)

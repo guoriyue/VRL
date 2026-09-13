@@ -1,0 +1,9 @@
+module(name = "vrl", version = "0.1.0")
+
+bazel_dep(name = "rules_python", version = "2.3.3")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = "3.12.13",
+)

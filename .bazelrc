@@ -1,0 +1,3 @@
+# Runtime dependencies must be declared, not inherited from a developer venv.
+build --incompatible_default_to_explicit_init_py
+test --test_output=errors

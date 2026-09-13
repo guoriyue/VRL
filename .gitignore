@@ -100,3 +100,6 @@ third_party/*
 
 # Model weights belong in the HF cache (~/.cache/huggingface), never the repo.
 checkpoints/
+
+# Bazel workspace convenience symlinks; source build definitions stay tracked.
+/bazel-*
