@@ -168,3 +168,41 @@ paths with matched forward activations before production CP integration.
 Both jobs are terminal and fresh compute inventory is empty. GPUs 0-1 are
 released. This is a two-rank small-input diagnosis, not full-resolution P1,
 a training update, or a four-GPU throughput acceptance.
+
+## Matched-forward backward trace
+
+`--trace-block-gradients` attaches tensor hooks to each block's full output.
+For CP, a detached gradient copy is summed across the two ranks before
+comparison; the hook does not return or modify the actual backward gradient.
+This accounts for rank-local downstream work and the replicated loss divided
+by two. Both CFG calls are tracked separately. The full-shape-conditioning
+control uses each branch's actual CPS loss, not a shared output cotangent.
+
+All 56 BF16 forward block outputs match exactly. Block 27 output gradients
+also match exactly in both CFG branches. Relative L2 for selected earlier
+block output gradients is:
+
+| Block | CFG call 0 | CFG call 1 |
+| --- | ---: | ---: |
+| 27 | 0 | 0 |
+| 26 | 0.0000259116 | 0 |
+| 25 | 0.00185231 | 0.00175426 |
+| 21 | 0.00779608 | 0.00765408 |
+| 14 | 0.0107842 | 0.0109955 |
+| 7 | 0.0133349 | 0.0130731 |
+| 0 | 0.00755762 | 0.00738407 |
+
+Aggregate BF16 parameter-gradient relative L2 is 0.0265821; the largest
+individual relative error is 0.0609939 for block 3 self-attention K LoRA B.
+FP32 aggregate error is 2.40103e-5. Both ranks' full case reports match.
+
+This establishes matching block-boundary forward states, then divergence
+during backward propagation in this case. It does not establish equality of
+every internal activation, a collective bug, or an acceptable training error.
+Next isolation should examine backward inside the final blocks, separating
+local projection/reduction arithmetic from attention backward. Production
+integration and full-resolution acceptance remain open.
+
+Evidence: `cosmos_cp_backward_blocks_l40s/rank-{0,1}.json` and adjacent log.
+Torchrun exits 0, fresh compute inventory is empty, and GPUs 0-1 are released.
+The runtime candidate remains clean; no production or dependency changes.
