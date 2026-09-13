@@ -78,3 +78,28 @@ The GPU gate must still reject an OCR-zero/zero-gradient run even if its step
 counter advances. Require both experts' real finite nonzero updates, lifecycle
 memory evidence, rollout/replay agreement and exact controlled resume. Do not
 claim success from this preflight or restart the disabled SD3 long queue.
+
+## Bounded CUDA prerequisite verified
+
+The same clean candidate now passes the existing tiny-real CUDA/NCCL test on
+this L40S host at world sizes one and two: **2 passed in 20.39 s**, exit 0.
+Test: `test_wan_dual_expert_fsdp_cuda_cpu_offload` in the same distributed
+test module, invoked with `--distributed`, `CUDA_VISIBLE_DEVICES=0,1` and
+`OMP_NUM_THREADS=4`. No Ray process or released-weight pipeline was involved.
+
+Assertions cover nonzero CUDA gradients and changed weights for both experts,
+CPU-resident local parameter shards after execution, exportable optimizer
+state, CPU rollout-state export and exact buffer-device restoration across
+training-state parking. Six lifecycle log events cover the one-rank high/low
+pair and both ranks' high/low pairs in the two-rank case. Every event reports
+zero inactive CUDA parameter bytes. These counters are captured after forward
+resharding, not evidence that an active expert used no GPU during its forward.
+The trace's largest forward peak counter is 17,136,128 bytes; tiny-model
+counters do not estimate released 14B activation peaks or production throughput.
+
+Log: `/mnt/nvme/outputs/wan22_i2v_cache/dual_expert_cuda_l40s_distributed.log`.
+The first invocation omitted the repository's required distributed opt-in and
+was skipped, not passed. Its separate `dual_expert_cuda_l40s.log` is retained.
+Both pytest sessions are terminal and fresh GPU compute inventory is empty;
+GPUs 0-1 are released. Full released-weight GPU update and controlled resume
+remain open; neither CPU nor tiny CUDA prerequisites close those gates.
