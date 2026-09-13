@@ -13,7 +13,7 @@ py_test(
     srcs = ["torch_cuda_test.py"],
     deps = [
         "//tools/python:nvidia_preload",
-        "@pypi//torch",
+        "@vrl_pypi//torch",
     ],
     tags = ["gpu", "manual", "no-remote"],
 )

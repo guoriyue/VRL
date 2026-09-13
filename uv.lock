@@ -345,6 +345,18 @@ wheels = [
 ]
 
 [[package]]
+name = "attrdict"
+version = "2.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3f/72/614aae677d28e81a5bf830fadcf580803876ef76e0306902d3ca5790cd9a/attrdict-2.0.1.tar.gz", hash = "sha256:35c90698b55c683946091177177a9e9c0713a0860f0e049febd72649ccd77b70", size = 9593, upload-time = "2019-02-01T22:33:58.493Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/97/28fe7e68bc7adfce67d4339756e85e9fcf3c6fd7f0c0781695352b70472c/attrdict-2.0.1-py2.py3-none-any.whl", hash = "sha256:9432e3498c74ff7e1b20b3d93b45d766b71cbffa90923496f82c4ae38b92be34", size = 9946, upload-time = "2019-02-01T22:33:56.508Z" },
+]
+
+[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -959,7 +971,7 @@ name = "cuda-bindings"
 version = "13.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-ar-vllm') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "cuda-pathfinder" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ce/67/5e7dba1ba576dd73da5dee894ca076ca5e959450dfff66d6d510a255d1f7/cuda_bindings-13.3.1-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c7855c4868aabc0cfae28abbe83d56734bdfbd08f08fc234ac1912a12858bf49", size = 6025351, upload-time = "2026-05-29T23:11:49.685Z" },
@@ -1052,37 +1064,37 @@ wheels = [
 
 [package.optional-dependencies]
 cublas = [
-    { name = "nvidia-cublas", marker = "sys_platform == 'linux' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-cublas", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
 ]
 cudart = [
-    { name = "nvidia-cuda-runtime", marker = "sys_platform == 'linux' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-cuda-runtime", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
 ]
 cufft = [
-    { name = "nvidia-cufft", marker = "sys_platform == 'linux' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-cufft", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
 ]
 cufile = [
     { name = "nvidia-cufile", marker = "sys_platform == 'linux' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti", marker = "sys_platform == 'linux' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-cuda-cupti", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
 ]
 curand = [
-    { name = "nvidia-curand", marker = "sys_platform == 'linux' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-curand", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
 ]
 cusolver = [
-    { name = "nvidia-cusolver", marker = "sys_platform == 'linux' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-cusolver", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse", marker = "sys_platform == 'linux' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-cusparse", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "sys_platform == 'linux' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-nvjitlink", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "sys_platform == 'linux' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-cuda-nvrtc", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx", marker = "sys_platform == 'linux' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-nvtx", marker = "sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
 ]
 
 [[package]]
@@ -1748,7 +1760,7 @@ name = "grpcio"
 version = "1.81.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-videoeval'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b0/b5/1ff353970a87eda4c98251e34d2dfd214abd4982dc89119c9252a2a482d2/grpcio-1.81.1.tar.gz", hash = "sha256:6fa10a767143a5e82e8eaab53918af0cd8909a57a27f8cb2288b80a613ac671b", size = 13026582, upload-time = "2026-06-11T12:46:51.673Z" }
 wheels = [
@@ -2602,7 +2614,7 @@ name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mdurl" },
+    { name = "mdurl", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/06/ff/7841249c247aa650a76b9ee4bbaeae59370dc8bfd2f6c01f3630c35eb134/markdown_it_py-4.2.0.tar.gz", hash = "sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49", size = 82454, upload-time = "2026-05-07T12:08:28.36Z" }
 wheels = [
@@ -3121,7 +3133,7 @@ name = "numba"
 version = "0.65.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "llvmlite" },
+    { name = "llvmlite", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-videoeval'" },
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra != 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra != 'extra-9-visual-rl-cosmos' and extra != 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-9-visual-rl-ar-vllm' or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
 ]
@@ -3335,7 +3347,7 @@ name = "nvidia-cudnn-cu13"
 version = "9.19.0.56"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-ar-vllm') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-cublas" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/84/26025437c1e6b61a707442184fa0c03d083b661adf3a3eecfd6d21677740/nvidia_cudnn_cu13-9.19.0.56-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:6ed29ffaee1176c612daf442e4dd6cfeb6a0caa43ddcbeb59da94953030b1be4", size = 433781201, upload-time = "2026-02-03T20:40:53.805Z" },
@@ -3364,7 +3376,7 @@ name = "nvidia-cufft"
 version = "12.0.0.61"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-ar-vllm') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-nvjitlink" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8b/ae/f417a75c0259e85c1d2f83ca4e960289a5f814ed0cea74d18c353d3e989d/nvidia_cufft-12.0.0.61-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:2708c852ef8cd89d1d2068bdbece0aa188813a0c934db3779b9b1faa8442e5f5", size = 214053554, upload-time = "2025-09-04T08:31:38.196Z" },
@@ -3396,9 +3408,9 @@ name = "nvidia-cusolver"
 version = "12.0.4.66"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-ar-vllm') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
-    { name = "nvidia-cusparse", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-ar-vllm') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
-    { name = "nvidia-nvjitlink", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-ar-vllm') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-cublas" },
+    { name = "nvidia-cusparse" },
+    { name = "nvidia-nvjitlink" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/c3/b30c9e935fc01e3da443ec0116ed1b2a009bb867f5324d3f2d7e533e776b/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:02c2457eaa9e39de20f880f4bd8820e6a1cfb9f9a34f820eb12a155aa5bc92d2", size = 223467760, upload-time = "2025-09-04T08:33:04.222Z" },
@@ -3411,7 +3423,7 @@ name = "nvidia-cusparse"
 version = "12.6.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-ar-vllm') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'darwin' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'win32' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (sys_platform == 'emscripten' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "nvidia-nvjitlink" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/94/5c26f33738ae35276672f12615a64bd008ed5be6d1ebcb23579285d960a9/nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:80bcc4662f23f1054ee334a15c72b8940402975e0eab63178fc7e670aa59472c", size = 162155568, upload-time = "2025-09-04T08:33:42.864Z" },
@@ -3644,7 +3656,7 @@ name = "opencv-python-headless"
 version = "4.13.0.92"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-reward' or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/42/2310883be3b8826ac58c3f2787b9358a2d46923d61f88fedf930bc59c60c/opencv_python_headless-4.13.0.92-cp37-abi3-macosx_13_0_arm64.whl", hash = "sha256:1a7d040ac656c11b8c38677cc8cccdc149f98535089dbe5b081e80a4e5903209", size = 46247192, upload-time = "2026-02-05T07:01:35.187Z" },
@@ -5397,8 +5409,8 @@ name = "rich"
 version = "15.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "markdown-it-py" },
-    { name = "pygments" },
+    { name = "markdown-it-py", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
+    { name = "pygments", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c0/8f/0722ca900cc807c13a6a0c696dacf35430f72e0ec571c4275d2371fca3e9/rich-15.0.0.tar.gz", hash = "sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36", size = 230680, upload-time = "2026-04-12T08:24:00.75Z" }
 wheels = [
@@ -6224,7 +6236,8 @@ name = "timm"
 version = "1.0.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra != 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra != 'extra-9-visual-rl-cosmos' and extra != 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
+    { name = "huggingface-hub", version = "1.23.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward' or extra != 'extra-9-visual-rl-videoeval'" },
     { name = "pyyaml" },
     { name = "safetensors" },
     { name = "torch" },
@@ -6302,7 +6315,7 @@ resolution-markers = [
     "(python_full_version < '3.13' and platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-9-visual-rl-ar-vllm' and extra != 'extra-9-visual-rl-cosmos' and extra != 'extra-9-visual-rl-reward' and extra != 'extra-9-visual-rl-videoeval') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra != 'extra-9-visual-rl-cosmos' and extra != 'extra-9-visual-rl-reward' and extra != 'extra-9-visual-rl-videoeval')",
 ]
 dependencies = [
-    { name = "huggingface-hub", version = "1.23.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "huggingface-hub", version = "1.23.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/73/6f/f80cfef4a312e1fb34baf7d85c72d4411afde10978d4657f8cdd811d3ccc/tokenizers-0.22.2.tar.gz", hash = "sha256:473b83b915e547aa366d1eee11806deaf419e17be16310ac0a14077f1e28f917", size = 372115, upload-time = "2026-01-05T10:45:15.988Z" }
 wheels = [
@@ -6446,7 +6459,7 @@ version = "0.26.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra != 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra != 'extra-9-visual-rl-cosmos' and extra != 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward' or extra != 'extra-9-visual-rl-videoeval'" },
     { name = "pillow" },
     { name = "torch" },
 ]
@@ -6567,15 +6580,15 @@ resolution-markers = [
     "(python_full_version < '3.13' and platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-9-visual-rl-ar-vllm' and extra != 'extra-9-visual-rl-cosmos' and extra != 'extra-9-visual-rl-reward' and extra != 'extra-9-visual-rl-videoeval') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-9-visual-rl-ar-vllm' and extra != 'extra-9-visual-rl-cosmos' and extra != 'extra-9-visual-rl-reward' and extra != 'extra-9-visual-rl-videoeval')",
 ]
 dependencies = [
-    { name = "huggingface-hub", version = "1.23.0", source = { registry = "https://pypi.org/simple" } },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" } },
-    { name = "packaging" },
-    { name = "pyyaml" },
-    { name = "regex" },
-    { name = "safetensors" },
-    { name = "tokenizers", version = "0.22.2", source = { registry = "https://pypi.org/simple" } },
-    { name = "tqdm" },
-    { name = "typer" },
+    { name = "huggingface-hub", version = "1.23.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
+    { name = "packaging", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
+    { name = "pyyaml", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
+    { name = "regex", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
+    { name = "safetensors", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
+    { name = "tokenizers", version = "0.22.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
+    { name = "tqdm", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
+    { name = "typer", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ec/e1/720ff7ff666b04279fea5bb7ac3ef8675e98f0ddbc1b8cb8bc9f3889d62e/transformers-5.13.0.tar.gz", hash = "sha256:940c1428e42a4238f9ccf0cd41e63c590701aa63c19fd2ce3d7d602222d68495", size = 9195801, upload-time = "2026-07-03T16:05:39.362Z" }
 wheels = [
@@ -6604,10 +6617,10 @@ name = "typer"
 version = "0.26.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "annotated-doc" },
+    { name = "annotated-doc", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
     { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "rich" },
-    { name = "shellingham" },
+    { name = "rich", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
+    { name = "shellingham", marker = "extra == 'extra-9-visual-rl-ar-vllm' or extra == 'extra-9-visual-rl-cosmos' or extra == 'extra-9-visual-rl-reward'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5e/ed/ef06584ccdd5c410df0837951ecd7e15d9a6144ea1bd4c73cecab1a89891/typer-0.26.7.tar.gz", hash = "sha256:e314a34c617e419c091b2830dda3ea1f257134ff593061a8f5b9717ab8dddb3a", size = 201709, upload-time = "2026-06-03T07:18:06.843Z" }
 wheels = [
@@ -6858,6 +6871,10 @@ data = [
 detection = [
     { name = "onnxruntime" },
 ]
+janus = [
+    { name = "attrdict" },
+    { name = "timm" },
+]
 ocr = [
     { name = "paddleocr" },
     { name = "paddlepaddle" },
@@ -6897,6 +6914,7 @@ test = [
 requires-dist = [
     { name = "accelerate", marker = "extra == 'cosmos'", specifier = ">=0.30.0" },
     { name = "aiohttp", marker = "extra == 'reward-service'", specifier = ">=3.10.0" },
+    { name = "attrdict", marker = "extra == 'janus'", specifier = ">=2.0.1" },
     { name = "av", marker = "extra == 'data'", specifier = ">=12.0.0" },
     { name = "bitsandbytes", marker = "extra == 'optim8bit'", specifier = ">=0.43.0" },
     { name = "datasets", marker = "extra == 'data'", specifier = ">=2.18.0" },
@@ -6928,6 +6946,7 @@ requires-dist = [
     { name = "requests", marker = "extra == 'data'", specifier = ">=2.31.0" },
     { name = "safetensors", specifier = ">=0.4.0" },
     { name = "sentencepiece", marker = "extra == 'cosmos'", specifier = ">=0.2.0" },
+    { name = "timm", marker = "extra == 'janus'", specifier = ">=0.9.16" },
     { name = "torch", specifier = ">=2.5.0" },
     { name = "torchvision", marker = "extra == 'cosmos'", specifier = ">=0.20.0" },
     { name = "torchvision", marker = "extra == 'reward'", specifier = ">=0.17.0" },
@@ -6937,7 +6956,7 @@ requires-dist = [
     { name = "vbench", marker = "extra == 'videoeval'", specifier = "==0.1.5" },
     { name = "vllm", marker = "extra == 'ar-vllm'", specifier = ">=0.21.0,<0.22" },
 ]
-provides-extras = ["cosmos", "reward", "reward-service", "data", "detection", "ocr", "ar-vllm", "videoeval", "optim8bit", "perf"]
+provides-extras = ["cosmos", "reward", "reward-service", "data", "detection", "ocr", "ar-vllm", "videoeval", "janus", "optim8bit", "perf"]
 
 [package.metadata.requires-dev]
 lint = [{ name = "ruff", specifier = ">=0.4.0" }]

@@ -68,7 +68,7 @@ uv_exports(
         "main": [
             "--extra", "cosmos", "--extra", "reward", "--extra", "reward-service",
             "--extra", "data", "--extra", "ocr", "--extra", "detection",
-            "--extra", "optim8bit", "--group", "test", "--group", "lint",
+            "--extra", "optim8bit", "--extra", "janus", "--group", "test", "--group", "lint",
         ],
         # Conflicting stacks each carry the test group so their lanes need no
         # second hub for pytest.
@@ -78,7 +78,7 @@ uv_exports(
 
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 pip.parse(
-    hub_name = "pypi",
+    hub_name = "vrl_pypi",
     python_version = "3.12.13",
     requirements_lock = "@python_locks//:main.txt",
     target_platforms = ["linux_x86_64"],
@@ -87,7 +87,7 @@ pip.parse(
 # Dependency sets pyproject.toml declares as conflicting with the main stack.
 # Each is its own hub from the same uv.lock; a target picks exactly one.
 pip.parse(
-    hub_name = "pypi_vllm",
+    hub_name = "vrl_pypi_vllm",
     python_version = "3.12.13",
     requirements_lock = "@python_locks//:vllm.txt",
     target_platforms = ["linux_x86_64"],
@@ -95,7 +95,7 @@ pip.parse(
 # Not a hub yet: the videoeval extra (VBench 0.1.5 -> transformers 4.33.2 ->
 # tokenizers 0.13.3) ships no CPython 3.12 wheel and would need a Rust source
 # build; see docs/research/bazel_migration.md.
-use_repo(pip, "pypi", "pypi_vllm")
+use_repo(pip, "vrl_pypi", "vrl_pypi_vllm")
 
 # CountGD reward: pinned upstream source (with the qualified torch-2 patch),
 # the Hugging Face Space assets, and its own dependency hub. These fetch only
@@ -111,9 +111,6 @@ http_archive(
     strip_prefix = "CountGD-" + COUNTGD_SOURCE_REVISION,
     type = "tar.gz",
     patches = ["//third_party/countgd:ms_deform_attn_torch2.patch"],
-    # The qualified patch adds a final newline; Bazel's built-in patcher rejects
-    # the "\ No newline at end of file" marker mid-hunk, so GNU patch applies it.
-    patch_tool = "patch",
     patch_args = ["-p1"],
     build_file_content = 'filegroup(name = "all_files", srcs = glob(["**"]), visibility = ["//visibility:public"])',
 )
@@ -140,9 +137,31 @@ http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_
 ]
 
 pip.parse(
-    hub_name = "pypi_countgd",
+    hub_name = "vrl_pypi_countgd",
     python_version = "3.12.13",
     requirements_lock = "//third_party/countgd:requirements.txt",
     target_platforms = ["linux_x86_64"],
 )
-use_repo(pip, "pypi_countgd")
+use_repo(pip, "vrl_pypi_countgd")
+
+# Janus-Pro model code (deepseek-ai/Janus ships no PyPI package). Pinned commit,
+# patched so its PretrainedConfig subclasses survive transformers 5's dataclass
+# conversion; runtime dependencies come from the `janus` extra in uv.lock.
+http_archive(
+    name = "janus_src",
+    urls = ["https://codeload.github.com/deepseek-ai/Janus/tar.gz/1daa72fa409002d40931bd7b36a9280362469ead"],
+    sha256 = "3725fde8817c50ad61828401c598a2a7ee314c8b7d211920c593b1a667f3813c",
+    strip_prefix = "Janus-1daa72fa409002d40931bd7b36a9280362469ead",
+    type = "tar.gz",
+    patches = ["//third_party/janus:transformers5_dataclass_defaults.patch"],
+    patch_args = ["-p1"],
+    build_file_content = """
+load("@rules_python//python:defs.bzl", "py_library")
+py_library(
+    name = "janus",
+    srcs = glob(["janus/**/*.py"]),
+    imports = ["."],
+    visibility = ["//visibility:public"],
+)
+""",
+)

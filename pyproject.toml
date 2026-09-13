@@ -128,6 +128,14 @@ ar-vllm = [
 videoeval = [
     "vbench==0.1.5",
 ]
+# Janus-Pro token-image family runtime. deepseek-ai/Janus ships no PyPI package
+# and its configs need a one-line patch for transformers 5, so the source is a
+# pinned, patched archive in MODULE.bazel (//third_party/janus); these are the
+# runtime dependencies that archive declares and the main stack lacks.
+janus = [
+    "attrdict>=2.0.1",
+    "timm>=0.9.16",
+]
 # Full-param 8-bit Adam optimizer states (actor.optim.optim_8bit). int8 Adam state
 # via bitsandbytes lets a full-param 2B DiT fit a single 32GB card where fp32 Adam
 # state OOMs. Quantizes the optimizer state only (not the forward) → RL-safe:

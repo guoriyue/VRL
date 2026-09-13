@@ -1,0 +1,9 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["transformers5_dataclass_defaults.patch"])
+
+# The pinned upstream package, patched for transformers 5, as an import root.
+alias(
+    name = "janus",
+    actual = "@janus_src//:janus",
+)

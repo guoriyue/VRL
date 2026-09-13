@@ -267,6 +267,10 @@ CASES: tuple[RealCheckpointCase, ...] = (
                 # No ref model in this harness; only DanceGRPO exposes GRPO's
                 # reference-KL coefficient and therefore needs it disabled.
                 *(("algorithm.kl_coef=0.0",) if _algo == "dance_grpo" else ()),
+                # The trust-region algorithms refuse a run whose ratio is
+                # identically 1: a second PPO epoch over the full batch
+                # (prompts_per_collection=0 above) gives them a ratio.
+                *(("actor.ppo_epochs=2",) if _algo in ("flow_dppo", "grpo_guard") else ()),
                 "algorithm.kl_reward_coef=0.0",
                 "actor.drop_zero_advantage=false",
                 "rollout.n_samples_per_prompt=2",
@@ -315,10 +319,14 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "rollout.prompts_per_batch=1",
             "sampling.max_text_length=64",
             "sampling.image_token_num=4",
-            "sampling.image_size=64",
+            "sampling.image_size=32",
             "sampling.guidance_scale=1.0",
             "sampling.temperature=1.0",
             "sampling.attention_backend=torch_native",
+            # bf16 rollout vs replay log-probs differ by ~0.04 on this 1B model
+            # (limit 0.01); fp32 keeps the parity gate meaningful for one step.
+            "precision.training.dtype=fp32",
+            "precision.rollout.dtype=fp32",
         ),
         min_cuda_memory_gib=16.0,
     ),
@@ -399,6 +407,11 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "sampling.height=128",
             "sampling.width=128",
             "sampling.max_sequence_length=64",
+            # The recipe's 1e-6 parity limit was qualified at full precision;
+            # bf16 and TF32 both exceed it on this synthetic one-step replay.
+            "precision.training.dtype=fp32",
+            "precision.rollout.dtype=fp32",
+            "precision.float32_precision=ieee",
         ),
         min_cuda_memory_gib=28.0,
         synthetic_replay_rollout=True,
@@ -438,6 +451,11 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "sampling.height=128",
             "sampling.width=128",
             "sampling.max_sequence_length=64",
+            # The recipe's 1e-6 parity limit was qualified at full precision;
+            # bf16 and TF32 both exceed it on this synthetic one-step replay.
+            "precision.training.dtype=fp32",
+            "precision.rollout.dtype=fp32",
+            "precision.float32_precision=ieee",
         ),
         min_cuda_memory_gib=28.0,
         synthetic_replay_rollout=True,
@@ -468,7 +486,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "sampling.max_text_length=64",
             "rollout.noise_level=1.0",
             "sampling.image_token_num=4",
-            "sampling.image_size=64",
+            "sampling.image_size=32",
             "sampling.num_steps=1",
             "rollout.noise_level=1.0",
             "sampling.guidance_scale=1.0",
@@ -692,8 +710,9 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         case.config,
         overrides=[
             *checkpoint_overrides,
-            *case_overrides,
             *_common_training_overrides(tmp_path),
+            # Case overrides win: the trust-region cases need ppo_epochs=2.
+            *case_overrides,
         ],
     )
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")

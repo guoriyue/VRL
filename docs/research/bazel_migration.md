@@ -104,16 +104,16 @@ CPU 目标无需 --config=cuda；GPU 测试标记 manual，普通 //... 不运�
   （`nvidia-cuda-runtime 13.0.96`），12.8 的 nvcc 与之 ABI 不匹配。CUDA 13 需要额外
   `crt`、`nvvm`、`culibos` 组件；宿主驱动 580.x 满足 CUDA 13。
 - `bazel test //tests/build:torch_cuda_test`：沙箱内 torch `2.11.0+cu130` 导入并在
-  RTX 5090 上执行矩阵乘；15 个 nvidia-* 包来自 `@pypi`，无 `.venv`、`CUDA_HOME`。
+  RTX 5090 上执行矩阵乘；15 个 nvidia-* 包来自 `@vrl_pypi`，无 `.venv`、`CUDA_HOME`。
 - `bazel test --config=cuda //tests/toolchains:cuda_execution_test` 在 13.0.2 上重新通过；
   aquery 确认 `nvcc 13.0.88`，ldd 确认 `libcudart.so.13` 来自 Bazel external。
 
-标签说明：pip hub 里的包是 `@pypi//<pkg>` 或 `@pypi//<pkg>:pkg`，不是 `@pypi//:<pkg>`。
+标签说明：pip hub 里的包是 `@vrl_pypi//<pkg>` 或 `@vrl_pypi//<pkg>:pkg`，不是 `@vrl_pypi//:<pkg>`。
 
 ## VRL 库、测试与入口阶段（2026-09-12）
 
 已通过（全部 `CUDA_VISIBLE_DEVICES=""`，清除 `CUDA_HOME`/`VIRTUAL_ENV`/`PYTHONPATH`）：
-- `//:vrl`：`vrl/**` 源码 + 预设 YAML/资产；依赖是 `@pypi` hub 的 `all_requirements`，
+- `//:vrl`：`vrl/**` 源码 + 预设 YAML/资产；依赖是 `@vrl_pypi` hub 的 `all_requirements`，
   即 uv.lock main profile（core + cosmos + reward + reward-service + data + test + lint）
   的闭包，不在 BUILD 里重复任何版本或包名。
 - `//third_party:vendored`：用 `imports` 替代 `pip install -e third_party`，
@@ -141,7 +141,7 @@ Ray/torchrun 解释器、CI。
 ## 独立依赖栈与真实 GPU lane（2026-09-12）
 
 已通过：
-- `@pypi_vllm` hub：uv.lock 的 `ar-vllm` extra + test 组（vllm 0.21.0 锁定 torch 2.11.0，
+- `@vrl_pypi_vllm` hub：uv.lock 的 `ar-vllm` extra + test 组（vllm 0.21.0 锁定 torch 2.11.0，
   与主栈同一 torch，隔离的是 flashinfer/依赖闭包与 ABI 约束）。`//:vrl_vllm` 用
   `tools/python/defs.bzl::vrl_library` 把同一份源码接到这个 hub。
 - `bazel test --config=gpu //tests:gpu_tests`（主 hub，`-m gpu`）：34 个真实 GPU 测试
@@ -228,7 +228,7 @@ CountGD 进入 Bazel：
   已验证补丁后文件哈希与安装器记录一致）。Bazel 内置 patcher 不接受 hunk 中间的
   `\ No newline at end of file`，所以用 `patch_tool = "patch"`——这是唯一的宿主工具依赖。
 - 8 个 Space 资产（cfg_app、checkpoint、BERT 6 文件）：`http_file` 固定 HF revision + sha256。
-- `@pypi_countgd`：`third_party/countgd/requirements.txt`（带 hash，torch/torchvision/triton
+- `@vrl_pypi_countgd`：`third_party/countgd/requirements.txt`（带 hash，torch/torchvision/triton
   指向 download.pytorch.org cu128）是唯一版本表；原 `countgd_environment_lock.py` 的 Python
   表由它一次性生成后删除。补入 pydantic 及其 3 个依赖：`vrl.rewards.service.server`
   2026-09-05 起 import pydantic，而锁是 09-04 定的——旧安装器的服务 smoke 今天同样失败

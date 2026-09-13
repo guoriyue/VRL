@@ -652,9 +652,9 @@ class OnlineTrainer:
                 "staleness and actor.ppo_epochs=1 makes the ratio identically 1 (behavior == "
                 "target on the single replay pass), so the clip/guard term is a no-op "
                 "and the run is equivalent to plain GRPO. Set actor.ppo_epochs>1 — which "
-                "needs the legacy full-batch path (actor.prompts_per_collection=0 "
-                "and actor.prompts_per_collection=0, since streaming releases each microbatch "
-                "and cannot replay it across epochs) — or use schedule_mode='continuous' "
+                "needs the full-batch path (actor.prompts_per_collection=0, since "
+                "streaming releases each collection and cannot replay it across "
+                "epochs) — or use schedule_mode='continuous' "
                 "with continuous.max_stale_policy_versions>0 for an off-policy ratio."
             )
 

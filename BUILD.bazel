@@ -1,6 +1,6 @@
-load("@pypi//:requirements.bzl", "all_requirements")
-load("@pypi_countgd//:requirements.bzl", countgd_requirements = "all_requirements")
-load("@pypi_vllm//:requirements.bzl", vllm_requirements = "all_requirements")
+load("@vrl_pypi//:requirements.bzl", "all_requirements")
+load("@vrl_pypi_countgd//:requirements.bzl", countgd_requirements = "all_requirements")
+load("@vrl_pypi_vllm//:requirements.bzl", vllm_requirements = "all_requirements")
 load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 load("//tools/python:defs.bzl", "vrl_library")
 

@@ -95,6 +95,7 @@ third_party/*
 
 !third_party/BUILD.bazel
 !third_party/countgd
+!third_party/janus
 !third_party/README.md
 
 # All Python virtualenvs live under one parent dir (one ignore entry covers all)
