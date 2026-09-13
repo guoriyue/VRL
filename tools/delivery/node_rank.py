@@ -22,7 +22,7 @@ def main() -> None:
     dist.all_reduce(total)
     assert int(total.item()) == world * (world + 1) // 2
     dist.destroy_process_group()
-    print(f"rank {rank}/{world} nccl ok", flush=True)
+    print(f"rank {rank}/{world} nccl ok on {os.uname().nodename}", flush=True)
 
 
 if __name__ == "__main__":
