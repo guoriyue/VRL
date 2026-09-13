@@ -35,6 +35,7 @@ if TYPE_CHECKING:
         load_prompt_examples_from_config as load_prompt_examples_from_config,
     )
     from vrl.trainers.data.prompts import load_prompt_image_manifest as load_prompt_image_manifest
+    from vrl.trainers.data.provenance import DatasetProvenance as DatasetProvenance
 
 _PUBLIC_EXPORTS = {
     "DatasetFileReport": "vrl.trainers.data.artifacts",
