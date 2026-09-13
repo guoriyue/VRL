@@ -95,3 +95,48 @@ env CUDA_VISIBLE_DEVICES= \
 Observed: `2.12.0+cu130 0.40.0 5.13.0`, then successful component imports.
 All preflight command sessions exited. GPUs remain available; this document is
 not a GPU claim or an assertion that H3 fits or runs successfully.
+
+## 2026-09-13: released-config meta placement
+
+Executed a weight-free placement probe against the pinned revision above.
+The probe retrieved only the transformer and text-encoder JSON configurations,
+constructed their real architectures with Accelerate `init_empty_weights`, and
+asserted every parameter and buffer remained on the meta device. No released
+weights were downloaded; no CUDA model was created. Process exited 0.
+
+Artifacts:
+
+- `/mnt/nvme/outputs/wan22_i2v_cache/h3_meta_placement_probe.py`
+- `/mnt/nvme/outputs/wan22_i2v_cache/h3_meta_placement_20260913.json`
+
+The JSON retains both input configurations and complete inferred device maps.
+Accelerate `infer_auto_device_map` used the models' native no-split classes,
+BF16 weight accounting, and explicit FP32 exceptions for the transformer's
+`_keep_in_fp32_modules`. It counted 33,122,992,896 transformer parameters and
+33,357,390,064 text-encoder parameters. Transformer accounting preserves 13
+FP32 parameter/buffer tensors, including the computed RoPE buffer.
+
+With a 32 GiB per-device weight budget, all mapped tensors stayed on the
+requested GPU IDs, without CPU or disk fallback:
+
+| Component | Device | Estimated resident weights and buffers (GiB) |
+| --- | --- | ---: |
+| Transformer | 0 | 30.408 |
+| Transformer | 1 | 31.321 |
+| Text encoder | 2 | 30.468 |
+| Text encoder | 3 | 31.664 |
+
+36 and 40 GiB budgets also produced GPU-only maps but packed more weights on
+the first device of each pair. These are capacity estimates, not measured GPU
+memory, executed dispatch, generation, or training acceptance. They exclude
+both VAEs, activations, LoRA, gradients, optimizer state and transfer buffers.
+In particular, fitting the two large components does not prove the full
+pipeline fits with the FP32 video VAE co-resident.
+
+Next technical gate: execute a small random-weight H3 with the proposed
+cross-device dispatch and compare against its unsharded forward. Native H3
+performs functional scatter/select operations outside leaf modules, so a
+valid weight map alone cannot establish device-correct execution. Then wire
+placement through the family loader and lifecycle without whole-model moves.
+Released-weight execution still awaits the deployment and model-name
+confirmations above; do not label this meta probe a model GPU run.
