@@ -623,3 +623,46 @@ comparison source. GPU job exited 0; unchanged-threshold CPU comparison exited
 2. Fresh GPU inventory empty; all four GPUs released. Native-compatible CP
 dispatch remains unapproved. Other individual overrides/interactions and the
 full training/quality gates remain open.
+
+## Fixed-row-only ablation: a second independent native-parity failure
+
+Candidate `435c8fa2` was unchanged. The native DP4 single-slice harness changed
+only Linear execution to `fixed_row_linear_compute(base_handle, rows=64)`.
+No FP32-LoRA module overrides were supplied, and default native SDPA selection
+was retained. The saved eight real samples, initial adapter state, timestep 10,
+whole-group advantages, two samples/rank with loss divided by two, strict IEEE
+determinism, checkpointing and native optimizer boundary match the control.
+
+Execution completed, all four final trainable replicas were exactly equal,
+560 gradients were captured and 280 trainable tensors changed. Gradient norm
+was 0.0008438613731. Maximum saved-rollout log-prob error was 3.8146973e-6,
+below the admission tolerance, but the unchanged update-parity limits failed:
+
+| Fixed-row-only vs native DP4 | Relative L2 | Max absolute error |
+| --- | ---: | ---: |
+| Gradients | 0.5711056042 | 1.0721618e-5 |
+| Updates | 0.5755606012 | 1.9952650e-4 |
+| Adam first moments | 0.5711056042 | 1.0721621e-6 |
+| Adam second moments | 0.7067326491 | 1.0648253e-13 |
+
+Limits remain gradient/update/first-moment relative L2 1e-4, second-moment
+relative L2 2e-4, and parameter maximum absolute error 1e-6. Parameters had
+maximum absolute error 1.9952650e-4. No thresholds were relaxed. This isolates
+another override sufficient to fail native parity on this group: removing
+efficient SDPA alone cannot make the fixed-row contract native-equivalent.
+It does not identify higher-precision truth, prove a general Linear defect,
+or establish learning quality. FP32-LoRA-only and interaction effects remain
+unresolved; the separate single-factor errors must not be added together.
+
+The measured diagnostic region took 244.957895 seconds versus native DP4's
+36.435179 seconds, with peak allocated memory 15,246,827,520 bytes/rank.
+These are single-run, single-time-slice observations, not complete training
+throughput or a statistically qualified benchmark. The fixed-row path is not
+approved as a semantics-preserving or performance-improving native replacement.
+
+Evidence: `/mnt/nvme/outputs/wan22_i2v_cache/cosmos_real_fixed_rows_only_dp4_update`,
+including executed GPU/comparison sources, four transition/pre-step receipts,
+`update.pt`, execution-only `result.json` and failed `native_comparison.json`.
+GPU process exited 0, CPU comparison exited 2 on threshold failure. Fresh GPU
+compute inventory was empty; all four GPUs released. Full production training,
+native-compatible CP, recovery, EMA and quality gates remain open.
