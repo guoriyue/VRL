@@ -246,3 +246,38 @@ effect. Local backward projections/reductions remain to be isolated.
 Both backend/communication controls are terminal, fresh compute inventory is
 empty, and GPUs 0-1 are released. No production runtime, dependencies or
 thresholds changed. These controls do not establish training acceptance.
+
+## Block-26 internal backward trace
+
+The diagnostic option `--trace-module-gradients 26` records output values and
+tensor gradients of norm1/attn1/norm2/attn2/norm3 and FF submodules. CP tensors
+at these points are local token slices; detached copies are all-gathered in
+token order, not summed or rescaled. Actual backward gradients are unchanged.
+This control uses efficient SDPA, full-shape conditioning, ordinary gather
+precision and each branch's CPS loss.
+
+All recorded BF16 forward values match exactly in both CFG calls. Selected
+output-gradient relative L2 errors, ordered in backward direction:
+
+| Module output | CFG call 0 | CFG call 1 |
+| --- | ---: | ---: |
+| ff / ff.net.2 | 0.0000906487 | 0.0000394666 |
+| ff.net.0 | 0.000236147 | 0.000126368 |
+| norm3 (FF input) | 0.000578365 | 0.000335665 |
+| attn2 | 0.000400255 | 0.000270394 |
+| norm2 (cross-attention input) | 0.00538186 | 0.00191891 |
+| attn1 | 0.000482450 | 0.000290001 |
+| norm1 (self-attention input) | 0.00365589 | 0.00359196 |
+
+Attention backward increases the relative discrepancy at these boundaries;
+this is not yet a localization to SDPA versus Q/K/V/output projections,
+nor proof of a faulty operator. Residual paths mean the table is not a single
+unbranched gradient chain. Aggregate BF16 parameter-gradient relative L2 is
+0.0277477, FP32 2.38874e-5. Small variations from earlier runs are preserved,
+not hidden by substituting previous measurements.
+
+Evidence: `cosmos_cp_block26_internal_l40s/rank-{0,1}.json` and adjacent log.
+Both rank case reports match; torchrun exits 0, fresh compute inventory is
+empty and GPUs 0-1 are released. No production changes or acceptance pass.
+Next isolation should capture attention-internal gradients, distinguishing
+replicated cross-attention K/V from token-sharded self-attention tensors.
