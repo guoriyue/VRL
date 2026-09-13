@@ -395,3 +395,35 @@ trajectory, or MP4 output. Artifacts are under
 All jobs terminal, fresh compute inventory empty, all GPUs released. Released
 weights, full geometry/peak memory, production ownership and controlled timing
 remain open; no H3 download or long queue was started.
+
+## 2026-09-13: native modular reload and production batch execution
+
+Removed the substituted modular metadata/small-component loader from the
+unified integration test. It now constructs a native `MiniMaxH3ModularPipeline`
+for `t2va`, registers all eight real tiny components, installs the upstream
+video scheduler before serialization, and calls native `save_pretrained`.
+The resulting local directory includes modular metadata, tokenizer, processor,
+both VAEs, both schedulers, encoder and transformer weights. The partitioned
+generation builder reloads this directory with no loader monkeypatches.
+
+The same test now submits an actual `GenerationRequest` to the production
+`MiniMaxH3BatchExecutor.forward_batch`: one prompt/sample, 16x16, 8 frames,
+3 steps, guidance 1, 24 fps and seed 17. In addition to the existing staged
+decode assertions, it verifies finite returned video, observations, actions
+and nonempty log-probs; observation/action shapes match, video is
+`[1,3,8,16,16]`, and audio per-step replay tensors are present. After execution,
+both VAEs are CPU-resident and the encoder is restored across GPUs 2 and 3.
+
+Complete H3 family suite with both GPU opt-ins: **50 passed in 7.11 seconds**,
+exit 0. Ruff, formatting and diff checks passed. Local native pipeline files
+are retained under
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_native_executor_pytest`.
+The documented four-GPU environment and full H3 family pytest command reproduce
+this gate. All jobs terminal, fresh compute inventory empty, all GPUs released.
+
+This replaces the earlier substituted-loader limitation for the tiny native
+pipeline and adds local production batch execution. It does not establish
+released-model geometry/weights, rollout/replay numeric agreement for these
+executor trajectories, Ray/collector integration, reward/learning, full trainer
+recovery, MP4 quality or throughput. Test-suite wall time is not a model speed
+measurement. No released weights were downloaded or long queue started.
