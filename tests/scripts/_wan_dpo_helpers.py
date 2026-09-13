@@ -52,11 +52,9 @@ def install_local_pickapic(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, An
     reached (or, for a guard, never reached) dataset loading.
     """
 
-    from PIL import Image
-
-    from datasets import Dataset
-
     def jpeg(color: tuple[int, int, int]) -> bytes:
+        from PIL import Image
+
         buffer = io.BytesIO()
         Image.new("RGB", (40, 40), color).save(buffer, format="JPEG")
         return buffer.getvalue()
@@ -72,6 +70,8 @@ def install_local_pickapic(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, An
     calls: list[dict[str, Any]] = []
 
     def from_hub(cls, **kwargs):
+        from datasets import Dataset
+
         calls.append(kwargs)
         return cls(
             Dataset.from_list(rows),
