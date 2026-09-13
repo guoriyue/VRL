@@ -13,42 +13,7 @@ import sqlite3
 
 import pytest
 
-from vrl.scripts.perf.nsys_report import (
-    GpuBusyReport,
-    clip_intervals,
-    merge_intervals,
-    overlap_length,
-    union_length,
-)
-
-
-# ---------------------------------------------------------------------------
-# Pure interval algebra — no sqlite, no GPU
-# ---------------------------------------------------------------------------
-def test_merge_unions_overlapping_and_touching() -> None:
-    # [0,10] and [5,15] overlap -> [0,15]; [20,25] disjoint; [25,30] touches -> [20,30]
-    merged = merge_intervals([(0, 10), (5, 15), (20, 25), (25, 30)])
-    assert merged == [(0, 15), (20, 30)]
-
-
-def test_union_length_counts_overlap_once() -> None:
-    # naive sum would be 10+10+5 = 25; the union is [0,15]+[20,25] = 20
-    assert union_length([(0, 10), (5, 15), (20, 25)]) == 20
-
-
-def test_union_drops_empty_intervals() -> None:
-    assert union_length([(5, 5), (10, 9)]) == 0
-
-
-def test_clip_keeps_only_the_in_window_part() -> None:
-    # a kernel [8,20] crossing the window edge [0,10] must contribute only [8,10].
-    # This is the projection-vs-union distinction: projection would credit all 12.
-    assert clip_intervals([(8, 20)], 0, 10) == [(8, 10)]
-
-
-def test_overlap_length_disjoint_is_zero() -> None:
-    assert overlap_length(0, 5, 10, 20) == 0
-    assert overlap_length(0, 15, 10, 20) == 5
+from vrl.scripts.perf.nsys_report import GpuBusyReport
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +105,21 @@ def test_nvtx_attribution_uses_union_not_projection(tmp_path) -> None:
     assert stage.summed_wall_ns == 800
     assert stage.union_busy_ns == 500  # kernels clipped to the range, unioned
     assert stage.busy_fraction == pytest.approx(500 / 800)
+
+
+def test_overlapping_nvtx_ranges_do_not_double_count_gpu_busy(tmp_path) -> None:
+    path = _make_db(tmp_path / "overlap.sqlite")
+    with sqlite3.connect(path) as db:
+        db.execute("delete from NVTX_EVENTS")
+        db.executemany(
+            "insert into NVTX_EVENTS values (?,?,?,?)",
+            [("rollout", 100, 600, 59), ("rollout", 150, 700, 59)],
+        )
+    (stage,) = GpuBusyReport.from_capture(path).nvtx
+    assert stage.occurrences == 2
+    assert stage.summed_wall_ns == 1050
+    # The combined window is 100..700: 100 ns of kernel 1 and 200 of kernel 2.
+    assert stage.union_busy_ns == 300
 
 
 def test_window_nvtx_selects_named_range(tmp_path) -> None:

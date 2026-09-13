@@ -38,7 +38,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,47 +58,8 @@ _API_VERSION_SUFFIX = re.compile(r"_v\d+$")
 Interval = tuple[int, int]
 
 
-# ---------------------------------------------------------------------------
-# Interval algebra — the core of the kernel-union metric, kept pure so it is
-# unit-testable on any machine with no GPU and no sqlite.
-# ---------------------------------------------------------------------------
-def merge_intervals(intervals: Iterable[Interval]) -> list[Interval]:
-    """Merge overlapping/touching ``(start, end)`` intervals into disjoint runs.
-
-    Empty (``end <= start``) intervals are dropped. Touching intervals
-    (``next.start == prev.end``) merge — back-to-back kernels are continuous GPU
-    busy, not two separate busy spans.
-    """
-
-    return list(TimeIntervals((s, e) for s, e in intervals if e > s).intervals)
-
-
-def union_length(intervals: Iterable[Interval]) -> int:
-    """Total length covered by the union of ``intervals`` (overlaps counted once)."""
-
-    return TimeIntervals((s, e) for s, e in intervals if e > s).duration
-
-
-def clip_intervals(intervals: Iterable[Interval], lo: int, hi: int) -> list[Interval]:
-    """Clip each interval to ``[lo, hi]``, dropping anything outside the window.
-
-    This is what keeps union-busy honest at window edges: a kernel that starts
-    inside a window but ends after it contributes only the part that actually
-    falls inside — unlike projection, which would credit the whole kernel.
-    """
-
-    out: list[Interval] = []
-    for start, end in intervals:
-        s2 = max(start, lo)
-        e2 = min(end, hi)
-        if e2 > s2:
-            out.append((s2, e2))
-    return out
-
-
 def overlap_length(start: int, end: int, lo: int, hi: int) -> int:
-    """Length of ``[start, end]`` ∩ ``[lo, hi]`` (0 if disjoint)."""
-
+    """Clip one API/copy event to a report window without constructing a timeline."""
     return max(0, min(end, hi) - max(start, lo))
 
 
@@ -261,7 +222,7 @@ class GpuBusyReport:
                         device_id=dev,
                         name=names.get(dev, f"device{dev}"),
                         kernel_count=len(ivals),
-                        busy_ns=union_length(ivals),
+                        busy_ns=TimeIntervals((s, e) for s, e in ivals if e > s).duration,
                         wall_ns=wall,
                     )
                 )
@@ -635,7 +596,7 @@ def _idle_gaps(
     """
 
     lo, hi = window
-    merged = merge_intervals(busy_intervals)
+    merged = TimeIntervals((s, e) for s, e in busy_intervals if e > s).intervals
     gaps: list[Interval] = []
     cursor = lo
     for start, end in merged:
@@ -691,17 +652,15 @@ def _nvtx_attribution(
         by_name.setdefault(str(text), []).append((start, end))
 
     out: list[NvtxBusy] = []
+    kernel_timeline = TimeIntervals((s, e) for s, e in kernels if e > s)
     for name, spans in by_name.items():
         summed_wall = sum(e - s for s, e in spans)
-        clipped: list[Interval] = []
-        for s, e in spans:
-            clipped.extend(clip_intervals(kernels, s, e))
         out.append(
             NvtxBusy(
                 name=name,
                 occurrences=len(spans),
                 summed_wall_ns=summed_wall,
-                union_busy_ns=union_length(clipped),
+                union_busy_ns=kernel_timeline.overlap(TimeIntervals(spans)),
             )
         )
     out.sort(key=lambda n: n.summed_wall_ns, reverse=True)
@@ -741,10 +700,7 @@ __all__ = [
     "NvtxBusy",
     "ReportProvenance",
     "capture_window",
-    "clip_intervals",
-    "merge_intervals",
     "nvtx_window",
     "open_report",
     "overlap_length",
-    "union_length",
 ]
