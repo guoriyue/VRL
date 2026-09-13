@@ -24,7 +24,7 @@ an existing process group and do not change process identity or model wrapping.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -99,6 +99,88 @@ def context_parallel_heads_to_tokens(tensor: torch.Tensor, *, group: Any) -> tor
         raise ValueError("token count must be divisible by context parallel group size")
     full = _context_parallel_gather(tensor, 1, group)
     return full.chunk(world, dim=2)[rank].contiguous()
+
+
+@dataclass(frozen=True, slots=True)
+class ContextParallelGroups:
+    """A complete world arranged as contiguous CP groups and strided DP groups."""
+
+    cp_group: Any
+    dp_group: Any
+    cp_size: int
+    dp_size: int
+    cp_rank: int
+    dp_rank: int
+
+
+def create_context_parallel_groups(cp_size: int) -> ContextParallelGroups:
+    """Collectively create DP x CP groups in identical order on every world rank.
+
+    Does not initialize the default group. The process-group owner is also
+    responsible for shutdown. CP peers must receive identical replay inputs;
+    sampler identity is dp_rank/dp_size, not physical rank/world size.
+    """
+    import torch.distributed as dist
+
+    if not dist.is_initialized():
+        raise RuntimeError("CP groups require an initialized process group")
+    world, rank = dist.get_world_size(), dist.get_rank()
+    if isinstance(cp_size, bool) or not isinstance(cp_size, int) or cp_size < 2 or world % cp_size:
+        raise ValueError("CP size must be an integer >= 2 dividing world size")
+    dp_size = world // cp_size
+    cp_group = dp_group = None
+    for dp_rank in range(dp_size):
+        members = list(range(dp_rank * cp_size, (dp_rank + 1) * cp_size))
+        group = dist.new_group(members)
+        if rank in members:
+            cp_group = group
+    for cp_rank in range(cp_size):
+        members = list(range(cp_rank, world, cp_size))
+        group = dist.new_group(members)
+        if rank in members:
+            dp_group = group
+    return ContextParallelGroups(
+        cp_group, dp_group, cp_size, dp_size, rank % cp_size, rank // cp_size
+    )
+
+
+def reduce_context_parallel_gradients(
+    parameters: Iterable[torch.nn.Parameter], *, groups: ContextParallelGroups
+) -> None:
+    """SUM CP contributions, then average independent DP replicas in place.
+
+    Call exactly once after local gradient accumulation, before clipping/step;
+    do not also use a DDP reducer. Replicated full-output losses must already
+    be divided by CP size, and accumulation normalized by the caller. Every
+    world rank supplies the same ordered dense parameter list on one device.
+    Globally unused gradients remain None (preserving optimizer semantics).
+    """
+    import torch.distributed as dist
+
+    parameters = list(parameters)
+    if not parameters:
+        return
+    device = parameters[0].device
+    if any(parameter.device != device for parameter in parameters):
+        raise ValueError("CP gradient reduction requires one parameter device")
+    flags = torch.tensor(
+        [0 if p.grad is None else (2 if p.grad.is_sparse else 1) for p in parameters],
+        dtype=torch.int32,
+        device=device,
+    )
+    dist.all_reduce(flags, op=dist.ReduceOp.MAX)
+    active = flags.tolist()
+    if 2 in active:
+        raise ValueError("CP gradient reduction requires dense gradients")
+    for parameter, present in zip(parameters, active, strict=True):
+        if not present:
+            continue
+        if parameter.grad is None:
+            parameter.grad = torch.zeros_like(parameter)
+        dist.all_reduce(parameter.grad, op=dist.ReduceOp.SUM, group=groups.cp_group)
+        if groups.dp_size > 1:
+            dist.all_reduce(parameter.grad, op=dist.ReduceOp.SUM, group=groups.dp_group)
+            parameter.grad.div_(groups.dp_size)
 
 
 @dataclass(frozen=True, slots=True)
