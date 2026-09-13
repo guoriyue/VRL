@@ -582,3 +582,44 @@ executed GPU source, native update/pre-step/transition artifacts, `result.json`
 0; both parity comparisons exited 2 as intended on threshold failure. Fresh
 GPU inventory empty, all four GPUs released. Full recipe, native-compatible
 CP update semantics, recovery, EMA and quality gates remain open.
+
+## Attention-only ablation: efficient SDPA is sufficient for parity failure
+
+The same real DP4 single-slice harness changed only the attention selection
+from the native default to `sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION)`.
+Ordinary Linear and LoRA autocast were retained; fixed-row execution and
+explicit FP32-LoRA overrides were not installed. All other workload, state,
+determinism, optimizer, sample ownership and capture settings were unchanged.
+
+The update executed successfully and produced identical final replicas across
+four ranks. All eight log-prob absolute errors were below 1e-3, with maximum
+4.3213367e-6. Gradient norm was 0.0008289589896; 560 gradients were captured
+and 280 trainable tensors changed. These execution checks did not imply
+native-update parity: the independent unchanged-threshold comparison failed.
+
+| Efficient-only vs native DP4 | Relative L2 | Max absolute error |
+| --- | ---: | ---: |
+| Gradients | 0.5228995987 | 1.1342578e-5 |
+| Updates | 0.5470939425 | 1.9958774e-4 |
+| Adam first moments | 0.5228995987 | 1.1342580e-6 |
+| Adam second moments | 0.6227557954 | 8.8303137e-14 |
+
+For this real group, forcing efficient SDPA alone is sufficient to reproduce
+a large gradient/update mismatch. It is not necessary to combine it with
+fixed-row GEMMs or FP32 LoRA to fail the native-parity gate. This does not
+prove those other changes have no effect, apportion the combined error, or
+establish which backend is more accurate against a higher-precision reference.
+Do not describe efficient SDPA generally as broken based on this one workload.
+
+Measured diagnostic region took 100.509438 seconds versus native DP4's
+36.435179 seconds. Peak allocated memory was 15,429,801,984 bytes/rank. These
+single-run, single-time-slice observations isolate a workload-specific cost,
+not a general backend benchmark or end-to-end training speedup.
+
+Evidence: `cosmos_real_efficient_only_dp4_update` under the NVMe output root,
+including executed GPU source, all transition/pre-step/update artifacts,
+execution `result.json`, failed `native_comparison.json` and its executed
+comparison source. GPU job exited 0; unchanged-threshold CPU comparison exited
+2. Fresh GPU inventory empty; all four GPUs released. Native-compatible CP
+dispatch remains unapproved. Other individual overrides/interactions and the
+full training/quality gates remain open.
