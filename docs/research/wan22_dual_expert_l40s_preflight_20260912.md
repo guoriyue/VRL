@@ -6,6 +6,10 @@ transitions with native frozen FP32 preservation and matching batch size two.
 Batch size one still differs. Gradient/update equivalence and controlled resume
 remain open; historical diagnostics and the latest matrix follow below.
 
+Latest gradient gate: matched-batch real one/two-rank gradients differ by
+0.403% relative L2 and are not accepted under the fixed 1e-4 gate. See the
+final section; exact forward replay did not close training equivalence.
+
 ## Reproducible artifacts
 
 Runtime: clean `382d08254848f19e398243348a3e3f35a4f774f5` in
@@ -271,3 +275,75 @@ comparing actual gradients, accumulation and updates across one and multiple
 ranks. Native policy also changes gradient reduction dtype; do not infer its
 gradient semantics from forward equality. No public default, clipping threshold
 or full-size I2V recipe was changed; training remains stopped pending that gate.
+
+## Four-sample gradient and accumulation control
+
+On clean candidate `52a7cf44`, `wan22_four_sample_fixture` captured four distinct
+real samples in one prompt group, using two generation batches of two. The
+initial LoRA hash is unchanged from the earlier two-sample fixture. The saved
+40-transition trajectory hash is
+`f441099acd2af7f976710547eb2f9b61ea01ab575731996cfc991dd16f7a081c`.
+The audit checks finite values and distinct initial latents, not just row count.
+Collection wall was 180.918 seconds (generation 138.164, reward 42.754), with
+successful real Kling parking and owned Ray shutdown, exit zero.
+
+`wan22_fixed_gradient_probe.py` ran one-rank FSDP accumulation and two-rank
+FSDP on this same fixture. Both used native frozen FP32 preservation, replay
+batch two, full_cpu activation checkpointing, the same four-sample advantages
+and all nine replay steps from the bounded recipe. The single rank averaged
+two two-row chunks per step; two ranks each handled one of those same chunks,
+with FSDP rank averaging. Each arm covered exactly 36 sample/step pairs and
+every pre-update log probability was tensor-exact to generation. All 1,280
+trainable gradients were saved before optimizer preparation or clipping.
+
+The initial configuration attempt exited before loading because the harness
+used `actor.microbatch_size=2`, which counts prompts, not replay samples.
+The correct public knob is `actor.samples_per_replay_batch=2`. The successful
+single output is `wan22_fixed_gradient_single_matched`; the two-rank output is
+`wan22_fixed_gradient_two`. Both completed and exited zero.
+
+An important harness limitation was discovered while auditing optimizer output:
+the executed probe called `build_optimizer` directly instead of the online
+trainer's `_ensure_optimizer`, omitting FP32 master weights. Its `update.pt`
+files are therefore **plain low-precision Adam diagnostics, not native online
+optimizer acceptance**. This does not affect the captured pre-clip gradients.
+Executed source copies are preserved in each output. The adjacent probe has
+since been corrected to call `_ensure_optimizer`, but that corrected GPU
+optimizer path has not yet been rerun.
+
+To inspect the consequences without repeating model backward,
+`wan22_cached_master_update.py` rebuilt the initial LoRA on CPU, attached each
+arm's saved full gradients, and called the native `_ensure_optimizer` and
+`_clip_and_step`. It asserted the FP32 wrapper, finite gradients and positive
+norm below the clipping limit. The resulting `master_update.pt` files include
+FP32 masters, Adam slots, exact parameter order and updated BF16 projections.
+This is CPU optimizer-only replay, not distributed optimizer lifecycle proof.
+
+`wan22_fixed_gradient_compare.py` verifies sample/step coverage, zero replay
+errors, identical advantages and optimizer hyperparameters, finite tensor
+state, parameter ordering, first-step counters and exact master-to-BF16
+projections. Its fixed thresholds were declared before comparison; it exits
+two and writes `wan22_fixed_gradient_comparison.json` with `not_accepted`:
+
+| Compared quantity | Relative L2 difference | Fixed limit |
+| --- | ---: | ---: |
+| Pre-clip gradients | 0.0040335740695426345 | 0.0001 |
+| BF16 model update from CPU master replay | 0.007979809568899933 | 0.0001 |
+| FP32 master update | 0.007895163367033808 | 0.0001 |
+| Adam first moment | 0.004033572380764671 | 0.0001 |
+| Adam second moment | 0.007646695396405864 | 0.0002 |
+
+Maximum gradient difference is 1.52587890625e-05; maximum master difference is
+9.521072206553072e-05. Thus matching forward precision and batch shape does not
+establish single/multi-rank training semantics. Native BF16 reduction and
+different accumulation order are candidates to isolate, not yet a proven sole
+cause. Do not relax thresholds or infer learning quality from this diagnostic.
+
+The measured gradient loops took about 247.041 seconds (one rank) and 144.280
+seconds (two ranks), excluding setup; these are component timings, not a fair
+end-to-end training speedup claim. The optimizer-wrapper omission also prevents
+treating the complete probe times as native-update performance acceptance.
+All GPU/runtime and CPU audit sessions are terminal, and fresh GPU/Ray process
+inventories are empty. Next isolate per-microbatch gradient reduction versus
+cross-microbatch accumulation, then rerun the correctly wrapped distributed
+optimizer and controlled resume only after the gradient gate passes.
