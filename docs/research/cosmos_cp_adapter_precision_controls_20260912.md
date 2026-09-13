@@ -206,3 +206,43 @@ integration and full-resolution acceptance remain open.
 Evidence: `cosmos_cp_backward_blocks_l40s/rank-{0,1}.json` and adjacent log.
 Torchrun exits 0, fresh compute inventory is empty, and GPUs 0-1 are released.
 The runtime candidate remains clean; no production or dependency changes.
+
+## Attention backend control
+
+Selecting PyTorch math SDPA for both branches while retaining full-shape
+conditioning and actual CPS loss does not remove the backward discrepancy.
+BF16 aggregate parameter-gradient relative L2 is 0.0275351, compared with
+0.0265821 for the traced efficient-SDPA control. All 56 BF16 block outputs,
+the final output, and logprob match within each reference/CP comparison.
+Final block output gradients match, but block 26 relative errors are
+0.000657616 and 0.000741438 in the two CFG calls. FP32 aggregate parameter
+gradient error is 2.81032e-5.
+
+This is evidence against attributing the discrepancy solely to efficient
+attention. It is not an efficient-versus-math output equivalence test:
+changing the backend also changes the reference numerical trajectory.
+Evidence: `cosmos_cp_math_sdpa_l40s/rank-{0,1}.json` and adjacent log.
+Both ranks match and torchrun exits 0. No production backend or threshold
+changed; the diagnostic rejects math selection for its separate native-CP
+mode, whose implementation was only exercised with efficient SDPA.
+
+## Gather communication precision control
+
+`--fp32-gather` promotes differentiable gather inputs to FP32 and casts the
+concatenated result back to its original dtype. It covers block outputs,
+self-attention K/V and the full-shape conditioning projections. This promotes
+the gather backward's cross-rank accumulation without changing the forward
+BF16 values. It does not promote local operator arithmetic or claim a memory
+optimization. This control returns to efficient SDPA.
+
+BF16 aggregate parameter-gradient relative L2 is 0.0271955, with all block
+outputs, final output and scalar logprob still exactly matching. FP32 aggregate
+error is 2.39783e-5. Both ranks' full case reports match and torchrun exits 0.
+Evidence: `cosmos_cp_fp32_gather_l40s/rank-{0,1}.json` and adjacent log.
+The absence of a material reduction rules out low-precision gather accumulation
+as the sole explanation in this case, not every possible distributed numeric
+effect. Local backward projections/reductions remain to be isolated.
+
+Both backend/communication controls are terminal, fresh compute inventory is
+empty, and GPUs 0-1 are released. No production runtime, dependencies or
+thresholds changed. These controls do not establish training acceptance.
