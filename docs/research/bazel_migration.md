@@ -21,7 +21,7 @@
 - [x] 从唯一依赖来源生成 Bazel 所需锁，避免手工双份版本。（uv.lock → 按 profile 导出；
   CountGD 的 `third_party/countgd/requirements.txt` 是它那一栈的唯一表）
 - [~] 分离主模型、vLLM、MAGI-1、CountGD 依赖目标。（主模型 `//:vrl`、vLLM `//:vrl_vllm`、
-  shared-GPU `//:vrl_shared_gpu`、CountGD `//:vrl_countgd` 已分离；videoeval 与 MAGI-1 未做）
+  shared-GPU `//:vrl_shared_gpu`、CountGD `//:vrl_countgd`、videoeval `//:vrl_videoeval` 已分离；MAGI-1 未做）
 - [~] 固定 CUDA Toolkit、宿主编译器、Torch ABI、GPU 架构；真实扩展编译及执行。
   （Toolkit 13.0.2 = torch cu130、LLVM 19.1.7 + sysroot、sm_120 已固定并在 GPU 执行；
   仓库没有自有 Torch 扩展源码，扩展编译链没有真实用例可验收）
@@ -29,10 +29,11 @@
 - [x] 外部源码版本与补丁进入构建输入。（CountGD 为 http_archive + patch + http_file；
   其他 vendored 上游仍是 git submodule，由 `make setup` 拉取）
 - [x] CountGD 权重与依赖进入 Bazel，评分/服务等价性通过后删除旧安装器。
-- [x] 真实生成与训练步骤测试通过，非 CPU/mock 替代。（5 个真实权重 case）
+- [x] 真实生成与训练步骤测试通过，非 CPU/mock 替代。（10 个真实权重 case）
 - [x] Reward 服务集成测试通过。（CPU lane 内真实子进程 + HTTP；CountGD 服务 smoke）
-- [~] Ray、torchrun、跨节点产物交付与解释器选择明确并验证。（单机 torchrun 双 rank、
-  本地 Ray 集群、python zip 在空环境运行均已验证；真实多节点未验证——只有一台机器）
+- [x] Ray、torchrun、跨节点产物交付与解释器选择明确并验证。（本机 torchrun 双 rank、本地 Ray
+  集群；zip 产物交付到另一台机器（EC2 4×L40S）在空环境运行，4 rank NCCL 通过。多节点 NCCL/Ray
+  集群仍未跑，见未完成）
 - [x] 普通 lint/配置/单元测试不下载所有模型权重。
 - [x] 干净 checkout 验证，无原有 venv、隐式 CUDA_HOME 依赖。（见下）
 - [x] CI、文档、运行入口迁移；已替代旧流程删除。
@@ -281,19 +282,38 @@ bazelisk 所在 PATH）+ 全新 `--output_base`：
 - `bazel test --config=gpu //tests/build:torch_cuda_test //tests/toolchains:cuda_execution_test`
   在同一环境通过：torch 在 GPU 执行且进程内没有宿主 CUDA 库；独立核函数在 sm_120 执行。
 
+## 第二轮：原"未完成"六项的处理（2026-09-13）
+
+1. **MAGI-1**：未做，原因比"需要源码构建"更硬——MAGI 官方栈是 flash-attn 2.4.2 + torch 2.4/cu124，
+   flash-attn 2.4.2 只有 sm80–sm90 内核，本机 RTX 5090（sm_120）根本无法运行它，所以即使
+   构建出来也没有真实验证。Bazel 上可行的做法与 tokenizers 相同：`rust_wheel` 式的仓库规则
+   下载固定 CUDA 12.4 工具包 + torch 2.4 轮子，`pip wheel` 编 flash-attn，flashinfer 用其
+   索引上的预编译 wheel，`third_party/magi_1/requirements.txt` 作为该栈唯一版本表，
+   `//third_party/magi_1:python` 作为 `model.python_executable`。等有 sm80–sm90 的机器再做。
+2. **videoeval**：已解决。`tools/dependencies/rust_wheel.bzl` 用固定 Rust 1.89 从锁定 sdist 构建
+   tokenizers 0.13.3 的 cp312 wheel（21 秒），导出规则把该行改成 `file://` + hash；
+   `@vrl_pypi_videoeval`、`//:vrl_videoeval`、`//:video_reward_suite`、
+   `//tests/build:videoeval_stack_test`。发现：仓库规则继承调用 shell 的 `CFLAGS`（conda 的
+   `-isystem`），已在规则内清空编译器变量。
+3. **跨机器交付**：已验证到"另一台机器"。`//tools/delivery:node_probe` 的 zip（3.6 GB）传到
+   EC2 g6e.12xlarge（4×L40S，驱动 580.173，glibc 2.39），`env -i` 下运行：内嵌 3.12.13、
+   torch cu130 上四张卡执行、进程无宿主 CUDA 库、4 rank torchrun NCCL all-reduce（含 `import vrl`）
+   全部通过。仍未做：两台以上机器组成的 NCCL/Ray 集群。
+4. **Torch 扩展编译**：仍无真实用例（仓库无扩展源码；CountGD 的 CUDA op 在 qualified CPU 服务
+   里不构建；MAGI 的 flash-attn 本机无法运行）。工具链（CUDA 13.0.2 + LLVM 19）与
+   `rust_wheel` 式的源码构建规则都已就位，出现用例即可接。
+5. **e2e case**：全部解决。janus_pro：Janus 源码改为 `@janus_src`（固定 commit + sha256 +
+   transformers 5 补丁）；flow_dppo/grpo_guard：case 覆盖项优先于 harness 默认，`ppo_epochs=2`；
+   anima×2 与 janus_pro 在 fp32（anima 还需 IEEE）下通过。10 个有缓存的 case 全绿。
+   两个真实发现：Janus-Pro-1B bf16 rollout/replay log-prob 偏差 0.04（限 0.01）；Anima 合成
+   replay 在 bf16 与 TF32 下均超过 recipe 的 1e-6 限。
+6. **宿主工具**：GNU `patch` 不再需要（补丁不再改 C/CUDA 源码的末尾换行——它们不在
+   qualified 摘要内），Bazel 内置 patcher 直接应用。`git`（子模块）、NVIDIA 驱动、glibc ≥ 2.28
+   属执行平台要求；子模块改为 http_archive 可去掉 `git`，未做。
+
 ## 未完成（明确记录）
 
-1. **MAGI-1 环境**：官方 requirements 需 flash-attn 2.4.2 + flashinfer（cu124/torch2.4）
-   源码构建，与 uv.lock 无交集；仍按 README 由用户自建 `third_party/MAGI-1/.venv` 并配置
-   `model.python_executable`。可行路线：rules_python `pip.parse` + 预构建 wheel 仓库，或
-   接受非受管的 CUDA 源码构建；两者都不是"固定工具链"，未做。
-2. **videoeval 环境**：tokenizers 0.13.3 无 cp312 wheel（VBench → transformers 4.33.2），
-   需要 Rust 源码构建；未建 hub。
-3. **真实多节点**：只有一台机器。交付路径（zip / 同路径挂载）与解释器选择已验证到单机；
-   Ray 多节点 runtime_env、NCCL 跨节点未跑。
-4. **Torch C++/CUDA 扩展的 Bazel 编译**：没有真实用例（仓库无扩展源码；CountGD 的 CUDA op
-   在 qualified CPU 服务里不构建）。rules_cuda + LLVM 工具链就绪但只有独立核函数证据。
-5. **e2e 仍失败的 case**（与构建无关，已记录原因）：sd3_5_flow_dppo、sd3_5_grpo_guard、
-   cosmos_anima、cosmos_anima_safe、janus_pro；cosmos_predict2_5 无缓存、nextstep_1 需 64 GiB。
-6. **宿主工具**：GNU `patch`（CountGD 补丁的换行标记）、`git`（子模块）、NVIDIA 驱动、
-   glibc ≥ 2.28。
+- MAGI-1 独立栈（见上，缺可运行的 GPU）。
+- 多机 NCCL/Ray 集群（只有一台本地机器 + 一台单节点 EC2）。
+- Torch C++/CUDA 扩展的真实用例。
+- 未缓存/显存不足的 e2e：cosmos_predict2_5、nextstep_1（64 GiB）。
