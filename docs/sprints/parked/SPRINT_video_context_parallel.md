@@ -28,6 +28,14 @@ BF16 drift than the two-block probe; it is not original P0 acceptance. Real
 family CFG/replay and the training objective remain untested with CP. See
 `../../research/cosmos_cp_released_weights_20260912.md` for pinned cache,
 scope, artifacts and released GPU ownership.
+
+Actual family-forward/CPS-logprob follow-up: fixed-action scalar logprob checks
+pass the unchanged 1e-3 diagnostic limit at two sigma values, including CFG=5.
+However, BF16 aggregate LoRA gradient relative L2 is 0.08469 without CFG and
+0.41371 with CFG=5 at the same low-noise point. Do not promote CP to training
+or count scalar agreement as gradient semantics acceptance. This is a small
+synthetic conditioning/logprob-loss diagnostic, not GRPO/NFT updates or full
+trajectory replay. Evidence: `../../research/cosmos_cp_family_logprob_diagnostic_20260912.md`.
 **来源**: FlashDreams 引擎评审教训 ②——它的多卡故事只有上下文并行且总共
 157 行（`core/distributed/context_parallel.py:32-157`：token 维
 `split_inputs_cp`/`cat_outputs_cp` + ring attention 组），证明视频 DiT 的
