@@ -481,3 +481,82 @@ Baseline profile (AST over `tests/`, 3247 tests):
 Batch targets, from the profile: 17 `get_model_family_entry` swaps across 12
 script tests; `_FakeRay` in 11 files; 39 no-counterpart doubles; private-name
 patches (`_run_command`, `_cumem_allocator`, `_source_head_revision`, `_embed`).
+
+## Night sprint batch 1 (2026-09-13): script tests on real tiny families
+
+Commits: `d0dae3ee` (SANA eval), `6957a59d` (Cosmos-2.5 kling eval),
+`7032e34c` (Cosmos-2.5 frame-prefix gate), `db4cd7a6` (Wan DPO + robotics
+eval), `5ab2530e` (worker identity + perf build_runtime), `ca67d582` (online
+lifecycle). Full suite after the batch: 5123 passed, 36 skipped; the only
+reds are the 8 upstream ones listed in the plan (deselected).
+
+### Tiny families now on disk (all KB-scale, CPU, loaded by the real loaders)
+
+- SANA (`write_tiny_sana_snapshot`): official scheduler + real tiny
+  `SanaTransformer2DModel` under `transformer/`. The replay bundle loads it
+  unpatched; only the rollout `SanaPipeline.from_pretrained` is served by
+  `TinySanaPipeline` (real transformer/VAE/text-encoder modules, doubled
+  denoising loop). `tiny_sana_online_config` resolves the aesthetic GRPO
+  preset onto it with a GPU-less rollout fleet.
+- Cosmos-2.5 (`write_tiny_cosmos25_snapshot`): transformer + Wan VAE + UniPC
+  via `save_pretrained`; `skip_text_encoder` + LoRA; nothing is patched.
+- Wan-2.1 T2V (`write_tiny_wan_snapshot`): word-level tokenizer, one-layer
+  UMT5, tiny transformer + VAE, flow UniPC, written by
+  `WanPipeline.save_pretrained`; nothing is patched.
+
+### Deleted doubles -> which test guards the real error now
+
+- SANA eval `_FakePipeline` / `_FakeModel` -> real `SanaModel` over the tiny
+  pipeline; base-vs-restored witnessed by the weights the pipeline held at
+  call time and by two distinct real schedulers.
+- Cosmos kling eval fake entry/bundle/generate -> real resolve -> LoRA build
+  -> generate -> mp4; restore order witnessed on real checkpoints (fill 1.0
+  vs 2.0); model-release witnessed by weakrefs; source drift by a file
+  written during `from_build`.
+- Frame-prefix gate: 6 fakes (config, precision, entry, resolve_model,
+  prefix video, cuda release) -> the gate runs unpatched on a real libx264
+  prefix mp4 and real `prepare_latents`. Running it real exposed that
+  `build_tiny_wan_vae` had two `dim_mult` levels while diffusers derives
+  8x/4x scale factors from `temperal_downsample`; the fixture now matches.
+- Wan DPO config/identity: fake registry, resources, identity, checkpoint
+  loader, encoders, trainer, CSV, dataset -> `train_wan_2_1_dpo` runs a real
+  step; alias/family theorem = saved checkpoint meta; gradient-checkpointing
+  theorem = the real transformer's flags and the installed
+  `selective_checkpoint_func`; resume theorem = global_step 2 on the resumed
+  run's checkpoints (impossible for a fresh trainer); mismatch = real
+  validator against a second snapshot; drift = file written in
+  `from_build`. Remaining double: the Pick-a-Pic Hub download, replaced by
+  an in-memory `datasets.Dataset` of real JPEG pairs (`_wan_dpo_helpers.py`).
+- Wan robotics eval fake model/generate/write_mp4 -> real `generate_shard`
+  on base and on a real full-parameter checkpoint; same seed grid, different
+  mp4 sha256 only because the loaded weights differ.
+- Worker identity `_FamilyEntry` / `_RuntimeModel` / `_ChunkExecutor` /
+  identity iterator -> the real launch contract from `ray_launch_inputs`;
+  real executor; VAE memory policy checked on the real VAE.
+- Perf `build_runtime` fake resolver -> the real SANA bundle.
+- Online lifecycle: 55 patches -> Ray-side recorders only (placement owner,
+  launcher/runtime, collector, reward, trainer+schedule, weight syncer,
+  save_checkpoint, seal_artifacts). Config, entry, replay bundle, identity,
+  checkpoint validation, resources, launch contract, evidence trace and
+  metrics CSV are real. Topology guards run on a pinned torchrun topology
+  (`cuda_devices` + RANK/LOCAL_RANK/WORLD_SIZE) through the real resolver
+  and the real `DDPStrategy.validate_training_state_parking`.
+
+### Kept as boundary sentinels (and why)
+
+- `test_anima_fixed_eval` / `test_anima_generate` fake entry: Anima's loader
+  hardcodes the Qwen3-0.6B config (`_qwen3_06b_config`) and reads
+  safetensors + Qwen2/T5 tokenizer files, so no KB-scale snapshot exists
+  without changing production. The tests assert config projection captured
+  at the registry boundary, not fake return values.
+- `test_encode_sft_targets` `pytest.fail` sentinel entry: a red line, not a
+  model.
+- Lifecycle reference-conditioned guard: relabels the real SANA entry's
+  `task` to `v2w` because the guard reads the family's declared task and no
+  tiny reference-conditioned family exists on CPU yet.
+
+### Not run here
+
+- `tests/e2e/test_real_checkpoint_rl.py` real-weights lane (needs cached Hub
+  checkpoints); the identity/resume theorems that the plan proposed folding
+  there are instead real on the tiny SANA run above.
