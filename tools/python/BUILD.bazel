@@ -1,1 +1,18 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
 exports_files(["defs.bzl"])
+
+# `imports = ["."]` puts this directory on sys.path, so Python's `site` finds
+# sitecustomize.py at startup in every process using the target's venv.
+py_library(
+    name = "nvidia_preload",
+    srcs = [
+        "__init__.py",
+        "nvidia_preload.py",
+        "sitecustomize.py",
+        "//tools:__init__.py",
+    ],
+    imports = ["."],
+)

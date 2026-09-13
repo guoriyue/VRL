@@ -4,7 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 py_library(
     name = "main",
-    srcs = ["main.py"],
+    srcs = ["main.py", "__init__.py", "//tools:__init__.py"],
     deps = ["@pypi//pytest"],
 )
 

@@ -2,10 +2,17 @@
 
 import os
 import pathlib
+import re
 import sys
 import unittest
 
 import torch
+
+from tools.python.nvidia_preload import preload
+
+# sitecustomize already ran the preload at interpreter startup; this returns
+# what it loaded.
+PRELOADED = preload()
 
 
 class TorchCudaTest(unittest.TestCase):
@@ -20,6 +27,17 @@ class TorchCudaTest(unittest.TestCase):
         y = (x @ x.T).sum().item()
         self.assertTrue(abs(y) < float("inf"))
         self.assertEqual(torch.cuda.get_device_capability()[0] >= 8, True)
+
+    def test_cuda_libraries_come_from_the_lock_not_the_host(self):
+        self.assertTrue(PRELOADED)
+        maps = pathlib.Path("/proc/self/maps").read_text()
+        cuda_libs = sorted(
+            set(re.findall(r"\S+/lib(?:cudart|cublas|cublasLt|cudnn)\.so\S*", maps))
+        )
+        self.assertTrue(cuda_libs)
+        for lib in cuda_libs:
+            self.assertNotIn("/usr/local/cuda", lib)
+            self.assertNotIn("/usr/lib", lib)
 
 
 if __name__ == "__main__":

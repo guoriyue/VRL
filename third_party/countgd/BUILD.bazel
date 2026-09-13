@@ -1,0 +1,69 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load(":defs.bzl", "countgd_runtime")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "ms_deform_attn_torch2.patch",
+    "requirements.txt",
+])
+
+# The qualified runtime tree: patched upstream source + Space assets + the
+# audited build-directory copies, verified against COUNTGD_RUNTIME_TREE_SHA256.
+countgd_runtime(
+    name = "runtime",
+    source = "@countgd_src//:all_files",
+    assets = {
+        "@countgd_space_cfg_app//file": "cfg_app.py",
+        "@countgd_space_checkpoint//file": "checkpoint_best_regular.pth",
+        "@countgd_space_bert_config//file": "checkpoints/bert-base-uncased/config.json",
+        "@countgd_space_bert_model//file": "checkpoints/bert-base-uncased/model.safetensors",
+        "@countgd_space_bert_special_tokens_map//file": "checkpoints/bert-base-uncased/special_tokens_map.json",
+        "@countgd_space_bert_tokenizer//file": "checkpoints/bert-base-uncased/tokenizer.json",
+        "@countgd_space_bert_tokenizer_config//file": "checkpoints/bert-base-uncased/tokenizer_config.json",
+        "@countgd_space_bert_vocab//file": "checkpoints/bert-base-uncased/vocab.txt",
+    },
+)
+
+# bazel run //third_party/countgd:reward_service -- --config vrl/config/reward_service/countgd.yaml
+py_binary(
+    name = "reward_service",
+    srcs = ["//tools/countgd:serve.py"],
+    main = "//tools/countgd:serve.py",
+    data = [":runtime"],
+    deps = [
+        "//:vrl_countgd",
+        "@rules_python//python/runfiles",
+    ],
+)
+
+# The exact-count evaluation with the in-process CountGD backend (see the
+# module docstring for its CLI); same runtime tree and dependency stack.
+py_binary(
+    name = "anima_exact_count_checkpoint_eval",
+    srcs = ["//tools/countgd:anima_exact_count_eval.py"],
+    main = "//tools/countgd:anima_exact_count_eval.py",
+    data = [":runtime"],
+    deps = [
+        "//:vrl_countgd",
+        "@rules_python//python/runfiles",
+    ],
+)
+
+# bazel test //third_party/countgd:service_smoke_test  (fetches the pinned
+# checkpoint; manual so the default CPU suite never downloads model weights).
+# no-sandbox: the sandbox materializes the runtime tree as per-file symlinks,
+# which the reward model's qualified-tree check rejects by design.
+py_test(
+    name = "service_smoke_test",
+    size = "large",
+    srcs = ["//tools/countgd:service_smoke_test.py"],
+    main = "//tools/countgd:service_smoke_test.py",
+    data = [":runtime"],
+    env = {"CUDA_VISIBLE_DEVICES": ""},
+    tags = ["manual", "external", "no-remote", "no-sandbox"],
+    deps = [
+        "//:vrl_countgd",
+        "@rules_python//python/runfiles",
+    ],
+)

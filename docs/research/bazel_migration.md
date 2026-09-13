@@ -19,11 +19,11 @@
 
 - [x] 固定 Bazel 9.2.0、rules_python 2.3.3、Python 3.12.13；首个 sandbox 导入测试通过。
 - [x] 从唯一依赖来源生成 Bazel 所需锁，避免手工双份版本。
-- [ ] 分离主模型、vLLM、MAGI-1、CountGD 依赖目标。（主模型、vLLM 已分离；videoeval 受阻；MAGI-1、CountGD 未做）
-- [ ] 固定 CUDA Toolkit、宿主编译器、Torch ABI、GPU 架构；真实扩展编译及执行。
+- [ ] 分离主模型、vLLM、MAGI-1、CountGD 依赖目标。（主模型、vLLM、CountGD 已分离；videoeval 受阻；MAGI-1 未做）
+- [~] 固定 CUDA Toolkit、宿主编译器、Torch ABI、GPU 架构；真实扩展编译及执行。（Toolkit/编译器/架构已固定并在 GPU 执行；VRL 没有自有 C++/CUDA 扩展源码，Torch 扩展编译链无真实用例，见下）
 - [x] 显式处理 Triton/JIT 编译依赖与缓存；驱动作为运行平台要求。
-- [ ] 外部源码版本与补丁进入构建输入。
-- [ ] CountGD 权重与依赖进入 Bazel，评分/服务等价性通过后删除旧安装器。
+- [x] 外部源码版本与补丁进入构建输入。（CountGD：http_archive + patch 文件 + http_file 资产；其余 vendored 仍是 git submodule）
+- [x] CountGD 权重与依赖进入 Bazel，评分/服务等价性通过后删除旧安装器。
 - [x] 真实生成与训练步骤测试通过，非 CPU/mock 替代。（5 个真实权重 case；见下）
 - [x] Reward 服务集成测试通过。（`//tests:rewards_tests` 含真实 `python -m vrl.rewards.service.server` 子进程 + HTTP 探活）
 - [x] Ray、torchrun、跨节点产物交付与解释器选择明确并验证。（本机单节点验证；多节点未验证，见下）
@@ -214,3 +214,45 @@ zip 的 `__main__` 解包后执行内嵌的 3.12.13。远端节点两种交付�
 
 未验证：真实多节点（本机只有一台机器）。MAGI-1 的 `model.python_executable` 仍指向
 用户自建环境，未迁移。
+
+## CountGD 与 NVIDIA 库来源（2026-09-13）
+
+CountGD 进入 Bazel：
+- `@countgd_src`：`http_archive` 固定 revision `b6f362b3` + sha256，qualified 的 torch-2
+  兼容改动改为 `third_party/countgd/ms_deform_attn_torch2.patch`（由原字符串替换生成，
+  已验证补丁后文件哈希与安装器记录一致）。Bazel 内置 patcher 不接受 hunk 中间的
+  `\ No newline at end of file`，所以用 `patch_tool = "patch"`——这是唯一的宿主工具依赖。
+- 8 个 Space 资产（cfg_app、checkpoint、BERT 6 文件）：`http_file` 固定 HF revision + sha256。
+- `@pypi_countgd`：`third_party/countgd/requirements.txt`（带 hash，torch/torchvision/triton
+  指向 download.pytorch.org cu128）是唯一版本表；原 `countgd_environment_lock.py` 的 Python
+  表由它一次性生成后删除。补入 pydantic 及其 3 个依赖：`vrl.rewards.service.server`
+  2026-09-05 起 import pydantic，而锁是 09-04 定的——旧安装器的服务 smoke 今天同样失败
+  （已实测）。
+- `//third_party/countgd:runtime`：组装规则复制源码 + 资产 + 4 个 audited build 目录副本，
+  用 reward 模型自己的 `_runtime_tree_digest` 校验：133 个文件，
+  `e41c4fd6…` == `COUNTGD_RUNTIME_TREE_SHA256`，并写 `install_manifest.json`。
+- `//third_party/countgd:reward_service`、`:anima_exact_count_checkpoint_eval`、
+  `:service_smoke_test`（manual；起服务、校验 model_version、HTTP 评分）。
+
+等价性：同一 48 个 image/class 对（`docs/runs/.../eval_epoch_0180/0*.png` × sign/letter/person）
+分别在 Bazel 栈和旧安装器（miniconda 3.12.2 + 锁定 wheel）环境里跑 `CountGDModel.detect`：
+445 个检测框，bbox 与置信度逐位相同（最大差 0.0）。Bazel 服务经 HTTP 完成 48 个请求。
+据此删除 `vrl/scripts/rewards/install_countgd.py`、`countgd_environment_lock.py` 及其测试。
+
+NVIDIA 库来源（重要发现）：rules_python 把每个 wheel 放在各自目录，torch 轮子里
+`$ORIGIN/../../nvidia/<lib>/lib` 的 RPATH 失效，动态链接器退回 ldconfig，**宿主的
+`/usr/local/cuda-*` 库被按 soname 命中**（主 hub 之前映射了宿主的 `libcudart.so.13.0.96`，
+CountGD hub 直接因宿主 cuda-12.1 的 `libcusparse/libnvJitLink` 崩溃）。修法：
+`tools/python/sitecustomize.py`（随 `//tools/python:nvidia_preload` 的 `imports` 进入每个
+vrl target 的 venv 路径）在解释器启动时按 torch 自己的顺序 `RTLD_GLOBAL` 预加载 hub 内的
+运行库；子进程（torchrun rank、reward worker）同样生效。只加载 torch 清单里的库——
+`libnvblas` 是 BLAS 拦截器，全局加载会劫持 CPU BLAS（已踩坑）。
+`//tests/build:torch_cuda_test` 与 `torchrun_test` 断言进程映射中没有 `/usr/local/cuda`。
+
+Torch 扩展编译链：仓库里没有自有 `.cu/.cpp`；两个 Triton 内核在运行时 JIT（已在 GPU lane
+验证）。CountGD 的 `MultiScaleDeformableAttention` CUDA op 在 qualified 的 CPU 服务里不构建
+（上游安装同样不构建）。因此"用 Bazel 编 Torch 扩展"没有真实用例可验收；rules_cuda 工具链
+（13.0.2，与 torch cu130 同版）与 LLVM 已就绪，独立核函数在 GPU 执行通过。
+
+`.bazelignore`：`.venv`（torch 包内自带 BUILD 文件）、`data`、`outputs`。
+`bazel test //...`：21/21 通过。

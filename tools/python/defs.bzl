@@ -23,6 +23,10 @@ def vrl_library(name, requirements, **kwargs):
         name = name,
         srcs = native.glob(VRL_SOURCES),
         data = native.glob(VRL_DATA, allow_empty = True),
-        deps = requirements + ["//third_party:vendored"],
+        deps = requirements + [
+            "//third_party:vendored",
+            # Interpreter-startup preload of the locked NVIDIA libraries.
+            "//tools/python:nvidia_preload",
+        ],
         **kwargs
     )

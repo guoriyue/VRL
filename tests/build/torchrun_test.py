@@ -26,7 +26,7 @@ class TorchrunTest(unittest.TestCase):
             text=True,
             timeout=300,
         )
-        self.assertEqual(result.returncode, 0, result.stdout[-3000:] + result.stderr[-3000:])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("rank 0/2 ok", result.stdout)
         self.assertIn("rank 1/2 ok", result.stdout)
 

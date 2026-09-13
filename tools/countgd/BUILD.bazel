@@ -1,0 +1,13 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# Build-time tool: it reads the digest contract from vrl and runs on the main
+# hub; the resulting tree is data for the CountGD-hub service below.
+py_binary(
+    name = "assemble_runtime",
+    srcs = ["assemble_runtime.py"],
+    deps = ["//:vrl"],
+)
+
+exports_files(["anima_exact_count_eval.py", "serve.py", "service_smoke_test.py"])

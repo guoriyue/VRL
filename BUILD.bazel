@@ -1,4 +1,5 @@
 load("@pypi//:requirements.bzl", "all_requirements")
+load("@pypi_countgd//:requirements.bzl", countgd_requirements = "all_requirements")
 load("@pypi_vllm//:requirements.bzl", vllm_requirements = "all_requirements")
 load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 load("//tools/python:defs.bzl", "vrl_library")
@@ -18,6 +19,13 @@ vrl_library(
 vrl_library(
     name = "vrl_vllm",
     requirements = vllm_requirements,
+)
+
+# The same sources against the qualified CountGD stack (transformers 4.48,
+# numpy 1.26, torch cu128) for the CPU counting reward service.
+vrl_library(
+    name = "vrl_countgd",
+    requirements = countgd_requirements,
 )
 
 # Shared-GPU topology: the model/reward stack plus vLLM's CuMem allocator for

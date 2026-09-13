@@ -1,0 +1,5 @@
+# Directories Bazel must not treat as packages: the legacy venv carries BUILD
+# files inside torch, and data/outputs are ignored run artifacts.
+.venv
+data
+outputs

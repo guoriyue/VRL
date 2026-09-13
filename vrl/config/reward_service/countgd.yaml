@@ -1,18 +1,16 @@
 # Operator-owned CPU CountGD service for text-conditioned object counting.
 #
-# The pinned external installation lives under data/external/countgd by default.
 # CPU placement avoids allocating memory on the generator's GPU. The service
 # automatically advertises generation_overlap_safe for an explicit CPU device.
 #
-# Install or verify the ignored pinned runtime:
+# Bazel builds the qualified runtime (pinned upstream source + patch, Space
+# assets, and the CountGD dependency hub from third_party/countgd/requirements.txt)
+# and launches the service on it:
 #
-#   python -m vrl.scripts.rewards.install_countgd install --python /path/to/python3.12.2
-#   python -m vrl.scripts.rewards.install_countgd verify
-#
-# Launch from the isolated CountGD environment:
-#
-#   data/external/countgd/env/bin/python -m vrl.rewards.service.server \
+#   bazel run //third_party/countgd:reward_service -- \
 #     --config vrl/config/reward_service/countgd.yaml
+#
+# To point the reward model at a tree elsewhere, set worker_config.source_dir.
 host: 127.0.0.1
 port: 8311
 model_name: countgd

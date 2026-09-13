@@ -94,3 +94,53 @@ pip.parse(
 # tokenizers 0.13.3) ships no CPython 3.12 wheel and would need a Rust source
 # build; see docs/research/bazel_migration.md.
 use_repo(pip, "pypi", "pypi_vllm")
+
+# CountGD reward: pinned upstream source (with the qualified torch-2 patch),
+# the Hugging Face Space assets, and its own dependency hub. These fetch only
+# when a //third_party/countgd target is built.
+COUNTGD_SOURCE_REVISION = "b6f362b3f5cd20db4a171faa410dfed8f2f466d8"
+COUNTGD_SPACE_REVISION = "6e82e59569a84ee5c6aafa35d396f2d2bee57be2"
+COUNTGD_SPACE_URL = "https://huggingface.co/spaces/nikigoli/countgd/resolve/" + COUNTGD_SPACE_REVISION + "/"
+
+http_archive(
+    name = "countgd_src",
+    urls = ["https://codeload.github.com/niki-amini-naieni/CountGD/tar.gz/" + COUNTGD_SOURCE_REVISION],
+    sha256 = "dcab136e4c1ce9a567a3f67bef084ec3efbcbe15c6f6155755fea4ac48457378",
+    strip_prefix = "CountGD-" + COUNTGD_SOURCE_REVISION,
+    type = "tar.gz",
+    patches = ["//third_party/countgd:ms_deform_attn_torch2.patch"],
+    # The qualified patch adds a final newline; Bazel's built-in patcher rejects
+    # the "\ No newline at end of file" marker mid-hunk, so GNU patch applies it.
+    patch_tool = "patch",
+    patch_args = ["-p1"],
+    build_file_content = 'filegroup(name = "all_files", srcs = glob(["**"]), visibility = ["//visibility:public"])',
+)
+
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+[
+    http_file(
+        name = "countgd_space_" + name,
+        urls = [COUNTGD_SPACE_URL + path],
+        sha256 = sha256,
+        downloaded_file_path = path.rpartition("/")[2],
+    )
+    for name, path, sha256 in [
+        ("cfg_app", "cfg_app.py", "b7e7061e8f343f054adff6b9417a6acd4e7c155e767c22cf58f533c8d8fd0587"),
+        ("checkpoint", "checkpoint_best_regular.pth", "c1bab864b17db345b4c6e3aaabb5765bc2c0a90d0bc8defb5e664a74a50aa126"),
+        ("bert_config", "checkpoints/bert-base-uncased/config.json", "f2375bb637ff0932102389231414227f0517017a8b8d724d084d9229fd5966e1"),
+        ("bert_model", "checkpoints/bert-base-uncased/model.safetensors", "5875f83030335d194f35b15a32e7f4e654aa302aa83af032a3f36d035dcaf8af"),
+        ("bert_special_tokens_map", "checkpoints/bert-base-uncased/special_tokens_map.json", "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3"),
+        ("bert_tokenizer", "checkpoints/bert-base-uncased/tokenizer.json", "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66"),
+        ("bert_tokenizer_config", "checkpoints/bert-base-uncased/tokenizer_config.json", "f62a57a75856b93282501c92a86f62b169997c81e93cf6f75b7cc15d6285968e"),
+        ("bert_vocab", "checkpoints/bert-base-uncased/vocab.txt", "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3"),
+    ]
+]
+
+pip.parse(
+    hub_name = "pypi_countgd",
+    python_version = "3.12.13",
+    requirements_lock = "//third_party/countgd:requirements.txt",
+    target_platforms = ["linux_x86_64"],
+)
+use_repo(pip, "pypi_countgd")

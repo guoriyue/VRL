@@ -7,11 +7,10 @@ the production Codex exact-count judge or individual images with pinned
 CountGD. The report keeps per-image diagnostics, prompt-clustered paired
 statistics, and deterministic blind contact sheets for human review.
 
-CountGD must run under its isolated interpreter because upstream exposes
+CountGD must run under its isolated dependency stack because upstream exposes
 generic top-level packages such as ``models`` and ``util``::
 
-    data/external/countgd/env/bin/python -m \
-      vrl.scripts.eval.anima_exact_count_checkpoint_eval \
+    bazel run //third_party/countgd:anima_exact_count_checkpoint_eval -- \
       --reward-backend countgd --base-dir ... --checkpoint-dir ... \
       --output-dir ...
 """
@@ -119,7 +118,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Pinned CountGD source directory. Defaults to "
-            "data/external/countgd/source through the model adapter."
+            "<VRL_DATA_ROOT>/countgd/source through the model adapter; the Bazel "
+            "target points the data root at the assembled runtime tree."
         ),
     )
     parser.add_argument(

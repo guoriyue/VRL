@@ -62,10 +62,11 @@ throughput for fake event-loop concurrency.
 ## CountGD object counting
 
 Select `+reward=countgd_http` with any reward-neutral generator recipe. Start
-the shared CPU service from the existing isolated CountGD installation:
+the shared CPU service; Bazel assembles the qualified CountGD runtime and its
+isolated dependency stack (`third_party/countgd/`):
 
 ```bash
-data/external/countgd/env/bin/python -m vrl.rewards.service.server \
+bazel run //third_party/countgd:reward_service -- \
   --config vrl/config/reward_service/countgd.yaml
 ```
 
