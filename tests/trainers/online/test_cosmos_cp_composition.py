@@ -3,16 +3,19 @@
 import asyncio
 import copy
 import os
+import random
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from diffusers import CosmosTransformer3DModel, UniPCMultistepScheduler
 
+from tests.trainers._strategy_policies import free_port
 from tests.trainers.online._collector_control import CollectorControlFake
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.config.precision import RolePrecision
@@ -23,13 +26,20 @@ from vrl.models.families.cosmos.predict2_5.model import (
     CosmosPredict25ReplayModel,
     CosmosPredict25SamplingState,
 )
-from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.models.precision import apply_float32_precision, fixed_row_linear_compute
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.denoise.sde_logprob import DiffusionSDELogProbEvaluator
 from vrl.rollouts.orchestration.strict_on_policy import ContextParallelStrictRolloutSchedule
+from vrl.trainers.checkpointing import (
+    TrainingCheckpoint,
+    _require_equal_tensor_tree,
+    restore_rng_state,
+    restore_training_checkpoint,
+    save_training_checkpoint,
+)
 from vrl.trainers.core.types import EMAConfig, OptimConfig
-from vrl.trainers.distributed import DistributedTrainingContext
+from vrl.trainers.distributed import DistributedTrainingContext, init_training_process_group
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.strategy import ContextParallelStrategy
@@ -109,6 +119,7 @@ class _Collector(CollectorControlFake):
             for i in range(count)
         ]
         old = torch.stack(logprobs, dim=1)
+        self.last_actions = torch.stack(actions, dim=1).detach().cpu()
         trajectory = build_diffusion_trajectory(
             request=request,
             sample_rows=rows,
@@ -146,7 +157,7 @@ class _Syncer:
         self.collector.generation_runtime.current_policy_version += 1
 
 
-def _worker(rank, rendezvous, root, cuda=False):
+def _worker(rank, rendezvous, root, cuda=False, phase=None):
     torch.set_num_threads(1)
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     torch.use_deterministic_algorithms(True)
@@ -155,16 +166,20 @@ def _worker(rank, rendezvous, root, cuda=False):
         torch.cuda.set_device(rank)
     device = torch.device("cuda", rank) if cuda else torch.device("cpu")
     rollout_device = torch.device("cuda", 2) if cuda and rank == 0 else torch.device("cpu")
-    dist.init_process_group(
-        "nccl" if cuda else "gloo",
-        init_method=rendezvous,
-        rank=rank,
-        world_size=2,
-        timeout=timedelta(seconds=120),
-    )
-    strategy = ContextParallelStrategy(
-        DistributedTrainingContext("context_parallel", rank, 2, device), cp_size=2
-    )
+    context = DistributedTrainingContext("context_parallel", rank, 2, device)
+    if cuda:
+        os.environ["MASTER_ADDR"] = "127.0.0.1"
+        os.environ["MASTER_PORT"] = str(rendezvous)
+        init_training_process_group(context, backend="nccl")
+    else:
+        dist.init_process_group(
+            "gloo",
+            init_method=rendezvous,
+            rank=rank,
+            world_size=2,
+            timeout=timedelta(seconds=120),
+        )
+    strategy = ContextParallelStrategy(context, cp_size=2)
     trainer = None
     try:
         torch.manual_seed(31)
@@ -247,7 +262,7 @@ def _worker(rank, rendezvous, root, cuda=False):
                 timestep_fraction=1.0,
                 drop_zero_advantage=False,
                 optim=OptimConfig(lr=1e-4),
-                ema=EMAConfig(),
+                ema=EMAConfig(enable=phase is not None, decay=0.9, update_interval=1),
                 train_precision="no",
                 output_dir=str(Path(root) / f"rank-{rank}"),
             ),
@@ -257,11 +272,47 @@ def _worker(rank, rendezvous, root, cuda=False):
             groups=strategy.groups,
             spool_dir=root,
         )
-        for _ in range(2):
+        bundle = RuntimeBundle(
+            model=model,
+            trainable_modules={"transformer": model.transformer},
+            scheduler=scheduler,
+            raw_handle=None,
+            precision=precision,
+            loads_full_generation_modules=False,
+        )
+        identity = {"schema": "tiny-cosmos-cp-composition/v1"}
+        checkpoint_dir = Path(root) / "checkpoint-1"
+        if phase == "resume":
+            checkpoint = TrainingCheckpoint.load(checkpoint_dir)
+            restore_training_checkpoint(
+                checkpoint,
+                trainer=trainer,
+                bundle=bundle,
+                family="cosmos-predict2.5",
+                expected_model_identity=identity,
+                strict=True,
+            )
+            restore_rng_state(checkpoint.rng_state, rank=rank, world_size=2, strict=True)
+            assert trainer.state.step == 1
+            assert trainer._ema.has_updates
+        updates = 1 if phase == "resume" else 2
+        for index in range(updates):
             metrics = asyncio.run(trainer.step(["controlled text"]))
             assert metrics.grad_norm > 0
             assert metrics.initial_replay.finite
             assert metrics.initial_replay.logprob_abs_diff_max <= 1e-3
+            if phase == "control" and index == 0:
+                assert trainer._ema.has_updates
+                save_training_checkpoint(
+                    checkpoint_dir,
+                    trainer=trainer,
+                    bundle=bundle,
+                    family="cosmos-predict2.5",
+                    model_identity=identity,
+                    progress={"next_step": 1},
+                    strategy=strategy,
+                )
+                strategy.barrier()
         assert next(model.parameters()).device == device
         assert next(rollout.parameters()).device == rollout_device
         assert trainer.state.step == 2
@@ -271,13 +322,38 @@ def _worker(rank, rendezvous, root, cuda=False):
             for name, p in model.named_parameters()
             if name in before
         )
-        assert collector.calls == (2 if rank == 0 else 0)
-        assert collector.versions == ([1, 2] if rank == 0 else [])
-        assert syncer.calls == (3 if rank == 0 else 0)
+        assert collector.calls == (updates if rank == 0 else 0)
+        assert collector.versions == (list(range(1, updates + 1)) if rank == 0 else [])
+        assert syncer.calls == (updates + 1 if rank == 0 else 0)
         for parameter in model.parameters():
             reference = parameter.detach().clone()
             dist.broadcast(reference, src=0)
             torch.testing.assert_close(parameter, reference, rtol=0, atol=0)
+        if phase is not None:
+            assert trainer._ema.num_updates == trainer.state.global_step
+            trainable = [p for p in model.parameters() if p.requires_grad]
+            assert any(
+                not torch.equal(shadow, parameter)
+                for shadow, parameter in zip(trainer._ema.ema_parameters, trainable, strict=True)
+            )
+            outcome = {
+                "model": model.state_dict(),
+                "trainer": trainer.state_dict(),
+                "actions": collector.last_actions if rank == 0 else None,
+                "next_rng": {
+                    "torch": torch.rand(8),
+                    "python": random.random(),
+                    "numpy": torch.from_numpy(np.random.rand(8)),
+                    "training": torch.rand(8, device=device),
+                    "rollout": torch.rand(8, device=rollout_device) if rank == 0 else None,
+                },
+            }
+            reference_path = Path(root) / f"control-rank-{rank}.pt"
+            if phase == "control":
+                torch.save(outcome, reference_path)
+            else:
+                reference = torch.load(reference_path, map_location="cpu", weights_only=False)
+                _require_equal_tensor_tree(reference, outcome, label="fresh-process resume")
     finally:
         if trainer is not None:
             asyncio.run(trainer.rollout_schedule.shutdown())
@@ -292,6 +368,26 @@ def test_native_cosmos_cp_online_step(tmp_path):
 def test_native_cosmos_cp_online_step_disjoint_cuda(tmp_path):
     if torch.cuda.device_count() < 3:
         pytest.skip("requires two training GPUs and one disjoint rollout GPU")
-    mp.spawn(
-        _worker, args=((tmp_path / "nccl").as_uri(), str(tmp_path), True), nprocs=2, join=True
-    )
+    mp.spawn(_worker, args=(free_port(), str(tmp_path), True), nprocs=2, join=True)
+
+
+def _run_resume_comparison(tmp_path, *, cuda):
+    for phase in ("control", "resume"):
+        rendezvous = free_port() if cuda else (tmp_path / phase).as_uri()
+        mp.spawn(
+            _worker,
+            args=(rendezvous, str(tmp_path), cuda, phase),
+            nprocs=2,
+            join=True,
+        )
+
+
+def test_native_cosmos_cp_checkpoint_resume_ema(tmp_path):
+    _run_resume_comparison(tmp_path, cuda=False)
+
+
+@pytest.mark.distributed
+def test_native_cosmos_cp_checkpoint_resume_ema_disjoint_cuda(tmp_path):
+    if torch.cuda.device_count() < 3:
+        pytest.skip("requires two training GPUs and one disjoint rollout GPU")
+    _run_resume_comparison(tmp_path, cuda=True)
