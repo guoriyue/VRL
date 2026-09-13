@@ -453,3 +453,31 @@ records the rule.
   `torch.cuda.is_available()`/`device_count()` to no-GPU for every test not in
   the `gpu` lane. Tests that model a GPU host still patch on top; the eight
   files that already patched explicitly are unaffected.
+
+## Night sprint batch 0 (2026-09-13): baseline before the cleanup
+
+Plan: `docs/sprints/SPRINT_test_cleanup_night.md`. Branch at `origin/main`
+(`b64baced`), venv synced to the lock (zero drift after upstream `78d2edc6`
+retired the editable `third_party` wrapper).
+
+Environment fix carried in this batch: the six vendored source roots that
+Bazel supplies through `imports` in `third_party/BUILD.bazel` are now also
+appended to `sys.path` by `tests/conftest.py`, from the same list. Without it
+plain `pytest` lost `ltx_distillation` (5 Echo tests red) and VDN-H3's `src`
+(hybrid-attention tests silently skipped); with it Echo / CausVid / VDN /
+MiniMax-H3 run for real (67 passed).
+
+Baseline profile (AST over `tests/`, 3247 tests):
+- assertion kind: state 1550, raises 1182, numeric 482, none 33
+- tests that monkeypatch a `vrl.*` symbol: 329; external-only: 63
+- fake/spy/stub classes: 136 (112 with zero branches, 21 with one, 3 with two)
+- `SimpleNamespace(...)` uses: 533; standing in most often for `build` (22),
+  `model` (12), `pipeline` (11), `entry` (11), `collectives` (11)
+- files running real tiny transformers (`build_tiny_*`): 57
+- `real_cover` register: 112 labelled doubles, 39 with no real counterpart
+- baseline full suite: 5112 passed; red = the 8 upstream reds listed in the
+  plan plus the 5 Echo tests fixed above (they were environment, not code)
+
+Batch targets, from the profile: 17 `get_model_family_entry` swaps across 12
+script tests; `_FakeRay` in 11 files; 39 no-counterpart doubles; private-name
+patches (`_run_command`, `_cumem_allocator`, `_source_head_revision`, `_embed`).

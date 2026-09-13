@@ -29,12 +29,33 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import sys
 from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
 
 from tests import ci_envs, real_cover
+
+# The vendored submodule source roots. Bazel puts these on the import path
+# through `imports` in third_party/BUILD.bazel (which replaced the editable
+# third_party install); plain `pytest` from the synced venv has to do the
+# same, or every Echo / CausVid / VDN test that imports the vendored code
+# fails on an import that CI never sees. Kept as the same list, in the same
+# order, so the two stay one contract.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VENDORED_SOURCE_ROOTS = (
+    "joyai_echo/ltx-core/src",
+    "joyai_echo/ltx-pipelines/src",
+    "joyai_echo/ltx-distillation/src",
+    "videophy/videocon/training/pipeline_video",
+    "CausVid",
+    "vdn-minimax-h3",
+)
+for _root in VENDORED_SOURCE_ROOTS:
+    _path = os.path.join(_REPO_ROOT, "third_party", _root)
+    if os.path.isdir(_path) and _path not in sys.path:
+        sys.path.append(_path)
 
 try:  # torch may be importable without a usable CUDA device
     import torch
