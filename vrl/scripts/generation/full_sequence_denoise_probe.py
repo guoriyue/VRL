@@ -47,6 +47,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--family", required=True)
     parser.add_argument("--path", required=True, help="checkpoint repo or local dir")
+    parser.add_argument("--model-preset", default=None, help="optional existing model YAML preset")
     parser.add_argument("--prompt", default="a photo of a red fox sitting in fresh snow")
     parser.add_argument("--negative-prompt", default="")
     parser.add_argument("--steps", type=int, default=8)
@@ -153,6 +154,15 @@ def _resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any
             "precision": precision,
         },
     )
+    if args.model_preset:
+        preset = OmegaConf.load(args.model_preset)
+        if not OmegaConf.is_dict(preset) or not OmegaConf.is_dict(preset.get("model")):
+            raise ValueError("model preset must contain a model mapping")
+        if preset.model.get("family", entry.family) != entry.family:
+            raise ValueError("model preset family must match --family")
+        cfg.model = OmegaConf.merge(
+            cfg.model, preset.model, {"family": entry.family, "path": args.path}
+        )
     root = parse_config(cfg)
     precision_policy = PrecisionPolicy.from_section(root.precision)
     build = entry.resolve_model_build(
