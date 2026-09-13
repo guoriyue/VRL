@@ -140,3 +140,56 @@ valid weight map alone cannot establish device-correct execution. Then wire
 placement through the family loader and lifecycle without whole-model moves.
 Released-weight execution still awaits the deployment and model-name
 confirmations above; do not label this meta probe a model GPU run.
+
+## 2026-09-13: two-device random-weight execution
+
+Candidate `/home/ubuntu/VRL-h3-l40s` now contains the opt-in gate
+`tests/models/families/minimax_h3/test_device_dispatch.py`. With physical GPUs
+0 and 1 reserved, the final run exited 0: 2 passed in 6.59 seconds. Both tests
+use a real two-block Diffusers H3 transformer, native family layout and fixed
+conditioning from the tiny Qwen fixture, with identical single-device weights.
+
+- FP32 full-parameter forward/backward passes `atol=rtol=1e-5`.
+- Frozen BF16 base with native FP32 exceptions and FP32 rank-2 Q/K/V/out LoRA
+  passes `atol=rtol=1e-3`. LoRA B is deliberately nonzero (normal, std 0.01).
+- Both video and audio outputs are checked for finiteness and closeness.
+  Parameter names, gradient presence and every present parameter gradient are
+  compared. A nonzero gradient on the remote block is required.
+
+The explicit map places each non-stack top-level component on GPU 0 and
+individually assigns block 0 to GPU 0 and block 1 to GPU 1. Input projections,
+normalization and selection heads stay on GPU 0. Accelerate dispatch hooks
+perform the differentiable block transfers. This is not tensor parallelism
+and does not establish simultaneous compute utilization or a speedup.
+
+Failures retained as limitations, not converted into passes:
+
+1. The abbreviated overlapping map `{"": 0, "transformer_blocks.1": 1}`
+   failed forward: a nested Linear hook received CUDA 0 input with CUDA 1
+   parameters. The successful test uses complete, non-overlapping mappings.
+2. Training all BF16 base parameters passed the output gate but failed the
+   `1e-3` gradient gate: one 32-element gradient had two mismatches and maximum
+   absolute difference 0.0029296875. FP32 LoRA acceptance does not close this
+   full-BF16-gradient failure; no tolerance was relaxed to claim it passed.
+3. An intermediate test incorrectly shared the tiny conditioner autograd graph
+   between two backward calls. Detaching the fixed input conditioning corrected
+   that test fixture; text-encoder backward is outside this frozen-conditioning
+   gate.
+
+Reproduce from the candidate worktree:
+
+```bash
+env CUDA_VISIBLE_DEVICES=0,1 VRL_H3_DISPATCH_CUDA=1 \
+  PYTHONPATH=/mnt/nvme/venvs/h3-runtime-overlay:/mnt/nvme/venvs/transformers-5.13-overlay:/home/ubuntu/VRL-h3-l40s \
+  /home/ubuntu/VRL/.venv/bin/python -m pytest \
+  tests/models/families/minimax_h3/test_device_dispatch.py -q
+```
+
+Ruff and formatting checks passed. All test processes are terminal and fresh
+compute-process inventory is empty; GPU claims released. This does not test
+released weights, full geometry, full LoRA rank, activation checkpointing,
+optimizer updates, trainer lifecycle, four-device encoder/denoiser composition
+or throughput. The original full deployment gates remain open. Next integrate
+the validated non-overlapping block mapping with the loader/lifecycle and
+validate the conditioner pair; do not feed the earlier automatic capacity map
+unchanged into a production training claim.
