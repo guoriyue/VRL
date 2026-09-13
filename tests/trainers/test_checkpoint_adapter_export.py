@@ -296,7 +296,7 @@ def test_training_checkpoint_exports_lora_with_ema_without_mutating_resume_state
 ) -> None:
     """The published adapter carries EMA weights; the resume checkpoint carries raw ones.
 
-    Driven by a real ``EMAModuleWrapper``, so the 7.0 in the artifact is the
+    Driven by a real ``EMAWeights``, so the 7.0 in the artifact is the
     wrapper's own running average copied in by its own ``copy_ema_to``, and the
     restore afterwards is its own ``copy_temp_to`` — the previous stand-in filled
     the number in itself, which made ``store_temp=True`` a claim about the stub

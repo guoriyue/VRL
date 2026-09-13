@@ -10,7 +10,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from vrl.trainers.online.ema import EMAModuleWrapper
+from vrl.trainers.online.ema import EMAWeights
 
 
 def _single_param(value: float) -> nn.Parameter:
@@ -19,7 +19,7 @@ def _single_param(value: float) -> nn.Parameter:
 
 def test_get_current_decay_warmup_schedule() -> None:
     """Warmup ramps as (1+s)/(10+s), capped at the configured decay."""
-    ema = EMAModuleWrapper([_single_param(0.0)], decay=0.99)
+    ema = EMAWeights([_single_param(0.0)], decay=0.99)
     assert ema.get_current_decay(0) == pytest.approx(1 / 10)
     assert ema.get_current_decay(9) == pytest.approx(10 / 19)
     # Far enough along, the ramp exceeds 0.99 and is clamped to it.
@@ -29,7 +29,7 @@ def test_get_current_decay_warmup_schedule() -> None:
 def test_step_matches_analytic_recurrence() -> None:
     """ema += (1-decay)*(param-ema) at each on-interval step, decay=warmup."""
     param = _single_param(10.0)
-    ema = EMAModuleWrapper([param], decay=1.0, update_step_interval=1)
+    ema = EMAWeights([param], decay=1.0, update_step_interval=1)
     # Start the shadow at a known offset from the live param.
     ema.ema_parameters[0].fill_(0.0)
 
@@ -45,7 +45,7 @@ def test_step_matches_analytic_recurrence() -> None:
 def test_update_step_interval_gates_updates() -> None:
     """Only steps where (step+1) % interval == 0 mutate the shadow."""
     param = _single_param(10.0)
-    ema = EMAModuleWrapper([param], decay=1.0, update_step_interval=4)
+    ema = EMAWeights([param], decay=1.0, update_step_interval=4)
     ema.ema_parameters[0].fill_(0.0)
 
     # Steps 0,1,2 are off-boundary → no change, no update count.
@@ -63,7 +63,7 @@ def test_update_step_interval_gates_updates() -> None:
 def test_non_trainable_params_are_skipped() -> None:
     """Frozen params (requires_grad=False) are not pulled into the EMA."""
     frozen = nn.Parameter(torch.tensor([5.0], dtype=torch.float64), requires_grad=False)
-    ema = EMAModuleWrapper([frozen], decay=1.0, update_step_interval=1)
+    ema = EMAWeights([frozen], decay=1.0, update_step_interval=1)
     ema.ema_parameters[0].fill_(0.0)
     ema.step([frozen], 0)
     assert ema.ema_parameters[0].item() == pytest.approx(0.0)
@@ -72,7 +72,7 @@ def test_non_trainable_params_are_skipped() -> None:
 def test_copy_ema_to_then_copy_temp_to_restores_exactly() -> None:
     """Swap EMA weights in for eval, then restore the originals byte-for-byte."""
     param = _single_param(10.0)
-    ema = EMAModuleWrapper([param], decay=1.0, update_step_interval=1)
+    ema = EMAWeights([param], decay=1.0, update_step_interval=1)
     ema.ema_parameters[0].fill_(3.0)
 
     original = param.detach().clone()
@@ -87,7 +87,7 @@ def test_copy_ema_to_then_copy_temp_to_restores_exactly() -> None:
 def test_failed_ema_swap_restores_every_parameter_before_raising() -> None:
     first = _single_param(1.0)
     second = _single_param(2.0)
-    ema = EMAModuleWrapper([first, second])
+    ema = EMAWeights([first, second])
     ema.ema_parameters[0].fill_(7.0)
     ema.ema_parameters[1] = torch.ones(2)
 
@@ -101,7 +101,7 @@ def test_failed_ema_swap_restores_every_parameter_before_raising() -> None:
 
 def test_copy_temp_to_rejects_missing_snapshot() -> None:
     param = _single_param(1.0)
-    ema = EMAModuleWrapper([param])
+    ema = EMAWeights([param])
 
     with pytest.raises(RuntimeError, match="snapshot is not available"):
         ema.copy_temp_to([param])
@@ -109,7 +109,7 @@ def test_copy_temp_to_rejects_missing_snapshot() -> None:
 
 def test_repeated_ema_swap_preserves_original_snapshot() -> None:
     param = _single_param(10.0)
-    ema = EMAModuleWrapper([param])
+    ema = EMAWeights([param])
     ema.ema_parameters[0].fill_(3.0)
     ema.copy_ema_to([param])
     snapshot = ema.temp_stored_parameters
@@ -133,7 +133,7 @@ def test_both_checkpoint_paths_snapshot_away_from_the_live_shadow(is_primary: bo
     """
 
     param = _single_param(1.0)
-    ema = EMAModuleWrapper([param], decay=0.5, update_step_interval=1)
+    ema = EMAWeights([param], decay=0.5, update_step_interval=1)
 
     plain = ema.state_dict()["ema_parameters"][0]
     sharded = ema.checkpoint_state_dict(is_primary=is_primary).get("ema_parameters")

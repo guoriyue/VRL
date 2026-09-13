@@ -164,7 +164,7 @@ def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> N
         gather_full_optimizer_state_dict,
         load_full_optimizer_state_dict,
     )
-    from vrl.trainers.online.ema import EMAModuleWrapper
+    from vrl.trainers.online.ema import EMAWeights
 
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
@@ -221,7 +221,7 @@ def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> N
         )
 
         # EMA over sharded params: step + checkpoint gather + reshard on load.
-        ema = EMAModuleWrapper(params, decay=0.5, update_step_interval=1)
+        ema = EMAWeights(params, decay=0.5, update_step_interval=1)
         with torch.no_grad():
             for p in params:
                 p.add_(1.0)
@@ -233,7 +233,7 @@ def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> N
             and tuple(t.shape) == tuple(shadow.shape)  # DTensor.shape is global
             for t, shadow in zip(state["ema_parameters"], ema.ema_parameters, strict=True)
         )
-        restored = EMAModuleWrapper(params, decay=0.5, update_step_interval=1)
+        restored = EMAWeights(params, decay=0.5, update_step_interval=1)
         restored.load_state_dict(state)
         ema_round_trip = all(
             isinstance(got, DTensor) and torch.equal(got.full_tensor(), want.full_tensor())
@@ -312,7 +312,7 @@ def _run_checkpoint_ema_export_rank(
         TrainingCheckpoint,
         save_training_checkpoint,
     )
-    from vrl.trainers.online.ema import EMAModuleWrapper
+    from vrl.trainers.online.ema import EMAWeights
     from vrl.trainers.strategy import FSDPStrategy
 
     os.environ["MASTER_ADDR"] = "127.0.0.1"
@@ -350,7 +350,7 @@ def _run_checkpoint_ema_export_rank(
         with torch.no_grad():
             for parameter in parameters:
                 parameter.fill_(3.0)
-        ema = EMAModuleWrapper(parameters, decay=0.9)
+        ema = EMAWeights(parameters, decay=0.9)
         with torch.no_grad():
             for shadow in ema.ema_parameters:
                 shadow.fill_(7.0)

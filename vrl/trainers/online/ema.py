@@ -12,12 +12,12 @@ from typing import Any
 import torch
 
 
-class EMAModuleWrapper:
+class EMAWeights:
     """EMA wrapper for any set of torch parameters.
 
     Typical usage::
 
-        ema = EMAModuleWrapper(model.parameters(), decay=0.9, update_step_interval=8)
+        ema = EMAWeights(model.parameters(), decay=0.9, update_step_interval=8)
         # after each optimizer step:
         ema.step(model.parameters(), global_step)
         # for evaluation:

@@ -54,7 +54,7 @@ from vrl.trainers.diagnostics import (
     trainable_state_digest,
 )
 from vrl.trainers.online.config import TrainerConfig
-from vrl.trainers.online.ema import EMAModuleWrapper
+from vrl.trainers.online.ema import EMAWeights
 from vrl.trainers.online.precision_guard import (
     enforce_precision_drift,
     measure_precision_drift,
@@ -574,7 +574,7 @@ class OnlineTrainer:
         )
 
         self._optimizer: torch.optim.Optimizer | None = None
-        self._ema: EMAModuleWrapper | None = None
+        self._ema: EMAWeights | None = None
         self._rollout_weights_initialized = False
         # Recheck rollout/replay parity in each process; a checkpoint's previous
         # pass does not cover changes to kernels, compilation, or batch geometry.
@@ -663,12 +663,12 @@ class OnlineTrainer:
                 self._optimizer = build_optimizer(trainable, self.config.optim)
         return self._optimizer
 
-    def _ensure_ema(self) -> EMAModuleWrapper | None:
+    def _ensure_ema(self) -> EMAWeights | None:
         if not self.config.ema.enable:
             return None
         if self._ema is None:
             trainable = [p for p in self.model.parameters() if p.requires_grad]
-            self._ema = EMAModuleWrapper(
+            self._ema = EMAWeights(
                 trainable,
                 decay=self.config.ema.decay,
                 update_step_interval=self.config.ema.update_interval,

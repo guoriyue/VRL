@@ -13,7 +13,7 @@ from torch import nn
 
 from tests.trainers.online._helpers import bare_trainer
 from vrl.models.interfaces.runtime import register_checkpoint_owned_state
-from vrl.trainers.online.ema import EMAModuleWrapper
+from vrl.trainers.online.ema import EMAWeights
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer
 from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
 
@@ -144,7 +144,7 @@ def test_training_state_parking_is_idempotent_and_deduplicates_model_identity() 
     assert scaler._per_optimizer_states[id(optimizer)]["found_inf_per_device"]
     grad_before = model.weight.grad.detach().clone()
     optimizer_before = _tensor_values(optimizer.state)
-    ema = EMAModuleWrapper(model.parameters(), decay=0.9, device=torch.device("cpu"))
+    ema = EMAWeights(model.parameters(), decay=0.9, device=torch.device("cpu"))
     state = TrainingMemoryState(
         model=model,
         ref_model=model,
@@ -229,7 +229,7 @@ def test_online_trainer_resolves_lazy_training_memory_state_on_every_phase() -> 
     assert first.ema is None
 
     trainer._optimizer = torch.optim.AdamW(trainer.model.parameters(), lr=0.1)
-    trainer._ema = EMAModuleWrapper(trainer.model.parameters(), device=torch.device("cpu"))
+    trainer._ema = EMAWeights(trainer.model.parameters(), device=torch.device("cpu"))
     second = trainer._training_memory_state()
 
     assert second.optimizer is trainer._optimizer
@@ -243,7 +243,7 @@ def test_cuda_training_state_parking_round_trip_preserves_all_live_state() -> No
     model = nn.Linear(4, 2).to(device)
     ref_model = nn.Linear(4, 2).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
-    ema = EMAModuleWrapper(model.parameters(), decay=0.9, device=device)
+    ema = EMAWeights(model.parameters(), decay=0.9, device=device)
     scaler = torch.amp.GradScaler("cuda")
 
     optimizer.zero_grad(set_to_none=True)

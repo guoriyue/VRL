@@ -1115,12 +1115,12 @@ def test_ema_over_dtensor_params_updates_swaps_and_round_trips(cpu_process_group
 
     from torch.distributed.tensor import DTensor
 
-    from vrl.trainers.online.ema import EMAModuleWrapper
+    from vrl.trainers.online.ema import EMAWeights
 
     torch.manual_seed(0)
     net = _shard(ToyTransformer())
     params = [p for p in net.parameters() if p.requires_grad]
-    ema = EMAModuleWrapper(params, decay=0.5, update_step_interval=1)
+    ema = EMAWeights(params, decay=0.5, update_step_interval=1)
     assert all(isinstance(p, DTensor) for p in ema.ema_parameters)
 
     # Move the live params, then EMA-step: shadows must move toward them.
@@ -1149,7 +1149,7 @@ def test_ema_over_dtensor_params_updates_swaps_and_round_trips(cpu_process_group
         assert not isinstance(saved, DTensor)
         assert saved.shape == shadow.shape  # DTensor .shape is the global shape
 
-    restored = EMAModuleWrapper(params, decay=0.5, update_step_interval=1)
+    restored = EMAWeights(params, decay=0.5, update_step_interval=1)
     restored.load_state_dict(state)
     assert all(isinstance(p, DTensor) for p in restored.ema_parameters)
     for got, expected in zip(restored.ema_parameters, after, strict=True):

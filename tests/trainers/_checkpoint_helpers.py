@@ -15,7 +15,7 @@ from vrl.trainers.checkpointing import (
     TrainingCheckpoint,
 )
 from vrl.trainers.distributed import DistributedTrainingContext
-from vrl.trainers.online.ema import EMAModuleWrapper
+from vrl.trainers.online.ema import EMAWeights
 
 UNIT_IDENTITY = {"schema": "unit-model/v1"}
 
@@ -112,7 +112,7 @@ def _ema_holding(
     average: float,
     live: float,
     stepped: bool = True,
-) -> EMAModuleWrapper:
+) -> EMAWeights:
     """A real EMA whose stored average differs from the module's live weights.
 
     ``has_updates`` is derived from ``num_updates`` in the real wrapper, so a
@@ -127,7 +127,7 @@ def _ema_holding(
     with torch.no_grad():
         for parameter in trainable:
             parameter.fill_(average)
-    ema = EMAModuleWrapper(trainable, decay=0.9, device=torch.device("cpu"))
+    ema = EMAWeights(trainable, decay=0.9, device=torch.device("cpu"))
     if stepped:
         ema.step(trainable, 0)
     with torch.no_grad():
