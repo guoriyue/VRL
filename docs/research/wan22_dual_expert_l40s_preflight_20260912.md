@@ -1,9 +1,10 @@
 # Wan 2.2 dual-expert L40S launch preflight
 
-Status (2026-09-13): one bounded released-weight T2V dual-expert update
-completed, but strict rollout/replay equivalence was not accepted. Subsequent
-work was intentionally stopped. The original CPU preflight and tiny CUDA
-prerequisites below are historical; the real diagnostic is recorded last.
+Status (2026-09-13): the earlier real update failed strict replay acceptance.
+A subsequent fixed-trajectory matrix now gives exact replay on all 20 real
+transitions with native frozen FP32 preservation and matching batch size two.
+Batch size one still differs. Gradient/update equivalence and controlled resume
+remain open; historical diagnostics and the latest matrix follow below.
 
 ## Reproducible artifacts
 
@@ -207,3 +208,66 @@ All GPU and Ray process inventories were empty after testing. Full Kling
 parking must still be rechecked on the corrected candidate while completing
 the fixture capture; the Wan replay/gradient matrix remains pending. This
 reward lifecycle defect is separate from the previously observed replay drift.
+
+## Real capture and controlled replay matrix
+
+The unchanged capture harness completed on candidate `96bcac9c` in
+`wan22_replay_fixture_devicefix`. Both real clips were scored; CuMem backed up
+and released 4.69 GiB on reward device 1 while the driver's current device was
+0. Collection wall was 107.186 seconds: generation 69.588, reward 37.597,
+overlap zero. Rewards were -1.412971019744873 and -0.5611866116523743. These are
+fixture values, not an improvement over different sampled videos. The process
+exited zero including owned Ray shutdown, and GPU/Ray inventories were empty.
+
+`fixture_audit.json` verifies 20 finite transitions, FP32 observations/actions
+of shape `[2,10,16,5,40,40]`, BF16 conditioning, initial LoRA with 640 tensors
+per expert, and artifact hashes:
+
+- Initial weights (419,904,183 bytes):
+  `794d1df1b9c639e26effebefb84d8d83c668fe3a16ad4bffc4e46cb822890938`.
+- Trajectory (28,876,490 bytes):
+  `d245e36c3b1bcb5262193be3127bc733dc58c00aaaff4eb1960db78f5200e555`.
+
+The first replay attempt (`wan22_fixed_replay_actor`) failed before forward:
+the replay-only constructor had not initialized the inherited pipeline-offload
+state used by `load_trainable_state`. Candidate `52a7cf44` initializes this
+state to `None`; T2V/I2V single/dual-expert state-load regressions were added.
+Wan-family and inheritance tests: 86 passed in 4.20 seconds. No fake pipeline
+or offload hook is introduced into the replay-only model.
+
+Both successful matrix arms ran clean `52a7cf44`, one-rank native FSDP with
+CPU offload, IEEE math, the same initial LoRA, observations, actions, scheduler
+and conditioning. Native `DiffusionSDELogProbEvaluator` replayed all ten steps
+for both samples at batch two and then batch one. No gradients or optimizer
+updates were performed. Generation batch size was two.
+
+| FSDP precision | Replay batch | Maximum absolute log-prob difference | Clipped transitions |
+| --- | ---: | ---: | ---: |
+| actor | 2 | 0.0008442997932434082 | 11/20 |
+| actor | 1 | 0.0006373822689056396 | 10/20 |
+| none | 2 | 0 | 0/20 |
+| none | 1 | 0.0003195483877789229 | 9/20 |
+
+Clipping uses the unchanged recipe ratio 0.0001. Actor precision removes the
+250 frozen FP32 tensors (58,368,000 elements) across the two experts; native
+precision preserves their inventory. Native batch-two log probabilities are
+tensor-exact to the saved generation values at every step, across both experts.
+Changing only replay batch shape still causes meaningful drift under this
+narrow clip ratio. Therefore preserving frozen precision alone is insufficient
+for the original generation-two/replay-one configuration. The matched-batch
+result is a bounded real replay pass, not proof of general batch invariance.
+
+Outputs: `wan22_fixed_replay_actor_loaded/` and `wan22_fixed_replay_none/`, each
+with `result.json`, `transitions.json`, `logprobs.pt` and executed script copies.
+`wan22_fixed_replay_compare.py` rehashes the fixture, checks exact coverage of
+all 20 transitions per arm, compares saved old log probabilities to the actual
+fixture and recomputes differences/clipping from tensors. Its audited summary
+is `wan22_fixed_replay_comparison.json`. All scripts/artifacts are beneath the
+NVMe evidence directory used above. Both runtime sessions and the comparison
+audit exited zero; fresh GPU compute inventory was empty after completion.
+
+Next gate: preserve frozen FP32 and match generation/replay batch shape while
+comparing actual gradients, accumulation and updates across one and multiple
+ranks. Native policy also changes gradient reduction dtype; do not infer its
+gradient semantics from forward equality. No public default, clipping threshold
+or full-size I2V recipe was changed; training remains stopped pending that gate.
