@@ -51,3 +51,35 @@ real update/resume, rollout precision consistency and production mesh/lifecycle
 integration remain open. The prototype still gathers between blocks and uses
 gather-based head exchanges. All three jobs terminal; fresh compute inventory
 empty, GPUs 0-1 released. No runtime/dependency edits or long queue restart.
+
+## Full-shape family/CPS follow-up (September 13)
+
+The numerical probe now accepts rectangular latent dimensions, temporal
+length, text length and GPU checkpointing. Trace hooks assuming one forward
+per block are rejected when checkpoint recomputation is enabled. Both
+forward and backward remain inside the same selected SDPA backend context.
+
+At `[1,16,9,60,104]` with 512 synthetic text tokens, actual family adapters
+(nonzero B std 1e-3), local padded 64-row linears, FP32 LoRA and head-sharded
+attention, the real family forward_step and CPS fixed-action loss complete
+at scheduler index 18, sigma 0.0281334, CFG5. Both precisions have exactly
+matching output and scalar logprob. All 280 A and 280 B gradients are nonzero.
+
+| Precision | Rank 0 aggregate gradient relative L2 | Rank 1 |
+| --- | ---: | ---: |
+| FP32 | 4.41248e-6 | 4.34723e-6 |
+| BF16 | 0.0343482 | 0.0350728 |
+
+The full-size gradient result does not match the earlier small-input result.
+Both rank reports have identical forward/logprob metrics but differ in 550
+parameter-gradient error records. Comparison gradients are summed across
+ranks; each rank has its own independently executed reference backward.
+Do not assume all discrepancy is CP-specific without a matching full-shape,
+checkpointed unsharded control. The earlier exact small unsharded baseline
+does not cover this shape/backend/checkpoint workload.
+
+Evidence: `cosmos_fullshape_family_parity_l40s/rank-{0,1}.json` and adjacent
+log under the same NVMe root. This crosses the full-shape scalar diagnostic
+gate, not full trajectory, reward, update/resume or gradient-equivalence
+acceptance. Both rank jobs terminate and torchrun exits 0; fresh GPU inventory
+is empty, GPUs 0-1 released. Runtime and thresholds unchanged.
