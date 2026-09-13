@@ -114,7 +114,6 @@ class ReferenceConditionedBatches:
     ) -> dict[str, Any]:
         """Thread the active reference image into family prepare_sampling."""
 
-        del video_request, params
         reference_image = encoded.get("reference_image")
         if reference_image is None:
             reference_image = self._reference_image_for_batch(generation_request, batch)

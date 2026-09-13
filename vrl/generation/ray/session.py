@@ -10,8 +10,7 @@ from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.generation.ray.engine import RayGenerationEngine, rank_handles
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.weight_sync import GenerationWeightSync
-from vrl.ray.actor_group import RayActorHandle
-from vrl.ray.dependencies import kill_and_retain, require_ray
+from vrl.ray.dependencies import kill_actors, require_ray
 from vrl.utils.deadline import OperationDeadline
 
 logger = logging.getLogger(__name__)
@@ -59,6 +58,7 @@ class RayGenerationSession:
                 "Ray generation and weight sync must share one actor dispatcher",
             )
         self.engines = list(owned_engines)
+        self.rank_handles = rank_handles(self.engines)
         engine_ids = tuple(engine.engine_id for engine in self.engines)
         if len(set(engine_ids)) != len(engine_ids):
             raise RuntimeError(f"duplicate generation engine ids: {engine_ids}")
@@ -70,12 +70,6 @@ class RayGenerationSession:
         )
         self._release_wait_task: asyncio.Task[Any] | None = None
         self._force_close = False
-
-    @property
-    def rank_handles(self) -> list[RayActorHandle]:
-        """Flat rank-actor view for kill, liveness, and graceful-release paths."""
-
-        return rank_handles(self.engines)
 
     async def update_weights(self, trainable_state: Any, policy_version: int) -> None:
         weight_sync = self.weight_sync
@@ -132,7 +126,7 @@ class RayGenerationSession:
     async def close(self, *, force: bool) -> None:
         """Release rank policies, kill actors, and retain failed handles."""
 
-        if not self.engines:
+        if not self.rank_handles:
             return
         if force:
             self.force_close()
@@ -179,23 +173,17 @@ class RayGenerationSession:
     def kill_engines(self) -> None:
         """Synchronously kill every rank actor and retain handles that fail."""
 
-        if not self.engines:
+        if not self.rank_handles:
             return
         ray = require_ray()
-        surviving, failures = kill_and_retain(
-            ray,
-            self.rank_handles,
-            lambda rank: rank.actor,
-        )
-        surviving_actors = {id(rank.actor) for rank in surviving}
-        remaining_engines: list[RayGenerationEngine] = []
-        for engine in self.engines:
-            remaining_ranks = [rank for rank in engine.ranks if id(rank.actor) in surviving_actors]
-            if remaining_ranks:
-                # This is a cleanup-only view. Do not mutate the original engine
-                # topology still referenced by the executor or health monitor.
-                remaining_engines.append(RayGenerationEngine(engine.engine_id, remaining_ranks))
-        self.engines[:] = remaining_engines
+        failures = kill_actors(ray, [rank.actor for rank in self.rank_handles])
+        failed_actor_ids = {id(actor) for actor, _ in failures}
+        self.rank_handles[:] = [
+            rank for rank in self.rank_handles if id(rank.actor) in failed_actor_ids
+        ]
+        # Once shutdown starts, engines are no longer executable. Retry cleanup
+        # through the retained rank handles without rebuilding partial engines.
+        self.engines.clear()
         if failures:
             raise RuntimeError(
                 "Ray generation session cleanup incomplete: "

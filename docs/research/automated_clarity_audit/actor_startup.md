@@ -35,8 +35,8 @@ unbounded kill retries. The original production-wide ownership claim was too bro
   and handle construction. Keep the sweep around the whole launch sequence.
   Separate startup and metadata waits receive separate bounded budgets.
 - RayActorHandle holds transport metadata; RayActorGroup holds mutable ownership.
-  Their existing class split has a real lifetime purpose. Shared shutdown uses
-  kill_and_retain rather than another actor-specific cleanup implementation.
+  Their existing class split has a real lifetime purpose. Shared shutdown calls
+  kill_actors directly, then retains the handles whose kill calls failed.
 - Worker/config/bundle length checks protect positional correspondence before
   actor creation. Framework metadata conversion remains at this boundary. No
   new float/token tests or checker classes are justified by this review.

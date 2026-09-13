@@ -12,12 +12,10 @@ rank of an engine if any rank failed. Consequently the session continued to
 report already-killed ranks as owned and submitted kills for them again on retry.
 The existing retry test used one rank and could not expose this grouping error.
 
-Rebuild the session's cleanup engine views from only the failed ranks, preserving
-engine IDs and rank order. Do not mutate the original engine objects still held
-by the executor/health monitor. The replacement views exist during failed
-teardown, when the runtime has already closed admission; they are not executable
-subsets for resumed generation. This deliberately changes session engine object
-identity after a failed kill. Successful cleanup still leaves no owned engines.
+The session now retains failed rank handles directly and clears its engine list
+on teardown. It does not construct partial engines or mutate the original engine
+objects held by the executor/health monitor. A subsequent close checks the owned
+rank handles, so it retries failed kills even though the engine list is empty.
 
 A new two-rank runtime shutdown regression failed before the fix: after one kill
 succeeded and one failed, the owned-rank list still contained both. It now proves
@@ -40,10 +38,10 @@ shutdown retries precisely that actor before reaching TERMINATED.
 - The two adjacent timeout constants are the session's isolated lifecycle limit
   table, with different reasons for parking versus graceful release. Do not
   create a separate two-value file or expose new YAML knobs just to move them.
-- `kill_actors` performs a complete sweep and reports failures. `kill_and_retain`
-  maps those failures back to caller-owned records. Actor groups and sessions
-  share this real cleanup mechanism; keep its generic callback instead of a new
-  class per owner. Owner-specific exceptions remain at the owners.
+- `kill_actors` performs the shared complete sweep and reports failures. Each
+  owner directly retains its failed handles. The `kill_and_retain` callback
+  adapter was removed; mapping through a generic callback added an unnecessary
+  layer between the owner and this sweep.
 - `require_ray`, current-node and GPU-ID helpers are lazy dependency/framework
   adapters. GPU string ordinals normalize at the Ray API boundary, with errors
   preserved rather than silently dropping devices. ClusterTopology.from_ray

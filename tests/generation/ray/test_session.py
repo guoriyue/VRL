@@ -208,9 +208,12 @@ async def test_close_retains_only_actor_handles_that_failed_to_die(
 
     assert isinstance(caught.value.__cause__, RuntimeError)
     assert ray.killed == [first]
-    # The engine whose rank failed to die is retained; the killed one is gone.
-    assert [engine.engine_id for engine in session.engines] == ["rollout-1"]
-    assert session.engines[0].primary.actor is failed
+    assert session.engines == []
+    assert [rank.actor for rank in session.rank_handles] == [failed]
+    ray.failed_actor = None
+    await session.close(force=True)
+    assert ray.killed == [first, failed]
+    assert session.rank_handles == []
 
 
 @pytest.mark.asyncio
