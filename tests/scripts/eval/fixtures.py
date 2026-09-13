@@ -127,14 +127,21 @@ class TinySanaPipeline:
 
 
 def write_tiny_sana_snapshot(path: Path) -> Path:
-    """A local model directory: the official scheduler config plus a weights marker.
+    """A local model directory: the official scheduler, a real tiny transformer, and
+    the ``model_index.json`` marker.
 
     ``load_official_scheduler`` reads ``scheduler/`` from it for real
-    (``local_files_only``), and the checkpoint identity is the hash of this tree.
+    (``local_files_only``); the generic replay recipe loads ``transformer/``
+    through ``SanaTransformer2DModel.from_pretrained`` unpatched, so a replay
+    bundle built from this directory has no double at all. The checkpoint
+    identity is the hash of this tree.
     """
+
+    from tests.models.steps.denoise.fixtures import build_tiny_sana_transformer
 
     path.mkdir(parents=True, exist_ok=True)
     build_official_sana_scheduler().save_pretrained(path / "scheduler")
+    build_tiny_sana_transformer().save_pretrained(path / "transformer")
     (path / "model_index.json").write_text('{"_class_name": "SanaPipeline"}\n', encoding="utf-8")
     return path
 

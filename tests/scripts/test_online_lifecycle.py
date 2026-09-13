@@ -1,26 +1,38 @@
+"""Shutdown order and error propagation of ``run_online_recipe``.
+
+Everything up to the Ray side is real: the SANA aesthetic GRPO preset resolved
+onto the tiny local snapshot (``tiny_sana_online_config``), the real family
+loader over ``TinySanaPipeline`` (the Hub load is the one model double), the
+real local-directory checkpoint identity, the real resource plan on a GPU-less
+rollout fleet, the real launch contract and the real training launch evidence.
+
+The Ray-side roles -- placement owner, rollout launcher/runtime, collector,
+reward runtime, trainer and its rollout schedule -- are call recorders: the
+theorems here are *which* of them the recipe releases, in what order, and which
+error survives, so the recorders write a ``shutdown_order`` ledger and raise on
+demand. None of them re-implements a production cascade (see the docstrings on
+``_FakeCollector`` / ``_FakeSchedule``).
+"""
+
 from __future__ import annotations
 
-import contextlib
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
-from omegaconf import OmegaConf
 
 from tests.conftest import real_local_ray
+from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
+from tests.trainers._checkpoint_helpers import _Trainer
 from vrl import run as resolved_run
-from vrl.algorithms.grpo.continuous import GRPOConfig
-from vrl.config.precision import PrecisionPolicy, RolePrecision
-from vrl.config.schema import RootConfig
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.algorithms.types import TrainStepMetrics
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.models import checkpoint_identity
-from vrl.models.families.semantics import PolicySemantics
-from vrl.models.interfaces import ReplayResult
 from vrl.scripts.common import online
+from vrl.trainers.checkpointing import save_training_checkpoint
 from vrl.trainers.data.prompts import PromptExample
-from vrl.trainers.online.config import OnlineBatchPlan
 
 ray = pytest.importorskip("ray")
 
@@ -44,30 +56,10 @@ def preinitialized_ray():
         yield started
 
 
-class _FakeModel:
-    device = torch.device("cpu")
-
-    def replay_forward(
-        self,
-        batch: Any,
-        timestep_idx: int = 0,
-        *,
-        request: Any | None = None,
-    ) -> ReplayResult:
-        del batch, timestep_idx, request
-        return ReplayResult(log_probs=torch.zeros(1), metadata={})
-
-    def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
-        return contextlib.nullcontext()
-
-    def load_trainable_state(self, state_dict: dict[str, Any]) -> None:
-        self.state_dict = dict(state_dict)
-
-
 class _FakeReward:
     def __init__(self, state: dict[str, Any]) -> None:
         self._state = state
-        self.task = str(state.get("family_task", "t2i"))
+        self.task = "t2i"
 
     async def preflight(self) -> None:
         return None
@@ -83,9 +75,9 @@ class _FakeCollector:
     The generation→reward shutdown cascade (runtime first, retain the reward
     asleep and raise on runtime failure, ``_reward_shutdown_complete``
     idempotence) is owned by ``RolloutCollector.shutdown``
-    (vrl/rollouts/collector/core.py:177-202) and has direct real coverage in
-    tests/rollouts/collector/test_runtime.py:238-253. The recipe under test
-    only ever calls ``collector.shutdown()`` itself.
+    (vrl/rollouts/collector/core.py) and has direct real coverage in
+    tests/rollouts/collector/test_runtime.py. The recipe under test only ever
+    calls ``collector.shutdown()`` itself.
     """
 
     def __init__(self, state: dict[str, Any], reward: _FakeReward) -> None:
@@ -125,10 +117,9 @@ class _FakeSchedule:
     """Pure call recorder; it does NOT re-implement the production cascade.
 
     The recipe releases the whole rollout pipeline through the schedule alone
-    (vrl/scripts/common/online.py:214-218); the real schedule's cascade into
-    the collector (StrictOnPolicyRolloutSchedule.shutdown →
-    shutdown_collector_runtime) is schedule-internal and must not be
-    re-implemented here.
+    (``_OnlineRecipeLifecycle.shutdown``); the real schedule's cascade into the
+    collector (StrictOnPolicyRolloutSchedule.shutdown → shutdown_collector_runtime)
+    is schedule-internal and must not be re-implemented here.
     """
 
     def __init__(self, state: dict[str, Any]) -> None:
@@ -161,11 +152,6 @@ class _FakeLauncher:
         if self._state.get("launch_raises"):
             raise RuntimeError("launch boom")
         return _FakeRuntime(self._state)
-
-
-class _FakeGatherer:
-    def merge_generation_batches(self, *_args: Any) -> Any:
-        raise AssertionError("lifecycle test gatherer must not execute")
 
 
 class _FakePlacementOwner:
@@ -215,7 +201,8 @@ class _FakeTrainer:
         if self._state.get("trainer_step_raises"):
             raise RuntimeError("train boom")
         self.state.global_step += 1
-        return SimpleNamespace()
+        # The real metrics CSV reads every field of the real step result.
+        return TrainStepMetrics()
 
 
 def _state() -> dict[str, Any]:
@@ -232,90 +219,11 @@ def _state() -> dict[str, Any]:
         "launcher_worker": None,
         "launcher_model_identity": None,
         "placement_worker": None,
-        "model_builds": 0,
-        "bundle_builds": 0,
-        "resolved_build": None,
-        "bundle_build": None,
-        "identity_builds": [],
-        "compatibility_calls": [],
         "trainer_steps": 0,
         "trainer_prompt_batches": [],
         "checkpoint_paths": [],
         "shutdown_order": [],
     }
-
-
-def _trainer_config(tmp_path: Any) -> SimpleNamespace:
-    return SimpleNamespace(
-        profile=False,
-        output_dir=str(tmp_path),
-        batch_plan=OnlineBatchPlan(
-            prompts_per_batch=1,
-            n_samples_per_prompt=1,
-        ),
-        rollout_orchestration=SimpleNamespace(schedule_mode="strict_on_policy"),
-    )
-
-
-def _cfg() -> Any:
-    return OmegaConf.create(
-        {
-            "data": {"sampler": {"type": "random_without_replacement"}},
-            "distributed": {"rollout": {"cpus_per_worker": 0.5}},
-            "algorithm": {"kind": "grpo", "kl_coef": 0.0},
-            "model": {"family": "sd3_5", "use_lora": False},
-        },
-    )
-
-
-class _FakeFamilyEntry:
-    family = "sd3_5"
-    task = "t2i"
-
-    def validate_gpus_per_engine(self, gpus_per_engine: int) -> None:
-        del gpus_per_engine
-
-    policy_semantics = PolicySemantics(
-        generation_regime="full_sequence",
-        step_kind="denoise",
-        action_distribution="continuous",
-        trajectory_layout="denoise",
-    )
-
-    def __init__(self, state: dict[str, Any]) -> None:
-        self._state = state
-        self.task = str(state.get("family_task", "t2i"))
-
-    def resolve_model_build(
-        self,
-        root: Any,
-        device: Any,
-        *,
-        precision: Any,
-        **kwargs: Any,
-    ) -> Any:
-        del root, device, precision, kwargs
-        self._state["model_builds"] += 1
-        build = SimpleNamespace(family=self.family, rollout=None)
-        self._state["resolved_build"] = build
-        return build
-
-    def build_replay(self, build: Any) -> Any:
-        self._state["bundle_builds"] += 1
-        self._state["bundle_build"] = build
-        precision = RolePrecision(
-            dtype="fp32",
-            float32_precision="ieee",
-            outer_autocast=False,
-        )
-        model = _FakeModel()
-        model.precision = precision
-        return SimpleNamespace(
-            model=model,
-            scheduler=object(),
-            trainable_modules={},
-            precision=precision,
-        )
 
 
 def test_owned_ray_session_retries_shutdown_before_committing_closed() -> None:
@@ -341,176 +249,111 @@ def test_owned_ray_session_retries_shutdown_before_committing_closed() -> None:
     assert ray_api.calls == 2
 
 
-def _install_common_fakes(
+class _RealRun:
+    """One real tiny SANA run: config, snapshot and the pipeline the loader serves."""
+
+    def __init__(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        *,
+        prompts: tuple[str, ...] = ("a cat",),
+        overrides: tuple[str, ...] = (),
+        on_load: Any = None,
+    ) -> None:
+        self.cfg = tiny_sana_online_config(
+            tmp_path,
+            prompts=prompts,
+            overrides=(
+                "trainer.save_freq=0",
+                "distributed.rollout.cpus_per_worker=0.5",
+                *overrides,
+            ),
+        )
+        self.snapshot = tmp_path / "sana-snapshot"
+        self.output_dir = tmp_path / "run"
+        self.pipeline = TinySanaPipeline()
+        self.pipeline.install(monkeypatch, self.snapshot, on_load=on_load)
+
+    def replay_identity(self) -> dict[str, Any]:
+        """The identity the recipe resolves for this run's replay model."""
+
+        resolved = resolved_run.resolve_online_run(self.cfg)
+        return resolved_run.resolve_model(
+            resolved.family,
+            resolved.built.root,
+            resolved.device,
+            precision=resolved.built.precision,
+            for_rollout=False,
+        ).identity
+
+    def save_checkpoint(self, path: Path) -> Path:
+        """A real checkpoint of this run's replay bundle, for ``trainer.resume_from``."""
+
+        resolved = resolved_run.resolve_online_run(self.cfg)
+        replay = resolved_run.resolve_model(
+            resolved.family,
+            resolved.built.root,
+            resolved.device,
+            precision=resolved.built.precision,
+            for_rollout=False,
+        )
+        bundle = replay.materialize(context="lifecycle test checkpoint")
+        save_training_checkpoint(
+            path,
+            trainer=_Trainer(),
+            bundle=bundle,
+            family="sana",
+            progress={"next_epoch": 1, "next_step": 1},
+            rng_state={},
+            model_identity=replay.identity,
+        )
+        self.pipeline.loads = 0
+        return path
+
+    def evidence(self) -> list[dict[str, Any]]:
+        directory = self.output_dir / "run_evidence"
+        return [json.loads(path.read_text()) for path in sorted(directory.glob("*.json"))]
+
+
+def _spy_replay_transformer_load(monkeypatch, *, after_load) -> list[str]:
+    """Observe the real replay-bundle transformer load (diffusers' ``from_pretrained``
+    on ``transformer/``); ``after_load`` runs while the bundle is still being built."""
+
+    from diffusers import SanaTransformer2DModel
+
+    real_from_pretrained = SanaTransformer2DModel.from_pretrained.__func__
+    loads: list[str] = []
+
+    def from_pretrained(cls, path, **kwargs):
+        transformer = real_from_pretrained(cls, path, **kwargs)
+        loads.append(str(path))
+        after_load()
+        return transformer
+
+    monkeypatch.setattr(SanaTransformer2DModel, "from_pretrained", classmethod(from_pretrained))
+    return loads
+
+
+def _install_ray_side_fakes(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Any,
+    tmp_path: Path,
     state: dict[str, Any],
 ) -> _FakeReward:
-    trainer_config = _trainer_config(tmp_path)
+    """Replace the Ray-side roles with shutdown recorders; everything else is real."""
+
     reward = _FakeReward(state)
     collector = _FakeCollector(state, reward)
-    resources = SimpleNamespace(
-        cross_node=False,
-        colocated=False,
-        rollout_num_engines=1,
-        rollout_gpus_per_engine=1,
-        rollout_devices=(),
-        trainer_torch_device="cpu",
-        reward_devices=(),
-        reward_torch_device=lambda *, trainer_device=None: "cpu",
-        lifecycle=SimpleNamespace(
-            release_rollout_before_train=False,
-            release_rollout_before_reward=False,
-            release_trainer_before_reward=False,
-            release_reward_after_score=False,
-        ),
-    )
-
-    monkeypatch.setattr(online, "_preflight_production_video_reward", lambda cfg: None)
-    # The resolution seam moved into resolve_online_run, which calls its
-    # dependencies through their source modules; stub those seams at the owner.
-    monkeypatch.setattr(
-        resolved_run.registry,
-        "get_model_family_entry",
-        lambda family: _FakeFamilyEntry(state),
-    )
-    # The real resolved type. The namespace this replaces carried `rollout` as a
-    # bare string (the real field is a RolePrecision, which the same file already
-    # builds correctly in _FakeFamilyEntry.build_replay) plus a
-    # `rollout_base_precision` field that exists nowhere else in the repo.
-    fp32 = RolePrecision(dtype="fp32", float32_precision="ieee", outer_autocast=False)
-    precision = PrecisionPolicy(
-        training=fp32,
-        rollout=fp32,
-        diffusion_math="fp32",
-        prompt_encoder_dtype="fp32",
-    )
-    monkeypatch.setattr(
-        resolved_run.builders,
-        "build_configs",
-        lambda cfg: SimpleNamespace(
-            root=RootConfig.model_validate(
-                {
-                    "algorithm": {"kind": "grpo"},
-                    "rollout": {"sde": {"type": "flow_grpo"}},
-                    "data": {
-                        "manifest": "unit-manifest.jsonl",
-                        "preprocessing": {},
-                        "sampler": {"type": "random_without_replacement"},
-                    },
-                    "distributed": {
-                        "rollout": {"cpus_per_worker": cfg.distributed.rollout.cpus_per_worker},
-                        "training": {"strategy": "single_process"},
-                    },
-                    "trainer": {
-                        "total_epochs": int(state.get("total_epochs", 1)),
-                        "save_freq": 0,
-                        "seed": 0,
-                    },
-                    "model": {
-                        "family": "sd3_5",
-                        "path": "unit-checkpoint",
-                        "use_lora": False,
-                    },
-                },
-            ),
-            trainer=trainer_config,
-            precision=precision,
-            # Typed, matching the recipe's algorithm.kind=grpo: the run path
-            # reads built.algorithm.global_std, so a namespace stub here would
-            # only re-hide the field it is meant to exercise.
-            algorithm=GRPOConfig(kl_coef=0.0),
-            reward=SimpleNamespace(
-                weights={"kling_video_reward": 1.0},
-                kwargs={},
-                inference_configs={},
-                all_external_inference=False,
-            ),
-            resume=SimpleNamespace(checkpoint_path=None, strict=True),
-        ),
-    )
-    monkeypatch.setattr(online.TrainingCheckpoint, "load_for_resume", lambda resume: None)
-    model_identity = {"schema": "test"}
-
-    def _resolve_model_identity(build: Any) -> dict[str, str]:
-        state["identity_builds"].append(build)
-        return model_identity
-
-    def _validate_checkpoint(
-        checkpoint: Any,
-        *,
-        family: str,
-        expected_model_identity: dict[str, Any],
-        strict: bool,
-    ) -> None:
-        state["compatibility_calls"].append(
-            (checkpoint, family, expected_model_identity, strict),
-        )
-
-    # resolve_model/ResolvedModel.materialize live in vrl.run and reach the
-    # identity resolver.
-    # through its source module, so the stub targets the owner as well.
-    monkeypatch.setattr(
-        checkpoint_identity,
-        "resolve_checkpoint_model_identity",
-        _resolve_model_identity,
-    )
-    monkeypatch.setattr(online, "validate_checkpoint_compatibility", _validate_checkpoint)
-    monkeypatch.setattr(
-        resolved_run.ray_resources.ResolvedDistributedResources,
-        "from_root",
-        classmethod(lambda _cls, cfg, **kwargs: resources),
-    )
-    monkeypatch.setattr(online, "format_distributed_resource_plan", lambda resources: "resources")
-    monkeypatch.setattr(
-        online,
-        "load_prompt_examples_from_config",
-        lambda cfg: [
-            PromptExample(prompt=str(prompt))
-            for prompt in state.get("prompt_examples", ["prompt"])
-        ],
-    )
-    monkeypatch.setattr(online, "require_runtime_model", lambda model, **kwargs: model)
-    monkeypatch.setattr(
-        online,
-        "enable_transformer_gradient_checkpointing",
-        lambda *args, **kwargs: None,
-    )
-    monkeypatch.setattr(online._host_memory, "log", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         online,
         "GlobalRayPlacementOwner",
         lambda *args, **kwargs: _FakePlacementOwner(state, *args, **kwargs),
     )
-    monkeypatch.setattr(online, "validate_reward_memory_parking", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        resolved_run.RolloutCollectorConfig,
-        "from_root",
-        staticmethod(lambda root: object()),
-    )
     monkeypatch.setattr(online, "build_reward_runtime", lambda *args, **kwargs: reward)
-    monkeypatch.setattr(
-        online.AlgorithmEvaluatorPair,
-        "from_configs",
-        lambda *args, **kwargs: SimpleNamespace(algorithm=object(), evaluator=None),
-    )
     monkeypatch.setattr(
         online.RolloutCollector,
         "from_family",
         lambda *args, **kwargs: collector,
-    )
-    launch_inputs = RayGenerationLaunchInputs(
-        launch_contract=GenerationRuntimeLaunchContract(
-            family="sd3_5",
-            model_build={},
-            expected_model_identity=model_identity,
-        ),
-        gatherer=_FakeGatherer(),
-    )
-    monkeypatch.setattr(
-        resolved_run.ResolvedOnlineRun,
-        "ray_launch_inputs",
-        lambda _run, _replay_model: launch_inputs,
     )
     monkeypatch.setattr(online, "RayGenerationLauncher", lambda: _FakeLauncher(state))
     monkeypatch.setattr(
@@ -521,32 +364,24 @@ def _install_common_fakes(
         "if_supported",
         classmethod(lambda cls, *args, **kwargs: object()),
     )
-    monkeypatch.setattr(
-        online.TrainingRunTrace, "seal_artifacts", lambda self: self.artifacts_path
-    )
-    monkeypatch.setattr(online, "save_resolved_config", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        online.TrainingRunTrace,
-        "capture",
-        lambda *args, **kwargs: online.TrainingRunTrace(tmp_path / "evidence.json"),
-    )
-    monkeypatch.setattr(
-        online,
-        "OnlineMetricsCSV",
-        lambda *args, **kwargs: SimpleNamespace(append=lambda *args, **kwargs: None),
-    )
+    # The recorder trainer has no optimizer state to save and sealing hashes the
+    # written checkpoint-final, so both stay recorders keyed on the ledger.
     monkeypatch.setattr(
         online.OnlineRecipeRun,
         "save_checkpoint",
         lambda self, path, *args, **kwargs: state["checkpoint_paths"].append(path.name),
+    )
+    monkeypatch.setattr(
+        online.TrainingRunTrace, "seal_artifacts", lambda self: self.artifacts_path
     )
     return reward
 
 
 @pytest.mark.asyncio
 async def test_injected_prompt_examples_bypass_manifest_loader(monkeypatch, tmp_path) -> None:
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
     provided = PromptExample(prompt="frozen prompt", metadata={"source": "snapshot"})
     monkeypatch.setattr(
         online,
@@ -565,10 +400,10 @@ async def test_injected_prompt_examples_bypass_manifest_loader(monkeypatch, tmp_
     monkeypatch.setattr(online, "resolve_prompt_example_references", _stop_after_selection)
 
     with pytest.raises(_ReachedResolvedPrompt):
-        await online.run_online_recipe(_cfg(), prompt_examples=(provided,))
+        await online.run_online_recipe(run.cfg, prompt_examples=(provided,))
 
     assert seen == [provided]
-    assert state["bundle_builds"] == 0
+    assert run.pipeline.loads == 0
     assert state["owner_creates"] == 0
 
 
@@ -577,31 +412,38 @@ async def test_checkpoint_identity_preflight_runs_before_prompt_or_model_build(
     monkeypatch,
     tmp_path,
 ) -> None:
+    run = _RealRun(monkeypatch, tmp_path)
+    checkpoint = run.save_checkpoint(tmp_path / "checkpoint-1")
+    run = _RealRun(monkeypatch, tmp_path, overrides=(f"trainer.resume_from={checkpoint}",))
     state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
-    checkpoint = object()
-    monkeypatch.setattr(
-        online.TrainingCheckpoint,
-        "load_for_resume",
-        lambda _resume: checkpoint,
-    )
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
+    validated: list[tuple[Path, str, bool]] = []
+    real_validate = online.validate_checkpoint_compatibility
+
+    def spy_validate(checkpoint, *, family, expected_model_identity, strict):
+        validated.append((checkpoint.checkpoint_dir, family, strict))
+        real_validate(
+            checkpoint,
+            family=family,
+            expected_model_identity=expected_model_identity,
+            strict=strict,
+        )
+
+    monkeypatch.setattr(online, "validate_checkpoint_compatibility", spy_validate)
 
     class _ReachedPromptBoundary(RuntimeError):
         pass
 
     def _stop_at_prompt(_cfg: Any) -> list[Any]:
-        assert state["compatibility_calls"] == [
-            (checkpoint, "sd3_5", {"schema": "test"}, True),
-        ]
+        assert validated == [(checkpoint, "sana", True)]
         raise _ReachedPromptBoundary
 
     monkeypatch.setattr(online, "load_prompt_examples_from_config", _stop_at_prompt)
 
     with pytest.raises(_ReachedPromptBoundary):
-        await online.run_online_recipe(_cfg())
+        await online.run_online_recipe(run.cfg)
 
-    assert state["identity_builds"] == [state["resolved_build"]]
-    assert state["bundle_builds"] == 0
+    assert run.pipeline.loads == 0
     assert state["owner_creates"] == 0
     assert state["launches"] == 0
 
@@ -611,29 +453,15 @@ async def test_checkpoint_identity_mismatch_stops_before_prompt_model_or_ray(
     monkeypatch,
     tmp_path,
 ) -> None:
+    """A checkpoint saved from a different model directory is refused by the
+    real validator before prompts, the model or Ray."""
+
+    other = _RealRun(monkeypatch, tmp_path / "other")
+    (other.snapshot / "provenance.txt").write_text("another checkout", encoding="utf-8")
+    checkpoint = other.save_checkpoint(tmp_path / "checkpoint-1")
+    run = _RealRun(monkeypatch, tmp_path, overrides=(f"trainer.resume_from={checkpoint}",))
     state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
-    checkpoint = object()
-    monkeypatch.setattr(
-        online.TrainingCheckpoint,
-        "load_for_resume",
-        lambda _resume: checkpoint,
-    )
-
-    def _reject_checkpoint(
-        actual_checkpoint: Any,
-        *,
-        family: str,
-        expected_model_identity: dict[str, Any],
-        strict: bool,
-    ) -> None:
-        assert actual_checkpoint is checkpoint
-        assert family == "sd3_5"
-        assert expected_model_identity == {"schema": "test"}
-        assert strict is True
-        raise ValueError("checkpoint model identity mismatch")
-
-    monkeypatch.setattr(online, "validate_checkpoint_compatibility", _reject_checkpoint)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
     monkeypatch.setattr(
         online,
         "load_prompt_examples_from_config",
@@ -642,11 +470,10 @@ async def test_checkpoint_identity_mismatch_stops_before_prompt_model_or_ray(
         ),
     )
 
-    with pytest.raises(ValueError, match="checkpoint model identity mismatch"):
-        await online.run_online_recipe(_cfg())
+    with pytest.raises(ValueError, match="model identity mismatch"):
+        await online.run_online_recipe(run.cfg)
 
-    assert state["identity_builds"] == [state["resolved_build"]]
-    assert state["bundle_builds"] == 0
+    assert run.pipeline.loads == 0
     assert state["owner_creates"] == 0
     assert state["launches"] == 0
 
@@ -656,18 +483,12 @@ async def test_checkpoint_source_change_stops_after_model_before_ray_or_reward(
     monkeypatch,
     tmp_path,
 ) -> None:
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
-    identities = iter(({"source": "before"}, {"source": "after"}))
-
-    def _resolve_changed_identity(build: Any) -> dict[str, str]:
-        state["identity_builds"].append(build)
-        return next(identities)
-
-    monkeypatch.setattr(
-        checkpoint_identity,
-        "resolve_checkpoint_model_identity",
-        _resolve_changed_identity,
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
+    loads = _spy_replay_transformer_load(
+        monkeypatch,
+        after_load=lambda: (run.snapshot / "extra-weights.bin").write_bytes(b"drift"),
     )
     monkeypatch.setattr(
         online,
@@ -688,13 +509,9 @@ async def test_checkpoint_source_change_stops_after_model_before_ray_or_reward(
         RuntimeError,
         match="model checkpoint source changed during replay bundle construction",
     ):
-        await online.run_online_recipe(_cfg())
+        await online.run_online_recipe(run.cfg)
 
-    assert state["identity_builds"] == [
-        state["resolved_build"],
-        state["resolved_build"],
-    ]
-    assert state["bundle_builds"] == 1
+    assert loads == [str(run.snapshot)]
     assert state["owner_creates"] == 0
     assert state["launches"] == 0
 
@@ -702,39 +519,37 @@ async def test_checkpoint_source_change_stops_after_model_before_ray_or_reward(
 @pytest.mark.slow_test
 @pytest.mark.asyncio
 async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_path) -> None:
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
     # No preexisting driver: the recipe must start an owned local cluster and
     # close it on exit. Real Ray cannot append to the shutdown_order ledger, so
     # the post-run is_initialized() check stands in for the trailing "ray" entry.
     ray.shutdown()
+    replay_loads = _spy_replay_transformer_load(monkeypatch, after_load=lambda: None)
 
-    await online.run_online_recipe(_cfg())
+    await online.run_online_recipe(run.cfg)
 
     assert state["owner_creates"] == 1
     assert state["owner_cpu_plans"] == 1
     assert state["trainer_steps"] == 1
     assert state["checkpoint_paths"] == ["checkpoint-final"]
-    assert state["identity_builds"] == [
-        state["resolved_build"],
-        state["resolved_build"],
-    ]
-    assert state["bundle_build"] is state["resolved_build"]
-    assert state["compatibility_calls"] == [
-        (None, "sd3_5", {"schema": "test"}, True),
-    ]
+    # The driver's replay bundle is the real snapshot transformer, loaded once.
+    assert replay_loads == [str(run.snapshot)]
     assert state["collector_shutdowns"] == 0
     assert state["runtime_shutdowns"] == 0
     assert state["schedule_shutdowns"] == 1
     assert state["reward_shutdowns"] == 0
     assert state["owner_shutdowns"] == 1
     assert state["launcher_worker"] is state["placement_worker"]
-    assert state["launcher_model_identity"] == {"schema": "test"}
     assert state["launcher_worker"].cpus_per_worker == 0.5
+    # The launch contract carries the identity the real evidence record froze.
+    (evidence,) = run.evidence()
+    assert state["launcher_model_identity"] == evidence["model_identity"]
+    assert evidence["resumed"] is False
     # Once the trainer exists, the recipe releases the rollout pipeline through
-    # the schedule alone (online.py:214-218): collector, runtime, and reward
-    # are the schedule's to cascade into, never the recipe's — so the fakes
-    # must stay untouched here.
+    # the schedule alone: collector, runtime, and reward are the schedule's to
+    # cascade into, never the recipe's — so the recorders must stay untouched.
     assert state["shutdown_order"] == ["schedule", "owner"]
     assert not ray.is_initialized()
 
@@ -747,27 +562,38 @@ async def test_resume_releases_full_checkpoint_payload_before_training(
     preinitialized_ray,
 ) -> None:
     del preinitialized_ray
-    state = _state()
-    state["total_epochs"] = 2
-    checkpoint = SimpleNamespace(
-        next_epoch=1,
-        next_step=3,
-        checkpoint_dir=tmp_path / "checkpoint-1",
-        payload={"large_model_state": object()},
-        rng_state={},
+    run = _RealRun(monkeypatch, tmp_path)
+    checkpoint_dir = run.save_checkpoint(tmp_path / "checkpoint-1")
+    run = _RealRun(
+        monkeypatch,
+        tmp_path,
+        overrides=(f"trainer.resume_from={checkpoint_dir}", "trainer.total_epochs=2"),
     )
-    _install_common_fakes(monkeypatch, tmp_path, state)
-    monkeypatch.setattr(online.TrainingCheckpoint, "load_for_resume", lambda resume: checkpoint)
+    state = _state()
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
+    loaded: list[Any] = []
+    real_load = online.TrainingCheckpoint.load_for_resume
+
+    def spy_load(resume):
+        checkpoint = real_load(resume)
+        loaded.append(checkpoint)
+        return checkpoint
+
+    monkeypatch.setattr(online.TrainingCheckpoint, "load_for_resume", staticmethod(spy_load))
+    # The recorder trainer owns no optimizer state to restore into.
     monkeypatch.setattr(online, "restore_training_checkpoint", lambda *args, **kwargs: None)
-    monkeypatch.setattr(online, "restore_rng_state", lambda *args, **kwargs: None)
     collect_calls: list[bool] = []
     monkeypatch.setattr(online.gc, "collect", lambda: collect_calls.append(True))
 
-    await online.run_online_recipe(_cfg())
+    await online.run_online_recipe(run.cfg)
 
+    (checkpoint,) = loaded
+    assert checkpoint.checkpoint_dir == checkpoint_dir
     assert checkpoint.payload == {}
     assert collect_calls == [True]
     assert state["trainer_steps"] == 1
+    (evidence,) = run.evidence()
+    assert evidence["resumed"] is True
 
 
 @pytest.mark.slow_test
@@ -777,12 +603,16 @@ async def test_online_preview_matches_the_next_epoch_prompt_batch(
     tmp_path,
     preinitialized_ray,
 ) -> None:
+    run = _RealRun(
+        monkeypatch,
+        tmp_path,
+        prompts=("prompt-0", "prompt-1", "prompt-2"),
+        overrides=("trainer.total_epochs=2",),
+    )
     state = _state()
-    state["total_epochs"] = 2
-    state["prompt_examples"] = ["prompt-0", "prompt-1", "prompt-2"]
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
 
-    await online.run_online_recipe(_cfg())
+    await online.run_online_recipe(run.cfg)
 
     batches = state["trainer_prompt_batches"]
     assert len(batches) == 2
@@ -791,109 +621,83 @@ async def test_online_preview_matches_the_next_epoch_prompt_batch(
     assert preinitialized_ray.is_initialized()
 
 
+def _pin_torchrun_rank(monkeypatch, cuda_devices, *, gpus: int, world_size: int) -> None:
+    """A torchrun rank-0 process on a host with ``gpus`` cards, pinned at torch + env."""
+
+    cuda_devices(gpus)
+    monkeypatch.setenv("RANK", "0")
+    monkeypatch.setenv("LOCAL_RANK", "0")
+    monkeypatch.setenv("WORLD_SIZE", str(world_size))
+
+
 @pytest.mark.asyncio
 async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
     monkeypatch,
     tmp_path,
+    cuda_devices,
 ) -> None:
-    """Multi-rank ranks must not duplicate one global dedicated rollout plan."""
+    """Multi-rank ranks must not duplicate one global dedicated rollout plan.
 
-    from vrl.trainers.distributed import DistributedTrainingContext
+    Two FSDP ranks on a four-GPU host with a dedicated two-GPU rollout pool: the
+    real resource plan resolves rollout to the spare cards, so the real topology
+    guard rejects it before any model or Ray work."""
 
-    state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
-    resources = SimpleNamespace(
-        cross_node=False,
-        colocated=False,
-        rollout_num_engines=1,
-        rollout_gpus_per_engine=1,
-        rollout_devices=(),
-        rollout_num_gpus=2,
-        trainer_torch_device="cpu",
-        reward_torch_device=lambda *, trainer_device=None: "cpu",
-        lifecycle=SimpleNamespace(
-            release_rollout_before_train=False,
-            release_rollout_before_reward=False,
-            release_trainer_before_reward=False,
-            release_reward_after_score=False,
+    _pin_torchrun_rank(monkeypatch, cuda_devices, gpus=4, world_size=2)
+    run = _RealRun(
+        monkeypatch,
+        tmp_path,
+        overrides=(
+            "distributed.training.strategy=fsdp",
+            "distributed.training.num_nodes=1",
+            "distributed.training.gpus_per_node=2",
+            "distributed.resources.rollout.num_gpus=2",
+            "distributed.resources.rollout.gpu_pool=dedicated",
         ),
     )
-    context = DistributedTrainingContext(
-        strategy="fsdp",
-        rank=0,
-        world_size=2,
-        device=torch.device("cuda:0"),
-    )
-    monkeypatch.setattr(
-        resolved_run.ray_resources.ResolvedDistributedResources,
-        "from_root",
-        classmethod(lambda _cls, _cfg, **_kwargs: resources),
-    )
-    monkeypatch.setattr(
-        online.DistributedTrainingContext,
-        "from_root",
-        classmethod(lambda _cls, _cfg, *, device: context),
-    )
+    state = _state()
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
 
     with pytest.raises(
         NotImplementedError,
         match="every torchrun rank would independently initialize Ray",
     ):
-        await online.run_online_recipe(_cfg())
+        await online.run_online_recipe(run.cfg)
 
-    assert state["model_builds"] == 0
+    assert run.pipeline.loads == 0
     assert state["owner_creates"] == 0
     assert state["launches"] == 0
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("release_rollout_before_train", "release_trainer_before_reward"),
-    [(True, False), (False, True)],
-)
 async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
     monkeypatch,
     tmp_path,
-    release_rollout_before_train,
-    release_trainer_before_reward,
+    cuda_devices,
 ) -> None:
-    state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
-    resources = SimpleNamespace(
-        cross_node=False,
-        rollout_num_engines=1,
-        rollout_gpus_per_engine=1,
-        rollout_devices=(),
-        trainer_torch_device="cpu",
-        reward_torch_device=lambda *, trainer_device=None: "cpu",
-        lifecycle=SimpleNamespace(
-            release_rollout_before_train=release_rollout_before_train,
-            release_rollout_before_reward=False,
-            release_trainer_before_reward=release_trainer_before_reward,
-            release_reward_after_score=release_trainer_before_reward,
+    """A strategy that cannot park trainer state off a shared rollout GPU is
+    rejected before any model or Ray work: one DDP rank whose rollout shares
+    its only card resolves an on-demand rollout lease, and the real
+    ``DDPStrategy.validate_training_state_parking`` refuses it."""
+
+    _pin_torchrun_rank(monkeypatch, cuda_devices, gpus=1, world_size=1)
+    run = _RealRun(
+        monkeypatch,
+        tmp_path,
+        overrides=(
+            "distributed.training.strategy=ddp",
+            "distributed.training.num_nodes=1",
+            "distributed.training.gpus_per_node=1",
+            "distributed.resources.rollout.num_gpus=1",
+            "distributed.resources.rollout.gpu_pool=trainer",
         ),
     )
-    monkeypatch.setattr(
-        resolved_run.ray_resources.ResolvedDistributedResources,
-        "from_root",
-        classmethod(lambda _cls, _cfg, **_kwargs: resources),
-    )
-    monkeypatch.setattr(
-        online,
-        "validate_reward_memory_parking",
-        lambda *_args, **_kwargs: None,
-    )
-
-    class _UnsupportedStrategy:
-        def validate_training_state_parking(self) -> None:
-            raise NotImplementedError("Use disjoint rollout GPUs")
-
-    monkeypatch.setattr(online, "build_strategy", lambda _cfg, _context: _UnsupportedStrategy())
+    state = _state()
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
 
     with pytest.raises(NotImplementedError, match="Use disjoint rollout GPUs"):
-        await online.run_online_recipe(_cfg())
+        await online.run_online_recipe(run.cfg)
 
-    assert state["model_builds"] == 0
+    assert run.pipeline.loads == 0
     assert state["owner_creates"] == 0
     assert state["launches"] == 0
 
@@ -903,17 +707,21 @@ async def test_reference_conditioned_task_fails_before_model_or_ray_launch(
     monkeypatch,
     tmp_path,
 ) -> None:
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
-    state["family_task"] = "v2w"
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
+    # The guard reads the family's declared task; SANA is t2i, so the entry is
+    # relabelled v2w for this one theorem (the config carries no conditioning).
+    entry = resolved_run.resolve_online_run(run.cfg).family
+    monkeypatch.setattr(type(entry), "task", "v2w")
 
     with pytest.raises(
         ValueError,
         match=r"data\.preprocessing\.conditioning=reference_image",
     ):
-        await online.run_online_recipe(_cfg())
+        await online.run_online_recipe(run.cfg)
 
-    assert state["model_builds"] == 0
+    assert run.pipeline.loads == 0
     assert state["owner_creates"] == 0
     assert state["launches"] == 0
 
@@ -930,8 +738,9 @@ async def test_rollout_sync_getter_routes_through_strategy(
     produces rollout-facing weights, so the FSDP strategy controls what leaves
     the trainer without the recipe changing.
     """
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
 
     captured: dict[str, Any] = {}
 
@@ -941,7 +750,7 @@ async def test_rollout_sync_getter_routes_through_strategy(
 
     monkeypatch.setattr(online, "OnlineTrainer", _capture)
 
-    await online.run_online_recipe(_cfg())
+    await online.run_online_recipe(run.cfg)
 
     from vrl.trainers.strategy import SingleProcessStrategy
 
@@ -965,12 +774,13 @@ async def test_rollout_sync_getter_routes_through_strategy(
 async def test_run_online_recipe_shutdowns_owner_after_create_failure(
     preinitialized_ray, monkeypatch, tmp_path
 ) -> None:
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
     state["owner_create_raises"] = True
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
 
     with pytest.raises(RuntimeError, match="owner create boom"):
-        await online.run_online_recipe(_cfg())
+        await online.run_online_recipe(run.cfg)
 
     assert state["owner_creates"] == 1
     assert state["owner_shutdowns"] == 1
@@ -988,20 +798,20 @@ async def test_run_online_recipe_shutdowns_owner_after_rollout_launch_failure(
     monkeypatch,
     tmp_path,
 ) -> None:
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
     state["launch_raises"] = True
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
 
     with pytest.raises(RuntimeError, match="launch boom"):
-        await online.run_online_recipe(_cfg())
+        await online.run_online_recipe(run.cfg)
 
     assert state["owner_creates"] == 1
     assert state["collector_shutdowns"] == 1
-    # No schedule exists yet, so the recipe falls back to the collector
-    # (online.py:219-223). It never touches the reward directly: the real
-    # collector owns the generation→reward cascade
-    # (vrl/rollouts/collector/core.py:177-202), covered by
-    # tests/rollouts/collector/test_runtime.py:238-253.
+    # No schedule exists yet, so the recipe falls back to the collector. It
+    # never touches the reward directly: the real collector owns the
+    # generation→reward cascade (vrl/rollouts/collector/core.py), covered by
+    # tests/rollouts/collector/test_runtime.py.
     assert state["reward_shutdowns"] == 0
     assert state["owner_shutdowns"] == 1
     assert state["shutdown_order"] == ["collector", "owner"]
@@ -1016,8 +826,9 @@ async def test_run_online_recipe_shutdowns_owner_after_component_build_failure(
     tmp_path,
     failure,
 ) -> None:
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
     if failure == "reward":
         monkeypatch.setattr(
             online,
@@ -1034,15 +845,15 @@ async def test_run_online_recipe_shutdowns_owner_after_component_build_failure(
         message = "collector build boom"
 
     with pytest.raises(RuntimeError, match=message):
-        await online.run_online_recipe(_cfg())
+        await online.run_online_recipe(run.cfg)
 
     assert state["owner_creates"] == 1
     assert state["owner_shutdowns"] == 1
     assert state["collector_shutdowns"] == 0
-    # Partial-acquisition fallback (online.py:224-228): with neither schedule
-    # nor collector, the recipe shuts the standalone reward runtime down
-    # directly. In the "reward" case the reward build itself failed so nothing
-    # exists; in the "collector" case the built reward is still standalone.
+    # Partial-acquisition fallback: with neither schedule nor collector, the
+    # recipe shuts the standalone reward runtime down directly. In the "reward"
+    # case the reward build itself failed so nothing exists; in the "collector"
+    # case the built reward is still standalone.
     assert state["reward_shutdowns"] == (0 if failure == "reward" else 1)
     expected_order = ["owner"] if failure == "reward" else ["reward", "owner"]
     assert state["shutdown_order"] == expected_order
@@ -1055,8 +866,9 @@ async def test_run_online_recipe_shutdowns_owner_after_final_checkpoint_failure(
     monkeypatch,
     tmp_path,
 ) -> None:
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
 
     def raise_checkpoint(self: Any, path: Any, *args: Any, **kwargs: Any) -> None:
         del self, path, args, kwargs
@@ -1065,7 +877,7 @@ async def test_run_online_recipe_shutdowns_owner_after_final_checkpoint_failure(
     monkeypatch.setattr(online.OnlineRecipeRun, "save_checkpoint", raise_checkpoint)
 
     with pytest.raises(RuntimeError, match="save boom"):
-        await online.run_online_recipe(_cfg())
+        await online.run_online_recipe(run.cfg)
 
     # The schedule exists by this point, so the recipe releases the pipeline
     # through it alone; collector/reward are the schedule's to cascade into.
@@ -1082,14 +894,15 @@ async def test_run_online_recipe_shutdown_errors_do_not_hide_training_error(
     monkeypatch,
     tmp_path,
 ) -> None:
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
     state["trainer_step_raises"] = True
     state["schedule_shutdown_raises"] = True
     state["owner_shutdown_raises"] = True
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
 
     with pytest.raises(RuntimeError, match="train boom"):
-        await online.run_online_recipe(_cfg())
+        await online.run_online_recipe(run.cfg)
 
     # Both releases are attempted on the error path and again in the final
     # cleanup; neither failure replaces the training error.
@@ -1103,12 +916,13 @@ async def test_run_online_recipe_shutdown_errors_after_success_run_all_cleanups(
     monkeypatch,
     tmp_path,
 ) -> None:
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
     state["schedule_shutdown_raises"] = True
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
 
     with pytest.raises(RuntimeError, match="rollout_schedule shutdown failed"):
-        await online.run_online_recipe(_cfg())
+        await online.run_online_recipe(run.cfg)
 
     assert state["shutdown_order"] == ["schedule", "schedule", "owner"]
 
@@ -1203,25 +1017,27 @@ async def test_launch_evidence_failure_stops_before_training_and_cleans_up(
     monkeypatch,
     tmp_path,
 ) -> None:
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
 
     def fail_evidence(*args, **kwargs):
         raise OSError("evidence storage full")
 
     monkeypatch.setattr(online.TrainingRunTrace, "capture", fail_evidence)
     with pytest.raises(OSError, match="evidence storage full"):
-        await online.run_online_recipe(_cfg())
+        await online.run_online_recipe(run.cfg)
     assert state["trainer_steps"] == 0
     # The schedule already exists when evidence is captured, so the pipeline
-    # is released through it (online.py:214-218), never the collector.
+    # is released through it, never the collector.
     assert state["shutdown_order"] == ["schedule", "owner"]
 
 
 @pytest.mark.asyncio
 async def test_artifact_sealing_runs_after_final_checkpoint_before_cleanup(monkeypatch, tmp_path):
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
     sealed = []
 
     def seal(run_evidence):
@@ -1232,49 +1048,50 @@ async def test_artifact_sealing_runs_after_final_checkpoint_before_cleanup(monke
         return run_evidence.artifacts_path
 
     monkeypatch.setattr(online.TrainingRunTrace, "seal_artifacts", seal)
-    await online.run_online_recipe(_cfg())
-    assert sealed == [tmp_path / "evidence.json"]
+    await online.run_online_recipe(run.cfg)
+    (evidence_path,) = sorted((run.output_dir / "run_evidence").glob("*.json"))
+    assert sealed == [evidence_path]
     assert state["shutdown_order"] == ["schedule", "owner"]
 
 
 @pytest.mark.asyncio
 async def test_artifact_sealing_failure_still_cleans_up(monkeypatch, tmp_path):
+    run = _RealRun(monkeypatch, tmp_path)
     state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
 
     def fail_seal(path):
         raise OSError("artifact disk read failed")
 
     monkeypatch.setattr(online.TrainingRunTrace, "seal_artifacts", fail_seal)
     with pytest.raises(OSError, match="artifact disk read failed"):
-        await online.run_online_recipe(_cfg())
+        await online.run_online_recipe(run.cfg)
     assert state["shutdown_order"] == ["schedule", "owner"]
 
 
 @pytest.mark.asyncio
 async def test_process_seed_is_applied_before_actual_model_build(monkeypatch, tmp_path):
-    import torch
-
     from vrl.trainers.checkpointing import capture_rng_state, restore_rng_state
 
     previous = capture_rng_state()
-    state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
     observed = []
 
     class ReachedModelBuild(RuntimeError):
         pass
 
-    def inspect_build(self, build):
+    def inspect_build() -> None:
         observed.append(torch.nn.Linear(4, 3).weight.detach().clone())
         raise ReachedModelBuild()
 
-    monkeypatch.setattr(_FakeFamilyEntry, "build_replay", inspect_build)
+    run = _RealRun(monkeypatch, tmp_path)
+    state = _state()
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
+    _spy_replay_transformer_load(monkeypatch, after_load=inspect_build)
     try:
         for seed in (123, 456):
             torch.manual_seed(seed)
             with pytest.raises(ReachedModelBuild):
-                await online.run_online_recipe(_cfg())
+                await online.run_online_recipe(run.cfg)
         assert torch.equal(observed[0], observed[1])
     finally:
         restore_rng_state(previous)
