@@ -480,3 +480,44 @@ checkpoint helpers capture all CUDA devices, so a rank-local synchronization
 path needs care not to create contexts on another owner's GPU. No RNG
 synchronization, live generation, actual online loop, or public CP config
 enablement is claimed by this milestone.
+
+## Rank-local replay RNG boundary: 816418f9
+
+`synchronize_context_parallel_rng` copies the CP leader's PyTorch CPU,
+current-device CUDA, Python and NumPy RNG state to its CP peers. It uses
+explicit local CUDA state get/set calls, never all-device CUDA RNG APIs.
+Independent `torch.Generator` objects (including prompt samplers) are not
+modified. Different DP leaders retain distinct streams.
+
+Successful `collect_context_parallel_iteration` now calls this synchronization
+after every rank has loaded its shared replay data and agreed on success,
+before returning to replay. Leader-only random consumption during collection
+is therefore reflected in every CP peer's starting replay state. Failed
+collection/read paths still raise coherently instead of entering replay.
+
+This boundary assumes strict, ordered consumption without concurrent code
+advancing process RNGs. Matching RNG states is not proof of dropout/noise
+equivalence for tensors with different shard shapes, nor does it synchronize
+arbitrary explicit generators or change distributed checkpoint RNG capture.
+
+### Four-L40S verification
+
+The sharing test starts every rank with a different seed and makes only the
+leaders consume CPU/CUDA/Python/NumPy randomness during collection. After
+sharing, each rank's next random values exactly match an independently built
+reference stream for that group's leader after the same consumption. CPU
+`randperm` covers the type of operation used for replay timestep selection.
+The explicit sampler generator state remains exactly unchanged. Both
+all-device CUDA RNG APIs are patched to raise if called during sharing.
+
+- Four-L40S NCCL: **1 passed, 1 deselected**, 5.00 seconds.
+- CPU sharing/iteration/topology/distributed regression: **15 passed,
+  1 skipped**, 3.55 seconds.
+- Existing coherent failure and file cleanup cases still pass.
+- Ruff and whitespace checks pass. All processes terminal; fresh GPU compute
+  inventory empty, GPUs0-3 released. Shared runtime/dependencies unchanged.
+
+The shared-data interface now has a tested RNG boundary, but the live online
+recipe does not yet install it. Next required integration remains rollout
+owner lifecycle, group-aware orchestration/weight sync, and full online
+update/checkpoint/resume/EMA acceptance under the validated CP compute policy.
