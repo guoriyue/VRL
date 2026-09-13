@@ -394,3 +394,43 @@ need resolution before production adoption.
 Evidence: `cosmos_real_fixed_replay_control/{executed_probe.py,transitions.json,
 result.json}` under the NVMe output root. Process exited 0 and fresh compute
 inventory empty; GPU 0 released. No new video generation or reward scoring.
+
+## Real CP single-slice update: probe capture failure retained
+
+The next probe used all eight real rewarded samples at timestep 10. Native
+algorithm construction and whole-group advantages were evaluated once per
+rank, then each sample's native GRPO loss was weighted by 1/8 and passed to
+`ContextParallelStrategy.backward`. Gradient checkpointing was enabled. The
+native optimizer factory and `OnlineTrainer._clip_and_step` owned reduction,
+clipping and update. This is one time slice and one pass, not the configured
+multi-timestep/four-PPO-epoch update.
+
+All eight forward/backward microbatches completed, totaling 767.116901 seconds.
+Maximum pre-update saved-rollout log-prob error was 4.0829182e-6 (fixed limit
+1e-3); all rank noise-prediction comparisons were exact. Both ranks reached
+the code after the native optimizer boundary and passed assertions that the
+step happened, its norm was positive and trainable parameters changed.
+
+**The probe then failed and is not an accepted update result.** It attempted
+to read parameter gradients after `_clip_and_step`, which calls
+`optimizer.zero_grad()` before returning. The resulting gradient dictionary
+was empty. This was not evidence of non-finite gradients, but the process did
+not save `update.pt`, numeric gradient norm, optimizer state or final rank
+parameter equality. Those gates remain unproven, not implicitly passed.
+
+The reusable probe now registers an optimizer step pre-hook, capturing cloned
+CPU gradients after native reduction/clipping but before the optimizer clears
+them. It also writes each rank's raw accumulated gradients before the update
+boundary so a later capture failure need not force another full backward pass.
+A CPU regression using the real `_clip_and_step` verified clipped gradients
+are captured, parameters update, and live gradients are cleared afterward:
+**1 passed in 9.01s**. The corrected GPU probe has not yet been rerun.
+
+Failed evidence: `cosmos_real_cp_single_slice_update/{executed_probe.py,
+transitions.json,failure.json}`. Reusable corrected source:
+`/mnt/nvme/outputs/wan22_i2v_cache/cosmos_real_cp_update_probe.py`; regression:
+`/mnt/nvme/outputs/wan22_i2v_cache/test_cosmos_gradient_capture.py`.
+The corrected run uses a new `cosmos_real_cp_single_slice_update_captured`
+directory and must retain this failed artifact unchanged. Torchrun exited 1,
+the CPU regression exited 0, and fresh GPU inventory was empty; GPUs 0/1
+released. Full unsharded gradient/optimizer parity and full recipe remain open.
