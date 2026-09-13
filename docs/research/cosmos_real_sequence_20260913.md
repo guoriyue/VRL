@@ -1786,3 +1786,75 @@ Evidence: `/mnt/nvme/outputs/wan22_i2v_cache/cosmos_fair_throughput_four`,
 adjacent console log, acceptance_audit.json, timing_summary.json and preserved
 executed launch/audit/timing/preflight sources. Torchrun and audit exit0; fresh
 GPU and Ray inventories empty, GPUs0-3 released. No additional queue launched.
+
+## Matching single-card arm and controlled comparison passed
+
+The prepared native single-process arm now completed both updates at unchanged
+clean7bf2b579. Same manifest digest, seeds, eight global samples/update,
+512x512/93-frame/20-step generation, Kling reward and one-PPO/one-timestep
+training as the four-card arm above. GPU0 performed all work; GPUs1-3 remained
+idle to avoid competing host/PCIe jobs. No old queue was restarted.
+This is strict non-streaming GRPO with global_std=false, not a new validation
+of continuous stale-policy scheduling or streaming global-std accumulation.
+
+Measured same-work observations, not sustained/full-recipe scaling:
+
+| Timing boundary | Single L40S | Four L40S | Observed speedup |
+| --- | ---: | ---: | ---: |
+| First update native measured phases, cold | 739.225 s | 261.092 s | 2.83x |
+| Second update native measured phases, warm | 653.268 s | 171.632 s | 3.81x |
+| Complete two-update native training loop | 1403.335 s | 449.977 s | 3.12x |
+
+Warm measured-phase time decreased73.73%; two-update loop wall decreased67.94%.
+Four-card phase totals use the maximum rank total. Nested collection/reward
+metrics are not added twice, and sums were checked against every native printed
+phase total within0.00051s rounding. The loop wall starts at the earliest native
+`Starting ... online recipe` timestamp and ends at primary `Training complete`
+after final checkpoint and artifact sealing. It includes generation/reward cold
+construction, both updates and checkpoints, but excludes earlier trainer/Ray
+backend construction and later process shutdown. It is not shell process wall.
+
+Both actual updates pass the existing numerical limits without relaxation:
+
+| Cross-topology comparison, single as reference | Update1 | Update2 |
+| --- | ---: | ---: |
+| Own-step update relative L2 error | 1.633e-10 | 2.365e-10 |
+| Trainable parameter maximum absolute error | 3.638e-12 | 7.276e-12 |
+| Adam first-moment relative L2 error | 1.157e-10 | 1.186e-10 |
+| Adam second-moment relative L2 error | 1.270e-12 | 7.030e-13 |
+| EMA maximum absolute error | 3.638e-12 | 7.276e-12 |
+
+All560 frozen previous-adapter tensors match exactly across arms and remain
+equal to the initial trainable state. Full560 trainable tensors,560 Adam states
+and560 EMA tensors are compared each update; numerical values are not claimed
+bitwise equal. Single optimizer integer IDs and FSDP names are normalized only
+after exact parameter-manifest/order/shape checks, with identical hyperparameters
+and counts1/2. Every update's eight complete reward score vectors match exactly
+as a multiset; both arms' pre-update replay differences are0 and gradient norms
+match. Reward standard-deviation metrics differ by about4.8e-7/3.6e-7 from
+aggregation order; full metrics rows are not claimed identical. Raw gradients
+and released temporary videos were not retained, so there is no new direct
+raw-gradient or prompt-resolved video-hash equivalence claim.
+
+Single-arm audit also verifies1120 finite owned model tensors, both checkpoints,
+final checkpoint agreement, all560 trainables changed between updates, exact
+sequential sampler/RNG transition,16 decode/score receipts, one worker loaded
+once and successful temporary-video release. Native reward batching differs:
+single submits one eight-video request/update; four submits four two-video
+requests/update. Same total samples, not identical request batching. This is
+native topology/system throughput including replication and communication,
+not isolated GPU-only acceleration. Both arms use OMP_NUM_THREADS=4 per process,
+not an equal total CPU thread pool. There is only one warm observation/arm in
+fixed four-then-single order; host caches and a short CPU checkpoint1 audit
+overlapping the single arm's second iteration further limit timing precision.
+No confidence interval or learning-quality/full-paper-budget conclusion follows.
+
+Evidence under `/mnt/nvme/outputs/wan22_i2v_cache/`:
+`cosmos_fair_throughput_single` contains acceptance_audit.json,
+cross_topology_comparison_{1,2}_epochs.json and preserved executed launch/audit/
+comparison/summary sources. The shared `cosmos_fair_throughput_comparison.json`
+contains both timing boundaries and all phase ranges, also copied into the
+single output root. External comparator CPU tests7passed1.49s cover arithmetic,
+invalid tensors and verified optimizer ID normalization. Runtime, both comparison
+invocations, audit and summary all exit0. Candidate remains clean; manifest hash
+rechecked unchanged. Fresh GPU/Ray inventories empty; all GPU claims released.
