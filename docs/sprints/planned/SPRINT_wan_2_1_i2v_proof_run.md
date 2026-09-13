@@ -2,16 +2,32 @@
 
 ## Current execution state (2026-09-12 UTC)
 
-Status: **PLANNED: two-step deterministic equivalence passed; trained-moment resume and quality open**.
+Status: **PLANNED: deterministic trained-moment resume equivalence passed; full physics reward and quality open**.
+
+The trained-moment gate is now complete. From the clean original `9a2b01d2`
+checkout and unchanged environment, two ranks resumed checkpoint-2 to step 3.
+The source contains 1,600 Adam moment tensors, 800 already nonzero. Every final
+checkpoint payload section matches the uninterrupted step-3 baseline exactly:
+model, optimizer/EMA, progress, both rank RNG trees, family and schema. All 800
+finite LoRA tensors changed from step 2; gradient norm is 0.15291466209240082,
+and replay max error is 0.00009901821613311768 at the unchanged 0.01 gate.
+Both ranks succeeded, torchrun exited 0, and GPUs were released. Code and full
+runtime evidence records match exactly. Config changes are only output path,
+resume source and strict-resume activation. Evidence under the NVMe proof root:
+`resume_seed7_deterministic_step3`, `resume_step3.launch.log`,
+`trained_moment_resume_comparison.json`, `verify_trained_moment_resume.py`, and
+`launch_trained_moment_resume.sh`. The initial offline-metadata failure is
+preserved separately; it ran no training update. This closes the deterministic
+small-geometry CPU-motion-reward resume gate, not supported-dependency upgrade
+acceptance, nondeterministic exact repeatability, full physics reward or quality.
 
 The uninterrupted three-step baseline is now available at
 `/mnt/nvme/outputs/wan_i2v_14b_l40s_proof/control_seed7_deterministic_step3`.
 Both ranks succeeded; third-step gradient is 0.1529146621, replay max error
 0.0000990182161, and all 800 finite LoRA tensors change from step 2 to step 3.
 Its checkpoint-2 contains 800 nonzero Adam moment leaves and matches the
-previous deterministic two-step state exactly. Resume from this checkpoint-2
-and compare the final payload to close the trained-moment gate; this branch
-has not yet run. A concurrent SD3.5 job overlapped GPU 2 during the baseline's
+previous deterministic two-step state exactly. The resumed branch is now
+verified above. A concurrent SD3.5 job overlapped GPU 2 during the baseline's
 third update, so its timings are not exclusive-capacity/performance evidence.
 
 The deterministic uninterrupted two-update control now matches the strict
@@ -21,9 +37,9 @@ matches the resume source exactly. Second-step gradient norm is 0.2728397151;
 nonzero Adam moment leaves. Reports under the NVMe I2V proof root:
 `deterministic_control_source_comparison.json` and
 `deterministic_continuous_resume_comparison.json`.
-The tested save boundary follows a zero-gradient first step. A further
-step-2-to-step-3 comparison is still needed to exercise production restoration
-of already nonzero Adam moments; full physics reward and quality remain open.
+That tested save boundary followed a zero-gradient first step. The subsequent
+step-2-to-step-3 comparison above now exercises production restoration of
+already nonzero Adam moments; full physics reward and quality remain open.
 
 Deterministic repeatability update: two independent 14B two-rank resumes
 with `trainer.deterministic=true` and `CUBLAS_WORKSPACE_CONFIG=:4096:8`
