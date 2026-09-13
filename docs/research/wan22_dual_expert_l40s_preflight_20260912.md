@@ -1,8 +1,9 @@
 # Wan 2.2 dual-expert L40S launch preflight
 
-Status: CPU-only preflight passed; released-weight GPU execution remains open.
-No GPU claim or job was launched. The prior Wan full-size Ray termination
-requires coordination before another expensive hardware run.
+Status (2026-09-13): one bounded released-weight T2V dual-expert update
+completed, but strict rollout/replay equivalence was not accepted. Subsequent
+work was intentionally stopped. The original CPU preflight and tiny CUDA
+prerequisites below are historical; the real diagnostic is recorded last.
 
 ## Reproducible artifacts
 
@@ -103,3 +104,70 @@ was skipped, not passed. Its separate `dual_expert_cuda_l40s.log` is retained.
 Both pytest sessions are terminal and fresh GPU compute inventory is empty;
 GPUs 0-1 are released. Full released-weight GPU update and controlled resume
 remain open; neither CPU nor tiny CUDA prerequisites close those gates.
+
+## Released-weight diagnostic, 2026-09-13
+
+Runtime was candidate `7bf2b57907b3e34f850d1b29181d6a1774e31571` in
+`/home/ubuntu/VRL-cosmos-cp`. Two ranks used both pinned full 14B T2V experts,
+320x320, 17 frames, ten denoise steps, four global samples per update and
+rank-32 LoRA. Real Kling reward replaced OCR; two VideoPhy prompts had fixed
+request seeds. FSDP CPU offload, sequential rollout offload, IEEE precision,
+full_cpu checkpointing and EMA every update were enabled; compile was disabled.
+This is not the full-size I2V physics recipe or an OCR comparison.
+
+All artifacts are under `/mnt/nvme/outputs/wan22_i2v_cache/`:
+
+- `wan22_native_dual_local_hash_attempt/`: intentionally stopped local-path
+  launch; identity hashing consumed about 192.5 seconds before model building.
+- `wan22_native_dual_kling_pinned*`: pinned Hub identity avoided full-tree
+  hashing, but offline shard discovery failed without `local_files_only`.
+- `wan22_native_dual_kling_offline*`: explicit `model.local_files_only=true`
+  reached the real update. Preflight verified the pinned revision and flag in
+  both rollout and replay model-build arguments.
+- `wan22_native_dual_kling_offline/first_update_diagnostic.json`: authoritative
+  completed-update audit, not a two-update success verdict.
+
+The first native update took about 406.08 seconds, including cold reward work.
+Four clips decoded to 17 frames and received nonconstant real rewards. Both
+experts updated: each has 640 trainable tensors, 320 nonzero Adam first moments
+and 320 nonzero LoRA B tensors. All 1,280 optimizer states and FP32 masters were
+finite; every master-to-BF16 projection exactly matched the checkpoint model.
+EMA count was one. This is checkpoint integrity, not controlled resume.
+
+However, pre-update maximum log-probability difference was
+`0.0009684562683105469`, with clip fraction `0.4722222222222222` and active clip
+fraction `0.19444444444444445`. Passing the existing 0.01 guard does not establish
+strict equivalence when the algorithm's clip ratio is 0.0001. The second update
+was deliberately prevented; second-generation artifacts exist, but there is
+only one completed update and no successful final checkpoint.
+
+Sampled NVML usage reached 10,223,616,000 bytes per participating GPU; minimum
+sampled available host RAM was 143,991,476,224 bytes. Monitoring began after
+early model loading, so these are not whole-lifecycle peak guarantees. Expert
+traces reported zero inactive CUDA parameter bytes after forward resharding.
+Controllers and monitor terminated; fresh GPU and Ray process inventories were
+empty after stopping. No performance or quality improvement is claimed.
+
+## Frozen precision admission fix
+
+Actor precision normalized 125 FP32 frozen tensors per expert to BF16. This is
+a plausible replay mismatch contributor, not a proven sole cause; generation
+batch two versus replay batch one remains another controlled-test variable.
+
+Candidate commit `4c527cb1` preserves frozen floating dtypes under native FSDP
+`precision_policy=none`, derives validation dtype from trainable parameters,
+and retains rejection of mixed trainable or nonfloating parameter dtypes.
+Existing actor-policy casting is unchanged. No default policy was flipped.
+
+Verification: 207 CPU tests passed, 13 skipped; four CUDA/NCCL cases passed
+in 34.17 seconds across one and two ranks, including mixed BF16 trainables and
+frozen FP32 dual experts. Tiny-model native forward outputs exactly matched
+unsharded references; both experts updated and frozen FP32 values stayed exact.
+An initial test-only CPU DTensor gather failure was corrected by staging the
+gather copy to CUDA; its original log is retained.
+
+Full-model cached-trajectory replay and gradient comparisons are still required
+before resuming training. Native policy also changes gradient reduction dtype,
+so tiny forward equality alone cannot close single-card training semantics.
+Independent all-step replay, controlled resume, full-size I2V and quality gates
+remain open. The stopped SD3 queue must not be restarted.
