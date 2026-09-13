@@ -684,3 +684,33 @@ co-residency were excluded. Evidence, including the executed source and JSON:
 `/mnt/nvme/outputs/wan22_i2v_cache/h3_fullsize_random_co_resident_capacity`.
 The process is terminal, result status is `finite_co_resident_decode`, and a
 fresh compute inventory is empty. GPUs 2-3 are released.
+
+## 2026-09-13: explicit keep-encoder runtime decode option
+
+Candidate commit `17b6f460` adds `park_encoder_for_decode: bool = True` to
+`H3GenerationPlacement`. Opting out leaves the conditioner on its dispatched
+devices during video and audio decode. Each VAE still moves to its configured
+GPU just for decode and returns to CPU in `finally`, including failed decode
+or failed initial device transfer. The default parking policy is unchanged;
+there is no automatic OOM fallback or new public Ray/trainer strategy.
+
+The standalone probe exposes `--keep-encoder-during-decode` and
+`--video-vae-device`. For the full-size 32/32 encoder map tested above, the
+measured video placement is `--video-vae-device 3`, not the CLI's unchanged
+default device 2. This is an explicit capacity-sensitive choice, not a promise
+that larger batches, audio or arbitrary geometry fit. Placement policy is
+included in the probe's existing result JSON.
+
+Both policies passed the native tiny four-device complete-checkpoint,
+generation/executor, independent replay log-probability and backward test.
+Six focused lifecycle cases check video/audio success, decode failure and
+initial VAE transfer failure; parking is forbidden in those keep-encoder
+tests and the final CPU transfer is asserted. The first lifecycle test fixture
+incorrectly assigned a read-only pipeline property; it was corrected to use
+the module's actual backing field before the successful run.
+
+Final H3 plus CLI suite: **64 passed in 7.72s**, both CUDA opt-ins enabled.
+Artifacts: `/mnt/nvme/outputs/wan22_i2v_cache/h3_keep_encoder_cleanup_fixed_pytest`.
+Ruff and diff checks passed. All jobs terminal; fresh compute inventory empty.
+This connects the capacity result to runtime behavior but does not measure a
+full-size end-to-end speedup or verify released-weight generation/quality.
