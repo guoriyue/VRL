@@ -3841,3 +3841,29 @@ terminated with exit 1 after 198.739 seconds following the requested SIGTERM;
 fresh compute inventory is empty. No completed update or accepted timing is
 claimed for this interrupted retry. Existing output and monitoring receipts
 are retained. Do not resume the experiment queue until requested by the user.
+
+User explicitly resumed hardware work after the review-branch push. Claim GPUs
+0-3 for the interrupted equal-work Wan mmap trial on clean candidate 9145b2af.
+Fresh inventory has no compute processes; host available memory is 367 GiB.
+New output four_mmap_resumed restarts from the original initialization (not a
+checkpoint), with only artifact paths changed: 2 updates x 8 global samples.
+Keep both previous failed/interrupted outputs. Acceptance still requires
+completed updates, checkpoint audit and the matched single-card comparison.
+
+Release GPUs 0-3. four_mmap_resumed exited 1 after 295.623 seconds. All eight
+initial samples were generated and scored, but the trainer's host budget gate
+rejected the collected batch at 97.1% used (95% limit, about 11 GiB available).
+No optimizer update or accepted timing. Fresh compute inventory is empty;
+retain complete logs/monitoring. mmap loading alone does not establish capacity.
+Claim GPU 0 for a bounded real Kling load/score/park host-memory diagnostic,
+including explicit allocator trim and identical-score validation after wake.
+
+Release GPU 0. Production-contract Kling host and pinned-host probes exited 0,
+with exact repeat scores across park/wake. libc trim recovered only ~110 MiB;
+pinned cache clearing during live parking recovered only 15 bytes. After model
+shutdown, pinned cache clearing recovered ~5.83 GiB. Two initial isolated
+attempts omitted the registry residual allowance and failed zero-limit checks;
+the corrected probes use the declared production allowance. Candidate unchanged.
+Fresh compute inventory empty. Details and receipts are in the Wan report.
+Next reduce cross-phase resident copies/owner lifetime, not memory thresholds
+or workload. Four-rank update capacity and fair speedup remain unaccepted.
