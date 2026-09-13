@@ -1259,3 +1259,45 @@ audit.json and C_gpu_timeline.csv. Separate CPU preflight evidence is in
 cosmos_overlap_abc_preflight. Driver, service cleanup, utilization monitor and
 independent CPU audit all exited 0. Fresh compute and Ray/service inventories
 were empty; all GPU claims released. No background training queue was started.
+
+### Strict production prompt-RNG admission fixed
+
+Inspection of the real online recipe found that OnlineRecipeRun saves the named
+prompt_generator after sampling, and run_online_recipe restores that stream
+before constructing PromptBatchSampler. The prior restore_rng_state checked
+multi-rank topology but silently skipped missing requested generator names even
+with strict=True. A model/optimizer checkpoint could therefore appear to resume
+while selecting prompts from a newly seeded data stream.
+
+Cosmos candidate commit d46766ec fixes this boundary. Strict restore now rejects
+missing requested named generators before mutating process RNG state. Non-strict
+restore retains existing streams and emits an explicit non-equivalence warning.
+Extra saved generator names remain allowed. This is a scoped candidate fix, not
+an integration of the experimental Cosmos/CP branch into the main worktree.
+
+Ten new missing-stream cases failed on the old implementation, then passed with
+the fix. CPU checkpoint, sampler and online-lifecycle/metrics regression coverage
+passed 183 tests, with two CUDA tests skipped, in 51.25s. After extending the
+existing positive roundtrip helper to four ranks, focused CPU checkpoint-RNG and
+sampler coverage passed 39 tests with two CUDA skips in 8.92s. Actual two-rank
+and four-rank NCCL checkpoint RNG tests both passed (9.77s combined); the separate
+cross-device tensor-state comparison passed (0.44s). GPU roundtrips cover native
+checkpoint publication, rank-local Python/NumPy/Torch CPU, requested named and
+all visible CUDA streams with unit model/trainer fixtures, not Cosmos updates.
+Ruff check/format and git diff --check passed.
+
+A CPU-only admission probe loaded the actual trained step-four checkpoint, not
+a mock: all four saved rank trees contain probe and lack prompt_generator.
+Each original probe stream still restores exactly. Each strict production
+prompt-generator restore is rejected with both process and requested-generator
+RNG unchanged. Evidence: cosmos_checkpoint_prompt_rng_admission/result.json and
+executed_probe.py under the NVMe output root. No checkpoint bytes were changed,
+no generator was renamed and no production data position was inferred from the
+probe's next_epoch field. Prior cached-group update/replay evidence remains valid;
+this artifact still does not prove production iterator continuation.
+
+All commands exited, fresh compute inventory empty, all four GPU claims released.
+The next production continuation test needs a genuine online-recipe checkpoint
+with its real sampler stream and data sequence. Model-only warm start from the
+trained weights is a distinct new-run operation, not exact continuation of a
+data stream that this probe checkpoint never recorded.
