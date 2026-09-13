@@ -30,7 +30,10 @@ from vrl.rewards.assets.video_judge_prompts import (
 )
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.hub import resolve_model_root
-from vrl.rewards.models.videocon_compat import prepare_videocon_imports
+from vrl.rewards.models.videocon_compat import (
+    prepare_videocon_imports,
+    prepare_videocon_model_class,
+)
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -80,6 +83,8 @@ class VideoConPhysicsModel:
             MplugOwlProcessor,
         )
         from transformers import LlamaTokenizer
+
+        prepare_videocon_model_class(MplugOwlPreTrainedModel)
 
         # The pinned vendor lists a nonexistent T5-style module on every root,
         # including the vision model. Modern Transformers validates this list.
