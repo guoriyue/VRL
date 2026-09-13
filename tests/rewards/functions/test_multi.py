@@ -19,7 +19,6 @@ from vrl.rewards.runtime import InProcessRewardScorer, RewardFunctionRuntime
 from vrl.rewards.service.client import HttpRewardScorer
 from vrl.rewards.service.server import RewardService
 from vrl.rewards.types import RewardOutput, RewardSample
-from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 
 
 def _make_sample(prompt: str) -> RewardSample:
@@ -346,10 +345,6 @@ def test_shared_parking_allows_one_gpu_reward_with_cpu_sibling() -> None:
     runtimes = {name: fn.scorer for name, _, fn in reward.rewards}
     functions = {name: fn for name, _, fn in reward.rewards}
     assert runtimes["aesthetic"].requires_memory_parking is True
-    assert (
-        runtimes["aesthetic"]._launch.memory_parking_residual_bytes_limit
-        == CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
-    )
     assert runtimes["ocr"].requires_memory_parking is False
     assert functions["ocr"].resolve_execution_device(device="cuda:0", kwargs={}) == "cpu"
 

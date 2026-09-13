@@ -38,9 +38,7 @@ from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import (
     CumemPool,
-    gpu_process_used_bytes,
     release_cuda_memory_for_parking,
-    validate_parking_residual,
 )
 from vrl.utils.deadline import OperationDeadline, require_timeout
 from vrl.utils.lifecycle import RuntimeLifecycle, RuntimePhase
@@ -285,7 +283,6 @@ class InProcessRewardScorer:
             )
         self._model = model
         self._pool: CumemPool | None = None
-        self._preload_gpu_used_bytes: int | None = None
 
     @property
     def requires_memory_parking(self) -> bool:
@@ -306,7 +303,7 @@ class InProcessRewardScorer:
             self._pool.wake()
 
     async def park_memory(self) -> None:
-        """Park reward pages and validate the residual-memory gate; safe to retry."""
+        """Park reward pages and release cached CUDA memory; safe to retry."""
 
         if not self._launch.sleep_offload:
             raise RuntimeError(
@@ -315,23 +312,13 @@ class InProcessRewardScorer:
         pool = self._pool
         if pool is None:
             raise RuntimeError(
-                "reward runtime cannot prove memory parking before its "
-                "CuMem-pooled model is built",
+                "reward runtime cannot park memory before its CuMem-pooled model is built",
             )
         if not pool.asleep:
             # CumemPool marks itself asleep only after allocator.sleep returns.
             # A failure therefore leaves this branch retryable on the next call.
             pool.sleep()
         self._release_cuda_memory_for_parking()
-        baseline_bytes = self._preload_gpu_used_bytes
-        if baseline_bytes is None:
-            raise RuntimeError("reward runtime has no pre-load GPU parking baseline")
-        validate_parking_residual(
-            residual_bytes=self._gpu_used_bytes(),
-            baseline_bytes=baseline_bytes,
-            limit_bytes=self._launch.memory_parking_residual_bytes_limit,
-            context="reward memory parking",
-        )
 
     def _ensure_model(self) -> Any:
         if self._model is None:
@@ -343,12 +330,7 @@ class InProcessRewardScorer:
                 )
             factory = import_from_path(factory_path)
             if self._launch.sleep_offload:
-                # Claim the pool before capturing the baseline so a box without
-                # CuMem leaves no phantom baseline behind for shutdown's residual
-                # check. get_instance() only does Python bookkeeping, so ordering
-                # it first does not perturb the measurement.
                 pool = CumemPool.require()
-                self._preload_gpu_used_bytes = self._gpu_used_bytes()
                 # Build inside the pool so every CUDA allocation the factory
                 # makes (from_pretrained, .to(device), buffers) is tagged and
                 # sleep/wake can release/restore it wholesale.
@@ -367,12 +349,10 @@ class InProcessRewardScorer:
                         self._release_cuda_memory_for_parking()
                         pool.close()
                     except BaseException as cleanup_error:
-                        self._preload_gpu_used_bytes = None
                         raise RuntimeError(
                             "reward model preparation and CuMem cleanup both failed: "
                             f"load={load_error!r}; cleanup={cleanup_error!r}",
                         ) from cleanup_error
-                    self._preload_gpu_used_bytes = None
                     raise
                 self._pool = pool
                 self._model = model
@@ -456,26 +436,9 @@ class InProcessRewardScorer:
         # Dedicated CUDA rewards use torch's caching allocator rather than a
         # CuMem pool. Dropping the model alone leaves those physical pages
         # reserved in this long-lived driver process, so terminal cleanup must
-        # release the configured device cache for every runtime. The shared
-        # path additionally proves the release against its pre-load baseline.
+        # release the configured device cache for every runtime.
         self._release_cuda_memory_for_parking()
-        if self._launch.sleep_offload and self._preload_gpu_used_bytes is not None:
-            baseline_bytes = self._preload_gpu_used_bytes
-            # A failure retains the pool/baseline so terminal cleanup can retry
-            # cache release; the trainer remains parked until this succeeds.
-            validate_parking_residual(
-                residual_bytes=self._gpu_used_bytes(),
-                baseline_bytes=baseline_bytes,
-                limit_bytes=self._launch.memory_parking_residual_bytes_limit,
-                context="reward memory release during shutdown",
-            )
         self._pool = None
-        self._preload_gpu_used_bytes = None
-
-    # Instance-assignable test seams over the shared parking bookkeeping in
-    # vrl.utils.cuda_memory; rewards measure their configured device only.
-    def _gpu_used_bytes(self) -> int:
-        return gpu_process_used_bytes(self._launch.device)
 
     def _release_cuda_memory_for_parking(self) -> None:
         release_cuda_memory_for_parking(self._launch.device)

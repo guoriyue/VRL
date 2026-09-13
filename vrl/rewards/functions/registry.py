@@ -19,6 +19,7 @@ from typing import Any
 
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.base import (
+    CumemRewardFunction,
     DiskArtifactRewardFunction,
     RewardCleanupError,
     RewardFunction,
@@ -234,7 +235,6 @@ class MultiReward(RewardFunction):
                     set(extra)
                     & {
                         "device",
-                        "memory_parking_residual_bytes_limit",
                         "sleep_offload",
                         "worker_config",
                     },
@@ -259,13 +259,11 @@ class MultiReward(RewardFunction):
             if memory_parking_required is True and component_device.startswith("cuda"):
                 # GPU ownership comes from topology. A shared reward cannot rely
                 # on every preset remembering an independent parking knob.
-                residual_limit = reward_cls.memory_parking_residual_bytes_limit
-                if residual_limit is None:
+                if not issubclass(reward_cls, CumemRewardFunction):
                     raise ValueError(
                         f"reward {name!r} has no complete memory-parking contract",
                     )
                 extra["sleep_offload"] = True
-                extra["memory_parking_residual_bytes_limit"] = int(residual_limit)
             elif memory_parking_required is not None:
                 # A dedicated reward owns its GPU and remains resident even if
                 # an inherited reward preset carried the old shared-phase knob.
@@ -366,9 +364,7 @@ def validate_reward_memory_parking_components(
             "are unmapped. Keep CPU reward siblings or use a dedicated/remote reward.",
         )
     unsupported = [
-        name
-        for name in gpu_components
-        if get_reward(name).memory_parking_residual_bytes_limit is None
+        name for name in gpu_components if not issubclass(get_reward(name), CumemRewardFunction)
     ]
     if unsupported:
         raise ValueError(

@@ -20,9 +20,6 @@ from vrl.rewards.runtime import InProcessRewardScorer, build_reward_scorer
         ("sleep_offload", "false"),
         ("sleep_offload", 1),
         ("sleep_offload", None),
-        ("memory_parking_residual_bytes_limit", True),
-        ("memory_parking_residual_bytes_limit", 1.5),
-        ("memory_parking_residual_bytes_limit", "2"),
     ],
 )
 def test_runtime_rejects_coerced_parking_configuration(field, value):

@@ -42,7 +42,6 @@ from vrl.rewards.protocols import (
     RewardScorer,
 )
 from vrl.rewards.types import RewardOutput, RewardSample
-from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -118,9 +117,6 @@ class RewardFunction:
     # The production gate's contract, declared by a reward that has one.
     production: ClassVar[ProductionContract | None] = None
 
-    # None is fail-closed. A specialized base class declares this capability only
-    # when all model-owned CUDA state is built in the tagged runtime pool.
-    memory_parking_residual_bytes_limit: ClassVar[int | None] = None
     # Most reward constructors expose the selected device as ``device``;
     # exceptional schemas (for example NSFW's classifier_device) override it.
     device_config_key: ClassVar[str] = "device"
@@ -489,9 +485,7 @@ class InferenceRewardFunction(RewardFunction):
 
 
 class CumemRewardFunction(InferenceRewardFunction):
-    """Reward whose model allocations support verified tagged-pool parking."""
-
-    memory_parking_residual_bytes_limit: ClassVar[int] = CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
+    """Reward whose model allocations are built in the tagged CuMem pool."""
 
 
 class DiskArtifactRewardFunction(CumemRewardFunction):
@@ -538,7 +532,6 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
         debug_dir: str = "",
         device: str | None = None,
         sleep_offload: bool = False,
-        memory_parking_residual_bytes_limit: int = 0,
         retain_artifacts: bool = False,
         worker_config: Mapping[str, Any] | None = None,
         scorer: RewardScorer | None = None,
@@ -600,9 +593,6 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
                 )
             if sleep_offload:
                 worker_cfg["sleep_offload"] = True
-                worker_cfg["memory_parking_residual_bytes_limit"] = int(
-                    memory_parking_residual_bytes_limit,
-                )
             scorer = build_reward_scorer(worker_cfg)
 
         super().__init__(

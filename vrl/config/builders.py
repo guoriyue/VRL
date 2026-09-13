@@ -34,13 +34,12 @@ class RewardRuntimeConfig:
 
     def __post_init__(self) -> None:
         for name, component_kwargs in self.kwargs.items():
-            for key in ("sleep_offload", "memory_parking_residual_bytes_limit"):
-                if key in component_kwargs:
-                    raise ValueError(
-                        f"reward.kwargs.{name}.{key} is topology-derived and cannot "
-                        "be set in YAML; remove it and select shared or dedicated "
-                        "reward GPU ownership under distributed.resources.reward",
-                    )
+            if "sleep_offload" in component_kwargs:
+                raise ValueError(
+                    f"reward.kwargs.{name}.sleep_offload is topology-derived and cannot "
+                    "be set in YAML; remove it and select shared or dedicated "
+                    "reward GPU ownership under distributed.resources.reward",
+                )
 
     @classmethod
     def from_cfg(cls, cfg: DictConfig | RewardConfig) -> RewardRuntimeConfig:

@@ -12,7 +12,7 @@ import torch
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import InProcessRewardScorer
-from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
+from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT, gpu_process_used_bytes
 
 
 class _SumMediaModel:
@@ -277,48 +277,11 @@ async def test_failed_pooled_preparation_rolls_back_before_retry(monkeypatch) ->
     assert _PARTIAL_PREPARE_REF() is None
     assert runtime._model is None
     assert runtime._pool is None
-    assert runtime._preload_gpu_used_bytes is None
     assert allocator.allocator_and_pools == {}
 
     results = await runtime.score_batch(_make_request())
     assert [result.scores["overall"] for result in results] == [3.0, 3.0]
     await runtime.park_memory()
-    await runtime.shutdown()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("extra_residual_bytes", "should_pass"), ((0, True), (1, False)))
-async def test_reward_parking_bounds_cuda_runtime_residual(
-    monkeypatch,
-    extra_residual_bytes: int,
-    should_pass: bool,
-) -> None:
-    import vrl.utils.cuda_memory as cuda_memory_mod
-
-    allocator = _FakeCumemAllocator()
-    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
-    runtime = InProcessRewardScorer(
-        {
-            "device": "cuda:0",
-            "sleep_offload": True,
-            "model_factory": f"{__name__}:_immovable_factory",
-            "memory_parking_residual_bytes_limit": CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
-        },
-    )
-    baseline = 1024
-    residual = baseline + CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT + extra_residual_bytes
-    # Load baseline, parking residual gate, terminal shutdown gate.
-    readings = iter((baseline, residual, baseline))
-    runtime._gpu_used_bytes = lambda: next(readings)  # type: ignore[method-assign]
-    runtime._release_cuda_memory_for_parking = lambda: None  # type: ignore[method-assign]
-
-    await runtime.score_batch(_parking_request())
-
-    if should_pass:
-        await runtime.park_memory()
-    else:
-        with pytest.raises(RuntimeError, match="incomplete reward memory parking"):
-            await runtime.park_memory()
     await runtime.shutdown()
 
 
@@ -408,7 +371,6 @@ async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
             "model_factory": f"{__name__}:_immovable_factory",
         },
     )
-    runtime._gpu_used_bytes = lambda: 1024  # type: ignore[method-assign]
     runtime._release_cuda_memory_for_parking = lambda: None  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError, match="CuMemAllocator is required"):
@@ -416,13 +378,10 @@ async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
 
     assert runtime._model is None
     assert runtime._pool is None
-    # The pool is claimed before the baseline sample, so a failed require leaves
-    # no phantom baseline for shutdown's residual check to measure against.
-    assert runtime._preload_gpu_used_bytes is None
 
 
 def test_sleep_offload_rejects_injected_model() -> None:
-    """An injected model cannot supply the required pre-load GPU baseline."""
+    """An injected model was not built inside the runtime-owned CuMem pool."""
     with pytest.raises(ValueError, match="model_factory"):
         InProcessRewardScorer({"sleep_offload": True}, model=object())
 
@@ -442,7 +401,6 @@ async def test_real_aesthetic_score_parks_stably_across_two_cycles() -> None:
             "model_name": "openai/clip-vit-large-patch14",
             "model_factory": "vrl.rewards.models.aesthetic:AestheticRewardModel",
             "sleep_offload": True,
-            "memory_parking_residual_bytes_limit": CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
         },
     )
     request = RewardInferenceRequest(
@@ -456,23 +414,21 @@ async def test_real_aesthetic_score_parks_stably_across_two_cycles() -> None:
             ),
         ),
     )
+    baseline = gpu_process_used_bytes("cuda:0")
     try:
         first_result = await runtime.score_batch(request)
         await runtime.park_memory()
-        first_baseline = runtime._preload_gpu_used_bytes
-        first_residual = runtime._gpu_used_bytes()
+        first_residual = gpu_process_used_bytes("cuda:0")
         second_result = await runtime.score_batch(request)
         await runtime.park_memory()
-        second_baseline = runtime._preload_gpu_used_bytes
-        second_residual = runtime._gpu_used_bytes()
+        second_residual = gpu_process_used_bytes("cuda:0")
 
         assert math.isfinite(first_result[0].scores["aesthetic"])
         assert second_result[0].scores["aesthetic"] == pytest.approx(
             first_result[0].scores["aesthetic"],
         )
-        assert first_baseline is not None and second_baseline is not None
-        first_delta = first_residual - first_baseline
-        second_delta = second_residual - second_baseline
+        first_delta = first_residual - baseline
+        second_delta = second_residual - baseline
         assert 0 <= first_delta <= CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
         # A second score may reuse the same process-lifetime CUDA code; it must
         # not accumulate another model-sized or steadily growing residual.

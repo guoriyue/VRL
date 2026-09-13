@@ -16,8 +16,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from vrl.utils.validation import require_int
-
 
 @dataclass(frozen=True, slots=True)
 class RewardRuntimeLaunchContract:
@@ -26,7 +24,6 @@ class RewardRuntimeLaunchContract:
     model_factory: str
     device: str
     sleep_offload: bool
-    memory_parking_residual_bytes_limit: int
     reward_model_name: str
     reward_model_version: str
     component_config: Mapping[str, Any]
@@ -39,11 +36,6 @@ class RewardRuntimeLaunchContract:
         if component_config is not None and not isinstance(component_config, Mapping):
             raise TypeError("reward component_config must be a mapping or None")
         cfg = {} if component_config is None else dict(component_config)
-        residual_limit = require_int(
-            cfg.get("memory_parking_residual_bytes_limit", 0),
-            path="reward memory_parking_residual_bytes_limit",
-            minimum=0,
-        )
         sleep_offload = cfg.get("sleep_offload", False)
         if not isinstance(sleep_offload, bool):
             raise ValueError("reward sleep_offload must be a boolean")
@@ -51,7 +43,6 @@ class RewardRuntimeLaunchContract:
             model_factory=str(cfg.get("model_factory", "")).strip(),
             device=str(cfg.get("device", "")),
             sleep_offload=sleep_offload,
-            memory_parking_residual_bytes_limit=residual_limit,
             reward_model_name=str(cfg.get("reward_model_name", "")).strip(),
             reward_model_version=str(cfg.get("reward_model_version", "")).strip(),
             component_config=cfg,
