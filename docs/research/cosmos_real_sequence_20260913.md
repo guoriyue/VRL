@@ -315,3 +315,43 @@ inventory empty, GPU 0 released. The prior collector group is retained for
 the next real-conditioned CP gate. CP numerical behavior, gradients/optimizer
 updates, recovery, quality and full paper-budget acceptance remain unverified
 by this independent single-device replay result.
+
+## Real-conditioned two-device CP admission check
+
+The explicit native `ContextParallelStrategy(cp_size=2)` replayed saved real
+samples 0 and 7 at steps 19, 10 and 0 on physical GPUs 0/1. Both ranks freshly
+loaded the released replay model, validated/loaded/read back the saved initial
+LoRA, then prepared the strategy (including its initial broadcast). Strict
+determinism, IEEE, efficient SDPA and the strategy's fixed-row/FP32-LoRA
+contract were enabled. This is six selected transitions, not the full group.
+
+| Sample | Step | Max log-prob absolute error vs saved rollout |
+| --- | ---: | ---: |
+| 0 | 19 | 2.7750854e-8 |
+| 0 | 10 | 6.5565109e-7 |
+| 0 | 0 | 1.1920929e-7 |
+| 7 | 19 | 5.8343669e-8 |
+| 7 | 10 | 1.8477440e-6 |
+| 7 | 0 | 5.9604645e-8 |
+
+All predictions/log-probabilities were finite, both ranks' complete noise
+predictions matched exactly, and all six log-prob errors passed the fixed
+1e-3 absolute tolerance. Maximum error is 1.8477440e-6, not zero. Rank equality
+is not equality with the original rollout noise prediction, which was not
+stored. The original Ray rollout did not use fixed-row/FP32-LoRA compute;
+this admission check must not be relabeled as exact rollout kernel parity.
+
+Selected replay plus checks took 71.116996 seconds; individual transitions
+took 11.71-12.26 seconds. Each rank's peak allocated memory after preparation
+was 6,620,361,216 bytes. The prior native single-device replay averaged about
+2.54 seconds per transition, but these runs have different compute contracts
+and scopes. No fair speedup/slowdown factor or CP-only overhead attribution
+is established. The next useful performance control uses the same six inputs
+and fixed-row/FP32-LoRA/efficient-SDPA contract without CP sharding.
+
+Evidence: `cosmos_real_cp_replay_admission/{executed_probe.py,transitions.json,
+result.json}` under the NVMe output root. Torchrun exited 0, probe processes
+are absent and fresh compute inventory empty; GPUs 0/1 released. This closes
+only selected real-input CP log-prob compatibility and rank-consistency checks.
+Full real-group CP gradients/updates, matched-compute control, production
+configuration dispatch and end-to-end quality/performance remain open.
