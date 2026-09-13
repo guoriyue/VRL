@@ -62,6 +62,35 @@ process inventory is empty. Shared dependencies and vendor source unchanged.
 
 ## Remaining gates
 
+### Dedicated HTTP service follow-up
+
+The production HTTP path now passes on the same candidate and dependency
+overlay. Two operator-owned services were masked to physical GPU 3; the client
+was launched with empty CUDA visibility and asserted CUDA was never initialized.
+Both calls matched the earlier in-process component scores and weighted total
+exactly, including the full 81-frame 480x832 decode/materialization path.
+Identity/version preflight and the service isolation attestation were validated.
+Isolation is enforced by launch masks, not independently proven by the protocol.
+
+- Cold call including lazy service loads: 52.751522 s.
+- Hot call: 4.156644 s, including 1.429674 s materialization.
+- Hot reported inference: 2.719377 s.
+- Temporary MP4 cleanup passed after each call; client shutdown completed.
+- Supervisor exited 0 after reaping both service processes; GPU inventory empty.
+
+Reproducer: `/mnt/nvme/outputs/wan22_i2v_cache/combined_reward_http_probe.py`.
+Run with the environment above but empty `CUDA_VISIBLE_DEVICES`; the supervisor
+sets its service subprocess masks explicitly to `3`. Evidence under
+`/mnt/nvme/outputs/wan22_i2v_cache/http_acceptance`: `result.json`, service YAMLs,
+service logs and per-component debug receipts. The outer log is
+`combined_reward_http_probe.log`. Recorded ephemeral endpoints are no longer live.
+
+The full-size training layout should use three symmetric-colocated FSDP policy
+ranks on GPUs 0-2 and these external services on GPU 3. Current online runtime
+explicitly rejects asymmetric multi-rank dedicated rollout ownership; changing
+resource YAML alone cannot implement a two-trainer/one-rollout/one-reward layout.
+Actual concurrent rank clients and full-size policy updates are still untested.
+
 This supports a dedicated GPU reward layout without CPU VideoCon, but does not
 prove distributed resource assignment, shared-GPU CuMem parking, full-size Wan
 policy update or learning quality. The default recipe remains unchanged: moving
