@@ -692,3 +692,18 @@ ran inside them.
 - `tests/generation/bindings/chunk_autoregressive_denoise/test_binding.py::test_serialized_replay_records_preserve_axes_values_and_sample_order`
 - `tests/generation/bindings/full_sequence_denoise/test_layout.py::test_unseeded_window_survives_serialized_batch_split_retry`
 - the five tests in `tests/scripts/test_train_signals.py`
+
+### Bazel lanes (2026-09-13, after the report)
+
+Bazel is the canonical runner (`tests/BUILD.bazel` globs the tree into one
+`vrl_pytest` lane per package; CI runs `bazel test //...`), so the night's
+tree was also run through `//tests:config_tests`, `data_tests`,
+`rewards_tests`, `scripts_tests` and `//tools/lint:ruff_check`. Two findings:
+- The Bazel ruff gate has no `datasets/` directory in runfiles and classifies
+  the `datasets` package as third-party; `_wan_dpo_helpers.py` now imports it
+  inside the one function that uses it (`61919d91`).
+- The main and vLLM dependency hubs carried tokenizers 0.13.3 (VBench's
+  source-built wheel shadowed every profile), so any test importing a
+  transformers model failed at collection under Bazel. Fixed in
+  `uv_exports.bzl` / `replace_requirement.py` (commit above); `scripts_tests`
+  now completes with only the five upstream-red `test_train_signals` tests.
