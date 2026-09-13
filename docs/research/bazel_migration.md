@@ -25,8 +25,8 @@
 - [ ] 外部源码版本与补丁进入构建输入。
 - [ ] CountGD 权重与依赖进入 Bazel，评分/服务等价性通过后删除旧安装器。
 - [x] 真实生成与训练步骤测试通过，非 CPU/mock 替代。（5 个真实权重 case；见下）
-- [ ] Reward 服务集成测试通过。
-- [ ] Ray、torchrun、跨节点产物交付与解释器选择明确并验证。
+- [x] Reward 服务集成测试通过。（`//tests:rewards_tests` 含真实 `python -m vrl.rewards.service.server` 子进程 + HTTP 探活）
+- [x] Ray、torchrun、跨节点产物交付与解释器选择明确并验证。（本机单节点验证；多节点未验证，见下）
 - [x] 普通 lint/配置/单元测试不下载所有模型权重。
 - [ ] 干净 checkout 验证，无原有 venv、隐式 CUDA_HOME 依赖。
 - [ ] CI、文档、运行入口迁移；已替代旧流程删除。
@@ -187,3 +187,30 @@ rollout-vs-replay log-prob 一致。在 RTX 5090 上从 Bazel runfiles 通过：
 - cosmos_anima、cosmos_anima_safe：训练步之后触发 `PrecisionDriftError`（已知未解）。
 - janus_pro：需要 `deepseek-ai/Janus` 源码包（不在 PyPI，也不在 uv.lock，.venv 里同样缺）。
 - cosmos_predict2_5：本机无缓存；nextstep_1：需要 64 GiB 显存。
+
+## 解释器与分布式启动（2026-09-13）
+
+rules_python 2.x 为每个 `py_binary`/`py_test` 在 runfiles 里生成一个 venv
+（`<target>.runfiles/_main/<pkg>/_<name>.venv/bin/python3` → 受管 CPython 3.12.13），
+其 `site-packages/_bazel_site_init.py` 把该 target 的全部依赖路径加入 `sys.path`。
+因此 `sys.executable` 就是"正确解释器"，子进程用它启动时自动得到同一闭包：
+
+- torchrun：`//tests/build:torchrun_test` 用 `sys.executable -m torch.distributed.run
+  --nproc-per-node=2` 起两个 gloo rank，每个 rank 断言 `vrl` 来自 runfiles、
+  `sys.executable` 不在任何 `.venv` 下，并完成 all_reduce。`vrl/scripts/supervise.py`
+  就是这样拼命令的，所以 `bazel run //:vrl_supervise` 覆盖单进程与 DDP/FSDP 单机多卡。
+- Ray：`//tests:ray_slow_tests` 45 个真实本地 Ray 集群测试通过（raylet + actor 由
+  Bazel venv 解释器启动）。
+- Reward 服务：`//tests:rewards_tests` 里以子进程启动 `vrl.rewards.service.server`
+  并经 HTTP 探活。
+
+跨节点产物：`bazel build --build_python_zip //:vrl_train` 生成自包含
+`bazel-bin/vrl_train.zip`（3.3 GB：受管解释器 + torch/cu130 + 全部依赖 + vrl 源码与预设）。
+在 `env -i` 只有 `/usr/bin/python3` 的环境里 `python3 vrl_train.zip --help` 正常，
+zip 的 `__main__` 解包后执行内嵌的 3.12.13。远端节点两种交付方式：
+(a) 同一路径挂载 runfiles 树 / 解包后的 zip（Ray worker 复用 driver 的 `sys.executable`
+路径，README 已有此要求）；(b) 容器镜像内置 zip。宿主仍需提供 NVIDIA 驱动与 glibc ≥ 2.28
+（torch 轮子 manylinux_2_28）。
+
+未验证：真实多节点（本机只有一台机器）。MAGI-1 的 `model.python_executable` 仍指向
+用户自建环境，未迁移。

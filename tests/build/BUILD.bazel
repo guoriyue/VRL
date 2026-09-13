@@ -14,3 +14,18 @@ py_test(
     deps = ["@pypi//torch"],
     tags = ["gpu", "manual", "no-remote"],
 )
+
+# A real two-rank torchrun launch from the Bazel interpreter: every rank
+# resolves vrl and its dependencies from runfiles, not from a venv.
+py_test(
+    name = "torchrun_test",
+    size = "medium",
+    srcs = [
+        "torchrun_rank.py",
+        "torchrun_test.py",
+        "__init__.py",
+        "//tests:__init__.py",
+    ],
+    main = "torchrun_test.py",
+    deps = ["//:vrl"],
+)

@@ -3,6 +3,8 @@ load("//tools/pytest:defs.bzl", "vrl_pytest")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["__init__.py"])
+
 filegroup(
     name = "python_sources",
     srcs = glob(["**/*.py"]),
@@ -135,4 +137,16 @@ vrl_pytest(
     env = {"WM_RUN_REAL_MODEL_TESTS": "1"},
     support = ":support_shared_gpu",
     tags = GPU_TAGS + ["external"],
+)
+
+# Local Ray cluster smoke tests: real raylet + actors started from the
+# Bazel-managed interpreter, so rollout workers resolve the same closure.
+vrl_pytest(
+    name = "ray_slow_tests",
+    size = "enormous",
+    srcs = glob(["ray/**/*.py", "generation/ray/**/*.py", "rollouts/**/*.py"]),
+    args = ["-m", "'slow_test and not e2e'"],
+    data = ["//datasets:manifests"],
+    env = CPU_ENV,
+    tags = ["exclusive"],
 )

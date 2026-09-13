@@ -35,6 +35,16 @@ py_binary(
     deps = [":vrl"],
 )
 
+# One-host supervisor: launches vrl.scripts.train (single process or
+# torchrun DDP/FSDP ranks) with this target's own interpreter, restarts on
+# retryable failure classes, and aggregates the per-rank verdict files.
+py_binary(
+    name = "vrl_supervise",
+    srcs = ["vrl/scripts/supervise.py"],
+    main = "vrl/scripts/supervise.py",
+    deps = [":vrl"],
+)
+
 py_binary(
     name = "vrl_reward_service",
     srcs = ["vrl/rewards/service/server.py"],
