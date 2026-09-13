@@ -460,6 +460,19 @@ def test_wan_sequential_offload_weight_sync_changes_forward() -> None:
     assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
     assert model.transformer(sample).shape == (1, 2)
 
+    model.verify_trainable_state(payload)
+    assert model.pipeline_cpu_offload_healthy
+    assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
+    assert torch.equal(model.transformer(sample).detach(), after)
+    wrong = {name: value + 1 for name, value in payload.items()}
+    with pytest.raises(RuntimeError, match="trainable weight verification failed") as error:
+        model.verify_trainable_state(wrong)
+    assert "installed weight content differs" in str(error.value.__cause__)
+    assert pipeline.remove_calls == 4
+    assert pipeline.enable_calls == 5
+    assert not model.pipeline_cpu_offload_healthy
+    assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
+
 
 def test_wan_pipeline_offload_remove_failure_is_permanently_broken() -> None:
     from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
