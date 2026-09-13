@@ -283,9 +283,11 @@ def test_partitioned_conditioner_native_prompt_and_four_device_forward(tmp_path)
                         for t in list(encoder.parameters()) + list(encoder.buffers())
                     )
                     assert all(not hasattr(module, "_hf_hook") for module in encoder.modules())
-                    with pytest.raises(ValueError, match="GPU-only"):
-                        with park_partitioned_text_encoder(encoder):
-                            pytest.fail("Nested parking must be rejected")
+                    with (
+                        pytest.raises(ValueError, match="GPU-only"),
+                        park_partitioned_text_encoder(encoder),
+                    ):
+                        pytest.fail("Nested parking must be rejected")
                     try:
                         components.vae.to("cuda:2")
                         components.audio_vae.to("cuda:3")
