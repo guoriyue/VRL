@@ -355,11 +355,11 @@ def test_decode_uses_vae_owner_and_returns_outputs_to_latent_owner(vae_device):
     os.environ.get("VRL_H3_FOUR_GPU") != "1",
     reason="Requires an explicit four-GPU hardware reservation",
 )
-def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path, monkeypatch):
+def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path):
     from dataclasses import replace
-    from types import SimpleNamespace
 
-    from diffusers import ModularPipeline
+    from diffusers import MiniMaxH3Scheduler
+    from diffusers.modular_pipelines.minimax_h3.modular_pipeline import MiniMaxH3ModularPipeline
 
     from tests.models.families.minimax_h3.test_backbone_parity import _rollout
     from tests.models.families.minimax_h3.test_model_loading import _build
@@ -369,12 +369,8 @@ def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path, mon
     )
 
     components = _model().pipeline
-    components.transformer.save_pretrained(tmp_path / "transformer", max_shard_size="50KB")
-    components.text_encoder.save_pretrained(tmp_path / "text_encoder", max_shard_size="20KB")
-    calls = []
-    # Only modular metadata/small-component loading is substituted; both large
-    # component loaders read real local shards and all component execution is real.
-    small = SimpleNamespace(
+    pipeline = MiniMaxH3ModularPipeline(workflow="t2va")
+    pipeline.register_components(
         **{
             name: getattr(components, name)
             for name in (
@@ -384,11 +380,16 @@ def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path, mon
                 "processor",
                 "scheduler",
                 "audio_scheduler",
+                "transformer",
+                "text_encoder",
             )
         },
-        load_components=lambda **kwargs: calls.append(kwargs),
     )
-    monkeypatch.setattr(ModularPipeline, "from_pretrained", lambda *args, **kwargs: small)
+    pipeline.update_components(
+        scheduler=MiniMaxH3Scheduler.from_config(dict(components.scheduler.config))
+    )
+    pipeline.save_pretrained(str(tmp_path), max_shard_size="50KB")
+    assert (tmp_path / "modular_model_index.json").is_file()
     build = replace(
         _build(rollout=True, num_steps=3),
         model_name_or_path=str(tmp_path),
@@ -407,15 +408,7 @@ def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path, mon
     model = bundle.model
     model.pipeline.text_encoder_layer = 1
     assert build.defer_trainable_device_move is False
-    assert set(calls[0]["names"]) == {
-        "vae",
-        "audio_vae",
-        "tokenizer",
-        "processor",
-        "scheduler",
-        "audio_scheduler",
-    }
-    assert calls[0]["torch_dtype"] == torch.float32
+    assert model.pipeline.vae.dtype == model.pipeline.audio_vae.dtype == torch.float32
     assert bundle.loads_full_generation_modules
     assert {p.device.index for p in model.transformer.parameters()} == {0, 1}
     assert {p.device.index for p in model.pipeline.text_encoder.parameters()} == {2, 3}
@@ -433,3 +426,36 @@ def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path, mon
     assert {p.device.index for p in model.pipeline.text_encoder.parameters()} == {2, 3}
     with pytest.raises(RuntimeError, match="whole-component"):
         model.move_frozen_components("cuda:0")
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
+    from vrl.generation.types import GenerationRequest
+    from vrl.models.families.minimax_h3.runtime import MiniMaxH3BatchExecutor
+
+    request = GenerationRequest(
+        request_id="h3-native-partitioned",
+        family="minimax_h3",
+        task="t2v",
+        inputs=["a wooden block"],
+        samples_per_prompt=1,
+        sampling={
+            "num_steps": 3,
+            "height": 16,
+            "width": 16,
+            "num_frames": 8,
+            "fps": 24,
+            "guidance_scale": 1.0,
+            "max_sequence_length": 8,
+            "seed": 17,
+        },
+    )
+    executor = MiniMaxH3BatchExecutor(model)
+    result = executor.forward_batch(
+        request, GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1)
+    )
+    assert result.observations.shape == result.actions.shape
+    assert result.log_probs.numel() > 0
+    for tensor in (result.observations, result.actions, result.log_probs, result.video):
+        assert torch.isfinite(tensor).all()
+    assert result.video.shape == (1, 3, 8, 16, 16)
+    assert "audio_rows_by_step" in result.replay_tensors
+    assert model.pipeline.vae.device.type == model.pipeline.audio_vae.device.type == "cpu"
+    assert {p.device.index for p in model.pipeline.text_encoder.parameters()} == {2, 3}
