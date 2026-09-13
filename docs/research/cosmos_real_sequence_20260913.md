@@ -1526,3 +1526,90 @@ compute-process and Ray/child inventories are empty; all four GPUs released.
 This closes real-model subsequent-update equivalence across a real generation
 handoff. Fresh-data/reward training, persistent-worker reuse, complete production
 loop/checkpoint/sampler continuation, full recipe and quality remain open.
+
+### Native four-card online loop with real reward and persistent workers
+
+The reduced-workload production-entry integration gate now passes, not just an
+external cached trainer. Candidate commits `fff0e73f` and `f55aca2a` add
+`experiment/cosmos_predict2_5/online_grpo_kling_video_reward_colocated_fsdp_4x_l40s`.
+The preset preserves the base GRPO algorithm and global32 prompts x8 samples
+budget by assigning8 prompts/rank. It uses native adapter-only FSDP, IEEE compute,
+no compile, explicit full activation checkpointing, CPU-preserved trajectories,
+strict orchestration and rank-local generation/reward/training phase ownership.
+Five CPU preset tests pass, covering global budget, preserved algorithm/sampling
+settings, explicit activation checkpointing and each physical rank's shared
+resource plan. No runtime safety guard was bypassed.
+
+The actual `torchrun --standalone --nproc-per-node=4 -m vrl.scripts.train` launch
+uses the real VideoPhy309-prompt manifest and pinned Cosmos/Kling weights. Its
+explicit acceptance-only overrides are two epochs, one prompt/rank, two samples
+per prompt, one PPO pass and one of20 training timesteps, with checkpoint every
+epoch. Geometry remains512x512,93frames,20CPS steps, guidance1 and noise0.7.
+This is eight freshly generated/scored samples per global update, sixteen total,
+not the preset's full256-sample/four-PPO-epoch recipe or a quality run.
+
+The first attempt (`cosmos_native_fsdp_online`, candidatefff0e73f) generated and
+scored eight clips and passed first-step replay at0 on all ranks, then OOMed in
+the first training forward. Effective actor.gradient_checkpointing was absent,
+which the native resolver interprets as off. Earlier successful model probes
+explicitly enabled gradient checkpointing. All ranks/torchrun exited1 and all
+GPU/Ray processes cleaned up. No optimizer checkpoint completed. The failure's
+launch/config/verdicts, scoring records and adjacent log remain preserved; native
+successful reward scoring had already released its temporary MP4 files.
+
+Commitf55aca2a explicitly enables full activation checkpointing in this hardware
+preset. The otherwise identical fresh retry (`cosmos_native_fsdp_online_gc`)
+completed both actual online iterations and final checkpoint, with all four native
+rank verdicts success and torchrun exit0. Training observed about17762MiB/GPU
+at100% utilization, versus the prior OOM at approximately44GiB. This fixes a
+configuration omission, not the model or optimizer's numerical implementation.
+
+Independent CPU audit `acceptance_audit.json` passes:
+
+- Epoch0/1 pre-update log-prob maximum difference is0.0; gradient norms are
+  1.790813621482812e-05 and1.882251672213897e-05, both finite and nonzero.
+- Checkpoints1/2 contain560 Adam states with counters1/2 and560 EMA tensors with
+  update counts1/2. All checkpoint tensors are finite CPU tensors. The native
+  owned-state set is1120 tensors:560 trainable default adapters, matched against
+  the optimizer parameter manifest, plus560 frozen previous adapters.
+- All560 trainable tensors change between checkpoints1 and2. Final checkpoint
+  model and trainer states match checkpoint2 exactly; explicit progress is
+  next_epoch=2,next_step=2. The native artifact content seal verifies.
+- Both checkpoints contain four valid prompt_generator RNG streams and one
+  rank-local CUDA RNG state each. Replaying the native sampler from checkpoint1
+  consumes exactly the RNG transition saved at checkpoint2, with disjoint
+  second-epoch prompt indices179,298,39,13. This is genuine production sampler
+  progress, not fabricated progress around a cached probe.
+- Eight real Kling requests contain sixteen unique scored artifact IDs, with
+  finite component scores and pinned reward version. Sixteen corresponding
+  decoder log receipts confirm93frames at16fps. Temporary MP4 files are released
+  by native reward ownership after successful scoring; no retained-video visual
+  quality or independent all-transition replay audit is claimed here.
+- Exactly four distinct RayGenerationWorker PIDs load their policies once for
+  both epochs. All four processes persist across the generation/reward/training
+  transitions; phase events and subsequent generation establish runtime reuse.
+
+Rank-local reported phase times clarify cold-start waiting: first activation of
+generation takes38.3-38.8s, second activation2.9-3.0s. Each generation phase remains
+about123-124s for two sequential full clips/rank. Reward wall falls from about58s
+including cold load to about7.4s on reuse. Native reported phase totals are about
+261s then171s, excluding checkpoint/startup/cleanup outside the phase timer.
+These are cold/warm observations on different sampled prompts, not a controlled
+single-versus-four-card speed comparison. Global reward means-5.01326 and-3.93302
+likewise do not establish learning improvement because the samples differ.
+
+The first two CPU audit revisions had probe-only assumptions that were corrected
+against native ownership: expecting560 rather than1120 checkpoint-owned tensors,
+and expecting retained MP4s despite successful native reward cleanup. Both sources
+are preserved separately; neither is counted as a pass. The final audit validates
+the full owned-state set and joins all16 decode receipts to scoring IDs.
+
+Evidence: `cosmos_native_fsdp_online_gc` with resolved config, run evidence/seal,
+four success verdicts, checkpoint1/2/final, metrics/full-precision metrics,
+rollout/phase/training-debug records, reward debug receipts, executed launch and
+audit source, and `acceptance_audit.json`; adjacent full console log. All runtime,
+inspection and audit sessions are terminal, fresh GPU/Ray inventories empty;
+GPU0-3 released. This closes the bounded actual-loop/reward/new-data update and
+persistent-worker integration gate. Fresh-process checkpoint continuation, full
+recipe/workload acceptance, controlled end-to-end performance and quality remain
+open. No old queue or unbounded training was launched.
