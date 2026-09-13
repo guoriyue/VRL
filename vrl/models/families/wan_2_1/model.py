@@ -233,6 +233,9 @@ class WanT2VDiffusersModel(
 
         from peft import LoraConfig, get_peft_model
 
+        adapter_dtype = (build.model_config or {}).get("lora_parameter_dtype")
+        if adapter_dtype not in (None, "float32"):
+            raise ValueError("model.lora_parameter_dtype must be null or 'float32'")
         lora_path = build.lora_path
         names = self._trainable_transformer_names
         if lora_path and len(names) != 1:
@@ -284,6 +287,10 @@ class WanT2VDiffusersModel(
                 # One construction dtype keeps single-process, FSDP, and worker
                 # replicas byte-compatible at weight sync.
                 wrapped = get_peft_model(transformer, cfg, autocast_adapter_dtype=False)
+            if adapter_dtype == "float32":
+                for parameter in wrapped.parameters():
+                    if parameter.requires_grad:
+                        parameter.data = parameter.data.to(dtype=torch.float32)
             self._set_wan_transformer(name, wrapped)
 
     @property

@@ -575,6 +575,22 @@ def test_family_behavior_value_changes_identity(
     assert left != right
 
 
+@pytest.mark.parametrize("family", ["wan_2_1", "wan_2_1_i2v"])
+def test_wan_adapter_storage_identity_is_opt_in(family: str) -> None:
+    values = {"family": family, "trainable_transformers": ["transformer"]}
+    baseline = resolve_checkpoint_model_identity(_build(**values))
+    explicit_default = resolve_checkpoint_model_identity(
+        _build(**values, lora_parameter_dtype=None),
+    )
+    fp32 = resolve_checkpoint_model_identity(
+        _build(**values, lora_parameter_dtype="float32"),
+    )
+    assert baseline == explicit_default
+    assert "lora_parameter_dtype" not in baseline["build"]
+    assert fp32["build"]["lora_parameter_dtype"] == "float32"
+    assert fp32 != baseline
+
+
 def test_runtime_only_fields_do_not_change_wan_identity() -> None:
     baseline = resolve_checkpoint_model_identity(
         _build(
