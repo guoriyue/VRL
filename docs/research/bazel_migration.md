@@ -15,21 +15,27 @@
 
 ## 验收清单
 
-下列所有项目完成并验证之前，整体目标保持进行中。
+状态（2026-09-13）。`[~]` = 部分完成，说明在括号里；未勾选项目见文末"未完成"。
 
 - [x] 固定 Bazel 9.2.0、rules_python 2.3.3、Python 3.12.13；首个 sandbox 导入测试通过。
-- [x] 从唯一依赖来源生成 Bazel 所需锁，避免手工双份版本。
-- [ ] 分离主模型、vLLM、MAGI-1、CountGD 依赖目标。（主模型、vLLM、CountGD 已分离；videoeval 受阻；MAGI-1 未做）
-- [~] 固定 CUDA Toolkit、宿主编译器、Torch ABI、GPU 架构；真实扩展编译及执行。（Toolkit/编译器/架构已固定并在 GPU 执行；VRL 没有自有 C++/CUDA 扩展源码，Torch 扩展编译链无真实用例，见下）
+- [x] 从唯一依赖来源生成 Bazel 所需锁，避免手工双份版本。（uv.lock → 按 profile 导出；
+  CountGD 的 `third_party/countgd/requirements.txt` 是它那一栈的唯一表）
+- [~] 分离主模型、vLLM、MAGI-1、CountGD 依赖目标。（主模型 `//:vrl`、vLLM `//:vrl_vllm`、
+  shared-GPU `//:vrl_shared_gpu`、CountGD `//:vrl_countgd` 已分离；videoeval 与 MAGI-1 未做）
+- [~] 固定 CUDA Toolkit、宿主编译器、Torch ABI、GPU 架构；真实扩展编译及执行。
+  （Toolkit 13.0.2 = torch cu130、LLVM 19.1.7 + sysroot、sm_120 已固定并在 GPU 执行；
+  仓库没有自有 Torch 扩展源码，扩展编译链没有真实用例可验收）
 - [x] 显式处理 Triton/JIT 编译依赖与缓存；驱动作为运行平台要求。
-- [x] 外部源码版本与补丁进入构建输入。（CountGD：http_archive + patch 文件 + http_file 资产；其余 vendored 仍是 git submodule）
+- [x] 外部源码版本与补丁进入构建输入。（CountGD 为 http_archive + patch + http_file；
+  其他 vendored 上游仍是 git submodule，由 `make setup` 拉取）
 - [x] CountGD 权重与依赖进入 Bazel，评分/服务等价性通过后删除旧安装器。
-- [x] 真实生成与训练步骤测试通过，非 CPU/mock 替代。（5 个真实权重 case；见下）
-- [x] Reward 服务集成测试通过。（`//tests:rewards_tests` 含真实 `python -m vrl.rewards.service.server` 子进程 + HTTP 探活）
-- [x] Ray、torchrun、跨节点产物交付与解释器选择明确并验证。（本机单节点验证；多节点未验证，见下）
+- [x] 真实生成与训练步骤测试通过，非 CPU/mock 替代。（5 个真实权重 case）
+- [x] Reward 服务集成测试通过。（CPU lane 内真实子进程 + HTTP；CountGD 服务 smoke）
+- [~] Ray、torchrun、跨节点产物交付与解释器选择明确并验证。（单机 torchrun 双 rank、
+  本地 Ray 集群、python zip 在空环境运行均已验证；真实多节点未验证——只有一台机器）
 - [x] 普通 lint/配置/单元测试不下载所有模型权重。
-- [ ] 干净 checkout 验证，无原有 venv、隐式 CUDA_HOME 依赖。
-- [ ] CI、文档、运行入口迁移；已替代旧流程删除。
+- [x] 干净 checkout 验证，无原有 venv、隐式 CUDA_HOME 依赖。（见下）
+- [x] CI、文档、运行入口迁移；已替代旧流程删除。
 
 ## 架构边界
 
@@ -44,18 +50,17 @@ Bazel 规则负责已声明依赖，宿主驱动与 GPU 不能被普通构建替
 安装 Bazelisk 后，由 .bazelversion 选择仓库固定版本：
 
 ```bash
-bazel test //tests/build:python_toolchain_test
+make setup                                   # submodules + entry points
+make verify                                  # uv lock --check && bazel test //...
+bazel test --config=gpu //tests:gpu_tests //tests:gpu_vllm_tests
+HF_HOME=... WM_REAL_MODEL_RL_CASES=cached bazel test --config=gpu --config=real_weights //tests:e2e_real_checkpoint_tests
+bazel test //third_party/countgd:service_smoke_test
+bazel run //:vrl_train -- --config <experiment>
+bazel run //:vrl_supervise -- --config <experiment>
+bazel run //:vrl_reward_service -- --config vrl/config/reward_service/<service>.yaml
+bazel run //third_party/countgd:reward_service -- --config vrl/config/reward_service/countgd.yaml
+bazel build --build_python_zip //:vrl_train
 ```
-
-首个测试仅证明受管解释器和显式 Python 源码依赖可用，不证明完整仓库隔离。
-迁移期间 uv.lock 继续作为已有 Python 依赖解析的权威来源；
-后续 Bazel 消费格式由导出生成，禁止手动编辑第二份版本表。
-
-## 下一步
-
-优先接入 rules_cuda 的 deliverable Toolkit（NVIDIA redistribution 清单及 hash）
-和固定 C++ 编译工具链，执行真实 GPU 核函数测试。
-然后接入锁定 Torch 依赖及实际 VRL 内核/生成/训练目标。
 
 ## CUDA 工具链阶段
 
@@ -256,3 +261,39 @@ Torch 扩展编译链：仓库里没有自有 `.cu/.cpp`；两个 Triton 内核�
 
 `.bazelignore`：`.venv`（torch 包内自带 BUILD 文件）、`data`、`outputs`。
 `bazel test //...`：21/21 通过。
+
+## CI、文档与干净 checkout（2026-09-13）
+
+- `.github/workflows/ci.yml`：`uv lock --check`；`bazel test //...` + 两个入口 `--help`
+  （bazelisk + Bazel 缓存）；打包 job 不变（`uv build` + 轮子外部安装校验——保留的
+  Python 打包能力）。原 uv sync / pytest / editable third_party 的 job 删除。
+- `Makefile`：`setup` = 子模块 + 构建入口；`verify` = CI 门。`third_party/pyproject.toml`
+  删除，`//third_party:vendored` 的 `imports` 是唯一的 vendored 源根清单。
+- README Setup/Dependencies 改写为 target/栈/宿主要求表；`vdn_h3/vendor.py` 安装提示同步。
+- 主 hub 扩到 pyproject 允许组合的全部 extras（新增 ocr、detection、optim8bit），
+  GPU lane 从 34 增至 37（bitsandbytes 三个测试跑起来了）。
+
+干净 checkout：`git clone` 到临时目录（无 `.venv`、无子模块），`env -i`（只有 HOME 和
+bazelisk 所在 PATH）+ 全新 `--output_base`：
+- `bazel test //...`：21 个 lane 中 20 个通过；`//tests:models_tests` 失败是 CausVid/Echo/
+  MAGI-1 测试要读子模块源码。拉取 CausVid、joyai_echo、vdn-minimax-h3 后只剩 MAGI-1
+  一个用例（它的子模块没拉）。子模块是源码 checkout 的一部分，`make setup` 负责。
+- `bazel test --config=gpu //tests/build:torch_cuda_test //tests/toolchains:cuda_execution_test`
+  在同一环境通过：torch 在 GPU 执行且进程内没有宿主 CUDA 库；独立核函数在 sm_120 执行。
+
+## 未完成（明确记录）
+
+1. **MAGI-1 环境**：官方 requirements 需 flash-attn 2.4.2 + flashinfer（cu124/torch2.4）
+   源码构建，与 uv.lock 无交集；仍按 README 由用户自建 `third_party/MAGI-1/.venv` 并配置
+   `model.python_executable`。可行路线：rules_python `pip.parse` + 预构建 wheel 仓库，或
+   接受非受管的 CUDA 源码构建；两者都不是"固定工具链"，未做。
+2. **videoeval 环境**：tokenizers 0.13.3 无 cp312 wheel（VBench → transformers 4.33.2），
+   需要 Rust 源码构建；未建 hub。
+3. **真实多节点**：只有一台机器。交付路径（zip / 同路径挂载）与解释器选择已验证到单机；
+   Ray 多节点 runtime_env、NCCL 跨节点未跑。
+4. **Torch C++/CUDA 扩展的 Bazel 编译**：没有真实用例（仓库无扩展源码；CountGD 的 CUDA op
+   在 qualified CPU 服务里不构建）。rules_cuda + LLVM 工具链就绪但只有独立核函数证据。
+5. **e2e 仍失败的 case**（与构建无关，已记录原因）：sd3_5_flow_dppo、sd3_5_grpo_guard、
+   cosmos_anima、cosmos_anima_safe、janus_pro；cosmos_predict2_5 无缓存、nextstep_1 需 64 GiB。
+6. **宿主工具**：GNU `patch`（CountGD 补丁的换行标记）、`git`（子模块）、NVIDIA 驱动、
+   glibc ≥ 2.28。
