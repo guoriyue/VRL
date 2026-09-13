@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
-from typing import ClassVar
 
 import torch
 from omegaconf import OmegaConf
 
+from tests.scripts.eval.fixtures import cosmos25_eval_config, write_tiny_cosmos25_snapshot
 from vrl.scripts.eval import cosmos_predict25_frame_prefix_gate as gate
+from vrl.utils.media import write_mp4
 
 
 def test_prepare_prefix_uses_real_tail_frames_and_pads_last(monkeypatch, tmp_path: Path) -> None:
@@ -36,75 +36,39 @@ def test_parser_requires_a_real_prefix_video() -> None:
     assert args.prefix_video == Path("prefix.mp4")
 
 
-def test_run_gate_loads_through_production_resolve_and_materialize(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
+def test_run_gate_loads_through_production_resolve_and_materialize(tmp_path: Path) -> None:
+    """The gate runs unpatched: real config, real tiny Cosmos-2.5 snapshot, real prefix mp4.
+
+    ``resolve_model`` / ``materialize`` build the real LoRA bundle from the
+    on-disk snapshot, ``_prepare_prefix_video`` decodes a real libx264 mp4, and
+    ``pipe.prepare_latents`` runs the real conditioning math; the report is the
+    script's own verdict on those tensors.
+    """
+
+    snapshot = write_tiny_cosmos25_snapshot(tmp_path / "cosmos-snapshot")
+    config_path = tmp_path / "resolved_config.yaml"
+    OmegaConf.save(cosmos25_eval_config(snapshot, num_frames=9), config_path)
     prefix = tmp_path / "prefix.mp4"
-    prefix.write_bytes(b"video")
-    calls: list[str] = []
+    write_mp4(torch.rand(3, 9, 32, 32), prefix, fps=4.0)
 
-    class FakePipeline:
-        vae = SimpleNamespace(dtype=torch.float32)
-        transformer = SimpleNamespace(config=SimpleNamespace(in_channels=17))
-
-        def prepare_latents(self, **kwargs):
-            calls.append("prepare_latents")
-            assert kwargs["num_frames_in"] == 5
-            assert kwargs["video"].shape == (1, 3, 9, 8, 8)
-            latents = torch.zeros(1, 16, 3, 1, 1)
-            condition = torch.ones_like(latents)
-            mask = torch.zeros(1, 1, 3, 1, 1)
-            mask[:, :, :2] = 1
-            return latents, condition, mask, mask.clone()
-
-    class FakeResolved:
-        identity: ClassVar[dict[str, str]] = {"schema": "test-model/v1"}
-
-        def materialize(self, *, context: str):
-            calls.append("materialize")
-            assert "frame-prefix" in context
-            model = SimpleNamespace(pipeline=FakePipeline(), eval=lambda: model)
-            return SimpleNamespace(model=model)
-
-    entry = SimpleNamespace(family="cosmos-predict2.5")
-    root = SimpleNamespace(
-        model=SimpleNamespace(family="cosmos-predict2.5"),
-        precision=object(),
-        sampling=SimpleNamespace(height=8, width=8, num_frames=9),
+    args = gate.build_parser().parse_args(
+        [
+            "--config",
+            str(config_path),
+            "--prefix-video",
+            str(prefix),
+            "--prefix-frames",
+            "5",
+            "--device",
+            "cpu",
+        ],
     )
-    monkeypatch.setattr(
-        gate,
-        "load_config",
-        lambda *_args, **_kwargs: OmegaConf.create(
-            {"sampling": {"height": 8, "width": 8, "num_frames": 9}},
-        ),
-    )
-    monkeypatch.setattr(gate, "parse_config", lambda _cfg: root)
-    monkeypatch.setattr(
-        gate.PrecisionPolicy,
-        "from_section",
-        classmethod(lambda _cls, _section: object()),
-    )
-    monkeypatch.setattr(gate, "get_model_family_entry", lambda _family: entry)
-    monkeypatch.setattr(gate, "resolve_eval_device", lambda _device: torch.device("cpu"))
-    monkeypatch.setattr(
-        gate.run,
-        "resolve_model",
-        lambda *_args, **_kwargs: calls.append("resolve_model") or FakeResolved(),
-    )
-    monkeypatch.setattr(
-        gate,
-        "_prepare_prefix_video",
-        lambda *_args, **_kwargs: torch.zeros(1, 3, 9, 8, 8),
-    )
-    monkeypatch.setattr(gate, "release_cuda_memory", lambda: None)
-    args = gate.build_parser().parse_args(["--prefix-video", str(prefix), "--device", "cpu"])
-
     report = gate.run_gate(args)
 
-    assert calls == ["resolve_model", "materialize", "prepare_latents"]
     assert report["schema"] == gate.REPORT_SCHEMA
     assert report["status"] == "passed"
+    assert report["prefix_video"]["conditioned_pixel_frames"] == 5
+    assert report["sampling"] == {"height": 32, "width": 32, "num_frames": 9}
+    assert report["tensors"]["latents"] == report["tensors"]["condition"]
     assert "pipeline constructs" in report["claim"]
     assert "wrapper/forward integration" in report["non_goal"]

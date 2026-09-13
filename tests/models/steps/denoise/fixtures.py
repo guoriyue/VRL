@@ -522,6 +522,15 @@ def build_tiny_wan_vae(
     ``vae.config``, so a double that re-declares them cannot catch a rename.
     Non-trivial ``latents_mean`` / ``latents_std`` make a denormalizing decode
     observable (the identity stats hide a dropped mean or a swapped std).
+
+    Four ``dim_mult`` levels, not two: diffusers' Wan/Cosmos pipelines derive
+    ``vae_scale_factor_spatial = 2 ** len(temperal_downsample)`` (8) and
+    ``vae_scale_factor_temporal = 2 ** sum(temperal_downsample)`` (4) from the
+    config alone, while the real encoder compresses by ``2 ** (len(dim_mult) - 1)``
+    spatially. A two-level VAE therefore encodes 32x32 to 16x16 while the
+    pipeline allocates 4x4 denoise latents -- the Cosmos-2.5 frame-prefix gate
+    rejects exactly that shape mismatch. Matching the levels to
+    ``temperal_downsample`` keeps the fixture's geometry honest.
     """
 
     from diffusers import AutoencoderKLWan
@@ -530,7 +539,7 @@ def build_tiny_wan_vae(
     return AutoencoderKLWan(
         base_dim=4,
         z_dim=z_dim,
-        dim_mult=[1, 1],
+        dim_mult=[1, 1, 1, 1],
         num_res_blocks=1,
         latents_mean=[latents_mean] * z_dim,
         latents_std=[latents_std] * z_dim,
