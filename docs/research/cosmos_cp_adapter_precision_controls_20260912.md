@@ -592,3 +592,30 @@ The next work should test those conditions, not repeat this same passing case.
 
 Both jobs exit 0 with matching rank reports and fresh compute inventory is
 empty. GPUs 0-1 are released. Production runtime and thresholds unchanged.
+
+## Unaligned tile boundary and local padding
+
+Spatial size 24 creates 288 global tokens, 144 per rank, deliberately not
+aligned to the 64-row Linear tile size. With nonzero B, FP32 LoRA compute
+and local conditioning, unpadded tail tiles reintroduce BF16 aggregate
+gradient relative L2 0.436192 and output max error 0.34375. Logprob error is
+1.57345e-6; FP32 aggregate gradient error is 2.26890e-5. Evidence:
+`cosmos_ulysses_unaligned_tiles_l40s` rank JSON/log.
+
+The diagnostic `--pad-linear-tiles` pads only each Linear call's final partial
+row block to 64 rows, invokes the unchanged operator, then immediately
+discards the padded rows. No extra tokens reach attention, normalization or
+the objective. Both reference and CP use this compute schedule; both retain
+all 280 nonzero A and 280 nonzero B gradients.
+
+On the same unaligned shape, padded tiles give zero final output/logprob and
+block output-gradient errors. Aggregate parameter-gradient relative L2 is
+3.41641e-7 for FP32 and 3.39596e-7 for BF16. Evidence:
+`cosmos_ulysses_padded_tiles_l40s` rank JSON/log. Both ranks match in both
+runs; both jobs exit 0, fresh compute inventory empty and GPUs 0-1 released.
+
+This resolves the tested tail-tile counterexample locally, without full
+projection gathers. It does not validate unequal CP shard lengths, masks,
+other batch layouts, full-resolution memory, performance, optimizer updates
+or resume. Keep the failed unpadded result and original acceptance scope.
+Production runtime and dependencies remain unchanged.
