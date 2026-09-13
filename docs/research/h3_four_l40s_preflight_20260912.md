@@ -427,3 +427,33 @@ released-model geometry/weights, rollout/replay numeric agreement for these
 executor trajectories, Ray/collector integration, reward/learning, full trainer
 recovery, MP4 quality or throughput. Test-suite wall time is not a model speed
 measurement. No released weights were downloaded or long queue started.
+
+## 2026-09-13: native executor actions replayed by an independent model
+
+Extended the native modular/executor test with a separately loaded partitioned
+replay bundle. Before executor generation, LoRA B is initialized nonzero
+(normal, std 0.01). The replay bundle independently loads its checkpoint and
+receives the generator's complete policy state through strict state loading.
+It reconstructs each recorded observation with the exported prompt/audio
+payload and native geometry, visiting steps in reverse order. Recorded actions
+are re-scored using the executor's resolved SDE type/noise level and schedule.
+
+All three recorded steps pass the predeclared absolute `1e-3` log-probability
+and policy-ratio gates, with measured **log-prob max absolute error 0** and
+**max absolute deviation of ratio from 1 equal to 0**. Backpropagating the
+negative mean re-scored log-probability gives 16 finite gradient tensors,
+12 nonzero. This is a differentiation check, not a reward-weighted training
+objective or proof of learning.
+
+Final H3 suite: **50 passed in 7.27 seconds**, exit 0. Raw metrics:
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_executor_replay_metrics_pytest/test_unified_partitioned_gener0/executor_replay_metrics.json`.
+Local modular checkpoint files remain beside this JSON. Reproduction uses the
+documented four-GPU environment and H3 family suite. Ruff, formatting and diff
+checks passed. All jobs terminal, fresh compute inventory empty, all GPUs
+released.
+
+This closes executor-to-replay log-prob agreement for the tiny nonzero-LoRA
+checkpoint, not full-size released weights, collector/trainer contracts,
+optimizer/recovery semantics for this trajectory, quality or performance.
+The test co-resides separate tiny rollout and replay models on GPUs 0-1;
+released-model replication would require its own memory/scheduling design.
