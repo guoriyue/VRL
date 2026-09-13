@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 
+import imageio.v2 as imageio
 import pytest
 from omegaconf import OmegaConf
 from PIL import Image
@@ -238,16 +239,6 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
     assert Path(examples[0].reference_image).exists()
 
 
-@pytest.mark.real_cover(
-    None,
-    why=(
-        "imageio + imageio-ffmpeg are declared dependencies, so real mp4 encoding would "
-        "work here; it is skipped because this test asserts clip splitting, row paths and "
-        "the per-episode fps override, and never decodes the written video — real encoding "
-        "would add seconds and zero coverage"
-    ),
-    tracked_in="docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
-)
 def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path) -> None:
     """Target rows carry reference + target artifacts, and per-episode fps wins over CLI fps."""
     data_root = tmp_path / "external"
@@ -272,16 +263,6 @@ def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path
         },
     ]
 
-    # Record the encoder call instead of writing a formatted string and reading it
-    # back: the invariant under test is that the per-episode source_fps=15.0 beats
-    # the CLI fps=10.0, and an argument list states that directly.
-    writes: list[tuple[Path, int, float]] = []
-
-    def record_video_write(path: Path, frames: list[Image.Image], fps: float) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch()
-        writes.append((path, len(frames), fps))
-
     rows = video_world.build_target_video_world_rows(
         episodes,
         reference_dir=reference_dir,
@@ -289,14 +270,16 @@ def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path
         data_root=data_root,
         source="droid",
         fps=10.0,
-        video_writer=record_video_write,
     )
 
     assert rows[0]["reference_image"].startswith("video_world/references/")
     assert rows[0]["target_video"].startswith("video_world/targets/")
     assert (data_root / rows[0]["reference_image"]).exists()
-    assert (data_root / rows[0]["target_video"]).exists()
-    assert writes == [(data_root / rows[0]["target_video"], 2, 15.0)]
+    # The real encoder wrote both frames at the per-episode source_fps=15.0,
+    # which beats the CLI fps=10.0: read it back from the mp4 itself.
+    reader = imageio.get_reader(data_root / rows[0]["target_video"])
+    assert reader.count_frames() == 2
+    assert round(reader.get_meta_data()["fps"]) == 15
     assert rows[0]["task_type"] == "video2world"
     assert rows[0]["metadata"]["source"] == "droid"
     assert rows[0]["metadata"]["source_repo"] == "lerobot/droid_100"

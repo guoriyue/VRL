@@ -39,18 +39,31 @@ SANA_IDENTITY = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
 # materialized is covered for real by
 # `test_snapshot_materialization_uses_all_four_pinned_revisions`; what has no
 # counterpart anywhere is the download and the generation itself.
-_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS = pytest.mark.real_cover(
+_HUB_SNAPSHOTS_AND_REWARD_WEIGHTS_NEED_THE_NETWORK = pytest.mark.real_cover(
     None,
     why=(
-        "materializing the four pinned Hub snapshots needs network access and multi-GB weights, "
-        "and generating the image grid from them needs a CUDA device; there is no SANA case in "
-        "tests/e2e, so this repo has no lane where either runs for real"
+        "the model and the two reward repos are pinned Hub snapshots (snapshot_download needs "
+        "the network and multi-GB weights) and scoring needs the real aesthetic/PickScore "
+        "weights, so materialization and _score_images stay doubles; generation itself runs "
+        "for real on the tiny local snapshot (see test_generation_uses_fresh_base_...)"
     ),
     tracked_in="docs/sprints/done/SPRINT_zero-cost-real-object-swaps.md",
 )
 
 
-def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
+def _write_run(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    empty_manifest: bool = False,
+) -> tuple[Path, TinySanaPipeline]:
+    """A 25-epoch run on the tiny snapshot: resolved config, metrics, and a real
+    `checkpoint-25` saved from the real bundle (weights filled to 1.0 and labelled
+    so the pipeline reports which weights painted each image)."""
+
+    snapshot = write_tiny_sana_snapshot(tmp_path / "sana-snapshot")
+    pipeline = TinySanaPipeline()
+    pipeline.install(monkeypatch, snapshot)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     manifest = tmp_path / "eval.txt"
@@ -59,8 +72,8 @@ def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
         {
             "model": {
                 "family": "sana",
-                "path": "test/sana",
-                "revision": "model-revision",
+                "path": str(snapshot),
+                "revision": None,
                 "use_lora": False,
                 "lora": None,
             },
@@ -110,32 +123,42 @@ def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
         "epoch,loss\n" + "".join(f"{epoch},1.0\n" for epoch in range(25)),
         encoding="utf-8",
     )
-    checkpoint = run_dir / "checkpoint-25"
-    checkpoint.mkdir()
-    payload = b"checkpoint-state"
-    (checkpoint / "checkpoint.pt").write_bytes(payload)
-    (checkpoint / "checkpoint_meta.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 2,
-                "family": "sana",
-                "model_identity": SANA_IDENTITY,
-                "completed_epoch": 25,
-                "checkpoint_file_bytes": len(payload),
-                "uses_lora": False,
-            },
-        ),
-        encoding="utf-8",
+
+    import vrl.models.families.registry as model_families
+
+    root, precision = _sana_root(snapshot)
+    entry = model_families.get_model_family_entry("sana")
+    build = entry.resolve_model_build(
+        root, torch.device("cpu"), precision=precision, for_rollout=True
     )
-    return run_dir
+    bundle = entry.build_rollout(build)
+    base_state = {name: value.clone() for name, value in pipeline.transformer.state_dict().items()}
+    with torch.no_grad():
+        for parameter in pipeline.transformer.parameters():
+            parameter.fill_(1.0)
+    pipeline.label_weights("checkpoint-25")
+    save_training_checkpoint(
+        run_dir / "checkpoint-25",
+        trainer=_Trainer(),
+        bundle=bundle,
+        family="sana",
+        progress={"completed_epoch": 25, "next_epoch": 25},
+        rng_state={},
+        model_identity=checkpoint_identity.resolve_checkpoint_model_identity(build),
+    )
+    pipeline.transformer.load_state_dict(base_state)
+    pipeline.loads = 0
+    return run_dir, pipeline
 
 
 def _allow_minimal_protocol(monkeypatch) -> None:
     """Let a minimal synthetic run dir through, so the report machinery can be tested.
 
-    The identity patch on ``_normalize_run_config`` is what makes the tiny config in
+    The identity patch on ``normalize_run_config`` is what makes the tiny config in
     ``_write_run`` acceptable — the real gate only accepts the registered
-    300-epoch protocol. That means none of these tests says anything about main()
+    300-epoch protocol. ``_materialize_model_snapshot`` becomes ``parse_config``
+    because ``model.path`` is already the local tiny snapshot (the Hub download
+    is the boundary); the model identity is the real local-directory hash. That means none of these tests says anything about main()
     calling the gate; the two tests driven from ``_write_protocol_run`` below own
     that, on a run dir the real gate does accept.
     """
@@ -169,50 +192,12 @@ def _allow_minimal_protocol(monkeypatch) -> None:
         return path, path, prompts
 
     monkeypatch.setattr(sana_report, "resolve_protocol_manifests", resolve_manifests)
-    monkeypatch.setattr(
-        checkpoint_identity,
-        "resolve_checkpoint_model_identity",
-        lambda _build: SANA_IDENTITY,
-    )
 
 
-@_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS
+@_HUB_SNAPSHOTS_AND_REWARD_WEIGHTS_NEED_THE_NETWORK
 def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> None:
-    run_dir = _write_run(tmp_path)
+    run_dir, pipeline = _write_run(tmp_path, monkeypatch)
     _allow_minimal_protocol(monkeypatch)
-
-    def fake_generate(
-        root,
-        precision,
-        targets,
-        prompts,
-        *,
-        output_dir,
-        sampling,
-        device,
-        expected_model_identity,
-    ):
-        del root, precision, sampling, device
-        assert expected_model_identity == SANA_IDENTITY
-        generated = []
-        for target in targets:
-            for sample_index in range(sana_report.EVAL_SAMPLES_PER_PROMPT):
-                path = output_dir / "images" / target.label / f"sample{sample_index}.png"
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(f"{target.label}-{sample_index}".encode())
-                generated.append(
-                    checkpoint_eval.GeneratedImage(
-                        checkpoint_label=target.label,
-                        epoch=target.epoch,
-                        prompt_index=0,
-                        sample_index=sample_index,
-                        group_seed=sana_report.group_seed(0),
-                        prompt=prompts[0],
-                        path=path.resolve(),
-                        image_sha256=sha256_file(path),
-                    ),
-                )
-        return generated
 
     def fake_score(generated, rewards):
         assert [reward.name for reward in rewards] == ["aesthetic", "pickscore"]
@@ -232,10 +217,13 @@ def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> N
             for image in generated
         ]
 
-    monkeypatch.setattr(checkpoint_eval, "_generate_images", fake_generate)
     monkeypatch.setattr(checkpoint_eval, "_score_images", fake_score)
     checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
 
+    # Real generation: the base grid was painted before checkpoint-25 was
+    # restored into the same bundle, one pipeline load for the whole run.
+    assert [call["weights"] for call in pipeline.calls] == ["base", "checkpoint-25"]
+    assert pipeline.loads == 1
     rows = sana_report.load_report_metrics(run_dir)
     assert [row["epoch"] for row in rows] == [-1.0, 25.0]
     assert all(row["sample_count"] == 2.0 for row in rows)
@@ -283,20 +271,19 @@ def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> N
         sana_report.load_report_metrics(run_dir)
 
 
-@_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS
+@_HUB_SNAPSHOTS_AND_REWARD_WEIGHTS_NEED_THE_NETWORK
 def test_report_reader_rejects_empty_metrics(monkeypatch, tmp_path) -> None:
-    run_dir = _write_run(tmp_path)
+    run_dir, _pipeline = _write_run(tmp_path, monkeypatch)
     _allow_minimal_protocol(monkeypatch)
-    monkeypatch.setattr(checkpoint_eval, "_generate_images", lambda *args, **kwargs: [])
     monkeypatch.setattr(checkpoint_eval, "_score_images", lambda *args, **kwargs: [])
 
     with pytest.raises(ValueError, match=r"empty.*sample manifest"):
         checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
 
 
-@_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS
+@_HUB_SNAPSHOTS_AND_REWARD_WEIGHTS_NEED_THE_NETWORK
 def test_main_rejects_checkpoint_identity_before_model_snapshot(monkeypatch, tmp_path) -> None:
-    run_dir = _write_run(tmp_path)
+    run_dir, pipeline = _write_run(tmp_path, monkeypatch)
     _allow_minimal_protocol(monkeypatch)
     meta_path = run_dir / "checkpoint-25" / "checkpoint_meta.json"
     meta = json.loads(meta_path.read_text())
@@ -315,46 +302,13 @@ def test_main_rejects_checkpoint_identity_before_model_snapshot(monkeypatch, tmp
         checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
 
     assert materialized is False
+    assert pipeline.loads == 0
 
 
-@_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS
+@_HUB_SNAPSHOTS_AND_REWARD_WEIGHTS_NEED_THE_NETWORK
 def test_report_reader_rejects_changed_config_provenance(monkeypatch, tmp_path) -> None:
-    run_dir = _write_run(tmp_path)
+    run_dir, _pipeline = _write_run(tmp_path, monkeypatch)
     _allow_minimal_protocol(monkeypatch)
-
-    def fake_generate(
-        root,
-        precision,
-        targets,
-        prompts,
-        *,
-        output_dir,
-        sampling,
-        device,
-        expected_model_identity,
-    ):
-        del root, precision, sampling, device
-        assert expected_model_identity == SANA_IDENTITY
-        images = []
-        for target in targets:
-            for sample_index in range(2):
-                path = output_dir / f"{target.label}-{sample_index}.png"
-                path.write_bytes(b"image")
-                images.append(
-                    checkpoint_eval.GeneratedImage(
-                        target.label,
-                        target.epoch,
-                        0,
-                        sample_index,
-                        sana_report.group_seed(0),
-                        prompts[0],
-                        path,
-                        sha256_file(path),
-                    ),
-                )
-        return images
-
-    monkeypatch.setattr(checkpoint_eval, "_generate_images", fake_generate)
 
     def fake_score(images, rewards):
         del rewards
@@ -383,16 +337,16 @@ def test_report_reader_rejects_changed_config_provenance(monkeypatch, tmp_path) 
         sana_report.load_report_metrics(run_dir)
 
 
-@_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS
+@_HUB_SNAPSHOTS_AND_REWARD_WEIGHTS_NEED_THE_NETWORK
 def test_main_rejects_empty_manifest(monkeypatch, tmp_path) -> None:
-    run_dir = _write_run(tmp_path, empty_manifest=True)
+    run_dir, _pipeline = _write_run(tmp_path, monkeypatch, empty_manifest=True)
     _allow_minimal_protocol(monkeypatch)
     with pytest.raises(ValueError, match="manifest has no prompts"):
         checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
 
 
-def test_checkpoint_discovery_rejects_curve_gap(tmp_path) -> None:
-    run_dir = _write_run(tmp_path)
+def test_checkpoint_discovery_rejects_curve_gap(tmp_path, monkeypatch) -> None:
+    run_dir, _pipeline = _write_run(tmp_path, monkeypatch)
     (run_dir / "checkpoint-25").rename(run_dir / "checkpoint-50")
     meta_path = run_dir / "checkpoint-50" / "checkpoint_meta.json"
     meta = json.loads(meta_path.read_text())
@@ -405,8 +359,10 @@ def test_checkpoint_discovery_rejects_curve_gap(tmp_path) -> None:
         checkpoint_eval._discover_checkpoint_targets(run_dir, parse_config(cfg))
 
 
-def test_checkpoint_discovery_rejects_incomplete_curve_before_model_load(tmp_path) -> None:
-    run_dir = _write_run(tmp_path)
+def test_checkpoint_discovery_rejects_incomplete_curve_before_model_load(
+    tmp_path, monkeypatch
+) -> None:
+    run_dir, _pipeline = _write_run(tmp_path, monkeypatch)
     cfg = OmegaConf.load(run_dir / "resolved_config.yaml")
     cfg.trainer.total_epochs = 50
 
@@ -414,8 +370,10 @@ def test_checkpoint_discovery_rejects_incomplete_curve_before_model_load(tmp_pat
         checkpoint_eval._discover_checkpoint_targets(run_dir, parse_config(cfg))
 
 
-def test_checkpoint_discovery_keeps_recovery_saves_out_of_eval_curve(tmp_path) -> None:
-    run_dir = _write_run(tmp_path)
+def test_checkpoint_discovery_keeps_recovery_saves_out_of_eval_curve(
+    tmp_path, monkeypatch
+) -> None:
+    run_dir, _pipeline = _write_run(tmp_path, monkeypatch)
     cfg = OmegaConf.load(run_dir / "resolved_config.yaml")
     cfg.trainer.save_freq = 5
 
@@ -441,8 +399,10 @@ def test_checkpoint_discovery_keeps_recovery_saves_out_of_eval_curve(tmp_path) -
     assert [target.epoch for target in targets] == [-1, 25]
 
 
-def test_training_metrics_preflight_requires_every_registered_update(tmp_path) -> None:
-    run_dir = _write_run(tmp_path)
+def test_training_metrics_preflight_requires_every_registered_update(
+    tmp_path, monkeypatch
+) -> None:
+    run_dir, _pipeline = _write_run(tmp_path, monkeypatch)
     cfg = OmegaConf.load(run_dir / "resolved_config.yaml")
     metrics = run_dir / "metrics.csv"
     sana_report.validate_training_metrics(metrics, parse_config(cfg))
@@ -681,8 +641,10 @@ def test_manifest_replacement_and_overlap_are_rejected(monkeypatch, tmp_path) ->
         sana_report.resolve_protocol_manifests(parse_config(overlap_cfg))
 
 
-def test_reward_model_definitions_resolve_device_and_require_explicit_identity(tmp_path) -> None:
-    run_dir = _write_run(tmp_path)
+def test_reward_model_definitions_resolve_device_and_require_explicit_identity(
+    tmp_path, monkeypatch
+) -> None:
+    run_dir, _pipeline = _write_run(tmp_path, monkeypatch)
     cfg = OmegaConf.load(run_dir / "resolved_config.yaml")
     cfg.reward.kwargs.aesthetic.device = None
     cfg.reward.kwargs.pickscore.device = None

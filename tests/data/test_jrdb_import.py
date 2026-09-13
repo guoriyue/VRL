@@ -10,12 +10,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import imageio.v2 as imageio
 import pytest
 from PIL import Image
 
 from vrl.scripts.data import jrdb
 from vrl.scripts.data import setup as setup_cli
-from vrl.scripts.data.video_world import dataset_index as video_world_dataset_index
 from vrl.trainers.data.artifacts import SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS
 
 
@@ -98,29 +98,10 @@ def test_iter_jrdb_clips_rejects_overlapping_stride(tmp_path: Path) -> None:
         )
 
 
-@pytest.mark.real_cover(
-    None,
-    why=(
-        "imageio + imageio-ffmpeg are declared dependencies, so real mp4 encoding would work "
-        "here; it is skipped because this test asserts the manifests, the report and the "
-        "artifact validation, and never decodes the written video — real encoding would add "
-        "seconds per clip and zero coverage"
-    ),
-    tracked_in="docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
-)
-def test_jrdb_targets_command_writes_manifests_report_and_validates(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_jrdb_targets_command_writes_manifests_report_and_validates(tmp_path: Path) -> None:
     jrdb_root = tmp_path / "jrdb"
     _make_layout(jrdb_root, {"bytes-cafe-2019-02-07_0": 8, "clark-center-2019-02-28_1": 8})
     data_root = tmp_path / "data_root"
-
-    def fake_video_writer(path: Path, frames, fps: float) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"fake-video frames={len(frames)} fps={fps}")
-
-    monkeypatch.setattr(video_world_dataset_index, "_write_mp4", fake_video_writer)
 
     setup_cli.main(
         [
@@ -157,7 +138,8 @@ def test_jrdb_targets_command_writes_manifests_report_and_validates(
     row = train_rows[0]
     assert row["task_type"] == "video2world"
     assert (data_root / row["reference_image"]).exists()
-    assert (data_root / row["target_video"]).exists()
+    # The target clip is a real mp4 holding exactly the --clip-frames frames.
+    assert len(imageio.mimread(data_root / row["target_video"])) == 4
     for field in SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS:
         assert row["metadata"].get(field) not in (None, ""), field
 
