@@ -295,10 +295,10 @@ bazelisk 所在 PATH）+ 全新 `--output_base`：
    `@vrl_pypi_videoeval`、`//:vrl_videoeval`、`//:video_reward_suite`、
    `//tests/build:videoeval_stack_test`。发现：仓库规则继承调用 shell 的 `CFLAGS`（conda 的
    `-isystem`），已在规则内清空编译器变量。
-3. **跨机器交付**：已验证到"另一台机器"。`//tools/delivery:node_probe` 的 zip（3.6 GB）传到
+3. **跨机器交付与多节点**：已验证到真实两节点集群（第二轮追加，见下一节）。此前先验证了"另一台机器"：`//tools/delivery:node_probe` 的 zip（3.6 GB）传到
    EC2 g6e.12xlarge（4×L40S，驱动 580.173，glibc 2.39），`env -i` 下运行：内嵌 3.12.13、
    torch cu130 上四张卡执行、进程无宿主 CUDA 库、4 rank torchrun NCCL all-reduce（含 `import vrl`）
-   全部通过。仍未做：两台以上机器组成的 NCCL/Ray 集群。
+   全部通过。
 4. **Torch 扩展编译**：仍无真实用例（仓库无扩展源码；CountGD 的 CUDA op 在 qualified CPU 服务
    里不构建；MAGI 的 flash-attn 本机无法运行）。工具链（CUDA 13.0.2 + LLVM 19）与
    `rust_wheel` 式的源码构建规则都已就位，出现用例即可接。
@@ -311,9 +311,20 @@ bazelisk 所在 PATH）+ 全新 `--output_base`：
    qualified 摘要内），Bazel 内置 patcher 直接应用。`git`（子模块）、NVIDIA 驱动、glibc ≥ 2.28
    属执行平台要求；子模块改为 http_archive 可去掉 `git`，未做。
 
+## 多节点集群（2026-09-13）
+
+临时起了第二台 EC2（g6.xlarge，1×L4，同 VPC/子网/安全组；安全组加了组内互通规则），
+两台节点都只拿到 `node_probe.zip`（`RULES_PYTHON_EXTRACT_ROOT` 固定解包目录）：
+- torchrun 两节点：node1（4×L40S）rank 0–3 + node2（L4）rank 4，`--nnodes=2` 会合、
+  NCCL all-reduce 校验和正确、每个 rank `import vrl`、无宿主 CUDA 库。
+  注意 `NCCL_SOCKET_IFNAME` 用排除式（`^lo,docker`），两台机器的网卡名不同（enp39s0 / ens5）。
+- Ray 两节点：node1 `ray start --head`、node2 `ray start --address`，都用各自产物 venv 的
+  解释器；驱动用 `--ray-address` 从产物提交每 GPU 一个任务：2 节点、5 GPU，任务在两台机器
+  上执行，worker 的 `sys.executable` 分别是各节点产物内的解释器，`import vrl` 成功。
+- 验证后 `ray stop`，第二台实例终止。
+
 ## 未完成（明确记录）
 
-- MAGI-1 独立栈（见上，缺可运行的 GPU）。
-- 多机 NCCL/Ray 集群（只有一台本地机器 + 一台单节点 EC2）。
+- MAGI-1 独立栈：见下一节的进展。
 - Torch C++/CUDA 扩展的真实用例。
 - 未缓存/显存不足的 e2e：cosmos_predict2_5、nextstep_1（64 GiB）。
