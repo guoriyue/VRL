@@ -80,3 +80,52 @@ Evidence: `cosmos_cp_shared_cotangent_cfg5_l40s/rank-{0,1}.json` and adjacent
 log under the same NVMe root. Script option `--shared-output-cotangent` marks
 the altered diagnostic backward explicitly. Torchrun and both ranks exited 0;
 fresh GPU inventory is empty and GPUs 0-1 are released. Runtime unchanged.
+
+## First-block localization
+
+Per-block hooks on the same shared-cotangent CFG5 diagnostic show BF16
+divergence already at block 0 (relative L2 0.00313467), increasing to
+0.0126416 at block 27 in the first CFG branch. FP32 block 0 and block 27
+relative errors are 4.72727e-7 and 1.22734e-6 respectively. Both rank reports
+match. The 56 recorded events cover 28 blocks in each of two CFG branches,
+not 56 independent layers or training updates.
+
+A second trace of first-block submodules finds BF16 relative L2 0.000965296
+at norm1's modulated hidden output and 0.000998577 at its gate output,
+before the first self-attention call. Self-attention output relative L2 is
+0.00201252. This rules out self-attention as the first observed divergence
+in this test; it does not establish that attention contributes no further
+error, or that a particular kernel is faulty. FP32 norm1 output relative L2
+is 2.36213e-7. Both ranks' complete case reports match.
+
+Evidence under the same NVMe root:
+`cosmos_cp_block_trace_l40s/rank-{0,1}.json` and
+`cosmos_cp_firstblock_modules_l40s/rank-{0,1}.json`, with adjacent logs.
+These are synthetic, pinned-weight diagnostics, not a production CP pass.
+
+### AdaLN internals
+
+Follow-up `cosmos_cp_adaln_trace_l40s/rank-{0,1}.json` adds hooks inside
+norm1 without changing runtime operators. Both ranks match, and torchrun
+exits 0. In the first CFG branch:
+
+| Output | FP32 relative L2 | BF16 relative L2 | BF16 max absolute |
+| --- | ---: | ---: | ---: |
+| norm1.activation | 0 | 0 | 0 |
+| norm1.linear_1 | 0 | 0.00218015 | 0.0078125 |
+| norm1.linear_2 | 2.49304e-7 | 0.000927816 | 0.03125 |
+| norm1.norm | 0 | 0 | 0 |
+| norm1 modulated hidden | 2.36213e-7 | 0.000965296 | 0.199526 |
+
+The first observed BF16 discrepancy is therefore in the timestep-conditioned
+AdaLN linear projection, with equal activation inputs and equal plain
+LayerNorm outputs. The local versus full sequence changes projection shapes;
+shape-dependent numerical execution is a hypothesis to isolate next, not a
+verified kernel defect. Shared-cotangent aggregate BF16 gradient relative L2
+remains 0.103061, so training equivalence is still open. A useful next control
+is identical full-shape conditioning projections before selecting local
+tokens, while preserving gradients and separating this from attention changes.
+
+No production code, dependency or acceptance threshold changed. The frozen
+runtime worktree remains clean. Fresh compute inventory is empty; the
+per-block-trace GPU claim is released.
