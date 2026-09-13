@@ -63,7 +63,7 @@ def test_streaming_matches_full_batch_advantages_gradients_and_adam(
         plan = OnlineBatchPlan(
             prompts_per_batch=4,
             n_samples_per_prompt=2,
-            gradient_accumulation_steps=4 // micro if streaming else 0,
+            prompts_per_collection=micro if streaming else 0,
         )
         trainer.config.batch_plan = plan
         seen = []
@@ -144,9 +144,7 @@ def test_streaming_matches_full_batch_advantages_gradients_and_adam(
 def test_spool_cleanup_on_failure(tmp_path, stage):
     trainer = _build_trainer(tmp_path)
     trainer.algorithm.config = type("Config", (), {"global_std": True, "adv_clip_max": 5.0})()
-    plan = OnlineBatchPlan(
-        prompts_per_batch=2, n_samples_per_prompt=2, gradient_accumulation_steps=2
-    )
+    plan = OnlineBatchPlan(prompts_per_batch=2, n_samples_per_prompt=2, prompts_per_collection=1)
     trainer.config.batch_plan = plan
     calls = []
 

@@ -306,7 +306,7 @@ class _RealRun:
             bundle=bundle,
             family="sana",
             progress={"next_epoch": 1, "next_step": 1},
-            rng_state={},
+            rng_state=online.capture_rng_state(prompt_generator=torch.Generator()),
             model_identity=replay.identity,
         )
         self.pipeline.loads = 0
@@ -487,8 +487,11 @@ async def test_missing_prompt_rng_stops_before_prompt_model_or_ray(
     world_size,
     missing_rank,
 ) -> None:
+    run = _RealRun(monkeypatch, tmp_path)
+    checkpoint_dir = run.save_checkpoint(tmp_path / "checkpoint-1")
+    run = _RealRun(monkeypatch, tmp_path, overrides=(f"trainer.resume_from={checkpoint_dir}",))
     state = _state()
-    _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
     rank_states = [
         online.capture_rng_state(prompt_generator=torch.Generator()) for _ in range(world_size)
     ]
@@ -501,8 +504,11 @@ async def test_missing_prompt_rng_stops_before_prompt_model_or_ray(
             "by_rank": rank_states,
         }
     )
-    checkpoint = SimpleNamespace(rng_state=rng_state)
-    monkeypatch.setattr(online, "load_training_checkpoint_for_resume", lambda _resume: checkpoint)
+    checkpoint = online.TrainingCheckpoint.load(checkpoint_dir)
+    checkpoint.payload["rng"] = rng_state
+    monkeypatch.setattr(
+        online.TrainingCheckpoint, "load_for_resume", staticmethod(lambda _resume: checkpoint)
+    )
     monkeypatch.setattr(
         online.DistributedTrainingContext,
         "from_root",
@@ -528,8 +534,8 @@ async def test_missing_prompt_rng_stops_before_prompt_model_or_ray(
         ),
     )
     with pytest.raises(ValueError, match="missing requested generators: prompt_generator"):
-        await online.run_online_recipe(_cfg())
-    assert state["bundle_builds"] == state["owner_creates"] == state["launches"] == 0
+        await online.run_online_recipe(run.cfg)
+    assert run.pipeline.loads == state["owner_creates"] == state["launches"] == 0
 
 
 @pytest.mark.asyncio

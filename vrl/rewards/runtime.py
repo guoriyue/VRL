@@ -245,7 +245,11 @@ def _reward_device_scope(worker_config: Mapping[str, Any]) -> Any:
 
     configured_device = worker_config.get("device")
     device = torch.device(configured_device) if configured_device is not None else None
-    return torch.cuda.device(device) if device is not None and device.type == "cuda" else nullcontext()
+    return (
+        torch.cuda.device(device)
+        if device is not None and device.type == "cuda"
+        else nullcontext()
+    )
 
 
 def _build_prepared_model_in_pool(
@@ -459,7 +463,11 @@ class InProcessRewardScorer:
         # dropping the model so freeing the tensors actually returns the
         # pool's memory instead of leaking offloaded copies.
         pool = self._pool
-        with _reward_device_scope(self._launch.component_config) if pool is not None else nullcontext():
+        with (
+            _reward_device_scope(self._launch.component_config)
+            if pool is not None
+            else nullcontext()
+        ):
             if pool is not None:
                 pool.wake()
             self._model = None

@@ -11,7 +11,7 @@ import torch.multiprocessing as mp
 from tests.trainers._strategy_policies import free_port
 from tests.trainers.online.test_fsdp_streaming_equivalence import _Policy
 from vrl.trainers.distributed import DistributedTrainingContext
-from vrl.trainers.online.ema import EMAModuleWrapper
+from vrl.trainers.online.ema import EMAWeights
 from vrl.trainers.strategy import FSDPStrategy, TrainingMemoryState
 
 
@@ -68,7 +68,7 @@ def _equivalence_worker(rank, port):
                     model=model,
                     ref_model=_Policy().to(device).requires_grad_(False),
                     optimizer=torch.optim.AdamW(parameters, lr=0.01),
-                    ema=EMAModuleWrapper(parameters, decay=0.9, device=device),
+                    ema=EMAWeights(parameters, decay=0.9, device=device),
                     grad_scaler=None,
                     device=device,
                 )
@@ -178,11 +178,13 @@ def _worker(rank, port):
             dist.destroy_process_group()
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="requires four CUDA devices")
 def test_four_gpu_adapter_parking():
     mp.spawn(_worker, args=(free_port(),), nprocs=4, join=True)
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="requires four CUDA devices")
 def test_four_gpu_parking_preserves_next_updates():
     mp.spawn(_equivalence_worker, args=(free_port(),), nprocs=4, join=True)

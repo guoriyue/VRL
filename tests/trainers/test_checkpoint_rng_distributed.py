@@ -85,7 +85,7 @@ def _rng_rank(rank, rendezvous, output, backend="gloo", world_size=2):
             rng_state=local,
             strategy=strategy,
         )
-        strategy.barrier()
+        strategy.collectives.barrier()
         checkpoint = TrainingCheckpoint.load(output)
         assert checkpoint.rng_state["world_size"] == world_size
         rank_states = checkpoint.rng_state["by_rank"]
@@ -118,6 +118,7 @@ def test_two_rank_rng_checkpoint_round_trip(tmp_path, monkeypatch):
     )
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="requires two CUDA devices")
 def test_two_rank_cuda_rng_checkpoint_round_trip(tmp_path):
     from tests.trainers._strategy_policies import free_port
@@ -127,6 +128,7 @@ def test_two_rank_cuda_rng_checkpoint_round_trip(tmp_path):
     )
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="requires four CUDA devices")
 def test_four_rank_cuda_rng_checkpoint_round_trip(tmp_path):
     from tests.trainers._strategy_policies import free_port

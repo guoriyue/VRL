@@ -17,7 +17,7 @@ from vrl.rollouts.orchestration.schedule import collect_context_parallel_iterati
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.trainers.data.prompt_sampler import PromptBatchSampler
 from vrl.trainers.distributed import create_context_parallel_groups
-from vrl.trajectory import TrajectoryBatch
+from vrl.trajectory.types import TrajectoryBatch
 
 
 def _worker(rank, rendezvous, spool_dir, cuda):

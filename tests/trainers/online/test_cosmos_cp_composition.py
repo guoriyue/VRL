@@ -42,10 +42,10 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.core.types import EMAConfig, OptimConfig
 from vrl.trainers.distributed import DistributedTrainingContext, init_training_process_group
-from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+from vrl.trainers.online.trainer import OnlineTrainer
 from vrl.trainers.strategy import ContextParallelStrategy
-from vrl.trajectory import build_diffusion_trajectory
+from vrl.trajectory.builders import build_diffusion_trajectory
 
 
 class _Collector(CollectorControlFake):
@@ -58,10 +58,13 @@ class _Collector(CollectorControlFake):
             current_policy_version=0, requires_driver_model_offload=False
         )
 
-    async def score_rollouts(self, batches):
+    async def evaluate_rollout(self, batches):
         return list(batches)
 
-    async def collect_unscored(self, prompts, **kwargs):
+    async def generate_rollout(self, prompts, **kwargs):
+        prepared = prompts
+        prompts = prepared.inputs
+        kwargs = prepared.options
         self.calls += 1
         self.versions.append(kwargs.get("policy_version"))
         count = kwargs["group_size"]
@@ -320,7 +323,6 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
             scheduler=scheduler,
             raw_handle=None,
             precision=precision,
-            loads_full_generation_modules=False,
         )
         identity = (
             {"schema": "released-cosmos-cp-composition/v1", "checkpoint": released_model}
@@ -382,7 +384,7 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
                     progress={"next_step": 1},
                     strategy=strategy,
                 )
-                strategy.barrier()
+                strategy.collectives.barrier()
         assert next(model.parameters()).device == device
         assert next(rollout.parameters()).device == rollout_device
         assert trainer.state.step == 2
@@ -449,6 +451,7 @@ def test_native_cosmos_cp_online_step(tmp_path):
 
 
 @pytest.mark.distributed
+@pytest.mark.gpu
 def test_native_cosmos_cp_online_step_disjoint_cuda(tmp_path):
     if torch.cuda.device_count() < 3:
         pytest.skip("requires two training GPUs and one disjoint rollout GPU")
@@ -471,6 +474,7 @@ def test_native_cosmos_cp_checkpoint_resume_ema(tmp_path):
 
 
 @pytest.mark.distributed
+@pytest.mark.gpu
 def test_native_cosmos_cp_checkpoint_resume_ema_disjoint_cuda(tmp_path):
     if torch.cuda.device_count() < 3:
         pytest.skip("requires two training GPUs and one disjoint rollout GPU")

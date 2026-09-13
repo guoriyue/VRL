@@ -13,6 +13,7 @@ from vrl.models.families.minimax_h3.model import patchify_video_latents
 from vrl.models.families.minimax_h3.placement import transformer_device_map
 
 pytest.importorskip("diffusers.modular_pipelines.minimax_h3")
+pytestmark = pytest.mark.gpu
 
 
 @pytest.mark.skipif(
@@ -411,7 +412,6 @@ def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path, par
     model.pipeline.text_encoder_layer = 1
     assert build.defer_trainable_device_move is False
     assert model.pipeline.vae.dtype == model.pipeline.audio_vae.dtype == torch.float32
-    assert bundle.loads_full_generation_modules
     assert {p.device.index for p in model.transformer.parameters()} == {0, 1}
     assert {p.device.index for p in model.pipeline.text_encoder.parameters()} == {2, 3}
     with torch.no_grad():

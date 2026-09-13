@@ -58,6 +58,9 @@ def _context_parallel_gather(tensor: torch.Tensor, dim: int, group: Any) -> torc
 
     # Keep the collective's gather dimension zero; preserve head/token ordering.
     full = all_gather_tensor_autograd(tensor.movedim(dim, 0).contiguous(), 0, group)
+    if full.requires_grad:
+        # PyTorch's reduce-scatter backward requires contiguous consumer gradients.
+        full.register_hook(lambda gradient: gradient.contiguous())
     return full.movedim(0, dim)
 
 

@@ -26,7 +26,7 @@ rollout:
   prompts_per_batch: 2
 
 actor:
-  gradient_accumulation_steps: 2
+  prompts_per_collection: 1
 
 model:
   torch_compile:

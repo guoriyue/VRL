@@ -242,7 +242,6 @@ class _ProcessGroupStrategy:
         dist.all_gather_object(states, state, group=group)
         return states
 
-
     def shutdown(self, *, restore_parked: bool = True) -> None:
         del restore_parked
         shutdown_training_process_group()
@@ -384,6 +383,7 @@ class SingleProcessStrategy(_TrainingParkingStrategy, _UnshardedStateStrategy):
 
     def gather_rng_states(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         return [state]
+
 
 def _release_training_cuda_memory() -> None:
     """Release trainer allocator pages; any CUDA failure invalidates the handoff."""

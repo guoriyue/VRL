@@ -47,7 +47,9 @@ class ModelParking:
         if callable(buffers):
             yield from (buffer for buffer in buffers() if isinstance(buffer, torch.Tensor))
 
-    def park(self, model: Any, *, restore_device: Any, preserve_tensor_devices: bool = False) -> None:
+    def park(
+        self, model: Any, *, restore_device: Any, preserve_tensor_devices: bool = False
+    ) -> None:
         if id(model) in self._seen_modules:
             return
         self._seen_modules.add(id(model))
@@ -104,7 +106,11 @@ class ModelParking:
         for tensor in ModelParking.module_tensors(model):
             ModelParking._move_tensor(tensor, torch.device(device))
         for child in fsdp_modules:
-            for group in child._get_fsdp_state()._fsdp_param_groups:
+            state = child._get_fsdp_state()
+            groups = getattr(state, "_fsdp_param_groups", None)
+            if groups is None:
+                groups = (state._fsdp_param_group,) if state._fsdp_param_group else ()
+            for group in groups:
                 for parameter in group.fsdp_params:
                     parameter.reset_sharded_param()
 

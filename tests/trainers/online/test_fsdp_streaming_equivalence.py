@@ -96,7 +96,7 @@ async def _run(output, rank=None, uneven=False):
     plan = OnlineBatchPlan(
         prompts_per_batch=len(prompts),
         n_samples_per_prompt=4,
-        gradient_accumulation_steps=4 if rank is None else 2,
+        prompts_per_collection=2 if rank is None else 1,
     )
     trainer.config.batch_plan = plan
     if rank is not None:

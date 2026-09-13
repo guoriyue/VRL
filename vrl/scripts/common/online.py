@@ -64,7 +64,11 @@ from vrl.trainers.data.prompts import PromptExample, load_prompt_examples_from_c
 from vrl.trainers.distributed import DistributedTrainingContext, run_on_primary_rank
 from vrl.trainers.metrics_io import OnlineMetricsCSV
 from vrl.trainers.online.config import OnlineBatchPlan
-from vrl.trainers.online.trainer import OnlineTrainer, _compute_rollout_advantages, _global_reward_stats
+from vrl.trainers.online.trainer import (
+    OnlineTrainer,
+    _compute_rollout_advantages,
+    _global_reward_stats,
+)
 from vrl.trainers.strategy import Strategy, build_strategy
 from vrl.trainers.trace import TrainingRunTrace
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
@@ -686,7 +690,9 @@ async def _run_streaming_optimizer_update(
         else:
             next_prompts = None
         if _prepared is None:
-            batch = await trainer.collect_training_batch(collection_batch, next_prompts=next_prompts)
+            batch = await trainer.collect_training_batch(
+                collection_batch, next_prompts=next_prompts
+            )
         else:
             iteration, advantages, reward_stats = next(_prepared)
             batch = await trainer.collect_training_batch(

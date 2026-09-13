@@ -169,6 +169,8 @@ def test_from_build_loads_the_t2va_workflow_and_freezes_the_generation_modules(
 def test_replay_builder_loads_transformer_and_both_schedulers_only(monkeypatch) -> None:
     import diffusers
 
+    import vrl.models.steps.denoise.build as denoise_build
+
     loads: list[dict[str, Any]] = []
 
     class _Scheduler(diffusers.MiniMaxH3Scheduler):
@@ -188,7 +190,8 @@ def test_replay_builder_loads_transformer_and_both_schedulers_only(monkeypatch) 
     )
     monkeypatch.setattr("vrl.models.loader.load_diffusers_transformer", fake_transformer_loader)
     monkeypatch.setattr(
-        "vrl.models.steps.denoise.build.assemble_replay_bundle",
+        denoise_build,
+        "assemble_replay_bundle",
         lambda model, build: SimpleNamespace(model=model),
     )
 

@@ -40,7 +40,7 @@ distributed:
       devices: [1, 2, 3]
 
 rollout:
-  # ONE sample per generation batch, matching actor.samples_per_replay_batch
+  # ONE sample per generation batch, matching actor.training_microbatch_size
   # below. Measured on this stack (2026-09-12, single L40S, first-replay
   # max_abs_logprob_diff against the 0.01 replay-parity gate): generation
   # batch 16 vs replay 1 -> 0.015-0.017 (fails in every topology, compile on
@@ -52,7 +52,7 @@ rollout:
   samples_per_generation_batch: 1
 
 actor:
-  samples_per_replay_batch: 1
+  training_microbatch_size: 1
 
 trainer:
   output_dir: outputs/sd3_5_ocr_dedicated_3x1/strict
