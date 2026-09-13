@@ -286,3 +286,35 @@ audio decode or training acceptance. VAEs stayed on CPU and were not decoded
 by the new four-device test. A unified generation loader and its component
 offload/restore lifecycle, full geometry, released weights, quality and timing
 remain open. No H3 weights downloaded while deployment confirmation is pending.
+
+## 2026-09-13: independent video and audio VAE devices
+
+H3 video decode previously created normalization tensors on the input latent
+device and called the VAE without transferring its input. Audio decode had
+the same assumption. Both now transfer latent inputs to their respective
+VAE's actual device, perform native normalization/decode/postprocessing there,
+and return the output to the input device. VAE parameters are not moved or
+recast; video keeps the existing CUDA FP16 autocast behavior and both VAEs
+retain FP32 storage. This allows explicit VAE placement without moving the
+policy to the decoder's device.
+
+Final family suite with GPUs 0 and 1 reserved: **39 passed, 1 skipped in 10.12
+seconds**, exit 0. The four-device conditioner test is the skipped test because
+its separate four-GPU opt-in was not enabled this turn. New parameterized
+tests use CUDA 0 video/audio latents with real tiny VAEs on CPU or CUDA 1:
+
+- Decoded video and stereo waveform match same-VAE-device controls exactly.
+- Outputs return to CUDA 0; shapes and sample rate match the native contract.
+- Inputs remain unchanged, outputs are finite, VAE locations remain unchanged,
+  and VAE parameter dtype remains FP32.
+- Existing CPU normalization/reference decode tests continue to pass.
+
+Artifacts: `/mnt/nvme/outputs/wan22_i2v_cache/h3_independent_vae_pytest`.
+Reproduction uses the two-GPU environment documented above and runs the full
+H3 family test directory. Ruff, formatting and diff checks passed. All jobs
+terminal, fresh compute inventory empty, GPUs 0 and 1 released.
+
+This is device-correct decode, not full-size VAE capacity evidence. The released
+FP32 video VAE may not fit beside a 31 GiB conditioner partition; a staged
+conditioner parking/restoration policy and unified generation builder remain
+necessary. No released weights or production training queue were started.
