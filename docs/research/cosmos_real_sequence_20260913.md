@@ -127,3 +127,59 @@ Remaining: real-conditioned CP updates/full trajectory integration, actual
 reward scoring, production construction and sample ownership, original SFT/
 compile/numerical gates, quality and paper-shaped workload. A single generated
 clip fitting on one L40S is not a multi-GPU-only capacity claim.
+
+## Native real reward scoring
+
+The retained NVMe-run MP4 was decoded with decord into a real
+`RewardSample` (`[3,93,512,512]`,16fps, actual generation prompt), then scored
+twice through production `KlingVideoReward.score_batch`. This exercises
+temporary MP4 materialization, the real in-process inference runtime, result
+selection, cleanup and shutdown. It uses the decoded exported video, not the
+original pre-encoding float VAE tensor; this introduces the usual additional
+codec round trip compared with directly scoring fresh generation tensors.
+
+Physical GPU3 was dedicated to this bounded scoring job. Worker settings
+match the existing Cosmos reward preset: BF16, normalized `overall_reward`,
+min_frame_pixels200704, local-only files. VideoReward is explicitly pinned
+to4f26600130683e6f1de9f5d463887f28e8ef995c; its Qwen2-VL-2B-Instruct base
+resolves local main to895c3a49bc3fa70a340399125c650a463535e71c. Both caches
+are on NVMe; no shared package or model weights were modified.
+
+Both calls and all four debug scores agree exactly:
+
+| Score | Value |
+| --- | ---: |
+| visual_quality | -1.5804257179880763 |
+| motion_quality | 0.0052675403663745715 |
+| text_alignment | -1.921151626129533 |
+| overall_reward | -3.4963098037512346 |
+
+First score_batch took38.2534s including lazy model initialization. The warm
+call took0.94855s: artifact materialization631.92ms, inference315.67ms.
+Peak allocated memory was5,103,843,840bytes (about4.75GiB). Temporary MP4s
+were absent after each call, shutdown completed, and the process exited0.
+Fresh compute inventory was empty afterwards; GPU3 released.
+
+The initial Qwen base load emitted old/new Transformers key-layout warnings.
+The selected VideoReward checkpoint contains full `model.pth`, not an
+adapter-only checkpoint. The actual loader remaps the complete state against
+live keys and calls `load_state_dict(strict=True)` before inference, so this
+run did not retain the initially missing base parameters. Relevant CPU
+loading tests under the same Transformers5.13 overlay:12 passed,1 optional
+test skipped in2.74s. The live-model strict old/new key-layout test was also
+run explicitly and passed in2.54s. This full-checkpoint conclusion must not
+be generalized to unverified adapter-only reward checkpoints.
+
+Artifacts under `cosmos_real_reward_l40s`: result.json, two distinct request
+and result debug records, and `executed_probe.py`, the exact executed script.
+The reusable sibling `cosmos_real_reward_probe.py` was subsequently corrected
+to name its preflight timer `preflight_seconds`. The original result's
+`load_seconds` field (~37microseconds) actually measures preflight, NOT model
+loading; retain that original artifact with this interpretation. The first
+score_batch timing above includes real lazy loading. No second job was needed
+for this label-only correction.
+
+This establishes the real clip's native scoring path and repeatability, not
+a quality threshold, reward discrimination across different samples, learned
+improvement, HTTP/Ray delivery or integration with a CP optimizer update.
+The remaining whole-training and paper-budget requirements stay open.
