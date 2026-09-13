@@ -139,4 +139,80 @@ def write_tiny_sana_snapshot(path: Path) -> Path:
     return path
 
 
-__all__ = ["TinySanaPipeline", "build_official_sana_scheduler", "write_tiny_sana_snapshot"]
+COSMOS25_TINY_LORA = {"rank": 2, "alpha": 2, "target_modules": ["to_q", "to_k", "to_v"]}
+COSMOS25_TINY_SAMPLING = {
+    "width": 32,
+    "height": 32,
+    "num_frames": 1,
+    "num_steps": 2,
+    "fps": 4,
+    "max_sequence_length": 8,
+    "guidance_scale": 1.0,
+    "negative_prompt": "",
+}
+
+
+def write_tiny_cosmos25_snapshot(path: Path) -> Path:
+    """A real on-disk Cosmos-Predict2.5 model directory the family loads unpatched.
+
+    ``transformer/``, ``vae/`` and ``scheduler/`` are genuine diffusers
+    ``save_pretrained`` trees of the tiny CosmosTransformer3DModel, the tiny
+    AutoencoderKLWan and a flow UniPC scheduler. With
+    ``model.skip_text_encoder=true`` the family loads exactly these three
+    components and synthesizes prompt embeddings, so resolve -> build_rollout
+    -> generate_one_video -> VAE decode runs for real on CPU in well under a
+    second; nothing about the model path is a double.
+    """
+
+    from diffusers import UniPCMultistepScheduler
+
+    from tests.models.steps.denoise.fixtures import (
+        build_tiny_cosmos_transformer,
+        build_tiny_wan_vae,
+    )
+
+    build_tiny_cosmos_transformer().save_pretrained(path / "transformer")
+    build_tiny_wan_vae().save_pretrained(path / "vae")
+    UniPCMultistepScheduler(
+        num_train_timesteps=1000,
+        use_flow_sigmas=True,
+        prediction_type="flow_prediction",
+    ).save_pretrained(path / "scheduler")
+    return path
+
+
+def cosmos25_eval_config(snapshot: Path, **sampling: Any) -> Any:
+    """The resolved config a Cosmos-2.5 eval reads, pointed at a tiny snapshot."""
+
+    from omegaconf import OmegaConf
+
+    return OmegaConf.create(
+        {
+            "model": {
+                "family": "cosmos-predict2.5",
+                "path": str(snapshot),
+                "revision": None,
+                "use_lora": True,
+                "lora": dict(COSMOS25_TINY_LORA),
+                "skip_text_encoder": True,
+            },
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
+            "sampling": {**COSMOS25_TINY_SAMPLING, **sampling},
+            "rollout": {"denoise_mode": "native", "noise_level": 0.0, "sde": {"type": "cps"}},
+        },
+    )
+
+
+__all__ = [
+    "COSMOS25_TINY_LORA",
+    "COSMOS25_TINY_SAMPLING",
+    "TinySanaPipeline",
+    "build_official_sana_scheduler",
+    "cosmos25_eval_config",
+    "write_tiny_cosmos25_snapshot",
+    "write_tiny_sana_snapshot",
+]

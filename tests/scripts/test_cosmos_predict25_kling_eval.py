@@ -4,34 +4,23 @@ import gc
 import json
 import weakref
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import torch
 from omegaconf import OmegaConf
 
+from tests.scripts.eval.fixtures import cosmos25_eval_config, write_tiny_cosmos25_snapshot
+from tests.trainers._checkpoint_helpers import _Trainer
 from vrl.config.builders import RewardRuntimeConfig
-from vrl.config.precision import RolePrecision
+from vrl.config.loading import load_config
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
+from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
+from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
-from vrl.trainers.checkpointing import CheckpointTarget
+from vrl.trainers.checkpointing import CheckpointTarget, save_training_checkpoint
 
 MODEL_IDENTITY = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
-
-# The generation loop's two boundaries: one needs a real Cosmos pipeline on a GPU,
-# the other needs a real libx264 encoder. The seed grid's claim does not depend on
-# either being real, and the e2e case named here runs both for real — reaching them
-# through the rollout + Kling video-reward artifact path rather than through this
-# script's own loop.
-_GENERATION_AND_MP4_NEED_REAL_WEIGHTS = pytest.mark.real_cover(
-    "tests/e2e/test_real_checkpoint_rl.py"
-    "::test_real_checkpoint_online_rl_updates_trainable_weights",
-    why=(
-        "a video frame can only come out of a real diffusion pipeline on a CUDA device, and an "
-        "mp4 can only come out of a real ffmpeg/libx264 encoder; the e2e case generates with "
-        "real weights and materializes real mp4 artifacts through vrl/rewards/artifacts.py"
-    ),
-)
 
 
 def _minimal_eval_config(*, family: str = "cosmos-predict2.5"):
@@ -69,45 +58,37 @@ def test_parse_checkpoint_accepts_label_and_path(tmp_path) -> None:
     assert target.path == checkpoint.resolve()
 
 
-@_GENERATION_AND_MP4_NEED_REAL_WEIGHTS
-def test_seed_grid_cell_is_identical_across_checkpoints(monkeypatch, tmp_path) -> None:
+def test_seed_grid_cell_is_identical_across_checkpoints(tmp_path) -> None:
     """The generator must derive each seed from the (prompt, sample) cell only.
 
     ``target`` is in scope inside the generation loop, so folding the checkpoint
-    label into the seed is one live edit away — and it would silently turn every
+    label into the seed is one live edit away -- and it would silently turn every
     reward delta into a different latent-noise draw instead of a weight effect.
     That edit is invisible one level down in ``seed_for``, which never sees a
-    checkpoint at all, so the claim has to be driven through the real loop.
-
-    The seed grid itself is entirely real code here; only the two boundaries the
-    loop cannot cross in-process are replaced (see the ``real_cover`` label).
+    checkpoint at all, so the claim is driven through the real loop, real tiny
+    generation and a real mp4 encode.
     """
 
-    monkeypatch.setattr(
-        eval_script,
-        "generate_one_video",
-        lambda _model, *, prompt, seed, sampling: torch.zeros(3, 1, 2, 2),
-    )
-    monkeypatch.setattr(
-        eval_script,
-        "write_mp4",
-        lambda _tensor, path, *, fps: Path(path).touch(),
+    _snapshot, _config_path, root, entry, build, _identity = _tiny_cosmos_run(tmp_path)
+    model = entry.build_rollout(build).model.eval()
+    sampling = eval_script._resolve_sampling(
+        eval_script.build_parser().parse_args(["--checkpoint", "unused"]), root
     )
 
     def run(label: str) -> list[int]:
         videos = eval_script._generate_checkpoint_videos(
-            object(),
+            model,
             eval_script.CheckpointTarget(label, tmp_path / label),
             ["p0", "p1"],
             samples_per_prompt=2,
             base_seed=17,
             output_dir=tmp_path / label,
-            sampling={"fps": 16.0},
+            sampling=sampling,
         )
+        assert all(video.path.is_file() and video.path.stat().st_size > 0 for video in videos)
         return [video.seed for video in videos]
 
     base, trained = run("base"), run("a-much-longer-label")
-
     assert base == trained
     assert len(set(base)) == 4  # non-degeneracy: four cells, four distinct seeds
 
@@ -194,41 +175,84 @@ def test_eval_sampling_preserves_explicit_zero_guidance() -> None:
     assert sampling["guidance_scale"] == 0.0
 
 
-def test_explicit_dtype_path_runs_after_structural_validation(
-    monkeypatch,
-    tmp_path,
-) -> None:
-    checkpoint = tmp_path / "checkpoint-final"
-    checkpoint.mkdir()
-    captured: dict[str, object] = {}
+def _tiny_cosmos_run(tmp_path: Path):
+    """A real tiny Cosmos-2.5 snapshot, its resolved config on disk, and the real entry/build."""
 
-    monkeypatch.setattr(
-        eval_script,
-        "load_config",
-        lambda *_args, **_kwargs: _minimal_eval_config(),
+    snapshot = write_tiny_cosmos25_snapshot(tmp_path / "cosmos-snapshot")
+    config_path = tmp_path / "resolved_config.yaml"
+    OmegaConf.save(cosmos25_eval_config(snapshot), config_path)
+    root = parse_config(load_config(config_path))
+    entry = get_model_family_entry("cosmos-predict2.5")
+    build = entry.resolve_model_build(
+        root,
+        torch.device("cpu"),
+        precision=PrecisionPolicy.from_section(root.precision),
+        for_rollout=True,
     )
-    entry = SimpleNamespace(
+    identity = resolve_checkpoint_model_identity(build)
+    return snapshot, config_path, root, entry, build, identity
+
+
+def _save_real_checkpoint(path: Path, *, entry, build, identity, fill: float) -> Path:
+    """Save a strict checkpoint from the real bundle with every LoRA weight set to ``fill``."""
+
+    bundle = entry.build_rollout(build)
+    with torch.no_grad():
+        for parameter in bundle.trainable_modules["transformer"].parameters():
+            if parameter.requires_grad:
+                parameter.fill_(fill)
+    save_training_checkpoint(
+        path,
+        trainer=_Trainer(),
+        bundle=bundle,
         family="cosmos-predict2.5",
-        resolve_model_build=lambda _root, _device, **kwargs: SimpleNamespace(
-            family="cosmos-predict2.5",
-            parameter_dtype=kwargs["parameter_dtype_override"],
-        ),
+        progress={"next_epoch": 1},
+        rng_state={},
+        model_identity=identity,
     )
-    monkeypatch.setattr(eval_script, "get_model_family_entry", lambda _family: entry)
-    monkeypatch.setattr(
-        eval_script,
-        "resolve_checkpoint_model_identity",
-        lambda _build: MODEL_IDENTITY,
+    return path
+
+
+def _spy_from_build(monkeypatch, on_built=None):
+    """Record every real CosmosPredict25Model.from_build call (a spy, not a fake)."""
+
+    from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25Model
+
+    real = CosmosPredict25Model.from_build.__func__
+    built: list[weakref.ReferenceType] = []
+
+    def from_build(cls, build):
+        model = real(cls, build)
+        built.append(weakref.ref(model))
+        if on_built is not None:
+            on_built(model)
+        return model
+
+    monkeypatch.setattr(CosmosPredict25Model, "from_build", classmethod(from_build))
+    return built
+
+
+def test_explicit_dtype_path_runs_after_structural_validation(monkeypatch, tmp_path) -> None:
+    """``--dtype fp32`` reaches the real build, and generation runs on it for real."""
+
+    _snapshot, config_path, _root, entry, build, identity = _tiny_cosmos_run(tmp_path)
+    checkpoint = _save_real_checkpoint(
+        tmp_path / "checkpoint-final", entry=entry, build=build, identity=identity, fill=1.0
     )
+    seen_dtypes: list[torch.dtype] = []
+    real_generate_all = eval_script._generate_all
 
-    def fake_generate_all(build, *_args, **_kwargs):
-        captured["dtype"] = build.parameter_dtype
-        return []
+    def spy_generate_all(build, *args, **kwargs):
+        seen_dtypes.append(build.parameter_dtype)
+        return real_generate_all(build, *args, **kwargs)
 
-    monkeypatch.setattr(eval_script, "_generate_all", fake_generate_all)
+    monkeypatch.setattr(eval_script, "_generate_all", spy_generate_all)
+    output_dir = tmp_path / "output"
 
     eval_script.main(
         [
+            "--config",
+            str(config_path),
             "--checkpoint",
             str(checkpoint),
             "--prompt",
@@ -237,13 +261,18 @@ def test_explicit_dtype_path_runs_after_structural_validation(
             "cpu",
             "--dtype",
             "fp32",
+            "--samples-per-prompt",
+            "1",
             "--generate-only",
             "--output-dir",
-            str(tmp_path / "output"),
+            str(output_dir),
         ],
     )
 
-    assert captured["dtype"] is torch.float32
+    assert seen_dtypes == [torch.float32]
+    videos = sorted(output_dir.rglob("*.mp4"))
+    assert len(videos) == 1 and videos[0].stat().st_size > 0
+    assert (output_dir / "run_config.json").is_file()
 
 
 def test_explicit_dtype_rejects_malformed_model_family_before_generation(
@@ -280,6 +309,7 @@ def test_explicit_dtype_rejects_malformed_model_family_before_generation(
 
 
 def test_checkpoint_identity_rejects_before_model_generation(monkeypatch, tmp_path) -> None:
+    _snapshot, config_path, *_ = _tiny_cosmos_run(tmp_path)
     checkpoint = tmp_path / "checkpoint-final"
     checkpoint.mkdir()
     (checkpoint / "checkpoint_meta.json").write_text(
@@ -291,32 +321,14 @@ def test_checkpoint_identity_rejects_before_model_generation(monkeypatch, tmp_pa
             },
         ),
     )
-    monkeypatch.setattr(
-        eval_script,
-        "load_config",
-        lambda *_args, **_kwargs: _minimal_eval_config(),
-    )
-    build = SimpleNamespace(family="cosmos-predict2.5")
-    entry = SimpleNamespace(
-        family="cosmos-predict2.5",
-        resolve_model_build=lambda *_args, **_kwargs: build,
-    )
-    monkeypatch.setattr(eval_script, "get_model_family_entry", lambda _family: entry)
-    monkeypatch.setattr(
-        eval_script,
-        "resolve_checkpoint_model_identity",
-        lambda _build: MODEL_IDENTITY,
-    )
-    monkeypatch.setattr(
-        eval_script,
-        "_generate_all",
-        lambda *_args, **_kwargs: pytest.fail("generation started before identity preflight"),
-    )
+    built = _spy_from_build(monkeypatch)
     output_dir = tmp_path / "output"
 
     with pytest.raises(ValueError, match="metadata model identity mismatch"):
         eval_script.main(
             [
+                "--config",
+                str(config_path),
                 "--checkpoint",
                 str(checkpoint),
                 "--prompt",
@@ -331,154 +343,91 @@ def test_checkpoint_identity_rejects_before_model_generation(monkeypatch, tmp_pa
             ],
         )
 
+    assert built == []
     assert not output_dir.exists()
 
 
 def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) -> None:
-    """Checks non-reused checkpoint eval does not keep old models alive."""
+    """Without model reuse, each checkpoint gets a fresh real bundle and the old model is gone."""
 
-    class FakeModel:
-        def eval(self) -> FakeModel:
-            return self
-
-    class FakeBundle:
-        def __init__(self) -> None:
-            self.model = FakeModel()
-            self.precision = RolePrecision(
-                dtype="fp32",
-                float32_precision="ieee",
-                outer_autocast=False,
-            )
-            self.model.precision = self.precision
-
-    model_refs: list[weakref.ReferenceType[FakeModel]] = []
-    bundle_ids: list[int] = []
-
-    def fake_build_runtime_bundle(_build):
-        gc.collect()
-        if model_refs:
-            assert model_refs[-1]() is None
-        bundle = FakeBundle()
-        model_refs.append(weakref.ref(bundle.model))
-        bundle_ids.append(id(bundle))
-        return bundle
-
-    monkeypatch.setattr(eval_script, "release_cuda_memory", gc.collect)
-    entry = SimpleNamespace(
-        family="cosmos-predict2.5",
-        build_rollout=fake_build_runtime_bundle,
-    )
-    monkeypatch.setattr(eval_script, "get_model_family_entry", lambda _family: entry)
-    checkpoints = {}
-
-    def fake_load_checkpoint(path):
-        checkpoint = object()
-        checkpoints[path] = checkpoint
-        return checkpoint
-
-    monkeypatch.setattr(
-        eval_script.TrainingCheckpoint,
-        "load",
-        fake_load_checkpoint,
-    )
-    restored = []
-
-    def fake_restore(
-        checkpoint,
-        *,
-        bundle,
-        family,
-        expected_model_identity,
-        strict,
-    ):
-        restored.append(
-            (
-                checkpoint,
-                id(bundle),
-                family,
-                expected_model_identity,
-                strict,
+    _snapshot, _config_path, root, entry, build, identity = _tiny_cosmos_run(tmp_path)
+    targets = [
+        eval_script.CheckpointTarget(
+            label,
+            _save_real_checkpoint(
+                tmp_path / label, entry=entry, build=build, identity=identity, fill=fill
             ),
         )
+        for label, fill in (("base", 1.0), ("trained", 2.0))
+    ]
+    monkeypatch.setattr(eval_script, "release_cuda_memory", gc.collect)
 
-    monkeypatch.setattr(eval_script, "restore_model_checkpoint", fake_restore)
-    monkeypatch.setattr(
-        eval_script,
-        "resolve_checkpoint_model_identity",
-        lambda _build: MODEL_IDENTITY,
+    def previous_model_is_gone(_model) -> None:
+        gc.collect()
+        assert all(ref() is None for ref in built[:-1])
+
+    built = _spy_from_build(monkeypatch, on_built=previous_model_is_gone)
+    restored: list[tuple[Path, float]] = []
+    real_restore = eval_script.restore_model_checkpoint
+
+    def spy_restore(checkpoint, *, bundle, **kwargs):
+        real_restore(checkpoint, bundle=bundle, **kwargs)
+        weight = next(
+            p for p in bundle.trainable_modules["transformer"].parameters() if p.requires_grad
+        )
+        restored.append((checkpoint.checkpoint_dir, float(weight.flatten()[0])))
+
+    monkeypatch.setattr(eval_script, "restore_model_checkpoint", spy_restore)
+    sampling = eval_script._resolve_sampling(
+        eval_script.build_parser().parse_args(["--checkpoint", "unused"]), root
     )
-    monkeypatch.setattr(eval_script, "_generate_checkpoint_videos", lambda *args, **kwargs: [])
 
-    build = SimpleNamespace(family="cosmos-predict2.5")
     videos = eval_script._generate_all(
         build,
-        [
-            eval_script.CheckpointTarget("base", tmp_path / "base"),
-            eval_script.CheckpointTarget("trained", tmp_path / "trained"),
-        ],
+        targets,
         ["prompt"],
         samples_per_prompt=1,
         base_seed=0,
-        output_dir=tmp_path,
-        sampling={},
+        output_dir=tmp_path / "videos",
+        sampling=sampling,
         keep_model_between_checkpoints=False,
-        expected_model_identity=MODEL_IDENTITY,
+        expected_model_identity=identity,
     )
 
-    assert videos == []
-    assert list(checkpoints) == [tmp_path / "base", tmp_path / "trained"]
-    assert [
-        (
-            checkpoint,
-            family,
-            expected_model_identity,
-            strict,
-        )
-        for checkpoint, _bundle_id, family, expected_model_identity, strict in restored
-    ] == [
-        (checkpoints[tmp_path / "base"], "cosmos-predict2.5", MODEL_IDENTITY, True),
-        (checkpoints[tmp_path / "trained"], "cosmos-predict2.5", MODEL_IDENTITY, True),
-    ]
-    assert [bundle_id for _checkpoint, bundle_id, *_rest in restored] == bundle_ids
+    # Two real builds, each checkpoint strictly restored into its own bundle
+    # (the LoRA weights it wrote are the ones the model then generated with).
+    assert len(built) == 2
+    assert restored == [(tmp_path / "base", 1.0), (tmp_path / "trained", 2.0)]
+    assert [video.checkpoint_label for video in videos] == ["base", "trained"]
+    assert all(video.path.is_file() and video.path.stat().st_size > 0 for video in videos)
     gc.collect()
-    assert [ref() for ref in model_refs] == [None, None]
+    assert [ref() for ref in built] == [None, None]
 
 
 def test_generate_all_rejects_model_source_drift_before_checkpoint_load(
     monkeypatch,
     tmp_path,
 ) -> None:
-    build = SimpleNamespace(family="cosmos-predict2.5")
-    built = False
-    checkpoint_loaded = False
+    """A model directory that changes while the bundle is built is caught before any checkpoint."""
 
-    def build_rollout(actual_build):
-        nonlocal built
-        assert actual_build is build
-        built = True
-        return object()
+    snapshot, _config_path, root, _entry, build, identity = _tiny_cosmos_run(tmp_path)
 
-    entry = SimpleNamespace(
-        family="cosmos-predict2.5",
-        build_rollout=build_rollout,
-    )
-    monkeypatch.setattr(eval_script, "get_model_family_entry", lambda _family: entry)
+    def drift(_model) -> None:
+        (snapshot / "extra-weights.bin").write_bytes(b"drift")
+
+    built = _spy_from_build(monkeypatch, on_built=drift)
+    checkpoint_loads: list[Path] = []
     monkeypatch.setattr(
-        eval_script,
-        "resolve_checkpoint_model_identity",
-        lambda _build: {"schema": "changed"},
+        eval_script.TrainingCheckpoint,
+        "load",
+        classmethod(lambda _cls, path: checkpoint_loads.append(Path(path))),
     )
-
-    def fail_if_checkpoint_loaded(_path):
-        nonlocal checkpoint_loaded
-        checkpoint_loaded = True
-        raise AssertionError("checkpoint load must not run after model source drift")
-
-    monkeypatch.setattr(eval_script.TrainingCheckpoint, "load", fail_if_checkpoint_loaded)
+    sampling = eval_script._resolve_sampling(
+        eval_script.build_parser().parse_args(["--checkpoint", "unused"]), root
+    )
 
     with pytest.raises(
-        RuntimeError,
-        match="Cosmos model source changed during runtime construction",
+        RuntimeError, match="Cosmos model source changed during runtime construction"
     ):
         eval_script._generate_all(
             build,
@@ -486,11 +435,11 @@ def test_generate_all_rejects_model_source_drift_before_checkpoint_load(
             ["prompt"],
             samples_per_prompt=1,
             base_seed=0,
-            output_dir=tmp_path,
-            sampling={},
+            output_dir=tmp_path / "videos",
+            sampling=sampling,
             keep_model_between_checkpoints=True,
-            expected_model_identity=MODEL_IDENTITY,
+            expected_model_identity=identity,
         )
 
-    assert built is True
-    assert checkpoint_loaded is False
+    assert len(built) == 1
+    assert checkpoint_loads == []
