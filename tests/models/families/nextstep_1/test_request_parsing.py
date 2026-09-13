@@ -179,7 +179,8 @@ def test_replay_build_resolves_gradient_checkpointing_mode(
     assert build.model_config["gradient_checkpointing"] is expected
 
 
-def test_replay_build_rejects_selective_gradient_checkpointing() -> None:
+@pytest.mark.parametrize("mode", ["selective", "full_cpu"])
+def test_replay_build_rejects_custom_gradient_checkpointing(mode) -> None:
     cfg = OmegaConf.create(
         {
             "model": {"family": "nextstep_1", "use_lora": False},
@@ -188,13 +189,13 @@ def test_replay_build_rejects_selective_gradient_checkpointing() -> None:
                 "training": {"dtype": "fp32"},
                 "rollout": {"dtype": "fp32"},
             },
-            "actor": {"gradient_checkpointing": "selective"},
+            "actor": {"gradient_checkpointing": mode},
         },
     )
 
     root = parse_config(cfg)
     precision = PrecisionPolicy.from_section(root.precision)
-    with pytest.raises(ValueError, match="does not support selective"):
+    with pytest.raises(ValueError, match=f"does not support {mode}"):
         get_model_family_entry("nextstep_1").resolve_model_build(
             root,
             "cpu",

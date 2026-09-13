@@ -349,7 +349,7 @@ def test_validate_rejects_compile_with_gradient_checkpointing() -> None:
     """
     base = "experiment/sd3_5/online_grpo_ocr"  # resolves compile=true
 
-    for ckpt in ("true", "full", "selective"):
+    for ckpt in ("true", "full", "full_cpu", "selective"):
         cfg = load_config(base, overrides=[f"actor.gradient_checkpointing={ckpt}"])
         with pytest.raises(ValueError, match="cannot combine"):
             require_training_config(cfg)
