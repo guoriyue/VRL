@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -27,9 +28,12 @@ class H3GenerationPlacement:
     encoder_layers: tuple[int, ...]
     video_vae: int
     audio_vae: int
+    park_encoder_for_decode: bool = True
 
     def validate(self, build: ModelBuild) -> None:
         rollout = build.require_rollout()
+        if type(self.park_encoder_for_decode) is not bool:
+            raise ValueError("park_encoder_for_decode must be a boolean")
         root = torch.device(build.device)
         devices = (
             *self.transformer_blocks,
@@ -106,7 +110,7 @@ class PartitionedH3GenerationModel(MiniMaxH3Model):
         return cls(pipeline=components, device=build.device, placement=placement)
 
     def decode_latents(self, latents):
-        with park_partitioned_text_encoder(self.pipeline.text_encoder):
+        with self._decode_encoder_context():
             try:
                 self.pipeline.vae.to(torch.device("cuda", self.placement.video_vae))
                 return super().decode_latents(latents)
@@ -114,12 +118,17 @@ class PartitionedH3GenerationModel(MiniMaxH3Model):
                 self.pipeline.vae.to("cpu")
 
     def decode_audio(self, audio_rows):
-        with park_partitioned_text_encoder(self.pipeline.text_encoder):
+        with self._decode_encoder_context():
             try:
                 self.pipeline.audio_vae.to(torch.device("cuda", self.placement.audio_vae))
                 return super().decode_audio(audio_rows)
             finally:
                 self.pipeline.audio_vae.to("cpu")
+
+    def _decode_encoder_context(self):
+        if self.placement.park_encoder_for_decode:
+            return park_partitioned_text_encoder(self.pipeline.text_encoder)
+        return nullcontext()
 
     def move_frozen_components(self, device):
         raise RuntimeError(

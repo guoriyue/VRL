@@ -355,7 +355,8 @@ def test_decode_uses_vae_owner_and_returns_outputs_to_latent_owner(vae_device):
     os.environ.get("VRL_H3_FOUR_GPU") != "1",
     reason="Requires an explicit four-GPU hardware reservation",
 )
-def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path):
+@pytest.mark.parametrize("park_encoder", [True, False])
+def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path, park_encoder):
     from dataclasses import replace
 
     from diffusers import MiniMaxH3Scheduler
@@ -404,7 +405,7 @@ def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path):
             },
         },
     )
-    placement = H3GenerationPlacement((1,), 2, (3, 2), 2, 3)
+    placement = H3GenerationPlacement((1,), 2, (3, 2), 2, 3, park_encoder_for_decode=park_encoder)
     bundle = build_partitioned_h3_generation_runtime_bundle(build, placement)
     model = bundle.model
     model.pipeline.text_encoder_layer = 1

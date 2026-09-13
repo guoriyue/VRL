@@ -40,6 +40,8 @@ def main() -> None:
     parser.add_argument("--policy-devices", nargs="+", type=int, default=[0, 1])
     parser.add_argument("--policy-root", type=int, default=0)
     parser.add_argument("--encoder-devices", nargs="+", type=int, default=[2, 3])
+    parser.add_argument("--video-vae-device", type=int)
+    parser.add_argument("--keep-encoder-during-decode", action="store_true")
     for name in ("steps", "height", "width", "frames"):
         parser.add_argument(f"--{name}", type=int, required=True)
     parser.add_argument("--seed", type=int, default=42)
@@ -63,8 +65,9 @@ def main() -> None:
         layer_owners(transformer_config["num_layers"], args.policy_devices),
         args.encoder_devices[0],
         layer_owners(encoder_layers, args.encoder_devices),
-        args.encoder_devices[0],
+        args.encoder_devices[0] if args.video_vae_device is None else args.video_vae_device,
         args.encoder_devices[-1],
+        park_encoder_for_decode=not args.keep_encoder_during_decode,
     )
     preset_path = Path(__file__).resolve().parents[2] / "config/presets/model/minimax_h3/h3.yaml"
     preset = OmegaConf.to_container(OmegaConf.load(preset_path)["model"], resolve=True)
