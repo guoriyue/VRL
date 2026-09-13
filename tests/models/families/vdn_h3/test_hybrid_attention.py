@@ -63,11 +63,12 @@ def test_the_transform_replaces_every_block_attention_and_keeps_the_original() -
 
     model = build_tiny_vdn_h3_model()
 
-    assert model.hybrid_blocks == len(model.transformer.transformer_blocks)
+    hybrids = list(vendor.iter_hybrids(model.transformer))
+    assert len(hybrids) == len(model.transformer.transformer_blocks)
     for block in model.transformer.transformer_blocks:
         assert isinstance(block.attn, vendor.hybrid_attention_cls)
     # A freshly built tiny model has the same block count as the untransformed one.
-    assert len(original) == model.hybrid_blocks
+    assert len(original) == len(hybrids)
 
 
 def test_forward_step_runs_the_hybrid_and_keeps_the_minimax_h3_contract() -> None:

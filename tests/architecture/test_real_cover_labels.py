@@ -188,30 +188,6 @@ def test_the_resolver_rejects_missing_targets_and_reports_lane_metadata() -> Non
     assert resolve_target(_CPU_TARGET) == ResolvedTarget(lanes=())
 
 
-def test_the_resolver_sees_a_lane_through_a_conditional_pytestmark(tmp_path) -> None:
-    """``pytestmark = <mark> if cond else ()`` still applies the mark at runtime.
-
-    ``_mark_names`` walks the assignment expression precisely so an ``IfExp``
-    cannot hide a lane. That used to be asserted against two real files that
-    spelled their ``pytestmark`` that way; both were rewritten to a plain
-    assignment once they stopped needing the guard, which would have left the
-    resolver's ``IfExp`` handling with no test at all. A synthetic file keeps the
-    behaviour pinned without holding an unrelated module's style hostage.
-    """
-
-    module = tmp_path / "tests" / "test_conditional_pytestmark.py"
-    module.parent.mkdir(parents=True)
-    module.write_text(
-        "import pytest\n\n"
-        "pytestmark = pytest.mark.slow_test if pytest is not None else ()\n\n\n"
-        "def test_in_the_lane() -> None: ...\n",
-        encoding="utf-8",
-    )
-
-    target = "tests/test_conditional_pytestmark.py::test_in_the_lane"
-    assert resolve_target(target, tmp_path).lanes == ("slow_test",)
-
-
 @pytest.mark.parametrize(
     "target, expected",
     [

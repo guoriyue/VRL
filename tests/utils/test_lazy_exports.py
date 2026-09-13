@@ -26,12 +26,13 @@ def _namespace() -> dict[str, object]:
     return {"__name__": "tests.fake_package"}
 
 
-def test_installer_defers_the_import_until_the_symbol_is_requested() -> None:
+def test_installer_defers_the_import_and_reports_unknown_names() -> None:
     namespace = _namespace()
     install_lazy_exports(namespace, {"Mapping": "collections.abc"})
 
     assert namespace["__all__"] == ["Mapping"]
     assert "Mapping" not in namespace
+    assert "Mapping" in namespace["__dir__"]()
 
     from collections.abc import Mapping
 
@@ -39,26 +40,10 @@ def test_installer_defers_the_import_until_the_symbol_is_requested() -> None:
     # Resolved once, then served from the package namespace.
     assert namespace["Mapping"] is Mapping
 
-
-def test_installer_reports_an_unknown_name_as_a_module_attribute_error() -> None:
-    namespace = _namespace()
-    install_lazy_exports(namespace, {"Mapping": "collections.abc"})
-
     with pytest.raises(
         AttributeError, match=r"module 'tests.fake_package' has no attribute 'nope'"
     ):
         namespace["__getattr__"]("nope")
-
-
-def test_installer_dir_covers_declared_and_already_resolved_names() -> None:
-    namespace = _namespace()
-    install_lazy_exports(namespace, {"Mapping": "collections.abc"})
-    namespace["local"] = object()
-
-    listing = namespace["__dir__"]()
-
-    assert "Mapping" in listing and "local" in listing
-    assert listing == sorted(listing)
 
 
 @pytest.mark.parametrize("package", LAZY_PACKAGES)

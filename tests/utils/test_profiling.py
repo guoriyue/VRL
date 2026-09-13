@@ -7,7 +7,6 @@ asserts the trace/summary/manifest trust triad. The nvtx tests carry a
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -196,11 +195,7 @@ def test_cpu_trace_writes_trace_summary_manifest(tmp_path: Path) -> None:
     # Summary must warn against summing nested-range percentages.
     assert "not additive wall-time" in summary_text
 
-
-def test_manifest_is_json_with_required_fields(tmp_path: Path) -> None:
-    run_smoke(("cpu",), tmp_path)
-    manifest_path = tmp_path / "torch_profiler" / "profile_smoke" / "profile_manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    # run_smoke returns the manifest parsed from the file it just produced.
     required = {
         "schema_version",
         "requested_activities",

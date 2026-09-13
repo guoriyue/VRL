@@ -121,6 +121,11 @@ class TestTrainableState:
 
         assert collect_seen_sync_counts == [1]
         assert len(syncer.calls) == 2
+        torch.testing.assert_close(
+            syncer.calls[0]["linear.weight"], torch.ones(1, 1), rtol=0, atol=0
+        )
+        assert not torch.equal(model.weight, syncer.calls[0]["linear.weight"])
+        torch.testing.assert_close(syncer.calls[1]["linear.weight"], model.weight, rtol=0, atol=0)
 
     def test_weight_sync_requires_explicit_trainable_state_getter(self) -> None:
         """A trainer with a weight syncer but no trainable-state getter is refused at

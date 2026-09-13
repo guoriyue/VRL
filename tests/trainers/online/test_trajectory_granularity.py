@@ -15,6 +15,7 @@ from tests.trainers.online._helpers import (
     _EvaluatorAlgorithmFake,
     _stamp_model_precision,
     _trajectory_signals,
+    bare_trainer,
 )
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.generation import GenerationRequest, GenerationSampleRow
@@ -181,8 +182,7 @@ def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(streaming: boo
 
 
 def test_unknown_replay_granularity_fails_fast() -> None:
-    trainer = object.__new__(OnlineTrainer)
-    trainer.evaluator = type("Evaluator", (), {"replay_granularity": "batch"})()
+    trainer = bare_trainer(evaluator=type("Evaluator", (), {"replay_granularity": "batch"})())
     batch = _diffusion_rollout_batch(
         rewards=torch.zeros(1),
         group_ids=torch.zeros(1, dtype=torch.long),
@@ -202,15 +202,13 @@ def test_unknown_replay_granularity_fails_fast() -> None:
     ],
 )
 def test_token_evaluators_replay_multi_token_trajectories_once(evaluator: object) -> None:
-    trainer = object.__new__(OnlineTrainer)
-    trainer.evaluator = evaluator
+    trainer = bare_trainer(evaluator=evaluator)
 
     assert trainer._train_replay_indices(_chunk_denoise_batch(), 0.5, "strided") == [0]
 
 
 def test_step_evaluator_uses_primary_action_axis_for_fractional_selection() -> None:
-    trainer = object.__new__(OnlineTrainer)
-    trainer.evaluator = object()
+    trainer = bare_trainer(evaluator=object())
     batch = _diffusion_rollout_batch(
         rewards=torch.zeros(1),
         group_ids=torch.zeros(1, dtype=torch.long),
@@ -228,16 +226,14 @@ def test_step_evaluator_uses_primary_action_axis_for_fractional_selection() -> N
 
 
 def test_step_replay_rejects_multiple_primary_action_axes() -> None:
-    trainer = object.__new__(OnlineTrainer)
-    trainer.evaluator = object()
+    trainer = bare_trainer(evaluator=object())
 
     with pytest.raises(ValueError, match="exactly one non-sample axis"):
         trainer._train_replay_indices(_chunk_denoise_batch(), 1.0, "strided")
 
 
 def test_evaluator_less_diffusion_uses_primary_action_axis() -> None:
-    trainer = object.__new__(OnlineTrainer)
-    trainer.evaluator = None
+    trainer = bare_trainer(evaluator=None)
     batch = _diffusion_rollout_batch(
         rewards=torch.zeros(1),
         group_ids=torch.zeros(1, dtype=torch.long),

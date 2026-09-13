@@ -20,6 +20,17 @@ def test_frame_sampling_preserves_order_and_noop_identity() -> None:
         assert sample_frames(frames, count) is frames
 
 
+def test_image_to_uint8_hwc_scales_chw_float() -> None:
+    image = np.zeros((3, 2, 2), dtype=np.float32)
+    image[0] = 1.0
+
+    out = image_to_uint8_hwc(image)
+
+    assert out.shape == (2, 2, 3)
+    assert out.dtype == np.uint8
+    np.testing.assert_array_equal(out, np.full((2, 2, 3), [255, 0, 0], dtype=np.uint8))
+
+
 def test_image_to_uint8_hwc_preserves_uint8_tensor_values() -> None:
     image = torch.tensor(
         [

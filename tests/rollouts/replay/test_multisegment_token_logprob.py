@@ -113,7 +113,7 @@ class _SegmentReplayModel:
     precision = _PRECISION
 
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[str] = []
 
     def replay_forward(
         self,
@@ -122,13 +122,15 @@ class _SegmentReplayModel:
         *,
         request: ReplayRequest | None = None,
     ) -> ReplayResult:
-        del batch, timestep_idx
+        del timestep_idx
         names = request.segment_names if request is not None and request.segment_names else ()
         segments = {}
         for name in names:
-            trajectory_segment = self._segment_payload(name)
-            values = self.replay_r1_segment(segment_name=name, segment=trajectory_segment)
-            segments[name] = ReplaySegmentResult(segment=name, values=values)
+            token_ids = batch.trajectory.segments[name].role_tensor("action").value
+            self.calls.append(name)
+            logits = torch.zeros(*token_ids.shape, 20)
+            logits.scatter_(-1, token_ids.unsqueeze(-1), 3.0)
+            segments[name] = ReplaySegmentResult(segment=name, values={"logits": logits})
         return ReplayResult(segments=segments)
 
     def disable_adapter(self):
@@ -136,24 +138,6 @@ class _SegmentReplayModel:
 
     def load_trainable_state(self, state_dict):
         del state_dict
-
-    def replay_r1_segment(self, *, segment_name, segment):
-        modality = str(segment["modality"])
-        self.calls.append((segment_name, modality))
-        token_ids = segment["token_ids"]
-        logits = torch.zeros(token_ids.shape[0], token_ids.shape[1], 20)
-        logits.scatter_(-1, token_ids.unsqueeze(-1), 3.0)
-        return {"logits": logits, "token_ids": token_ids}
-
-    @staticmethod
-    def _segment_payload(name: str):
-        token_ids = {
-            "selfcheck_text": torch.tensor([[7, 8], [8, 9]]),
-            "final_image": torch.tensor([[3, 4, 5], [4, 5, 6]]),
-            "initial_image": torch.tensor([[1, 2], [2, 3]]),
-        }[name]
-        modality = "text" if name == "selfcheck_text" else "image"
-        return {"token_ids": token_ids, "modality": modality}
 
 
 def test_evaluator_can_replay_text_segment_without_using_image_path() -> None:
@@ -169,7 +153,7 @@ def test_evaluator_can_replay_text_segment_without_using_image_path() -> None:
 
     signals = evaluator.evaluate(model, batch)
 
-    assert model.calls == [("selfcheck_text", "text")]
+    assert model.calls == ["selfcheck_text"]
     assert signals.primary_segment == "selfcheck_text"
     assert signals.segments["selfcheck_text"].log_prob.shape == (2, 2)
 
@@ -195,28 +179,38 @@ def test_evaluator_applies_rollout_temperature_to_all_segments() -> None:
         )
         .squeeze(-1)
     )
-    assert torch.allclose(signals.segments["selfcheck_text"].log_prob, expected, atol=1e-6)
+    for segment in signals.segments.values():
+        torch.testing.assert_close(
+            segment.log_prob, expected[0, 0].expand_as(segment.log_prob), atol=1e-6, rtol=1e-5
+        )
     assert signals.context == {"temperature": 0.5}
 
 
 def test_evaluator_reads_r1_segments_from_canonical_trajectory_fields() -> None:
     """With both R1 segments enabled, replay reads them from the canonical trajectory segments in
-    enabled order, the last enabled segment is primary, and no segment bookkeeping leaks into
-    the signal context.
+    enabled order, the trajectory's primary is preserved, and no segment bookkeeping leaks
+    into the signal context. If the primary is disabled, the first enabled segment is used.
     """
     batch = _trajectory_batch()
+    final = batch.trajectory.segments["final_image"]
+    final.role_tensor("old_log_prob").value.fill_(-0.75)
+    final.role_tensor("mask").value[0, -1] = 0
     model = _SegmentReplayModel()
     evaluator = MultiSegmentTokenLogProbEvaluator(
-        enabled_segments=("selfcheck_text", "final_image"),
+        enabled_segments=("final_image", "selfcheck_text"),
     )
 
     signals = evaluator.evaluate(model, batch)
 
-    assert model.calls == [("selfcheck_text", "text"), ("final_image", "image")]
+    assert model.calls == ["final_image", "selfcheck_text"]
     assert signals.primary_segment == "final_image"
     assert signals.primary.log_prob.shape == (2, 3)
     assert signals.segments["selfcheck_text"].log_prob.shape == (2, 2)
     assert signals.segments["final_image"].old_log_prob.shape == (2, 3)
+    torch.testing.assert_close(signals.primary.old_log_prob, torch.full((2, 3), -0.75))
+    torch.testing.assert_close(
+        signals.primary.mask, torch.tensor([[1.0, 1.0, 0.0], [1.0, 1.0, 1.0]])
+    )
     assert "primary_segment" not in signals.context
     assert "segment_order" not in signals.context
 

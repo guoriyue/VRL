@@ -29,24 +29,27 @@ def _load(recipe: str):
 def test_dance_grpo_recipe_resolves_with_random_timestep_selection() -> None:
     cfg = _load("flow_matching_dance_grpo")
     assert cfg.algorithm.kind == "dance_grpo"
-    assert isinstance(parse_config(cfg).algorithm.hyperparameters, GRPOConfig)
+    built = build_configs(cfg)
+    assert isinstance(built.algorithm, GRPOConfig)
     # The defining knob: random per-update timestep subset reaches TrainerConfig.
-    assert build_configs(cfg).trainer.timestep_selection == "random"
+    assert built.trainer.timestep_selection == "random"
 
 
-def test_flow_dppo_recipe_resolves_and_enables_proposal_mean_storage() -> None:
-    cfg = _load("flow_matching_dppo")
-    assert cfg.algorithm.kind == "flow_dppo"
-    assert isinstance(parse_config(cfg).algorithm.hyperparameters, FlowDPPOConfig)
+@pytest.mark.parametrize(
+    ("preset", "kind", "config_cls"),
+    [
+        ("flow_matching_dppo", "flow_dppo", FlowDPPOConfig),
+        ("flow_matching_grpo_guard", "grpo_guard", GRPOGuardConfig),
+    ],
+)
+def test_trust_region_recipes_resolve_and_enable_proposal_mean_storage(
+    preset: str, kind: str, config_cls: type
+) -> None:
+    cfg = _load(preset)
+    assert cfg.algorithm.kind == kind
+    assert isinstance(build_configs(cfg).algorithm, config_cls)
     # Required for the trust-region loss; without it generation never stores the
     # rollout proposal mean and the loss fails fast.
-    assert cfg.rollout.return_prev_sample_mean is True
-
-
-def test_grpo_guard_recipe_resolves_and_enables_proposal_mean_storage() -> None:
-    cfg = _load("flow_matching_grpo_guard")
-    assert cfg.algorithm.kind == "grpo_guard"
-    assert isinstance(parse_config(cfg).algorithm.hyperparameters, GRPOGuardConfig)
     assert cfg.rollout.return_prev_sample_mean is True
 
 
@@ -89,10 +92,6 @@ def test_token_grpo_keeps_its_clipping_and_reference_kl_config() -> None:
     assert built.kl_estimator == "k2"
 
 
-@pytest.mark.parametrize(
-    "recipe",
-    ["flow_matching_dance_grpo", "flow_matching_dppo", "flow_matching_grpo_guard", "v_grpo"],
-)
-def test_recipes_have_no_unknown_config_keys(recipe: str) -> None:
+def test_v_grpo_recipe_has_no_unknown_config_keys() -> None:
     """An unknown key fails parse_config, so a clean build is the assertion."""
-    build_configs(_load(recipe))
+    build_configs(_load("v_grpo"))

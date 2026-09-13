@@ -565,11 +565,8 @@ def test_family_behavior_value_changes_identity(
         left_build = _token_build(family, **{included: first})
         right_build = _token_build(family, **{included: second})
     else:
-        extra = (
-            {"trainable_transformers": ["transformer_2"]} if family.startswith("wan_2_1") else {}
-        )
-        left_build = _build(family=family, **extra, **{included: first})
-        right_build = _build(family=family, **extra, **{included: second})
+        left_build = _build(family=family, **{included: first})
+        right_build = _build(family=family, **{included: second})
     left = resolve_checkpoint_model_identity(left_build)
     right = resolve_checkpoint_model_identity(right_build)
 

@@ -78,12 +78,20 @@ class _FakeReward:
 
 
 class _FakeCollector:
+    """Pure call recorder; it does NOT re-implement the production cascade.
+
+    The generation→reward shutdown cascade (runtime first, retain the reward
+    asleep and raise on runtime failure, ``_reward_shutdown_complete``
+    idempotence) is owned by ``RolloutCollector.shutdown``
+    (vrl/rollouts/collector/core.py:177-202) and has direct real coverage in
+    tests/rollouts/collector/test_runtime.py:238-253. The recipe under test
+    only ever calls ``collector.shutdown()`` itself.
+    """
+
     def __init__(self, state: dict[str, Any], reward: _FakeReward) -> None:
         self._state = state
         self._reward = reward
         self._generation_runtime: Any | None = None
-        self._runtime_shutdown_complete = False
-        self._reward_shutdown_complete = False
 
     def set_generation_runtime(self, runtime: Any) -> None:
         self._generation_runtime = runtime
@@ -96,14 +104,6 @@ class _FakeCollector:
     async def shutdown(self) -> None:
         self._state["collector_shutdowns"] += 1
         self._state["shutdown_order"].append("collector")
-        if not self._runtime_shutdown_complete:
-            shutdown = getattr(self._generation_runtime, "shutdown", None)
-            if shutdown is not None:
-                await shutdown()
-            self._runtime_shutdown_complete = True
-        if not self._reward_shutdown_complete:
-            await self._reward.shutdown()
-            self._reward_shutdown_complete = True
         if self._state.get("collector_shutdown_raises"):
             raise RuntimeError("collector shutdown boom")
 
@@ -122,14 +122,23 @@ class _FakeRuntime:
 
 
 class _FakeSchedule:
-    def __init__(self, state: dict[str, Any], collector: Any) -> None:
+    """Pure call recorder; it does NOT re-implement the production cascade.
+
+    The recipe releases the whole rollout pipeline through the schedule alone
+    (vrl/scripts/common/online.py:214-218); the real schedule's cascade into
+    the collector (StrictOnPolicyRolloutSchedule.shutdown →
+    shutdown_collector_runtime) is schedule-internal and must not be
+    re-implemented here.
+    """
+
+    def __init__(self, state: dict[str, Any]) -> None:
         self._state = state
-        self._collector = collector
 
     async def shutdown(self) -> None:
         self._state["schedule_shutdowns"] += 1
         self._state["shutdown_order"].append("schedule")
-        await self._collector.shutdown()
+        if self._state.get("schedule_shutdown_raises"):
+            raise RuntimeError("schedule shutdown boom")
 
 
 class _FakeLauncher:
@@ -188,7 +197,7 @@ class _FakeTrainer:
         del args
         self._state = state
         self.state = SimpleNamespace(global_step=0)
-        self.rollout_schedule = _FakeSchedule(state, kwargs["collector"])
+        self.rollout_schedule = _FakeSchedule(state)
 
     async def step(
         self,
@@ -714,21 +723,19 @@ async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_
     assert state["compatibility_calls"] == [
         (None, "sd3_5", {"schema": "test"}, True),
     ]
-    assert state["collector_shutdowns"] == 1
-    assert state["runtime_shutdowns"] == 1
+    assert state["collector_shutdowns"] == 0
+    assert state["runtime_shutdowns"] == 0
     assert state["schedule_shutdowns"] == 1
-    assert state["reward_shutdowns"] == 1
+    assert state["reward_shutdowns"] == 0
     assert state["owner_shutdowns"] == 1
     assert state["launcher_worker"] is state["placement_worker"]
     assert state["launcher_model_identity"] == {"schema": "test"}
     assert state["launcher_worker"].cpus_per_worker == 0.5
-    assert state["shutdown_order"] == [
-        "schedule",
-        "collector",
-        "runtime",
-        "reward",
-        "owner",
-    ]
+    # Once the trainer exists, the recipe releases the rollout pipeline through
+    # the schedule alone (online.py:214-218): collector, runtime, and reward
+    # are the schedule's to cascade into, never the recipe's — so the fakes
+    # must stay untouched here.
+    assert state["shutdown_order"] == ["schedule", "owner"]
     assert not ray.is_initialized()
 
 
@@ -990,8 +997,14 @@ async def test_run_online_recipe_shutdowns_owner_after_rollout_launch_failure(
 
     assert state["owner_creates"] == 1
     assert state["collector_shutdowns"] == 1
-    assert state["reward_shutdowns"] == 1
+    # No schedule exists yet, so the recipe falls back to the collector
+    # (online.py:219-223). It never touches the reward directly: the real
+    # collector owns the generation→reward cascade
+    # (vrl/rollouts/collector/core.py:177-202), covered by
+    # tests/rollouts/collector/test_runtime.py:238-253.
+    assert state["reward_shutdowns"] == 0
     assert state["owner_shutdowns"] == 1
+    assert state["shutdown_order"] == ["collector", "owner"]
 
 
 @pytest.mark.slow_test
@@ -1004,7 +1017,7 @@ async def test_run_online_recipe_shutdowns_owner_after_component_build_failure(
     failure,
 ) -> None:
     state = _state()
-    reward = _install_common_fakes(monkeypatch, tmp_path, state)
+    _install_common_fakes(monkeypatch, tmp_path, state)
     if failure == "reward":
         monkeypatch.setattr(
             online,
@@ -1026,8 +1039,13 @@ async def test_run_online_recipe_shutdowns_owner_after_component_build_failure(
     assert state["owner_creates"] == 1
     assert state["owner_shutdowns"] == 1
     assert state["collector_shutdowns"] == 0
+    # Partial-acquisition fallback (online.py:224-228): with neither schedule
+    # nor collector, the recipe shuts the standalone reward runtime down
+    # directly. In the "reward" case the reward build itself failed so nothing
+    # exists; in the "collector" case the built reward is still standalone.
     assert state["reward_shutdowns"] == (0 if failure == "reward" else 1)
-    assert reward is not None
+    expected_order = ["owner"] if failure == "reward" else ["reward", "owner"]
+    assert state["shutdown_order"] == expected_order
 
 
 @pytest.mark.slow_test
@@ -1049,8 +1067,11 @@ async def test_run_online_recipe_shutdowns_owner_after_final_checkpoint_failure(
     with pytest.raises(RuntimeError, match="save boom"):
         await online.run_online_recipe(_cfg())
 
-    assert state["collector_shutdowns"] == 1
-    assert state["reward_shutdowns"] == 1
+    # The schedule exists by this point, so the recipe releases the pipeline
+    # through it alone; collector/reward are the schedule's to cascade into.
+    assert state["schedule_shutdowns"] == 1
+    assert state["collector_shutdowns"] == 0
+    assert state["reward_shutdowns"] == 0
     assert state["owner_shutdowns"] == 1
 
 
@@ -1063,16 +1084,16 @@ async def test_run_online_recipe_shutdown_errors_do_not_hide_training_error(
 ) -> None:
     state = _state()
     state["trainer_step_raises"] = True
-    state["collector_shutdown_raises"] = True
+    state["schedule_shutdown_raises"] = True
     state["owner_shutdown_raises"] = True
     _install_common_fakes(monkeypatch, tmp_path, state)
 
     with pytest.raises(RuntimeError, match="train boom"):
         await online.run_online_recipe(_cfg())
 
-    assert state["collector_shutdowns"] == 2
-    assert state["reward_shutdowns"] == 1
-    assert state["owner_shutdowns"] == 2
+    # Both releases are attempted on the error path and again in the final
+    # cleanup; neither failure replaces the training error.
+    assert state["shutdown_order"] == ["schedule", "schedule", "owner", "owner"]
 
 
 @pytest.mark.slow_test
@@ -1083,15 +1104,13 @@ async def test_run_online_recipe_shutdown_errors_after_success_run_all_cleanups(
     tmp_path,
 ) -> None:
     state = _state()
-    state["collector_shutdown_raises"] = True
+    state["schedule_shutdown_raises"] = True
     _install_common_fakes(monkeypatch, tmp_path, state)
 
     with pytest.raises(RuntimeError, match="rollout_schedule shutdown failed"):
         await online.run_online_recipe(_cfg())
 
-    assert state["collector_shutdowns"] == 2
-    assert state["reward_shutdowns"] == 1
-    assert state["owner_shutdowns"] == 1
+    assert state["shutdown_order"] == ["schedule", "schedule", "owner"]
 
 
 @pytest.mark.asyncio
@@ -1194,9 +1213,9 @@ async def test_launch_evidence_failure_stops_before_training_and_cleans_up(
     with pytest.raises(OSError, match="evidence storage full"):
         await online.run_online_recipe(_cfg())
     assert state["trainer_steps"] == 0
-    assert state["collector_shutdowns"] == 1
-    assert state["reward_shutdowns"] == 1
-    assert state["owner_shutdowns"] == 1
+    # The schedule already exists when evidence is captured, so the pipeline
+    # is released through it (online.py:214-218), never the collector.
+    assert state["shutdown_order"] == ["schedule", "owner"]
 
 
 @pytest.mark.asyncio
@@ -1207,14 +1226,15 @@ async def test_artifact_sealing_runs_after_final_checkpoint_before_cleanup(monke
 
     def seal(run_evidence):
         assert state["checkpoint_paths"][-1] == "checkpoint-final"
-        assert state["collector_shutdowns"] == 0
+        # Nothing has been released yet when the artifacts are sealed.
+        assert state["shutdown_order"] == []
         sealed.append(run_evidence.launch_path)
         return run_evidence.artifacts_path
 
     monkeypatch.setattr(online.TrainingRunTrace, "seal_artifacts", seal)
     await online.run_online_recipe(_cfg())
     assert sealed == [tmp_path / "evidence.json"]
-    assert state["collector_shutdowns"] == 1
+    assert state["shutdown_order"] == ["schedule", "owner"]
 
 
 @pytest.mark.asyncio
@@ -1228,9 +1248,7 @@ async def test_artifact_sealing_failure_still_cleans_up(monkeypatch, tmp_path):
     monkeypatch.setattr(online.TrainingRunTrace, "seal_artifacts", fail_seal)
     with pytest.raises(OSError, match="artifact disk read failed"):
         await online.run_online_recipe(_cfg())
-    assert state["collector_shutdowns"] == 1
-    assert state["reward_shutdowns"] == 1
-    assert state["owner_shutdowns"] == 1
+    assert state["shutdown_order"] == ["schedule", "owner"]
 
 
 @pytest.mark.asyncio

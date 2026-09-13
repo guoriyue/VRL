@@ -61,36 +61,24 @@ def test_full_pipeline_omits_absent_revision() -> None:
 
 
 def test_flow_match_replay_maps_sana_flow_shift(monkeypatch) -> None:
+    from diffusers import FlowMatchEulerDiscreteScheduler
+
     from vrl.models import loader
 
-    calls: list[dict] = []
-
-    class Config(dict):
-        def __getattr__(self, name):
-            return self[name]
-
-    class Scheduler:
-        def __init__(self, config):
-            self.config = Config(config)
-            self.timesteps = None
-
-        @classmethod
-        def from_config(cls, config, **kwargs):
-            calls.append(dict(kwargs))
-            return cls({**dict(config), **kwargs})
-
-        def set_timesteps(self, num_steps, device=None):
-            self.timesteps = (num_steps, device)
-
-    original = Scheduler({"flow_shift": 3.0, "shift": 1.0})
+    # SANA's DPM-facing field survives loading into the replay scheduler config.
+    original = FlowMatchEulerDiscreteScheduler.from_config({"flow_shift": 3.0, "shift": 1.0})
+    original.set_timesteps(10, device="cpu")
     monkeypatch.setattr(loader, "load_diffusers_scheduler", lambda *args, **kwargs: original)
     build = SimpleNamespace(num_steps=10, device="cpu")
 
     scheduler = loader.load_flow_match_scheduler(build)
 
-    assert calls == [{"shift": 3.0}]
+    expected = FlowMatchEulerDiscreteScheduler(shift=3.0)
+    expected.set_timesteps(10, device="cpu")
     assert scheduler.config.shift == 3.0
-    assert scheduler.timesteps == (10, "cpu")
+    torch.testing.assert_close(scheduler.timesteps, expected.timesteps)
+    torch.testing.assert_close(scheduler.sigmas, expected.sigmas)
+    assert not torch.equal(scheduler.sigmas, original.sigmas)
 
 
 def test_flow_match_replay_keeps_native_shift_config(monkeypatch) -> None:

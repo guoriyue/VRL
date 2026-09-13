@@ -81,12 +81,6 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "gpu" in item.keywords:
                 item.add_marker(skip_gpu)
-    # NOTE: the `optional` branch below is a reserved vLLM-parity lane (commit
-    # "vLLM-style marker gating") with no current members — `@pytest.mark.optional`
-    # is unused repo-wide. Keep it: it preserves structural parity with vLLM's
-    # marker scaffold and is the opt-in point for future optional suites. Do not
-    # delete as dead code.
-    #
     # Distributed tests need an explicit lane; slow local Ray tests should use
     # slow_test instead of distributed.
     if not (config.getoption("--distributed") or ci_envs.VRL_RUN_DISTRIBUTED_TESTS):
@@ -245,6 +239,28 @@ def cuda_devices(monkeypatch) -> Callable[[int], None]:
         monkeypatch.setattr(torch.cuda, "device_count", lambda: count)
 
     return pin
+
+
+@pytest.fixture(autouse=True)
+def _no_implicit_cuda(request, monkeypatch):
+    """A test that is not in the ``gpu`` lane sees no CUDA, whatever the host has.
+
+    Only ``gpu``-marked tests may touch the card. Everything else used to depend
+    on whether it happened to patch ``torch.cuda.is_available`` itself: a test
+    that forgot ran one way on the 5090 and another way on a CI runner, and the
+    difference surfaced as an unrelated failure. Pinning the topology here makes
+    "no GPU" the deterministic default; a test that needs to model a GPU host
+    still patches ``is_available``/``device_count`` on top of this, as
+    ``cuda_devices`` does.
+    """
+    if request.node.get_closest_marker("gpu") is not None:
+        return
+    try:
+        import torch
+    except Exception:  # pragma: no cover - torch import/driver failure
+        return
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 0)
 
 
 @pytest.fixture(autouse=True)

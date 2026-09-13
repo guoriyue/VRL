@@ -51,10 +51,10 @@ def test_weighted_mean_matches_token_grpo_per_segment() -> None:
     under ``segment_weights``, with zero-weight segments excluded from the denominator.
     """
     adv = torch.ones(2)
-    old_initial = torch.zeros(2, 2)
-    old_final = torch.zeros(2, 3)
-    initial = _segment_signal("initial_image", torch.full((2, 2), 0.1), old_initial)
-    final = _segment_signal("final_image", torch.full((2, 3), 0.3), old_final)
+    old_initial = torch.full((2, 2), -2.0)
+    old_final = torch.full((2, 3), -2.0)
+    initial = _segment_signal("initial_image", old_initial + 0.1, old_initial)
+    final = _segment_signal("final_image", old_final + 0.3, old_final)
     inputs = _inputs({"initial_image": initial, "final_image": final}, adv)
 
     cfg = MultiSegmentTokenGRPOConfig(
@@ -88,18 +88,16 @@ def test_weighted_mean_matches_token_grpo_per_segment() -> None:
 
 
 def test_default_selfcheck_weight_zero_does_not_affect_loss() -> None:
-    """The default ``selfcheck_text`` weight is 0, so an absurd selfcheck signal cannot move the
-    loss.
-    """
+    """An enabled selfcheck segment with zero weight cannot change the image loss."""
     adv = torch.ones(1)
-    image_old = torch.zeros(1, 2)
-    image_signal = _segment_signal("initial_image", torch.zeros(1, 2), image_old)
+    image_old = torch.full((1, 2), -2.0)
+    image_signal = _segment_signal("initial_image", image_old.clone(), image_old)
     noisy_selfcheck = _segment_signal(
         "selfcheck_text",
-        torch.full((1, 2), 100.0),
-        torch.full((1, 2), -100.0),
+        torch.full((1, 2), -1.0),
+        torch.full((1, 2), -2.0),
     )
-    final_signal = _segment_signal("final_image", torch.zeros(1, 2), image_old)
+    final_signal = _segment_signal("final_image", image_old.clone(), image_old)
     inputs = _inputs(
         {
             "initial_image": image_signal,
@@ -109,10 +107,18 @@ def test_default_selfcheck_weight_zero_does_not_affect_loss() -> None:
         adv,
     )
 
-    algo = MultiSegmentTokenGRPO(MultiSegmentTokenGRPOConfig(kl_coef=0.0))
+    config = MultiSegmentTokenGRPOConfig(
+        kl_coef=0.0,
+        train_segments={"initial_image": True, "selfcheck_text": True, "final_image": True},
+    )
+    algo = MultiSegmentTokenGRPO(config)
     loss, _ = algo.compute_loss(inputs)
 
     assert loss.item() == pytest.approx(-1.0)
+
+    config.segment_weights["selfcheck_text"] = 1.0
+    weighted_loss, _ = algo.compute_loss(inputs)
+    assert weighted_loss.item() < loss.item()
 
 
 def test_nonzero_missing_segment_raises() -> None:

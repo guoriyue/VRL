@@ -46,32 +46,6 @@ class TestOnlineTrainerResumeState:
         assert restored.state.step == 3
         assert restored.state.global_step == 5
 
-    def test_load_state_dict_initializes_and_restores_optimizer_state(self) -> None:
-        """``load_state_dict`` on a fresh trainer creates the optimizer on demand and restores its
-        Adam moments together with the step counters.
-        """
-        import torch
-
-        source = _make_resume_trainer()
-        optimizer = source._ensure_optimizer()
-        loss = source.model(torch.ones(1, 1)).sum()
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
-        source.state.step = 3
-        source.state.global_step = 5
-        state = source.state_dict()
-
-        restored = _make_resume_trainer()
-        restored.load_state_dict(state, strict=True)
-
-        assert restored.state.step == 3
-        assert restored.state.global_step == 5
-        assert restored._optimizer is not None
-        assert _adam_exp_avg_values(restored._optimizer) == pytest.approx(
-            _adam_exp_avg_values(optimizer),
-        )
-
     def test_strict_resume_rejects_master_state_for_plain_optimizer(self) -> None:
         source = _make_resume_trainer()
         source._ensure_optimizer()
@@ -239,6 +213,8 @@ class TestOnlineTrainerResumeState:
         """
         import asyncio
 
+        import torch
+
         syncer = _Syncer()
         collect_seen_sync_counts: list[int] = []
         trainer = _make_resume_trainer(
@@ -246,11 +222,15 @@ class TestOnlineTrainerResumeState:
             collector=_SyncCountingCollector(syncer, collect_seen_sync_counts),
         )
         trainer._rollout_weights_initialized = True
+        saved_weight = torch.full_like(trainer.model.weight, 3.0)
+        # Model restoration is separate from trainer counters in checkpoint resume.
+        trainer.model.load_state_dict({"weight": saved_weight})
         trainer.load_state_dict({"step": 4, "global_step": 4}, strict=True)
 
         asyncio.run(trainer.step(["prompt-a"]))
 
         assert collect_seen_sync_counts == [1]
+        torch.testing.assert_close(syncer.calls[0]["linear.weight"], saved_weight, rtol=0, atol=0)
 
 
 class _ResumeAlgorithm(_EvaluatorAlgorithmFake):
@@ -391,15 +371,6 @@ def _make_resume_trainer(
     )
 
 
-def _adam_exp_avg_values(optimizer) -> list[float]:
-    values: list[float] = []
-    for slot in optimizer.state.values():
-        exp_avg = slot.get("exp_avg")
-        if exp_avg is not None:
-            values.extend(float(v) for v in exp_avg.reshape(-1).detach().cpu().tolist())
-    return values
-
-
 def test_online_trainer_standard_adamw_roundtrip(tmp_path) -> None:
     import torch
 
@@ -409,14 +380,17 @@ def test_online_trainer_standard_adamw_roundtrip(tmp_path) -> None:
     source.model(torch.ones(1, 1)).sum().backward()
     optimizer.step()
     optimizer.zero_grad()
-    source.state.global_step = 1
+    source.state.step = 3
+    source.state.global_step = 5
     checkpoint = tmp_path / "state.pt"
     torch.save({"trainer": source.state_dict(), "model": source.model.state_dict()}, checkpoint)
     saved = torch.load(checkpoint, weights_only=True)
     restored = _make_resume_trainer()
     restored.model.load_state_dict(saved["model"])
     restored.load_state_dict(saved["trainer"], strict=True)
-    assert restored.state.global_step == 1
+    assert restored.state.step == 3
+    assert restored.state.global_step == 5
+    assert restored._optimizer is not None
     for trainer in (source, restored):
         trainer.model(torch.ones(1, 1)).sum().backward()
         trainer._ensure_optimizer().step()

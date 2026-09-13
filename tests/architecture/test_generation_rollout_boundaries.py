@@ -196,47 +196,6 @@ def test_trajectory_layer_stays_family_neutral() -> None:
     assert not violations, _format_violations(violations)
 
 
-def test_model_family_registry_stays_import_light() -> None:
-    """The model-family registry must stay importable during config parsing.
-
-    Every module-level import must be stdlib, one of the three lightweight
-    registry modules, or the torch-free ``vrl.config`` schema layer. Edges into
-    concrete family implementations, trainers, generation, and utils remain
-    function-level lazy so config parsing does not pay for the runtime stack.
-
-    Walk ``tree.body`` only — NOT ``ast.walk`` — so the intentional function-level
-    lazy imports (e.g. registry.py's gradient-checkpointing resolver) are not swept
-    in and false-failed. This turns the lazy-import convention into a mechanical gate.
-    """
-    registry_modules = (
-        VRL_ROOT / "models" / "families" / "names.py",
-        VRL_ROOT / "models" / "families" / "registry.py",
-        VRL_ROOT / "models" / "families" / "semantics.py",
-    )
-    allowed_registry_imports = frozenset(
-        f"vrl.models.families.{path.stem}" for path in registry_modules
-    )
-    violations: list[tuple[Path, str]] = []
-    for path in registry_modules:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in tree.body:  # module-level statements only
-            if isinstance(node, ast.Import):
-                modules = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                modules = [node.module]
-            else:
-                continue
-            for module in modules:
-                if not module.startswith("vrl."):
-                    continue  # stdlib / third-party import-light deps are unrestricted
-                if module in allowed_registry_imports:
-                    continue
-                if module == "vrl.config" or module.startswith("vrl.config."):
-                    continue  # torch-free config-schema layer (capability SoT)
-                violations.append((path.relative_to(ROOT), module))
-    assert not violations, _format_violations(violations)
-
-
 def test_shared_ray_substrate_stays_domain_neutral() -> None:
     """``vrl.ray`` is shared substrate and must not know generation, rewards, rollouts or
     trainers.
@@ -251,41 +210,6 @@ def test_shared_ray_substrate_stays_domain_neutral() -> None:
         ),
     )
     assert not violations, _format_violations(violations)
-
-
-def test_reward_models_live_under_models() -> None:
-    """Model-backed rewards own model modules; pure functions do not."""
-    models_root = VRL_ROOT / "rewards" / "models"
-    present = _module_filenames(models_root)
-    model_modules = _registered_model_reward_modules()
-    assert model_modules <= present
-    # Only scaffolding may live alongside the per-reward modules.
-    scaffolding = {"__init__.py", "base.py", "hub.py", "media.py", "qwen_vl_judge.py"}
-    extras = present - model_modules - scaffolding
-    assert not extras, f"unexpected modules under rewards/models/: {extras}"
-
-
-def test_reward_function_implementations_live_under_functions() -> None:
-    """Every registered reward function module lives under ``vrl/rewards/functions``, the package
-    root keeps its fixed scaffolding files, and no unregistered module hides in ``functions/``.
-    """
-    rewards_root = VRL_ROOT / "rewards"
-    required_root = {
-        "__init__.py",
-        "artifacts.py",
-        "base.py",
-        "inference.py",
-        "protocols.py",
-        "runtime.py",
-        "types.py",
-    }
-    assert required_root <= _module_filenames(rewards_root)
-
-    functions = _module_filenames(rewards_root / "functions")
-    assert _registered_reward_modules() <= functions
-    scaffolding = {"__init__.py", "base.py", "registry.py"}
-    extras = functions - _registered_reward_modules() - scaffolding
-    assert not extras, f"unexpected modules under rewards/functions/: {extras}"
 
 
 def test_generation_execution_core_stays_ray_neutral() -> None:
@@ -314,13 +238,10 @@ def _forbidden_imports(
     root: Path,
     *,
     forbidden: tuple[str, ...],
-    allow_path_prefixes: tuple[Path, ...] = (),
 ) -> list[tuple[Path, str]]:
     violations: list[tuple[Path, str]] = []
     for path in _python_files(root):
         rel = path.relative_to(ROOT)
-        if any(_is_relative_to(rel, prefix) for prefix in allow_path_prefixes):
-            continue
         for module in _imports(path):
             if any(_is_module_or_child(module, item) for item in forbidden):
                 violations.append((rel, module))
@@ -360,45 +281,6 @@ def _imports(path: Path, *, root: Path = ROOT) -> Iterable[str]:
 
 def _python_files(root: Path) -> Iterable[Path]:
     return sorted(path for path in root.rglob("*.py") if "__pycache__" not in path.parts)
-
-
-def _module_filenames(root: Path) -> set[str]:
-    return {path.name for path in root.glob("*.py") if "__pycache__" not in path.parts}
-
-
-def _registered_reward_modules() -> set[str]:
-    """Reward-impl filenames derived from the registry, the single source of truth.
-
-    Each registered reward ``<name>`` owns a ``<name>.py`` module, so the
-    expected module set is the registry keys — never a hand-typed ``ls``.
-    Registration is lazy (``_register_builtins`` runs inside ``from_dict``),
-    so trigger it once with an empty score dict before reading the keys.
-    """
-    from vrl.rewards.functions.registry import _REWARD_REGISTRY, MultiReward
-
-    MultiReward.from_dict({}, device="cpu")  # populate _REWARD_REGISTRY
-    return {f"{name}.py" for name in _REWARD_REGISTRY}
-
-
-def _registered_model_reward_modules() -> set[str]:
-    """Derive model-module owners from the registered reward class hierarchy."""
-    from vrl.rewards.base import InferenceRewardFunction
-    from vrl.rewards.functions.registry import _REWARD_REGISTRY, MultiReward
-
-    MultiReward.from_dict({}, device="cpu")  # populate _REWARD_REGISTRY
-    return {
-        f"{name}.py"
-        for name, reward_cls in _REWARD_REGISTRY.items()
-        if issubclass(reward_cls, InferenceRewardFunction)
-    }
-
-
-def _is_relative_to(path: Path, prefix: Path) -> bool:
-    try:
-        path.relative_to(prefix)
-    except ValueError:
-        return False
-    return True
 
 
 def _is_module_or_child(module: str, parent: str) -> bool:

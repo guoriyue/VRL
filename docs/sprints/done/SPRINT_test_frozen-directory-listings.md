@@ -1,5 +1,12 @@
 # SPRINT: 干掉穷举式冻结目录清单断言（done）
 
+> Update (2026-09-12): The reward directory subset/allowlist checks described
+> below have also been retired. Explicit registry imports and model factory
+> paths drive loading; neither runtime requires registry keys to equal module
+> filenames or prohibits additional shared modules. Their three test-only
+> filename helpers were removed with them. Dependency-layer checks remain.
+> See `docs/sprints/SPRINT_test_credibility.md` for the current audit.
+
 状态：done（2026-06-21）。仅改 `tests/architecture/test_generation_rollout_boundaries.py`：四处穷举
 `_module_filenames(dir) == {手抄全集}` 全部消除。新增 `_registered_reward_modules()` 从
 `_REWARD_REGISTRY` 派生；`rewards/models/` 与 `rewards/functions/` 改「派生 ⊆ present + 脚手架白名单

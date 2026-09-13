@@ -5,34 +5,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.generation import GenerationRequest, GenerationSampleRow
+from tests.rollouts.replay._helpers import janus_request, janus_sample_rows
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.trajectory import build_ar_discrete_trajectory
-
-
-def _request() -> GenerationRequest:
-    return GenerationRequest(
-        request_id="req",
-        family="janus_pro",
-        task="ar_t2i",
-        inputs=["draw text"],
-        samples_per_prompt=2,
-    )
-
-
-def _sample_rows() -> list[GenerationSampleRow]:
-    request = _request()
-    return [
-        GenerationSampleRow(
-            prompt_index=0,
-            sample_index=index,
-            prompt=request.prompts[0],
-            sample_id=f"s{index}",
-        )
-        for index in range(2)
-    ]
 
 
 def _discrete_batch() -> tuple[RolloutBatch, torch.Tensor, torch.Tensor]:
@@ -40,8 +17,8 @@ def _discrete_batch() -> tuple[RolloutBatch, torch.Tensor, torch.Tensor]:
     old_log_prob = torch.tensor([[-0.1, -0.2], [-0.3, -0.4]])
     token_mask = torch.tensor([[1.0, 0.0], [1.0, 1.0]])
     trajectory = build_ar_discrete_trajectory(
-        request=_request(),
-        sample_rows=_sample_rows(),
+        request=janus_request(),
+        sample_rows=janus_sample_rows(),
         token_ids=token_ids,
         token_log_probs=old_log_prob,
         token_mask=token_mask,

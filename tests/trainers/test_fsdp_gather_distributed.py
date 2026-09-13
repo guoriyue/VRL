@@ -416,8 +416,9 @@ def _run_checkpoint_ema_export_rank(
             return
 
         live = strategy.export_checkpoint_state(bundle)["transformer"]
-        live_restored = all(
-            torch.equal(value, torch.full_like(value, 3.0)) for value in live.values()
+        live_restored = (
+            all(torch.equal(value, torch.full_like(value, 3.0)) for value in live.values())
+            and ema.temp_stored_parameters is None
         )
         if fail_swap_rank is not None or fail_artifact_write:
             failed_together = isinstance(save_error, RuntimeError)

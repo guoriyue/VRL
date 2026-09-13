@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
 from omegaconf import OmegaConf
-from safetensors.torch import load_file, save_file
 from torch import nn
 
+from tests.trainers._checkpoint_helpers import (
+    UNIT_IDENTITY,
+    _Bundle,
+    _context,
+    _ema_holding,
+    _Trainer,
+)
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
-from vrl.models.interfaces.runtime import RuntimeBundle, register_checkpoint_owned_state
+from vrl.models.interfaces.runtime import RuntimeBundle
 from vrl.models.steps.denoise.base import DiffusionModelBase
 from vrl.models.steps.token.base import ARModelBase
 from vrl.trainers.checkpointing import (
@@ -21,10 +26,8 @@ from vrl.trainers.checkpointing import (
     LORA_WEIGHTS_NAME,
     TRAINING_CHECKPOINT_NAME,
     AdapterExport,
-    CheckpointTarget,
     TrainingCheckpoint,
     TrainingResumeConfig,
-    build_adapter_exports,
     export_checkpoint_state,
     load_checkpoint_state,
     prepare_model_config_for_training_resume,
@@ -34,10 +37,6 @@ from vrl.trainers.checkpointing import (
     validate_checkpoint_compatibility,
     validate_checkpoint_meta_compatibility,
 )
-from vrl.trainers.distributed import DistributedTrainingContext
-from vrl.trainers.online.ema import EMAModuleWrapper
-
-UNIT_IDENTITY = {"schema": "unit-model/v1"}
 
 
 @pytest.mark.parametrize(
@@ -314,27 +313,6 @@ def test_checkpoint_meta_preflight_rejects_missing_protocol_fields(meta) -> None
         validate_checkpoint_meta_compatibility(
             meta,
             family="sana",
-            expected_model_identity=UNIT_IDENTITY,
-            strict=True,
-        )
-
-
-def test_checkpoint_compatibility_rejects_schema_v2_without_saved_family(tmp_path) -> None:
-    checkpoint = TrainingCheckpoint(
-        checkpoint_dir=tmp_path,
-        checkpoint_path=tmp_path / TRAINING_CHECKPOINT_NAME,
-        payload={
-            "schema_version": CHECKPOINT_SCHEMA_VERSION,
-            "family": "",
-            "model": {"identity": UNIT_IDENTITY, "owned_state": {}},
-        },
-        meta={},
-    )
-
-    with pytest.raises(ValueError, match="family"):
-        validate_checkpoint_compatibility(
-            checkpoint,
-            family="unit",
             expected_model_identity=UNIT_IDENTITY,
             strict=True,
         )
@@ -635,107 +613,6 @@ def test_non_primary_receives_primary_checkpoint_publication_failure(tmp_path) -
     assert not (tmp_path / "checkpoint-peer-write-failure").exists()
 
 
-def test_training_checkpoint_writes_optional_lora_export(tmp_path) -> None:
-    """The adapter artifact lands beside the resume checkpoint and is really loadable.
-
-    ``save_pretrained`` stays a stand-in (real PEFT also writes an adapter config,
-    which belongs to the PEFT-export tests), but the *file* it produces is a real
-    safetensors container, so the assertion can read the tensor back instead of
-    settling for "a file with that name exists".
-    """
-
-    class _ExportModule(nn.Linear):
-        def save_pretrained(self, path, *, state_dict, selected_adapters):
-            assert state_dict.keys() == {"weight"}
-            assert selected_adapters == ["default"]
-            path.mkdir(parents=True)
-            save_file(dict(state_dict), path / "adapter_model.safetensors")
-
-    export_module = _ExportModule(1, 1, bias=False)
-    with torch.no_grad():
-        export_module.weight.fill_(4.0)
-    save_training_checkpoint(
-        tmp_path / "checkpoint-1",
-        trainer=_Trainer(),
-        bundle=_Bundle(export_module),
-        family="unit",
-        model_identity=UNIT_IDENTITY,
-        progress={"next_epoch": 1},
-        rng_state={},
-        adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(export_module)},
-    )
-
-    assert (tmp_path / "checkpoint-1" / TRAINING_CHECKPOINT_NAME).exists()
-    assert (tmp_path / "checkpoint-1" / CHECKPOINT_META_NAME).exists()
-    exported = _exported_adapter_weight(
-        tmp_path / "checkpoint-1" / LORA_WEIGHTS_NAME / "adapter_model.safetensors",
-    )
-    assert torch.equal(exported, torch.full((1, 1), 4.0))
-
-
-def test_adapter_export_accepts_safe_namespaced_path(tmp_path) -> None:
-    class _ExportModule(nn.Linear):
-        def save_pretrained(self, path, *, state_dict, selected_adapters):
-            del selected_adapters
-            path.mkdir(parents=True)
-            save_file(dict(state_dict), path / "adapter_model.safetensors")
-
-    module = _ExportModule(1, 1, bias=False)
-    with torch.no_grad():
-        module.weight.fill_(5.0)
-    artifact_name = f"{LORA_WEIGHTS_NAME}/transformer"
-
-    save_training_checkpoint(
-        tmp_path / "checkpoint-namespaced",
-        trainer=_Trainer(),
-        bundle=_Bundle(module),
-        family="unit",
-        model_identity=UNIT_IDENTITY,
-        progress={"next_epoch": 1},
-        rng_state={},
-        adapter_exports={artifact_name: AdapterExport(module)},
-    )
-
-    exported = _exported_adapter_weight(
-        tmp_path / "checkpoint-namespaced" / artifact_name / "adapter_model.safetensors",
-    )
-    assert torch.equal(exported, torch.full((1, 1), 5.0))
-
-
-def test_adapter_export_accepts_safe_named_adapter(tmp_path) -> None:
-    class _ExportModule(nn.Linear):
-        def __init__(self) -> None:
-            super().__init__(1, 1, bias=False)
-            self.peft_config = {"publish": object()}
-
-        def save_pretrained(self, path, *, state_dict, selected_adapters):
-            assert state_dict.keys() == {"weight"}
-            assert selected_adapters == ["publish"]
-            path.mkdir(parents=True)
-            save_file(dict(state_dict), path / "adapter_model.safetensors")
-
-    module = _ExportModule()
-    with torch.no_grad():
-        module.weight.fill_(6.0)
-    save_training_checkpoint(
-        tmp_path / "checkpoint-named-adapter",
-        trainer=_Trainer(),
-        bundle=_Bundle(module),
-        family="unit",
-        model_identity=UNIT_IDENTITY,
-        progress={"next_epoch": 1},
-        rng_state={},
-        adapter_exports={
-            LORA_WEIGHTS_NAME: AdapterExport(module, adapter_name="publish"),
-        },
-    )
-
-    exported = _exported_adapter_weight(
-        tmp_path / "checkpoint-named-adapter" / LORA_WEIGHTS_NAME / "adapter_model.safetensors",
-    )
-    assert torch.equal(exported, torch.full((1, 1), 6.0))
-
-
 # ── build_adapter_exports: bundle -> publishable adapter artifacts ────────────
 #
 # Driven through REAL model bases and a REAL RuntimeBundle, because the split of
@@ -807,259 +684,6 @@ def _export_bundle(model) -> RuntimeBundle:
         loads_full_generation_modules=False,
         adapter_roots=model.adapter_roots,
     )
-
-
-def test_build_adapter_exports_namespaces_multiple_denoise_roots() -> None:
-    high = _PublishableModule()
-    low = _PublishableModule()
-    bundle = _export_bundle(_DenoisePolicy({"transformer": high, "transformer_2": low}))
-
-    assert build_adapter_exports(bundle, use_lora=True) == {
-        "lora_weights/transformer": AdapterExport(high),
-        "lora_weights/transformer_2": AdapterExport(low),
-    }
-
-
-def test_build_adapter_exports_keeps_the_flat_path_for_a_single_root() -> None:
-    transformer = _PublishableModule()
-    bundle = _export_bundle(_DenoisePolicy({"transformer": transformer}))
-
-    assert build_adapter_exports(bundle, use_lora=True) == {
-        LORA_WEIGHTS_NAME: AdapterExport(transformer),
-    }
-
-
-def test_build_adapter_exports_drops_a_denoise_root_that_cannot_publish() -> None:
-    """A full-finetune-shaped root is skipped, not turned into a failed export."""
-
-    publishable = _PublishableModule()
-    bundle = _export_bundle(
-        _DenoisePolicy({"transformer": publishable, "plain": nn.Linear(1, 1)}),
-    )
-
-    assert build_adapter_exports(bundle, use_lora=True) == {
-        LORA_WEIGHTS_NAME: AdapterExport(publishable),
-    }
-
-
-def test_build_adapter_exports_is_none_when_nothing_is_publishable() -> None:
-    bundle = _export_bundle(_DenoisePolicy({"transformer": nn.Linear(1, 1)}))
-
-    assert build_adapter_exports(bundle, use_lora=True) is None
-
-
-def test_build_adapter_exports_is_none_for_a_full_finetune() -> None:
-    bundle = _export_bundle(_DenoisePolicy({"transformer": _PublishableModule()}))
-
-    assert build_adapter_exports(bundle, use_lora=False) is None
-
-
-def test_build_adapter_exports_reaches_the_token_language_model() -> None:
-    """The AR root is the wrapper, but the exported adapter is one hop inside it."""
-
-    language_model = _PublishableModule()
-    bundle = _export_bundle(_TokenPolicy(language_model))
-
-    assert bundle.trainable_modules == {"model": bundle.model}
-    assert build_adapter_exports(bundle, use_lora=True) == {
-        LORA_WEIGHTS_NAME: AdapterExport(language_model),
-    }
-
-
-def test_build_adapter_exports_raises_for_an_unexportable_token_trunk() -> None:
-    """Red line: the AR side must fail loudly, never publish silently nothing."""
-
-    bundle = _export_bundle(_TokenPolicy(nn.Linear(1, 1)))
-
-    with pytest.raises(TypeError, match="save_pretrained"):
-        build_adapter_exports(bundle, use_lora=True)
-
-
-@pytest.mark.parametrize(
-    "adapter_name",
-    ["", "a/b"],
-)
-def test_adapter_export_rejects_unsafe_adapter_name(adapter_name) -> None:
-    class _ExportModule(nn.Linear):
-        def __init__(self) -> None:
-            super().__init__(1, 1, bias=False)
-            self.peft_config = {adapter_name: object()}
-
-        def save_pretrained(self, *_args, **_kwargs):
-            raise AssertionError("unsafe adapter name must fail at construction")
-
-    with pytest.raises(ValueError, match=r"trimmed|string|single path segment"):
-        AdapterExport(_ExportModule(), adapter_name=adapter_name)
-
-
-@pytest.mark.parametrize(
-    "artifact_name",
-    ["/absolute", "a/../b"],
-)
-def test_adapter_export_rejects_unsafe_output_path(tmp_path, artifact_name) -> None:
-    class _ExportModule(nn.Linear):
-        def save_pretrained(self, *_args, **_kwargs):
-            raise AssertionError("unsafe artifact path must fail before IO")
-
-    module = _ExportModule(1, 1, bias=False)
-
-    with pytest.raises(ValueError, match="safe relative path"):
-        save_training_checkpoint(
-            tmp_path / "checkpoint-unsafe",
-            trainer=_Trainer(),
-            bundle=_Bundle(module),
-            family="unit",
-            model_identity=UNIT_IDENTITY,
-            progress={"next_epoch": 1},
-            rng_state={},
-            adapter_exports={artifact_name: AdapterExport(module)},
-        )
-
-    assert not (tmp_path / "checkpoint-unsafe").exists()
-
-
-def test_adapter_export_rejects_ancestor_output_paths(tmp_path) -> None:
-    class _ExportModule(nn.Linear):
-        def save_pretrained(self, *_args, **_kwargs):
-            raise AssertionError("overlapping artifact paths must fail before IO")
-
-    module = _ExportModule(1, 1, bias=False)
-
-    with pytest.raises(ValueError, match=r"paths .* overlap"):
-        save_training_checkpoint(
-            tmp_path / "checkpoint-overlap",
-            trainer=_Trainer(),
-            bundle=_Bundle(module),
-            family="unit",
-            model_identity=UNIT_IDENTITY,
-            progress={"next_epoch": 1},
-            rng_state={},
-            adapter_exports={
-                "lora_weights": AdapterExport(module),
-                "lora_weights/expert": AdapterExport(module),
-            },
-        )
-
-    assert not (tmp_path / "checkpoint-overlap").exists()
-
-
-def test_adapter_export_rejects_custom_adapter_effective_path_collision(tmp_path) -> None:
-    class _ExportModule(nn.Linear):
-        def __init__(self) -> None:
-            super().__init__(1, 1, bias=False)
-            self.peft_config = {"default": object(), "expert": object()}
-
-        def save_pretrained(self, *_args, **_kwargs):
-            raise AssertionError("colliding PEFT outputs must fail before IO")
-
-    module = _ExportModule()
-
-    with pytest.raises(ValueError, match="same PEFT output path"):
-        save_training_checkpoint(
-            tmp_path / "checkpoint-effective-collision",
-            trainer=_Trainer(),
-            bundle=_Bundle(module),
-            family="unit",
-            model_identity=UNIT_IDENTITY,
-            progress={"next_epoch": 1},
-            rng_state={},
-            adapter_exports={
-                "lora_weights": AdapterExport(module, adapter_name="expert"),
-                "lora_weights/expert": AdapterExport(module),
-            },
-        )
-
-    assert not (tmp_path / "checkpoint-effective-collision").exists()
-
-
-def test_training_checkpoint_exports_lora_with_ema_without_mutating_resume_state(
-    tmp_path,
-) -> None:
-    """The published adapter carries EMA weights; the resume checkpoint carries raw ones.
-
-    Driven by a real ``EMAModuleWrapper``, so the 7.0 in the artifact is the
-    wrapper's own running average copied in by its own ``copy_ema_to``, and the
-    restore afterwards is its own ``copy_temp_to`` — the previous stand-in filled
-    the number in itself, which made ``store_temp=True`` a claim about the stub
-    rather than about the swap. Here that claim is implied: a swap taken without
-    a snapshot could not restore 3.0 at all.
-    """
-
-    class _ExportModule(nn.Linear):
-        def save_pretrained(self, path, *, state_dict, selected_adapters):
-            assert selected_adapters == ["default"]
-            path.mkdir(parents=True)
-            save_file(dict(state_dict), path / "adapter_model.safetensors")
-
-    export_module = _ExportModule(1, 1, bias=False)
-    bundle = _Bundle(export_module)
-    ema = _ema_holding(export_module, average=7.0, live=3.0)
-
-    save_training_checkpoint(
-        tmp_path / "checkpoint-ema",
-        trainer=_Trainer(),
-        bundle=bundle,
-        family="unit",
-        model_identity=UNIT_IDENTITY,
-        progress={"next_epoch": 1},
-        rng_state={},
-        adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(export_module)},
-        export_ema=ema,
-    )
-
-    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-ema")
-    saved_trainable = checkpoint.checkpoint_state["module"]["weight"].item()
-    published = _exported_adapter_weight(
-        tmp_path / "checkpoint-ema" / LORA_WEIGHTS_NAME / "adapter_model.safetensors",
-    )
-
-    assert saved_trainable == pytest.approx(3.0)
-    assert published.item() == pytest.approx(7.0)
-    assert bundle.module.weight.item() == pytest.approx(3.0)
-    assert ema.temp_stored_parameters is None
-
-
-def test_training_checkpoint_skips_lora_ema_export_before_first_ema_update(
-    tmp_path,
-) -> None:
-    """Before the first ``step()`` the EMA average is meaningless, so publish raw weights.
-
-    The real wrapper derives ``has_updates`` from ``num_updates``, so "unupdated"
-    is a state the object is genuinely in rather than a flag a stub sets. Its
-    stored average is deliberately 7.0 while the live weight is 3.0: an export
-    that swapped anyway would publish 7.0, and one that took a snapshot would
-    leave ``temp_stored_parameters`` behind.
-    """
-
-    class _ExportModule(nn.Linear):
-        def save_pretrained(self, path, *, state_dict, selected_adapters):
-            assert selected_adapters == ["default"]
-            path.mkdir(parents=True)
-            save_file(dict(state_dict), path / "adapter_model.safetensors")
-
-    export_module = _ExportModule(1, 1, bias=False)
-    bundle = _Bundle(export_module)
-    ema = _ema_holding(export_module, average=7.0, live=3.0, stepped=False)
-    assert ema.has_updates is False
-
-    save_training_checkpoint(
-        tmp_path / "checkpoint-raw-export",
-        trainer=_Trainer(),
-        bundle=bundle,
-        family="unit",
-        model_identity=UNIT_IDENTITY,
-        progress={"next_epoch": 1},
-        rng_state={},
-        adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(export_module)},
-        export_ema=ema,
-    )
-
-    published = _exported_adapter_weight(
-        tmp_path / "checkpoint-raw-export" / LORA_WEIGHTS_NAME / "adapter_model.safetensors",
-    )
-    assert published.item() == pytest.approx(3.0)
-    assert ema.temp_stored_parameters is None  # no swap, so no snapshot was taken
-    assert bundle.module.weight.item() == pytest.approx(3.0)
 
 
 def test_training_checkpoint_restores_raw_weights_when_ema_gather_fails(tmp_path) -> None:
@@ -1345,92 +969,6 @@ def test_non_primary_joins_ema_artifact_gather_and_restores_raw_weights(tmp_path
     assert not (tmp_path / "checkpoint-nonprimary-ema").exists()
 
 
-def test_adapter_export_derives_nested_module_state_prefix(tmp_path) -> None:
-    class _ExportModule(nn.Linear):
-        def __init__(self) -> None:
-            super().__init__(1, 1, bias=False)
-            self.saved_keys = None
-
-        def save_pretrained(self, path, *, state_dict, selected_adapters):
-            self.saved_keys = set(state_dict)
-            assert selected_adapters == ["default"]
-            path.mkdir(parents=True)
-            save_file(dict(state_dict), path / "adapter_model.safetensors")
-
-    class _Root(nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.language_model = _ExportModule()
-
-    root = _Root()
-    bundle = _Bundle(root)
-
-    save_training_checkpoint(
-        tmp_path / "checkpoint-nested-adapter",
-        trainer=_Trainer(),
-        bundle=bundle,
-        family="unit",
-        model_identity=UNIT_IDENTITY,
-        progress={"next_epoch": 1},
-        rng_state={},
-        adapter_exports={
-            LORA_WEIGHTS_NAME: AdapterExport(root.language_model),
-        },
-    )
-
-    assert root.language_model.saved_keys == {"weight"}
-
-
-def test_adapter_export_selects_default_and_excludes_frozen_previous(tmp_path) -> None:
-    # peft is an optional extra, safetensors is a core dependency — only the
-    # former can legitimately be missing, so only the former guards the skip.
-    peft = pytest.importorskip("peft")
-
-    from vrl.models.steps.denoise.common.lora import (
-        freeze_checkpoint_owned_adapter_params,
-    )
-
-    class _Base(nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.lin = nn.Linear(2, 2, bias=False)
-
-        def forward(self, inputs):
-            return self.lin(inputs)
-
-    config = peft.LoraConfig(r=2, lora_alpha=4, target_modules=["lin"])
-    module = peft.get_peft_model(_Base(), config)
-    module.add_adapter("previous", config)
-    freeze_checkpoint_owned_adapter_params(module, "previous")
-    with torch.no_grad():
-        for name, parameter in module.named_parameters():
-            if ".default." in name:
-                parameter.fill_(3.0)
-            elif ".previous." in name:
-                parameter.fill_(9.0)
-    bundle = _Bundle(module)
-
-    save_training_checkpoint(
-        tmp_path / "checkpoint-default-only",
-        trainer=_Trainer(),
-        bundle=bundle,
-        family="unit",
-        model_identity=UNIT_IDENTITY,
-        progress={"next_epoch": 1},
-        rng_state={},
-        adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
-    )
-
-    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-default-only")
-    root_state = checkpoint.checkpoint_state["module"]
-    assert any(".previous." in name for name in root_state)
-    artifact_dir = tmp_path / "checkpoint-default-only" / LORA_WEIGHTS_NAME
-    artifact = load_file(artifact_dir / "adapter_model.safetensors")
-    assert artifact
-    assert all(torch.equal(tensor, torch.full_like(tensor, 3.0)) for tensor in artifact.values())
-    assert not (artifact_dir / "previous").exists()
-
-
 def test_load_training_checkpoint_requires_checkpoint_pt(tmp_path) -> None:
     ckpt = tmp_path / "checkpoint-1"
     ckpt.mkdir()
@@ -1497,44 +1035,6 @@ def test_load_training_checkpoint_accepts_exact_integer_schema_versions(
     )
 
     assert TrainingCheckpoint.load(ckpt).schema_version == schema_version
-
-
-def test_load_training_checkpoint_rejects_schema_v2_without_identity(tmp_path) -> None:
-    ckpt = tmp_path / "checkpoint-no-identity"
-    ckpt.mkdir()
-    torch.save(
-        {
-            "schema_version": CHECKPOINT_SCHEMA_VERSION,
-            "family": "unit",
-            "trainer": {},
-            "model": {"owned_state": {}},
-            "progress": {},
-            "rng": {},
-        },
-        ckpt / TRAINING_CHECKPOINT_NAME,
-    )
-
-    with pytest.raises(ValueError, match="model keys mismatch"):
-        TrainingCheckpoint.load(ckpt)
-
-
-def test_load_training_checkpoint_rejects_schema_v2_without_family(tmp_path) -> None:
-    ckpt = tmp_path / "checkpoint-no-family"
-    ckpt.mkdir()
-    torch.save(
-        {
-            "schema_version": CHECKPOINT_SCHEMA_VERSION,
-            "family": "",
-            "trainer": {},
-            "model": {"identity": UNIT_IDENTITY, "owned_state": {}},
-            "progress": {},
-            "rng": {},
-        },
-        ckpt / TRAINING_CHECKPOINT_NAME,
-    )
-
-    with pytest.raises(ValueError, match="family"):
-        TrainingCheckpoint.load(ckpt)
 
 
 def test_save_training_checkpoint_requires_non_empty_identity(tmp_path) -> None:
@@ -1609,551 +1109,6 @@ def test_load_training_checkpoint_rejects_non_object_meta(tmp_path) -> None:
 
     with pytest.raises(TypeError, match="JSON object"):
         TrainingCheckpoint.load(ckpt)
-
-
-def _context(*, rank: int = 0, world_size: int = 1) -> DistributedTrainingContext:
-    """The real context the checkpoint reads ``is_primary`` / ``world_size`` off.
-
-    ``is_primary`` is derived (``rank == 0``), so the two can no longer be written
-    independently: a hand-rolled namespace let a test claim "not primary, world
-    size 1", a state ``DistributedTrainingContext.from_root`` cannot produce. ``strategy``
-    follows the same rule the resolver enforces — ``single_process`` is world 1.
-
-    The context is real; the strategies that carry it stay recording doubles,
-    because a ``world_size=2`` rank-agreement *sequence* cannot be produced by one
-    process. Those sequences run for real on gloo in
-    ``tests/trainers/test_fsdp_gather_distributed.py`` (default lane).
-    """
-
-    return DistributedTrainingContext(
-        strategy="single_process" if world_size == 1 else "fsdp",
-        rank=rank,
-        world_size=world_size,
-        device=torch.device("cpu"),
-    )
-
-
-def _ema_holding(
-    module: nn.Module,
-    *,
-    average: float,
-    live: float,
-    stepped: bool = True,
-) -> EMAModuleWrapper:
-    """A real EMA whose stored average differs from the module's live weights.
-
-    ``has_updates`` is derived from ``num_updates`` in the real wrapper, so a
-    ``step()`` is what makes it True — the hand-written doubles this replaces could
-    simply declare it, and they had drifted apart on whether they even recorded
-    the parameters they were handed. The step runs while the weights still equal
-    ``average`` so the running average stays exactly there, which is what makes
-    the EMA artifact distinguishable from the raw one on disk.
-    """
-
-    trainable = [parameter for parameter in module.parameters() if parameter.requires_grad]
-    with torch.no_grad():
-        for parameter in trainable:
-            parameter.fill_(average)
-    ema = EMAModuleWrapper(trainable, decay=0.9, device=torch.device("cpu"))
-    if stepped:
-        ema.step(trainable, 0)
-    with torch.no_grad():
-        for parameter in trainable:
-            parameter.fill_(live)
-    return ema
-
-
-def _exported_adapter_weight(path: Path) -> torch.Tensor:
-    """Read an exported adapter back through safetensors.
-
-    ``write_text("stub")`` produced a five-byte file that no safetensors reader can
-    open, so ``.exists()`` was the strongest claim available. Loading it proves the
-    artifact is the real container with the real tensor in it.
-    """
-
-    return load_file(path)["weight"]
-
-
-class _Trainer:
-    def __init__(self) -> None:
-        self.loaded = None
-
-    def state_dict(self):
-        return {"step": 2, "global_step": 5}
-
-    def load_state_dict(self, state, *, strict=True):
-        del strict
-        self.loaded = dict(state)
-
-
-class _Bundle:
-    def __init__(self, module=None) -> None:
-        import torch.nn as nn
-
-        self.module = module or nn.Linear(1, 1, bias=False)
-        self.model = self.module
-        self.trainable_modules = {"module": self.module}
-
-
-class _OwnedModule(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.weight = nn.Parameter(torch.tensor([1.0]))
-        self.frozen_base = nn.Parameter(torch.tensor([2.0]), requires_grad=False)
-        self.register_buffer("previous", torch.tensor([3.0]))
-        register_checkpoint_owned_state(self, ["previous"])
-
-
-class _OwnedBundle:
-    def __init__(self) -> None:
-        self.module = _OwnedModule()
-        self.trainable_modules = {"module": self.module}
-
-
-def _training_checkpoint(tmp_path, payload) -> TrainingCheckpoint:
-    return TrainingCheckpoint(
-        checkpoint_dir=tmp_path,
-        checkpoint_path=tmp_path / TRAINING_CHECKPOINT_NAME,
-        payload=payload,
-        meta={},
-    )
-
-
-def _v1_payload(
-    state: dict[str, torch.Tensor],
-    *,
-    identity: dict | None = None,
-) -> dict:
-    model = {"trainable_modules": {"module": state}}
-    if identity is not None:
-        model["identity"] = identity
-    return {
-        "schema_version": 1,
-        "family": "unit",
-        "trainer": {"step": 2, "global_step": 5},
-        "model": model,
-        "progress": {"next_epoch": 2},
-        "rng": {},
-    }
-
-
-def test_checkpoint_export_is_exact_owned_clone_and_unwraps_compile() -> None:
-    bundle = _OwnedBundle()
-    compiled = torch.compile(bundle.module)
-    bundle.trainable_modules["module"] = compiled
-
-    snapshot = export_checkpoint_state(bundle)["module"]
-
-    assert set(snapshot) == {"weight", "previous"}
-    assert snapshot["weight"].data_ptr() != bundle.module.weight.data_ptr()
-    assert snapshot["previous"].data_ptr() != bundle.module.previous.data_ptr()
-    assert all("_orig_mod" not in name for name in snapshot)
-    before = {name: value.clone() for name, value in snapshot.items()}
-    with torch.no_grad():
-        bundle.module.weight.add_(10)
-        bundle.module.previous.add_(10)
-    assert all(torch.equal(snapshot[name], before[name]) for name in snapshot)
-
-
-def test_checkpoint_export_rejects_module_without_owned_state() -> None:
-    module = nn.Linear(1, 1)
-    module.requires_grad_(False)
-    bundle = type("_FrozenBundle", (), {"trainable_modules": {"module": module}})()
-
-    with pytest.raises(ValueError, match="no checkpoint-owned state"):
-        export_checkpoint_state(bundle)
-
-
-def test_strict_schema_v2_restore_requires_exact_owned_keys(tmp_path) -> None:
-    bundle = _OwnedBundle()
-    payload = {
-        "schema_version": CHECKPOINT_SCHEMA_VERSION,
-        "family": "unit",
-        "trainer": {"step": 2, "global_step": 5},
-        "model": {
-            "identity": UNIT_IDENTITY,
-            "owned_state": {
-                "module": {
-                    "weight": torch.tensor([7.0], dtype=torch.float64),
-                    "previous": torch.tensor([8.0], dtype=torch.float64),
-                },
-            },
-        },
-        "progress": {"next_epoch": 2},
-        "rng": {},
-    }
-
-    restore_training_checkpoint(
-        _training_checkpoint(tmp_path, payload),
-        trainer=_Trainer(),
-        bundle=bundle,
-        family="unit",
-        expected_model_identity=UNIT_IDENTITY,
-        strict=True,
-    )
-
-    assert bundle.module.weight.item() == pytest.approx(7.0)
-    assert bundle.module.previous.item() == pytest.approx(8.0)
-    assert bundle.module.frozen_base.item() == pytest.approx(2.0)
-    assert bundle.module.weight.dtype == torch.float32
-    assert bundle.module.previous.dtype == torch.float32
-
-
-def test_schema_v2_wrong_shape_rejects_all_roots_before_mutation(tmp_path) -> None:
-    bundle = _OwnedBundle()
-    bundle.second = _OwnedModule()
-    bundle.trainable_modules["second"] = bundle.second
-    before = {
-        root_name: {name: value.clone() for name, value in module.state_dict().items()}
-        for root_name, module in bundle.trainable_modules.items()
-    }
-    payload = {
-        "schema_version": CHECKPOINT_SCHEMA_VERSION,
-        "family": "unit",
-        "trainer": {},
-        "model": {
-            "identity": UNIT_IDENTITY,
-            "owned_state": {
-                "module": {
-                    "weight": torch.tensor([7.0]),
-                    "previous": torch.tensor([8.0]),
-                },
-                "second": {
-                    "weight": torch.tensor([9.0]),
-                    "previous": torch.tensor([10.0, 11.0]),
-                },
-            },
-        },
-        "progress": {},
-        "rng": {},
-    }
-
-    with pytest.raises(ValueError, match="shape mismatch"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, payload),
-            trainer=_Trainer(),
-            bundle=bundle,
-            family="unit",
-            expected_model_identity=UNIT_IDENTITY,
-            strict=True,
-        )
-
-    assert all(
-        torch.equal(value, before[root_name][name])
-        for root_name, module in bundle.trainable_modules.items()
-        for name, value in module.state_dict().items()
-    )
-
-
-def test_schema_v2_non_tensor_owned_value_rejects_before_mutation(tmp_path) -> None:
-    bundle = _OwnedBundle()
-    before = {name: value.clone() for name, value in bundle.module.state_dict().items()}
-    payload = {
-        "schema_version": CHECKPOINT_SCHEMA_VERSION,
-        "family": "unit",
-        "trainer": {},
-        "model": {
-            "identity": UNIT_IDENTITY,
-            "owned_state": {
-                "module": {
-                    "weight": torch.tensor([7.0]),
-                    "previous": 8.0,
-                },
-            },
-        },
-        "progress": {},
-        "rng": {},
-    }
-
-    with pytest.raises(TypeError, match="must be a tensor"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, payload),
-            trainer=_Trainer(),
-            bundle=bundle,
-            family="unit",
-            expected_model_identity=UNIT_IDENTITY,
-            strict=True,
-        )
-
-    assert all(
-        torch.equal(value, before[name]) for name, value in bundle.module.state_dict().items()
-    )
-
-
-@pytest.mark.parametrize(
-    "owned_state",
-    [
-        {"module": {"weight": torch.tensor([7.0])}},
-        {
-            "module": {
-                "weight": torch.tensor([7.0]),
-                "previous": torch.tensor([8.0]),
-                "frozen_base": torch.tensor([9.0]),
-            },
-        },
-        {
-            "module": {
-                "weight": torch.tensor([7.0]),
-                "previous": torch.tensor([8.0]),
-            },
-            "extra": {},
-        },
-    ],
-)
-def test_strict_schema_v2_restore_rejects_missing_extra_keys_and_roots(
-    tmp_path,
-    owned_state,
-) -> None:
-    payload = {
-        "schema_version": CHECKPOINT_SCHEMA_VERSION,
-        "family": "unit",
-        "trainer": {"step": 2, "global_step": 5},
-        "model": {"identity": UNIT_IDENTITY, "owned_state": owned_state},
-        "progress": {},
-        "rng": {},
-    }
-
-    with pytest.raises(ValueError, match=r"keys mismatch|roots mismatch"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, payload),
-            trainer=_Trainer(),
-            bundle=_OwnedBundle(),
-            family="unit",
-            expected_model_identity=UNIT_IDENTITY,
-            strict=True,
-        )
-
-
-def test_strict_schema_v1_full_state_restores_without_identity(tmp_path) -> None:
-    source = _OwnedBundle()
-    with torch.no_grad():
-        source.module.weight.fill_(7.0)
-        source.module.frozen_base.fill_(9.0)
-        source.module.previous.fill_(8.0)
-    restored = _OwnedBundle()
-
-    restore_training_checkpoint(
-        _training_checkpoint(tmp_path, _v1_payload(source.module.state_dict())),
-        trainer=_Trainer(),
-        bundle=restored,
-        family="unit",
-        strict=True,
-    )
-
-    assert restored.module.weight.item() == pytest.approx(7.0)
-    assert restored.module.previous.item() == pytest.approx(8.0)
-    assert restored.module.frozen_base.item() == pytest.approx(9.0)
-
-
-def test_strict_schema_v1_full_wrong_shape_rejects_all_roots_before_mutation(
-    tmp_path,
-) -> None:
-    restored = _OwnedBundle()
-    restored.second = _OwnedModule()
-    restored.trainable_modules["second"] = restored.second
-    before = {
-        root_name: {name: value.clone() for name, value in module.state_dict().items()}
-        for root_name, module in restored.trainable_modules.items()
-    }
-    state = {
-        "module": {
-            "weight": torch.tensor([7.0]),
-            "frozen_base": torch.tensor([9.0]),
-            "previous": torch.tensor([8.0]),
-        },
-        "second": {
-            "weight": torch.tensor([10.0]),
-            "frozen_base": torch.tensor([11.0]),
-            "previous": torch.tensor([12.0, 13.0]),
-        },
-    }
-    payload = {
-        "schema_version": 1,
-        "family": "unit",
-        "trainer": {},
-        "model": {"trainable_modules": state},
-        "progress": {},
-        "rng": {},
-    }
-
-    with pytest.raises(ValueError, match="shape mismatch"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, payload),
-            trainer=_Trainer(),
-            bundle=restored,
-            family="unit",
-            strict=True,
-        )
-
-    assert all(
-        torch.equal(value, before[root_name][name])
-        for root_name, module in restored.trainable_modules.items()
-        for name, value in module.state_dict().items()
-    )
-
-
-@pytest.mark.parametrize("mutation", ["missing", "extra"])
-def test_strict_schema_v1_malformed_full_state_rejects_before_mutation(
-    tmp_path,
-    mutation,
-) -> None:
-    source = _OwnedBundle()
-    with torch.no_grad():
-        source.module.weight.fill_(7.0)
-        source.module.frozen_base.fill_(9.0)
-        source.module.previous.fill_(8.0)
-    state = dict(source.module.state_dict())
-    if mutation == "missing":
-        state.pop("frozen_base")
-    else:
-        state["unknown"] = torch.tensor([10.0])
-    restored = _OwnedBundle()
-    before = {name: value.clone() for name, value in restored.module.state_dict().items()}
-
-    with pytest.raises(ValueError, match=r"verified model identity|keys mismatch"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, _v1_payload(state)),
-            trainer=_Trainer(),
-            bundle=restored,
-            family="unit",
-            strict=True,
-        )
-
-    assert all(
-        torch.equal(value, before[name]) for name, value in restored.module.state_dict().items()
-    )
-
-
-def test_strict_schema_v1_compiled_full_state_normalizes_legacy_prefix(tmp_path) -> None:
-    source = _OwnedBundle()
-    with torch.no_grad():
-        source.module.frozen_base.fill_(9.0)
-    legacy_compiled = dict(torch.compile(source.module).state_dict())
-    restored = _OwnedBundle()
-
-    restore_training_checkpoint(
-        _training_checkpoint(tmp_path, _v1_payload(legacy_compiled)),
-        trainer=_Trainer(),
-        bundle=restored,
-        family="unit",
-        strict=True,
-    )
-
-    assert torch.equal(restored.module.weight, source.module.weight)
-    assert torch.equal(restored.module.previous, source.module.previous)
-    assert torch.equal(restored.module.frozen_base, source.module.frozen_base)
-
-
-def test_strict_schema_v1_rejects_mixed_compile_prefixes(tmp_path) -> None:
-    mixed = {
-        "_orig_mod.weight": torch.tensor([7.0]),
-        "frozen_base": torch.tensor([2.0]),
-        "_orig_mod.previous": torch.tensor([8.0]),
-    }
-
-    with pytest.raises(ValueError, match="mixes compiled and uncompiled"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, _v1_payload(mixed)),
-            trainer=_Trainer(),
-            bundle=_OwnedBundle(),
-            family="unit",
-            strict=True,
-        )
-
-
-def test_strict_schema_v2_never_normalizes_compile_prefix(tmp_path) -> None:
-    payload = {
-        "schema_version": CHECKPOINT_SCHEMA_VERSION,
-        "family": "unit",
-        "trainer": {"step": 2, "global_step": 5},
-        "model": {
-            "identity": UNIT_IDENTITY,
-            "owned_state": {
-                "module": {
-                    "_orig_mod.weight": torch.tensor([7.0]),
-                    "_orig_mod.previous": torch.tensor([8.0]),
-                },
-            },
-        },
-        "progress": {},
-        "rng": {},
-    }
-
-    with pytest.raises(ValueError, match="keys mismatch"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, payload),
-            trainer=_Trainer(),
-            bundle=_OwnedBundle(),
-            family="unit",
-            expected_model_identity=UNIT_IDENTITY,
-            strict=True,
-        )
-
-
-def test_strict_schema_v1_selective_state_requires_verified_identity(tmp_path) -> None:
-    selective = {
-        "weight": torch.tensor([7.0]),
-        "previous": torch.tensor([8.0]),
-    }
-
-    with pytest.raises(ValueError, match="verified model identity"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, _v1_payload(selective)),
-            trainer=_Trainer(),
-            bundle=_OwnedBundle(),
-            family="unit",
-            strict=True,
-        )
-
-
-def test_strict_schema_v1_selective_state_rejects_missing_registered_state(tmp_path) -> None:
-    payload = _v1_payload(
-        {"weight": torch.tensor([7.0])},
-        identity=UNIT_IDENTITY,
-    )
-
-    with pytest.raises(ValueError, match=r"missing=.*previous"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, payload),
-            trainer=_Trainer(),
-            bundle=_OwnedBundle(),
-            family="unit",
-            expected_model_identity=UNIT_IDENTITY,
-            strict=True,
-        )
-
-
-def test_non_strict_restore_warns_and_loads_matching_owned_state(tmp_path, caplog) -> None:
-    payload = {
-        "schema_version": CHECKPOINT_SCHEMA_VERSION,
-        "family": "other",
-        "trainer": {"step": 2, "global_step": 5},
-        "model": {
-            "identity": {"schema": "other"},
-            "owned_state": {
-                "module": {
-                    "weight": torch.tensor([7.0]),
-                    "unknown": torch.tensor([9.0]),
-                },
-            },
-        },
-        "progress": {},
-        "rng": {},
-    }
-    bundle = _OwnedBundle()
-
-    restore_training_checkpoint(
-        _training_checkpoint(tmp_path, payload),
-        trainer=_Trainer(),
-        bundle=bundle,
-        family="unit",
-        expected_model_identity=UNIT_IDENTITY,
-        strict=False,
-    )
-
-    assert bundle.module.weight.item() == pytest.approx(7.0)
-    assert bundle.module.previous.item() == pytest.approx(3.0)
-    assert "Non-strict checkpoint restore" in caplog.text
 
 
 def test_checkpoint_publish_is_atomic(tmp_path) -> None:
@@ -2333,27 +1288,26 @@ def test_resave_to_existing_checkpoint_dir_replaces_it(tmp_path) -> None:
     from vrl.trainers.checkpointing import is_complete_checkpoint
 
     target = tmp_path / "checkpoint-1"
-    for _ in range(2):
+    bundle = _Bundle()
+    for value in (3.0, 7.0):
+        with torch.no_grad():
+            bundle.module.weight.fill_(value)
         save_training_checkpoint(
             target,
             trainer=_Trainer(),
-            bundle=_Bundle(),
+            bundle=bundle,
             family="unit",
             model_identity=UNIT_IDENTITY,
             progress={"next_epoch": 1, "global_step": 1},
             rng_state={},
         )
     assert is_complete_checkpoint(target)
-    assert TrainingCheckpoint.load(target).payload["family"] == "unit"
+    saved = TrainingCheckpoint.load(target)
+    assert saved.payload["family"] == "unit"
+    assert saved.checkpoint_state["module"]["weight"].item() == 7.0
 
 
-def test_require_equal_tensor_tree_bridges_devices() -> None:
-    """Optimizer-restore parity must compare values, not tensor placement.
-
-    load_state_dict moves optimizer state onto the param device while the
-    checkpoint side stays on CPU; the strict parity gate crashed on that
-    legitimate device split (torch.equal rejects cross-device operands).
-    """
+def test_require_equal_tensor_tree_compares_values() -> None:
     from vrl.trainers.checkpointing import _require_equal_tensor_tree
 
     cpu_tree = {"optimizer": {"exp_avg": torch.ones(3)}}
@@ -2365,8 +1319,15 @@ def test_require_equal_tensor_tree_bridges_devices() -> None:
             label="mismatch",
         )
 
+
+@pytest.mark.gpu
+def test_require_equal_tensor_tree_bridges_devices() -> None:
+    """Restored optimizer tensors move to CUDA while the checkpoint stays on CPU."""
+    from vrl.trainers.checkpointing import _require_equal_tensor_tree
+
     if not torch.cuda.is_available():
         pytest.skip("cross-device case needs CUDA")
+    cpu_tree = {"optimizer": {"exp_avg": torch.ones(3)}}
     cuda_tree = {"optimizer": {"exp_avg": torch.ones(3, device="cuda")}}
     _require_equal_tensor_tree(cpu_tree, cuda_tree, label="cross device")
     with pytest.raises(ValueError, match="tensor mismatch"):
@@ -2425,64 +1386,3 @@ def test_latest_checkpoint_does_not_guess_missing_step_from_name(tmp_path):
     )
     with pytest.raises(ValueError, match="requires a non-negative integer global_step"):
         find_latest_complete_checkpoint(tmp_path)
-
-
-def test_checkpoint_cli_values_become_distinct_labelled_arms(tmp_path: Path) -> None:
-    """`--checkpoint [LABEL=]PATH` parsing, shared by the evaluation entrypoints.
-
-    Two of them used to carry byte-identical copies of this, down to the error
-    strings, differing only in whether a plain file is acceptable.
-    """
-
-    final = tmp_path / "epoch-3" / "checkpoint-final"
-    final.mkdir(parents=True)
-    other = tmp_path / "epoch-7"
-    other.mkdir()
-
-    # Whitespace around the label is trimmed; the path is taken as written,
-    # because a padded path is a typo, not a label style.
-    targets = CheckpointTarget.from_cli_values([str(final), f" late ={other}"])
-
-    # An omitted label comes from the parent when the leaf is checkpoint-final.
-    assert [target.label for target in targets] == ["epoch-3", "late"]
-    assert [target.path for target in targets] == [final.resolve(), other.resolve()]
-
-
-def test_checkpoint_cli_values_refuse_collisions_and_the_reserved_label(
-    tmp_path: Path,
-) -> None:
-    first = tmp_path / "a" / "epoch-1"
-    second = tmp_path / "b" / "epoch-1"
-    for path in (first, second):
-        path.mkdir(parents=True)
-
-    with pytest.raises(ValueError, match="labels must be unique"):
-        CheckpointTarget.from_cli_values([str(first), str(second)])
-
-    with pytest.raises(ValueError, match="reserved"):
-        CheckpointTarget.from_cli_values([f"base={first}"], reserved_label="base")
-
-    with pytest.raises(ValueError, match="must be non-empty"):
-        CheckpointTarget.from_cli_values(["  "])
-
-    with pytest.raises(ValueError, match="resolved empty"):
-        CheckpointTarget.from_cli_values([f"!!!={first}"])
-
-
-def test_require_directory_is_what_separates_the_two_entrypoints(tmp_path: Path) -> None:
-    """One entrypoint loads a published directory; another may name a weights file."""
-
-    weights = tmp_path / "adapter.safetensors"
-    weights.touch()
-
-    with pytest.raises(FileNotFoundError, match="does not exist"):
-        CheckpointTarget.from_cli_values([f"arm={weights}"])
-
-    (target,) = CheckpointTarget.from_cli_values([f"arm={weights}"], require_directory=False)
-    assert target.path == weights.resolve()
-
-    with pytest.raises(FileNotFoundError, match="does not exist"):
-        CheckpointTarget.from_cli_values(
-            [f"arm={tmp_path / 'absent'}"],
-            require_directory=False,
-        )

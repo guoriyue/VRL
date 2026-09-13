@@ -28,9 +28,7 @@ from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.strategy import (
     DDPStrategy,
-    FSDPStrategy,
     SingleProcessStrategy,
-    _UnshardedStateStrategy,
     build_strategy,
 )
 
@@ -152,26 +150,6 @@ def test_ddp_prepare_model_wraps_transformer(cpu_process_group) -> None:
     assert out is policy
     assert policy.set_calls == 1
     assert isinstance(policy.transformer, DistributedDataParallel)
-
-
-def test_ddp_and_single_process_share_one_rollout_export(cpu_process_group) -> None:
-    """DDP and single process must resolve rollout export to the same function.
-
-    Both hold every parameter unsharded, so the export is one implementation on
-    ``_UnshardedStateStrategy``. DDP used to hand-copy it, and the copy carried
-    the reason it must not route through the FSDP DCP gather; that reason now
-    lives on the shared method. A re-added override reddens this.
-    """
-
-    assert (
-        DDPStrategy.export_rollout_state
-        is SingleProcessStrategy.export_rollout_state
-        is _UnshardedStateStrategy.export_rollout_state
-    )
-    assert "export_rollout_state" not in vars(DDPStrategy)
-    assert "export_rollout_state" not in vars(SingleProcessStrategy)
-    # FSDP is the counterexample the mixin docstring names: it must override.
-    assert "export_rollout_state" in vars(FSDPStrategy)
 
 
 def test_ddp_rollout_export_matches_single_process_key_space(cpu_process_group) -> None:

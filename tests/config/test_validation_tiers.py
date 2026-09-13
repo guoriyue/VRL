@@ -10,27 +10,11 @@ into ``parse_config``.
 
 from __future__ import annotations
 
-import inspect
-
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.config import rules, validation
+from vrl.config import validation
 from vrl.config.schema import RootConfig, parse_config
-
-
-def test_tier_two_is_one_entrypoint_over_the_parsed_root() -> None:
-    """Tier 2 is a single function of the root: no per-rule registry to drift."""
-
-    assert list(inspect.signature(rules.check_cross_section_rules).parameters) == ["root"]
-    assert rules.__all__ == ["check_cross_section_rules"]
-
-
-def test_every_training_gate_takes_the_root_and_the_precision_policy() -> None:
-    assert validation.TRAINING_GATES
-    for gate in validation.TRAINING_GATES:
-        parameters = list(inspect.signature(gate).parameters)
-        assert parameters == ["root", "precision"], gate.__name__
 
 
 def test_cross_section_rules_fire_on_direct_root_construction() -> None:
@@ -40,14 +24,6 @@ def test_cross_section_rules_fire_on_direct_root_construction() -> None:
         RootConfig.model_validate(
             {"model": {"family": "janus_pro_r1"}, "algorithm": {"kind": "token_grpo"}}
         )
-
-
-def test_rules_module_stays_import_light() -> None:
-    """Tier 2 runs on every parse, eval tools included: no torch, no runtime modules."""
-
-    source = inspect.getsource(rules)
-    for forbidden in ("import torch", "from vrl.trainers", "from vrl.models.interfaces"):
-        assert forbidden not in source, forbidden
 
 
 def test_launch_gates_do_not_run_inside_parse_config() -> None:

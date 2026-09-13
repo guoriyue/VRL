@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 from omegaconf import OmegaConf
 from PIL import Image
@@ -96,22 +95,6 @@ def test_lora_checkpoint_provenance_binds_progress_and_identity(tmp_path) -> Non
         "next_epoch": 20,
     }
     assert len(provenance["metadata_sha256"]) == 64
-
-
-def test_generate_image_conversion_accepts_chw_float() -> None:
-    """``image_to_uint8_hwc`` turns a float CHW image into uint8 HWC with the [0, 1] range scaled
-    to 255.
-    """
-    from vrl.utils.media import image_to_uint8_hwc
-
-    image = np.zeros((3, 2, 2), dtype=np.float32)
-    image[0] = 1.0
-
-    out = image_to_uint8_hwc(image)
-
-    assert out.shape == (2, 2, 3)
-    assert out.dtype == np.uint8
-    assert out[..., 0].max() == 255
 
 
 def test_generate_sampling_defaults_follow_config() -> None:
@@ -422,11 +405,13 @@ def test_generate_records_the_batch_seed_for_every_sample(monkeypatch, tmp_path)
             ),
         ],
     )
-    monkeypatch.setattr(
-        generate,
-        "generate_images",
-        lambda *_args, **_kwargs: [Image.new("RGB", (2, 2)), Image.new("RGB", (2, 2))],
-    )
+    generation_calls = []
+
+    def generate_batch(_model, *, prompt, seed, samples_per_prompt, **_kwargs):
+        generation_calls.append((prompt, seed, samples_per_prompt))
+        return [Image.new("RGB", (2, 2)) for _ in range(samples_per_prompt)]
+
+    monkeypatch.setattr(generate, "generate_images", generate_batch)
 
     output_dir = tmp_path / "generated"
     generate.main(
@@ -450,7 +435,9 @@ def test_generate_records_the_batch_seed_for_every_sample(monkeypatch, tmp_path)
         json.loads(line)
         for line in (output_dir / "metadata.jsonl").read_text(encoding="utf-8").splitlines()
     ]
-    assert [row["seed"] for row in rows] == [37, 37]
+    assert generation_calls == [('A sign reading "OPEN".', 37, 2)]
+    prompt, seed, sample_count = generation_calls[0]
+    assert [(row["prompt"], row["seed"]) for row in rows] == [(prompt, seed)] * sample_count
     assert {path.name for path in output_dir.iterdir()} == {
         "images",
         "run_config.json",

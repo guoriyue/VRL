@@ -25,3 +25,7 @@
 ## Tests
 
 - Tests are written for the reader: prefer self-contained tests; a shared builder/fixture is allowed only when the same construction is genuinely reused by 3+ test files. Delete on sight: tests that echo a constructor's fields or a default back, and parametrized matrices whose rows all exercise the same code path.
+- A test outside the `gpu` lane never sees CUDA: `tests/conftest.py` pins `torch.cuda.is_available()` to False for every unmarked test. A test that models a GPU host patches `is_available`/`device_count` itself (or uses `cuda_devices`); a test that needs the card carries `@pytest.mark.gpu`.
+- Constructor bypasses (`object.__new__(Cls)` plus attribute pokes) belong in one named package helper (`bare_trainer` in `tests/trainers/online/_helpers.py`), never inline in a test: the attribute names a method reads should appear in one place.
+- A test module carries one theorem family and says so in its name (`test_checkpoint_cli.py`, `test_checkpoint_schema_restore.py`), not one production module; shared doubles for a family live in a `_<family>_helpers.py` beside them.
+- Run tests only from a venv synced to the lock (`uv sync --frozen --group test --group lint --extra cosmos ...`, then the editable `third_party` install — see README). Never `pip install` into `.venv` by hand.

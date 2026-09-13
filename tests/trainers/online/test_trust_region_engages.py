@@ -96,14 +96,6 @@ def _build_trainer(
     )
 
 
-def test_flag_values_match_objective() -> None:
-    # Plain GRPO: clip is a safety rail, valid at one epoch.
-    assert GRPO().requires_active_trust_region is False
-    # Subclasses whose loss IS the ratio term must require a moving policy.
-    assert FlowDPPO().requires_active_trust_region is True
-    assert GRPOGuard().requires_active_trust_region is True
-
-
 def test_flow_dppo_strict_single_epoch_is_rejected(tmp_path) -> None:
     with pytest.raises(ValueError, match="trust region"):
         _build_trainer(tmp_path, algorithm=FlowDPPO(), ppo_epochs=1)

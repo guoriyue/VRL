@@ -161,14 +161,6 @@ class VDNH3Model(MiniMaxH3Model):
             ),
         )
 
-    # -- diagnostics -------------------------------------------------------
-
-    @property
-    def hybrid_blocks(self) -> int:
-        """How many DiT blocks carry the hybrid attention (0 = dense base)."""
-
-        return sum(1 for _ in load_vdn().iter_hybrids(self.transformer))
-
 
 class VDNH3ReplayModel(MiniMaxH3ReplayModel, VDNH3Model):
     """Trainer-side replay model: the hybrid transformer and the two schedulers.

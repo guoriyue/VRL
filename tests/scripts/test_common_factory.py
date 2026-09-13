@@ -177,36 +177,6 @@ def test_chunk_autoregressive_factory_rejects_full_sequence_sft_regularizer() ->
         )
 
 
-def test_wan_empty_lora_preserves_base_policy_initially(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An empty training LoRA on Wan keeps ``init_lora_weights`` at its True default, so a fresh
-    adapter reproduces the base policy until it is trained.
-    """
-    monkeypatch.setattr(
-        "diffusers.DiffusionPipeline.load_config",
-        lambda *_args, **_kwargs: {
-            "boundary_ratio": None,
-            "expand_timesteps": False,
-        },
-    )
-    cfg = load_config("experiment/wan_2_1/online_grpo_physics")
-    built = build_configs(cfg)
-
-    build = get_model_family_entry("wan_2_1").resolve_model_build(
-        built.root,
-        torch.device("cpu"),
-        precision=built.precision,
-    )
-
-    assert build.use_lora is True
-    lora_config = build.lora
-    assert lora_config is not None
-    # Wan's apply_lora reads ``init_lora_weights`` with a True default, so an
-    # empty training adapter still initially preserves base Wan output.
-    assert lora_config.get("init_lora_weights", True) is True
-
-
 def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     """PickScore is logged on CPU but contributes zero optimization weight."""
     cfg = load_config("experiment/sana/online_grpo_aesthetic")

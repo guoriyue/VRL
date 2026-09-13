@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import torch
 from torch import nn
 
 from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
@@ -44,11 +45,13 @@ def _lora_values(dropout: float | None) -> dict[str, Any]:
     ("configured_dropout", "expected_dropout"),
     ((0.4, 0.4), (None, 0.0)),
 )
-def test_wan_fresh_adapter_preserves_effective_dropout(
+def test_wan_fresh_adapter_preserves_base_output_and_effective_dropout(
     configured_dropout: float | None,
     expected_dropout: float,
 ) -> None:
     model = _model()
+    inputs = torch.ones(1, 2)
+    before = model.transformer.proj(inputs).detach()
 
     model.apply_lora(
         SimpleNamespace(
@@ -60,6 +63,7 @@ def test_wan_fresh_adapter_preserves_effective_dropout(
     )
 
     assert model.transformer.peft_config["default"].lora_dropout == expected_dropout
+    torch.testing.assert_close(model.transformer.proj(inputs), before, rtol=0, atol=0)
 
 
 def test_wan_warm_start_validates_effective_topology(

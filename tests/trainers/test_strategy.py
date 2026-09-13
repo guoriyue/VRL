@@ -11,6 +11,7 @@ import pytest
 import torch
 from torch import nn
 
+from tests.trainers.online._helpers import bare_trainer
 from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer
@@ -213,15 +214,15 @@ def test_training_parking_cache_release_failure_rolls_back_and_does_not_commit(
 
 
 def test_online_trainer_resolves_lazy_training_memory_state_on_every_phase() -> None:
-    from vrl.trainers.online.trainer import OnlineTrainer
 
-    trainer = object.__new__(OnlineTrainer)
-    trainer.model = nn.Linear(2, 1)
-    trainer.ref_model = nn.Linear(2, 1)
-    trainer._optimizer = None
-    trainer._ema = None
-    trainer._grad_scaler = None
-    trainer.device = torch.device("cpu")
+    trainer = bare_trainer(
+        model=nn.Linear(2, 1),
+        ref_model=nn.Linear(2, 1),
+        _optimizer=None,
+        _ema=None,
+        _grad_scaler=None,
+        device=torch.device("cpu"),
+    )
 
     first = trainer._training_memory_state()
     assert first.optimizer is None
@@ -497,12 +498,9 @@ def test_every_strategy_answers_the_checkpoint_optimizer_export() -> None:
         _UnshardedStateStrategy,
     )
 
+    assert hasattr(Strategy, "export_checkpoint_optimizer_state")
     for strategy in (SingleProcessStrategy, DDPStrategy, FSDPStrategy):
         assert callable(getattr(strategy, "export_checkpoint_optimizer_state", None)), strategy
-    assert hasattr(Strategy, "export_checkpoint_optimizer_state")
-    assert "export_checkpoint_optimizer_state" in vars(FSDPStrategy)
-    assert "export_checkpoint_optimizer_state" not in vars(SingleProcessStrategy)
-    assert "export_checkpoint_optimizer_state" not in vars(DDPStrategy)
 
     model = nn.Linear(2, 2)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)

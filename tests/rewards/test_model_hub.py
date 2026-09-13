@@ -7,31 +7,21 @@ import pytest
 from vrl.rewards.models.hub import HuggingFaceRepoRevision
 
 
-def test_parse_hf_repo_revision_defaults_bare_repo_to_main() -> None:
-    """Checks bare Hugging Face repo ids use the default revision."""
+@pytest.mark.parametrize(
+    ("reference", "repo_id", "revision"),
+    [
+        ("org/model", "org/model", "main"),
+        ("org/model@checkpoint-1", "org/model", "checkpoint-1"),
+        # ``repo@`` means the default revision, never an empty string.
+        ("org/model@", "org/model", "main"),
+    ],
+)
+def test_parse_hf_repo_revision_splits_at_the_final_at_sign(
+    reference: str, repo_id: str, revision: str
+) -> None:
+    ref = HuggingFaceRepoRevision.parse(reference)
 
-    ref = HuggingFaceRepoRevision.parse("org/model")
-
-    assert ref.repo_id == "org/model"
-    assert ref.revision == "main"
-
-
-def test_parse_hf_repo_revision_accepts_explicit_revision() -> None:
-    """Checks repo@revision model references split at the final at sign."""
-
-    ref = HuggingFaceRepoRevision.parse("org/model@checkpoint-1")
-
-    assert ref.repo_id == "org/model"
-    assert ref.revision == "checkpoint-1"
-
-
-def test_parse_hf_repo_revision_defaults_empty_revision() -> None:
-    """Checks repo@ uses the default revision instead of an empty string."""
-
-    ref = HuggingFaceRepoRevision.parse("org/model@")
-
-    assert ref.repo_id == "org/model"
-    assert ref.revision == "main"
+    assert (ref.repo_id, ref.revision) == (repo_id, revision)
 
 
 def test_parse_hf_repo_revision_rejects_missing_repo_id() -> None:

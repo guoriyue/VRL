@@ -11,6 +11,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 
 from tests.trainers._strategy_policies import free_port
+from vrl.algorithms.types import TrainStepMetrics
 from vrl.scripts.common.online import OnlineRecipeRun
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.metrics_io import OnlineMetricsCSV
@@ -141,44 +142,7 @@ def test_metrics_csv_initializes_both_headers_before_any_rows(tmp_path) -> None:
 def test_metrics_csv_writes_continuous_request_diagnostics(tmp_path) -> None:
     path = tmp_path / "metrics.csv"
     run = OnlineMetricsCSV(tmp_path)
-    update = SimpleNamespace(
-        clip_fraction=0.0,
-        active_clip_fraction=0.0,
-        tis_clip_fraction=0.0,
-        rs_seq_masked_fraction=0.0,
-        approx_kl=0.0,
-    )
-    initial = SimpleNamespace(
-        clip_fraction=0.0,
-        active_clip_fraction=0.0,
-        logprob_abs_diff_max=0.0,
-    )
-    mismatch = SimpleNamespace(
-        logprob_abs_diff_mean=0.0,
-        logprob_abs_diff_max=0.0,
-        ratio_abs_dev_mean=0.0,
-        ratio_abs_dev_max=0.0,
-        mismatch_kl=0.0,
-        mismatch_k3_kl=0.0,
-    )
-    metrics = SimpleNamespace(
-        loss=0.0,
-        policy_loss=0.0,
-        sft_loss=0.0,
-        kl_penalty=0.0,
-        weighted_kl_loss=0.0,
-        reward_mean=1.0,
-        reward_std=0.0,
-        update=update,
-        initial_replay=initial,
-        logprob_mismatch=mismatch,
-        advantage_mean=0.0,
-        grad_norm=1.0,
-        adv_saturation=0.0,
-        adv_zero_rate=0.0,
-        group_size=4.0,
-        trained_prompt_num=1,
-        reward_components={},
+    metrics = TrainStepMetrics(
         phase_times={
             "continuous.ready_groups_at_demand": 1.0,
             "continuous.lookahead_requested": 1.0,
@@ -231,8 +195,6 @@ def test_metrics_csv_preflight_is_rank_consistent_with_real_gloo(tmp_path, fail)
 
 def test_full_precision_metrics_follow_online_write_and_resume(tmp_path) -> None:
     import csv
-
-    from vrl.algorithms.types import TrainStepMetrics
 
     run = OnlineMetricsCSV(tmp_path, component_names=("ocr",))
     for epoch in range(3):

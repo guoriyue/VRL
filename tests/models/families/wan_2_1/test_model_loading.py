@@ -175,51 +175,36 @@ def test_wan_resolver_projects_pipeline_offload_to_rollout_only(family: str, mon
     assert "offload_mode" not in (replay.model_config or {})
 
 
-def test_wan_i2v_from_build_sequential_cpu_offload(monkeypatch) -> None:
-    """Sequential hooks are deferred until after the loader returns."""
+@pytest.mark.parametrize(
+    ("mode", "device_index", "hooked", "untouched"),
+    [
+        ("sequential", 3, "sequential_offload_gpu", "model_offload_gpu"),
+        ("model", 2, "model_offload_gpu", "sequential_offload_gpu"),
+    ],
+)
+def test_wan_i2v_offload_hooks_are_deferred_until_after_the_loader(
+    monkeypatch, mode: str, device_index: int, hooked: str, untouched: str
+) -> None:
+    """Either offload mode installs its hooks only in ``apply_generation_offload``,
+    on the build device's index, and stages every module dtype-only on CPU until
+    Accelerate streams it."""
     from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
 
     pipeline, calls = _patch_from_pretrained(monkeypatch)
 
     build = _i2v_build(
-        device=torch.device("cuda:3"),
-        rollout=_rollout_build_options("sequential"),
+        device=torch.device(f"cuda:{device_index}"),
+        rollout=_rollout_build_options(mode),
     )
 
     model = WanI2VDiffusersModel.from_build(build)
 
     assert model.pipeline is pipeline
     _assert_frozen_and_loaded(pipeline, calls)
-    assert pipeline.sequential_offload_gpu is None
+    assert getattr(pipeline, hooked) is None
     model.apply_generation_offload(build)
-    # gpu_id is taken from the build device index.
-    assert pipeline.sequential_offload_gpu == 3
-    assert pipeline.model_offload_gpu is None
-    # Dtype-only staging keeps every module on CPU until Accelerate streams it.
-    assert pipeline.vae.to_calls == [(None, torch.float32)]
-    assert pipeline.text_encoder.to_calls == [(None, torch.bfloat16)]
-    assert pipeline.image_encoder.to_calls == [(None, torch.bfloat16)]
-
-
-def test_wan_i2v_from_build_model_cpu_offload(monkeypatch) -> None:
-    """Model-offload hooks are also deferred until adapter setup is complete."""
-    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
-
-    pipeline, calls = _patch_from_pretrained(monkeypatch)
-
-    build = _i2v_build(
-        device=torch.device("cuda:2"),
-        rollout=_rollout_build_options("model"),
-    )
-
-    model = WanI2VDiffusersModel.from_build(build)
-
-    assert model.pipeline is pipeline
-    _assert_frozen_and_loaded(pipeline, calls)
-    assert pipeline.model_offload_gpu is None
-    model.apply_generation_offload(build)
-    assert pipeline.model_offload_gpu == 2
-    assert pipeline.sequential_offload_gpu is None
+    assert getattr(pipeline, hooked) == device_index
+    assert getattr(pipeline, untouched) is None
     assert pipeline.vae.to_calls == [(None, torch.float32)]
     assert pipeline.text_encoder.to_calls == [(None, torch.bfloat16)]
     assert pipeline.image_encoder.to_calls == [(None, torch.bfloat16)]

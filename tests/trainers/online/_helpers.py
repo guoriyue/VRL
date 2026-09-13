@@ -166,3 +166,20 @@ def _trajectory_signals(
         group_ids=batch.group_ids,
         primary_segment="default",
     )
+
+
+def bare_trainer(**attributes):
+    """An ``OnlineTrainer`` with only the attributes a single method reads.
+
+    The full constructor wires a rollout schedule, strategy, and algorithm; the
+    index-selection and optimizer-derivation methods read one or two fields.
+    Every test that needs such a shell builds it here, so the constructor bypass
+    has one owner and the attribute names appear in one place.
+    """
+
+    from vrl.trainers.online.trainer import OnlineTrainer
+
+    trainer = object.__new__(OnlineTrainer)
+    for name, value in attributes.items():
+        setattr(trainer, name, value)
+    return trainer

@@ -7,8 +7,8 @@ from collections.abc import Iterator
 
 import torch
 
+from tests.rollouts.replay._helpers import janus_request, janus_sample_rows
 from vrl.config.precision import RolePrecision
-from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.token.continuous_token_logprob import (
@@ -29,34 +29,11 @@ _PRECISION = RolePrecision(
 )
 
 
-def _request() -> GenerationRequest:
-    return GenerationRequest(
-        request_id="req",
-        family="janus_pro",
-        task="ar_t2i",
-        inputs=["draw text"],
-        samples_per_prompt=2,
-    )
-
-
-def _sample_rows() -> list[GenerationSampleRow]:
-    request = _request()
-    return [
-        GenerationSampleRow(
-            prompt_index=0,
-            sample_index=index,
-            prompt=request.prompts[0],
-            sample_id=f"s{index}",
-        )
-        for index in range(2)
-    ]
-
-
 def _discrete_batch(context: dict | None = None) -> RolloutBatch:
     token_ids = torch.tensor([[1, 2], [2, 3]])
     trajectory = build_ar_discrete_trajectory(
-        request=_request(),
-        sample_rows=_sample_rows(),
+        request=janus_request(),
+        sample_rows=janus_sample_rows(),
         token_ids=token_ids,
         token_log_probs=torch.zeros_like(token_ids, dtype=torch.float32),
         token_mask=torch.ones_like(token_ids, dtype=torch.float32),
@@ -76,8 +53,8 @@ def _discrete_batch(context: dict | None = None) -> RolloutBatch:
 def _continuous_batch() -> RolloutBatch:
     tokens = torch.ones(2, 2, 3)
     trajectory = build_ar_continuous_trajectory(
-        request=_request(),
-        sample_rows=_sample_rows(),
+        request=janus_request(),
+        sample_rows=janus_sample_rows(),
         tokens=tokens,
         saved_noise=torch.zeros_like(tokens),
         token_log_probs=torch.zeros(2, 2),

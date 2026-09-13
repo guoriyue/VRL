@@ -15,19 +15,9 @@ from __future__ import annotations
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.config.loading import bundled_config_resource, list_bundled_configs
+from vrl.config.loading import bundled_config_resource, list_bundled_configs, load_config
 from vrl.config.schema import DataConfig
-from vrl.rewards.functions.registry import _register_builtins, get_reward
-
-# Dataset groups whose independent loadability we pin. Each is a reusable
-# building block consumed by one or more experiment YAMLs.
-DATASET_GROUPS = (
-    "ocr",
-    "geneval",
-    "pickscore_sfw",
-    "videophy_i2v",
-    "pickapic_v2",
-)
+from vrl.rewards.functions.registry import get_reward
 
 
 def _load_bundled_raw(name: str):
@@ -36,7 +26,7 @@ def _load_bundled_raw(name: str):
         return OmegaConf.load(stream)
 
 
-@pytest.mark.parametrize("group", DATASET_GROUPS)
+@pytest.mark.parametrize("group", list_bundled_configs("dataset"))
 def test_dataset_group_loads_into_valid_data_config(group: str) -> None:
     """Each dataset group YAML parses into a DataConfig that passes _validate_data.
 
@@ -45,15 +35,12 @@ def test_dataset_group_loads_into_valid_data_config(group: str) -> None:
     the declared shape. No literal-value equality — values are declarations,
     validated structurally by ``test_schema.py`` discriminator tests.
     """
-    raw = _load_bundled_raw(f"dataset/{group}")
+    raw = load_config(group)
     payload = OmegaConf.to_container(raw.data, resolve=True)
 
     # Constructing the model runs the loader discriminator (Literal field) and
     # the @model_validator(mode="after") _validate_data; neither must raise.
-    cfg = DataConfig.model_validate(payload)
-
-    valid_loaders = {"prompt_manifest", "prompt_image_manifest", "pickapic_preference"}
-    assert cfg.loader in valid_loaders
+    DataConfig.model_validate(payload)
 
 
 def test_reward_component_keys_resolve_to_registered_reward_names() -> None:
@@ -67,7 +54,6 @@ def test_reward_component_keys_resolve_to_registered_reward_names() -> None:
     key actually resolves, value-agnostically (no literal name table), so a new
     prompt reward cannot ship a typo'd component key undetected.
     """
-    _register_builtins()  # populate the lazily-filled registry get_reward reads
     for name in list_bundled_configs("reward"):
         raw = _load_bundled_raw(name)
         reward = raw.get("reward", None)

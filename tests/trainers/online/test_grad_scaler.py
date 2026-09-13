@@ -22,6 +22,7 @@ from tests.trainers.online._helpers import (
     _EvaluatorAlgorithmFake,
     _stamp_model_precision,
     _trajectory_signals,
+    bare_trainer,
 )
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.config.precision import RolePrecision
@@ -183,10 +184,11 @@ def test_clip_and_step_lets_scaler_skip_nonfinite_gradient() -> None:
 
 
 def test_low_precision_trainables_derive_master_optimizer_without_config_knob() -> None:
-    trainer = object.__new__(OnlineTrainer)
-    trainer.model = nn.Linear(1, 1, bias=False).half()
-    trainer.config = SimpleNamespace(optim=OptimConfig(lr=1.0e-5))
-    trainer._optimizer = None
+    trainer = bare_trainer(
+        model=nn.Linear(1, 1, bias=False).half(),
+        config=SimpleNamespace(optim=OptimConfig(lr=1.0e-5)),
+        _optimizer=None,
+    )
 
     optimizer = trainer._ensure_optimizer()
 
@@ -196,10 +198,11 @@ def test_low_precision_trainables_derive_master_optimizer_without_config_knob() 
 
 
 def test_fp32_trainables_use_direct_optimizer_without_duplicate_master() -> None:
-    trainer = object.__new__(OnlineTrainer)
-    trainer.model = nn.Linear(1, 1, bias=False).float()
-    trainer.config = SimpleNamespace(optim=OptimConfig(lr=1.0e-5))
-    trainer._optimizer = None
+    trainer = bare_trainer(
+        model=nn.Linear(1, 1, bias=False).float(),
+        config=SimpleNamespace(optim=OptimConfig(lr=1.0e-5)),
+        _optimizer=None,
+    )
 
     optimizer = trainer._ensure_optimizer()
 

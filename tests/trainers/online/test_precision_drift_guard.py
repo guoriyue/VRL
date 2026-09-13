@@ -108,37 +108,26 @@ def test_auto_enables_fail_for_rollout_compute_mismatch() -> None:
     )
 
 
-def test_auto_is_off_for_same_dtype() -> None:
+@pytest.mark.parametrize(
+    ("training_precision", "rollout_precision", "expected"),
+    [
+        ("fp32", "fp32", "off"),
+        # A quantized rollout role is the drift the guard exists for.
+        ("bf16", "bf16+fp8", "fail"),
+        # Both public spellings of no-autocast resolve to one contract.
+        ("no", "fp32", "off"),
+    ],
+)
+def test_auto_mode_arms_only_when_the_roles_differ(
+    training_precision: str, rollout_precision: str, expected: str
+) -> None:
     assert (
         resolve_guard_mode(
             "auto",
-            training_precision="fp32",
-            rollout_precision="fp32",
+            training_precision=training_precision,
+            rollout_precision=rollout_precision,
         )
-        == "off"
-    )
-
-
-def test_auto_detects_rollout_quantization() -> None:
-    assert (
-        resolve_guard_mode(
-            "auto",
-            training_precision="bf16",
-            rollout_precision="bf16+fp8",
-        )
-        == "fail"
-    )
-
-
-def test_auto_normalizes_legacy_no_to_fp32() -> None:
-    # Both public spellings resolve to one concrete no-autocast contract.
-    assert (
-        resolve_guard_mode(
-            "auto",
-            training_precision="no",
-            rollout_precision="fp32",
-        )
-        == "off"
+        == expected
     )
 
 

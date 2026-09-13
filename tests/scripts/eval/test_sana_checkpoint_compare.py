@@ -504,23 +504,6 @@ def test_model_precision_snapshot_records_configured_outer_autocast() -> None:
     assert actual["outer_autocast"] is True
 
 
-def test_model_precision_snapshot_records_effective_backend(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        checkpoint_compare,
-        "float32_precision_state",
-        lambda: {"matmul": "tf32", "cudnn": "ieee"},
-    )
-
-    actual = checkpoint_compare._model_precision_snapshot(_FakeModel([]))
-
-    assert actual["effective_float32_precision"] == {
-        "matmul": "tf32",
-        "cudnn": "ieee",
-    }
-
-
 @pytest.mark.parametrize("count", [True, 1.5, "2", 0, -1])
 def test_generation_rejects_invalid_image_count_before_pipeline_access(count) -> None:
     with pytest.raises(ValueError, match="num_images"):

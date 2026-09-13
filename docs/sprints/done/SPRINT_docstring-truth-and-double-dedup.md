@@ -1,5 +1,12 @@
 # SPRINT：让 docstring 陈述不变量，让每个替身只有一个 owner
 
+> Update (2026-09-12): The docstring token-similarity gate introduced here has
+> been retired by the test-credibility audit. It enforced prose style rather
+> than runtime correctness and required its own vocabulary and heuristic tests.
+> The cleanup below remains historical evidence, not an instruction to restore
+> `tests/architecture/test_docstring_truth.py`. Keep useful invariant comments;
+> review their meaning instead of checking word overlap mechanically.
+
 状态：**done（2026-09-07 落地，见文末「落地记录」）**。原基线 main @ `812cc3cf`。本文全部数字均在本机实测（`.venv/bin/python -m pytest ... -p no:randomly`），不是估算。
 
 序号：**轨道六 / 共六轨。风险 low。必须最后执行。**

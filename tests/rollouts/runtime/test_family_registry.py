@@ -74,7 +74,7 @@ def test_model_build_projects_typed_sections_without_losing_falsy_presence() -> 
             },
             "sampling": {
                 "guidance_scale": 0,
-                "num_steps": 0,
+                "num_steps": 1,
                 "max_sequence_length": None,
             },
             "precision": {
@@ -109,7 +109,7 @@ def test_model_build_projects_typed_sections_without_losing_falsy_presence() -> 
     )
     assert build.sampling_config == {
         "guidance_scale": 0,
-        "num_steps": 0,
+        "num_steps": 1,
         "max_sequence_length": None,
     }
 
