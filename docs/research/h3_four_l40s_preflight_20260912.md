@@ -193,3 +193,48 @@ or throughput. The original full deployment gates remain open. Next integrate
 the validated non-overlapping block mapping with the loader/lifecycle and
 validate the conditioner pair; do not feed the earlier automatic capacity map
 unchanged into a production training claim.
+
+## 2026-09-13: explicit partitioned replay loader
+
+The H3 candidate now accepts an explicit `block_devices` tuple in
+`build_minimax_h3_replay_runtime_bundle`. The existing registry/default call is
+unchanged; this is not a public distributed-config or trainer-strategy entry.
+The family-owned `placement.py` builds a meta skeleton from the checkpoint
+configuration, derives complete non-overlapping block ownership, and passes
+the map into native Diffusers `from_pretrained` with low-CPU-memory loading.
+Upstream mixed-precision loading remains responsible for FP32 exceptions.
+Both schedulers still use the existing replay loader. The local build copy
+sets `defer_trainable_device_move=True` for native PEFT preparation, avoiding
+its whole-transformer `.to(root_device)` without mutating the caller's build.
+
+The explicit path rejects full finetuning, compile, quantization, CPU roots
+and implicit CUDA roots. Block counts and device index types are validated.
+It has not established trainer ownership or compatibility with whole-model
+offload/restore; callers must not infer those from this loader.
+
+Final verification on GPUs 0 and 1: **31 passed in 7.30 seconds**, process
+exited 0, covering the complete H3 family test directory. The new integration
+test writes a two-block random-weight transformer as local 50 KB safetensor
+shards plus both native scheduler configurations, then loads single-device
+and partitioned replay bundles via the real loaders. Tests confirm:
+
+- Native LoRA preparation leaves parameters on both GPUs and trainables FP32.
+- Identical base/adapter state with nonzero B gives close video/audio outputs
+  and present gradients (`atol=rtol=1e-3`); remote gradients are nonzero.
+- One AdamW update (learning rate 1e-4) changes parameters on both GPUs,
+  preserves every parameter's device and stays within the same single-device
+  parameter comparison tolerance.
+- Invalid map ownership and unsupported load modes fail; original H3 loading,
+  backbone, scheduler and decode tests still pass.
+
+Test artifacts reside at
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_partitioned_load_final_pytest`.
+Reproduction uses the previous CUDA/overlay environment and runs
+`python -m pytest tests/models/families/minimax_h3 -q` from the candidate.
+Ruff, formatting and diff checks passed. All jobs terminal, fresh GPU compute
+inventory empty, GPUs 0 and 1 released. No released weights downloaded.
+
+Still open: full-sized checkpoint execution, actual rank-32 policy, encoder
+pair and VAE placement, full native generation/replay, trainer lifecycle,
+checkpoint recovery, quality, and controlled throughput. The tiny local shard
+test does not prove released H3 peak memory or real video generation.
