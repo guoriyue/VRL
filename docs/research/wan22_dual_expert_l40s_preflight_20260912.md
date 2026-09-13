@@ -486,3 +486,53 @@ Next use the public option, without diagnostic post-build casting, to verify
 updated FP32 adapters reaching actual generation workers, matched replay and
 controlled checkpoint continuation. Full-size I2V, quality and end-to-end
 throughput remain open.
+
+## 2026-09-13: updated public FP32 adapter delivery and replay
+
+The public build option was exercised with the actual saved two-rank FP32
+update, not another initial adapter. Source `wan22_fp32_lora_two/update.pt`
+SHA256 is `baf7196bb758def031a46d64166e87b41afdf0965b54b59a8050f121918a849f`.
+Both trainer-side replay construction and actual Ray generation construction
+used the public FP32 option, with no post-build diagnostic parameter casting.
+
+First attempt `wan22_updated_fp32_rollout` exited 1 before generation: exact
+readback rejected sequential-offload meta parameters. The existing weight
+load had returned, but that did not prove installed content. Candidate
+`21ae2051` adds Wan readback through the existing hook-suspension transaction:
+materialize on CPU, compare actual parameter bytes, restore offload hooks.
+Mismatch remains fail-closed. All 49 Wan tests passed in 3.97s, including actual
+Accelerate/PEFT hook restoration and wrong-payload rejection; Ruff passed.
+
+Retry `wan22_updated_fp32_rollout_readback` exited 0. All 1280 FP32 adapter
+tensors matched the sender on the actual worker before generation, version 1.
+Two 320x320/17f clips completed all ten steps; Kling scores were
+`[-1.1431514024734497, -0.6394544839859009]`. Collection took 111.773s,
+generation 74.467s and reward 37.291s, with zero measured overlap. These are
+phase observations, not throughput or learning-improvement acceptance.
+Trajectory audit checked 20 finite transitions, two distinct initial latents
+and version-1 metadata. The legacy `initial_trainable_state.pt` filename and
+fixture auditor's initial-LoRA scope string mean the starting state for this
+capture; its tensors are the updated policy, not the original initial policy.
+
+Native one-rank FSDP replay (`precision_policy=none`) then completed in
+`wan22_updated_fp32_replay`, exit 0. Frozen inventories remained 250 FP32 and
+1940 BF16 tensors; all 1280 adapter tensors remained FP32. Both branches
+covered every one of the 20 saved sample/step pairs:
+
+| Replay batch | Maximum absolute log-prob error | Clipped at ratio 1e-4 |
+| --- | ---: | ---: |
+| 2, matching generation | **0 exactly** | **0/20** |
+| 1, diagnostic shape change | 0.00039689987897872925 | 8/20 |
+
+Standalone `wan22_updated_fp32_audit.py` exited 0. It hashes the source update,
+checks every exported parameter against it, proves 320 changed tensors per
+expert versus the original initial adapter, compares replay tensors directly
+with the saved old log-probs, validates full coverage, identity, inventories
+and policy version. Receipt: `wan22_updated_fp32_replay/acceptance_audit.json`.
+Executed capture and replay scripts are retained beside their outputs.
+
+This closes public updated-weight delivery to one real worker and matched-
+batch updated replay, not arbitrary batch-size invariance, checkpoint resume,
+full-size I2V, end-to-end scaling or quality. All compute processes exited;
+fresh GPU inventory empty and claims released. Next controlled checkpoint
+continuation should retain matching batch geometry and the public FP32 option.
