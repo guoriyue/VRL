@@ -1132,3 +1132,36 @@ fresh compute inventory empty, all four GPUs released. This establishes a
 trained-checkpoint -> native multi-worker generation/reward -> independent
 replay chain. Production iterator continuation, live trainer-to-worker loop,
 continuous queue recovery, full recipe and quality acceptance remain open.
+
+### Trained collector overlap capability preflight
+
+The saved trained-collection configuration was resolved on CPU against the
+unchanged Cosmos candidate 435c8fa2. Its native reward runtime reports
+scoring_is_nonblocking=false and external_accelerator_isolation_verified=true;
+the collector consequently reports supports_reward_generation_overlap=false.
+The resolved batch plan contains one prompt group. Thus a separate reward GPU
+does not establish asynchronous execution, and this single-group collection
+has no following group whose generation could overlap scoring.
+
+An explicit PER_GROUP_STREAMING request with two placeholder prompts was
+rejected by the native capability guard before generation runtime access.
+These prompts were never generated or scored. The successful probe loaded no
+models and used no GPUs. Its receipt is
+cosmos_reward_overlap_preflight_validated/result.json under the NVMe output
+root, with executed source preserved beside it. Earlier empty preflight output
+directories are not passes: the recovered retry failed because the probe
+omitted three required collector arguments; the final probe supplies them.
+
+Focused CPU regression coverage passed: 68 tests in 1.29 seconds across
+tests/rollouts/collector/test_runtime.py,
+tests/rollouts/orchestration/test_prompt_collection.py, and
+tests/scripts/perf/test_reward_overlap_benchmark.py. This is capability and
+scheduling coverage, not a GPU performance result or a production fix.
+
+Next performance gate requires a native asynchronous reward service with
+verified accelerator isolation, at least two real prompt groups, and equal-work
+A/B/C arms: batched serial, per-group serial, and per-group streaming. Streaming
+must beat the batched baseline, not just the extra per-group-call overhead.
+Keep policy, prompts, seeds, sample count, generation parameters, reward model,
+warmup and timing boundaries fixed; measure actual overlap and validate outputs.
+Do not force the capability flag or claim these CPU checks removed GPU bubbles.
