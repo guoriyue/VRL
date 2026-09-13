@@ -16,3 +16,8 @@
 
 - Keep inner functions when repeated calls, recursion, or captured per-operation state make the parent operation clearer. Do not expand them into duplicated logic or manual traversal stacks merely to remove nesting.
 - Inline single-use helpers when that improves readability. Keep framework callbacks and native-API simplifications based on their actual role, not invocation count alone.
+
+## Cleanup scope
+
+- Do not count name-only changes as structural cleanup. Rename only when the user explicitly requests clearer naming; describe such work as a rename, not as architectural completion.
+- Cleanup must identify the concrete duplication, state, ownership, dependency, or control-flow complexity it removes. Moving the same branches into a classmethod alone does not prove simplification.
