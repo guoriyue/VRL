@@ -192,3 +192,77 @@ def test_partitioned_replay_loads_local_shards_and_keeps_native_lora_on_owners(t
         if name in before and not torch.equal(parameter, before[name]):
             changed_devices.add(parameter.device.index)
     assert changed_devices == {0, 1}
+
+
+@pytest.mark.skipif(
+    os.environ.get("VRL_H3_FOUR_GPU") != "1",
+    reason="Requires an explicit four-GPU hardware reservation",
+)
+def test_partitioned_conditioner_native_prompt_and_four_device_forward(tmp_path):
+    from dataclasses import replace
+
+    from tests.models.families.minimax_h3.test_backbone_parity import _request
+    from tests.models.families.minimax_h3.test_model_loading import _build
+    from tests.models.steps.denoise.fixtures import stamp_model_precision
+    from vrl.models.families.minimax_h3.model import MiniMaxH3Model
+    from vrl.models.families.minimax_h3.placement import load_partitioned_text_encoder
+
+    assert torch.cuda.device_count() >= 4
+    fixture = _model()
+    components = fixture.pipeline
+    components.text_encoder.save_pretrained(tmp_path / "text_encoder", max_shard_size="20KB")
+    reference_components = _model().pipeline
+    reference_components.transformer.load_state_dict(
+        components.transformer.state_dict(), strict=True
+    )
+    reference_components.text_encoder.load_state_dict(
+        components.text_encoder.state_dict(), strict=True
+    )
+    reference_components.text_encoder.to("cuda:2", dtype=torch.bfloat16).requires_grad_(False)
+    reference_components.transformer.to("cuda:0")
+    reference = MiniMaxH3Model(pipeline=reference_components, device=torch.device("cuda:0"))
+    stamp_model_precision(reference)
+    build = replace(_build(rollout=True), model_name_or_path=str(tmp_path), revision=None)
+    components.text_encoder = load_partitioned_text_encoder(
+        build, root_device=2, layer_devices=(3, 2)
+    )
+    assert {p.device.index for p in components.text_encoder.parameters()} == {2, 3}
+    assert not any(p.requires_grad for p in components.text_encoder.parameters())
+    visits = []
+    hook = components.text_encoder.model.language_model.layers[0].register_forward_hook(
+        lambda module, args, output: visits.append(next(module.parameters()).device.index)
+    )
+    components.transformer = dispatch_model(
+        components.transformer,
+        device_map=transformer_device_map(
+            components.transformer, root_device=0, block_devices=(1,)
+        ),
+        main_device=0,
+        force_hooks=True,
+    )
+    model = MiniMaxH3Model(pipeline=components, device=torch.device("cuda:0"))
+    stamp_model_precision(model)
+    assert {p.device.index for p in model.transformer.parameters()} == {0, 1}
+    with torch.no_grad():
+        expected = reference.encode_prompt("a wooden block", max_sequence_length=8)
+        actual = model.encode_prompt("a wooden block", max_sequence_length=8)
+        assert visits == [3]
+        assert actual["prompt_embeds"].device == torch.device("cuda:0")
+        repeated = model.encode_prompt("a wooden block", max_sequence_length=8)
+        assert visits == [3, 3]
+        torch.testing.assert_close(
+            repeated["prompt_embeds"], actual["prompt_embeds"], atol=0, rtol=0
+        )
+        torch.testing.assert_close(
+            actual["prompt_embeds"], expected["prompt_embeds"], atol=1e-3, rtol=1e-3
+        )
+        reference_state = reference.prepare_sampling(_request(), expected)
+        state = model.prepare_sampling(_request(), actual)
+        torch.testing.assert_close(state.latents, reference_state.latents, atol=0, rtol=0)
+        expected_output = reference.forward_step(reference_state, 0)
+        actual_output = model.forward_step(state, 0)
+        assert torch.isfinite(actual_output["noise_pred"]).all()
+        torch.testing.assert_close(
+            actual_output["noise_pred"], expected_output["noise_pred"], atol=1e-3, rtol=1e-3
+        )
+    hook.remove()

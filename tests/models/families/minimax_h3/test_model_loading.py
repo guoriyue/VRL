@@ -49,6 +49,33 @@ def test_partitioned_map_is_complete_and_nonoverlapping():
         assert sum(name == key or name.startswith(key + ".") for key in mapping) == 1
 
 
+@pytest.mark.parametrize("devices", [(), (2,), (-1, 2), (True, 2), ("cuda:2", 3)])
+def test_conditioner_map_rejects_invalid_layer_ownership(devices):
+    from tests.models.steps.denoise.fixtures import (
+        build_tiny_minimax_h3_text_encoder,
+        build_tiny_minimax_h3_tokenizer,
+    )
+    from vrl.models.families.minimax_h3.placement import text_encoder_device_map
+
+    encoder = build_tiny_minimax_h3_text_encoder(build_tiny_minimax_h3_tokenizer())
+    with pytest.raises(ValueError):
+        text_encoder_device_map(encoder, root_device=2, layer_devices=devices)
+
+
+def test_conditioner_map_covers_parameters_and_buffers_without_overlap():
+    from tests.models.steps.denoise.fixtures import (
+        build_tiny_minimax_h3_text_encoder,
+        build_tiny_minimax_h3_tokenizer,
+    )
+    from vrl.models.families.minimax_h3.placement import text_encoder_device_map
+
+    encoder = build_tiny_minimax_h3_text_encoder(build_tiny_minimax_h3_tokenizer())
+    mapping = text_encoder_device_map(encoder, root_device=2, layer_devices=(3, 2))
+    assert mapping["model.language_model.embed_tokens"] == mapping["model.visual"] == 2
+    for name, _ in list(encoder.named_parameters()) + list(encoder.named_buffers()):
+        assert sum(name == key or name.startswith(key + ".") for key in mapping) == 1
+
+
 def _build(*, rollout: bool, num_steps: int | None = None, device: str = "cuda:0") -> ModelBuild:
     return ModelBuild(
         model_name_or_path=_PATH,
