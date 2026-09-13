@@ -54,8 +54,31 @@ Reports: `/mnt/nvme/outputs/wan_full_shape_memory_{default,expandable,cpu_saved,
 one JSON per rank with shape, block-memory events, status, errors and timing.
 Matching logs are in the wan22_i2v_cache directory.
 
-The full training supervisor now defaults to `full_cpu` and
-`PYTORCH_ALLOC_CONF=expandable_segments:True`, retains generated reward artifacts
+The full training supervisor now defaults to `full_cpu` with the default CUDA
+allocator (see the follow-up below), retains generated reward artifacts
 for inspection and refuses to overwrite a prior training directory. No complete
 real rollout/update has yet been rerun with the fix. The original full-size OOM
 evidence remains unchanged; the next gate must complete the real physics update.
+
+## Default allocator follow-up
+
+The real full-shape three-rank diagnostic also passes with `full_cpu` and both
+allocator environment variables unset. Rank 0: forward 33.85 s, backward 81.14 s,
+peak allocated 27,685,304,832 bytes, peak reserved 35,035,021,312 bytes, 400
+finite nonzero gradient tensors. All three ranks succeeded; torchrun exited 0.
+Reports: `/mnt/nvme/outputs/wan_full_shape_memory_block_cpu_default`.
+
+The intervening real-training attempt at
+`/mnt/nvme/outputs/wan_i2v_full_physics_cpu_ckpt_l40s` used expandable segments.
+Codex stopped it during the first video's denoising after observing slow initial
+progress and lower utilization. This suggests an allocator/offload interaction,
+but it is NOT a completed throughput comparison or proof of its cause. No
+complete sample group, reward batch, replay pass or optimizer update completed.
+Torchrun needed forceful rank cleanup after SIGTERM; supervisor and services
+are terminal and GPU inventory is empty. Logs and partial outputs are preserved.
+
+Since expandable segments are not necessary for the successful full-shape
+diagnostic, the supervisor now clears both allocator environment variables by
+default. `--allocator expandable` explicitly opts back in. It records the chosen
+allocator and device masks in `launch_environment.json`. The next full run must
+use a fresh output directory and still prove real rollout/replay/update success.
