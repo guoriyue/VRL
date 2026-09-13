@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 import torch
 
@@ -21,17 +19,15 @@ def test_default_generation_composes_model_without_training_recipe(
 
     captured = {}
 
-    def resolve_model_build(root, device, *, precision, parameter_dtype_override):
+    def resolve_model_build(self, root, device, *, precision, parameter_dtype_override):
         captured.update(root=root, precision=precision, dtype=parameter_dtype_override)
         raise GenerationBoundaryReached
 
     monkeypatch.setattr(data, "load_prompt_dataset_index", lambda _: [])
     monkeypatch.setattr(_device, "resolve_eval_device", lambda _: torch.device("cpu"))
-    monkeypatch.setattr(
-        registry,
-        "get_model_family_entry",
-        lambda _: SimpleNamespace(resolve_model_build=resolve_model_build, build_rollout=None),
-    )
+    # parse_config consults the same registry entry (section class, runtime
+    # validation), so keep the real entry and intercept only the build step.
+    monkeypatch.setattr(registry.ModelFamilyEntry, "resolve_model_build", resolve_model_build)
     argv = ["--output-dir", str(tmp_path)]
     for override in overrides:
         argv.extend(["--override", override])

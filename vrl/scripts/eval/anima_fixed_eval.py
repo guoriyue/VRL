@@ -114,13 +114,11 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
     from vrl.config.loading import load_config
     from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
-    from vrl.generation.types import DenoiseRequest
     from vrl.models.dtypes import resolve_torch_dtype
     from vrl.models.families.registry import get_model_family_entry
     from vrl.scripts.eval._device import resolve_eval_device
-    from vrl.scripts.eval._sampling import resolve_eval_sampling
+    from vrl.scripts.eval.denoise_generation import ImageSampling, generate_images
     from vrl.trainers.data.prompts import load_prompt_dataset_index
-    from vrl.utils.media import to_pil_image
 
     # Preserve this evaluator's established sampling and precision without importing
     # an unrelated training reward, dataset, or mandatory trainer configuration.
@@ -148,15 +146,10 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
     prompts = [example.prompt for example in load_prompt_dataset_index(args.manifest)][
         : args.limit
     ]
-    sampling = resolve_eval_sampling(
+    sampling = ImageSampling.from_root(
         root,
         overrides={"num_steps": args.steps, "guidance_scale": args.guidance_scale},
     )
-    num_steps = int(sampling["num_steps"])
-    guidance = float(sampling["guidance_scale"])
-    width = int(sampling["width"])
-    height = int(sampling["height"])
-    max_seq = int(sampling["max_sequence_length"])
 
     device = resolve_eval_device("auto")
     dtype = resolve_torch_dtype("fp32" if device.type == "cpu" else precision.training.dtype)
@@ -171,32 +164,16 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with torch.no_grad():
         for index, prompt in enumerate(prompts):
-            encoded = model.encode_prompt(
-                [prompt],
-                [_DEFAULT_NEGATIVE_PROMPT],
-                max_sequence_length=max_seq,
-                guidance_scale=guidance,
-            )
-            request = DenoiseRequest(
+            (image,) = generate_images(
+                model,
+                prompt=prompt,
                 negative_prompt=_DEFAULT_NEGATIVE_PROMPT,
-                width=width,
-                height=height,
-                frame_count=1,
-                num_steps=num_steps,
-                guidance_scale=guidance,
                 # Same seed per index across runs: checkpoints differ only by weights.
                 seed=int(args.seed) + index,
+                samples_per_prompt=1,
+                sampling=sampling,
+                torch=torch,
             )
-            state = model.prepare_sampling(request, encoded)
-            for step_idx, timestep in enumerate(state.timesteps):
-                step_output = model.forward_step(state, step_idx)
-                state.latents = state.scheduler.step(
-                    step_output["noise_pred"].float(),
-                    timestep,
-                    state.latents.float(),
-                    return_dict=False,
-                )[0]
-            image = to_pil_image(model.decode_latents(state.latents)[0])
             path = out_dir / "images" / f"eval_{index:04d}.png"
             image.save(path)
             rows.append({"image_path": str(path), "prompt": prompt, "index": index})
