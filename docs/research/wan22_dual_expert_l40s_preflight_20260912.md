@@ -644,3 +644,43 @@ on CPU; two-rank capacity alone does not establish four-rank capacity. Run arms
 sequentially, retain cold/warm timing boundaries, compare actual updated state
 and global work before reporting a speedup. Both full-size I2V and quality
 remain separate open gates.
+
+## 2026-09-13: four-rank pilot exposes host-memory limit
+
+Candidate `21ae2051` attempted the prepared native four-rank pilot in
+`wan22_fair_throughput_four`. All four workers completed their first ten-step
+dual-expert generation batches (eight global samples). During simultaneous
+Kling cold loading, Ray's default node-memory protection killed rollout
+workers at approximately 354.4/372.7 GiB used, exceeding its 95% limit. Logs
+include explicit `ray.exceptions.OutOfMemoryError`. No optimizer update or
+training checkpoint completed; this is not a throughput acceptance result.
+
+The monitoring process recorded 340 samples, minimum host available memory
+5,881,606,144 bytes and sampled maximum GPU usage approximately 7.246 GB on each
+card. The agent requested SIGTERM of the identified torchrun parent after
+observing the low-memory sample; Ray's memory failure is also independently
+recorded in the log. Elastic subsequently forced stuck child shutdown. Outer
+process exit was 1 after 351.207s, including startup and failure cleanup.
+Fresh compute inventory was empty and all GPU claims released. Do not disable
+or increase Ray's memory protection to turn this failure into a passing run.
+
+Preserved evidence is the output directory plus adjacent `.log`,
+`_memory.jsonl` and `_process.json`; the monitored launcher and checkpoint-audit
+script remain in the same NVMe experiment directory. The single-card arm has
+not run, and the failed four-card arm must not be silently overwritten.
+
+Inspection found the full Kling checkpoint was read into a private CPU state
+dictionary on every rank before copying into the model. Candidate `9145b2af`
+uses mmap for ZIP-format full checkpoints while retaining the legacy Torch
+serialization fallback and strict state loading. This avoids eagerly creating
+four private copies of the full checkpoint; it does not change model values,
+reward precision, memory thresholds or the benchmark workload.
+
+Kling loader/scoring regressions: 34 passed, 1 skipped in 8.12s; Ruff passed.
+Both current and legacy key layouts are tested with ZIP and old serialization.
+An additional actual-checkpoint CPU comparison found all 1123 tensors exactly
+equal between mmap and ordinary loads, covering 5,030,744,064 tensor bytes,
+without initializing CUDA. This proves loaded-value equivalence, not successful
+four-rank capacity or a measured peak-memory reduction. Next rerun the same
+four-card work in a distinct output directory and inspect the full lifecycle
+before proceeding to the matching single-card arm.
