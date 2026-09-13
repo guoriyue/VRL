@@ -5,6 +5,15 @@
 Status: **PLANNED: T2V/I2V caches ready, awaiting the coordinated GPU queue**.
 This section supersedes the historical hardware/storage blockers below.
 
+Four-L40S launch preflight: exact checkpoint-header inventory, parsed two-rank
+configuration and native ten-step expert routing are recorded in
+`../../research/wan22_dual_expert_l40s_preflight_20260912.md`. Two ranks have
+about 204 GiB nominal steady weight storage versus about 355 GiB for four,
+before runtime/activation overhead. These are estimates, not GPU capacity
+acceptance. The current candidate's tiny two-rank CPU stage-isolation, sync
+and serialized optimizer/weight restoration test passes. Real two-expert GPU
+execution is still pending; no launch occurred during this preflight.
+
 Reward prerequisite update: the real pinned Kling VideoReward and
 VideoCon-Physics models now pass GPU scoring, combined production
 `MultiReward` execution, and isolated HTTP service execution on a dedicated
