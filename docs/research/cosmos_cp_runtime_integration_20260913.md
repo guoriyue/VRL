@@ -423,3 +423,60 @@ batch semantics, EMA, rollout synchronization or full-weight updates. The
 public online recipe still uses physical-rank data ownership and must not be
 enabled for CP by merely adding a strategy string. Those integration and
 original full online acceptance gates remain required next work.
+
+## Leader-owned replay sharing: 37791c05
+
+The existing rollout schedule module now exposes an explicit
+`collect_context_parallel_iteration` function. Every world rank participates;
+only CP rank0 invokes the asynchronous collection callback. Leaders serialize
+one typed `RolloutIteration` into a private temporary file on a shared
+filesystem. CP peers receive only the path/error metadata through their
+collective, then all load the same file onto CPU. Large trajectory tensors
+are not serialized into GPU object-broadcast buffers. The directory is
+validated/created before collection starts and removed after all readers
+have reported success/failure.
+
+Ordinary collection and read failures are gathered across the complete world,
+so one failed CP group does not let another DP group continue into training
+collectives. Job/process death or broken collective transport still requires
+external recovery. Only locally created private spool files are deserialized
+with the same trusted-object approach as the existing streaming spool; this
+is not an external-file import API. All ranks need access to the shared
+spool path. Use NVMe for real runs, not the nearly-full root filesystem.
+
+### Four-rank data ownership test
+
+DP2 x CP2 uses the real `PromptBatchSampler` with DP rank/size: CP peers
+receive identical prompt indices and the two DP groups receive disjoint
+indices. Synthetic typed rollout/trajectory records test rewards, group IDs,
+policy version, nested tensors, BF16 values, CPU placement after loading,
+and one collection callback per CP group. The trajectory fixture is a
+transport record, not a replay-valid generated video.
+
+Leader collection failure, rank1-only read failure, and nonexistent spool
+directory all fail coherently across the world. A missing directory fails
+before invoking the collector. Temporary files are absent after the readers'
+completion barrier, including failure cases.
+
+- Four-L40S NCCL final test: **1 passed, 1 deselected**, 4.58 seconds.
+- CPU sharing/iteration/topology regression: **8 passed, 1 skipped**,
+  3.43 seconds.
+- Ruff and whitespace checks passed. All processes terminal, fresh GPU
+  compute inventory empty; GPUs0-3 released. Shared runtime unchanged.
+
+### Integration prerequisites still open
+
+This interface is not automatically installed by the schedule factory. Its
+leader callback must be rank-local: it cannot call trainer/world collectives
+while other CP ranks wait for collection. The current strict schedule's
+lifecycle uses strategy methods, so wrapping it blindly with the CP training
+strategy would risk deadlock. Rollout owner lifecycle and weight-sync ownership
+must be wired deliberately.
+
+Identical replay files also do not synchronize random decisions. The actual
+trainer selects replay timesteps using CPU `torch.randperm`/`torch.randint`;
+CP peers must agree on RNG state or selected indices. Existing global RNG
+checkpoint helpers capture all CUDA devices, so a rank-local synchronization
+path needs care not to create contexts on another owner's GPU. No RNG
+synchronization, live generation, actual online loop, or public CP config
+enablement is claimed by this milestone.
