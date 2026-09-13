@@ -661,3 +661,26 @@ Next useful placement check is co-resident decode on the less-loaded encoder
 GPU, which may avoid these transfers; separate peak measurements cannot prove
 that it fits. Full four-component co-residency, real checkpoint loading,
 generation/quality and end-to-end controlled performance remain unverified.
+
+## 2026-09-13: full conditioner and video VAE co-resident decode
+
+The next placement probe succeeded without parking the conditioner. Full
+random Qwen3-VL weights remained split 32/32 layers on physical GPUs 2 and 3,
+with the full FP32 video VAE on GPU 3. Native tiled decode produced finite
+`[1,3,124,768,1344]` video in 17.742230 seconds. Encoding again while the VAE
+and video remained resident took 0.183075 seconds and reproduced the initial
+embedding exactly (max absolute difference 0).
+
+Peak allocated bytes were 39,776,483,840 on GPU 2 and 45,508,336,640 on GPU 3;
+peak reserved bytes were 40,110,129,152 and 45,871,005,696 respectively. These
+counters were reset immediately before decode and include subsequent encoding,
+not initial model construction. GPU 3 has limited remaining headroom.
+
+This demonstrates a placement that avoids the previously measured 47.64-second
+encoder parking/restoration interval for this isolated video decode. It is not
+an end-to-end speedup measurement or a change to the runtime's default parking
+policy. DiT, audio VAE, released weights, real prompts, quality and training
+co-residency were excluded. Evidence, including the executed source and JSON:
+`/mnt/nvme/outputs/wan22_i2v_cache/h3_fullsize_random_co_resident_capacity`.
+The process is terminal, result status is `finite_co_resident_decode`, and a
+fresh compute inventory is empty. GPUs 2-3 are released.
