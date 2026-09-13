@@ -1562,7 +1562,8 @@ def restore_rng_state(
 
     Legacy single-process trees remain readable. Multi-rank strict resume
     requires every rank's tree and the same topology; non-strict legacy resume
-    warns because the missing streams cannot be reconstructed.
+    warns because the missing streams cannot be reconstructed. Requested named
+    generators must also be present for strict resume.
     """
 
     if type(rank) is not int or type(world_size) is not int or not 0 <= rank < world_size:
@@ -1586,13 +1587,22 @@ def restore_rng_state(
         if strict:
             raise ValueError(message)
         logger.warning(message)
+    # Reject missing data-sampler streams before mutating any process RNG.
+    named = state.get("generators", {}) if state else {}
+    missing = sorted(
+        name for name in generators if not isinstance(named, dict) or name not in named
+    )
+    if missing:
+        message = "checkpoint RNG state missing requested generators: " + ", ".join(missing)
+        if strict:
+            raise ValueError(message)
+        logger.warning("%s; retaining current streams, resume is not equivalent", message)
     if not state:
         return
     if "torch" in state:
         torch.set_rng_state(state["torch"])
     if "cuda" in state and torch.cuda.is_available():
         torch.cuda.set_rng_state_all(state["cuda"])
-    named = state.get("generators", {})
     if isinstance(named, dict):
         for name, gen in generators.items():
             if name in named:

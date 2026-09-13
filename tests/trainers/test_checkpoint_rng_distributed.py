@@ -41,13 +41,13 @@ def _draw(generator, *, cuda=False):
     )
 
 
-def _rng_rank(rank, rendezvous, output, backend="gloo"):
+def _rng_rank(rank, rendezvous, output, backend="gloo", world_size=2):
     from tests.trainers.test_checkpointing import UNIT_IDENTITY, _Bundle, _Trainer
 
     context = DistributedTrainingContext(
         strategy="ddp",
         rank=rank,
-        world_size=2,
+        world_size=world_size,
         device=torch.device(f"cuda:{rank}" if backend == "nccl" else "cpu"),
     )
     if backend == "nccl":
@@ -56,7 +56,11 @@ def _rng_rank(rank, rendezvous, output, backend="gloo"):
         init_training_process_group(context, backend=backend)
     else:
         dist.init_process_group(
-            "gloo", init_method=rendezvous, rank=rank, world_size=2, timeout=timedelta(seconds=60)
+            "gloo",
+            init_method=rendezvous,
+            rank=rank,
+            world_size=world_size,
+            timeout=timedelta(seconds=60),
         )
     try:
         strategy = DDPStrategy(
@@ -82,14 +86,14 @@ def _rng_rank(rank, rendezvous, output, backend="gloo"):
         )
         strategy.barrier()
         checkpoint = TrainingCheckpoint.load(output)
-        assert checkpoint.rng_state["world_size"] == 2
+        assert checkpoint.rng_state["world_size"] == world_size
         rank_states = checkpoint.rng_state["by_rank"]
         assert not torch.equal(rank_states[0]["torch"], rank_states[1]["torch"])
         if backend == "nccl":
             assert len(rank_states[rank]["cuda"]) == torch.cuda.device_count()
             assert not torch.equal(rank_states[0]["cuda"][rank], rank_states[1]["cuda"][rank])
         restore_rng_state(
-            checkpoint.rng_state, rank=rank, world_size=2, prompt_generator=generator
+            checkpoint.rng_state, rank=rank, world_size=world_size, prompt_generator=generator
         )
         actual = _draw(generator, cuda=backend == "nccl")
         assert torch.equal(expected[0], actual[0])
@@ -122,10 +126,70 @@ def test_two_rank_cuda_rng_checkpoint_round_trip(tmp_path):
     )
 
 
+@pytest.mark.skipif(torch.cuda.device_count() < 4, reason="requires four CUDA devices")
+def test_four_rank_cuda_rng_checkpoint_round_trip(tmp_path):
+    from tests.trainers._strategy_policies import free_port
+
+    mp.spawn(
+        _rng_rank, args=(free_port(), str(tmp_path / "checkpoint"), "nccl", 4), nprocs=4, join=True
+    )
+
+
 @pytest.mark.parametrize("state", [None, {}, {"generators": {}}])
 def test_strict_multi_rank_restore_rejects_legacy_rng(state):
     with pytest.raises(ValueError, match="no per-rank RNG"):
         restore_rng_state(state, rank=1, world_size=2)
+
+
+@pytest.mark.parametrize("named", [None, {}, {"probe": torch.Generator().get_state()}])
+def test_strict_restore_rejects_missing_requested_generator_before_mutation(named):
+    before = torch.get_rng_state().clone()
+    prompt_generator = torch.Generator().manual_seed(999)
+    prompt_before = prompt_generator.get_state().clone()
+    saved = {"torch": torch.Generator().manual_seed(12).get_state(), "generators": named}
+
+    with pytest.raises(ValueError, match="missing requested generators: prompt_generator"):
+        restore_rng_state(saved, prompt_generator=prompt_generator)
+
+    assert torch.equal(torch.get_rng_state(), before)
+    assert torch.equal(prompt_generator.get_state(), prompt_before)
+
+
+@pytest.mark.parametrize("state", [None, {}])
+def test_strict_restore_requires_requested_generator_even_without_rng_tree(state):
+    with pytest.raises(ValueError, match="missing requested generators: prompt_generator"):
+        restore_rng_state(state, prompt_generator=torch.Generator())
+
+
+@pytest.mark.parametrize("rank", range(4))
+def test_strict_four_rank_restore_checks_selected_rank_generator(rank):
+    states = [
+        capture_rng_state(prompt_generator=torch.Generator().manual_seed(20)) for _ in range(4)
+    ]
+    states[rank]["generators"] = {"probe": torch.Generator().get_state()}
+    with pytest.raises(ValueError, match="missing requested generators: prompt_generator"):
+        restore_rng_state(
+            {"world_size": 4, "by_rank": states},
+            rank=rank,
+            world_size=4,
+            prompt_generator=torch.Generator(),
+        )
+
+
+def test_nonstrict_missing_generator_warns_and_preserves_missing_stream(caplog):
+    prompt_generator = torch.Generator().manual_seed(99)
+    before = prompt_generator.get_state().clone()
+    other = torch.Generator().manual_seed(44)
+    saved_other = torch.Generator().manual_seed(22).get_state()
+    restore_rng_state(
+        {"generators": {"other": saved_other}},
+        strict=False,
+        prompt_generator=prompt_generator,
+        other=other,
+    )
+    assert torch.equal(prompt_generator.get_state(), before)
+    assert torch.equal(other.get_state(), saved_other)
+    assert "missing requested generators: prompt_generator" in caplog.text
 
 
 def test_nonstrict_legacy_rng_restore_warns(monkeypatch):
