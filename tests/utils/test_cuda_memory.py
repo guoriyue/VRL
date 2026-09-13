@@ -69,7 +69,8 @@ def test_real_cumem_parking_with_another_process_allocation():
     code = textwrap.dedent("""
         import gc, subprocess, sys
         import torch
-        from vrl.utils.cuda_memory import CumemPool, gpu_process_used_bytes
+        from vrl.models.parking import CumemPool
+        from vrl.utils.cuda_memory import gpu_process_used_bytes
         pool = CumemPool.require('process-ownership-acceptance')
         warm = torch.ones(1, device='cuda').cpu()
         torch.cuda.empty_cache()

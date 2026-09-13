@@ -13,9 +13,10 @@ from typing import Any
 
 import torch
 
+from vrl.models.parking import TrainingMemoryState
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.stats import RolloutStats
-from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
+from vrl.trainers.strategy import SingleProcessStrategy
 
 
 class _FakeDriverModel:
@@ -26,11 +27,11 @@ class _FakeDriverModel:
             self.move_frozen_components = self._move_frozen
 
     def to(self, device: Any) -> _FakeDriverModel:
-        self.to_calls.append(device)
+        self.to_calls.append(torch.device(device))
         return self
 
     def _move_frozen(self, device: Any) -> None:
-        self.frozen_calls.append(device)
+        self.frozen_calls.append(torch.device(device))
 
 
 def _coordinator(model: _FakeDriverModel) -> RolloutRuntimeCoordinator:

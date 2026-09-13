@@ -16,13 +16,14 @@ import torch.nn as nn
 from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.rollouts.orchestration.continuous._helpers import owner_snapshot
 from vrl.generation.execution.types import StaleSlotDiscard
+from vrl.models.parking import TrainingMemoryState
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration import (
     ContinuousRolloutSchedule,
     build_rollout_schedule,
 )
 from vrl.trainers.data.prompts import PromptExample
-from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
+from vrl.trainers.strategy import SingleProcessStrategy
 
 
 def _batch(prompts: list[str], group_size: int) -> RolloutBatch:

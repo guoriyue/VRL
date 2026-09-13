@@ -19,7 +19,9 @@ No new state manager, validation helper or identity test framework is added.
 - Strategy is a structural consumer protocol outside concrete-class MRO. Its
   apparent stubs must not become inherited implementations shadowing mixins.
   SingleProcess, DDP and FSDP retain uniform trainer-facing method signatures.
-- TrainingStateParking inherits ModelParking's model/tensor restore ledger.
+- TrainingStateParking and its TrainingMemoryState input live in
+  vrl/models/parking.py, without importing trainer strategies.
+  TrainingStateParking inherits ModelParking's model/tensor restore ledger.
   Model and frozen-component moves, alias deduplication and local DTensor
   relocation are shared with generation's ordinary CPU parking backend.
   TrainingStateParking adds optimizer, EMA, scaler and live-gradient traversal.

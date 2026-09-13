@@ -93,8 +93,9 @@ async def test_strict_schedule_collects_and_syncs() -> None:
     import torch
     import torch.nn as nn
 
+    from vrl.models.parking import TrainingMemoryState
     from vrl.rollouts.orchestration import build_rollout_schedule
-    from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
+    from vrl.trainers.strategy import SingleProcessStrategy
 
     runtime = _Runtime()
     collector = _Collector(runtime)
@@ -397,9 +398,10 @@ async def test_strict_schedule_forwards_the_configured_reward_collection_arm() -
     import torch
     import torch.nn as nn
 
+    from vrl.models.parking import TrainingMemoryState
     from vrl.rollouts.collector.core import RewardCollectionMode
     from vrl.rollouts.orchestration import build_rollout_schedule
-    from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
+    from vrl.trainers.strategy import SingleProcessStrategy
 
     runtime = _Runtime()
     collector = _Collector(runtime)
@@ -440,8 +442,9 @@ async def test_strict_schedule_defaults_to_capability_derived_arm() -> None:
     import torch
     import torch.nn as nn
 
+    from vrl.models.parking import TrainingMemoryState
     from vrl.rollouts.orchestration import build_rollout_schedule
-    from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
+    from vrl.trainers.strategy import SingleProcessStrategy
 
     runtime = _Runtime()
     schedule = build_rollout_schedule(

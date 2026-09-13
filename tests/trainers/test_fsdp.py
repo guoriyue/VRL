@@ -893,7 +893,7 @@ def test_fsdp_parking_rolls_every_rank_back_when_one_peer_fails() -> None:
     import torch
     import torch.nn as nn
 
-    from vrl.trainers.strategy import TrainingMemoryState
+    from vrl.models.parking import TrainingMemoryState
 
     strategy = _fsdp_strategy(_cpu_fsdp_context())
     # This rank parks cleanly; the agreement reports that a peer did not.
@@ -920,7 +920,7 @@ def test_fsdp_parking_rolls_every_rank_back_when_one_peer_fails() -> None:
 def test_fsdp_shutdown_consumes_parked_state_before_group_cleanup(
     monkeypatch, restore_parked
 ) -> None:
-    from vrl.trainers.strategy import TrainingMemoryState
+    from vrl.models.parking import TrainingMemoryState
 
     calls = []
 
@@ -945,7 +945,7 @@ def test_fsdp_shutdown_consumes_parked_state_before_group_cleanup(
 
 
 def test_fsdp_shutdown_cleans_process_group_when_restore_fails(monkeypatch) -> None:
-    from vrl.trainers.strategy import TrainingMemoryState
+    from vrl.models.parking import TrainingMemoryState
 
     strategy = _fsdp_strategy(_cpu_fsdp_context())
     state = TrainingMemoryState(nn.Linear(2, 2), None, None, None, None, torch.device("cpu"))

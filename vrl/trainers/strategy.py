@@ -14,14 +14,13 @@ from __future__ import annotations
 
 import gc
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol
 
 import torch
 from torch import nn
 
-from vrl.models.parking import ModelParking
+from vrl.models.parking import ModelParking, TrainingMemoryState, TrainingStateParking
 from vrl.trainers.distributed import (
     DistributedTrainingContext,
     TrainingCollectives,
@@ -29,83 +28,9 @@ from vrl.trainers.distributed import (
     shutdown_training_process_group,
 )
 from vrl.trainers.weight_sync import require_trainable_modules
-from vrl.utils.cuda_memory import empty_cuda_cache
 
 if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
-
-
-@dataclass(frozen=True, slots=True)
-class TrainingMemoryState:
-    """Live trainer-owned state that must leave a shared GPU for rollout.
-
-    The trainer builds this value at the start of every rollout phase.  Keeping
-    object discovery there is important: optimizer and EMA state are lazy, and
-    streaming accumulation can add live gradients between two rollout phases.
-    The strategy owns *how* those objects move; rollout orchestration must never
-    inspect their internals.
-    """
-
-    model: nn.Module
-    ref_model: nn.Module | None
-    optimizer: torch.optim.Optimizer | None
-    ema: Any | None
-    grad_scaler: Any | None
-    device: torch.device
-
-    @property
-    def identity_key(self) -> tuple[int, int, int, int, int, str]:
-        """Identify live owners and device without comparing tensor contents."""
-        return (
-            id(self.model),
-            id(self.ref_model),
-            id(self.optimizer),
-            id(self.ema),
-            id(self.grad_scaler),
-            str(self.device),
-        )
-
-
-class TrainingStateParking(ModelParking):
-    """Extend model parking with optimizer, gradient, EMA and scaler storage."""
-
-    def __init__(self, state: TrainingMemoryState) -> None:
-        super().__init__()
-        self.state = state
-        self.ema_device = getattr(state.ema, "device", None)
-
-    def park_training_state(self) -> None:
-        state = self.state
-        for model in (state.model, state.ref_model):
-            if model is None:
-                continue
-            # Whole modules restore to their original device; heterogeneous
-            # pipeline offload is owned by generation's hook backend instead.
-            tensor = next(self.module_tensors(model), None)
-            device = state.device if tensor is None else torch.device(tensor.device)
-            self.park(model, restore_device=device)
-        if state.optimizer is not None:
-            # Independent FP32 master parameters and live grads may not belong
-            # to the model. The shared ledger deduplicates ordinary parameters.
-            for group in state.optimizer.param_groups:
-                for parameter in group.get("params", ()):
-                    self.park_tensors(parameter)
-                    self.park_tensors(getattr(parameter, "grad", None))
-            self.park_tensors(state.optimizer.state)
-        if state.ema is not None:
-            self.park_tensors(getattr(state.ema, "ema_parameters", ()))
-            self.park_tensors(getattr(state.ema, "temp_stored_parameters", ()))
-            if hasattr(state.ema, "device"):
-                state.ema.device = torch.device("cpu")
-        if state.grad_scaler is not None:
-            for attr in ("_scale", "_growth_tracker", "_per_optimizer_states"):
-                self.park_tensors(getattr(state.grad_scaler, attr, None))
-
-    def restore(self) -> None:
-        super().restore()
-        if self.state.ema is not None and hasattr(self.state.ema, "device"):
-            self.state.ema.device = self.ema_device
-        empty_cuda_cache()
 
 
 class Strategy(Protocol):
@@ -957,6 +882,5 @@ __all__ = [
     "FSDPStrategy",
     "SingleProcessStrategy",
     "Strategy",
-    "TrainingMemoryState",
     "build_strategy",
 ]

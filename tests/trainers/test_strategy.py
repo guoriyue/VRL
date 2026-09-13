@@ -13,9 +13,10 @@ from torch import nn
 
 from tests.trainers.online._helpers import bare_trainer
 from vrl.models.interfaces.runtime import register_checkpoint_owned_state
+from vrl.models.parking import TrainingMemoryState
 from vrl.trainers.online.ema import EMAWeights
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer
-from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
+from vrl.trainers.strategy import SingleProcessStrategy
 
 
 class _Bundle:

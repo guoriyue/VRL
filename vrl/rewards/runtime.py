@@ -26,6 +26,7 @@ from typing import Any
 from vrl.config.reward_inference import (
     RewardInferenceConfig,
 )
+from vrl.models.parking import CumemPool
 from vrl.rewards.base import RewardCleanupError, RewardFunction
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
@@ -36,10 +37,7 @@ from vrl.rewards.launch_contract import RewardRuntimeLaunchContract
 from vrl.rewards.protocols import RewardScorer
 from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.config import import_from_path
-from vrl.utils.cuda_memory import (
-    CumemPool,
-    release_cuda_memory_for_parking,
-)
+from vrl.utils.cuda_memory import release_cuda_memory_for_parking
 from vrl.utils.deadline import OperationDeadline, require_timeout
 from vrl.utils.lifecycle import RuntimeLifecycle, RuntimePhase
 

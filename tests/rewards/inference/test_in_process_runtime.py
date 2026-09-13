@@ -119,9 +119,9 @@ class _LazyTorchModel(TorchRewardModel):
         self.load_scopes: list[bool] = []
 
     def _load_module(self) -> torch.nn.Module:
-        import vrl.utils.cuda_memory as cuda_memory_mod
+        import vrl.models.parking as parking_mod
 
-        allocator = cuda_memory_mod.cumem_allocator()
+        allocator = parking_mod.cumem_allocator()
         self.load_scopes.append(bool(allocator and getattr(allocator, "building", False)))
         return torch.nn.Identity()
 
@@ -185,10 +185,10 @@ def _parking_request() -> RewardInferenceRequest:
 @pytest.mark.asyncio
 async def test_sleep_offload_uses_cumem_pool(monkeypatch) -> None:
     """Repeated scores reuse one construction pool and park after each request."""
-    import vrl.utils.cuda_memory as cuda_memory_mod
+    import vrl.models.parking as parking_mod
 
     allocator = _FakeCumemAllocator()
-    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: allocator)
+    monkeypatch.setattr(parking_mod, "cumem_allocator", lambda: allocator)
     runtime = InProcessRewardScorer(
         {
             "sleep_offload": True,
@@ -214,10 +214,10 @@ async def test_sleep_offload_uses_cumem_pool(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_sleep_offload_materializes_lazy_model_inside_cumem_pool(monkeypatch) -> None:
     """A lazy wrapper cannot defer its real CUDA allocations until scoring."""
-    import vrl.utils.cuda_memory as cuda_memory_mod
+    import vrl.models.parking as parking_mod
 
     allocator = _FakeCumemAllocator()
-    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: allocator)
+    monkeypatch.setattr(parking_mod, "cumem_allocator", lambda: allocator)
     runtime = InProcessRewardScorer(
         {
             "sleep_offload": True,
@@ -236,10 +236,10 @@ async def test_sleep_offload_materializes_lazy_model_inside_cumem_pool(monkeypat
 @pytest.mark.asyncio
 async def test_dedicated_runtime_keeps_lazy_model_outside_cumem_pool(monkeypatch) -> None:
     """Without a shared-GPU lease, model loading remains first-score lazy."""
-    import vrl.utils.cuda_memory as cuda_memory_mod
+    import vrl.models.parking as parking_mod
 
     allocator = _FakeCumemAllocator()
-    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: allocator)
+    monkeypatch.setattr(parking_mod, "cumem_allocator", lambda: allocator)
     runtime = InProcessRewardScorer(
         {"model_factory": f"{__name__}:_lazy_torch_factory"},
     )
@@ -254,10 +254,10 @@ async def test_dedicated_runtime_keeps_lazy_model_outside_cumem_pool(monkeypatch
 @pytest.mark.asyncio
 async def test_failed_pooled_preparation_rolls_back_before_retry(monkeypatch) -> None:
     """A partial lazy load cannot become the runtime's committed model."""
-    import vrl.utils.cuda_memory as cuda_memory_mod
+    import vrl.models.parking as parking_mod
 
     allocator = _FakeCumemAllocator()
-    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: allocator)
+    monkeypatch.setattr(parking_mod, "cumem_allocator", lambda: allocator)
     _FLAKY_PREPARE_CALLS["count"] = 0
     runtime = InProcessRewardScorer(
         {
@@ -288,7 +288,7 @@ async def test_failed_pooled_preparation_rolls_back_before_retry(monkeypatch) ->
 @pytest.mark.asyncio
 async def test_reward_memory_parking_retries_after_sleep_failure(monkeypatch) -> None:
     """A failed allocator sleep does not poison a retry."""
-    import vrl.utils.cuda_memory as cuda_memory_mod
+    import vrl.models.parking as parking_mod
 
     class _FlakyAllocator(_FakeCumemAllocator):
         def __init__(self) -> None:
@@ -302,7 +302,7 @@ async def test_reward_memory_parking_retries_after_sleep_failure(monkeypatch) ->
             super().sleep(offload_tags=offload_tags)
 
     allocator = _FlakyAllocator()
-    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: allocator)
+    monkeypatch.setattr(parking_mod, "cumem_allocator", lambda: allocator)
     runtime = InProcessRewardScorer(
         {
             "sleep_offload": True,
@@ -325,11 +325,11 @@ async def test_reward_memory_parking_retries_after_sleep_failure(monkeypatch) ->
 @pytest.mark.asyncio
 async def test_dedicated_reward_runtime_stays_resident(monkeypatch) -> None:
     """A dedicated runtime never creates or sleeps a parking pool."""
+    import vrl.models.parking as parking_mod
     import vrl.rewards.runtime as reward_runtime_module
-    import vrl.utils.cuda_memory as cuda_memory_mod
 
     allocator = _FakeCumemAllocator()
-    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: allocator)
+    monkeypatch.setattr(parking_mod, "cumem_allocator", lambda: allocator)
     runtime = InProcessRewardScorer(
         {"model_factory": f"{__name__}:_immovable_factory"},
     )
@@ -361,9 +361,9 @@ async def test_dedicated_reward_runtime_stays_resident(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
     """Without vLLM a parking reward fails loud instead of faking a CPU park."""
-    import vrl.utils.cuda_memory as cuda_memory_mod
+    import vrl.models.parking as parking_mod
 
-    monkeypatch.setattr(cuda_memory_mod, "cumem_allocator", lambda: None)
+    monkeypatch.setattr(parking_mod, "cumem_allocator", lambda: None)
     runtime = InProcessRewardScorer(
         {
             "device": "cuda:0",

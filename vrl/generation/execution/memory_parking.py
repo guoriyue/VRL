@@ -12,10 +12,9 @@ from typing import TYPE_CHECKING, Any
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.models.interfaces.runtime import PipelineOffloadMode
-from vrl.models.parking import ModelParking
+from vrl.models.parking import CumemPool, ModelParking
 from vrl.utils.cuda_memory import (
     CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
-    CumemPool,
     gpu_process_used_bytes,
     release_cuda_memory,
     release_cuda_memory_for_parking,
@@ -36,12 +35,7 @@ class _ParkingPhase(Enum):
     CUMEM_BROKEN = "cumem_broken"
 
 
-@dataclass(frozen=True, slots=True)
-class _CumemParking:
-    pool: CumemPool
-
-
-_ParkingBackend = ModelParking | _CumemParking
+_ParkingBackend = ModelParking | CumemPool
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +154,6 @@ class WorkerMemoryParking:
         # in milliseconds on a misconfigured box, not after loading GiB of weights
         # it would then have no way to release.
         pool = CumemPool.require(tag=f"vrl:generation:{self.worker_id}:weights")
-        backend = _CumemParking(pool)
         try:
             with pool.building():
                 executor = build_executor()
@@ -177,7 +170,7 @@ class WorkerMemoryParking:
                     required=state.required,
                     profile=state.profile,
                     baseline_gpu_used_bytes=baseline_gpu_used_bytes,
-                    backend=backend,
+                    backend=pool,
                 )
                 self._quarantine(
                     f"CuMem cleanup failed after pooled build error: {close_error!r}",
@@ -192,7 +185,7 @@ class WorkerMemoryParking:
             required=state.required,
             profile=state.profile,
             baseline_gpu_used_bytes=baseline_gpu_used_bytes,
-            backend=backend,
+            backend=pool,
         )
         return executor
 
@@ -207,7 +200,7 @@ class WorkerMemoryParking:
         uses_pipeline_offload = bool(
             getattr(model, "uses_pipeline_cpu_offload", False),
         )
-        if isinstance(backend, _CumemParking):
+        if isinstance(backend, CumemPool):
             if uses_pipeline_offload:
                 raise RuntimeError(
                     f"generation worker {self.worker_id!r} selected both CuMem and "
@@ -266,10 +259,10 @@ class WorkerMemoryParking:
         model = executor.model
         backend = session.backend
 
-        if isinstance(backend, _CumemParking):
+        if isinstance(backend, CumemPool):
             try:
-                if not backend.pool.asleep:
-                    backend.pool.sleep()
+                if not backend.asleep:
+                    backend.sleep()
             except BaseException as error:
                 self._quarantine(
                     f"CuMem sleep failed and may have partially unmapped allocations: {error!r}",
@@ -356,9 +349,9 @@ class WorkerMemoryParking:
         model = getattr(executor, "model", None)
         session = self._loaded_session()
         backend = session.backend
-        if isinstance(backend, _CumemParking):
+        if isinstance(backend, CumemPool):
             try:
-                backend.pool.wake()
+                backend.wake()
             except BaseException as error:
                 self._quarantine(
                     f"CuMem wake failed and may have partially remapped allocations: {error!r}",
@@ -388,7 +381,7 @@ class WorkerMemoryParking:
 
         state = self._parking
         backend = state.backend if isinstance(state, _ParkingSession) else None
-        pool = backend.pool if isinstance(backend, _CumemParking) else None
+        pool = backend if isinstance(backend, CumemPool) else None
         if self._phase is _ParkingPhase.CUMEM_BROKEN:
             raise RuntimeError(
                 f"generation worker {self.worker_id!r} has an indeterminate CuMem "

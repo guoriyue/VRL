@@ -1,15 +1,23 @@
 # Worker memory parking lifecycle
 
-Reviewed the complete 586-line `vrl/generation/execution/memory_parking.py`,
+Reviewed `vrl/generation/execution/memory_parking.py`,
 worker load/release/sleep/wake callers and targeted failure/retry tests. Retain
 the implementation in this batch; the small methods represent shared lifecycle
 operations rather than independent utility clutter.
+
+The backends now live together in `vrl/models/parking.py`: `ModelParking`,
+`TrainingStateParking` with its `TrainingMemoryState` input, and `CumemPool`.
+Trainer strategies, generation workers and reward runtimes retain lifecycle
+coordination; generic CUDA accounting remains in `vrl/utils/cuda_memory.py`.
+The lazy `cumem_allocator` dependency adapter stays beside `CumemPool` so tests
+can exercise allocator behavior without loading vLLM or accessing CUDA.
 
 ## Retain and why
 
 - `_ParkingPlan` versus `_ParkingSession` distinguishes configuration before
   construction from committed backend ownership. `ModelParking` carries a
-  shared model/tensor restore ledger; `_CumemParking` carries the allocation pool. A single bag of
+  shared model/tensor restore ledger; `CumemPool` directly owns the allocation pool.
+  The one-field `_CumemParking` wrapper has been removed. A single bag of
   optional fields would permit combinations the current union excludes.
 - `build` must wrap executor construction because CuMem allocation ownership
   starts during model construction. The callback lets this owner establish the
