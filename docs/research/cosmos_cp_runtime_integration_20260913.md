@@ -595,3 +595,33 @@ quality improvement, full checkpoint/resume/EMA proof, or a throughput result.
 Configuration dispatch is still closed. Next: GPU composition with actual
 disjoint placement, then released-weight online update and native distributed
 checkpoint/resume/EMA validation under the original sprint requirements.
+
+## Disjoint CUDA native training composition: d782836f
+
+The same native composition now also runs with NCCL CP training on GPUs 0-1
+and the leader's separate rollout transformer and scheduler on GPU 2. GPU 3
+is unused. Conditioning and CPS sampling tensors are created on the rollout
+device; shared trajectories are loaded through the existing CPU spool path.
+The test asserts actual model parameter placement, not just configured device
+labels. Strict deterministic algorithms, IEEE FP32 and the required cuBLAS
+workspace are enabled before execution.
+
+Two complete native trainer updates pass the unchanged initial replay guard
+of 1e-3, positive gradient checks, parameter-change checks, exact CP peer
+parameter equality and policy publication/collection version assertions.
+The local collector still uses synthetic text and rewards; this does not
+exercise Ray, real encoders, VAE decoding or external reward placement.
+
+Verified on four available L40S cards (three used):
+
+- CUDA distributed test: **1 passed, 1 deselected**, 10.48 seconds.
+- CPU composition and trainer split regression: **14 passed, 1 skipped**,
+  8.44 seconds; the skip is the CUDA test.
+- Ruff and git whitespace checks pass.
+
+Both test sessions exited successfully. A fresh compute-process inventory
+was empty afterwards; GPUs 0-2 are released. These are test-suite elapsed
+times, not model throughput measurements. Frozen integration runtime and
+shared dependencies remain unchanged. Full-weight online update, native
+checkpoint/resume/EMA, DP-aware production construction and public config
+acceptance remain open.
