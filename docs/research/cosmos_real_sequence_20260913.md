@@ -1396,3 +1396,69 @@ GPU unit tests, real torchrun and CPU comparator exited 0. Fresh compute invento
 was empty; all four GPU claims released. FSDP's existing lifecycle is now a
 verified numerical candidate for full integration without enabling unsupported
 DDP parking or the failed fixed-compute CP path.
+
+### Real four-card trainer-to-generation memory handoff
+
+On unchanged candidate 260b7d19, four actual Cosmos FSDP trainer processes
+performed the same bounded native slice update from the original initial policy,
+exported updated trainable weights collectively, and parked their model/Adam/EMA
+state. Each rank then launched a separate native Ray cluster and worker on its
+own physical GPU. The child used the parent's newly updated snapshot, not the
+older step-four checkpoint. Native GlobalRayPlacementOwner probes and generation
+receipts confirmed one worker each on GPUs 0, 1, 2 and 3.
+
+Each child explicitly activated its deferred runtime, generated one real
+512x512/93-frame/20-CPS-step clip with seed 32000+rank, and verified active
+parameter content against the parent's snapshot at version 1. It saved the
+native unscored GenerationOutput, explicitly offloaded the runtime, and shut down
+its owned worker/cluster before exiting. Every parent waited for collective
+child success before restoring. The four children capped Ray object stores at
+2GiB each; all Ray sessions and artifacts used NVMe. No reward model was invoked.
+
+The retained trainer processes each had 189,665,280 bytes of PyTorch allocated
+memory while parked. A saved live process inventory shows each GPU simultaneously
+holding a 1084MiB trainer process and a 26530MiB generation worker. Thus the
+real generation model fits without terminating the trainer. The difference from
+PyTorch allocated bytes includes context/communication and other process memory;
+do not call 190MB the whole trainer process footprint.
+
+Generation times were 62.186910, 61.967324, 62.062213 and 61.900882 seconds for
+ranks 0-3, excluding worker startup/activation. Each saved video is a nonuniform
+uint8 tensor of shape [1,3,93,512,512]. CPU-only artifact audit passed native
+trajectory validation, finite tensors, distinct physical device receipts, active
+weight verification and exact equality between generation source weights and
+post-handoff reconstructed trainer weights. All serialized storages were CPU.
+Pixel nonuniformity is not visual quality or motion correctness acceptance.
+
+After actual generation and worker cleanup, every parent passed exact local
+readback of 3,929 parameter/Adam/EMA tensors, original device restoration and
+parameter-object identity. The complete parked interval plus generation/startup,
+cleanup and readback was 182.403-182.518 seconds. Rank0 diagnostic update/handoff
+wall was 232.401740 seconds; neither number is a fair training-throughput metric.
+The independent native-DP comparison again passed unchanged limits: gradient
+relative L2 7.895697e-11, update relative L2 3.328797e-10, parameter maxabs
+2.910383e-11, with both Adam moments passing. No next optimizer update was run
+after this real-model handoff; that remains separate from the earlier unit-policy
+three-update parking control.
+
+Two failed probe attempts are preserved rather than labeled passes. The first
+omitted deferred-runtime activate() and was rejected before worker generation.
+The activated retry generated clips and verified weights but incorrectly invoked
+score_rollouts without a reward owner in a shared-reward topology. The final
+generation-only probe saves GenerationOutput and never invokes scoring; it does
+not override that reward guard. Both failed attempts coordinated rank failure,
+restored parent state via the native API, cleaned owned Ray instances and exited
+before the next attempt. Their sources/logs/timelines remain in
+cosmos_real_fsdp_generation_handoff and *_activated.
+
+Successful evidence: cosmos_real_fsdp_generation_handoff_unscored contains
+executed parent/child/audit/comparator sources, native result and parking receipts,
+full gradient/update artifacts, generation_weights.pt, four child logs/configs/
+GenerationOutput files/results, GPU timeline, live compute inventory,
+artifact_audit.json and native_comparison.json. Parent, all children, monitor and
+CPU audits exited 0; fresh GPU and Ray/child inventories empty, all claims released.
+This establishes actual phased four-card update -> generation -> state restoration,
+not simultaneous four-card training and generation. Reward integration, persistent
+worker reuse across repeated phases, independent replay of these new clips,
+next real update, production sampler/checkpoint continuation and full recipe/quality
+remain open. No old training queue was restarted.
