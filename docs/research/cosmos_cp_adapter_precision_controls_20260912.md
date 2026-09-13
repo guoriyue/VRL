@@ -281,3 +281,37 @@ Both rank case reports match; torchrun exits 0, fresh compute inventory is
 empty and GPUs 0-1 are released. No production changes or acceptance pass.
 Next isolation should capture attention-internal gradients, distinguishing
 replicated cross-attention K/V from token-sharded self-attention tensors.
+
+## Attention-internal trace
+
+The block-26 trace now includes Q/K/V projections, Q/K normalization and
+output projection. Self-attention tensors and cross-attention Q/output tensors
+are token-sharded and gathered for comparison. Cross-attention K/V and norm_k
+are replicated: forward values are compared directly, while detached gradient
+copies are summed across ranks in FP32. Actual gradients are not changed.
+
+All traced BF16 forward outputs match. CFG call 0 output-gradient relative L2:
+
+| Module | Self-attention | Cross-attention |
+| --- | ---: | ---: |
+| to_out.0 | 0.000453839 | 0.000373945 |
+| norm_q | 0.000994751 | 0.00392359 |
+| to_q | 0.00111407 | 0.00247088 |
+| norm_k | 0.00322613 | 0.00304969 |
+| to_k | 0.00486029 | 0.0212226 |
+| to_v | 0.00288178 | 0.00300477 |
+
+The cross-attention K normalization backward is a specific amplification
+boundary: about 0.305% error at its output cotangent versus 2.12% at its input
+cotangent. This does not prove the entire discrepancy originates there or
+constitute an operator bug. Replicated nonlinear operators receive partial
+cotangents on each rank; finite-precision local backward followed by summation
+need not numerically match backward on a summed cotangent. A targeted next
+control should test that ordering at cross-attention norm_k without changing
+forward values or confusing replicated and sharded gradient conventions.
+
+Aggregate BF16 parameter-gradient relative L2 is 0.0271407, FP32 2.40468e-5.
+Both rank reports match. Evidence:
+`cosmos_cp_attention_internal_l40s/rank-{0,1}.json` and adjacent log.
+Torchrun exits 0; fresh compute inventory empty and GPUs 0-1 released.
+Production runtime, dependencies and acceptance thresholds remain unchanged.
