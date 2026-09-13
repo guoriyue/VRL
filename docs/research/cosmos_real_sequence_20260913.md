@@ -1752,3 +1752,37 @@ inspection processes are terminal; fresh compute and Ray inventories empty,
 GPU0-3 released. This closes actual fresh-process strict online continuation for
 the bounded workload. Full recipe, controlled throughput, quality, broader
 topologies and continuous queue recovery remain separate open requirements.
+
+## Controlled throughput pilot: four-card arm complete
+
+Clean candidate7bf2b579 completed two native CLI updates with four fixed VideoPhy
+training prompts (original lines1-4), explicit seeds11000/22000/33000/44000,
+two samples/group and one group/rank: eight global samples/update. JSONL SHA256
+cac2f660d55bf4f987affbf516f09e0b6763e02a8837dca01e14a4d45a326a77.
+Full512p93f20-step generation and real Kling scoring remain enabled; training
+is the bounded one-PPO/one-timestep integration workload, not the full recipe.
+Both prepared launchers passed CPU preflight for identical global requests,
+model/algorithm/actor/sampling/reward settings and partitioned advantages.
+The single-process launcher explicitly clears the inherited FSDP configuration.
+Single-card execution and cross-topology numerical comparison remain pending.
+
+Four-card native measured phase totals range260.025-261.092s for cold update1
+and170.902-171.632s for warm update2. Generation remains122.891-123.875s/rank;
+reward wall falls from57.867-58.035s to7.255-7.437s, while generation activation
+falls from38.124-39.086s to2.932-2.979s. Timings sum only native non-overlapping
+phases, excluding outer model construction, checkpoint save and shutdown;
+nested collect/reward metrics are not added twice. These are four-card-only
+observations, not a single-card speedup or full process wall-time measurement.
+
+Audit passes: two checkpoints and final state agreement,1120 owned model tensors,
+560 finite Adam states and EMA tensors with counts1/2; all560 training tensors
+change between updates. Both pre-update replay differences are0, gradient norms
+1.7424408724764362e-05 and1.7502563423477113e-05. Sixteen real video decode/score
+receipts, eight reward requests, four workers loaded once, sampler transitions
+and artifact seals verified. Temporary MP4s were released as intended. Reward
+means-3.324514150619507 and-3.33978009223938 are observations, not learning proof.
+
+Evidence: `/mnt/nvme/outputs/wan22_i2v_cache/cosmos_fair_throughput_four`,
+adjacent console log, acceptance_audit.json, timing_summary.json and preserved
+executed launch/audit/timing/preflight sources. Torchrun and audit exit0; fresh
+GPU and Ray inventories empty, GPUs0-3 released. No additional queue launched.
