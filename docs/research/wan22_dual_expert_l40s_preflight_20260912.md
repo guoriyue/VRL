@@ -619,3 +619,28 @@ FP32 T2V recipe. It does not close full-size I2V, arbitrary batch geometry,
 four-rank throughput, long-run quality, or the broader multi-family hardware
 goal. Next scaling comparisons must keep this accepted numerical configuration
 and fixed global work, rather than compare unrelated rewards or cold/warm runs.
+
+## 2026-09-13: equal-global-work one/four-rank pilot preflight
+
+`wan22_fair_throughput_prepare.py` completed CPU preflight and wrote separate
+single/four YAML configurations plus one four-prompt manifest. Each arm uses
+eight global samples per update and two updates: one rank processes four
+prompts, four ranks process one prompt each, with two samples per prompt.
+Both arms use native FSDP, FP32 LoRA, precision policy none, full_cpu activation
+checkpointing, generation/replay batch 2, both experts and nine replay steps.
+No model geometry, reward model, optimizer or algorithm setting was reduced.
+
+Resolved request plans match exactly across both epochs, including explicit
+seeds and per-request geometry. Group-local advantages computed over all eight
+test rewards exactly match concatenated per-rank groups; global_std remains
+false. Model/actor/algorithm/sampling/precision/data sections are equal.
+Manifest SHA256: `c7e11000d5cfe554ed1cc7665905d36467a0864844e806d9cdab01bf299bebfb`.
+Receipt: `wan22_fair_throughput_preflight.json`. The launcher accepts only
+`single` or `four` and refuses an existing output directory.
+
+No GPU benchmark was launched during this preparation. Four-rank host-memory
+capacity remains to be measured because trainer and rollout replicas coexist
+on CPU; two-rank capacity alone does not establish four-rank capacity. Run arms
+sequentially, retain cold/warm timing boundaries, compare actual updated state
+and global work before reporting a speedup. Both full-size I2V and quality
+remain separate open gates.
