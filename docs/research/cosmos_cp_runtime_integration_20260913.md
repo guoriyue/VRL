@@ -323,3 +323,48 @@ Both processes exited0, fresh GPU compute inventory empty, GPUs0-1 released.
 Frozen integration runtime and shared dependencies remain unchanged. Next
 required work is strategy/data ownership integration and actual trainer
 update/resume with the validated attention/precision contract.
+
+## DP x CP accumulation primitives: e3f7f54b
+
+The existing distributed module now provides `ContextParallelGroups`,
+`create_context_parallel_groups` and `reduce_context_parallel_gradients`.
+For four ranks with CP2, CP groups are `[0,1]` and `[2,3]`; DP groups are
+`[0,2]` and `[1,3]`. All ranks create groups in the same order. The default
+process group must already exist; its owner remains responsible for shutdown.
+DP rank/size, not physical rank/size, define independent sampler identity.
+
+The reducer is called **once after accumulation and before clipping/step**:
+SUM across CP, then SUM/divide across DP. It is not combined with a DDP
+reducer. A replicated full-output loss must be divided by CP size before
+backward and by the accumulation count as appropriate. Globally unused
+parameters retain `grad=None`, preserving AdamW skip/weight-decay semantics.
+Rank-local missing gradients are replaced with zeros only when another world
+rank used the parameter. Sparse gradients cause a collective-consistent error.
+The caller must supply identical ordered parameter lists on one device; no
+FSDP/DTensor integration is claimed.
+
+### Four-L40S update comparison
+
+`tests/trainers/test_context_parallel_updates.py` runs DP2 x CP2 with an actual
+tiny Cosmos self-attention module and fixed-row compute. CP peers share
+inputs; the two DP groups use distinct inputs. Two AdamW updates each have
+two accumulated microbatches. A full-batch unsharded reference computes all
+four contributions per update. Checks cover gradients, updated parameters,
+AdamW state, a globally unused parameter, and a parameter used only by DP1.
+Invalid CP sizes and rank0-only sparse gradients also exercise failure paths.
+
+- Four-L40S NCCL final test: **1 passed, 1 deselected**, 9.97 seconds.
+- CPU update/exchange/distributed regression: **11 passed, 2 skipped**,
+  20.31 seconds.
+- Gradients use atol1e-5/rtol3e-5; updated parameters atol1e-6/rtol1e-5;
+  optimizer state atol2e-6/rtol5e-5. This is tolerance agreement, not bitwise
+  equivalence. Existing full-weight CPS metrics remain separate evidence.
+- Ruff and whitespace checks passed. All processes terminal; fresh GPU
+  compute inventory empty, GPUs0-3 released. Frozen integration runtime and
+  shared dependencies unchanged.
+
+This is a FP32 attention/reduction/optimizer unit, not a full Cosmos model
+online update, checkpoint/resume, reward or advantage test. The helpers are
+not yet invoked by a selectable training strategy or online data path. Next
+integration must connect group-aware replay ownership, precision contexts,
+accumulation boundaries and checkpoint handling before opening a config gate.
