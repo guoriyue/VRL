@@ -2,8 +2,9 @@
 
 Status: OPEN. Production-candidate primitives, self-attention processor and
 opt-in model-level sharding are implemented. Fixed-row Linear compute resolves
-the retained small-model CUDA regression below. Training integration and
-released-weight validation of this candidate remain absent. This does not close
+the retained small-model CUDA regression below. Released-weight fixed-action
+CPS validation now has exact output/logprob but nonzero gradient differences
+(see below). Training integration remains absent. This does not close
 the original context-parallel sprint or the four-L40S hardware goal.
 
 ## Isolation and commits
@@ -183,3 +184,74 @@ evidence of why ordinary untiled compute is insufficient for that guard.
 Next required: real-family BF16/FP32-LoRA validation with this model-level
 candidate, strict deterministic runtime configuration, CP strategy/loss/gradient
 integration, and the original full-shape online update/resume/EMA gates.
+
+## Released-weight full-shape CPS candidate validation
+
+Runtime remains candidate `5c89cf7f`, frozen during execution. The existing
+NVMe diagnostic now accepts `--runtime-cp`: it calls the candidate model-level
+context and fixed-row precision helper, bypassing the old per-block diagnostic
+installation and forward monkeypatches. No shared dependency changed.
+
+Evidence root:
+`/mnt/nvme/outputs/wan22_i2v_cache/cosmos_candidate_fullshape_cps_l40s`
+with `rank-0.json`, `rank-1.json`, `probe_source.py` and adjacent `.log`.
+Probe snapshot SHA256:
+`343d704ac8e3a1e2c4d7969494eda0a492f75311903e38ac29c02bfd1691390e`.
+
+Pinned released Predict2.5 2B transformer/scheduler revision
+`0d37c7498f54cee3c599d438d895a0a4a8608064`. Latent `[1,16,9,60,104]`,
+14,040 tokens, corresponding to 480x832 / 33 frames; synthetic text
+`[1,512,100352]`. Actual family `forward_step`, CFG5, UniPC20 index18,
+sigma 0.0281333942. Fixed action from the unsharded reference, actual CPS
+log-prob, BF16 base, native default/frozen-previous adapters, nonzero default
+B std .001 seed73, FP32 LoRA, padded64 Linear, native GPU checkpoint.
+Strict deterministic algorithms, `CUBLAS_WORKSPACE_CONFIG=:4096:8`, efficient
+SDPA context spanning both forward and backward. CP replicated loss divided
+by2; parameter gradients SUM-reduced across the two ranks.
+
+Both ranks report identical results:
+
+- Output max absolute error: **0**.
+- CPS log-prob max absolute error and ratio deviation: **0**.
+- Global gradient relative L2: **0.00016143085017429523**.
+- All **560** trainable gradient tensors finite and nonzero: 280 A + 280 B.
+- Trainable dtype FP32; all 560 previous-adapter tensors frozen.
+- Largest per-tensor gradient relative L2: **0.0200619791** at
+  `transformer_blocks.26.attn2.to_k.lora_B.default.weight`; max absolute error
+  **3.0536240203e-11**, error L2 **2.2238370867e-10**.
+- The corresponding A relative L2 is .0200533625. Other largest relative
+  errors also involve later cross-attention K projections.
+
+The whole-gradient error is higher than the older strict-deterministic
+per-block-gather prototype's ~2.2244e-6. This is not exact gradient equivalence,
+and the global norm must not hide the ~2% small-tensor relative errors. The
+diagnostic's `finite_network_diagnostic_complete` status asserts finiteness
+and scalar log-prob <=1e-3, not a gradient acceptance threshold. No original
+gate was relaxed. Investigate the local-query cross-attention K-gradient
+accumulation path with a controlled head-sharded cross-attention comparison;
+its causal role is not yet proven.
+
+Launch used `--runtime-cp --method ulysses --family-forward
+--production-adapters --guidance-scale 5 --timestep-index 18
+--fp32-lora-compute --lora-b-std 0.001 --linear-token-tile 64
+--pad-linear-tiles --latent-height 60 --latent-width 104 --latent-frames 9
+--text-tokens 512 --checkpoint --deterministic --dtype bf16` with the pinned
+model path above and candidate PYTHONPATH after the TF5.13 overlay.
+
+This is one synthetic-condition, fixed-action full-weight test. It does not
+exercise real text encoding, VAE, reward, a rollout trajectory, advantages,
+optimizer update/resume, EMA, compile or end-to-end performance. It also is
+not a peak-memory benchmark. Both processes exit0; fresh GPU compute inventory
+empty and claim released.
+
+### Online integration remains broader than a strategy switch
+
+Current `vrl/scripts/common/online.py` gives `PromptBatchSampler` physical
+world size/rank, and initializes rank-distinct RNG streams. CP requires
+identical replay tensors, timesteps, conditions and stochastic decisions
+within a CP group. Prompt sampling, rollout ownership/broadcast, filtering,
+advantage statistics and denominators must distinguish DP from CP. Existing
+DDP averages parameter gradients whereas this probe SUMs after dividing the
+replicated loss; integrating both without accounting for that distinction
+would scale gradients incorrectly. No configuration-only CP enablement is
+claimed or installed.
