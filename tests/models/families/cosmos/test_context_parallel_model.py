@@ -1,6 +1,7 @@
 """Real multi-block Cosmos forward/backward, including native checkpoint calls."""
 
 import copy
+from contextlib import ExitStack
 from datetime import timedelta
 from itertools import product
 
@@ -11,9 +12,10 @@ import torch.multiprocessing as mp
 from diffusers import CosmosTransformer3DModel
 
 from vrl.models.families.cosmos.context_parallel import cosmos_context_parallel
+from vrl.models.precision import fixed_row_linear_compute
 
 
-def _worker(rank, rendezvous, cuda, extra_pos, cross_projection):
+def _worker(rank, rendezvous, cuda, extra_pos, cross_projection, fixed_rows=True):
     torch.set_num_threads(1)
     if cuda:
         torch.cuda.set_device(rank)
@@ -25,6 +27,7 @@ def _worker(rank, rendezvous, cuda, extra_pos, cross_projection):
         world_size=2,
         timeout=timedelta(seconds=120),
     )
+    precision = ExitStack()
     try:
         torch.manual_seed(194)
         reference = CosmosTransformer3DModel(
@@ -45,6 +48,9 @@ def _worker(rank, rendezvous, cuda, extra_pos, cross_projection):
             encoder_hidden_states_channels=32,
         ).to(device)
         candidate = copy.deepcopy(reference)
+        if fixed_rows:
+            precision.enter_context(fixed_row_linear_compute(reference))
+            precision.enter_context(fixed_row_linear_compute(candidate))
         original_processors = [b.attn1.processor for b in candidate.transformer_blocks]
         for recompute, frame_time in product((False, True), repeat=2):
             for model in (reference, candidate):
@@ -102,6 +108,7 @@ def _worker(rank, rendezvous, cuda, extra_pos, cross_projection):
                 )
         torch.testing.assert_close(candidate(local, timestep, local_text).sample, expected)
     finally:
+        precision.close()
         dist.destroy_process_group()
 
 
@@ -125,6 +132,18 @@ def test_cosmos_context_parallel_model_nccl(tmp_path, extra_pos, cross_projectio
     mp.spawn(
         _worker,
         args=((tmp_path / "nccl").as_uri(), True, extra_pos, cross_projection),
+        nprocs=2,
+        join=True,
+    )
+
+
+@pytest.mark.distributed
+def test_cosmos_context_parallel_fixed_rows_nccl(tmp_path):
+    if torch.cuda.device_count() < 2:
+        pytest.skip("requires two CUDA devices")
+    mp.spawn(
+        _worker,
+        args=((tmp_path / "nccl-fixed").as_uri(), True, True, False, True),
         nprocs=2,
         join=True,
     )
