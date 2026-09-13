@@ -666,3 +666,71 @@ including executed GPU/comparison sources, four transition/pre-step receipts,
 GPU process exited 0, CPU comparison exited 2 on threshold failure. Fresh GPU
 compute inventory was empty; all four GPUs released. Full production training,
 native-compatible CP, recovery, EMA and quality gates remain open.
+
+## FP32-LoRA-only ablation: smaller mismatch, still outside native limits
+
+The same native DP4 diagnostic changed only the LoRA A/B Linear branches:
+autocast disabled inside each branch and input converted to FP32, with existing
+FP32 parameters. Native full-row Linear and default SDPA were unchanged. The
+probe-only wrapper remains active through checkpoint recomputation/backward
+and restores forwards on exit. CPU tests covered FP32 execution under BF16
+autocast, exact FP32 control output, finite gradients and restoration on both
+normal and injected-exception exits: 2 passed in 8.19 seconds.
+
+Same saved group, weights, timestep, loss averaging, optimizer and capture
+settings as previous arms. Execution passed, all eight log-prob errors were
+zero and final trainable replicas were exact across four ranks. There were
+560 captured gradients and 280 changed tensors; gradient norm 0.0008509107865.
+Nevertheless the unchanged native-parity comparison failed:
+
+| FP32-LoRA-only vs native DP4 | Relative L2 | Max absolute error |
+| --- | ---: | ---: |
+| Gradients | 0.0029878823 | 5.0235485e-8 |
+| Updates | 0.0066886213 | 7.4179014e-5 |
+| Adam first moments | 0.0029878823 | 5.0235371e-9 |
+| Adam second moments | 0.0041234047 | 4.5701832e-16 |
+
+This effect is much smaller than the efficient-SDPA-only or fixed-row-only
+differences, but still fails the original tolerances. Exact initial log-probs
+do not establish derivative equivalence. No quality or higher-precision-truth
+claim follows, and individual ablation errors cannot be summed to explain the
+combined contract. The measured region was 38.485526 seconds; peak allocations
+were 15,337,463,808 / 15,153,963,008 / 15,337,463,808 / 15,337,463,808 bytes.
+Timing is one diagnostic update, not complete training throughput.
+
+Evidence: `/mnt/nvme/outputs/wan22_i2v_cache/cosmos_real_fp32_lora_only_dp4_update`
+contains the executed probe, precision helper, helper tests and comparator,
+all per-rank receipts, `update.pt`, execution `result.json` and failed
+`native_comparison.json`. GPU process exited 0, comparison exited 2. Fresh GPU
+inventory empty before transferring all four GPUs to an unchanged native
+fresh-process repetition to check reference reproducibility. Production CP,
+full recipe, recovery, EMA and quality remain open.
+
+## Native reference repetition: exact update reproducibility
+
+A fresh four-process launch repeated the original native DP4 script with only
+its output directory changed. Same candidate, model/adapter, saved real group,
+default SDPA, native Linear/autocast, precision/determinism and optimizer.
+All eight log-prob errors were zero, all four final parameter replicas exact,
+and the native comparison found zero relative L2 and zero maximum absolute
+error for all 560 gradient, update and final parameter tensors and both Adam
+moments. Optimizer parameter groups, advantages and step counters matched.
+
+The measured region was 36.454606 seconds versus the original 36.435179;
+all ranks peaked at 15,429,804,032 allocated bytes. Gradient norm again was
+0.0008508932078, with 280 changed tensors. This repetition supports reference
+stability for the tested diagnostic; it is not a broad reproducibility or
+statistical throughput guarantee.
+
+Evidence: `/mnt/nvme/outputs/wan22_i2v_cache/cosmos_real_native_repeat_dp4_update`,
+with executed probe/comparator, per-rank receipts, update artifact, execution
+result and passed `native_comparison.json`. GPU job and CPU comparison both
+exited 0, fresh compute inventory empty, all four GPU claims released.
+
+The three single-factor ablations all fail unchanged native-update limits,
+while the unchanged reference repeats exactly. Keep the fixed-compute CP
+contract experimental; none of these ablations warrants silently changing
+native rollout/training precision. The matched fixed CP/DP proof remains only
+within its explicit compute contract. Full native DP training semantics versus
+single-device accumulation, production integration and full-recipe quality
+remain required; these diagnostic slices do not close them.
