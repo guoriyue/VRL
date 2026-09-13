@@ -1028,3 +1028,45 @@ arms' final states and per-rank receipts/future RNG references, and passed
 comparison.json. Both GPU launches and the CPU comparator exited 0. Fresh GPU
 compute inventory empty, all four claims released. Production rollout/weight
 sync, actual data progress and remaining quality gates stay open.
+
+## Trained checkpoint delivery to four real Ray workers passed
+
+The existing native vrl.scripts.perf.weight_delivery_probe ran unchanged on
+candidate 435c8fa2 with four isolated single-GPU acceptance actors. It strictly
+restored the real four-update checkpoint through native model identity checks,
+exported the sender snapshot, and loaded full real Cosmos generation models
+on all four L40S devices. The tool launches its own actor fleet directly; this
+is not the production trainer/rollout/reward placement in the source config.
+No GPU trainer or reward worker was active. Ray temporary files used NVMe.
+
+Each receiver first installed and verified an intentionally different parameter
+payload: zero entries replaced by one and nonzero entries replaced by zero.
+Two subsequent native snapshot syncs installed the trained sender payload with
+versions 1 and 2, requiring parameter-content readback and matching version ACK
+on every receiver. This rejects a no-op update even if its version echo is right.
+Both delivery versions refer to the same four-update trained snapshot, not two
+additional training updates or a continuous retained-version-slot experiment.
+
+All four receivers passed for 560 tensors and 183,500,800 bytes each. The shared
+snapshot path was used (bucket_bytes=null). Fleet-wide sync plus readback took
+0.687883 seconds on first install and 0.503922 seconds on repeated install.
+Sender build/restore was 18.861041 seconds; snapshot export 0.068314 seconds.
+Per-receiver poison install/readback took 0.215234-0.229403 seconds. Timings
+exclude worker/model startup and are not video throughput, network bandwidth
+or a controlled scaling benchmark. Source initialization reported seed zero,
+deterministic=false; this parameter-byte test does not imply deterministic
+forward execution. Actual GPU processes were observed at approximately 21GB
+each during worker loading.
+
+Existing test_weight_delivery_probe.py regressions also passed: 10 tests in
+62.99 seconds, with one Ray future-behavior warning. They ran CPU-only and
+overlapped source setup. The production tool publishes its report only after
+successful fleet cleanup. It exited 0; fresh GPU inventory and raylet/GCS/probe
+process queries were empty. All four GPU claims released.
+
+Evidence: `/mnt/nvme/outputs/wan22_i2v_cache/cosmos_trained_four_worker_delivery`,
+with native result.json, executed source and command/scope receipt. This proves
+trained parameter delivery and in-place verification on four real receivers.
+No new video was generated, so fresh rollout/replay correctness, reward/quality,
+production scheduling, restored-worker rollout initialization and continuous
+queue/version retention behavior remain separate open gates.
