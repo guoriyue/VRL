@@ -355,3 +355,42 @@ are absent and fresh compute inventory empty; GPUs 0/1 released. This closes
 only selected real-input CP log-prob compatibility and rank-consistency checks.
 Full real-group CP gradients/updates, matched-compute control, production
 configuration dispatch and end-to-end quality/performance remain open.
+
+## Matched-compute unsharded control
+
+The same six real `(sample,step)` inputs used by CP admission were replayed on
+GPU 0 without CP hooks, while retaining strict determinism, IEEE, efficient
+SDPA, fixed-row Linear and the same explicit FP32 LoRA branches. Initial
+adapter validation/load/readback, source checkpoint and data were unchanged.
+This removes the earlier mismatch in the core compute contract.
+
+| Six-transition diagnostic | Total seconds | Per-step seconds |
+| --- | ---: | ---: |
+| Fixed-row unsharded control | 125.183727 | 20.63-21.33 |
+| CP2 admission | 71.116996 | 11.71-12.26 |
+
+The observed phase ratio is 1.760x, or 43.190% less elapsed time with CP2.
+These are one execution per arm with no confidence interval. CP additionally
+timed rank-consistency broadcasts/reductions and a final memory all-gather;
+the unsharded control has no equivalent collectives. Both timings include
+replay validation and exclude initial loading. This is a diagnostic comparison,
+not a pure-forward benchmark, full training throughput or production speedup.
+
+Every saved-rollout log-prob absolute error matches the corresponding CP
+receipt's reported absolute error; maximum is 1.8477440e-6, below unchanged
+1e-3 tolerance. Matching scalar absolute errors do not establish equality of
+the full prediction tensors across these two runs. Unsharded peak allocated
+memory was 7,977,218,048 bytes, versus 6,620,361,216 bytes per CP rank.
+
+Important decision: fixed-row computation itself is expensive. The previous
+ordinary native single-device replay averaged about 2.54 seconds per step,
+far below either fixed-row arm (different scope/contract, not a controlled
+speedup figure). CP distributes the expensive fixed-row path successfully,
+but this evidence does not justify replacing the ordinary native path for
+this geometry, which already fits on one GPU. Leave CP out of public/default
+dispatch; real update semantics and the cost of its compute contract still
+need resolution before production adoption.
+
+Evidence: `cosmos_real_fixed_replay_control/{executed_probe.py,transitions.json,
+result.json}` under the NVMe output root. Process exited 0 and fresh compute
+inventory empty; GPU 0 released. No new video generation or reward scoring.
