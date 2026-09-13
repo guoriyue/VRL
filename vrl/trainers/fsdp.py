@@ -631,15 +631,16 @@ def normalize_fsdp_parameter_dtype(
     *,
     allow_cast: bool,
 ) -> None:
-    """Make an FSDP parameter group uniform without hiding dtype provenance.
+    """Validate native trainable dtypes or normalize the explicit actor policy.
 
-    FSDP2 validates original parameter dtypes before its mixed-precision cast.
+    FSDP2 requires uniform trainable original/reduction dtypes, but permits
+    frozen floating parameters to retain their own storage dtype.
     Diffusers deliberately leaves a small set of normalization/conditioning
     parameters in FP32 even when the resolved model dtype is BF16. The actor
     policy stores all model parameters in its resolved low precision and relies
     on the FP32-master optimizer for update precision, so normalize those source
-    tensors before sharding. A ``none`` policy promises native dtype semantics
-    and therefore fails instead of silently changing them.
+    tensors before sharding. A ``none`` policy preserves frozen floating
+    parameters and rejects mismatched trainable dtypes instead of casting them.
     """
 
     if not target_dtype.is_floating_point:
@@ -648,6 +649,7 @@ def normalize_fsdp_parameter_dtype(
         (name, parameter)
         for name, parameter in module.named_parameters()
         if parameter.dtype != target_dtype
+        and (allow_cast or parameter.requires_grad or not parameter.is_floating_point())
     ]
     if not mismatched:
         return

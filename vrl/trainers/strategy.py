@@ -474,7 +474,18 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         for name, handle, writer in handles:
             parameter_dtype = getattr(handle, "dtype", None)
             if parameter_dtype is None:
-                parameter_dtypes = {parameter.dtype for parameter in handle.parameters()}
+                if self._precision_policy == "none":
+                    # Native FSDP keeps frozen floating parameters (diffusers'
+                    # FP32 norms, a BF16 base under an FP32 LoRA) in their own
+                    # storage dtype; only the trainable group must be uniform,
+                    # so it alone decides the target dtype.
+                    parameter_dtypes = {
+                        parameter.dtype
+                        for parameter in handle.parameters()
+                        if parameter.requires_grad
+                    }
+                else:
+                    parameter_dtypes = {parameter.dtype for parameter in handle.parameters()}
                 if not parameter_dtypes:
                     raise ValueError(f"FSDP trainable handle {name!r} has no parameters")
                 if len(parameter_dtypes) != 1:

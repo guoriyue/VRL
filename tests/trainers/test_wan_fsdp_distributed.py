@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -506,6 +507,7 @@ def _run_dual_cuda_offload_rank(
     world_size: int,
     port: int,
     queue: mp.Queue,
+    mixed_dtype: bool = False,
 ) -> None:
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
@@ -527,7 +529,44 @@ def _run_dual_cuda_offload_rank(
         policy = _build_dual_policy()
         policy._device = device
         policy._expert_lifecycle_profiling = True
+        frozen_fp32 = {}
+        reference_predictions = {}
+        if mixed_dtype:
+            from diffusers import WanTransformer3DModel
+
+            keep_fp32 = set(WanTransformer3DModel._keep_in_fp32_modules)
+            for name, parameter in policy.named_parameters():
+                keep = not parameter.requires_grad and bool(
+                    keep_fp32.intersection(name.split("."))
+                )
+                parameter.data = parameter.data.to(torch.float32 if keep else torch.bfloat16)
+                if keep:
+                    parameter.data.add_(0.000123)
+                    frozen_fp32[name] = parameter.detach().clone()
+            assert frozen_fp32
+            policy.precision = RolePrecision("bf16", "ieee", outer_autocast=True)
+            reference = deepcopy(policy).to(device)
+            reference._expert_lifecycle_profiling = False
+            with torch.no_grad():
+                for timestep in (750.0, 250.0):
+                    reference_predictions[timestep] = reference.forward_step(
+                        _input_state(device=device, timestep=timestep, boundary_ratio=0.5), 0
+                    )["noise_pred"].cpu()
+            del reference
         policy = strategy.prepare_model(policy)
+        if mixed_dtype:
+            for name, parameter in policy.named_parameters():
+                if name in frozen_fp32:
+                    assert parameter.dtype == torch.float32
+                    full = parameter.detach().to(device).full_tensor().cpu()
+                    assert torch.equal(full, frozen_fp32[name])
+            with torch.no_grad():
+                for timestep, expected in reference_predictions.items():
+                    actual = policy.forward_step(
+                        _input_state(device=device, timestep=timestep, boundary_ratio=0.5), 0
+                    )["noise_pred"].cpu()
+                    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+        before = strategy.export_checkpoint_state(_bundle(policy))
         optimizer = torch.optim.AdamW(
             [parameter for parameter in policy.parameters() if parameter.requires_grad],
             lr=1e-2,
@@ -552,6 +591,15 @@ def _run_dual_cuda_offload_rank(
             getattr(parameter, "_local_tensor", parameter).device.type == "cpu"
             for parameter in policy.parameters()
         )
+        after = strategy.export_checkpoint_state(_bundle(policy))
+        assert _module_changed(before, after, "transformer")
+        assert _module_changed(before, after, "transformer_2")
+        for name, parameter in policy.named_parameters():
+            if name in frozen_fp32:
+                assert parameter.dtype == torch.float32
+                full = parameter.detach().to(device).full_tensor().cpu()
+                assert torch.equal(full, frozen_fp32[name])
+        assert strategy.export_optimizer_state(policy, optimizer)
         queue.put(
             (
                 rank,
@@ -569,7 +617,8 @@ def _run_dual_cuda_offload_rank(
 @pytest.mark.gpu
 @pytest.mark.distributed
 @pytest.mark.parametrize("world_size", [1, 2])
-def test_wan_dual_expert_fsdp_cuda_cpu_offload(world_size: int) -> None:
+@pytest.mark.parametrize("mixed_dtype", [False, True])
+def test_wan_dual_expert_fsdp_cuda_cpu_offload(world_size: int, mixed_dtype: bool) -> None:
     if torch.cuda.device_count() < world_size:
         pytest.skip(f"requires {world_size} CUDA device(s)")
 
@@ -579,7 +628,7 @@ def test_wan_dual_expert_fsdp_cuda_cpu_offload(world_size: int) -> None:
     processes = [
         context.Process(
             target=_run_dual_cuda_offload_rank,
-            args=(rank, world_size, port, queue),
+            args=(rank, world_size, port, queue, mixed_dtype),
         )
         for rank in range(world_size)
     ]
