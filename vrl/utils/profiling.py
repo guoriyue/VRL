@@ -32,15 +32,15 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 
-class TimeIntervals:
-    """Elapsed-time coverage of intervals measured in seconds on the same clock.
+class TimeIntervals[Number: (int, float)]:
+    """Elapsed-time coverage of intervals in one unit on the same clock.
 
     Overlapping intervals are merged so concurrent work is not counted twice.
     This summarizes recorded timestamps; it does not start timers or synchronize GPUs.
     """
 
-    def __init__(self, intervals: Iterable[tuple[float, float]]) -> None:
-        merged: list[tuple[float, float]] = []
+    def __init__(self, intervals: Iterable[tuple[Number, Number]]) -> None:
+        merged: list[tuple[Number, Number]] = []
         for start, end in sorted(intervals):
             if end < start:
                 raise ValueError("interval end must not precede its start")
@@ -51,18 +51,23 @@ class TimeIntervals:
         self._intervals = tuple(merged)
 
     @property
-    def duration_s(self) -> float:
+    def intervals(self) -> tuple[tuple[Number, Number], ...]:
+        """Merged intervals, preserving the input unit and numeric precision."""
+        return self._intervals
+
+    @property
+    def duration(self) -> Number:
         """Total covered time, excluding gaps and counting overlaps once."""
         return sum(end - start for start, end in self._intervals)
 
-    def overlap_s(self, other: TimeIntervals) -> float:
+    def overlap(self, other: TimeIntervals[Number]) -> Number:
         """Time covered by both timelines, measured on the same clock."""
         left = right = 0
-        overlap = 0.0
+        overlap = 0
         while left < len(self._intervals) and right < len(other._intervals):
             left_start, left_end = self._intervals[left]
             right_start, right_end = other._intervals[right]
-            overlap += max(0.0, min(left_end, right_end) - max(left_start, right_start))
+            overlap += max(0, min(left_end, right_end) - max(left_start, right_start))
             if left_end <= right_end:
                 left += 1
             else:

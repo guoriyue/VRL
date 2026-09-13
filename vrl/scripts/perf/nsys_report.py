@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from vrl.utils.logging import init_logger
+from vrl.utils.profiling import TimeIntervals
 from vrl.utils.validation import require_int
 
 logger = init_logger(__name__)
@@ -69,24 +70,13 @@ def merge_intervals(intervals: Iterable[Interval]) -> list[Interval]:
     busy, not two separate busy spans.
     """
 
-    items = sorted((s, e) for s, e in intervals if e > s)
-    if not items:
-        return []
-    merged: list[list[int]] = [list(items[0])]
-    for start, end in items[1:]:
-        last = merged[-1]
-        if start <= last[1]:
-            if end > last[1]:
-                last[1] = end
-        else:
-            merged.append([start, end])
-    return [(s, e) for s, e in merged]
+    return list(TimeIntervals((s, e) for s, e in intervals if e > s).intervals)
 
 
 def union_length(intervals: Iterable[Interval]) -> int:
     """Total length covered by the union of ``intervals`` (overlaps counted once)."""
 
-    return sum(end - start for start, end in merge_intervals(intervals))
+    return TimeIntervals((s, e) for s, e in intervals if e > s).duration
 
 
 def clip_intervals(intervals: Iterable[Interval], lo: int, hi: int) -> list[Interval]:

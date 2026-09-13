@@ -277,6 +277,15 @@ def test_trace_discovery_excludes_temporary_and_backup_files(tmp_path: Path) -> 
 def test_time_intervals_measure_coverage_and_overlap(left, right, duration, overlap):
     first = TimeIntervals(left)
     second = TimeIntervals(right)
-    assert first.duration_s == duration
-    assert first.overlap_s(second) == overlap
-    assert second.overlap_s(first) == overlap
+    assert first.duration == duration
+    assert first.overlap(second) == overlap
+    assert second.overlap(first) == overlap
+
+
+def test_time_intervals_preserve_integer_nanoseconds():
+    start = 10**18
+    first = TimeIntervals([(start, start + 3), (start + 2, start + 5)])
+    second = TimeIntervals([(start + 1, start + 4)])
+    assert first.duration == 5
+    assert first.overlap(second) == 3
+    assert first.intervals == ((start, start + 5),)

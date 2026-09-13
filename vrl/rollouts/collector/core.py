@@ -634,9 +634,9 @@ class RolloutCollector:
         stats.add_phases(
             {
                 "collect.wall": time.perf_counter() - collection_started,
-                "collect.generation_wall": generation_timing.duration_s,
-                "collect.reward_wall": reward_timing.duration_s,
-                "collect.generation_reward_overlap": generation_timing.overlap_s(reward_timing),
+                "collect.generation_wall": generation_timing.duration,
+                "collect.reward_wall": reward_timing.duration,
+                "collect.generation_reward_overlap": generation_timing.overlap(reward_timing),
             },
         )
         stats.add_counter("collect.group_count", len(all_batches))
