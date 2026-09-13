@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Protocol
 
 from vrl.rollouts.collector.core import RewardCollectionMode
@@ -20,6 +22,65 @@ from vrl.rollouts.stats import RolloutStats
 if TYPE_CHECKING:
     from vrl.ray.resources import ResolvedDistributedResources
     from vrl.trainers.core.types import RolloutOrchestrationConfig
+    from vrl.trainers.distributed import ContextParallelGroups
+
+
+async def collect_context_parallel_iteration(
+    collect: Callable[[], Awaitable[RolloutIteration]] | None,
+    *,
+    groups: ContextParallelGroups,
+    spool_dir: str | Path,
+) -> RolloutIteration:
+    """Collect once per CP group and share CPU replay data on a shared filesystem.
+
+    All world ranks call in the same order. Only CP rank0 calls ``collect``;
+    it must be rank-local and must not enter trainer/world collectives. The
+    spool directory must be shared by every rank. Only a private file created
+    by this invocation is deserialized, never an external checkpoint. GPU
+    objects are loaded onto CPU on leaders and followers alike. Ordinary
+    collection/read errors are agreed across DP as well as CP before return.
+    Process death and collective transport failures require job-level recovery.
+    """
+    import torch
+    import torch.distributed as dist
+
+    directory = None
+    message = [None]
+    local_error = None
+    iteration = None
+    try:
+        if groups.cp_rank == 0:
+            try:
+                if collect is None:
+                    raise ValueError("CP leader requires a rollout collector")
+                directory = TemporaryDirectory(prefix=".cp-rollout-", dir=spool_dir)
+                iteration = await collect()
+                if not isinstance(iteration, RolloutIteration):
+                    raise TypeError("CP collection requires a RolloutIteration")
+                path = Path(directory.name).resolve() / "iteration.pt"
+                torch.save(iteration, path)
+                message[0] = {"path": str(path), "error": None}
+                del iteration
+            except Exception as error:
+                message[0] = {"path": None, "error": f"{type(error).__name__}: {error}"}
+        source = dist.get_global_rank(groups.cp_group, 0)
+        dist.broadcast_object_list(message, src=source, group=groups.cp_group)
+        local_error = message[0]["error"]
+        if local_error is None:
+            try:
+                iteration = torch.load(message[0]["path"], map_location="cpu", weights_only=False)
+                if not isinstance(iteration, RolloutIteration):
+                    raise TypeError("CP spool does not contain a RolloutIteration")
+            except Exception as error:
+                local_error = f"{type(error).__name__}: {error}"
+        errors = [None] * (groups.dp_size * groups.cp_size)
+        dist.all_gather_object(errors, local_error)
+        if any(error is not None for error in errors):
+            raise RuntimeError(f"CP rollout sharing failed: {errors}")
+        return iteration
+    finally:
+        if directory is not None:
+            directory.cleanup()
 
 
 class RolloutSchedule(Protocol):
@@ -125,5 +186,6 @@ def validate_rollout_schedule_topology(
 __all__ = [
     "RolloutSchedule",
     "build_rollout_schedule",
+    "collect_context_parallel_iteration",
     "validate_rollout_schedule_topology",
 ]
