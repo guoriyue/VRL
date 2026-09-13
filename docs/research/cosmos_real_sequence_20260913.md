@@ -479,3 +479,53 @@ It does not pass the complete multi-timestep/four-PPO-epoch recipe, matched
 unsharded gradient/optimizer equivalence, checkpoint recovery, EMA, learning
 quality or production performance. Those gates remain open; the captured
 artifacts provide the fixed reference for the next unsharded comparison.
+
+## Real single-slice unsharded gradient and optimizer reference
+
+The unsharded fixed-row/FP32-LoRA/efficient-SDPA reference was parallelized
+over samples with native DDP4, not over tokens. Each physical GPU processed
+two distinct samples (rank r owns 2r and 2r+1). Every rank calculated the same
+whole-group advantage vector once; local `loss/2` combined with DDP's four-rank
+mean yields the average loss over the original eight samples. This is an
+unsharded reference with a different reduction order, not a bitwise serial
+single-device run or a single-device timing measurement.
+
+All samples 0-7 at timestep 10 completed native backward and trainer
+clip/update. All four final trainable replicas matched exactly. The gradient
+norm, advantage vector, 560 captured gradient tensors and 280 changed
+trainable tensors match the corresponding CP result's counts and norm.
+DDP pre-step snapshots contain already-DDP-reduced accumulated gradients,
+unlike the CP snapshots, which preceded their final CP reduction.
+
+An independent CPU comparison used limits fixed before the results were read:
+gradient/update relative L2 <=1e-4, parameter max absolute error <=1e-6,
+Adam first-moment relative L2 <=1e-4 and second-moment <=2e-4. It required
+identical advantage vectors, optimizer parameter groups, tensor name/order
+and one-step optimizer counters. All tensors were checked finite.
+
+| CP2 vs unsharded DP4 reference | Relative L2 | Max absolute error |
+| --- | ---: | ---: |
+| Gradients (560 tensors) | 3.4060644e-7 | 4.0927262e-12 |
+| Actual parameter updates | 7.0991262e-7 | 1.1191332e-8 |
+| Final parameters | 1.6667707e-9 | 1.1191332e-8 |
+| Adam first moments | 3.4237987e-7 | 4.0500936e-13 |
+| Adam second moments | 5.0066448e-7 | 6.7762636e-20 |
+
+The update comparison subtracts the saved initial parameters before measuring
+relative L2, so unchanged large base values cannot conceal update disagreement.
+All declared tolerances passed without modification. This supports numerical
+equivalence for the tested real eight-sample, one-time-slice accumulated update,
+not exact equality or complete multi-timestep/PPO training equivalence.
+
+Four-device reference region took 288.514487 seconds, with peak allocated
+15,153,960,960 bytes per rank. Each of the two concurrent microbatch waves
+took roughly 143 seconds. Do not compare this directly to CP2's 770 seconds
+as a same-resource speedup: device count, task placement and diagnostic work
+differ. Neither fixed-row path is a production-performance recommendation.
+
+Evidence: `cosmos_real_dp4_unsharded_reference` under the NVMe output root,
+including executed source, all rank transition/pre-step receipts, `update.pt`,
+`result.json`, `cp_comparison.json` and the executed comparison script. Torchrun
+and CPU comparison exited 0; fresh GPU inventory empty, all four GPUs released.
+Full recipe, checkpoint recovery, EMA, quality, original native-compute parity
+and production throughput gates remain open.
