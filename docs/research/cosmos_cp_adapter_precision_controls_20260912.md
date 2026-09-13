@@ -367,3 +367,25 @@ Both rank reports match; job exits 0 and fresh compute inventory is empty.
 GPUs 0-1 are released. No production fix or acceptance pass is claimed.
 Precision changes to normalization alone have not resolved the remaining
 backward mismatch, so further work must retain the full gradient comparison.
+
+## Unsharded replicated baseline
+
+The `--method replicated` negative control skips all block/attention CP
+wrapping. Each rank runs the full reference and full comparison model using
+identical copied weights, inputs and fixed CPS action. Comparison loss is
+divided by two and final replicated parameter gradients are summed exactly
+as in the CP diagnostic. No precision intervention is enabled. The CLI
+rejects CP-specific options or module traces that assume token sharding.
+
+Both FP32 and BF16 have exactly zero final output error, zero error in all
+56 block forward traces, zero block output-gradient error, and zero aggregate
+parameter-gradient error. Both ranks' complete case reports match. Therefore
+this measured unsharded baseline does not explain the approximately 2.6%
+residual CP discrepancy as ordinary repeated-execution variation. A single
+control is not a universal determinism guarantee, but it also validates the
+loss scaling/final gradient SUM convention for this replicated case.
+
+Evidence: `cosmos_replicated_baseline_l40s/rank-{0,1}.json` and adjacent log.
+Torchrun exits 0, fresh compute inventory is empty and GPUs 0-1 are released.
+No production changes. CP numerical acceptance remains open; the unsharded
+control is not a substitute for sequence parallelism or its memory targets.
