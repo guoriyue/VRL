@@ -27,7 +27,7 @@ sampling:
 actor:
   optim:
     lr: 1.0e-4
-  gradient_accumulation_steps: 1
+  prompts_per_collection: 2
   gradient_checkpointing: true
 
 rollout:

@@ -245,7 +245,7 @@ class TestRewardUpdateFlow:
         assert evaluate_group_ids == [[0, 0], [0, 0], [1, 1], [1, 1]]
 
     def test_streaming_accumulation_runs_one_optimizer_step(self) -> None:
-        """gradient_accumulation_steps>0 streams microbatches into ONE optimizer update."""
+        """prompts_per_collection>0 streams collection batches into ONE optimizer update."""
         import asyncio
 
         import torch
@@ -332,7 +332,7 @@ class TestRewardUpdateFlow:
                 batch_plan=OnlineBatchPlan(
                     prompts_per_batch=4,
                     n_samples_per_prompt=2,
-                    gradient_accumulation_steps=4,
+                    prompts_per_collection=1,
                 ),
                 timestep_fraction=1.0,
                 drop_zero_advantage=False,
@@ -438,7 +438,7 @@ class TestRewardUpdateFlow:
                 batch_plan=OnlineBatchPlan(
                     prompts_per_batch=2,
                     n_samples_per_prompt=2,
-                    gradient_accumulation_steps=2,
+                    prompts_per_collection=1,
                 ),
             ),
         )
@@ -503,7 +503,7 @@ class TestRewardUpdateFlow:
                 batch_plan=OnlineBatchPlan(
                     prompts_per_batch=2,
                     n_samples_per_prompt=2,
-                    gradient_accumulation_steps=2,
+                    prompts_per_collection=1,
                 ),
             ),
         )
@@ -560,7 +560,7 @@ class TestRewardUpdateFlow:
                 batch_plan=OnlineBatchPlan(
                     prompts_per_batch=2,
                     n_samples_per_prompt=2,
-                    gradient_accumulation_steps=2,
+                    prompts_per_collection=1,
                 ),
                 next_example_batch=["prompt-c", "prompt-d"],
             ),
@@ -654,7 +654,7 @@ class TestRewardUpdateFlow:
                 batch_plan=OnlineBatchPlan(
                     prompts_per_batch=4,
                     n_samples_per_prompt=2,
-                    gradient_accumulation_steps=4,
+                    prompts_per_collection=1,
                 ),
                 timestep_fraction=1.0,
                 drop_zero_advantage=False,
@@ -766,7 +766,7 @@ class TestRewardUpdateFlow:
                     batch_plan=OnlineBatchPlan(
                         prompts_per_batch=4,
                         n_samples_per_prompt=2,
-                        gradient_accumulation_steps=gas,
+                        prompts_per_collection=(4 // gas) if gas else 0,
                     ),
                     timestep_fraction=1.0,
                     drop_zero_advantage=False,
@@ -896,7 +896,7 @@ def test_training_microbatch_size_splits_backward_and_preserves_gradient(monkeyp
                 batch_plan=OnlineBatchPlan(
                     prompts_per_batch=1,
                     n_samples_per_prompt=4,
-                    gradient_accumulation_steps=1 if streaming else 0,
+                    prompts_per_collection=1 if streaming else 0,
                     training_microbatch_size=training_microbatch_size,
                 ),
                 timestep_fraction=1.0,
@@ -978,7 +978,7 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
         return OnlineBatchPlan(
             prompts_per_batch=rbs,
             n_samples_per_prompt=2,
-            gradient_accumulation_steps=gas,
+            prompts_per_collection=(rbs // gas) if gas else 0,
         )
 
     logger_name = "vrl.scripts.common.online"
@@ -1020,7 +1020,7 @@ def test_global_std_streaming_divergence_warning(caplog) -> None:
         return OnlineBatchPlan(
             prompts_per_batch=rbs,
             n_samples_per_prompt=2,
-            gradient_accumulation_steps=gas,
+            prompts_per_collection=(rbs // gas) if gas else 0,
         )
 
     logger_name = "vrl.scripts.common.online"

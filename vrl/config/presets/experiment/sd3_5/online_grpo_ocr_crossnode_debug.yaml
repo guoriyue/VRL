@@ -44,7 +44,7 @@ rollout:
 actor:
   optim:
     lr: 3.0e-4
-  gradient_accumulation_steps: 1
+  prompts_per_collection: 2
 
 trainer:
   output_dir: outputs/sd3_5_ocr_grpo_crossnode_debug

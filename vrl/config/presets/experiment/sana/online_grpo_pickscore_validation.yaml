@@ -18,7 +18,7 @@ defaults:
 actor:
   optim:
     lr: 3.0e-4
-  gradient_accumulation_steps: 4
+  prompts_per_collection: 2
   # Symmetric 8/8 batch shape keeps rollout and replay on the same batched-CFG
   # execution shape before the first optimizer step.
   training_microbatch_size: 8

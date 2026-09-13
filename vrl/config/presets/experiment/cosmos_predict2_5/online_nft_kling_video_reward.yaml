@@ -43,7 +43,7 @@ actor:
     decay: 0.9
     update_interval: 1
   # Stream the optimizer-target batch one prompt group at a time so host RAM
-  # holds ~1 group instead of all 32 (derives gradient_accumulation_steps=32).
+  # holds ~1 group instead of all 32 (derives collections_per_update=32).
   prompts_per_collection: 1
   # Fail fast if one streamed group already uses >90% of host RAM instead of
   # OOMing minutes into rollout (0.0 disables the guard).

@@ -368,18 +368,18 @@ def _log_rollout_memory_plan(
 
     generation_batch_text = describe_batch_width(samples_per_generation_batch)
     replay_batch_text = describe_batch_width(replay_width)
-    gas = batch_plan.gradient_accumulation_steps
+    collection_count = batch_plan.collections_per_update
     if batch_plan.streaming:
         collection_prompts = batch_plan.prompts_per_collection
         collection_samples = collection_prompts * samples_per_prompt
         logger.info(
             "Rollout memory plan: streaming accumulation enabled "
-            "(prompts_per_batch=%d, gradient_accumulation_steps=%d, "
+            "(prompts_per_batch=%d, collections_per_update=%d, "
             "collection_prompts=%d, collection_samples=%d, "
             "samples_per_generation_batch=%s, training_microbatch_size=%s, "
             "target_samples_per_update=%d)",
             prompts_per_batch,
-            gas,
+            collection_count,
             collection_prompts,
             collection_samples,
             generation_batch_text,
@@ -402,7 +402,7 @@ def _log_rollout_memory_plan(
         logger.warning(
             "Legacy full-batch rollout accumulation is enabled; host RAM may hold "
             "up to %d prompt groups (%d samples) before backward. Set "
-            "actor.gradient_accumulation_steps to a divisor of prompts_per_batch "
+            "actor.prompts_per_collection to a divisor of prompts_per_batch "
             "to stream rollout collection_batches and fail earlier on memory issues.",
             prompts_per_batch,
             target_samples,
@@ -431,7 +431,7 @@ def _warn_global_std_streaming_divergence(
     typed field rather than re-reading a YAML path whose default would silently
     win if the key ever moved.
     """
-    gas = batch_plan.gradient_accumulation_steps
+    collection_count = batch_plan.collections_per_update
     if not batch_plan.streaming:
         return
     if not global_std:
@@ -442,13 +442,13 @@ def _warn_global_std_streaming_divergence(
         return
     logger.warning(
         "algorithm.global_std=true with streaming accumulation "
-        "(gradient_accumulation_steps=%d, %d prompt groups per collection_batch): the "
+        "(collections_per_update=%d, %d prompt groups per collection_batch): the "
         "global-std advantage normalization is computed per collection_batch, not over "
         "the full %d-group batch, so the gradient differs from the full-batch "
         "global-std intent. Set algorithm.global_std=false (per-group std, which "
         "is streaming-equivalent), actor.prompts_per_collection=1 (one group per "
         "collection_batch), or drop streaming to keep the full-batch global std.",
-        gas,
+        collection_count,
         groups_per_collection,
         rbs,
     )
@@ -522,7 +522,7 @@ async def _run_streaming_optimizer_update(
     batch_plan: OnlineBatchPlan,
     next_example_batch: list[Any] | None = None,
 ) -> Any:
-    """One optimizer update streamed over ``gradient_accumulation_steps`` collection batches.
+    """One optimizer update streamed over ``collections_per_update`` collection batches.
 
     Splits the ``prompts_per_batch`` prompts into collection batches and runs
     collect -> backward -> RELEASE for each before the next, so host RAM holds

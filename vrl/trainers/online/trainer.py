@@ -652,7 +652,7 @@ class OnlineTrainer:
                 "staleness and actor.ppo_epochs=1 makes the ratio identically 1 (behavior == "
                 "target on the single replay pass), so the clip/guard term is a no-op "
                 "and the run is equivalent to plain GRPO. Set actor.ppo_epochs>1 — which "
-                "needs the legacy full-batch path (actor.gradient_accumulation_steps=0 "
+                "needs the legacy full-batch path (actor.prompts_per_collection=0 "
                 "and actor.prompts_per_collection=0, since streaming releases each microbatch "
                 "and cannot replay it across epochs) — or use schedule_mode='continuous' "
                 "with continuous.max_stale_policy_versions>0 for an off-policy ratio."
@@ -1022,7 +1022,7 @@ class OnlineTrainer:
         # exact rebatching, then shuffles/rebatches into
         # num_batches_per_epoch training microbatches.
         # Per-group batches (one RolloutBatch per prompt group). Streaming
-        # accumulation (gradient_accumulation_steps>0) splits the optimizer
+        # accumulation (prompts_per_collection>0) splits the optimizer
         # target into prompt microbatches in the recipe loop, so the collector
         # no longer rebatches internally; advantage stays per-group either way.
         filtered_batches: list[RolloutBatch] = []
@@ -1221,7 +1221,7 @@ class OnlineTrainer:
         return indices
 
     # ------------------------------------------------------------------
-    # Streaming accumulation boundary (gradient_accumulation_steps>0):
+    # Streaming accumulation boundary (prompts_per_collection>0):
     # begin -> backward(microbatch)* -> finish. One optimizer update spans
     # several separately-collected prompt microbatches so the whole target
     # batch never has to be materialized at once (SPRINT_streaming_rollout_

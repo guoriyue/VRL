@@ -9,7 +9,7 @@ defaults:
 actor:
   optim:
     lr: 1.0e-4
-  # Stream one prompt group at a time (rbs=4 -> gradient_accumulation_steps=4)
+  # Stream one prompt group at a time (rbs=4 -> collections_per_update=4)
   # so host RAM holds ~1 group's AR replay tensors instead of all 4 before
   # backward. Gradient-identical to full-batch: advantages are per-group
   # (global_std=false) and the loss is reduced per prompt group, so streaming

@@ -38,7 +38,7 @@ actor:
   # the real full-state canary. The inherited LoRA recipe is 8 prompts x 16
   # samples x 4 PPO epochs and is not evidence for a 1.6B full-model update.
   ppo_epochs: 1
-  gradient_accumulation_steps: 1
+  prompts_per_collection: 1
   training_microbatch_size: 1
 
 rollout:

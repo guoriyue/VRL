@@ -24,7 +24,7 @@ model:
 
 actor:
   ppo_epochs: 1
-  gradient_accumulation_steps: 1
+  prompts_per_collection: 1
   gradient_checkpointing: true
 
 rollout:

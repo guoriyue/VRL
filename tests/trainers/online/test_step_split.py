@@ -245,7 +245,7 @@ def test_streaming_all_filtered_update_does_not_advance_policy(tmp_path) -> None
             batch_plan=OnlineBatchPlan(
                 prompts_per_batch=1,
                 n_samples_per_prompt=2,
-                gradient_accumulation_steps=1,
+                prompts_per_collection=1,
             ),
         ),
     )
@@ -303,7 +303,7 @@ def test_corrected_replay_enforces_drift_guard_on_both_update_paths(
                 batch_plan=OnlineBatchPlan(
                     prompts_per_batch=1,
                     n_samples_per_prompt=2,
-                    gradient_accumulation_steps=1,
+                    prompts_per_collection=1,
                 ),
             )
         return await trainer.step(["p"])
@@ -347,7 +347,7 @@ def test_streaming_scaler_skipped_update_does_not_publish_weights(tmp_path) -> N
             batch_plan=OnlineBatchPlan(
                 prompts_per_batch=1,
                 n_samples_per_prompt=2,
-                gradient_accumulation_steps=1,
+                prompts_per_collection=1,
             ),
         ),
     )
@@ -389,7 +389,7 @@ def test_streaming_profiles_training_phases(tmp_path) -> None:
             batch_plan=OnlineBatchPlan(
                 prompts_per_batch=1,
                 n_samples_per_prompt=2,
-                gradient_accumulation_steps=1,
+                prompts_per_collection=1,
             ),
         ),
     )

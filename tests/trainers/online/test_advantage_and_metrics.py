@@ -25,7 +25,7 @@ class TestAdvantageAndMetrics:
         *,
         ppo_epochs: int = 1,
         emit_diagnostics: bool = False,
-        gradient_accumulation_steps: int = 0,
+        prompts_per_collection: int = 0,
     ):
         import torch
         import torch.nn as nn
@@ -165,7 +165,7 @@ class TestAdvantageAndMetrics:
                 batch_plan=OnlineBatchPlan(
                     prompts_per_batch=1,
                     n_samples_per_prompt=2,
-                    gradient_accumulation_steps=gradient_accumulation_steps,
+                    prompts_per_collection=prompts_per_collection,
                 ),
                 timestep_fraction=1.0,
                 ppo_epochs=ppo_epochs,
@@ -213,7 +213,7 @@ class TestAdvantageAndMetrics:
         trainer = self._make_cea_trainer(
             [0.0, 1.0],
             emit_diagnostics=True,
-            gradient_accumulation_steps=1,
+            prompts_per_collection=1,
         )
         batch = asyncio.run(trainer.collect_training_batch(["prompt-a"]))
         two_boundaries = replace(

@@ -22,7 +22,7 @@ actor:
     optim_8bit: true
   max_norm: 1.0
   gradient_checkpointing: true
-  gradient_accumulation_steps: 1
+  prompts_per_collection: 1
 
 rollout:
   prompts_per_batch: 1

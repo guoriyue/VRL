@@ -11,7 +11,7 @@ actor:
   optim:
     lr: 1.0e-4
   # Stream the 4 video prompt-groups one at a time (derives
-  # gradient_accumulation_steps=4) so host RAM holds ~1 group's heavy video
+  # collections_per_update=4) so host RAM holds ~1 group's heavy video
   # replay trajectories instead of all 4 before backward. Gradient-identical to
   # full-batch (diffusion GRPO, global_std=false, ppo_epochs=1).
   prompts_per_collection: 1

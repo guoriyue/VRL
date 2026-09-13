@@ -11,7 +11,7 @@ defaults:
 actor:
   optim:
     lr: 3.0e-4
-  gradient_accumulation_steps: 4
+  prompts_per_collection: 2
 
 algorithm:
   kl_coef: 0.01

@@ -24,7 +24,7 @@ defaults:
 actor:
   optim:
     lr: 3.0e-4
-  gradient_accumulation_steps: 4
+  prompts_per_collection: 2
   timestep_fraction: 0.2          # N_MC = 4 of the 20 rollout steps
   ppo_epochs: 1                   # fully on-policy: rho == 1 (Stage-1)
 

@@ -65,10 +65,8 @@ actor:
     # FSDP supports EMA, but this validation recipe reserves that memory for the
     # full-parameter optimizer and colocated rollout.
     enable: false
-  # prompts_per_batch=1 below, so gradient_accumulation_steps must divide 1: use 1
-  # (the base GRPO OCR recipe streams over 4 microbatches for its rbs=8; with a
-  # single-prompt validation batch there is nothing to split).
-  gradient_accumulation_steps: 1
+  # Collect the single-prompt validation batch in one streaming slice.
+  prompts_per_collection: 1
   optim:
     lr: 3.0e-5                    # full-param LR (paper §4.2.2 trains 2B full-param at 3e-5);
                                   # the LoRA recipe's 3e-4 is too hot for full-param

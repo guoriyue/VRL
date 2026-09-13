@@ -102,6 +102,13 @@ def normalize_run_config(cfg: DictConfig) -> DictConfig:
         registered_actor["samples_per_replay_batch"] = registered_actor.pop(
             "training_microbatch_size"
         )
+    if registered_actor is not None and "prompts_per_collection" in registered_actor:
+        collection_prompts = registered_actor.pop("prompts_per_collection")
+        registered_actor["gradient_accumulation_steps"] = (
+            registered_shape["rollout"]["prompts_per_batch"] // collection_prompts
+            if collection_prompts
+            else 0
+        )
     registered_trainer = _section(registered_shape, "trainer")
     parity = _section(registered_shape, "trainer", "replay_parity")
     if registered_trainer is not None and parity is not None:
@@ -580,6 +587,21 @@ def _erase_meaningless_spelling(
                     f"ambiguous SANA config at {'.'.join(path)}: both {old!r} and {new!r}"
                 )
             renamed_section[new] = renamed_section.pop(old)
+
+    # Historical online configs stored collection counts rather than sizes.
+    actor = _section(actual, "actor")
+    if isinstance(actor, dict) and "gradient_accumulation_steps" in actor:
+        count = actor.pop("gradient_accumulation_steps")
+        if count:
+            prompts = actual["rollout"]["prompts_per_batch"]
+            if prompts % count:
+                raise ValueError("historical SANA collection count must divide prompt count")
+            size = prompts // count
+            if actor.get("prompts_per_collection", size) != size:
+                raise ValueError("ambiguous SANA collection size and count")
+            actor["prompts_per_collection"] = size
+        else:
+            actor.setdefault("prompts_per_collection", 0)
 
     # 2026-08 sharing-grammar simplification: allow_overlap was retired and the
     # canonical preset chain dropped its default-valued resource spellings

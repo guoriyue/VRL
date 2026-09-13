@@ -12,7 +12,7 @@ actor:
   optim:
     lr: 3.0e-4
   # Flow-GRPO SD3 OCR 1GPU parity: 8 batches/epoch, accum=8//2 → 2 updates/epoch.
-  gradient_accumulation_steps: 4
+  prompts_per_collection: 2
 
 rollout:
   # GPM active samples at n/sbs=8 still show ~20% SM occupancy; VAE tiling is on.

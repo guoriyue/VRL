@@ -21,7 +21,7 @@ actor:
     lr: ???
   max_norm: 0.1
   ppo_epochs: 1
-  gradient_accumulation_steps: 4
+  prompts_per_collection: 1
   training_microbatch_size: 1
   timestep_fraction: 1.0
   ema:

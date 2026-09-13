@@ -65,29 +65,23 @@ def _trainer_config(batch_plan: OnlineBatchPlan, *, ppo_epochs: int = 1) -> Trai
     )
 
 
-def test_batch_plan_resolves_size_and_count_to_the_same_state() -> None:
-    size_only = OnlineBatchPlan.from_root(_public_batch_config(prompts_per_collection=4))
-    count_only = OnlineBatchPlan.from_root(
-        _public_batch_config(gradient_accumulation_steps=8),
-    )
-    both = OnlineBatchPlan.from_root(
-        _public_batch_config(
-            prompts_per_collection=4,
-            gradient_accumulation_steps=8,
-        ),
-    )
+def test_batch_plan_derives_collection_count() -> None:
+    plan = OnlineBatchPlan.from_root(_public_batch_config(prompts_per_collection=4))
+    assert plan.collections_per_update == 8
+    assert plan.prompts_per_collection == 4
+    assert plan.streaming is True
 
-    assert size_only == count_only == both
-    assert size_only.gradient_accumulation_steps == 8
-    assert size_only.prompts_per_collection == 4
-    assert size_only.streaming is True
+
+def test_online_plan_rejects_retired_accumulation_setting() -> None:
+    with pytest.raises(ValueError, match="only supported by offline DPO"):
+        OnlineBatchPlan.from_root(_public_batch_config(gradient_accumulation_steps=8))
 
 
 def test_unsplit_batch_plan_derives_the_full_batch_size() -> None:
     plan = OnlineBatchPlan.from_root(_public_batch_config())
 
-    assert plan.gradient_accumulation_steps == 0
-    assert plan.prompts_per_collection == 32
+    assert plan.collections_per_update == 1
+    assert plan.prompts_per_collection == 0
     assert plan.host_memory_budget_fraction == 0.0
     assert isinstance(plan.host_memory_budget_fraction, float)
     assert plan.streaming is False
@@ -97,10 +91,6 @@ def test_unsplit_batch_plan_derives_the_full_batch_size() -> None:
     ("actor", "message"),
     [
         ({"prompts_per_collection": 5}, "evenly divide"),
-        (
-            {"prompts_per_collection": 4, "gradient_accumulation_steps": 4},
-            "set only one",
-        ),
         ({"prompts_per_collection": -1}, "must be >= 0"),
         ({"training_microbatch_size": -1}, "training_microbatch_size"),
     ],
@@ -132,7 +122,7 @@ def test_streaming_plan_requires_one_ppo_epoch() -> None:
     streaming = OnlineBatchPlan(
         prompts_per_batch=4,
         n_samples_per_prompt=2,
-        gradient_accumulation_steps=2,
+        prompts_per_collection=2,
     )
 
     assert _trainer_config(streaming, ppo_epochs=1).ppo_epochs == 1
@@ -147,7 +137,7 @@ def test_host_memory_budget_requires_streaming() -> None:
     plan = OnlineBatchPlan(
         prompts_per_batch=4,
         n_samples_per_prompt=2,
-        gradient_accumulation_steps=4,
+        prompts_per_collection=1,
         host_memory_budget_fraction=0.9,
     )
 
@@ -166,6 +156,6 @@ def test_host_memory_budget_rejects_invalid_values(budget: object) -> None:
         OnlineBatchPlan(
             prompts_per_batch=4,
             n_samples_per_prompt=2,
-            gradient_accumulation_steps=4,
+            prompts_per_collection=1,
             host_memory_budget_fraction=budget,  # type: ignore[arg-type]
         )

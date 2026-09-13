@@ -38,7 +38,7 @@ actor:
     decay: 0.9
     update_interval: 1
   # Use the streaming path for this one-group target so the host-RAM guard runs;
-  # this derives gradient_accumulation_steps=1.
+  # this derives collections_per_update=1.
   prompts_per_collection: 1
   # Fail fast if the streamed group already uses >90% of host RAM (0.0 disables).
   host_memory_budget_fraction: 0.9

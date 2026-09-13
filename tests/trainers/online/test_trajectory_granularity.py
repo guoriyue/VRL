@@ -145,7 +145,7 @@ def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(streaming: boo
     batch_plan = OnlineBatchPlan(
         prompts_per_batch=1,
         n_samples_per_prompt=2,
-        gradient_accumulation_steps=1 if streaming else 0,
+        prompts_per_collection=1 if streaming else 0,
         training_microbatch_size=0,
     )
     trainer = OnlineTrainer(

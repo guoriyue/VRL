@@ -14,7 +14,7 @@ defaults:
 actor:
   optim:
     lr: 3.0e-4
-  gradient_accumulation_steps: 4
+  prompts_per_collection: 1
 
 rollout:
   n_samples_per_prompt: 8

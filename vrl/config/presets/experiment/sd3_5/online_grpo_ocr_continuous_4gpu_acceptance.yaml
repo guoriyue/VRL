@@ -53,7 +53,7 @@ actor:
   # Preserve the full backward path even when the tiny OCR samples all score the
   # same. This gate validates scheduling overlap, not reward quality.
   drop_zero_advantage: false
-  gradient_accumulation_steps: 2
+  prompts_per_collection: 1
   training_microbatch_size: 2
 
 model:

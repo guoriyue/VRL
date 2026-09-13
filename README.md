@@ -338,10 +338,14 @@ recipe lives under `vrl/config/presets/experiment/` — browse it to see what ru
 
 ### Online training batch sizes
 
-- `rollout.prompts_per_batch`: planned prompt count for one online optimizer update.
+Online training uses collection sizes; `actor.gradient_accumulation_steps` is
+reserved for offline DPO and is rejected by the online batch plan.
+
+- `rollout.prompts_per_batch`: planned prompt count per training rank for one online optimizer update.
 - `rollout.n_samples_per_prompt`: generated samples in each prompt group.
 - `actor.prompts_per_collection`: prompt groups collected together during streaming.
-  It derives `gradient_accumulation_steps` by dividing `prompts_per_batch`.
+  Zero or unset keeps the full-batch path. A positive value must divide
+  `prompts_per_batch`; the plan derives `collections_per_update`.
 - `actor.training_microbatch_size`: samples processed together within each prompt
   group during training. Zero keeps the group whole; the default is one sample.
 

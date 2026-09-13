@@ -522,12 +522,13 @@ class ActorSection(ConfigBase):
     ppo_epochs: StrictInt | None = None
     # OnlineBatchPlan: accumulation divides prompts into collection batches;
     # training_microbatch_size separately splits samples within each prompt group.
-    gradient_accumulation_steps: StrictInt | None = None
     prompts_per_collection: StrictInt | None = None
     training_microbatch_size: StrictInt | None = None
     host_memory_budget_fraction: float | None = None
     # reader: vrl/trainers/activation_checkpointing.py (bool: true=full, false=off)
     gradient_checkpointing: Literal["off", "full", "selective"] | StrictBool | None = None
+    # Offline DPO counts actual training batches per optimizer update.
+    gradient_accumulation_steps: StrictInt | None = None
     # offline DPO entrypoint (vrl/scripts/families/wan_2_1/train_dpo.py)
     prediction_type: str | None = None
     scale_lr: StrictBool | None = None

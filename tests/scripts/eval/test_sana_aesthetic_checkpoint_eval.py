@@ -497,6 +497,11 @@ def test_historical_parity_threshold_normalizes_without_changing_frozen_identity
         "training_microbatch_size"
     )
 
+    collection_prompts = historical["actor"].pop("prompts_per_collection")
+    historical["actor"]["gradient_accumulation_steps"] = (
+        historical["rollout"]["prompts_per_batch"] // collection_prompts
+    )
+
     assert sana_report._semantic_digest(historical) == sana_report.CANONICAL_PROTOCOL_SHA256
     normalized = sana_report.normalize_run_config(OmegaConf.create(historical))
     assert OmegaConf.to_container(normalized, resolve=True) == OmegaConf.to_container(
