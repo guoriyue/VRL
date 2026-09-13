@@ -36,6 +36,14 @@ However, BF16 aggregate LoRA gradient relative L2 is 0.08469 without CFG and
 or count scalar agreement as gradient semantics acceptance. This is a small
 synthetic conditioning/logprob-loss diagnostic, not GRPO/NFT updates or full
 trajectory replay. Evidence: `../../research/cosmos_cp_family_logprob_diagnostic_20260912.md`.
+
+Actual adapter-construction controls also reproduce the discrepancy: at CFG5
+and low sigma, BF16 aggregate gradient relative L2 is 0.41292 with native
+FP32 adapters and 0.41182 after the real FSDP dtype normalizer. Both use the
+family's Gaussian initialization plus 560 frozen previous tensors. This
+rules out the earlier single-adapter simplification as the sole explanation,
+but does not exercise an actual FSDP/CP mesh or NFT objective. See
+`../../research/cosmos_cp_adapter_precision_controls_20260912.md`.
 **来源**: FlashDreams 引擎评审教训 ②——它的多卡故事只有上下文并行且总共
 157 行（`core/distributed/context_parallel.py:32-157`：token 维
 `split_inputs_cp`/`cat_outputs_cp` + ring attention 组），证明视频 DiT 的
