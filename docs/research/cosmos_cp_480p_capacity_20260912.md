@@ -178,3 +178,37 @@ The fixed-action CPS objective still has synthetic conditioning, no reward,
 advantage computation, online loop or generated trajectory. Production CP
 mesh/lifecycle integration, complete GRPO/EMA acceptance and final-config
 performance remain open. Do not label this as completion of the full sprint.
+
+## Deterministic warmed DiT timing (September 13)
+
+Remeasure the original squared-output DiT workload with strict deterministic
+algorithms, cuBLAS workspace :4096:8, GPU checkpoint, padded 64-row linears
+and FP32 LoRA. Same pinned weights/nonzero B, input dimensions and synthetic
+text features. Each arm runs one excluded warmup and two measured iterations;
+clear gradients and synchronize before timing. Backward includes gradient SUM.
+No optimizer step, CFG/family wrapper, reward or I/O is included in timing.
+
+| Case | Measured forward seconds | Measured backward seconds | Total seconds | Peak allocated GB |
+| --- | --- | --- | --- | ---: |
+| CP rank 0 | 12.913, 12.989 | 41.180, 41.028 | 54.093, 54.017 | 9.048 |
+| CP rank 1 | 12.910, 12.985 | 41.183, 41.032 | 54.093, 54.017 | 9.048 |
+| Single rank | 24.841, 24.714 | 66.799, 66.114 | 91.640, 90.829 | 11.270 |
+
+Take the slower rank's total per CP iteration, then average: 54.0552 seconds
+versus 91.2344 seconds single rank, 1.6878x and 40.75% less elapsed time.
+Allocated peak per device falls about 19.71%. Reserved peaks are 9.469 GB
+per CP rank and 11.713 GB single rank. GB here is decimal. All iterations
+have 560 nonzero finite gradients. Two measured samples do not establish
+long-run stability or full online training speedup.
+
+This replaces the earlier nondeterministic 1.86x as the DiT-only reference
+for the current deterministic candidate. It does not benchmark the CFG5 CPS
+acceptance workload or claim that a production training integration exists.
+
+Evidence directories in the same NVMe root:
+`cosmos_deterministic_cp_timing_l40s` and
+`cosmos_deterministic_single_timing_l40s`, rank JSON/progress JSON and logs.
+Frozen scripts in the CP timing directory preserve their sibling import path:
+memory driver SHA256 `b00cb36b6c69657ed1ddc4fbf02082d8d43f9841d55411d74bdc1e4a5f5a83a8`;
+network definitions SHA256 `34ea6064e271e546e16f63de67bc6819c1831102644b2f86bb93fed64cfcd16d`.
+Both jobs exit 0, fresh GPU inventory empty; GPUs 0-1 released. Runtime clean.
