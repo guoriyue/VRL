@@ -625,3 +625,47 @@ times, not model throughput measurements. Frozen integration runtime and
 shared dependencies remain unchanged. Full-weight online update, native
 checkpoint/resume/EMA, DP-aware production construction and public config
 acceptance remain open.
+
+## Native fresh-process checkpoint/resume and EMA: d85b6309
+
+The native composition test now has an uninterrupted control and a separate
+fresh-process resume group. Control performs update1, calls the production
+`save_training_checkpoint` with a `RuntimeBundle` and the CP strategy on all
+ranks, then performs update2. After both control workers exit, two new workers
+construct fresh models/trainers and restore through `TrainingCheckpoint`,
+`restore_training_checkpoint(strict=True)` and per-rank `restore_rng_state`.
+They then perform update2, including fresh publication of restored rollout
+weights. The model identity contract is explicitly a tiny-model test identity.
+
+EMA is enabled with decay0.9 and interval1. Assertions require actual EMA
+updates and shadows distinct from the final raw trainable weights. The final
+uninterrupted/resumed trees compare tensor-exactly on each rank: complete
+model state, optimizer state and parameter manifest, EMA shadows/update count,
+trainer progress, leader's generated actions, and subsequent CPU/training
+CUDA/rollout CUDA/Python/NumPy random draws. CP model parameters also remain
+exactly equal between training peers. Policy version counters are intentionally
+runtime-local: fresh owners republish restored weights before collection.
+
+The initial CUDA test failed explicitly at checkpoint RNG gathering because
+the test initialized raw NCCL directly, omitting the native CPU coordination
+group. The test harness now uses `init_training_process_group` for CUDA,
+matching the existing runtime initialization contract. No production API was
+patched or mocked to bypass checkpoint coordination. Gloo CPU tests retain
+their CPU-capable default group.
+
+Final validation:
+
+- CUDA native composition plus fresh-process resume: **2 passed**, 26.58s.
+- CPU composition, split trainer, checkpoint and EMA regressions:
+  **131 passed, 3 skipped**, 20.13s; 14 existing TorchScript deprecation warnings.
+- Ruff check/format and whitespace checks pass.
+- All test sessions terminal; fresh GPU compute inventory empty. All four
+  GPUs released. The native checkpoint RNG API visits all visible devices,
+  so GPU3 was reserved although model computation uses only GPUs0-2.
+
+This closes the tiny native composition's fresh-process recovery check, not
+the full-weight online checkpoint/resume/EMA gate. No adapter EMA artifact
+export, real text/VAE/reward pipeline, Ray owner recovery, changed topology,
+compile behavior or performance claim is established here. The next hardware
+gate remains released-weight online composition and recovery using the pinned
+Cosmos checkpoint, followed by production construction/config acceptance.
