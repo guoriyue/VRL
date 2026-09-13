@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import torch
 from torch import nn
 
+from vrl.models.parking import ModelParking
 from vrl.trainers.distributed import (
     DistributedTrainingContext,
     TrainingCollectives,
@@ -65,24 +66,46 @@ class TrainingMemoryState:
         )
 
 
-@dataclass(slots=True)
-class _ModuleRestore:
-    module: Any
-    device: torch.device
+class TrainingStateParking(ModelParking):
+    """Extend model parking with optimizer, gradient, EMA and scaler storage."""
 
+    def __init__(self, state: TrainingMemoryState) -> None:
+        super().__init__()
+        self.state = state
+        self.ema_device = getattr(state.ema, "device", None)
 
-@dataclass(slots=True)
-class _TensorRestore:
-    tensor: torch.Tensor
-    device: torch.device
+    def park_training_state(self) -> None:
+        state = self.state
+        for model in (state.model, state.ref_model):
+            if model is None:
+                continue
+            # Whole modules restore to their original device; heterogeneous
+            # pipeline offload is owned by generation's hook backend instead.
+            tensor = next(self.module_tensors(model), None)
+            device = state.device if tensor is None else torch.device(tensor.device)
+            self.park(model, restore_device=device)
+        if state.optimizer is not None:
+            # Independent FP32 master parameters and live grads may not belong
+            # to the model. The shared ledger deduplicates ordinary parameters.
+            for group in state.optimizer.param_groups:
+                for parameter in group.get("params", ()):
+                    self.park_tensors(parameter)
+                    self.park_tensors(getattr(parameter, "grad", None))
+            self.park_tensors(state.optimizer.state)
+        if state.ema is not None:
+            self.park_tensors(getattr(state.ema, "ema_parameters", ()))
+            self.park_tensors(getattr(state.ema, "temp_stored_parameters", ()))
+            if hasattr(state.ema, "device"):
+                state.ema.device = torch.device("cpu")
+        if state.grad_scaler is not None:
+            for attr in ("_scale", "_growth_tracker", "_per_optimizer_states"):
+                self.park_tensors(getattr(state.grad_scaler, attr, None))
 
-
-@dataclass(slots=True)
-class _ParkedTrainingState:
-    state: TrainingMemoryState
-    modules: list[_ModuleRestore]
-    tensors: list[_TensorRestore]
-    ema_device: Any | None
+    def restore(self) -> None:
+        super().restore()
+        if self.state.ema is not None and hasattr(self.state.ema, "device"):
+            self.state.ema.device = self.ema_device
+        empty_cuda_cache()
 
 
 class Strategy(Protocol):
@@ -195,11 +218,11 @@ class Strategy(Protocol):
         ...
 
 
-class _TrainingStateParking:
+class _TrainingParkingStrategy:
     """Move live trainer state off a shared GPU for a rollout phase, and back.
 
-    Shared by single-process and FSDP2. Once ``_move_tensor_data`` understands
-    DTensor the traversal is identical for both, because parking only ever
+    Shared by single-process and FSDP2. The shared parking ledger handles
+    DTensor storage locally, because parking only ever
     touches the shard a rank already owns: it issues no collective, so ranks
     cannot desynchronize by parking. What a distributed strategy adds on top is
     *failure* agreement -- see ``FSDPStrategy.park_training_state``.
@@ -207,7 +230,7 @@ class _TrainingStateParking:
 
     # Class-level default so a strategy that inherits this cannot forget to
     # initialize it; the first park assigns a per-instance value.
-    _parked_training_state: _ParkedTrainingState | None = None
+    _parked_training_state: TrainingStateParking | None = None
 
     def validate_training_state_parking(self) -> None:
         return None
@@ -233,78 +256,14 @@ class _TrainingStateParking:
                 "cannot park different training state before restoring the current phase"
             )
 
-        parked = _ParkedTrainingState(
-            state=state,
-            modules=[],
-            tensors=[],
-            ema_device=getattr(state.ema, "device", None),
-        )
+        parked = TrainingStateParking(state)
         self._parked_training_state = parked
-        seen_objects: set[int] = set()
-        seen_tensors: set[int] = set()
         try:
-            for module in (state.model, state.ref_model):
-                if module is None or id(module) in seen_objects:
-                    continue
-                seen_objects.add(id(module))
-                parked.modules.append(
-                    _ModuleRestore(module=module, device=_module_device(module, state.device)),
-                )
-                seen_tensors.update(id(tensor) for tensor in _module_tensors(module))
-                _move_module(module, torch.device("cpu"))
-
-            if state.optimizer is not None:
-                # Optimizers normally point at model parameters already moved
-                # above. A low-precision policy instead exposes independent FP32
-                # master parameters through param_groups; move those (and any
-                # live master grads) explicitly before walking moment state.
-                for group in state.optimizer.param_groups:
-                    for parameter in group.get("params", ()):
-                        _move_tensor_tree_in_place(
-                            parameter,
-                            torch.device("cpu"),
-                            seen=seen_tensors,
-                            restores=parked.tensors,
-                        )
-                        _move_tensor_tree_in_place(
-                            getattr(parameter, "grad", None),
-                            torch.device("cpu"),
-                            seen=seen_tensors,
-                            restores=parked.tensors,
-                        )
-                _move_tensor_tree_in_place(
-                    state.optimizer.state,
-                    torch.device("cpu"),
-                    seen=seen_tensors,
-                    restores=parked.tensors,
-                )
-            if state.ema is not None:
-                _move_tensor_tree_in_place(
-                    getattr(state.ema, "ema_parameters", ()),
-                    torch.device("cpu"),
-                    seen=seen_tensors,
-                    restores=parked.tensors,
-                )
-                _move_tensor_tree_in_place(
-                    getattr(state.ema, "temp_stored_parameters", ()),
-                    torch.device("cpu"),
-                    seen=seen_tensors,
-                    restores=parked.tensors,
-                )
-                if hasattr(state.ema, "device"):
-                    state.ema.device = torch.device("cpu")
-            if state.grad_scaler is not None:
-                for attr in ("_scale", "_growth_tracker", "_per_optimizer_states"):
-                    _move_tensor_tree_in_place(
-                        getattr(state.grad_scaler, attr, None),
-                        torch.device("cpu"),
-                        seen=seen_tensors,
-                        restores=parked.tensors,
-                    )
+            parked.park_training_state()
             _release_training_cuda_memory()
         except BaseException:
             try:
-                self._restore_parked_training_state(parked)
+                parked.restore()
             except BaseException as rollback_error:
                 raise RuntimeError(
                     "training-state parking failed and rollback could not restore the trainer",
@@ -317,20 +276,10 @@ class _TrainingStateParking:
         if parked is None:
             return
         same_state = parked.state.identity_key == state.identity_key
-        self._restore_parked_training_state(parked)
+        parked.restore()
         self._parked_training_state = None
         if not same_state:
             raise RuntimeError("trainer-owned state changed while its GPU memory was parked")
-
-    def _restore_parked_training_state(self, parked: _ParkedTrainingState) -> None:
-        for module in parked.modules:
-            _move_module(module.module, module.device)
-        for restore in reversed(parked.tensors):
-            _move_tensor_data(restore.tensor, restore.device)
-        ema = parked.state.ema
-        if ema is not None and hasattr(ema, "device"):
-            ema.device = parked.ema_device
-        empty_cuda_cache()
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         if self._parked_training_state is not None and restore_parked:
@@ -448,7 +397,7 @@ class _UnshardedStateStrategy:
         optimizer.load_state_dict(state)
 
 
-class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy):
+class SingleProcessStrategy(_TrainingParkingStrategy, _UnshardedStateStrategy):
     """The current single-GPU behavior, moved behind the strategy protocol.
 
     Every method here is the existing trainer / checkpoint / weight-sync logic
@@ -490,93 +439,6 @@ class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy):
         max_norm: float,
     ) -> float:
         return float(nn.utils.clip_grad_norm_(parameters, max_norm))
-
-
-def _module_device(module: Any, fallback: torch.device) -> torch.device:
-    """Record the single restore destination used by module-level parking.
-
-    Restore calls to(device), including the model's frozen-component hook;
-    this is not a snapshot of arbitrary per-submodule device placement. The
-    fallback serves modules without registered tensor storage.
-    """
-
-    for tensor in _module_tensors(module):
-        return torch.device(tensor.device)
-    return torch.device(fallback)
-
-
-def _module_tensors(module: Any) -> Iterable[torch.Tensor]:
-    parameters = getattr(module, "parameters", None)
-    if callable(parameters):
-        for parameter in parameters():
-            if isinstance(parameter, torch.Tensor):
-                yield parameter
-                if parameter.grad is not None:
-                    yield parameter.grad
-    buffers = getattr(module, "buffers", None)
-    if callable(buffers):
-        yield from (buffer for buffer in buffers() if isinstance(buffer, torch.Tensor))
-
-
-def _move_module(module: Any, device: torch.device) -> None:
-    move = getattr(module, "to", None)
-    if not callable(move):
-        raise TypeError(f"training module {type(module).__name__} does not expose to(device)")
-    move(device)
-    move_frozen = getattr(module, "move_frozen_components", None)
-    if callable(move_frozen):
-        move_frozen(device)
-
-
-def _move_tensor_tree_in_place(
-    value: Any,
-    device: torch.device,
-    *,
-    seen: set[int],
-    restores: list[_TensorRestore],
-) -> None:
-    if isinstance(value, torch.Tensor):
-        tensor_id = id(value)
-        if tensor_id in seen:
-            return
-        seen.add(tensor_id)
-        original_device = _tensor_device(value)
-        if original_device != device:
-            restores.append(_TensorRestore(tensor=value, device=original_device))
-            _move_tensor_data(value, device)
-        return
-    if isinstance(value, Mapping):
-        for child in value.values():
-            _move_tensor_tree_in_place(child, device, seen=seen, restores=restores)
-        return
-    if isinstance(value, (list, tuple, set)):
-        for child in value:
-            _move_tensor_tree_in_place(child, device, seen=seen, restores=restores)
-
-
-def _tensor_device(tensor: torch.Tensor) -> torch.device:
-    """Where this tensor's storage actually lives (local shard for a DTensor)."""
-
-    local = getattr(tensor, "_local_tensor", None)
-    return torch.device(local.device if local is not None else tensor.device)
-
-
-def _move_tensor_data(tensor: torch.Tensor, device: torch.device) -> None:
-    # A DTensor (FSDP2 parameter, its gradient, or an Adam moment) must move by
-    # its LOCAL shard: assigning `.data` re-points the storage and torch rejects
-    # a cross-device storage swap ("Attempted to set the storage of a tensor on
-    # device cuda:0 to a storage on different device cpu"). Moving the local
-    # shard keeps the DTensor wrapper -- device mesh and placements -- intact, so
-    # the parameter still participates in later collectives, and it issues no
-    # collective itself: every rank touches only the shard it already owns.
-    local = getattr(tensor, "_local_tensor", None)
-    if local is not None:
-        if torch.device(local.device) != device:
-            tensor._local_tensor = local.to(device=device)
-        return
-    if torch.device(tensor.device) == device:
-        return
-    tensor.data = tensor.data.to(device=device)
 
 
 def _release_training_cuda_memory() -> None:
@@ -631,7 +493,7 @@ def _trainable_module_handles(model: Any) -> list[tuple[str, Any, Any]]:
     return handles
 
 
-class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
+class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
     """FSDP2 (``fully_shard`` + DTensor) training behind the same seam.
 
     The model wraps once in ``prepare_model``; thereafter params/grads/optimizer
@@ -743,7 +605,7 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
         # replicated norm scalar to a Python float for logging.
         parameter_list = list(parameters)
         if self.context.device.type == "cuda" and any(
-            _tensor_device(parameter.grad).type == "cpu"
+            ModelParking.tensor_device(parameter.grad).type == "cpu"
             for parameter in parameter_list
             if parameter.grad is not None
         ):
@@ -896,7 +758,7 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
     def park_training_state(self, state: TrainingMemoryState) -> None:
         """Park this rank's shards, then agree with every peer before returning.
 
-        The move itself is rank-local: ``_move_tensor_data`` relocates a DTensor's
+        The move itself is rank-local: the parking ledger relocates a DTensor's
         local shard and leaves the mesh and placements alone, so no collective is
         issued and ranks cannot drift apart by parking.
 
@@ -937,7 +799,7 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingStateParking):
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         try:
-            _TrainingStateParking.shutdown(self, restore_parked=restore_parked)
+            _TrainingParkingStrategy.shutdown(self, restore_parked=restore_parked)
         finally:
             super().shutdown(restore_parked=restore_parked)
 

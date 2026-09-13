@@ -109,7 +109,7 @@ class _CountingLinear(nn.Linear):
     "tests/trainers/test_strategy.py"
     "::test_cuda_training_state_parking_round_trip_preserves_all_live_state",
     why=(
-        "parking's destination IS cpu on this lane, so _move_tensor_tree_in_place is a no-op "
+        "parking's destination IS cpu on this lane, so the shared tensor relocation is a no-op "
         "and no CPU assertion can distinguish a branch that ran from one that was skipped; only "
         "the gpu twin can watch the model, grads, optimizer, EMA and GradScaler tensors "
         "actually land on cpu and come back"

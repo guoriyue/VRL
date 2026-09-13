@@ -19,16 +19,14 @@ No new state manager, validation helper or identity test framework is added.
 - Strategy is a structural consumer protocol outside concrete-class MRO. Its
   apparent stubs must not become inherited implementations shadowing mixins.
   SingleProcess, DDP and FSDP retain uniform trainer-facing method signatures.
-- _TrainingStateParking coordinates all live owners: model/ref, independent
-  optimizer master parameters, moments, EMA, scaler and live gradients. The
-  shared identity sets prevent moving aliased objects twice; module and tensor
-  restore receipts describe different restoration operations. Keep those types.
-- _module_tensors and _module_device serve discovery and restore location;
-  _move_module includes a family frozen-component hook. Tensor-tree traversal
-  preserves aliases, while _move_tensor_data targets a DTensor's local shard.
-  These form shared mechanisms used across owner types, not independent public
-  operations to move into unrelated classes. The release helper synchronizes
-  before and after cache release; generic cache clearing is not equivalent.
+- TrainingStateParking inherits ModelParking's model/tensor restore ledger.
+  Model and frozen-component moves, alias deduplication and local DTensor
+  relocation are shared with generation's ordinary CPU parking backend.
+  TrainingStateParking adds optimizer, EMA, scaler and live-gradient traversal.
+- _TrainingParkingStrategy retains phase identity and rollback coordination;
+  FSDP adds peer agreement. CuMem mappings and Accelerate hooks remain separate.
+  Training allocator release still synchronizes before and after cache release;
+  generic cache clearing is not equivalent.
 - _ProcessGroupStrategy shares coordination between DDP/FSDP. Unsharded state
   methods serve single-process and DDP without forcing replicated tensors into
   FSDP gather machinery. Keep the thin checkpoint/optimizer adapters for that

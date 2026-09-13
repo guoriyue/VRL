@@ -1135,16 +1135,32 @@ def test_cuda_model_parking_returns_to_preload_process_baseline(monkeypatch) -> 
     assert model.weight.device.type == "cuda"
 
 
-def test_module_parking_release_then_reload_has_fresh_restore_state() -> None:
+def test_module_parking_release_then_reload_has_fresh_restore_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import weakref
+
+    import vrl.generation.execution.memory_parking as parking_module
+
     first_model = _SleepModel()
+    first_model_ref = weakref.ref(first_model)
     second_model = _SleepModel()
     core = _core(None, sleep_offload=True, family="janus_pro")
     core._build_executor = lambda: _build_executor(  # type: ignore[method-assign]
         core,
-        first_model,
+        first_model_ref(),
     )
     core.load_policy()
     core.sleep()
+    assert first_model.to_calls == ["cpu"]
+    del first_model
+
+    def release_memory(*, ipc_collect: bool) -> None:
+        # A parking ledger must not keep the released model alive until after
+        # allocator cleanup; otherwise its pages miss this cleanup pass.
+        assert first_model_ref() is None
+
+    monkeypatch.setattr(parking_module, "release_cuda_memory", release_memory)
     core.release_policy()
 
     core._build_executor = lambda: _build_executor(  # type: ignore[method-assign]
@@ -1155,7 +1171,6 @@ def test_module_parking_release_then_reload_has_fresh_restore_state() -> None:
     core.sleep()
     core.wake()
 
-    assert first_model.to_calls == ["cpu"]
     assert second_model.to_calls == ["cpu", "cuda:0"]
 
 

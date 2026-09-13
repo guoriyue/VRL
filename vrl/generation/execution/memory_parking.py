@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.models.interfaces.runtime import PipelineOffloadMode
+from vrl.models.parking import ModelParking
 from vrl.utils.cuda_memory import (
     CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
     CumemPool,
@@ -35,17 +36,12 @@ class _ParkingPhase(Enum):
     CUMEM_BROKEN = "cumem_broken"
 
 
-@dataclass(slots=True)
-class _ModelParking:
-    restore_device: Any | None = None
-
-
 @dataclass(frozen=True, slots=True)
 class _CumemParking:
     pool: CumemPool
 
 
-_ParkingBackend = _ModelParking | _CumemParking
+_ParkingBackend = ModelParking | _CumemParking
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +152,7 @@ class WorkerMemoryParking:
                 required=state.required,
                 profile=state.profile,
                 baseline_gpu_used_bytes=baseline_gpu_used_bytes,
-                backend=_ModelParking(),
+                backend=ModelParking(),
             )
             return executor
 
@@ -289,11 +285,19 @@ class WorkerMemoryParking:
             residual_bytes_limit = CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
         else:
             if backend.restore_device is None:
-                self._park_model_on_cpu(
-                    model,
-                    backend=backend,
-                    restore_device=restore_device,
-                )
+                try:
+                    backend.park(model, restore_device=restore_device)
+                except BaseException as move_error:
+                    try:
+                        backend.restore()
+                    except BaseException as rollback_error:
+                        reason = (
+                            "generation CPU parking and rollback both failed: "
+                            f"move={move_error!r}; rollback={rollback_error!r}"
+                        )
+                        self._quarantine(reason)
+                        raise RuntimeError(reason) from rollback_error
+                    raise
             snapshot_backend = (
                 "cpu_offload" if str(backend.restore_device).startswith("cuda") else "cpu_only"
             )
@@ -375,14 +379,7 @@ class WorkerMemoryParking:
             raise RuntimeError(
                 f"generation worker {self.worker_id!r} {reason}",
             )
-        move = getattr(model, "to", None)
-        if callable(move):
-            move(device)
-        move_frozen = getattr(model, "move_frozen_components", None)
-        if callable(move_frozen):
-            move_frozen(device)
-        # Preserve the target when either move raises so wake can be retried.
-        backend.restore_device = None
+        backend.restore()
         self._phase = _ParkingPhase.ACTIVE
 
     @contextmanager
@@ -407,6 +404,10 @@ class WorkerMemoryParking:
                 )
                 raise
         yield
+        if isinstance(backend, ModelParking):
+            # The restore ledger also owns model/tensor references. Drop them
+            # before collecting allocator pages after the executor was released.
+            backend.discard()
         release_cuda_memory(ipc_collect=True)
         if pool is not None:
             try:
@@ -505,43 +506,10 @@ class WorkerMemoryParking:
             required=state.required,
             profile=state.profile,
             baseline_gpu_used_bytes=None,
-            backend=_ModelParking(),
+            backend=ModelParking(),
         )
         self._parking = session
         return session
-
-    def _park_model_on_cpu(
-        self,
-        model: Any,
-        *,
-        backend: _ModelParking,
-        restore_device: Any,
-    ) -> None:
-        move_frozen = getattr(model, "move_frozen_components", None)
-        try:
-            model.to("cpu")
-            if callable(move_frozen):
-                move_frozen("cpu")
-        except BaseException as move_error:
-            rollback_errors: list[BaseException] = []
-            try:
-                model.to(restore_device)
-            except BaseException as rollback_error:
-                rollback_errors.append(rollback_error)
-            if callable(move_frozen):
-                try:
-                    move_frozen(restore_device)
-                except BaseException as rollback_error:
-                    rollback_errors.append(rollback_error)
-            if rollback_errors:
-                reason = (
-                    "generation CPU parking and rollback both failed: "
-                    f"move={move_error!r}; rollback={rollback_errors!r}"
-                )
-                self._quarantine(reason)
-                raise RuntimeError(reason) from rollback_errors[0]
-            raise
-        backend.restore_device = restore_device
 
     def _reset_pipeline_cpu_offload(
         self,

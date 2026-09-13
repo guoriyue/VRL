@@ -8,17 +8,18 @@ operations rather than independent utility clutter.
 ## Retain and why
 
 - `_ParkingPlan` versus `_ParkingSession` distinguishes configuration before
-  construction from committed backend ownership. `_ModelParking` carries a
-  restore device; `_CumemParking` carries the allocation pool. A single bag of
+  construction from committed backend ownership. `ModelParking` carries a
+  shared model/tensor restore ledger; `_CumemParking` carries the allocation pool. A single bag of
   optional fields would permit combinations the current union excludes.
 - `build` must wrap executor construction because CuMem allocation ownership
   starts during model construction. The callback lets this owner establish the
   pool before model tensors exist without importing each family's constructor.
   It is not a constructor function returned to the caller.
-- `_park_model_on_cpu` groups the policy and frozen-component moves with their
-  rollback. A failed rollback quarantines the worker; a successful rollback
+- `ModelParking` groups policy/frozen-component moves and restoration, shared
+  with its training-state subclass. The worker decides whether to quarantine. A failed rollback quarantines the worker; a successful rollback
   permits a later sleep retry. Wake keeps the restore target until both moves
-  finish. These conditions cannot be replaced by an unconditional parked flag.
+  finish. Terminal release drops ledger references before allocator cleanup.
+  These conditions cannot be replaced by an unconditional parked flag.
 - `require_active` adds a parked check to `require_healthy`. Both are shared by
   worker operations, and neither a parked model nor an unhealthy offload hook
   may execute. `_reset_pipeline_cpu_offload` centralizes recovery and diagnostic
