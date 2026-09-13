@@ -1198,3 +1198,64 @@ cosmos_http_reward_capability/{result.json,service.yaml,service.log,executed_pro
 under the NVMe output root. The service was shut down, not left listening.
 The next real gate remains two-or-more-group equal-work A/B/C generation and
 reward scheduling, using the same service across warmup and measured arms.
+
+### Real equal-work multi-group A/B/C pilot
+
+Unchanged candidate 435c8fa2 completed all three native collection modes on the
+same two-worker fleet and owned pinned Kling HTTP service. Native placement
+probed GPUs 1/2 for generation and GPU 3 for reward; GPU 0 was a reserved trainer
+role with an actual CPU sender, not an active GPU trainer. A live compute-process
+inventory independently showed the two workers and reward service on separate
+GPU UUIDs. This is not a four-GPU training or 3-rollout/1-trainer benchmark.
+
+Each measured arm generated two native PromptExample groups of eight clips,
+512x512, 93 frames, 20 CPS steps, noise 0.7, guidance 1.0, generation batch one.
+Both groups used explicit request seeds (12340 and 22340), distinct fixed prompts
+and the same trained step-four checkpoint. Plain string prompts were deliberately
+not used: the native collector coalesces consecutive strings into one generation
+request, which can remove the intended inter-group overlap opportunity.
+CPU preflight validated seed forwarding before GPU launch. Two unmeasured clips
+warmed both workers and the service before the fixed A -> B -> C order. Fifty
+clips total were generated: two warmup and sixteen per measured arm. No model,
+worker, reward or policy reload occurred between arms.
+
+| Arm | Collection seconds | Generation seconds | Reward phase seconds | Native overlap seconds |
+| --- | ---: | ---: | ---: | ---: |
+| A: batched serial | 520.154111 | 496.502157 | 23.571573 | 0.0 |
+| B: per-group serial | 518.685593 | 497.090159 | 21.515220 | 0.0 |
+| C: per-group streaming | 508.315438 | 497.029815 | 21.223076 | 10.018006 |
+
+Each arm's native counters confirm two groups and sixteen samples. A made one
+reward call; B/C each made two. All three arms passed native trajectory structure
+validation and finite-tensor/reward checks. Every stored trajectory tensor hash
+matched exactly across both groups in A/B/C, and every reward matched exactly
+(maximum difference zero). Both real workers passed final trained-weight content
+readback at fleet-local version 1. These comparisons do not constitute a new
+independent replay or optimizer-equivalence run for these seeds.
+
+Streaming reduced this observed collection wall time by 11.838673 seconds versus
+A, or 2.276% (1.02329x), and by 10.370155 seconds versus B. Native overlap measures
+the complete score operation, including CPU artifact preparation and transport,
+not ten seconds of overlapping GPU kernels. Two-second nvidia-smi snapshots
+also captured GPU 1/2 at 100% while GPU 3 was at 70% and 58%, at 08:52:42 and
+08:52:44 respectively. These utilization samples support concurrent device work
+but do not precisely measure kernel overlap duration.
+
+The score-phase composition explains the limited headroom: A's model inference
+was 4.736752 seconds while MP4 materialization was 16.988891 seconds; B/C total
+inference was 4.800866/4.827384 seconds and materialization 14.857914/14.545546
+seconds. A/B already differ by 1.468518 seconds without any overlap. Fixed order,
+one run per arm, artifact warmup and a lightweight utilization sampler during C
+remain measurement limitations. No confidence interval, generation-p95 gate,
+10% performance acceptance, quality or end-to-end training speedup is claimed.
+The pilot does not justify automatically launching the much longer confidence
+campaign; generation throughput and production training orchestration have
+higher priority than repeating reward compatibility tests.
+
+Evidence under cosmos_overlap_abc_real: executed_probe.py, executed_audit.py,
+resolved_config.yaml, prompts.json, service.yaml/log, trained policy snapshot,
+all three full rollout_batches.pt files and per-arm receipts, result.json,
+audit.json and C_gpu_timeline.csv. Separate CPU preflight evidence is in
+cosmos_overlap_abc_preflight. Driver, service cleanup, utilization monitor and
+independent CPU audit all exited 0. Fresh compute and Ray/service inventories
+were empty; all GPU claims released. No background training queue was started.
