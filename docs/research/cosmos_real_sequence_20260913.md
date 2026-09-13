@@ -280,3 +280,38 @@ to NVMe before Ray initialization. Both collector and artifact audit exited 0;
 owned driver/worker/raylet PIDs are absent, fresh compute inventory empty,
 and GPUs 0/2/3 released. Complete CP updates, controlled distributed throughput,
 checkpoint/EMA/quality and full paper workload remain open.
+
+## Independent released-model replay of the complete real group
+
+A fresh process loaded the pinned released Cosmos replay model on physical
+GPU 0 and the collector's saved initial LoRA. Native trainable-state validation,
+load and readback verification completed before any replay forward. Checkpoint
+identity matches the collected local-tree SHA256 exactly. No text encoder,
+VAE, reward or Ray worker was rebuilt; the actual saved embeddings, observations
+and actions were used directly.
+
+All eight samples were rescored over all 20 stored transitions, visiting steps
+19 down to 0 for each sample to avoid relying on previous forward order. Native
+Cosmos state restoration and `sde_step_with_logprob` used the original CPS
+noise level 0.7, scheduler schedule, BF16/IEEE outer-autocast configuration and
+native rank-32/alpha-64 adapter. Scheduler timesteps were checked exactly
+against the saved schedule. Each predicted tensor and recomputed log-probability
+was finite. The predeclared absolute tolerance was 1e-3; it was not relaxed.
+
+Result: **160/160 transitions, max log-probability difference 0, max
+`abs(exp(new-old)-1)` 0**. This includes the terminal scheduler transition,
+not 160 independent nondegenerate stochastic steps. A separate JSON audit
+confirmed 160 unique `(sample, step)` pairs spanning samples 0-7 and steps 0-19,
+not just a claimed count in the result summary.
+
+Replay/verification wall time after loading was 405.980307 seconds; per-sample
+time was 50.50-51.27 seconds. Peak allocated memory after the counter reset was
+7,739,583,488 bytes. These are isolated replay measurements, not generation,
+training or distributed speedup. Initial load and readback are outside timing.
+
+Evidence: `cosmos_real_independent_replay/{executed_probe.py,transitions.json,
+result.json}` under the NVMe output root. Process exited 0, fresh GPU compute
+inventory empty, GPU 0 released. The prior collector group is retained for
+the next real-conditioned CP gate. CP numerical behavior, gradients/optimizer
+updates, recovery, quality and full paper-budget acceptance remain unverified
+by this independent single-device replay result.
