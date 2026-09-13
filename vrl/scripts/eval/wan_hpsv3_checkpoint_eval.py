@@ -29,7 +29,6 @@ whole-video keys can show it.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import logging
 import sys
@@ -139,7 +138,7 @@ def main(argv: list[str] | None = None) -> None:
 def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
     if args.limit < 1 or args.samples_per_prompt < 1:
         raise ValueError("--limit and --samples-per-prompt must be >= 1")
-    targets = _parse_targets(args.checkpoint)
+    targets = CheckpointTarget.from_cli_values(args.checkpoint, reserved_label=BASE_LABEL)
     if not targets and args.no_base:
         raise ValueError("nothing to generate: pass --checkpoint or drop --no-base")
 
@@ -205,7 +204,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
         del model, bundle
         release_cuda_memory()
 
-    write_jsonl(args.output_dir / "generated.jsonl", [_row_of(video) for video in videos])
+    write_jsonl(args.output_dir / "generated.jsonl", [asdict(video) for video in videos])
     provenance = {
         "schema": REPORT_SCHEMA,
         "run_dir": str(args.run_dir),
@@ -361,16 +360,3 @@ def _load_run_config(run_dir: Path) -> DictConfig:
     if entry.family != "wan_2_1":
         raise ValueError(f"this evaluation requires a wan_2_1 run; got {entry.family!r}")
     return cfg
-
-
-def _parse_targets(values: list[str]) -> list[CheckpointTarget]:
-    return CheckpointTarget.from_cli_values(values, reserved_label=BASE_LABEL)
-
-
-def _row_of(video: GeneratedVideo) -> dict[str, Any]:
-    return asdict(video)
-
-
-if __name__ == "__main__":
-    with contextlib.suppress(KeyboardInterrupt):
-        main()

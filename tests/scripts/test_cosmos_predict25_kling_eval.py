@@ -14,6 +14,7 @@ from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
+from vrl.trainers.checkpointing import CheckpointTarget
 
 MODEL_IDENTITY = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
 
@@ -60,7 +61,9 @@ def test_parse_checkpoint_accepts_label_and_path(tmp_path) -> None:
     checkpoint = tmp_path / "checkpoint-final"
     checkpoint.mkdir()
 
-    (target,) = eval_script._parse_checkpoint_targets([f"baseline={checkpoint}"])
+    (target,) = CheckpointTarget.from_cli_values(
+        [f"baseline={checkpoint}"], require_directory=False
+    )
 
     assert target.label == "baseline"
     assert target.path == checkpoint.resolve()

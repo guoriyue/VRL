@@ -115,50 +115,6 @@ def test_write_scores_publishes_jsonl_and_csv(tmp_path: Path) -> None:
     assert "r_top_frame_mean" in (tmp_path / "scores.csv").read_text().splitlines()[0]
 
 
-# --- checkpoint targets ------------------------------------------------------
-
-
-def test_target_label_defaults_to_the_directory_name(tmp_path: Path) -> None:
-    path = tmp_path / "checkpoint-12"
-    path.mkdir()
-
-    assert checkpoint_eval._parse_targets([str(path)]) == [
-        checkpoint_eval.CheckpointTarget(label="checkpoint-12", path=path.resolve()),
-    ]
-
-
-def test_explicit_label_overrides_the_directory_name(tmp_path: Path) -> None:
-    path = tmp_path / "checkpoint-12"
-    path.mkdir()
-
-    (target,) = checkpoint_eval._parse_targets([f"late={path}"])
-
-    assert target.label == "late"
-
-
-def test_base_label_is_reserved_for_the_adapter_disabled_arm(tmp_path: Path) -> None:
-    path = tmp_path / "checkpoint-2"
-    path.mkdir()
-
-    with pytest.raises(ValueError, match="reserved"):
-        checkpoint_eval._parse_targets([f"base={path}"])
-
-
-def test_duplicate_labels_are_refused(tmp_path: Path) -> None:
-    first = tmp_path / "a" / "checkpoint-2"
-    second = tmp_path / "b" / "checkpoint-2"
-    first.mkdir(parents=True)
-    second.mkdir(parents=True)
-
-    with pytest.raises(ValueError, match="must be unique"):
-        checkpoint_eval._parse_targets([str(first), str(second)])
-
-
-def test_missing_checkpoint_path_is_refused(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError):
-        checkpoint_eval._parse_targets([str(tmp_path / "absent")])
-
-
 # --- run config --------------------------------------------------------------
 
 

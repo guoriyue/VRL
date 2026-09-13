@@ -136,7 +136,9 @@ def main(argv: list[str] | None = None) -> None:
         prompts = prompts[: args.limit]
     if not prompts:
         raise ValueError("provide --prompt, --manifest, or --eval-manifest")
-    checkpoint_targets = _parse_checkpoint_targets(args.checkpoint)
+    # A cosmos arm may name a single weights file, so the path need not be a
+    # directory; wan_hpsv3 loads published checkpoint directories and requires one.
+    checkpoint_targets = CheckpointTarget.from_cli_values(args.checkpoint, require_directory=False)
 
     device = resolve_eval_device(args.device)
     dtype = resolve_eval_dtype(
@@ -222,12 +224,6 @@ def _load_prompts(args: argparse.Namespace, root: RootConfig) -> list[str]:
     if args.manifest:
         prompts.extend(example.prompt for example in load_prompt_dataset_index(args.manifest))
     return prompts
-
-
-def _parse_checkpoint_targets(values: list[str]) -> list[CheckpointTarget]:
-    # A cosmos arm may name a single weights file, so the path need not be a
-    # directory; wan_hpsv3 loads published checkpoint directories and requires one.
-    return CheckpointTarget.from_cli_values(values, require_directory=False)
 
 
 def _resolve_sampling(args: argparse.Namespace, root: RootConfig) -> dict[str, Any]:
