@@ -20,8 +20,8 @@ from typing import Any
 
 _SETUP_HINT = (
     "the VDN-H3 sources are vendored as a git submodule; run `make setup` "
-    "(git submodule update --init --recursive && pip install -e third_party) "
-    "from the repository root"
+    "(git submodule update --init --recursive) from the repository root and "
+    "run through a Bazel target, which puts //third_party:vendored on the path"
 )
 
 

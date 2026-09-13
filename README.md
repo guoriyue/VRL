@@ -141,150 +141,91 @@ vrl/
   scripts/     training and data preparation entrypoints
 datasets/   committed prompt datasets and dataset build scripts
 docs/       architecture notes, sprint notes, training examples
-third_party/  vendored submodules + editable-install wrappers
+third_party/  vendored submodules (+ the CountGD Bazel package)
 ```
 
 ## Setup
 
-A bare `git clone` does **not** fetch submodules, so run once after cloning:
+Bazel owns dependencies, builds, tests and entry points. Install
+[Bazelisk](https://github.com/bazelbuild/bazelisk) (it reads `.bazelversion`),
+then fetch the vendored submodules once after cloning:
 
 ```bash
-make setup
+make setup          # git submodule update --init --recursive; builds the entry points
 ```
 
-That fetches the vendored submodules and editable-installs the **base** package
-plus the vendored submodule wrappers. It is the only setup step; re-run it after a
-submodule bump. Base install ≠ feature extras — see **Dependencies** below for the
-one or two extras your use case needs (the quickstart needs `.[cosmos,ocr]`).
+No virtualenv, `pip install`, `CUDA_HOME` or system CUDA toolkit is used:
+Bazel downloads the pinned CPython 3.12.13, every wheel from `uv.lock`, the
+CUDA 13.0.2 toolkit and the LLVM host compiler. What the host must still provide
+is the NVIDIA driver (CUDA 13 capable), glibc ≥ 2.28 and `git`/`patch`.
 
-The supported install unit is currently a source checkout, not a standalone
-wheel: runtime configs, datasets, reward assets, and vendored backends live beside
-the `vrl/` package. CI therefore verifies an editable source install and config
-resolution instead of publishing an incomplete wheel artifact.
+Python packaging (`pyproject.toml`, `uv build`) stays for wheel/sdist
+publication; it is not the way to set up a development or training
+environment any more.
 
-### Why a setup step (vendored submodules)
+### Vendored submodules
 
 Some model/reward backends are upstream code that ships no Python packaging
-(JoyAI-Echo's `ltx_*`, videophy's `mplug_owl_video`). They live as git
-submodules under `third_party/`. The single thin editable-install wrapper at
-`third_party/pyproject.toml` exposes their packages, so `vrl/` contains **no**
-`sys.path` injection. `make setup` fetches the submodules, then installs that
-wrapper. Adding a vendored dependency only requires extending the wrapper's
-explicit source roots and package allowlist under `third_party/`. See
-[`third_party/README.md`](third_party/README.md) for the convention.
+(JoyAI-Echo's `ltx_*`, videophy's `mplug_owl_video`, CausVid, VDN-H3). They
+live as git submodules under `third_party/`; `//third_party:vendored` puts their
+source roots on the import path of every `vrl` target, so `vrl/` contains no
+`sys.path` injection. See [`third_party/README.md`](third_party/README.md).
 
 ## Dependencies
 
-`make setup` installs the **base** package only. Each use case adds one or two
-optional-dependency groups. Most groups compose in a single `pip install`; the
-table and isolation notes below call out environments that must remain separate:
+`uv.lock` is the single dependency source. Bazel exports it per dependency
+stack at fetch time (`tools/dependencies/uv_exports.bzl`) and builds the same
+`vrl/` sources against one stack per target:
 
-| Use case | Install | Brings (why) |
+| Target | Stack (`uv.lock` extras) | Used by |
 |---|---|---|
-| Full-sequence denoise families (SD3.5 / Flux / Cosmos / Wan / Qwen …) | `.[cosmos]` | diffusers + transformers + peft + torchvision |
-| CausVid causal-chunk rollout/replay | `.[cosmos]` + CUDA `flash-attn` | pinned upstream CausVid/Wan runtime; cross-attention requires FlashAttention |
-| Token-autoregressive families (Janus-Pro / NextStep) | `.[cosmos]` | transformers/peft model runtime (vLLM accel is separate — see note) |
-| OCR reward (the validated quickstart) | `.[ocr]` | paddleocr |
-| Video / VLM reward (Kling, VideoScore2, UnifiedReward) | `.[reward]` | transformers≥5.13, qwen-vl-utils, opencv |
-| CPU tag inference | `.[detection]` | pinned CPU onnxruntime |
-| Dataset prep (video-world, pickapic) | `.[data]` | datasets, pyarrow, av |
-| Fixed video-eval suite (VBench) | dedicated `.[videoeval]` environment | vbench 0.1.5 |
-| Full-param 8-bit Adam (Cosmos trustworthy-curve recipe) | `.[optim8bit]` | bitsandbytes (int8 Adam state, RL-safe) |
-| Tests / lint | `uv sync --group test --group lint` | pytest, ruff |
+| `//:vrl` | core + cosmos, reward, reward-service, data, ocr, detection, optim8bit + test/lint | trainer, reward service, all CPU/GPU lanes |
+| `//:vrl_vllm` | core + ar-vllm + test | vLLM paged attention and CuMem memory parking (`//tests:gpu_vllm_tests`) |
+| `//:vrl_shared_gpu` | both of the above (identical shared pins) | shared-GPU topologies: model stack plus vLLM's allocator (real-weight lane) |
+| `//:vrl_countgd` | `third_party/countgd/requirements.txt` (transformers 4.48, numpy 1.26, torch cu128) | CountGD counting reward service |
 
-MAGI-1 is intentionally not a project extra: its official code pins an
-incompatible Torch/diffusers/transformers/FlashAttention stack. Create
-`third_party/MAGI-1/.venv` from that submodule's requirements and point
-`model.python_executable` at it. VRL invokes the audited official CLI in that
-environment and records a generation-only trajectory; trainer/replay startup
-fails before loading weights. Ray never uploads virtual environments: the
+Not migrated, still separate environments: **videoeval** (VBench 0.1.5 pins
+transformers 4.33.2 → tokenizers 0.13.3, which has no CPython 3.12 wheel) and
+**MAGI-1** (its official code needs a flash-attn 2.4.2 / torch 2.4 source build;
+create `third_party/MAGI-1/.venv` from that submodule's requirements and point
+`model.python_executable` at it). Ray never uploads virtual environments: the
 driver resolves a path-like executable to an absolute path before launch, and
 every rollout node must provide that path through a shared mount or container
-image (or override the preset with its node-local absolute executable). The
-official 4.5B process also fixes the DiT to BF16 and T5 to FP32, so its launch
-config must use rollout `dtype: bf16`, `outer_autocast: false`, prompt-encoder
-`dtype: fp32`, and `float32_precision: ieee`; unsupported precision knobs fail
-before source probing or weight download.
+image. The official MAGI 4.5B process fixes the DiT to BF16 and T5 to FP32, so
+its launch config must use rollout `dtype: bf16`, `outer_autocast: false`,
+prompt-encoder `dtype: fp32`, and `float32_precision: ieee`.
 
-CausVid stays in the main model environment, but its pinned Wan cross-attention
-calls FlashAttention directly. After installing `.[cosmos]`, install a CUDA-
-compatible `flash-attn` build (typically
-`uv pip install --no-build-isolation flash-attn`) before resolving the
-multi-gigabyte weights. Run `make setup` after
-fetching the new submodule so the editable `causvid` package is refreshed. Ray
-archives omit nested Git databases; both adapters retain strict
-commit/clean-tree checks in a developer checkout and verify an audited SHA256
-of their executable source subset in the packaged worker tree.
+CausVid stays in the main stack, but its pinned Wan cross-attention calls
+FlashAttention directly, which is not in the lock; CausVid rollouts need a
+CUDA-compatible `flash-attn` build in the environment that runs them.
 
-Example — the SD3.5-OCR quickstart below needs `pip install -e ".[cosmos,ocr]"`.
-(The `cosmos` group is the core model-runtime extra and is misnamed for history —
-it serves both full-sequence denoise and token-autoregressive families, not just Cosmos.)
-
-> **`ar-vllm` is optional; a separate environment is recommended.** Token-autoregressive families
-> run in the main env without it via `sampling.attention_backend=torch_native`;
-> `.[ar-vllm]` only adds vLLM's internal paged-attention / blockwise-fp8 kernels.
-> vLLM pins its Torch/TorchVision/TorchAudio ABI. The current lock resolves it with
-> `.[cosmos]`, but a dedicated venv keeps this large, tightly pinned accelerator
-> stack isolated — the repo already ships one at `.venvs/vllm-omni`.
-
-> **Physical parking checks require process memory accounting.** The core
-> `nvidia-ml-py` dependency reads the current process on the CUDA-selected GPU by
-> UUID. Whole-device free memory can change because of unrelated processes and
-> is not a proof that this worker released its allocations. Missing/ambiguous
-> per-process accounting (including unsupported MPS or PID-namespace setups)
-> fails closed; there is no whole-device or Torch-allocation fallback. The `perf`
-> extra remains accepted for compatibility, with NVML now supplied by core.
-
-> **Shared-GPU topologies need the `vllm` package importable in the run env.**
-> Separate from the `ar-vllm` kernel extra: whenever rollout and reward or trainer
-> share a card (`sleep_offload`), physical memory parking is CuMem-only and fails
-> loud at policy/model build without vLLM's `CuMemAllocator`. There is no CPU-move
-> fallback — the one that used to exist measured 6.2x slower per park cycle and
-> hid misconfiguration. `pyproject.toml` still declares `ar-vllm` conflicting with
-> `cosmos`/`reward` for ABI reasons, so install it into the run env directly
-> (`pip install "vllm>=0.21.0,<0.22" --no-deps`) rather than via the extra.
-> `--no-deps` also drops vLLM's own declared dependencies. The internal entry
-> points VRL imports (`CuMemAllocator`, the paged-attention kernels, the fp8
-> utils) also need packages outside the core/`cosmos`/`reward` closure,
-> including transitive dependencies, so install those alongside:
-> `pip install cbor2 gguf "mistral-common[image]" openai openai-harmony cloudpickle py-cpuinfo uvloop`.
-> (Measured on vllm 0.21.0 by importing those entry points and intersecting the
-> loaded modules with vLLM's `Requires-Dist`; without them the import chain
-> stops at `cbor2`, then `gguf`, and `tests/nn/kernels/test_vllm_paged_attention_real_ops.py`
-> fails loud instead of skipping.) The block-table import also requires `uvloop`;
-> its absence was reproduced with vLLM 0.21.0 and fixed using the locked 0.22.1 version.
-> The core environment declares `pyzmq`, which vLLM imports while initializing
-> this allocator even though VRL does not use vLLM's distributed serving path.
-
-> **`videoeval` also requires its own environment.** VBench 0.1.5 pins
-> `transformers==4.33.2`, while `cosmos` and `reward` require Transformers 5.13+
-> APIs. The conflict is declared in `pyproject.toml`, so uv can lock both valid
-> environments but rejects an invalid combined sync. Create the evaluation
-> environment directly from the repository lock:
->
-> ```bash
-> UV_PROJECT_ENVIRONMENT=.venvs/videoeval \
->   uv sync --frozen --extra videoeval
-> ```
-
-For the reproducible contributor/CI environment, install directly from the
-committed lock instead of resolving floating versions. The exact sync prunes
-packages outside the main project metadata, so reinstall the source-only vendored
-wrapper immediately afterward:
+### Commands
 
 ```bash
-uv sync --frozen --extra dev --extra cosmos
-uv pip install --python .venv/bin/python --no-deps --no-build-isolation --editable third_party
+make verify                                              # = uv lock --check && bazel test //...
+bazel test //tests:config_tests //tools/lint:ruff_check  # one lane
+bazel test --config=gpu //tests:gpu_tests //tests:gpu_vllm_tests   # real GPU (manual)
+HF_HOME=~/.cache/huggingface WM_REAL_MODEL_RL_CASES=sd3_5 \
+  bazel test --config=gpu --config=real_weights //tests:e2e_real_checkpoint_tests
+bazel run //:vrl_train -- --config experiment/sd3_5/online_grpo_ocr
+bazel run //:vrl_supervise -- --config experiment/sd3_5/online_grpo_ocr   # torchrun DDP/FSDP on one host
+bazel run //:vrl_reward_service -- --config vrl/config/reward_service/<service>.yaml
+bazel run //third_party/countgd:reward_service -- --config vrl/config/reward_service/countgd.yaml
+bazel build --build_python_zip //:vrl_train              # self-contained bazel-bin/vrl_train.zip for other nodes
 ```
+
+Every `py_binary`/`py_test` runs from a runfiles venv whose `sys.executable`
+carries the whole closure, so torchrun ranks, Ray workers and reward workers
+inherit it. See [docs/research/bazel_migration.md](docs/research/bazel_migration.md)
+for the acceptance record.
 
 ## Quickstart
 
-After `make setup`, install the two extras the validated recipe needs and launch
-it — SD3.5 text-to-image GRPO with an OCR reward:
+After `make setup`, launch the validated recipe — SD3.5 text-to-image GRPO with
+an OCR reward:
 
 ```bash
-pip install -e ".[cosmos,ocr]"
-vrl-train --config experiment/sd3_5/online_grpo_ocr
+bazel run //:vrl_train -- --config experiment/sd3_5/online_grpo_ocr
 ```
 
 `--config` accepts a bundled config name (no extension) or an absolute YAML path.
@@ -293,7 +234,7 @@ individual values with OmegaConf dotlist overrides (`vrl-train --help`):
 
 ```bash
 # shorter smoke run
-vrl-train --config experiment/sd3_5/online_grpo_ocr \
+bazel run //:vrl_train -- --config experiment/sd3_5/online_grpo_ocr \
     trainer.total_epochs=2 trainer.seed=0
 ```
 

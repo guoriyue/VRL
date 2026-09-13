@@ -62,11 +62,13 @@ uv_exports(
     uv = "@uv_export_tool//:uv",
     interpreter = "@python_3_12_13_host//:python",
     profiles = {
-        # The trainer/reward runtime plus the test and lint groups, so one hub
-        # serves libraries, tests and lint without duplicate package copies.
+        # Every extra pyproject.toml lets compose in one environment, plus the
+        # test and lint groups, so one hub serves libraries, tests and lint
+        # without duplicate package copies. Conflicting extras get their own hub.
         "main": [
             "--extra", "cosmos", "--extra", "reward", "--extra", "reward-service",
-            "--extra", "data", "--group", "test", "--group", "lint",
+            "--extra", "data", "--extra", "ocr", "--extra", "detection",
+            "--extra", "optim8bit", "--group", "test", "--group", "lint",
         ],
         # Conflicting stacks each carry the test group so their lanes need no
         # second hub for pytest.

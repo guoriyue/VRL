@@ -92,7 +92,7 @@ third_party/*
 # Single editable-install wrapper exposing the un-packaged submodule sources as
 # importable packages (so vrl/ needs no sys.path injection). Its generated
 # *.egg-info stays ignored by the third_party/* rule. See third_party/README.md.
-!third_party/pyproject.toml
+
 !third_party/BUILD.bazel
 !third_party/countgd
 !third_party/README.md

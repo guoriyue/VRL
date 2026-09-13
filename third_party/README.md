@@ -8,12 +8,13 @@ Vendored upstream code that ships **no Python packaging**, so it cannot be
 A vendored dependency is **a git submodule** — the upstream source, pinned to a
 commit (see `../.gitmodules`). E.g. `joyai_echo/`, `videophy/`.
 
-A single **editable-install wrapper**, `third_party/pyproject.toml`, exposes
-every submodule's un-packaged `src` tree as a real importable package via
-`[tool.setuptools.packages.find]` (`where` = the src roots, `include` = the
-package names). `pip install -e third_party` makes them all importable, so the
-main repo (`vrl/`) needs no `sys.path` injection. `make setup` (repo root) runs
-this for you after fetching the submodules.
+`//third_party:vendored` (`third_party/BUILD.bazel`) lists every submodule's
+un-packaged source root under `imports`, which puts them on the import path of
+every `vrl` Bazel target; the main repo (`vrl/`) needs no `sys.path` injection.
+`make setup` (repo root) fetches the submodules.
+
+`countgd/` is not a submodule: it is the Bazel package that pins the CountGD
+upstream archive, its patch, the Space assets and its dependency stack.
 
 ## Current vendored packages
 
@@ -35,20 +36,19 @@ released generator checkpoint are CC BY-NC-SA 4.0 / non-commercial (the
 checkpoint revision is separately pinned in the model preset); MAGI-1 source
 and weights are Apache-2.0.
 
-Not every vendored repo is exposed through `third_party/pyproject.toml`: the
-wrapper lists only submodules that `vrl/` **imports** in-process. The three
-motion-eval benchmarks above are invoked as external commands (their own CLIs,
-or the PhyMotion bridge run in PhyMotion's own conda env), so they are vendored
-to pin the code but stay out of the editable install — `make setup` simply
-skips them.
+Not every vendored repo is exposed through `//third_party:vendored`: it lists
+only submodules that `vrl/` **imports** in-process. The three motion-eval
+benchmarks above are invoked as external commands (their own CLIs, or the
+PhyMotion bridge run in PhyMotion's own conda env), so they are vendored to pin
+the code but stay off the import path.
 
 ## Adding a new vendored dependency
 
 ```bash
 git submodule add <url> third_party/<name>
-# In third_party/pyproject.toml: add the submodule's src root(s) to
-#   [tool.setuptools.packages.find].where  and the package name(s) to .include
-# In .gitignore: add `!third_party/<name>` (pyproject.toml is already whitelisted)
+# In third_party/BUILD.bazel: add the submodule's src root to `imports` and its
+#   package files to the `srcs`/`data` globs of //third_party:vendored
+# In .gitignore: add `!third_party/<name>`
 make setup
 ```
 

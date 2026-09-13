@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: "0 7 * * *"  # nightly: full suite incl. slow_test (Ray) tests
+    - cron: "0 7 * * *"  # nightly: same targets, warm cache check
   workflow_dispatch:
 
 permissions:
@@ -17,9 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CUDA_VISIBLE_DEVICES: ""
   PYTHONUNBUFFERED: "1"
-  PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
   lock:
@@ -38,69 +36,14 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
+      # uv.lock is the single dependency source; Bazel exports from it.
       - name: Verify lockfile
         run: uv lock --check
 
-  lint:
-    name: Lint
+  bazel:
+    name: Bazel lint, config and CPU tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          version: "0.10.2"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - name: Sync locked dependencies
-        run: uv sync --frozen --only-group lint
-
-      - name: Ruff lint
-        run: uv run --no-sync ruff check .
-
-  config:
-    name: Config contracts
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          version: "0.10.2"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - name: Sync locked dependencies
-        run: uv sync --frozen --group test --extra cosmos
-
-      - name: Validate config contracts
-        run: |
-          uv run --no-sync python -m vrl.config.lint
-          uv run --no-sync pytest tests/config -q
-
-  unit:
-    name: Unit tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
       - name: Check out repository
@@ -108,62 +51,29 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+      - name: Set up Bazelisk
+        uses: bazelbuild/setup-bazelisk@v3
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - name: Cache Bazel
+        uses: actions/cache@v4
         with:
-          version: "0.10.2"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'uv.lock', 'third_party/countgd/requirements.txt') }}
+          restore-keys: bazel-${{ runner.os }}-
 
-      - name: Sync locked dependencies
+      # Everything the default test suite covers: ruff, config lint, dead-flag
+      # audit, per-package pytest lanes (`not e2e and not slow_test`), the local
+      # Ray cluster lane and the torchrun launch check. GPU and real-weight lanes
+      # are `manual`; they run on a GPU host with --config=gpu.
+      - name: bazel test //...
+        run: bazel test //... --test_output=errors
+
+      - name: Entry points resolve from runfiles
         run: |
-          uv sync --frozen --group test --extra cosmos
-          uv pip install --python .venv/bin/python --no-deps --no-build-isolation --editable third_party
-
-      # Fast PR/push subset: excludes e2e (real weights) and slow_test (Ray spin-up).
-      # GPU-marked tests skip on this CPU runner via tests/conftest.py.
-      - name: Unit tests (fast subset)
-        run: uv run --no-sync pytest -m "not e2e and not slow_test" -q
-
-  nightly:
-    name: Full test suite (nightly)
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    # Only on schedule or manual dispatch — keeps PRs fast, runs slow_test nightly.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          version: "0.10.2"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - name: Sync locked dependencies
-        run: |
-          uv sync --frozen --group test --extra cosmos
-          uv pip install --python .venv/bin/python --no-deps --no-build-isolation --editable third_party
-
-      # Full suite incl. slow_test (Ray) tests. e2e still opt-in (needs GPU + real
-      # weights); gpu/distributed tests skip until dedicated lanes opt into them.
-      - name: Unit tests (full)
-        run: uv run --no-sync pytest -m "not e2e" -q
+          bazel run //:vrl_train -- --help
+          bazel run //:vrl_reward_service -- --help
 
   package:
     name: Build and install package artifact
