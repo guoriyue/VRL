@@ -691,7 +691,8 @@ ran inside them.
 - `tests/architecture/test_generation_rollout_boundaries.py::test_generation_model_imports_stay_on_public_floor`
 - `tests/generation/bindings/chunk_autoregressive_denoise/test_binding.py::test_serialized_replay_records_preserve_axes_values_and_sample_order`
 - `tests/generation/bindings/full_sequence_denoise/test_layout.py::test_unseeded_window_survives_serialized_batch_split_retry`
-- the five tests in `tests/scripts/test_train_signals.py`
+- the five tests in `tests/scripts/test_train_signals.py` -- fixed after the
+  report: they were a real production defect, not a stale test (see below)
 
 ### Bazel lanes (2026-09-13, after the report)
 
@@ -707,3 +708,15 @@ tree was also run through `//tests:config_tests`, `data_tests`,
   transformers model failed at collection under Bazel. Fixed in
   `uv_exports.bzl` / `replace_requirement.py` (commit above); `scripts_tests`
   now completes with only the five upstream-red `test_train_signals` tests.
+
+### `test_train_signals` (2026-09-13, after the report)
+
+Read on request instead of left as "upstream red": `vrl/scripts/train.py`
+rebound `result` from the `TrainingRunResultWriter` to the trainer's return
+value, so every `result.write` ran on a coroutine / `None`. Every real run
+ended in an AttributeError, the trainer's own error was replaced on the
+failure path, and the supervisor never received `training_run_result.json`.
+One rename (`outcome`) fixes it; the five tests are the guard and are green
+locally and in `//tests:scripts_tests`. Three upstream reds remain
+(architecture import floor, chunk-AR serialized replay, full-sequence
+unseeded window).
