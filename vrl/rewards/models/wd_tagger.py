@@ -146,7 +146,12 @@ class WDTaggerRewardModel:
                 f"non-empty list of tag strings on artifact {artifact.artifact_id!r}, "
                 f"got {type(raw).__name__}",
             )
-        wanted = {str(tag).strip().lower() for tag in raw if str(tag).strip()}
+        if any(not isinstance(tag, str) for tag in raw):
+            raise ValueError(
+                f"wd_tagger metadata[{self._metadata_key!r}] must contain only tag strings "
+                f"on artifact {artifact.artifact_id!r}",
+            )
+        wanted = {tag.strip().lower() for tag in raw if tag.strip()}
         if not wanted:
             raise ValueError(
                 f"wd_tagger requires a non-empty metadata[{self._metadata_key!r}] "
