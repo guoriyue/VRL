@@ -24,12 +24,18 @@ from vrl.rewards.assets.kling_prompt_templates import (
 )
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.hub import HuggingFaceRepoRevision
+from vrl.rewards.models.qwen2vl_checkpoint import (
+    remap_legacy_qwen2vl_key,
+    remap_legacy_qwen2vl_state_dict,
+)
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
 
 _SPECIAL_TOKENS = ["<|VQ_reward|>", "<|MQ_reward|>", "<|TA_reward|>"]
 _DEFAULT_REWARD_MODEL = "KlingTeam/VideoReward"
+# The published checkpoint is a PEFT-wrapped Qwen2-VL; its keys sit under this.
+_PEFT_PREFIX = "base_model.model."
 _SCORE_KEY_MAP = {
     "overall_reward": "Overall",
     "visual_quality": "VQ",
@@ -434,7 +440,7 @@ def load_kling_video_reward_checkpoint(
     if full_ckpt.exists():
         state = torch.load(full_ckpt, map_location="cpu")
         if isinstance(state, Mapping):
-            state = _remap_qwen2vl_state_dict(state, model.state_dict())
+            state = remap_legacy_qwen2vl_state_dict(state, model.state_dict(), prefix=_PEFT_PREFIX)
         model.load_state_dict(state, strict=True)
         return model, resolved_step
 
@@ -454,7 +460,9 @@ def load_kling_video_reward_checkpoint(
     model_state = model.state_dict()
     model_state.update(non_lora_state)
     model_state.update(lora_state)
-    model_state = _remap_qwen2vl_state_dict(model_state, model.state_dict())
+    model_state = remap_legacy_qwen2vl_state_dict(
+        model_state, model.state_dict(), prefix=_PEFT_PREFIX
+    )
     model.load_state_dict(model_state, strict=True)
     return model, resolved_step
 
@@ -469,27 +477,6 @@ def _resolve_checkpoint_path(checkpoint_dir: Path) -> tuple[Path, str]:
         raise FileNotFoundError(f"No Kling VideoReward checkpoints found in {checkpoint_dir}")
     checkpoint_path = checkpoint_paths[0]
     return checkpoint_path, checkpoint_path.name.split("checkpoint-")[-1]
-
-
-def _remap_qwen2vl_key(key: str) -> str:
-    if key.startswith("base_model.model.visual."):
-        return key.replace(
-            "base_model.model.visual.",
-            "base_model.model.model.visual.",
-            1,
-        )
-    for prefix in (
-        "base_model.model.model.embed_tokens.",
-        "base_model.model.model.layers.",
-        "base_model.model.model.norm.",
-    ):
-        if key.startswith(prefix):
-            return key.replace(
-                "base_model.model.model.",
-                "base_model.model.model.language_model.",
-                1,
-            )
-    return key
 
 
 def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
@@ -689,14 +676,6 @@ def _torch_dtype(name: str | None, *, fallback: torch.dtype | None = None) -> to
     return resolve_torch_dtype(name)
 
 
-def _remap_qwen2vl_state_dict(
-    state: Mapping[str, Any],
-    target_state: Mapping[str, Any],
-) -> Mapping[str, Any]:
-    remapped = {_remap_qwen2vl_key(str(key)): value for key, value in state.items()}
-    return remapped if set(remapped) == set(target_state) else state
-
-
 def _insert_adapter_name_into_state_dict(
     state_dict: Mapping[str, torch.Tensor],
     adapter_name: str,
@@ -710,6 +689,15 @@ def _insert_adapter_name_into_state_dict(
             new_key = f"{prefix}.{adapter_name}.{leaf}" if separator else f"{key}.{adapter_name}"
         remapped[new_key] = value
     return remapped
+
+
+# Kept as module-level names for the checkpoint-loading tests.
+def _remap_qwen2vl_key(key: str) -> str:
+    return remap_legacy_qwen2vl_key(key, prefix=_PEFT_PREFIX)
+
+
+def _remap_qwen2vl_state_dict(state, target_state):
+    return remap_legacy_qwen2vl_state_dict(state, target_state, prefix=_PEFT_PREFIX)
 
 
 __all__ = [

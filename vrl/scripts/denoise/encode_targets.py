@@ -160,6 +160,7 @@ def main(argv: list[str] | None = None) -> None:
     from vrl.config.loading import load_config
     from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
+    from vrl.models.dtypes import resolve_torch_dtype
     from vrl.models.families.registry import (
         get_model_family_entry,
     )
@@ -224,12 +225,9 @@ def main(argv: list[str] | None = None) -> None:
         )
 
     latents_by_target: dict[str, Any] = {}
-    storage_dtype = {
-        "preserve": None,
-        "bf16": torch.bfloat16,
-        "fp16": torch.float16,
-        "fp32": torch.float32,
-    }[args.storage_dtype]
+    storage_dtype = (
+        None if args.storage_dtype == "preserve" else resolve_torch_dtype(args.storage_dtype)
+    )
     for index, (target_key, target, media_type) in enumerate(targets):
         video = _target_at_sampling_geometry(
             str(target),

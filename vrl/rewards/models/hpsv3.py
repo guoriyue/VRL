@@ -43,6 +43,7 @@ from vrl.rewards.assets.hpsv3_prompts import (
 )
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.hub import resolve_model_root
+from vrl.rewards.models.qwen2vl_checkpoint import remap_legacy_qwen2vl_state_dict
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -232,7 +233,7 @@ class HPSv3Model:
         import safetensors.torch
 
         state_dict = safetensors.torch.load_file(str(self.checkpoint_path), device="cpu")
-        state_dict = _remap_qwen2vl_state_dict(state_dict, model.state_dict())
+        state_dict = remap_legacy_qwen2vl_state_dict(state_dict, model.state_dict())
         model.load_state_dict(state_dict, strict=True)
 
     def __call__(self, artifact: RewardInferenceArtifact) -> dict[str, float]:
@@ -318,33 +319,6 @@ def _aggregate_frame_scores(scores: list[float], top_fraction: float) -> dict[st
         "frame_mean": sum(scores) / len(scores),
         "frame_min": min(scores),
     }
-
-
-def _remap_qwen2vl_state_dict(
-    state_dict: dict[str, torch.Tensor],
-    model_state: Mapping[str, torch.Tensor],
-) -> dict[str, torch.Tensor]:
-    """Rename pre-4.52 Qwen2-VL checkpoint keys to the nested current layout.
-
-    The published checkpoint predates the transformers rename that moved
-    ``model.*`` under ``model.language_model.*`` and ``visual.*`` under
-    ``model.visual.*`` (upstream issues #15/#29). No-op when either side
-    already agrees.
-    """
-
-    target_is_nested = any(key.startswith("model.language_model.") for key in model_state)
-    source_is_nested = any("language_model" in key for key in state_dict)
-    if not target_is_nested or source_is_nested:
-        return state_dict
-    remapped: dict[str, torch.Tensor] = {}
-    for key, value in state_dict.items():
-        if key.startswith("visual."):
-            remapped[f"model.{key}"] = value
-        elif key.startswith("model."):
-            remapped[f"model.language_model.{key[len('model.') :]}"] = value
-        else:
-            remapped[key] = value
-    return remapped
 
 
 __all__ = ["HPSv3Model", "HPSv3Qwen2VLRewardModel"]

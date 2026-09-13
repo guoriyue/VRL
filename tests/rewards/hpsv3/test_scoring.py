@@ -16,10 +16,8 @@ from vrl.rewards.assets.hpsv3_prompts import (
     HPSV3_REWARD_SPECIAL_TOKEN,
     build_hpsv3_frame_prompt,
 )
-from vrl.rewards.models.hpsv3 import (
-    _aggregate_frame_scores,
-    _remap_qwen2vl_state_dict,
-)
+from vrl.rewards.models.hpsv3 import _aggregate_frame_scores
+from vrl.rewards.models.qwen2vl_checkpoint import remap_legacy_qwen2vl_state_dict
 
 
 class TestAggregateFrameScores:
@@ -50,6 +48,8 @@ class TestAggregateFrameScores:
 class TestStateDictRemap:
     _NESTED_MODEL_KEYS: ClassVar[dict[str, None]] = {
         "model.language_model.embed_tokens.weight": None,
+        "model.language_model.layers.0.self_attn.q_proj.weight": None,
+        "model.language_model.norm.weight": None,
         "model.visual.patch_embed.proj.weight": None,
         "lm_head.weight": None,
         "rm_head.0.weight": None,
@@ -65,7 +65,7 @@ class TestStateDictRemap:
             "lm_head.weight": tensor,
             "rm_head.0.weight": tensor,
         }
-        remapped = _remap_qwen2vl_state_dict(state, self._NESTED_MODEL_KEYS)
+        remapped = remap_legacy_qwen2vl_state_dict(state, self._NESTED_MODEL_KEYS)
         assert set(remapped) == {
             "model.language_model.embed_tokens.weight",
             "model.language_model.layers.0.self_attn.q_proj.weight",
@@ -77,12 +77,12 @@ class TestStateDictRemap:
 
     def test_already_nested_checkpoint_is_untouched(self) -> None:
         state = {"model.language_model.embed_tokens.weight": torch.zeros(1)}
-        assert _remap_qwen2vl_state_dict(state, self._NESTED_MODEL_KEYS) is state
+        assert remap_legacy_qwen2vl_state_dict(state, self._NESTED_MODEL_KEYS) is state
 
     def test_flat_target_model_is_untouched(self) -> None:
         state = {"model.embed_tokens.weight": torch.zeros(1)}
         flat_model_keys = {"model.embed_tokens.weight": None}
-        assert _remap_qwen2vl_state_dict(state, flat_model_keys) is state
+        assert remap_legacy_qwen2vl_state_dict(state, flat_model_keys) is state
 
 
 class TestPromptBuild:
