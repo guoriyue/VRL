@@ -605,3 +605,90 @@ underscore patches are internal spies/stops that are not external boundaries
 and were left as they are; `_materialize_model_snapshot` and `_generate_one`
 are Hub / subprocess boundaries that a later pass could give the same
 public-keyword shape.
+
+## Night sprint batch 5 (2026-09-13): same-theorem merges and a theorem split
+
+Commits `b777789f`, `a57c8bf6`. A normalized-AST scan over every test file
+found 31 same-shape groups. Seven state one theorem over several subjects
+and are now one parametrized test each (trust-region old-mean requirement
+x2 algorithms; SFT shard producer mismatch x2 fields; health failure before
+lease transition x2; LlamaGen request topology x3 fields; multi-rank
+colocated per-rank GPU x2 strategies; supported schedule/topology pairings
+x2; token log-prob evaluators under disable_adapter x2). The other 24 are
+different theorems with the same text (distinct rejections and messages,
+cross-family parity shapes, per-package prompt-format checks) and stay.
+
+`tests/config/test_schema.py` (1431 lines, five subjects) is now five
+theorem-family modules with no test changed; `literal_args` /
+`minimal_grpo_cfg` moved to `tests/config/helpers.py` (three consumers).
+The other thousand-line files (`test_runtime_lease_sleep`, continuous
+`test_contracts`, `test_worker_sleep`, `test_runtime_config`,
+`test_resources`, `test_supervise`) each carry one subject on reading their
+test-name prefixes and were left whole.
+
+## Night sprint report (2026-09-13)
+
+Thirteen commits on top of `origin/main` `b64baced`, none pushed. Full suite
+after batch 1 and again after batch 5: everything passes except the eight
+upstream reds below (deselected). CUDA was visible and idle during both full
+runs (no foreign compute process on the card), so the 50 `gpu`-marked tests
+ran inside them.
+
+### Deleted (what guards the real error now)
+
+- Fake family entries / `SimpleNamespace` models in the SANA eval, Cosmos-2.5
+  Kling eval, frame-prefix gate, Wan DPO config + identity, Wan robotics eval,
+  worker identity, perf `build_runtime` and online lifecycle tests -> real
+  tiny on-disk families (SANA, Cosmos-2.5, Wan-2.1) loaded by the real
+  loaders; real local-directory identity; real checkpoints saved from the real
+  bundle; real restore / drift / mismatch rejections; real generation and
+  mp4/png output (batch 1 ledger has the per-test list).
+- Recorded-call fakes for `_write_mp4` / `video_writer` -> real mp4 encode +
+  decode of frame count and fps.
+- Fake `_generate_images` + fake identity in the SANA aesthetic report tests
+  -> real generation on the tiny snapshot; scoring stays a double.
+- Underscore patches of `_run_command`, `_cumem_allocator`,
+  `_source_head_revision`, `_embed` -> public `run_command=` keyword, public
+  `cumem_allocator` / `source_head_revision` seams, a real `nn.Embedding`.
+- Seven same-theorem test pairs -> parametrized tests.
+
+### Simplified
+
+- `_install_common_fakes` (55 patches) -> `_install_ray_side_fakes` (Ray-side
+  shutdown recorders only) on a real resolved run.
+- `tests/scripts/eval/fixtures.py` gained the tiny Wan snapshot, the tiny
+  SANA online config and the prompt-manifest writer; `_wan_dpo_helpers.py`
+  holds the Pick-a-Pic in-memory dataset for the four Wan DPO modules.
+- `test_schema.py` split into five theorem modules.
+- One fixture lie fixed on the way: `build_tiny_wan_vae` now has the four
+  levels diffusers' derived scale factors assume (found because the
+  frame-prefix gate ran for real).
+
+### Kept, with the reason
+
+- Anima entry sentinels: the loader hardcodes the Qwen3-0.6B config and reads
+  safetensors + tokenizer files; no KB-scale snapshot without changing
+  production.
+- Ray doubles in health-monitor / weight-sync / OOM-split / batch-memory
+  tests: state-machine and argument-assembly theorems whose wire semantics
+  have real-cluster twins in the same files.
+- 36 no-counterpart labels that hold on reading (HTTP to danbooru, byte-exact
+  probe arithmetic, multi-node Ray, PickScore revision plumbing, nvtx depth).
+- Hub `snapshot_download`, reward-model scoring, and the Pick-a-Pic download
+  remain doubles (network / multi-GB weights), each labelled with why.
+- 24 same-shape-different-theorem test groups; six large single-subject files.
+
+### Not verified
+
+- Not run: `tests/e2e/test_real_checkpoint_rl.py` real-weights lane (needs
+  cached Hub checkpoints); the vLLM real-ops test (needs the `ar-vllm`
+  environment, which conflicts with `cosmos`).
+- Cannot run here: multi-node Ray topology, the four pinned SANA Hub
+  snapshots, the codex / aesthetic / PickScore judges.
+
+### Upstream reds (untouched)
+
+- `tests/architecture/test_generation_rollout_boundaries.py::test_generation_model_imports_stay_on_public_floor`
+- `tests/generation/bindings/chunk_autoregressive_denoise/test_binding.py::test_serialized_replay_records_preserve_axes_values_and_sample_order`
+- `tests/generation/bindings/full_sequence_denoise/test_layout.py::test_unseeded_window_survives_serialized_batch_split_retry`
+- the five tests in `tests/scripts/test_train_signals.py`
