@@ -1619,35 +1619,3 @@ async def test_consumer_rejects_invalid_wait_settings(field, value):
             current_policy_version=1,
             **settings,
         )
-
-
-@pytest.mark.parametrize("group_size", [True, 2.5, "2", 0, -1])
-def test_producer_rejects_invalid_group_size_before_collection(group_size) -> None:
-    collector = _FiniteCollector()
-    queue = ScoredRolloutQueue(max_items=4)
-    with pytest.raises(ValueError, match="group_size"):
-        _producer(collector, queue, group_size=group_size)
-    assert collector.calls == []
-    assert queue.size() == 0
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("prompts,group_size", [([], 2), (["next"], 2.5)])
-async def test_invalid_replacement_preserves_completed_batch(prompts, group_size) -> None:
-    queue = ScoredRolloutQueue(max_items=2)
-    producer = _producer(_FiniteCollector(), queue)
-    await producer.start()
-    try:
-        await producer.drain_prompt_batch(wait_timeout_s=5.0)
-        queue.remove(queue.snapshot())
-        original_batch_id = producer.current_batch_id
-        with pytest.raises(ValueError):
-            producer.set_prompt_batch(prompts, group_size=group_size, runtime_debug=False)
-        assert producer.current_batch_id == original_batch_id
-
-        producer.set_prompt_batch(["next"], group_size=2, runtime_debug=False)
-        assert producer.current_batch_id == original_batch_id + 1
-        await producer.drain_prompt_batch(wait_timeout_s=5.0)
-        assert queue.snapshot()[0].batch_id == original_batch_id + 1
-    finally:
-        await producer.stop()

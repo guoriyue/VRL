@@ -6,15 +6,11 @@ This owner-loop object retains no payloads and performs no queueing or waiting.
 
 from __future__ import annotations
 
-from vrl.utils.validation import require_int
-
 
 class PendingRewardCapacity:
     """Account group and byte capacity from generation admission through scoring."""
 
     def __init__(self, *, max_groups: int, max_bytes: int) -> None:
-        require_int(max_groups, path="generated capacity.max_groups", minimum=1)
-        require_int(max_bytes, path="generated capacity.max_bytes", minimum=1)
         self.max_groups = max_groups
         self.max_bytes = max_bytes
         self._reserved: dict[tuple[int, int], int] = {}
@@ -34,7 +30,6 @@ class PendingRewardCapacity:
             raise RuntimeError("generated capacity is closed")
         if key in self._reserved:
             raise RuntimeError(f"duplicate generated group reservation: {key}")
-        require_int(max_group_bytes, path="max_group_bytes", minimum=1)
         if max_group_bytes > self.max_bytes:
             raise ValueError("generated group byte ceiling must fit the capacity budget")
         if (
@@ -60,8 +55,7 @@ class PendingRewardCapacity:
         if key in self._waiting or key in self._scoring:
             raise RuntimeError(f"duplicate generated size report: {key}")
         ceiling = self._reserved[key]
-        require_int(nbytes, path="generated group.nbytes", minimum=0)
-        if nbytes > ceiling:
+        if nbytes < 0 or nbytes > ceiling:
             raise ValueError(
                 f"generated group exceeds reserved byte ceiling: {key} "
                 f"(bytes={nbytes}, ceiling={ceiling})",

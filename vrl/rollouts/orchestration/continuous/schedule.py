@@ -54,9 +54,7 @@ class ContinuousRolloutSchedule:
         Copies resolved fields without importing the trainer-owned config type.
         """
 
-        # Constructing the settings enforces max_stale_policy_versions >= 1 (its
-        # __post_init__), so the fail-fast on an unsound zero-window config happens
-        # here without a second copy of the check.
+        # User settings were validated by ContinuousRolloutConfig.
         settings = ContinuousRolloutSettings(
             max_inflight_groups=config.max_inflight_groups,
             max_ready_bytes_mb=config.max_ready_bytes_mb,

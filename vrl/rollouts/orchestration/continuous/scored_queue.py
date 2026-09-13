@@ -12,7 +12,6 @@ from __future__ import annotations
 from collections import deque
 
 from vrl.rollouts.orchestration.continuous.types import ScoredRollout
-from vrl.utils.validation import require_int
 
 
 class ScoredRolloutQueue:
@@ -24,8 +23,8 @@ class ScoredRolloutQueue:
         max_items: int,
         max_bytes: int = 0,
     ) -> None:
-        self.max_items = require_int(max_items, path="ScoredRolloutQueue.max_items", minimum=1)
-        self.max_bytes = require_int(max_bytes, path="ScoredRolloutQueue.max_bytes", minimum=0)
+        self.max_items = max_items
+        self.max_bytes = max_bytes
         self._items: deque[ScoredRollout] = deque()
         self._bytes = 0
 
@@ -49,7 +48,7 @@ class ScoredRolloutQueue:
     def set_item_limit(self, max_items: int) -> None:
         """Resize for the installed batch window without discarding receipts."""
 
-        next_limit = require_int(max_items, path="ScoredRolloutQueue.max_items", minimum=1)
+        next_limit = max_items
         if next_limit < len(self._items):
             raise RuntimeError(
                 "continuous ready queue item limit cannot shrink below resident items "
@@ -71,7 +70,9 @@ class ScoredRolloutQueue:
                 "continuous ready queue exceeds its active prompt-batch item limit "
                 f"(ready={len(self._items)}, limit={self.max_items})",
             )
-        item_bytes = require_int(item.nbytes, path="ready item.nbytes", minimum=0)
+        item_bytes = item.nbytes
+        if item_bytes < 0:
+            raise ValueError("ready item.nbytes must be non-negative")
         next_bytes = self._bytes + item_bytes
         if self.max_bytes > 0 and next_bytes > self.max_bytes:
             raise ValueError(

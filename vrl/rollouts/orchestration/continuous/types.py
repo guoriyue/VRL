@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.stats import RolloutStats
-from vrl.utils.validation import require_int
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,14 +17,9 @@ class ContinuousRolloutSettings:
     ``ContinuousRolloutSchedule`` -> ``ContinuousRolloutThread`` ->
     ``_ContinuousRolloutController`` so adding a knob touches one field here, not four
     repeated signatures. Deliberately has NO defaults: ``ContinuousRolloutConfig``
-    (``vrl.trainers.core.types``) remains the single source of default values, and
-    the rollout layer must not keep a second copy of them.
-
-    ``ContinuousRolloutConfig.__post_init__`` validates user settings; individual
-    mechanisms also enforce their own capacity and version invariants. This
-    carrier rejects a nonpositive policy-version window for both factory and
-    direct construction. It does not switch schedules: callers wanting zero
-    staleness must select strict-on-policy execution explicitly.
+    (``vrl.trainers.core.types``) remains the single source of default values.
+    User settings are validated by ContinuousRolloutConfig before projection.
+    This carrier does not repeat those checks.
     """
 
     max_inflight_groups: int
@@ -38,14 +32,6 @@ class ContinuousRolloutSettings:
     wait_timeout_s: float
     queue_poll_interval_s: float
     fail_fast_errors: int
-
-    def __post_init__(self) -> None:
-        require_int(self.max_stale_policy_versions, path="max_stale_policy_versions")
-        if self.max_stale_policy_versions < 1:
-            raise ValueError(
-                "continuous rollout requires max_stale_policy_versions >= 1; "
-                "use strict_on_policy for a zero-staleness serial run",
-            )
 
 
 @dataclass(frozen=True, slots=True)

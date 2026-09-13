@@ -43,7 +43,6 @@ from vrl.rollouts.stats import RolloutStats
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 from vrl.trajectory import trajectory_tensor_bytes
 from vrl.utils.deadline import require_timeout
-from vrl.utils.validation import require_int
 
 _CPU = torch.device("cpu")
 _OBSERVABILITY_LOG_INTERVAL_S = 30.0
@@ -78,13 +77,6 @@ class _PromptBatchProgress:
     pending_since: dict[int, float]
     failure_counts: dict[int, int] = field(default_factory=dict)
     failure: BaseException | None = None
-
-    def __post_init__(self) -> None:
-        # The value object owns its shape (vLLM's SamplingParams pattern):
-        # per-call inputs validate where they are born, not in the mechanism.
-        if not self.prompts:
-            raise ValueError("continuous prompt batch requires a non-empty prompt list")
-        require_int(self.group_size, path="continuous prompt batch.group_size", minimum=1)
 
 
 class ContinuousRolloutProducer:
