@@ -462,3 +462,27 @@ identity and strict dtype compatibility, then verify updated FP32 LoRA delivery
 to actual rollout workers and controlled checkpoint continuation. Keep existing
 defaults unchanged; the post-build diagnostic alone does not enable the native
 online recipe to construct this dtype consistently across trainer and workers.
+
+## 2026-09-13: public opt-in FP32 LoRA storage
+
+Candidate `6ab984cf` adds `model.lora_parameter_dtype: float32` to the shared
+Wan T2V/I2V family schema and LoRA construction path. The unset/null default
+retains prior construction behavior and checkpoint identity. Explicit FP32
+storage contributes to checkpoint identity; it requires `use_lora=true` and,
+when FSDP is selected, explicit `distributed.training.fsdp.precision_policy=none`.
+Only trainable adapter parameters are converted after fresh creation or warm
+loading. Unsupported storage values fail before adapter mutation.
+
+CPU verification: 437 tests passed in 30.20s across the Wan family, checkpoint
+identity and configuration suites; Ruff passed for all six changed files.
+New tests exercise actual PEFT fresh creation and saved-adapter reload in both
+default BF16 and opt-in FP32 storage, unchanged frozen parameter values/dtype/
+data pointers, invalid-value rejection, schema/FSDP policy rules and default
+identity compatibility for both Wan families. These tests do not establish
+actual distributed rollout delivery or checkpoint continuation.
+
+No GPU run or long training queue was started for this configuration change.
+Next use the public option, without diagnostic post-build casting, to verify
+updated FP32 adapters reaching actual generation workers, matched replay and
+controlled checkpoint continuation. Full-size I2V, quality and end-to-end
+throughput remain open.
