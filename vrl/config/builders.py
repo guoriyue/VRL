@@ -41,6 +41,25 @@ class RewardRuntimeConfig:
                     "reward GPU ownership under distributed.resources.reward",
                 )
 
+    def worker_config(
+        self, component: str, *, default_reward_model_name: str | None = None
+    ) -> dict[str, Any]:
+        """Project ``reward.kwargs.<component>`` into that reward's ``worker_config``.
+
+        ``default_reward_model_name`` is the per-reward contract constant to fall
+        back to when the run named no model; the evaluation entrypoints score on
+        training's own reward terms through this.
+        """
+
+        reward_cfg = self.kwargs.get(component) or {}
+        worker_config = dict(reward_cfg.get("worker_config") or {})
+        if default_reward_model_name is not None:
+            worker_config.setdefault(
+                "reward_model_name",
+                str(reward_cfg.get("reward_name") or default_reward_model_name),
+            )
+        return worker_config
+
     @classmethod
     def from_cfg(cls, cfg: DictConfig | RewardConfig) -> RewardRuntimeConfig:
         """Resolve one public reward section into its runtime config.

@@ -10,6 +10,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
@@ -124,9 +125,8 @@ def test_reward_worker_config_adds_reward_model_name_default() -> None:
         },
     )
 
-    worker_config = eval_script.resolve_reward_worker_config(
-        cfg,
-        component="kling_video_reward",
+    worker_config = RewardRuntimeConfig.from_cfg(cfg).worker_config(
+        "kling_video_reward",
         default_reward_model_name="KlingTeam/VideoReward@main",
     )
 

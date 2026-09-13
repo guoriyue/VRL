@@ -41,10 +41,10 @@ from typing import Any
 
 import torch
 
+from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.loading import load_config
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.scripts.eval._device import resolve_eval_device
-from vrl.scripts.eval._reward_worker import resolve_reward_worker_config
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 
 logger = logging.getLogger(__name__)
@@ -208,9 +208,8 @@ def _score_kling(
 ) -> dict[str, dict[str, float]]:
     from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 
-    worker_config = resolve_reward_worker_config(
-        load_config(kling_config),
-        component="kling_video_reward",
+    worker_config = RewardRuntimeConfig.from_cfg(load_config(kling_config)).worker_config(
+        "kling_video_reward",
         default_reward_model_name="KlingTeam/VideoReward@main",
     )
     worker_config.setdefault("device", str(device))

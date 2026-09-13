@@ -40,13 +40,13 @@ from typing import Any
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.scripts.eval._device import resolve_eval_device, resolve_eval_dtype
-from vrl.scripts.eval._reward_worker import resolve_reward_worker_config
 from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.denoise_generation import generate_one_video, seed_for
 from vrl.scripts.eval.score_report import summarize_paired_scores, write_scores
@@ -331,9 +331,8 @@ def score_grid(args: argparse.Namespace) -> dict[str, Any]:
 def _hpsv3_worker_config(cfg: DictConfig, *, device: torch.device) -> dict[str, Any]:
     """Project the run's own reward block so eval scores on training's terms."""
 
-    worker_config = resolve_reward_worker_config(
-        cfg,
-        component="hpsv3",
+    worker_config = RewardRuntimeConfig.from_cfg(cfg).worker_config(
+        "hpsv3",
         default_reward_model_name="MizzenAI/HPSv3@main",
     )
     worker_config["device"] = str(device)
