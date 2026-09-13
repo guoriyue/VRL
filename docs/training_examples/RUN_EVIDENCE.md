@@ -22,7 +22,7 @@ process start time or a measurement of model-loading latency.
 
 This is launch provenance, not a verification grade. It does not establish a
 successful exit, a full learning curve, or bitwise reproducibility. Consult the
-run verdict, metrics, checkpoints and separately identified evaluation outputs
+run result, metrics, checkpoints and separately identified evaluation outputs
 for those claims. Existing runs without a launch record cannot acquire historical
 software/hardware evidence by recording today's environment after the fact.
 
@@ -66,7 +66,7 @@ correctly fail against those newer files. The receipt does not retain old bytes.
 
 The phase is explicitly `after-training-loop-before-cleanup`. A later shutdown
 failure can still fail the run. The receipt neither binds the supervisor's final
-verdict nor includes held-out evaluations or intermediate checkpoints. Its hashes
+result nor includes held-out evaluations or intermediate checkpoints. Its hashes
 establish internal consistency, not authenticity: retain a trusted external digest
 or immutable archive if the receipt itself must be protected against replacement.
 No learning-curve or deterministic-regression grade is inferred from these files.
@@ -74,19 +74,19 @@ No learning-curve or deterministic-regression grade is inferred from these files
 For supervised runs, verify process completion separately:
 
 ```python
-verdict = trace.verify_completion("outputs/my-run/run_verdict.json")
+result = trace.verify_completion("outputs/my-run/training_run_result.json")
 ```
 
-The supervisor clears old verdict files before each launch and records the actual
+The supervisor clears old result files before each launch and records the actual
 `supervisor_exit_code` after joining the child. Completion verification requires
-zero and a successful verdict. Distributed runs additionally require each rank
-exactly once, matching world size, and successful rank verdicts.
+zero and a successful result. Distributed runs additionally require each rank
+exactly once, matching world size, and successful rank results.
 
 There is no cross-process attempt ID. This checks the supplied process outcome
-and artifact integrity; it does not establish that the verdict and artifacts
+and artifact integrity; it does not establish that the result and artifacts
 came from the same execution. Standalone runs without an observed supervisor
-exit remain eligible for artifact integrity checks. Archive the verdict and
-artifacts together; the earlier artifact receipt does not hash the final verdict.
+exit remain eligible for artifact integrity checks. Archive the result and
+artifacts together; the earlier artifact receipt does not hash the final result.
 
 Completed native image checkpoint evaluations can now be associated with training:
 
@@ -114,7 +114,7 @@ runtime identity from the one recorded during generation fails protocol matching
 recording today's environment cannot repair missing historical evidence.
 
 Programmatic callers can pass their independently specified `EvaluationArchive`
-to `trace.verify_evaluation(verdict_path, archive)`. Do not derive the
+to `trace.verify_evaluation(result_path, archive)`. Do not derive the
 expected protocol from an untrusted report merely to make it match. This path
 currently covers the native full-sequence denoise image evaluator. Video/token
 benchmarks need their own existing protocol adapters. A matching evaluation does

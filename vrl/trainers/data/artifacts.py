@@ -7,7 +7,7 @@ from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
-from vrl.trainers.data.prompts import PromptExample, load_prompt_manifest
+from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
 from vrl.utils.artifacts import (
     IMAGE_SUFFIXES,
     ArtifactManifestError,
@@ -138,9 +138,11 @@ class DatasetFileReport:
 
         path = Path(manifest_path)
         return cls.from_examples(
-            load_prompt_manifest(path),
+            load_prompt_dataset_index(path),
             manifest_path=path,
-            eval_examples=None if eval_manifest is None else load_prompt_manifest(eval_manifest),
+            eval_examples=None
+            if eval_manifest is None
+            else load_prompt_dataset_index(eval_manifest),
             eval_manifest_path=eval_manifest,
             data_root=data_root,
             artifact_fields=artifact_fields,

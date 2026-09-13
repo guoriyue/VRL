@@ -1,6 +1,6 @@
 """Gate math for the A/B/C generation/reward overlap acceptance benchmark.
 
-The GPU campaign is expensive and runs unattended, so the verdict logic is
+The GPU campaign is expensive and runs unattended, so the result logic is
 tested against synthetic run directories: a benchmark that silently accepts a
 regression is worse than no benchmark.
 """
@@ -30,11 +30,11 @@ def _write_run(
     generation_wall: float,
     reward_wall: float,
     overlap: float,
-    verdict: str = "success",
+    result: str = "success",
 ) -> Path:
     run_dir = out_dir / f"arm{arm}_run{repeat}"
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "run_verdict.json").write_text(json.dumps({"verdict": verdict}))
+    (run_dir / "training_run_result.json").write_text(json.dumps({"status": result}))
     lines = []
     for step in range(steps):
         lines.append(
@@ -234,7 +234,7 @@ def test_noisy_arms_fail_the_confidence_bound_despite_a_mean_win(tmp_path: Path)
 
 
 def test_failed_run_is_not_silently_averaged_in(tmp_path: Path) -> None:
-    """A crashed run must abort the verdict, not shrink the sample."""
+    """A crashed run must abort the result, not shrink the sample."""
     _passing_campaign(tmp_path)
     _write_run(
         tmp_path,
@@ -244,7 +244,7 @@ def test_failed_run_is_not_silently_averaged_in(tmp_path: Path) -> None:
         generation_wall=40.0,
         reward_wall=60.0,
         overlap=30.0,
-        verdict="failed",
+        result="failed",
     )
 
     with pytest.raises(RuntimeError, match="did not succeed"):
@@ -255,7 +255,7 @@ def test_warmup_steps_are_dropped_before_averaging(tmp_path: Path) -> None:
     """Cold-start steps must not enter the steady-state mean."""
     run_dir = tmp_path / "armA_run0"
     run_dir.mkdir(parents=True)
-    (run_dir / "run_verdict.json").write_text(json.dumps({"verdict": "success"}))
+    (run_dir / "training_run_result.json").write_text(json.dumps({"status": "success"}))
     rows = [
         {
             "step": 0,
@@ -328,7 +328,7 @@ def test_steps_without_collection_are_skipped_not_scored_as_zero(tmp_path: Path)
 
 
 def test_analysis_requires_both_the_baseline_and_streaming_arms(tmp_path: Path) -> None:
-    """B alone cannot produce a verdict: C must beat A, not merely B."""
+    """B alone cannot produce a result: C must beat A, not merely B."""
     for repeat in range(5):
         _write_run(
             tmp_path,

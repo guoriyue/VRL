@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.scripts.eval.sana_inference import SCHEDULER_PROTOCOL
+from vrl.scripts.eval.sana_inference import SANA_EVAL_SCHEDULER_CONFIG
 
 
 def build_official_sana_scheduler(**overrides: Any) -> Any:
@@ -18,7 +18,9 @@ def build_official_sana_scheduler(**overrides: Any) -> Any:
 
     from diffusers import DPMSolverMultistepScheduler
 
-    kwargs = {key: value for key, value in SCHEDULER_PROTOCOL.items() if key != "class_name"}
+    kwargs = {
+        key: value for key, value in SANA_EVAL_SCHEDULER_CONFIG.items() if key != "class_name"
+    }
     kwargs.update(overrides)
     return DPMSolverMultistepScheduler(**kwargs)
 

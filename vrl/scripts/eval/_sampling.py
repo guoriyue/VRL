@@ -10,7 +10,7 @@ training runtime does (``GenericDiffusionBatchExecutor`` applies its
 handed straight to the generation request, not a launch-time config object.
 
 Note: ``sana_aesthetic_report.resolve_sampling`` is deliberately NOT routed here
-— it returns the frozen ``OFFICIAL_SAMPLING_PROTOCOL`` to keep reproducibility
+— it returns the frozen ``SANA_EVAL_SAMPLING_CONFIG`` to keep reproducibility
 independent of the training SDE, and must stay separate.
 """
 

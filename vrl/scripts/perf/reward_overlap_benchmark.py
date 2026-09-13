@@ -33,7 +33,7 @@ Usage:
       --repeats 5 --iterations 6 --warmup-iterations 2 \\
       --out outputs/perf/reward_overlap
 
-    # Recompute the verdict from runs that already completed:
+    # Recompute the result from runs that already completed:
     python -m vrl.scripts.perf.reward_overlap_benchmark \\
       --out outputs/perf/reward_overlap --analyze-only
 """
@@ -132,11 +132,11 @@ class RunMetrics:
     def from_run_dir(cls, run_dir: Path, *, warmup_iterations: int) -> RunMetrics:
         """Load one run's per-step collection phases, dropping warmup steps."""
 
-        verdict_path = run_dir / "run_verdict.json"
-        if verdict_path.exists():
-            verdict = json.loads(verdict_path.read_text())
-            if verdict.get("verdict") != "success":
-                raise RuntimeError(f"{run_dir} did not succeed: {verdict}")
+        result_path = run_dir / "training_run_result.json"
+        if result_path.exists():
+            result = json.loads(result_path.read_text())
+            if result.get("status") != "success":
+                raise RuntimeError(f"{run_dir} did not succeed: {result}")
         stats_path = run_dir / "rollout_stats.jsonl"
         if not stats_path.exists():
             raise FileNotFoundError(f"missing {stats_path}; the run wrote no phase stats")

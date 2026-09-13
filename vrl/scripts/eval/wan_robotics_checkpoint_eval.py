@@ -41,7 +41,7 @@ from vrl.trainers.checkpointing import (
     load_checkpoint_state,
     load_resolved_run_config,
 )
-from vrl.trainers.data import PromptExample, load_prompt_manifest
+from vrl.trainers.data import PromptExample, load_prompt_dataset_index
 from vrl.utils.artifacts import resolve_artifact_path, sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
@@ -451,8 +451,8 @@ def _build_protocol(
         raise ValueError("training run config needs data and model sections")
     train_path = Path(str(root.data.manifest)).expanduser().resolve()
     eval_path = Path(str(root.data.eval_manifest)).expanduser().resolve()
-    train_examples = load_prompt_manifest(train_path)
-    eval_examples = load_prompt_manifest(eval_path)
+    train_examples = load_prompt_dataset_index(train_path)
+    eval_examples = load_prompt_dataset_index(eval_path)
     selected = select_strict_examples(train_examples, eval_examples, limit=limit)
     return {
         "resolved_config": {"path": str(config_path), "sha256": sha256_file(config_path)},

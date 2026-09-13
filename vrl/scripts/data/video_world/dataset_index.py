@@ -1,7 +1,7 @@
 """Pure Video2World row builders and media writers.
 
 Source adapters normalize public datasets into episode mappings. This module
-owns the persisted manifest shape and writes the reference/target media without
+owns the persisted dataset index shape and writes the reference/target media without
 knowing how an episode was fetched.
 """
 
@@ -24,11 +24,11 @@ def build_video_world_rows(
     source: str,
     conditioning: str = "first_frame",
 ) -> list[dict[str, Any]]:
-    """Write first-frame PNGs and return Video2World manifest rows.
+    """Write first-frame PNGs and return Video2World dataset index rows.
 
     Each normalized episode provides ``image``, ``prompt``, and ``episode_id``.
     Incomplete episodes are ignored so a partially corrupt public source does
-    not produce invalid manifest rows.
+    not produce invalid dataset index rows.
     """
 
     reference_dir.mkdir(parents=True, exist_ok=True)
@@ -43,7 +43,7 @@ def build_video_world_rows(
         image = episode.get("image")
         if not prompt or not episode_id or image is None:
             continue
-        metadata = _manifest_metadata(
+        metadata = _dataset_metadata(
             episode,
             source=source,
             episode_id=episode_id,
@@ -89,7 +89,7 @@ def build_target_video_world_rows(
         frames = list(episode.get("frames") or [])
         if not prompt or not episode_id or not frames:
             continue
-        metadata = _manifest_metadata(
+        metadata = _dataset_metadata(
             episode,
             source=source,
             episode_id=episode_id,
@@ -116,7 +116,7 @@ def build_target_video_world_rows(
     return rows
 
 
-def _manifest_metadata(
+def _dataset_metadata(
     episode: Mapping[str, Any],
     *,
     source: str,

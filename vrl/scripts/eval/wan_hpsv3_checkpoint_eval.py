@@ -57,7 +57,7 @@ from vrl.trainers.checkpointing import (
     restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
-from vrl.trainers.data import load_prompt_manifest
+from vrl.trainers.data import load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
@@ -175,7 +175,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
             strict=True,
         )
 
-    examples = load_prompt_manifest(args.prompts)[: args.limit]
+    examples = load_prompt_dataset_index(args.prompts)[: args.limit]
     if len(examples) < args.limit:
         raise ValueError(f"manifest has {len(examples)} prompts, fewer than --limit {args.limit}")
     sampling = resolve_eval_sampling(cfg)

@@ -76,7 +76,7 @@ class PromptExample:
         return metadata
 
 
-def load_prompt_manifest(path: str | Path) -> list[PromptExample]:
+def load_prompt_dataset_index(path: str | Path) -> list[PromptExample]:
     """Load prompt examples from a manifest file. Supports two formats:
 
     * ``.jsonl``: one JSON per line with explicit fields — native
@@ -175,7 +175,7 @@ def load_prompt_mixture(
     rng = random.Random(seed)
     picked: list[PromptExample] = []
     for path, count in sources.items():
-        available = load_prompt_manifest(path)
+        available = load_prompt_dataset_index(path)
         if count is None:
             picked.extend(available)
             continue
@@ -217,7 +217,7 @@ def load_prompt_examples_from_config(data: DataConfig) -> list[PromptExample]:
     if data.loader == "prompt_manifest":
         sources = manifest_sources(manifest)
         if len(sources) == 1 and next(iter(sources.values())) is None:
-            return load_prompt_manifest(next(iter(sources)))
+            return load_prompt_dataset_index(next(iter(sources)))
         if data.mix_seed is None:
             raise ValueError("config missing required field: data.mix_seed")
         return load_prompt_mixture(sources, seed=int(data.mix_seed))
@@ -352,9 +352,9 @@ __all__ = [
     "ImageCaptionPromptDataset",
     "JsonlPromptDataset",
     "PromptExample",
+    "load_prompt_dataset_index",
     "load_prompt_examples_from_config",
     "load_prompt_examples_from_jsonl_bytes",
     "load_prompt_image_manifest",
-    "load_prompt_manifest",
     "load_prompt_mixture",
 ]

@@ -45,7 +45,7 @@ from vrl.config.loading import load_config
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval._kling_reward import resolve_kling_worker_config
-from vrl.trainers.data.prompts import load_prompt_manifest
+from vrl.trainers.data.prompts import load_prompt_dataset_index
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +182,7 @@ def _pair_prompts(videos: list[Path], manifest: str) -> dict[Path, str]:
 
     if not manifest:
         return {video: "" for video in videos}
-    examples = load_prompt_manifest(manifest)
+    examples = load_prompt_dataset_index(manifest)
     by_name = {
         Path(example.reference_video).name: example.prompt
         for example in examples

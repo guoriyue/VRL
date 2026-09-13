@@ -10,7 +10,7 @@ from PIL import Image
 
 from vrl.config.schema import DataConfig
 from vrl.scripts.data import bootstrap, danbooru, setup, video_world
-from vrl.trainers.data import load_prompt_examples_from_config, load_prompt_manifest
+from vrl.trainers.data import load_prompt_dataset_index, load_prompt_examples_from_config
 from vrl.trainers.data.artifacts import (
     resolve_prompt_example_references,
     resolve_required_reference_images_,
@@ -227,7 +227,7 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
     monkeypatch.setenv("VRL_DATA_ROOT", str(data_root))
     examples = [
         resolve_prompt_example_references(example, allow_absolute=True)
-        for example in load_prompt_manifest(manifest)
+        for example in load_prompt_dataset_index(manifest)
     ]
     resolve_required_reference_images_(
         examples,

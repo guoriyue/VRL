@@ -24,13 +24,13 @@ from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
 from vrl.config.schema import RootConfig, parse_config
-from vrl.scripts.eval.sana_inference import OFFICIAL_SAMPLING_PROTOCOL, SCHEDULER_PROTOCOL
+from vrl.scripts.eval.sana_inference import SANA_EVAL_SAMPLING_CONFIG, SANA_EVAL_SCHEDULER_CONFIG
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
     is_complete_checkpoint,
     read_checkpoint_meta,
 )
-from vrl.trainers.data import load_prompt_manifest
+from vrl.trainers.data import load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
 
@@ -165,8 +165,8 @@ def resolve_protocol_manifests(root: RootConfig) -> tuple[Path, Path, list[str]]
             f"SANA evaluation manifest does not match the registered asset: {eval_path}",
         )
 
-    training_prompts = [example.prompt for example in load_prompt_manifest(training_path)]
-    eval_prompts = [example.prompt for example in load_prompt_manifest(eval_path)]
+    training_prompts = [example.prompt for example in load_prompt_dataset_index(training_path)]
+    eval_prompts = [example.prompt for example in load_prompt_dataset_index(eval_path)]
     if len(training_prompts) != TRAIN_PROMPT_COUNT:
         raise ValueError(
             f"SANA training manifest has {len(training_prompts)} prompts, "
@@ -813,7 +813,7 @@ def _validate_report_provenance(
         (
             "training_manifest",
             training_manifest_path,
-            len(load_prompt_manifest(training_manifest_path)),
+            len(load_prompt_dataset_index(training_manifest_path)),
         ),
         ("eval_manifest", eval_manifest_path, len(prompts)),
     ):
@@ -824,9 +824,9 @@ def _validate_report_provenance(
         if int(record.get("prompt_count", -1)) != expected_count:
             raise ValueError(f"SANA {label} prompt count changed")
 
-    if provenance["sampling"] != OFFICIAL_SAMPLING_PROTOCOL:
+    if provenance["sampling"] != SANA_EVAL_SAMPLING_CONFIG:
         raise ValueError("SANA evaluation sampling provenance changed")
-    if provenance["scheduler_protocol"] != SCHEDULER_PROTOCOL:
+    if provenance["scheduler_protocol"] != SANA_EVAL_SCHEDULER_CONFIG:
         raise ValueError("SANA evaluation scheduler protocol changed")
     expected_seed = seed_grid_record()
     if provenance["seed_grid"] != expected_seed:

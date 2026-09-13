@@ -15,7 +15,7 @@ from PIL import Image
 
 from vrl.scripts.data import jrdb
 from vrl.scripts.data import setup as setup_cli
-from vrl.scripts.data.video_world import manifests as video_world_manifests
+from vrl.scripts.data.video_world import dataset_index as video_world_dataset_index
 from vrl.trainers.data.artifacts import SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS
 
 
@@ -120,7 +120,7 @@ def test_jrdb_targets_command_writes_manifests_report_and_validates(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"fake-video frames={len(frames)} fps={fps}")
 
-    monkeypatch.setattr(video_world_manifests, "_write_mp4", fake_video_writer)
+    monkeypatch.setattr(video_world_dataset_index, "_write_mp4", fake_video_writer)
 
     setup_cli.main(
         [

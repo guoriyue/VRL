@@ -29,11 +29,11 @@ if TYPE_CHECKING:
     from vrl.trainers.data.prompts import ImageCaptionPromptDataset as ImageCaptionPromptDataset
     from vrl.trainers.data.prompts import JsonlPromptDataset as JsonlPromptDataset
     from vrl.trainers.data.prompts import PromptExample as PromptExample
+    from vrl.trainers.data.prompts import load_prompt_dataset_index as load_prompt_dataset_index
     from vrl.trainers.data.prompts import (
         load_prompt_examples_from_config as load_prompt_examples_from_config,
     )
     from vrl.trainers.data.prompts import load_prompt_image_manifest as load_prompt_image_manifest
-    from vrl.trainers.data.prompts import load_prompt_manifest as load_prompt_manifest
 
 _PUBLIC_EXPORTS = {
     "DatasetFileReport": ("vrl.trainers.data.artifacts", "DatasetFileReport"),
@@ -50,7 +50,7 @@ _PUBLIC_EXPORTS = {
         "load_prompt_examples_from_config",
     ),
     "load_prompt_image_manifest": ("vrl.trainers.data.prompts", "load_prompt_image_manifest"),
-    "load_prompt_manifest": ("vrl.trainers.data.prompts", "load_prompt_manifest"),
+    "load_prompt_dataset_index": ("vrl.trainers.data.prompts", "load_prompt_dataset_index"),
     "DatasetProvenance": ("vrl.trainers.data.provenance", "DatasetProvenance"),
     "resolve_prompt_example_artifacts": (
         "vrl.trainers.data.artifacts",

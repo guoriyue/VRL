@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 from omegaconf import DictConfig
 
-from vrl.run_verdict import RunVerdictWriter
 from vrl.scripts.common.launch_environment import narrow_rank_local_cuda_visibility
+from vrl.training_run_result import TrainingRunResultWriter
 from vrl.utils.config import import_from_path
 
 if TYPE_CHECKING:
@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     cfg = load_config(args.config, overrides=args.overrides)
     root = parse_config(cfg)
-    verdict = RunVerdictWriter.from_root(root)
+    result = TrainingRunResultWriter.from_root(root)
     try:
         selected_cuda = narrow_rank_local_cuda_visibility(root)
         if selected_cuda is not None:
@@ -143,12 +143,12 @@ def main(argv: list[str] | None = None) -> None:
         if inspect.isawaitable(result):
             received_signal = asyncio.run(_run_async_trainer(result))
     except BaseException as exc:
-        verdict.write(error=exc)
+        result.write(error=exc)
         raise
     if received_signal is not None:
-        verdict.write(received_signal=received_signal)
+        result.write(received_signal=received_signal)
         raise SystemExit(128 + int(received_signal))
-    verdict.write()
+    result.write()
 
 
 if __name__ == "__main__":

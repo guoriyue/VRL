@@ -277,3 +277,18 @@ is not a framework dependency. See the
 [evaluation cleanup inventory](/home/mingfeiguo/Desktop/vrl-eval-cleanup-archive-3AI2zQ/README.md)
 for archived paths and recovery instructions. Historical sprint commands refer
 to the archived versions, not current launch entrypoints.
+
+
+### Explicit data and run-result names
+
+- `load_prompt_dataset_index` reads the existing prompt dataset index format.
+  Existing dataset paths and YAML keys retain their spelling.
+- `vrl.scripts.data.video_world.dataset_index` builds Video2World dataset rows.
+- SANA evaluation shares `SANA_EVAL_SAMPLING_CONFIG` and
+  `SANA_EVAL_SCHEDULER_CONFIG`. Checkpoint comparison writes
+  `evaluation_record.json` and returns its path as `evaluation_record`.
+- `TrainingRunResultWriter` writes `training_run_result.json`, or
+  `training_run_result.rank-N.json` under torchrun. The outcome field is
+  `status` (`success`, `failed`, or `terminated`); aggregated worker records
+  use `rank_results`. The supervisor reads the new names only. Historical
+  `run_verdict.json` files are not rewritten automatically.

@@ -29,8 +29,8 @@ from vrl.models.dtypes import dtype_to_wire_name
 from vrl.models.precision import float32_precision_state, model_precision
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval.sana_inference import (
-    OFFICIAL_SAMPLING_PROTOCOL,
-    SCHEDULER_PROTOCOL,
+    SANA_EVAL_SAMPLING_CONFIG,
+    SANA_EVAL_SCHEDULER_CONFIG,
     generate_prompt_images,
     load_official_scheduler,
 )
@@ -122,7 +122,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         else run_dir / "sana_checkpoint_compare"
     )
     # A failed comparison must never leave a fresh base image beside a stale
-    # current image or manifest from an older checkpoint. Treat each directory
+    # current image or evaluation_record from an older checkpoint. Treat each directory
     # as an immutable one-shot evidence bundle; callers choose a new directory
     # (or explicitly remove the incomplete one) before retrying.
     if output_dir.exists():
@@ -212,8 +212,8 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     write_png(current_image, current_path)
     write_png(_side_by_side(base_image, current_image), side_by_side_path)
 
-    manifest_path = output_dir / "manifest.json"
-    manifest = {
+    evaluation_record_path = output_dir / "evaluation_record.json"
+    evaluation_record = {
         "schema": REPORT_SCHEMA,
         "schema_version": REPORT_SCHEMA_VERSION,
         "resolved_config": {
@@ -247,19 +247,19 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
             "same_seed_generator_reset_per_image": True,
         },
         "dtype": dtype_record,
-        "scheduler_protocol": dict(SCHEDULER_PROTOCOL),
+        "scheduler_protocol": dict(SANA_EVAL_SCHEDULER_CONFIG),
         "artifacts": {
             "base": _artifact_record(base_path, output_dir),
             "current": _artifact_record(current_path, output_dir),
             "side_by_side": _artifact_record(side_by_side_path, output_dir),
         },
     }
-    write_json(manifest_path, manifest)
+    write_json(evaluation_record_path, evaluation_record)
     return {
         "base": str(base_path),
         "current": str(current_path),
         "side_by_side": str(side_by_side_path),
-        "manifest": str(manifest_path),
+        "evaluation_record": str(evaluation_record_path),
     }
 
 
@@ -347,7 +347,7 @@ def _generate_one(
         num_images=1,
         device=device,
         sampling={
-            **OFFICIAL_SAMPLING_PROTOCOL,
+            **SANA_EVAL_SAMPLING_CONFIG,
             "height": height,
             "width": width,
             "num_inference_steps": steps,

@@ -29,7 +29,7 @@ from vrl.scripts.eval.denoise_generation import (
     generate_images,
 )
 from vrl.scripts.families.cosmos.anima.generation_protocol import ANIMA_GENERATION_SCHEMA
-from vrl.trainers.data import PromptExample, load_prompt_manifest
+from vrl.trainers.data import PromptExample, load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import write_jsonl
 
@@ -62,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--manifest",
         default="",
-        help="Prompt manifest supported by vrl.trainers.data.load_prompt_manifest.",
+        help="Prompt manifest supported by vrl.trainers.data.load_prompt_dataset_index.",
     )
     parser.add_argument(
         "--eval-manifest",
@@ -338,7 +338,7 @@ def _load_prompts(args: argparse.Namespace, root: RootConfig) -> list[PromptExam
         )
     manifest_path = _resolve_manifest_path(args, root)
     if manifest_path:
-        prompts.extend(load_prompt_manifest(manifest_path))
+        prompts.extend(load_prompt_dataset_index(manifest_path))
     return prompts
 
 

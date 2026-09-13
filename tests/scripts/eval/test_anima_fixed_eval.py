@@ -25,7 +25,7 @@ def test_default_generation_composes_model_without_training_recipe(
         captured.update(root=root, precision=precision, dtype=parameter_dtype_override)
         raise GenerationBoundaryReached
 
-    monkeypatch.setattr(data, "load_prompt_manifest", lambda _: [])
+    monkeypatch.setattr(data, "load_prompt_dataset_index", lambda _: [])
     monkeypatch.setattr(_device, "resolve_eval_device", lambda _: torch.device("cpu"))
     monkeypatch.setattr(
         registry,

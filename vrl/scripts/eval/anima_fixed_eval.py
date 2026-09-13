@@ -119,7 +119,7 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
     from vrl.models.families.registry import get_model_family_entry
     from vrl.scripts.eval._device import resolve_eval_device
     from vrl.scripts.eval._sampling import resolve_eval_sampling
-    from vrl.trainers.data import load_prompt_manifest
+    from vrl.trainers.data import load_prompt_dataset_index
     from vrl.utils.media import to_pil_image
 
     # Preserve this evaluator's established sampling and precision without importing
@@ -145,7 +145,9 @@ def _generate(args: argparse.Namespace, out_dir: Path) -> list[dict[str, Any]]:
     root = parse_config(cfg)
     precision = PrecisionPolicy.from_section(root.precision)
 
-    prompts = [example.prompt for example in load_prompt_manifest(args.manifest)][: args.limit]
+    prompts = [example.prompt for example in load_prompt_dataset_index(args.manifest)][
+        : args.limit
+    ]
     sampling = resolve_eval_sampling(
         root,
         overrides={"num_steps": args.steps, "guidance_scale": args.guidance_scale},

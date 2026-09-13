@@ -5,7 +5,7 @@ from pathlib import Path
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
-from vrl.trainers.data import load_prompt_manifest
+from vrl.trainers.data import load_prompt_dataset_index
 from vrl.trainers.data.artifacts import (
     resolve_prompt_example_artifacts,
     resolve_prompt_example_references,
@@ -36,7 +36,7 @@ def test_resolved_reference_image_flows_to_collector_metadata(tmp_path: Path) ->
     """
     manifest = _write_reference_manifest(tmp_path)
     example = resolve_prompt_example_artifacts(
-        load_prompt_manifest(manifest)[0],
+        load_prompt_dataset_index(manifest)[0],
         data_root=tmp_path,
     )
     builder = GenerationRequestBuilder(
@@ -62,7 +62,7 @@ def test_cosmos_per_sample_reference_uses_vrl_data_root(monkeypatch, tmp_path: P
     # time, then required-image resolution fills defaults and checks existence.
     examples = [
         resolve_prompt_example_references(example, allow_absolute=True)
-        for example in load_prompt_manifest(manifest)
+        for example in load_prompt_dataset_index(manifest)
     ]
     resolve_required_reference_images_(
         examples,
@@ -84,7 +84,7 @@ def test_cosmos_per_sample_reference_uses_artifact_data_root(tmp_path: Path) -> 
             data_root=tmp_path,
             allow_absolute=True,
         )
-        for example in load_prompt_manifest(manifest)
+        for example in load_prompt_dataset_index(manifest)
     ]
     resolve_required_reference_images_(
         examples,

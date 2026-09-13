@@ -18,9 +18,8 @@ from omegaconf import OmegaConf
 
 from vrl.algorithms.types import InitialReplayStats, TrainStepMetrics
 from vrl.config.schema import parse_config
-from vrl.run_verdict import RUN_VERDICT_NAME, RunVerdictWriter
 from vrl.scripts.supervise import (
-    HEALTH_VERDICT_NAME,
+    HEALTH_RESULT_NAME,
     ContinuousHealthPolicy,
     HealthGateConfig,
     MetricsHealthGate,
@@ -36,6 +35,7 @@ from vrl.trainers.core.types import (
 from vrl.trainers.metrics_io import (
     OnlineMetricRow,
 )
+from vrl.training_run_result import TRAINING_RUN_RESULT_NAME, TrainingRunResultWriter
 
 _METRICS_HEADER = "epoch,loss,reward_mean,reward_std,grad_norm,pre_update_logprob_abs_diff_max\n"
 
@@ -107,7 +107,7 @@ def _torchrun_command(script: Path, *, workers: int = 2) -> list[str]:
     ]
 
 
-def _write_verdict_snippet(out_dir: Path) -> str:
+def _write_result_snippet(out_dir: Path) -> str:
     return (
         "import json, os, pathlib\n"
         f"out = pathlib.Path({str(out_dir)!r})\n"
@@ -119,8 +119,8 @@ def test_success_first_attempt(tmp_path) -> None:
     out = tmp_path / "run"
     command = _child_script(
         tmp_path,
-        _write_verdict_snippet(out)
-        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
+        _write_result_snippet(out)
+        + "(out / 'training_run_result.json').write_text(json.dumps({'status': 'success'}))\n",
     )
     supervisor = RunSupervisor(command=command, output_dir=out, sleep=lambda _: None)
     assert supervisor.run() == 0
@@ -131,12 +131,12 @@ def test_same_cause_circuit_breaker_stops(tmp_path) -> None:
     attempts_file = tmp_path / "attempts"
     command = _child_script(
         tmp_path,
-        _write_verdict_snippet(out)
+        _write_result_snippet(out)
         + f"attempts = pathlib.Path({str(attempts_file)!r})\n"
         + "n = int(attempts.read_text()) + 1 if attempts.exists() else 1\n"
         + "attempts.write_text(str(n))\n"
-        + "(out / 'run_verdict.json').write_text(json.dumps("
-        "{'verdict': 'failed', 'error_class': 'ValueError'}))\n" + "raise SystemExit(1)\n",
+        + "(out / 'training_run_result.json').write_text(json.dumps("
+        "{'status': 'failed', 'error_class': 'ValueError'}))\n" + "raise SystemExit(1)\n",
     )
     supervisor = RunSupervisor(
         command=command,
@@ -153,22 +153,22 @@ def test_transient_failure_then_success_restarts(tmp_path) -> None:
     marker = tmp_path / "failed_once"
     command = _child_script(
         tmp_path,
-        _write_verdict_snippet(out)
+        _write_result_snippet(out)
         + f"marker = pathlib.Path({str(marker)!r})\n"
         + "if not marker.exists():\n"
         + "    marker.write_text('1')\n"
-        + "    (out / 'run_verdict.json').write_text(json.dumps("
-        "{'verdict': 'terminated', 'signal': 15, 'signal_name': 'SIGTERM'}))\n"
+        + "    (out / 'training_run_result.json').write_text(json.dumps("
+        "{'status': 'terminated', 'signal': 15, 'signal_name': 'SIGTERM'}))\n"
         + "    raise SystemExit(143)\n"
-        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
+        + "(out / 'training_run_result.json').write_text(json.dumps({'status': 'success'}))\n",
     )
     supervisor = RunSupervisor(command=command, output_dir=out, sleep=lambda _: None)
     assert supervisor.run() == 0
 
 
-def test_missing_verdict_is_a_distinct_failure_class(tmp_path) -> None:
+def test_missing_result_is_a_distinct_failure_class(tmp_path) -> None:
     out = tmp_path / "run"
-    # Child dies without unwinding: no verdict file is ever written.
+    # Child dies without unwinding: no result file is ever written.
     command = _child_script(tmp_path, "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n")
     supervisor = RunSupervisor(
         command=command,
@@ -177,7 +177,7 @@ def test_missing_verdict_is_a_distinct_failure_class(tmp_path) -> None:
         sleep=lambda _: None,
     )
     exit_code = supervisor.run()
-    assert exit_code != 0  # breaker tripped on consecutive no-verdict deaths
+    assert exit_code != 0  # breaker tripped on consecutive no-result deaths
 
 
 def test_restart_resumes_from_latest_complete_checkpoint(tmp_path) -> None:
@@ -211,16 +211,16 @@ def test_restart_resumes_from_latest_complete_checkpoint(tmp_path) -> None:
     command = _child_script(
         tmp_path,
         "import sys\n"
-        + _write_verdict_snippet(out)
+        + _write_result_snippet(out)
         + f"attempts = pathlib.Path({str(attempts_file)!r})\n"
         + "n = int(attempts.read_text()) + 1 if attempts.exists() else 1\n"
         + "attempts.write_text(str(n))\n"
         + "if n == 1:\n"
-        + "    (out / 'run_verdict.json').write_text(json.dumps("
-        + "{'verdict': 'failed', 'error_class': 'TransientRuntimeError'}))\n"
+        + "    (out / 'training_run_result.json').write_text(json.dumps("
+        + "{'status': 'failed', 'error_class': 'TransientRuntimeError'}))\n"
         + "    raise SystemExit(1)\n"
         + f"pathlib.Path({str(argv_log)!r}).write_text('\\n'.join(sys.argv[1:]))\n"
-        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
+        + "(out / 'training_run_result.json').write_text(json.dumps({'status': 'success'}))\n",
     )
     supervisor = RunSupervisor(command=command, output_dir=out, sleep=lambda _: None)
     assert supervisor.run() == 0
@@ -236,7 +236,7 @@ def test_torchrun_failure_restarts_all_ranks_from_complete_checkpoint(tmp_path) 
     worker = tmp_path / "restart_worker.py"
     worker.write_text(
         "import json, os, pathlib, sys, time\n"
-        "from vrl.run_verdict import RunVerdictWriter\n"
+        "from vrl.training_run_result import TrainingRunResultWriter\n"
         f"out = pathlib.Path({str(out)!r})\n"
         "rank = int(os.environ['RANK'])\n"
         "resume = next((arg for arg in sys.argv[1:] "
@@ -250,16 +250,16 @@ def test_torchrun_failure_restarts_all_ranks_from_complete_checkpoint(tmp_path) 
         "        meta = {'schema_version': 1, 'checkpoint_file_bytes': len(payload), "
         "'global_step': 4, 'next_epoch': 4}\n"
         "        (checkpoint / 'checkpoint_meta.json').write_text(json.dumps(meta))\n"
-        "        RunVerdictWriter(str(out)).write()\n"
+        "        TrainingRunResultWriter(str(out)).write()\n"
         "        raise SystemExit(0)\n"
         "    for _ in range(100):\n"
         "        if (checkpoint / 'checkpoint_meta.json').exists():\n"
         "            break\n"
         "        time.sleep(0.02)\n"
-        "    RunVerdictWriter(str(out)).write(error=ValueError('transient rank failure'))\n"
+        "    TrainingRunResultWriter(str(out)).write(error=ValueError('transient rank failure'))\n"
         "    raise SystemExit(1)\n"
         "(out / f'resume-rank-{rank}.txt').write_text('\\n'.join(sys.argv[1:]))\n"
-        "RunVerdictWriter(str(out)).write()\n",
+        "TrainingRunResultWriter(str(out)).write()\n",
     )
     supervisor = RunSupervisor(
         command=[*_torchrun_command(worker), str(out)],
@@ -275,9 +275,9 @@ def test_torchrun_failure_restarts_all_ranks_from_complete_checkpoint(tmp_path) 
         argv = (out / f"resume-rank-{rank}.txt").read_text().splitlines()
         assert f"trainer.resume_from={checkpoint}" in argv
         assert "model.lora.path=" in argv
-    aggregate = json.loads((out / "run_verdict.json").read_text())
-    assert aggregate["verdict"] == "success"
-    assert len(aggregate["rank_verdicts"]) == 2
+    aggregate = json.loads((out / "training_run_result.json").read_text())
+    assert aggregate["status"] == "success"
+    assert len(aggregate["rank_results"]) == 2
 
 
 def test_stop_kills_whole_child_process_group(tmp_path) -> None:
@@ -368,11 +368,11 @@ def test_stop_kills_torchrun_workers(tmp_path) -> None:
         raise AssertionError("torchrun worker survived supervisor stop")
 
 
-def test_verdict_file_contract_matches_train_cli() -> None:
+def test_result_file_contract_matches_train_cli() -> None:
     """The supervisor reads the same file name vrl-train writes."""
     from vrl.scripts import supervise
 
-    assert supervise.RUN_VERDICT_NAME == RUN_VERDICT_NAME
+    assert supervise.TRAINING_RUN_RESULT_NAME == TRAINING_RUN_RESULT_NAME
 
 
 def test_build_train_launch_keeps_single_process_direct() -> None:
@@ -466,44 +466,44 @@ def test_supervisor_rejects_nested_torchrun_owners() -> None:
         )
 
 
-def test_train_writes_atomic_rank_verdicts_and_failure_wins_aggregation(tmp_path) -> None:
+def test_train_writes_atomic_rank_results_and_failure_wins_aggregation(tmp_path) -> None:
 
     out = tmp_path / "run"
-    RunVerdictWriter(str(out), environ={"RANK": "0", "WORLD_SIZE": "4"}).write()
-    RunVerdictWriter(str(out), environ={"RANK": "1", "WORLD_SIZE": "4"}).write(
+    TrainingRunResultWriter(str(out), environ={"RANK": "0", "WORLD_SIZE": "4"}).write()
+    TrainingRunResultWriter(str(out), environ={"RANK": "1", "WORLD_SIZE": "4"}).write(
         received_signal=signal.SIGTERM
     )
-    RunVerdictWriter(str(out), environ={"RANK": "2", "WORLD_SIZE": "4"}).write(
+    TrainingRunResultWriter(str(out), environ={"RANK": "2", "WORLD_SIZE": "4"}).write(
         error=ValueError("rank 2 root cause")
     )
-    RunVerdictWriter(str(out), environ={"RANK": "3", "WORLD_SIZE": "4"}).write()
-    assert not (out / "run_verdict.json").exists()
+    TrainingRunResultWriter(str(out), environ={"RANK": "3", "WORLD_SIZE": "4"}).write()
+    assert not (out / "training_run_result.json").exists()
 
     supervisor = RunSupervisor(
         command=[],
         output_dir=out,
         expected_world_size=4,
     )
-    aggregate = supervisor._collect_attempt_verdict()
+    aggregate = supervisor._collect_attempt_result()
 
     assert aggregate is not None
-    assert aggregate["verdict"] == "failed"
+    assert aggregate["status"] == "failed"
     assert aggregate["error_class"] == "ValueError"
     assert aggregate["failed_ranks"] == [2]
-    assert json.loads((out / "run_verdict.json").read_text()) == aggregate
+    assert json.loads((out / "training_run_result.json").read_text()) == aggregate
     assert not list(out.glob(".*.tmp-*"))
 
 
-def test_train_keeps_single_process_verdict_name(tmp_path) -> None:
+def test_train_keeps_single_process_result_name(tmp_path) -> None:
 
     out = tmp_path / "run"
-    RunVerdictWriter(str(out), environ={}).write()
+    TrainingRunResultWriter(str(out), environ={}).write()
 
-    assert json.loads((out / "run_verdict.json").read_text())["verdict"] == "success"
-    assert not list(out.glob("run_verdict.rank-*.json"))
+    assert json.loads((out / "training_run_result.json").read_text())["status"] == "success"
+    assert not list(out.glob("training_run_result.rank-*.json"))
 
 
-def test_train_verdict_uses_cleanup_wrapper_root_class(tmp_path) -> None:
+def test_train_result_uses_cleanup_wrapper_root_class(tmp_path) -> None:
     from vrl.ray.operation_deadline import RayOperationTimeout
     from vrl.rollouts.collector.core import (
         PromptCollectionCleanupError,
@@ -521,47 +521,47 @@ def test_train_verdict_uses_cleanup_wrapper_root_class(tmp_path) -> None:
     )
     out = tmp_path / "run"
 
-    RunVerdictWriter(str(out), environ={}).write(error=wrapped)
+    TrainingRunResultWriter(str(out), environ={}).write(error=wrapped)
 
-    verdict = json.loads((out / "run_verdict.json").read_text())
-    assert verdict["error_class"] == "RayOperationTimeout"
-    assert "offload cleanup failed" in verdict["error_message"]
-    assert "RayOperationTimeout" in verdict["error_message"]
+    result = json.loads((out / "training_run_result.json").read_text())
+    assert result["error_class"] == "RayOperationTimeout"
+    assert "offload cleanup failed" in result["error_message"]
+    assert "RayOperationTimeout" in result["error_message"]
 
 
-def test_train_verdict_keeps_terminal_identity_before_dependency_cause(tmp_path) -> None:
+def test_train_result_keeps_terminal_identity_before_dependency_cause(tmp_path) -> None:
     from vrl.ray.operation_deadline import RayOperationTimeout
 
     timeout = RayOperationTimeout("rollout.startup.load_policy", 1.0)
     timeout.__cause__ = TimeoutError("dependency-owned timeout")
     out = tmp_path / "run"
 
-    RunVerdictWriter(str(out), environ={}).write(error=timeout)
+    TrainingRunResultWriter(str(out), environ={}).write(error=timeout)
 
-    verdict = json.loads((out / "run_verdict.json").read_text())
-    assert verdict["error_class"] == "RayOperationTimeout"
+    result = json.loads((out / "training_run_result.json").read_text())
+    assert result["error_class"] == "RayOperationTimeout"
 
 
-def test_distributed_success_requires_every_rank_verdict(tmp_path) -> None:
+def test_distributed_success_requires_every_rank_result(tmp_path) -> None:
 
     out = tmp_path / "run"
-    RunVerdictWriter(str(out), environ={"RANK": "0", "WORLD_SIZE": "2"}).write()
+    TrainingRunResultWriter(str(out), environ={"RANK": "0", "WORLD_SIZE": "2"}).write()
     supervisor = RunSupervisor(
         command=[],
         output_dir=out,
         expected_world_size=2,
     )
 
-    incomplete = supervisor._collect_attempt_verdict()
+    incomplete = supervisor._collect_attempt_result()
     assert incomplete is not None
-    assert incomplete["verdict"] == "failed"
+    assert incomplete["status"] == "failed"
     assert incomplete["error_class"] == "MissingRankVerdict"
     assert incomplete["missing_ranks"] == [1]
 
-    RunVerdictWriter(str(out), environ={"RANK": "1", "WORLD_SIZE": "2"}).write()
-    complete = supervisor._collect_attempt_verdict()
+    TrainingRunResultWriter(str(out), environ={"RANK": "1", "WORLD_SIZE": "2"}).write()
+    complete = supervisor._collect_attempt_result()
     assert complete is not None
-    assert complete["verdict"] == "success"
+    assert complete["status"] == "success"
 
 
 def test_supervisor_cli_defaults_are_derived_from_runtime_config() -> None:
@@ -740,7 +740,7 @@ def test_health_gate_reads_a_complete_online_metric_row(tmp_path) -> None:
     gate = MetricsHealthGate(HealthGateConfig(failure_limit=1), out)
 
     assert gate.judge_new_rows() is False
-    assert not (out / HEALTH_VERDICT_NAME).exists()
+    assert not (out / HEALTH_RESULT_NAME).exists()
 
 
 def test_health_gate_trips_on_a_grad_norm_spike_after_the_failure_limit(tmp_path) -> None:
@@ -761,11 +761,11 @@ def test_health_gate_trips_on_a_grad_norm_spike_after_the_failure_limit(tmp_path
     metrics.write_text(metrics.read_text() + _metric_row(2, grad_norm="2.1"))
 
     assert gate.judge_new_rows() is True
-    verdict = json.loads((out / HEALTH_VERDICT_NAME).read_text())
-    assert verdict["epoch"] == 2
-    assert verdict["consecutive_unhealthy_rows"] == 2
-    assert any("grad_norm 2.1 is above maximum 0.8" in reason for reason in verdict["reasons"])
-    assert verdict["thresholds"]["max_grad_norm"] == 0.8
+    result = json.loads((out / HEALTH_RESULT_NAME).read_text())
+    assert result["epoch"] == 2
+    assert result["consecutive_unhealthy_rows"] == 2
+    assert any("grad_norm 2.1 is above maximum 0.8" in reason for reason in result["reasons"])
+    assert result["thresholds"]["max_grad_norm"] == 0.8
 
 
 def test_health_gate_accepts_a_grad_norm_below_the_maximum(tmp_path) -> None:
@@ -775,7 +775,7 @@ def test_health_gate_accepts_a_grad_norm_below_the_maximum(tmp_path) -> None:
     gate = MetricsHealthGate(HealthGateConfig(failure_limit=1, max_grad_norm=0.8), out)
 
     assert gate.judge_new_rows() is False
-    assert not (out / HEALTH_VERDICT_NAME).exists()
+    assert not (out / HEALTH_RESULT_NAME).exists()
 
 
 def test_health_gate_default_never_trips_on_a_large_grad_norm(tmp_path) -> None:
@@ -785,7 +785,7 @@ def test_health_gate_default_never_trips_on_a_large_grad_norm(tmp_path) -> None:
     gate = MetricsHealthGate(HealthGateConfig(failure_limit=1), out)
 
     assert gate.judge_new_rows() is False
-    assert not (out / HEALTH_VERDICT_NAME).exists()
+    assert not (out / HEALTH_RESULT_NAME).exists()
 
 
 @pytest.mark.parametrize(
@@ -858,8 +858,8 @@ def test_metrics_health_gate_allows_missing_and_header_only_files(tmp_path) -> N
     (out / "metrics.csv").write_text(_METRICS_HEADER)
     command = _child_script(
         tmp_path,
-        _write_verdict_snippet(out)
-        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
+        _write_result_snippet(out)
+        + "(out / 'training_run_result.json').write_text(json.dumps({'status': 'success'}))\n",
     )
     supervisor = RunSupervisor(
         command=command,
@@ -869,7 +869,7 @@ def test_metrics_health_gate_allows_missing_and_header_only_files(tmp_path) -> N
     )
 
     assert supervisor.run() == 0
-    assert not (out / HEALTH_VERDICT_NAME).exists()
+    assert not (out / HEALTH_RESULT_NAME).exists()
 
 
 def test_continuous_health_gate_uses_stale_drift_bound() -> None:
@@ -985,9 +985,9 @@ def test_continuous_health_gate_trips_on_consecutive_producer_error_increases(
         tripped = gate.judge_new_rows()
         assert tripped is (producer_errors == "3")
 
-    verdict = json.loads((out / HEALTH_VERDICT_NAME).read_text())
-    assert verdict["epoch"] == 2
-    assert verdict["reasons"] == [
+    result = json.loads((out / HEALTH_RESULT_NAME).read_text())
+    assert result["epoch"] == 2
+    assert result["reasons"] == [
         "continuous_producer_errors increased from 2 to 3",
     ]
 
@@ -999,10 +999,10 @@ def test_continuous_health_gate_baselines_existing_producer_errors(tmp_path) -> 
     _write_continuous_metrics(out, rows)
     command = _child_script(
         tmp_path,
-        _write_verdict_snippet(out)
+        _write_result_snippet(out)
         + "with (out / 'metrics.csv').open('a') as handle:\n"
         + f"    handle.write({_continuous_metric_csv_row(1, producer_errors='0')!r})\n"
-        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
+        + "(out / 'training_run_result.json').write_text(json.dumps({'status': 'success'}))\n",
     )
     supervisor = RunSupervisor(
         command=command,
@@ -1016,7 +1016,7 @@ def test_continuous_health_gate_baselines_existing_producer_errors(tmp_path) -> 
     )
 
     assert supervisor.run() == 0
-    assert not (out / HEALTH_VERDICT_NAME).exists()
+    assert not (out / HEALTH_RESULT_NAME).exists()
 
 
 def test_metrics_health_gate_resets_failure_streak_after_healthy_row(tmp_path) -> None:
@@ -1026,9 +1026,9 @@ def test_metrics_health_gate_resets_failure_streak_after_healthy_row(tmp_path) -
     metrics += _metric_row(2, grad_norm="0")
     command = _child_script(
         tmp_path,
-        _write_verdict_snippet(out)
+        _write_result_snippet(out)
         + f"(out / 'metrics.csv').write_text({metrics!r})\n"
-        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
+        + "(out / 'training_run_result.json').write_text(json.dumps({'status': 'success'}))\n",
     )
     supervisor = RunSupervisor(
         command=command,
@@ -1038,7 +1038,7 @@ def test_metrics_health_gate_resets_failure_streak_after_healthy_row(tmp_path) -
     )
 
     assert supervisor.run() == 0
-    assert not (out / HEALTH_VERDICT_NAME).exists()
+    assert not (out / HEALTH_RESULT_NAME).exists()
 
 
 def test_metrics_health_gate_ignores_old_rows_and_partial_append(tmp_path) -> None:
@@ -1050,14 +1050,14 @@ def test_metrics_health_gate_ignores_old_rows_and_partial_append(tmp_path) -> No
     (out / "metrics.csv").write_text(old_metrics)
     command = _child_script(
         tmp_path,
-        _write_verdict_snippet(out)
+        _write_result_snippet(out)
         + "with (out / 'metrics.csv').open('a') as handle:\n"
         + "    handle.write('2,1.0,2.0,0')\n"
         + "    handle.flush()\n"
         + "    import time; time.sleep(0.08)\n"
         + "    handle.write(',0.1,0.001\\n')\n"
         + "    handle.flush()\n"
-        + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
+        + "(out / 'training_run_result.json').write_text(json.dumps({'status': 'success'}))\n",
     )
     supervisor = RunSupervisor(
         command=command,
@@ -1067,7 +1067,7 @@ def test_metrics_health_gate_ignores_old_rows_and_partial_append(tmp_path) -> No
     )
 
     assert supervisor.run() == 0
-    assert not (out / HEALTH_VERDICT_NAME).exists()
+    assert not (out / HEALTH_RESULT_NAME).exists()
 
 
 def test_metrics_health_gate_only_checks_replaced_suffix_after_truncation(tmp_path) -> None:
@@ -1095,11 +1095,11 @@ def test_metrics_health_gate_only_checks_replaced_suffix_after_truncation(tmp_pa
     )
 
     assert supervisor.run() != 0
-    verdict = json.loads((out / HEALTH_VERDICT_NAME).read_text())
-    assert verdict["epoch"] == 1
+    result = json.loads((out / HEALTH_RESULT_NAME).read_text())
+    assert result["epoch"] == 1
 
 
-def test_metrics_health_gate_stops_child_group_and_writes_verdict(tmp_path) -> None:
+def test_metrics_health_gate_stops_child_group_and_writes_result(tmp_path) -> None:
     out = tmp_path / "run"
     grandchild_pid_file = tmp_path / "health-grandchild.pid"
     unhealthy_rows = _metric_row(
@@ -1144,16 +1144,16 @@ def test_metrics_health_gate_stops_child_group_and_writes_verdict(tmp_path) -> N
     )
 
     assert supervisor.run() != 0
-    verdict = json.loads((out / HEALTH_VERDICT_NAME).read_text())
-    assert verdict["verdict"] == "failed"
-    assert verdict["source"] == "metrics_health_gate"
-    assert verdict["epoch"] == 1
-    assert verdict["consecutive_unhealthy_rows"] == 2
-    assert any("loss is not finite" in reason for reason in verdict["reasons"])
-    assert any("reward_mean is not finite" in reason for reason in verdict["reasons"])
-    assert any("exceeds maximum" in reason for reason in verdict["reasons"])
-    assert any("reward_std" in reason for reason in verdict["reasons"])
-    assert any("grad_norm" in reason for reason in verdict["reasons"])
+    result = json.loads((out / HEALTH_RESULT_NAME).read_text())
+    assert result["status"] == "failed"
+    assert result["source"] == "metrics_health_gate"
+    assert result["epoch"] == 1
+    assert result["consecutive_unhealthy_rows"] == 2
+    assert any("loss is not finite" in reason for reason in result["reasons"])
+    assert any("reward_mean is not finite" in reason for reason in result["reasons"])
+    assert any("exceeds maximum" in reason for reason in result["reasons"])
+    assert any("reward_std" in reason for reason in result["reasons"])
+    assert any("grad_norm" in reason for reason in result["reasons"])
 
     grandchild_pid = int(grandchild_pid_file.read_text())
     deadline = time.monotonic() + 5
@@ -1171,38 +1171,38 @@ def test_metrics_health_gate_stops_child_group_and_writes_verdict(tmp_path) -> N
 def test_supervisor_clears_previous_success_before_new_process(tmp_path):
     out = tmp_path / "run"
     out.mkdir()
-    (out / "run_verdict.json").write_text('{"verdict": "success"}')
-    (out / "run_verdict.rank-0.json").write_text('{"verdict": "success"}')
+    (out / "training_run_result.json").write_text('{"status": "success"}')
+    (out / "training_run_result.rank-0.json").write_text('{"status": "success"}')
     command = _child_script(tmp_path, "pass\n")
     outcome = RunSupervisor(command=command, output_dir=out)._run_attempt([])
     assert outcome.exit_code == 0
-    assert outcome.verdict is None
-    assert not list(out.glob("run_verdict*.json"))
+    assert outcome.result is None
+    assert not list(out.glob("training_run_result*.json"))
 
 
-def test_supervised_verdict_does_not_include_attempt_identity(tmp_path):
+def test_supervised_result_does_not_include_attempt_identity(tmp_path):
     out = tmp_path / "run"
     command = _child_script(
         tmp_path,
-        f"from vrl.run_verdict import RunVerdictWriter\nRunVerdictWriter({str(out)!r}).write()\n",
+        f"from vrl.training_run_result import TrainingRunResultWriter\nTrainingRunResultWriter({str(out)!r}).write()\n",
     )
     outcome = RunSupervisor(command=command, output_dir=out)._run_attempt([])
-    assert outcome.verdict["verdict"] == "success"
-    assert "attempt_id" not in outcome.verdict
+    assert outcome.result["status"] == "success"
+    assert "attempt_id" not in outcome.result
 
 
 def test_supervisor_records_nonzero_exit_even_after_child_wrote_success(tmp_path):
     out = tmp_path / "run"
     command = _child_script(
         tmp_path,
-        "from vrl.run_verdict import RunVerdictWriter\n"
-        f"RunVerdictWriter({str(out)!r}).write()\n"
+        "from vrl.training_run_result import TrainingRunResultWriter\n"
+        f"TrainingRunResultWriter({str(out)!r}).write()\n"
         "raise SystemExit(3)\n",
     )
     outcome = RunSupervisor(command=command, output_dir=out)._run_attempt([])
     assert outcome.exit_code == 3
-    assert outcome.verdict["supervisor_exit_code"] == 3
-    assert json.loads((out / "run_verdict.json").read_text())["supervisor_exit_code"] == 3
+    assert outcome.result["supervisor_exit_code"] == 3
+    assert json.loads((out / "training_run_result.json").read_text())["supervisor_exit_code"] == 3
 
 
 def test_health_check_failure_stops_owned_training_process(tmp_path, monkeypatch):

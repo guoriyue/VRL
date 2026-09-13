@@ -31,7 +31,7 @@ from vrl.trainers.data.artifacts import (
 from vrl.trainers.data.prompts import (
     ImageCaptionPromptDataset,
     PromptExample,
-    load_prompt_manifest,
+    load_prompt_dataset_index,
 )
 
 if TYPE_CHECKING:
@@ -125,7 +125,7 @@ class DatasetProvenanceSpec:
         if data.loader == "prompt_image_manifest":
             return list(ImageCaptionPromptDataset.from_config(data, path=path).examples)
         if data.loader == "prompt_manifest":
-            return load_prompt_manifest(path)
+            return load_prompt_dataset_index(path)
         raise ValueError(f"dataset provenance has no loader for data.loader={data.loader!r}")
 
 

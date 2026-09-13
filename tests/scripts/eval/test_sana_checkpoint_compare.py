@@ -255,15 +255,15 @@ def test_run_generates_base_before_strict_restore_and_current(
     assert Image.open(current_path).getpixel((0, 0)) == (200, 10, 20)
     assert Image.open(side_by_side_path).size == (20, 8)
 
-    manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
-    assert manifest["schema"] == checkpoint_compare.REPORT_SCHEMA
-    assert manifest["execution"]["generation_order"] == ["base", "current"]
-    assert manifest["execution"]["checkpoint_loaded_between_images"] is True
-    assert manifest["execution"]["strict_trainable_state_restore"] is True
-    assert manifest["scheduler_protocol"] == checkpoint_compare.SCHEDULER_PROTOCOL
-    assert manifest["checkpoint"]["meta"]["uses_lora"] is False
+    evaluation_record = json.loads(Path(result["evaluation_record"]).read_text(encoding="utf-8"))
+    assert evaluation_record["schema"] == checkpoint_compare.REPORT_SCHEMA
+    assert evaluation_record["execution"]["generation_order"] == ["base", "current"]
+    assert evaluation_record["execution"]["checkpoint_loaded_between_images"] is True
+    assert evaluation_record["execution"]["strict_trainable_state_restore"] is True
+    assert evaluation_record["scheduler_protocol"] == checkpoint_compare.SANA_EVAL_SCHEDULER_CONFIG
+    assert evaluation_record["checkpoint"]["meta"]["uses_lora"] is False
     assert (
-        manifest["checkpoint"]["sha256"]
+        evaluation_record["checkpoint"]["sha256"]
         == hashlib.sha256(
             checkpoint.checkpoint_path.read_bytes(),
         ).hexdigest()
@@ -274,7 +274,8 @@ def test_run_generates_base_before_strict_restore_and_current(
         ("side_by_side", side_by_side_path),
     ):
         assert (
-            manifest["artifacts"][name]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+            evaluation_record["artifacts"][name]["sha256"]
+            == hashlib.sha256(path.read_bytes()).hexdigest()
         )
 
 
@@ -602,5 +603,5 @@ def test_scheduler_protocol_rejects_wrong_class() -> None:
 def test_scheduler_protocol_accepts_official_identity() -> None:
     assert (
         sana_inference.require_scheduler(build_official_sana_scheduler())
-        == checkpoint_compare.SCHEDULER_PROTOCOL
+        == checkpoint_compare.SANA_EVAL_SCHEDULER_CONFIG
     )

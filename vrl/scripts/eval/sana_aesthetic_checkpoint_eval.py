@@ -30,8 +30,8 @@ from vrl.models import checkpoint_identity
 from vrl.scripts.eval import sana_aesthetic_report as sana_report
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval.sana_inference import (
-    OFFICIAL_SAMPLING_PROTOCOL,
-    SCHEDULER_PROTOCOL,
+    SANA_EVAL_SAMPLING_CONFIG,
+    SANA_EVAL_SCHEDULER_CONFIG,
     generate_prompt_images,
     load_official_scheduler,
 )
@@ -44,7 +44,7 @@ from vrl.trainers.checkpointing import (
     restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
-from vrl.trainers.data import load_prompt_manifest
+from vrl.trainers.data import load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
 
@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> None:
 
     targets = _discover_checkpoint_targets(run_dir, root)
     device = resolve_eval_device(args.device)
-    sampling = dict(OFFICIAL_SAMPLING_PROTOCOL)
+    sampling = dict(SANA_EVAL_SAMPLING_CONFIG)
     if root.model is None:
         raise ValueError("SANA checkpoint evaluation requires model configuration")
     identity_precision = PrecisionPolicy.from_section(root.precision)
@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> None:
         "training_manifest": {
             "path": str(training_manifest_path),
             "sha256": sha256_file(training_manifest_path),
-            "prompt_count": len(load_prompt_manifest(training_manifest_path)),
+            "prompt_count": len(load_prompt_dataset_index(training_manifest_path)),
         },
         "eval_manifest": {
             "path": str(eval_manifest_path),
@@ -199,7 +199,7 @@ def main(argv: list[str] | None = None) -> None:
         "seed_grid": sana_report.seed_grid_record(),
         "evaluation_curve": sana_report.evaluation_curve_record(),
         "sampling": sampling,
-        "scheduler_protocol": dict(SCHEDULER_PROTOCOL),
+        "scheduler_protocol": dict(SANA_EVAL_SCHEDULER_CONFIG),
         "execution": {"generation_device": str(device)},
         "rewards": [reward_model.to_report_record() for reward_model in reward_models],
         "checkpoints": [_checkpoint_record(target, run_dir) for target in targets],

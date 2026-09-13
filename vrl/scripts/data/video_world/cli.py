@@ -11,13 +11,13 @@ from vrl.scripts.data.common import (
     default_data_root,
     emit,
 )
+from vrl.scripts.data.video_world.dataset_index import (
+    build_target_video_world_rows,
+    build_video_world_rows,
+)
 from vrl.scripts.data.video_world.lerobot import (
     iter_lerobot_first_frames,
     iter_lerobot_target_clips,
-)
-from vrl.scripts.data.video_world.manifests import (
-    build_target_video_world_rows,
-    build_video_world_rows,
 )
 from vrl.trainers.data.artifacts import DatasetFileReport
 from vrl.utils.json_files import write_json, write_jsonl

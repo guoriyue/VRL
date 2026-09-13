@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from vrl.scripts.data import setup as setup_cli
-from vrl.trainers.data import PromptExample, load_prompt_manifest
+from vrl.trainers.data import PromptExample, load_prompt_dataset_index
 from vrl.trainers.data.artifacts import (
     DatasetFileReport,
     resolve_prompt_example_references,
@@ -40,7 +40,7 @@ def test_artifact_manifest_resolves_relative_references_via_data_root(tmp_path: 
         },
     )
 
-    examples = load_prompt_manifest(manifest)
+    examples = load_prompt_dataset_index(manifest)
     report = DatasetFileReport.from_manifest(
         manifest,
         data_root=data_root,
@@ -70,7 +70,7 @@ def test_target_artifacts_are_prompt_fields_and_validate(tmp_path: Path) -> None
         },
     )
 
-    examples = load_prompt_manifest(manifest)
+    examples = load_prompt_dataset_index(manifest)
     report = DatasetFileReport.from_manifest(
         manifest,
         data_root=data_root,

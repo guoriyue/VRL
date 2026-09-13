@@ -18,7 +18,7 @@ from vrl.utils.media import to_pil_image
 from vrl.utils.validation import require_int
 
 # These mappings are persisted protocol identities, not tunable defaults.
-OFFICIAL_SAMPLING_PROTOCOL = {
+SANA_EVAL_SAMPLING_CONFIG = {
     "negative_prompt": "",
     "height": 1024,
     "width": 1024,
@@ -28,7 +28,7 @@ OFFICIAL_SAMPLING_PROTOCOL = {
     "use_resolution_binning": True,
     "complex_human_instruction": "official_pipeline_default",
 }
-SCHEDULER_PROTOCOL = {
+SANA_EVAL_SCHEDULER_CONFIG = {
     "class_name": "DPMSolverMultistepScheduler",
     "algorithm_type": "dpmsolver++",
     "solver_order": 2,
@@ -66,12 +66,16 @@ def require_scheduler(scheduler: Any) -> dict[str, Any]:
         raise TypeError("official SANA scheduler has no config")
     actual = {
         "class_name": type(scheduler).__name__,
-        **{key: _config_value(config, key) for key in SCHEDULER_PROTOCOL if key != "class_name"},
+        **{
+            key: _config_value(config, key)
+            for key in SANA_EVAL_SCHEDULER_CONFIG
+            if key != "class_name"
+        },
     }
-    if actual != SCHEDULER_PROTOCOL:
+    if actual != SANA_EVAL_SCHEDULER_CONFIG:
         raise ValueError(
             "SANA scheduler does not match the official DPM-Solver++ protocol: "
-            f"expected={SCHEDULER_PROTOCOL}, actual={actual}",
+            f"expected={SANA_EVAL_SCHEDULER_CONFIG}, actual={actual}",
         )
     return actual
 
@@ -93,11 +97,11 @@ def generate_prompt_images(
     if torch.is_autocast_enabled(device.type):
         raise RuntimeError("SANA native inference must run without an outer autocast context")
     require_scheduler(scheduler)
-    protocol = dict(OFFICIAL_SAMPLING_PROTOCOL if sampling is None else sampling)
-    if require_official and protocol != OFFICIAL_SAMPLING_PROTOCOL:
+    protocol = dict(SANA_EVAL_SAMPLING_CONFIG if sampling is None else sampling)
+    if require_official and protocol != SANA_EVAL_SAMPLING_CONFIG:
         raise ValueError(
             "SANA quality evaluation sampling changed from the official protocol: "
-            f"{protocol!r} != {OFFICIAL_SAMPLING_PROTOCOL!r}",
+            f"{protocol!r} != {SANA_EVAL_SAMPLING_CONFIG!r}",
         )
     model.pipeline.scheduler = scheduler
     generator = torch.Generator(device=device).manual_seed(seed)
@@ -132,8 +136,8 @@ def _config_value(config: Any, key: str) -> Any:
 
 
 __all__ = [
-    "OFFICIAL_SAMPLING_PROTOCOL",
-    "SCHEDULER_PROTOCOL",
+    "SANA_EVAL_SAMPLING_CONFIG",
+    "SANA_EVAL_SCHEDULER_CONFIG",
     "generate_prompt_images",
     "load_official_scheduler",
     "require_scheduler",

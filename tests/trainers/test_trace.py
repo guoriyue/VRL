@@ -238,8 +238,8 @@ def test_incomplete_or_redirected_receipt_is_rejected(completed_loop, change):
 
 @pytest.mark.parametrize("world_size", [1, 2])
 def test_completion_requires_every_successful_rank(completed_loop, tmp_path, world_size):
-    from vrl.run_verdict import RunVerdictWriter
     from vrl.scripts.supervise import RunSupervisor
+    from vrl.training_run_result import TrainingRunResultWriter
 
     launch = json.loads(completed_loop.read_text())
     launch["runtime"]["environment"] = {"WORLD_SIZE": str(world_size)}
@@ -247,48 +247,48 @@ def test_completion_requires_every_successful_rank(completed_loop, tmp_path, wor
     seal = trace.TrainingRunTrace.load(completed_loop).seal_artifacts()
     supervisor = RunSupervisor(command=[], output_dir=tmp_path, expected_world_size=world_size)
     for rank in range(world_size):
-        RunVerdictWriter(
+        TrainingRunResultWriter(
             str(tmp_path),
             environ={
                 "RANK": str(rank),
                 "WORLD_SIZE": str(world_size),
             },
         ).write()
-    supervisor._collect_attempt_verdict(exit_code=0)
-    verdict_path = tmp_path / "run_verdict.json"
-    verdict = trace.TrainingRunTrace.load(seal).verify_completion(verdict_path)
-    assert verdict["verdict"] == "success"
-    verdict["verdict"] = "failed"
-    verdict_path.write_text(json.dumps(verdict))
+    supervisor._collect_attempt_result(exit_code=0)
+    result_path = tmp_path / "training_run_result.json"
+    result = trace.TrainingRunTrace.load(seal).verify_completion(result_path)
+    assert result["status"] == "success"
+    result["status"] = "failed"
+    result_path.write_text(json.dumps(result))
     with pytest.raises(ValueError, match="did not complete"):
-        trace.TrainingRunTrace.load(seal).verify_completion(verdict_path)
+        trace.TrainingRunTrace.load(seal).verify_completion(result_path)
     if world_size > 1:
-        verdict["verdict"] = "success"
+        result["status"] = "success"
         for mutate in (
             lambda ranks: ranks.pop(),
-            lambda ranks: ranks[1].update(verdict="failed"),
+            lambda ranks: ranks[1].update(status="failed"),
             lambda ranks: ranks[1].update(rank=0),
         ):
-            candidate = json.loads(json.dumps(verdict))
-            mutate(candidate["rank_verdicts"])
-            verdict_path.write_text(json.dumps(candidate))
-            with pytest.raises(ValueError, match="rank verdict"):
-                trace.TrainingRunTrace.load(seal).verify_completion(verdict_path)
+            candidate = json.loads(json.dumps(result))
+            mutate(candidate["rank_results"])
+            result_path.write_text(json.dumps(candidate))
+            with pytest.raises(ValueError, match="rank result"):
+                trace.TrainingRunTrace.load(seal).verify_completion(result_path)
 
 
 def test_completion_checks_success_without_attempt_identity(completed_loop, tmp_path):
     seal = trace.TrainingRunTrace.load(completed_loop).seal_artifacts()
-    verdict = tmp_path / "run_verdict.json"
-    verdict.write_text(
+    result = tmp_path / "training_run_result.json"
+    result.write_text(
         json.dumps(
             {
                 "schema_version": 1,
-                "verdict": "success",
+                "status": "success",
                 "supervisor_exit_code": 0,
             }
         )
     )
-    assert trace.TrainingRunTrace.load(seal).verify_completion(verdict)["verdict"] == "success"
+    assert trace.TrainingRunTrace.load(seal).verify_completion(result)["status"] == "success"
     assert "attempt_id" not in json.loads(completed_loop.read_text())
 
 
@@ -297,18 +297,18 @@ def test_success_payload_requires_observed_zero_process_exit(completed_loop, tmp
     launch = json.loads(completed_loop.read_text())
     completed_loop.write_text(json.dumps(launch))
     seal = trace.TrainingRunTrace.load(completed_loop).seal_artifacts()
-    verdict = tmp_path / "run_verdict.json"
-    verdict.write_text(
+    result = tmp_path / "training_run_result.json"
+    result.write_text(
         json.dumps(
             {
                 "schema_version": 1,
-                "verdict": "success",
+                "status": "success",
                 "supervisor_exit_code": exit_code,
             }
         )
     )
     with pytest.raises(ValueError, match="successful process exit"):
-        trace.TrainingRunTrace.load(seal).verify_completion(verdict)
+        trace.TrainingRunTrace.load(seal).verify_completion(result)
 
 
 def test_full_precision_metrics_are_bound_when_present(completed_loop, tmp_path):

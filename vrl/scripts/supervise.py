@@ -3,9 +3,9 @@
 Replaces the out-of-repo ``run-until-success`` shell guardian. The contract
 differences that make this one trustworthy:
 
-- **Explicit verdicts, not exit-code guessing.** A single ``vrl-train`` process
-  publishes ``run_verdict.json``; torchrun workers publish rank-specific verdicts
-  that this supervisor joins into the same aggregate contract. A missing verdict
+- **Explicit results, not exit-code guessing.** A single ``vrl-train`` process
+  publishes ``training_run_result.json``; torchrun workers publish rank-specific results
+  that this supervisor joins into the same aggregate contract. A missing result
   means a worker died without unwinding (SIGKILL, OOM kill) and is treated as an
   infrastructure failure.
 - **Process-group ownership.** The child runs in its own session; stop means
@@ -20,7 +20,7 @@ differences that make this one trustworthy:
   class stop the loop instead of burning GPU re-hitting a deterministic bug.
 - **Optional metrics health gate.** When explicitly enabled, consecutive new
   non-finite or out-of-bound training rows stop the child group without a
-  restart and publish a machine-readable health verdict. This is a numerical
+  restart and publish a machine-readable health result. This is a numerical
   training-invariant gate, not a reward-trend or evaluation-quality judge.
 """
 
@@ -49,11 +49,11 @@ if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
     from vrl.trainers.core.types import ReplayParityConfig, RolloutOrchestrationConfig
 
-from vrl.run_verdict import RUN_VERDICT_NAME, RunVerdictWriter
+from vrl.training_run_result import TRAINING_RUN_RESULT_NAME, TrainingRunResultWriter
 
 logger = logging.getLogger(__name__)
 
-HEALTH_VERDICT_NAME = "health_verdict.json"
+HEALTH_RESULT_NAME = "health_result.json"
 _REQUIRED_HEALTH_METRICS = (
     "loss",
     "reward_mean",
@@ -69,37 +69,37 @@ _CONTINUOUS_HEALTH_METRICS = (
 
 @dataclass(frozen=True, slots=True)
 class AttemptOutcome:
-    """One child run's result, joined from exit code and verdict file."""
+    """One child run's result, joined from exit code and result file."""
 
     exit_code: int
-    verdict: dict[str, Any] | None
+    result: dict[str, Any] | None
 
     @property
     def succeeded(self) -> bool:
         return (
             self.exit_code == 0
-            and self.verdict is not None
-            and self.verdict.get("verdict") == "success"
+            and self.result is not None
+            and self.result.get("status") == "success"
         )
 
     @property
     def failure_class(self) -> str:
         """Stable category key for the same-cause circuit breaker."""
 
-        if self.verdict is None:
+        if self.result is None:
             # Died without unwinding (SIGKILL/OOM) — infrastructure-shaped.
-            return f"no-verdict-exit-{self.exit_code}"
-        kind = str(self.verdict.get("verdict"))
+            return f"no-result-exit-{self.exit_code}"
+        kind = str(self.result.get("status"))
         if kind == "failed":
-            return str(self.verdict.get("error_class", "unknown-error"))
+            return str(self.result.get("error_class", "unknown-error"))
         if kind == "terminated":
-            return f"signal-{self.verdict.get('signal_name', self.verdict.get('signal'))}"
-        return f"verdict-{kind}-exit-{self.exit_code}"
+            return f"signal-{self.result.get('signal_name', self.result.get('signal'))}"
+        return f"result-{kind}-exit-{self.exit_code}"
 
 
 @dataclass(frozen=True, slots=True)
 class TrainLaunch:
-    """One supervised trainer command and the worker verdicts it must produce."""
+    """One supervised trainer command and the worker results it must produce."""
 
     command: tuple[str, ...]
     expected_world_size: int
@@ -298,12 +298,12 @@ class HealthGateConfig:
 
 
 class MetricsHealthGate:
-    """Judge new metrics.csv rows and hold the gate's verdict state.
+    """Judge new metrics.csv rows and hold the gate's result state.
 
     Owns the row baseline, the consecutive-unhealthy streak, and the
     per-attempt producer-error watermark. Process control stays with
     ``RunSupervisor``: the gate never signals the child; it reads the metrics
-    file, reports whether it tripped, and publishes ``health_verdict.json``.
+    file, reports whether it tripped, and publishes ``health_result.json``.
     """
 
     def __init__(self, config: HealthGateConfig, output_dir: Path) -> None:
@@ -317,7 +317,7 @@ class MetricsHealthGate:
     def baseline_existing_rows(self) -> None:
         """Treat rows already on disk as history, not judgments to make."""
 
-        (self.output_dir / HEALTH_VERDICT_NAME).unlink(missing_ok=True)
+        (self.output_dir / HEALTH_RESULT_NAME).unlink(missing_ok=True)
         self._seen_rows = self._read_complete_rows()[1]
 
     def start_attempt(self) -> None:
@@ -361,7 +361,7 @@ class MetricsHealthGate:
             )
             if self._unhealthy_rows >= self.config.failure_limit:
                 self.tripped = True
-                self._write_verdict(row, parsed, reasons)
+                self._write_result(row, parsed, reasons)
                 return True
         return False
 
@@ -479,7 +479,7 @@ class MetricsHealthGate:
             )
         return reasons, parsed
 
-    def _write_verdict(
+    def _write_result(
         self,
         row: dict[str, str | None],
         parsed: dict[str, float],
@@ -495,8 +495,8 @@ class MetricsHealthGate:
             )
         except ValueError:
             epoch = epoch_raw
-        verdict = {
-            "verdict": "failed",
+        result = {
+            "status": "failed",
             "source": "metrics_health_gate",
             "epoch": epoch,
             "consecutive_unhealthy_rows": self._unhealthy_rows,
@@ -510,14 +510,14 @@ class MetricsHealthGate:
                 ),
                 "min_reward_std": self.config.min_reward_std,
                 "min_grad_norm": self.config.min_grad_norm,
-                # None, not inf: the verdict is a machine-readable contract and
+                # None, not inf: the result is a machine-readable contract and
                 # ``Infinity`` is not valid JSON for a non-Python reader.
                 "max_grad_norm": (
                     None if math.isinf(self.config.max_grad_norm) else self.config.max_grad_norm
                 ),
             },
         }
-        write_json(self.output_dir / HEALTH_VERDICT_NAME, verdict)
+        write_json(self.output_dir / HEALTH_RESULT_NAME, result)
 
 
 @dataclass
@@ -612,7 +612,7 @@ class RunSupervisor:
         return [f"trainer.resume_from={latest}", "model.lora.path="]
 
     def _run_attempt(self, extra_overrides: list[str]) -> AttemptOutcome:
-        self._clear_attempt_verdicts()
+        self._clear_attempt_results()
         if self._health_gate is not None:
             self._health_gate.start_attempt()
         # start_new_session puts the child in its own process group so stop
@@ -637,66 +637,66 @@ class RunSupervisor:
             if self._child.poll() is not None:
                 self._child = None
         return AttemptOutcome(
-            exit_code=exit_code, verdict=self._collect_attempt_verdict(exit_code=exit_code)
+            exit_code=exit_code, result=self._collect_attempt_result(exit_code=exit_code)
         )
 
-    def _clear_attempt_verdicts(self) -> None:
-        (self.output_dir / RUN_VERDICT_NAME).unlink(missing_ok=True)
-        for path in self.output_dir.glob("run_verdict.rank-*.json"):
+    def _clear_attempt_results(self) -> None:
+        (self.output_dir / TRAINING_RUN_RESULT_NAME).unlink(missing_ok=True)
+        for path in self.output_dir.glob("training_run_result.rank-*.json"):
             path.unlink(missing_ok=True)
 
-    def _collect_attempt_verdict(self, *, exit_code: int | None = None) -> dict[str, Any] | None:
-        aggregate_path = self.output_dir / RUN_VERDICT_NAME
+    def _collect_attempt_result(self, *, exit_code: int | None = None) -> dict[str, Any] | None:
+        aggregate_path = self.output_dir / TRAINING_RUN_RESULT_NAME
         if self.expected_world_size == 1:
-            verdict = self._read_verdict(aggregate_path)
-            if verdict is not None and exit_code is not None:
-                verdict["supervisor_exit_code"] = exit_code
-                write_json(aggregate_path, verdict)
-            return verdict
+            result = self._read_result(aggregate_path)
+            if result is not None and exit_code is not None:
+                result["supervisor_exit_code"] = exit_code
+                write_json(aggregate_path, result)
+            return result
 
-        rank_verdicts: dict[int, dict[str, Any]] = {}
+        rank_results: dict[int, dict[str, Any]] = {}
         missing_ranks: list[int] = []
         for rank in range(self.expected_world_size):
-            verdict = self._read_verdict(
-                self.output_dir / RunVerdictWriter.rank_file_name(rank),
+            result = self._read_result(
+                self.output_dir / TrainingRunResultWriter.rank_file_name(rank),
             )
             if (
-                verdict is None
-                or verdict.get("rank") != rank
-                or verdict.get("world_size") != self.expected_world_size
+                result is None
+                or result.get("rank") != rank
+                or result.get("world_size") != self.expected_world_size
             ):
                 missing_ranks.append(rank)
                 continue
-            rank_verdicts[rank] = verdict
+            rank_results[rank] = result
 
-        aggregate = self._aggregate_rank_verdicts(rank_verdicts, missing_ranks)
+        aggregate = self._aggregate_rank_results(rank_results, missing_ranks)
         if exit_code is not None:
             aggregate["supervisor_exit_code"] = exit_code
         write_json(aggregate_path, aggregate)
         return aggregate
 
-    def _aggregate_rank_verdicts(
+    def _aggregate_rank_results(
         self,
-        rank_verdicts: dict[int, dict[str, Any]],
+        rank_results: dict[int, dict[str, Any]],
         missing_ranks: list[int],
     ) -> dict[str, Any]:
         """Choose one deterministic outcome without letting teardown hide failure."""
 
-        observed = [{"rank": rank, **verdict} for rank, verdict in sorted(rank_verdicts.items())]
+        observed = [{"rank": rank, **result} for rank, result in sorted(rank_results.items())]
         common = {
             "schema_version": 1,
             "world_size": self.expected_world_size,
-            "rank_verdicts": observed,
+            "rank_results": observed,
         }
         failures = [
-            (rank, verdict)
-            for rank, verdict in sorted(rank_verdicts.items())
-            if verdict.get("verdict") == "failed"
+            (rank, result)
+            for rank, result in sorted(rank_results.items())
+            if result.get("status") == "failed"
         ]
         if failures:
             classes = [
-                (rank, str(verdict.get("error_class", "unknown-error")))
-                for rank, verdict in failures
+                (rank, str(result.get("error_class", "unknown-error")))
+                for rank, result in failures
             ]
             distinct_classes = {error_class for _, error_class in classes}
             error_class = (
@@ -708,47 +708,47 @@ class RunSupervisor:
             )
             return {
                 **common,
-                "verdict": "failed",
+                "status": "failed",
                 "error_class": error_class,
                 "failed_ranks": [rank for rank, _ in failures],
             }
 
         invalid_ranks = [
             rank
-            for rank, verdict in sorted(rank_verdicts.items())
-            if verdict.get("verdict") not in {"success", "terminated"}
+            for rank, result in sorted(rank_results.items())
+            if result.get("status") not in {"success", "terminated"}
         ]
         if invalid_ranks:
             return {
                 **common,
-                "verdict": "failed",
+                "status": "failed",
                 "error_class": "InvalidRankVerdict",
                 "invalid_ranks": invalid_ranks,
             }
         if missing_ranks:
             return {
                 **common,
-                "verdict": "failed",
+                "status": "failed",
                 "error_class": "MissingRankVerdict",
                 "missing_ranks": missing_ranks,
             }
 
         terminated = [
-            (rank, verdict)
-            for rank, verdict in sorted(rank_verdicts.items())
-            if verdict.get("verdict") == "terminated"
+            (rank, result)
+            for rank, result in sorted(rank_results.items())
+            if result.get("status") == "terminated"
         ]
         if terminated:
-            rank, verdict = terminated[0]
+            rank, result = terminated[0]
             return {
                 **common,
-                "verdict": "terminated",
-                "signal": verdict.get("signal"),
-                "signal_name": verdict.get("signal_name"),
+                "status": "terminated",
+                "signal": result.get("signal"),
+                "signal_name": result.get("signal_name"),
                 "terminated_ranks": [item_rank for item_rank, _ in terminated],
                 "representative_rank": rank,
             }
-        return {**common, "verdict": "success"}
+        return {**common, "status": "success"}
 
     def _wait_with_health_checks(
         self,
@@ -777,7 +777,7 @@ class RunSupervisor:
                 continue
 
             # A short child may publish a final row and exit between polling
-            # intervals. Judge that row before accepting its success verdict.
+            # intervals. Judge that row before accepting its success result.
             if not gate.tripped:
                 gate.judge_new_rows()
             return exit_code
@@ -792,7 +792,7 @@ class RunSupervisor:
             return False
         return True
 
-    def _read_verdict(self, path: Path) -> dict[str, Any] | None:
+    def _read_result(self, path: Path) -> dict[str, Any] | None:
         try:
             raw = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):

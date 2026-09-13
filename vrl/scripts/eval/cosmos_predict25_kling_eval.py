@@ -35,7 +35,7 @@ from vrl.trainers.checkpointing import (
     restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
-from vrl.trainers.data import load_prompt_manifest
+from vrl.trainers.data import load_prompt_dataset_index
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import write_json
 from vrl.utils.media import write_mp4
@@ -218,10 +218,10 @@ def _load_prompts(args: argparse.Namespace, root: RootConfig) -> list[str]:
             )
         prompts.extend(
             example.prompt
-            for example in load_prompt_manifest(str(data.eval_manifest or data.manifest))
+            for example in load_prompt_dataset_index(str(data.eval_manifest or data.manifest))
         )
     if args.manifest:
-        prompts.extend(example.prompt for example in load_prompt_manifest(args.manifest))
+        prompts.extend(example.prompt for example in load_prompt_dataset_index(args.manifest))
     return prompts
 
 

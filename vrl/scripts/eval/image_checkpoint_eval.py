@@ -454,7 +454,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     from vrl.run import resolve_model
     from vrl.scripts.eval._device import resolve_eval_device
     from vrl.trainers.checkpointing import validate_checkpoint_meta_compatibility
-    from vrl.trainers.data import load_prompt_manifest
+    from vrl.trainers.data import load_prompt_dataset_index
 
     if (
         args.samples_per_prompt < 1
@@ -547,7 +547,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         resolved,
         targets,
         select_prompts(
-            load_prompt_manifest(manifest_path),
+            load_prompt_dataset_index(manifest_path),
             limit=args.limit,
             per_stratum=args.per_stratum,
             strata=args.strata,
@@ -765,7 +765,7 @@ def main(argv: list[str] | None = None) -> None:
 
         receipt = args.verify_training_evidence
         association = TrainingRunTrace.load(receipt).verify_evaluation(
-            receipt.parent.parent / "run_verdict.json", archive
+            receipt.parent.parent / "training_run_result.json", archive
         )
         print(json.dumps(association, indent=2, sort_keys=True))
         return

@@ -379,8 +379,8 @@ def test_completed_report_is_immutable_and_integrity_checked(generation):
 def completed_training_evaluation(generation, tmp_path, monkeypatch):
     import shutil
 
-    from vrl.run_verdict import RunVerdictWriter
     from vrl.trainers import trace
+    from vrl.training_run_result import TrainingRunResultWriter
 
     archive, rows = generation
     archive.publish_report(
@@ -412,13 +412,13 @@ def completed_training_evaluation(generation, tmp_path, monkeypatch):
         resumed=False,
     ).launch_path
     seal = trace.TrainingRunTrace.load(launch).seal_artifacts()
-    RunVerdictWriter(str(training), environ={}).write()
-    verdict_path = training / "run_verdict.json"
-    verdict = json.loads(verdict_path.read_text())
+    TrainingRunResultWriter(str(training), environ={}).write()
+    result_path = training / "training_run_result.json"
+    result = json.loads(result_path.read_text())
     # This is fixture data for association validation, not a real trainer run.
-    verdict["supervisor_exit_code"] = 0
-    verdict_path.write_text(json.dumps(verdict))
-    return seal, verdict_path, archive
+    result["supervisor_exit_code"] = 0
+    result_path.write_text(json.dumps(result))
+    return seal, result_path, archive
 
 
 def test_training_evaluation_association_uses_content_not_target_path(
@@ -426,8 +426,8 @@ def test_training_evaluation_association_uses_content_not_target_path(
 ):
     from vrl.trainers.trace import TrainingRunTrace
 
-    seal, verdict, archive = completed_training_evaluation
-    result = TrainingRunTrace.load(seal).verify_evaluation(verdict, archive)
+    seal, result, archive = completed_training_evaluation
+    result = TrainingRunTrace.load(seal).verify_evaluation(result, archive)
     assert "checkpoint-8" in result["checkpoint_labels"]
     assert "attempt_id" not in result
     assert result["evaluation_content"]["files"] > len(list(archive.plan.cells()))
@@ -435,12 +435,12 @@ def test_training_evaluation_association_uses_content_not_target_path(
 
 
 @pytest.mark.parametrize(
-    "change", ["model", "checkpoint", "scores", "image", "protocol", "verdict"]
+    "change", ["model", "checkpoint", "scores", "image", "protocol", "status"]
 )
 def test_training_evaluation_rejects_mismatched_evidence(completed_training_evaluation, change):
     from vrl.trainers import trace
 
-    seal, verdict, archive = completed_training_evaluation
+    seal, result, archive = completed_training_evaluation
     if change in {"model", "checkpoint"}:
         # Publish an internally valid training receipt for a different run/state.
         # Association must fail even though each side independently verifies.
@@ -465,17 +465,17 @@ def test_training_evaluation_rejects_mismatched_evidence(completed_training_eval
             archive.directory, replace(archive.plan, seed=999)
         )
     else:
-        record = json.loads(verdict.read_text())
-        record["verdict"] = "failed"
-        verdict.write_text(json.dumps(record))
+        record = json.loads(result.read_text())
+        record["status"] = "failed"
+        result.write_text(json.dumps(record))
     with pytest.raises(ValueError):
-        trace.TrainingRunTrace.load(seal).verify_evaluation(verdict, archive)
+        trace.TrainingRunTrace.load(seal).verify_evaluation(result, archive)
 
 
 def test_cli_verifies_existing_training_evaluation_without_generation_or_scoring(
     completed_training_evaluation, monkeypatch, capsys
 ):
-    seal, _verdict, archive = completed_training_evaluation
+    seal, _result, archive = completed_training_evaluation
     monkeypatch.setattr(checkpoint_eval, "resolve_plan", lambda _args: archive.plan)
     monkeypatch.setattr(
         checkpoint_eval.EvaluationPlan, "generate", lambda *_: pytest.fail("generation")
@@ -498,7 +498,7 @@ def test_cli_verifies_existing_training_evaluation_without_generation_or_scoring
 def test_nested_completion_marker_is_not_exempt_from_report_integrity(
     completed_training_evaluation,
 ):
-    _seal, _verdict, archive = completed_training_evaluation
+    _seal, _result, archive = completed_training_evaluation
     extra = archive.directory / "report/nested/evaluation_complete.json"
     extra.parent.mkdir()
     extra.write_text("{}")

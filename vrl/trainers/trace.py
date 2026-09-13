@@ -2,7 +2,7 @@
 
 This records what the trainer process actually observed. It is not a model
 support registry or a claim that the run completed, learned, or was deterministic.
-Metrics, checkpoint contents and the final run verdict are separate evidence.
+Metrics, checkpoint contents and the final run result are separate evidence.
 """
 
 from __future__ import annotations
@@ -127,7 +127,7 @@ class TrainingRunTrace:
         """Bind final online-loop artifacts to this launch, before runtime cleanup.
 
         Hash complete checkpoint contents without deserializing tensors. This is an
-        observation of bytes on disk, not a success verdict or recipe quality grade.
+        observation of bytes on disk, not a success result or recipe quality grade.
         Resuming in the same output directory can invalidate the old observation;
         archive the directory before resume to preserve independently verifiable runs.
         """
@@ -203,32 +203,32 @@ class TrainingRunTrace:
                 raise ValueError(f"{role} artifact content mismatch")
         return record
 
-    def verify_completion(self, verdict_path: str | Path) -> dict[str, Any]:
+    def verify_completion(self, result_path: str | Path) -> dict[str, Any]:
         """Check artifact integrity and the supplied successful process outcome.
 
         There is no cross-process attempt identity: this does not establish that
-        the supplied verdict and artifacts came from the same execution.
+        the supplied result and artifacts came from the same execution.
         """
 
         self.verify_artifacts()
         launch = self._read_launch()
-        verdict = json.loads(Path(verdict_path).read_text(encoding="utf-8"))
-        if not isinstance(verdict, dict) or verdict.get("schema_version") != 1:
-            raise ValueError("unsupported run verdict")
-        if verdict.get("verdict") != "success":
+        result = json.loads(Path(result_path).read_text(encoding="utf-8"))
+        if not isinstance(result, dict) or result.get("schema_version") != 1:
+            raise ValueError("unsupported run result")
+        if result.get("status") != "success":
             raise ValueError("run attempt did not complete successfully")
         if (
-            type(verdict.get("supervisor_exit_code")) is not int
-            or verdict["supervisor_exit_code"] != 0
+            type(result.get("supervisor_exit_code")) is not int
+            or result["supervisor_exit_code"] != 0
         ):
             raise ValueError("supervisor did not observe a successful process exit")
         world_size = int(launch["runtime"].get("environment", {}).get("WORLD_SIZE", "1"))
         if world_size > 1:
-            ranks = verdict.get("rank_verdicts")
-            if verdict.get("world_size") != world_size or not isinstance(ranks, list):
-                raise ValueError("distributed completion requires an aggregate verdict")
+            ranks = result.get("rank_results")
+            if result.get("world_size") != world_size or not isinstance(ranks, list):
+                raise ValueError("distributed completion requires an aggregate result")
             if len(ranks) != world_size:
-                raise ValueError("distributed completion is missing rank verdicts")
+                raise ValueError("distributed completion is missing rank results")
             seen = set()
             for rank in ranks:
                 if (
@@ -237,17 +237,17 @@ class TrainingRunTrace:
                     or rank["rank"] not in range(world_size)
                     or rank["rank"] in seen
                     or rank.get("world_size") != world_size
-                    or rank.get("verdict") != "success"
+                    or rank.get("status") != "success"
                 ):
-                    raise ValueError("distributed completion contains an invalid rank verdict")
+                    raise ValueError("distributed completion contains an invalid rank result")
                 seen.add(rank["rank"])
-        elif "rank" in verdict or "rank_verdicts" in verdict or verdict.get("world_size", 1) != 1:
-            raise ValueError("single-process launch has a distributed verdict")
-        return verdict
+        elif "rank" in result or "rank_results" in result or result.get("world_size", 1) != 1:
+            raise ValueError("single-process launch has a distributed result")
+        return result
 
     def verify_evaluation(
         self,
-        verdict_path: str | Path,
+        result_path: str | Path,
         archive: EvaluationArchive,
     ) -> dict[str, Any]:
         """Associate a completed image evaluation with the exact final trained state.
@@ -261,7 +261,7 @@ class TrainingRunTrace:
         from vrl.trainers.checkpointing import TRAINING_CHECKPOINT_NAME
         from vrl.utils.artifacts import sha256_file
 
-        self.verify_completion(verdict_path)
+        self.verify_completion(result_path)
         launch = self._read_launch()
         report = archive.verify_report()
         protocol = report["protocol"]
