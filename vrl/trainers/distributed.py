@@ -16,6 +16,9 @@ layer (``fully_shard`` wrapping + DTensor full-state export) lives in
 symmetric colocated torchrun path for ``ddp`` and ``fsdp``: each rank owns its
 local rollout/training device and the strategy layer handles cross-rank gradient
 coordination. TrainingCollectives provides communication over those groups.
+
+Training-only differentiable token/head exchanges also live here. They consume
+an existing process group and do not change process identity or model wrapping.
 """
 
 from __future__ import annotations
@@ -33,6 +36,57 @@ if TYPE_CHECKING:
 # torchrun / env-launcher contract. Source of truth for the keys the fsdp context
 # parses; the missing-env error lists exactly these.
 _TORCHRUN_ENV_KEYS = ("RANK", "LOCAL_RANK", "WORLD_SIZE")
+
+
+def _context_parallel_layout(tensor: torch.Tensor, group: Any) -> tuple[int, int]:
+    import torch.distributed as dist
+
+    if not dist.is_initialized():
+        raise RuntimeError("context parallel exchange requires an initialized process group")
+    world, rank = dist.get_world_size(group), dist.get_rank(group)
+    if world < 2 or rank < 0:
+        raise ValueError("context parallel exchange requires membership in a group of >= 2")
+    if tensor.ndim != 4 or any(size == 0 for size in tensor.shape):
+        raise ValueError(
+            "context parallel exchange expects nonempty [batch, heads, tokens, width]"
+        )
+    return world, rank
+
+
+def _context_parallel_gather(tensor: torch.Tensor, dim: int, group: Any) -> torch.Tensor:
+    from torch.distributed._functional_collectives import all_gather_tensor_autograd
+
+    # Keep the collective's gather dimension zero; preserve head/token ordering.
+    full = all_gather_tensor_autograd(tensor.movedim(dim, 0).contiguous(), 0, group)
+    return full.movedim(0, dim)
+
+
+def context_parallel_tokens_to_heads(tensor: torch.Tensor, *, group: Any) -> torch.Tensor:
+    """[B,H,S/P,D] -> [B,H/P,S,D], with gradients across equal token shards.
+
+    All group members must call with matching shapes/dtypes in the same order.
+    This gather-based baseline materializes full Q/K/V temporarily; it is not
+    the bandwidth-optimal all-to-all implementation.
+    """
+    world, rank = _context_parallel_layout(tensor, group)
+    if tensor.shape[1] % world:
+        raise ValueError("attention heads must be divisible by context parallel group size")
+    full = _context_parallel_gather(tensor, 2, group)
+    return full.chunk(world, dim=1)[rank].contiguous()
+
+
+def context_parallel_heads_to_tokens(tensor: torch.Tensor, *, group: Any) -> torch.Tensor:
+    """[B,H/P,S,D] -> [B,H,S/P,D], the differentiable inverse exchange.
+
+    Backward sums contributions from each consumer rank; callers must not
+    divide local-token losses by the CP group size unless their objective is
+    replicated. Parameter-gradient reduction remains the strategy's job.
+    """
+    world, rank = _context_parallel_layout(tensor, group)
+    if tensor.shape[2] % world:
+        raise ValueError("token count must be divisible by context parallel group size")
+    full = _context_parallel_gather(tensor, 1, group)
+    return full.chunk(world, dim=2)[rank].contiguous()
 
 
 @dataclass(frozen=True, slots=True)
