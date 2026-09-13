@@ -183,3 +183,40 @@ This establishes the real clip's native scoring path and repeatability, not
 a quality threshold, reward discrimination across different samples, learned
 improvement, HTTP/Ray delivery or integration with a CP optimizer update.
 The remaining whole-training and paper-budget requirements stay open.
+
+## Native collector launch preflight
+
+The next bounded production collector run now has a resolved launch contract,
+not an inferred topology. Preflight uses `load_config`, `resolve_online_run`,
+`resolve_model`, `ResolvedOnlineRun.ray_launch_inputs` and
+`GlobalRayPlacementOwner` directly from candidate `435c8fa2`.
+
+The existing GRPO experiment is overridden only for one prompt group, eager
+execution, the verified NVMe checkpoint, explicit placement and controlled
+precision/storage. Geometry remains 512x512/93f, 20 CPS steps, guidance 1,
+noise 0.7, eight samples per prompt, one sample per generation batch. Native
+LoRA is rank 32/alpha 64 with the preset's six target patterns.
+
+Resolution proves trainer reservation GPU 0, rollout GPU 2 and in-process
+reward GPU 3, with no shared-device lifecycle. GPU 1 is unused by this
+collector-only stage; this is preparation for CP replay, not CP execution.
+The planned driver initial replay model is on CPU and its trainable state is
+to be pushed through the native Ray syncer before collection.
+
+The first preflight exposed inherited TF32 and preserve-device trajectory
+storage. The corrected configuration fixes IEEE and CPU trajectory storage
+without dtype conversion. The second preflight passed with those settings.
+Checkpoint identity covered 20 files / 21,226,364,527 bytes, SHA256
+`4fec540c29ab67ad37ad12262bdac706e6849c41912590893b71ad845a7d2010`.
+The reward checkpoint is pinned to
+`KlingTeam/VideoReward@4f26600130683e6f1de9f5d463887f28e8ef995c`.
+
+Evidence: `cosmos_native_collector_preflight_ieee_cpu/{preflight.json,
+resolved_config.yaml,executed_probe.py}` under the existing NVMe output root.
+The first preflight is retained in `cosmos_native_collector_preflight`.
+Reusable script: `/mnt/nvme/outputs/wan22_i2v_cache/cosmos_native_collector_probe.py`.
+Preflight is the default; `--run` additionally requests real materialization,
+private Ray launch, weight sync, generation, reward and typed-batch saving.
+That execution branch has NOT yet been run or validated. No actors, model
+weights, reward scoring or trajectories were produced by these preflights.
+Both processes exited 0 and a fresh GPU compute inventory was empty.
