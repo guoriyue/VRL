@@ -61,6 +61,18 @@ def _context_parallel_gather(tensor: torch.Tensor, dim: int, group: Any) -> torc
     return full.movedim(0, dim)
 
 
+def context_parallel_gather_tokens(tensor: torch.Tensor, *, group: Any) -> torch.Tensor:
+    """Gather [B,S/P,D] outputs with summed consumer gradients.
+
+    A full-output objective replicated on every CP rank must be divided by the
+    group size before backward. Parameter-gradient reduction remains separate.
+    """
+    if tensor.ndim != 3:
+        raise ValueError("context parallel output gather expects [batch, tokens, width]")
+    _context_parallel_layout(tensor.unsqueeze(1), group)
+    return _context_parallel_gather(tensor, 1, group)
+
+
 def context_parallel_tokens_to_heads(tensor: torch.Tensor, *, group: Any) -> torch.Tensor:
     """[B,H,S/P,D] -> [B,H/P,S,D], with gradients across equal token shards.
 
