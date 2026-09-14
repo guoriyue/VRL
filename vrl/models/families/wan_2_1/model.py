@@ -248,7 +248,12 @@ class WanT2VDiffusersModel(
         for name in names:
             transformer = self._wan_transformers()[name]
             transformer.requires_grad_(False)
-            if not _defer_wan_trainable_device_move(build):
+            # Keep the full transformer on CPU for FSDP or pipeline CPU offload.
+            defer_device_move = bool(
+                getattr(build, "defer_trainable_device_move", False)
+                or _resolve_wan_offload_mode(build) != "none"
+            )
+            if not defer_device_move:
                 transformer.to(self.device)
             if lora_path:
                 wrapped = load_trainable_lora_adapter(
@@ -1268,15 +1273,6 @@ def _resolve_wan_offload_mode(build: ModelBuild) -> str:
         )
     rollout = getattr(build, "rollout", None)
     return str(getattr(rollout, "pipeline_offload_mode", "none"))
-
-
-def _defer_wan_trainable_device_move(build: ModelBuild) -> bool:
-    """Keep the full transformer on CPU for FSDP or pipeline CPU offload."""
-
-    return bool(
-        getattr(build, "defer_trainable_device_move", False)
-        or _resolve_wan_offload_mode(build) != "none"
-    )
 
 
 def _stage_eager_wan_modules(

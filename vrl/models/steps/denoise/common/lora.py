@@ -31,16 +31,6 @@ class LoraModelMixin:
     # base Wan output.
     _lora_default_init_weights: Any = "gaussian"
 
-    def _lora_transformer(self) -> Any:
-        """The trainable transformer to wrap.
-
-        Reads ``self.transformer`` — kept in sync with ``pipeline.transformer`` by
-        every family's ``_set_transformer`` — instead of ``pipeline.transformer``,
-        so this one attach path also serves the pipeline-less replay models (which
-        set ``self.transformer`` directly and raise on ``pipeline``).
-        """
-        return self.transformer
-
     def _lora_dtype(self, build: ModelBuild) -> Any | None:
         """Dtype for the pre-wrap device move; ``None`` skips the cast.
 
@@ -56,7 +46,10 @@ class LoraModelMixin:
         """Wrap the family transformer with PEFT LoRA per ``build.lora_*``."""
         from peft import LoraConfig, get_peft_model
 
-        transformer = self._lora_transformer()
+        # ``self.transformer`` (kept in sync with ``pipeline.transformer`` by every
+        # family's ``_set_transformer``) rather than ``pipeline.transformer``, so this
+        # one attach path also serves the pipeline-less replay models.
+        transformer = self.transformer
         transformer.requires_grad_(False)
         dtype = self._lora_dtype(build)
         # Quantized rollouts keep the checkpoint on CPU until base-weight

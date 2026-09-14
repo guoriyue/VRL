@@ -180,7 +180,12 @@ class JanusProBatchExecutor(ARDiscreteBatchExecutorBase):
         tokenizer = self.model.processor.tokenizer
         device = self.model.device
 
-        formatted = [self._format_t2i_prompt(p) for p in prompts]
+        # Janus' T2I chat template (deepseek-ai/Janus/generation_inference.py):
+        # a short chat-style header followed by the BOS image-generation tag.
+        formatted = [
+            f"<｜User｜>: {p}\n\n<｜Assistant｜>:<begin_of_image>"  # noqa: RUF001
+            for p in prompts
+        ]
         enc = tokenizer(
             formatted,
             return_tensors="pt",
@@ -198,18 +203,6 @@ class JanusProBatchExecutor(ARDiscreteBatchExecutorBase):
             pad_id=getattr(tokenizer, "pad_token_id", None) or 0,
         )
         return ids.to(device), mask.to(device)
-
-    @staticmethod
-    def _format_t2i_prompt(prompt: str) -> str:
-        """Format a prompt with Janus' T2I chat template.
-
-        Mirrors ``deepseek-ai/Janus/generation_inference.py``: a short
-        chat-style header followed by the BOS image-generation tag.
-        """
-        return (
-            f"<｜User｜>: {prompt}\n\n"  # noqa: RUF001
-            f"<｜Assistant｜>:<begin_of_image>"  # noqa: RUF001
-        )
 
 
 @dataclass(slots=True)

@@ -35,10 +35,6 @@ import torch.distributed as dist
 import torch.nn.functional as F
 
 
-def _group_info(group: Any) -> tuple[int, int]:
-    return dist.get_rank(group), dist.get_world_size(group)
-
-
 def _gather_dim(tensor: torch.Tensor, *, dim: int, group: Any) -> torch.Tensor:
     """All-gather shards of ``tensor`` along ``dim`` (equal shard sizes)."""
 
@@ -51,7 +47,7 @@ def _gather_dim(tensor: torch.Tensor, *, dim: int, group: Any) -> torch.Tensor:
 def _local_chunk(tensor: torch.Tensor, *, dim: int, group: Any) -> torch.Tensor:
     """This rank's contiguous chunk of ``tensor`` along ``dim``."""
 
-    rank, world = _group_info(group)
+    rank, world = dist.get_rank(group), dist.get_world_size(group)
     size = tensor.shape[dim]
     if size % world:
         raise ValueError(

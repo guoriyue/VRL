@@ -486,7 +486,14 @@ class Emu3Model(ARModelBase):
         # head path computes its logsumexp without ever materializing logits,
         # leaving nowhere to apply the mask. Adopting the fused payload here
         # requires a mask input on the kernel first.
-        height, width = self._replay_grid_dims(batch, int(image_token_ids.shape[1]))
+        # The executor stores image_height/image_width in the trajectory context;
+        # they are not derivable from the token count alone for non-square ratios.
+        height, width = replay_context_image_size(
+            batch,
+            token_count=int(image_token_ids.shape[1]),
+            expected_token_num=emu3_grid_token_num,
+            owner="Emu3",
+        )
         forced = emu3_forced_token_schedule(
             height,
             width,
@@ -497,20 +504,6 @@ class Emu3Model(ARModelBase):
         return ReplayResult.from_segment(
             "image_tokens",
             {"logits": logits, "image_token_ids": image_token_ids},
-        )
-
-    def _replay_grid_dims(self, batch: Any, token_count: int) -> tuple[int, int]:
-        """Read the latent grid dims the rollout generated with.
-
-        The executor stores ``image_height``/``image_width`` in the trajectory
-        context (they are NOT derivable from the token count alone for
-        non-square ratios).
-        """
-        return replay_context_image_size(
-            batch,
-            token_count=token_count,
-            expected_token_num=emu3_grid_token_num,
-            owner="Emu3",
         )
 
     # ------------------------------------------------------------------

@@ -16,7 +16,6 @@ modules or the filesystem are launch gates in ``vrl/config/validation.py``
 
 from __future__ import annotations
 
-import functools
 import math
 from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields
@@ -425,16 +424,11 @@ def generation_request_rollout_fields() -> frozenset[str]:
     )
 
 
-@functools.cache
-def _model_section_class_from_path(path: str) -> type[ModelSection]:
-    return import_from_path(path)
-
-
 def _model_section_class_for_family(family: Any) -> type[ModelSection]:
     if family is None or not str(family).strip():
         raise ValueError("config missing required field: model.family")
     entry = get_model_family_entry(str(family))
-    return _model_section_class_from_path(entry.model_section_cls)
+    return import_from_path(entry.model_section_cls)
 
 
 def _parse_model_section(value: Any) -> ModelSection | None:
@@ -465,16 +459,11 @@ def _parse_model_section(value: Any) -> ModelSection | None:
     return parsed
 
 
-@functools.cache
-def _sampling_section_class_from_path(path: str) -> type[SamplingSection]:
-    return import_from_path(path)
-
-
 def sampling_section_class_for_family(family: Any) -> type[SamplingSection]:
     if family is None or not str(family).strip():
         raise ValueError("sampling requires model.family")
     entry = get_model_family_entry(str(family))
-    return _sampling_section_class_from_path(entry.sampling_section_cls)
+    return import_from_path(entry.sampling_section_cls)
 
 
 def _parse_sampling_section(
