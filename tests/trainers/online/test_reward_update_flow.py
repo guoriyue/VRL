@@ -813,24 +813,20 @@ def test_training_microbatch_size_splits_backward_and_preserves_gradient(monkeyp
     import torch.nn as nn
 
     from vrl.algorithms.types import TrainStepMetrics
+    from vrl.rollouts.batch import RolloutBatch
     from vrl.scripts.common.online import _run_streaming_optimizer_update
     from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-    from vrl.trainers.online import trainer as trainer_module
     from vrl.trainers.online.config import TrainerConfig
     from vrl.trainers.online.trainer import OnlineTrainer
 
     device_move_sizes: list[int] = []
-    original_move_training_batch_to_device = trainer_module.move_training_batch_to_device
+    original_to_device = RolloutBatch.to_device
 
-    def _recording_move_training_batch_to_device(batch, *args, **kwargs):
+    def _recording_to_device(batch, *args, **kwargs):
         device_move_sizes.append(int(batch.rewards.shape[0]))
-        return original_move_training_batch_to_device(batch, *args, **kwargs)
+        return original_to_device(batch, *args, **kwargs)
 
-    monkeypatch.setattr(
-        trainer_module,
-        "move_training_batch_to_device",
-        _recording_move_training_batch_to_device,
-    )
+    monkeypatch.setattr(RolloutBatch, "to_device", _recording_to_device)
 
     class _Algorithm(_EvaluatorAlgorithmFake):
         required_signal_keys = ("log_prob",)
@@ -1086,11 +1082,6 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
 
     from vrl.generation import GenerationRequest, GenerationSampleRow
     from vrl.rollouts.batch import RolloutBatch
-    from vrl.rollouts.batch.ops import (
-        move_training_batch_to_device,
-        remap_group_ids_,
-        select_batch,
-    )
     from vrl.trajectory.builders import build_diffusion_trajectory
 
     request = GenerationRequest(
@@ -1127,7 +1118,7 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         trajectory=trajectory,
     )
 
-    selected = select_batch(batch, torch.tensor([True, False, True, False]))
+    selected = batch.select(torch.tensor([True, False, True, False]))
 
     assert selected.trajectory is not None
     assert selected.trajectory.primary_segment == "denoise"
@@ -1138,10 +1129,10 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         torch.tensor([[[0.0], [1.0]], [[4.0], [5.0]]]),
     )
 
-    moved = move_training_batch_to_device(selected, torch.device("cpu"))
+    moved = selected.to_device(torch.device("cpu"))
     assert moved.trajectory is not None
 
-    remap_group_ids_(moved, [10, 11])
+    moved.remap_group_ids_([10, 11])
     assert torch.equal(moved.group_ids, torch.tensor([10, 11]))
     assert moved.trajectory is not None
     assert [row.prompt_index for row in moved.trajectory.sample_rows] == [0, 1]

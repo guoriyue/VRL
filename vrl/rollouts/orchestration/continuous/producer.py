@@ -28,7 +28,6 @@ import torch
 
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.batch.ops import move_training_batch_to_device
 from vrl.rollouts.collector.core import RewardCollectionMode, RolloutGenerationResult
 from vrl.rollouts.orchestration.continuous.pending_reward_capacity import PendingRewardCapacity
 from vrl.rollouts.orchestration.continuous.scored_queue import ScoredRolloutQueue
@@ -724,7 +723,7 @@ class ContinuousRolloutProducer:
                 "continuous single-slot collect must return exactly one batch, "
                 f"got {len(batches)}",
             )
-        stored = move_training_batch_to_device(batches[0], _CPU)
+        stored = batches[0].to_device(_CPU)
         # Per-item stage views with gauge (max-on-merge) reduction: summing
         # concurrent per-slot walls would overstate wall-clock, so
         # the iteration reports the worst per-item interval. The summed phase

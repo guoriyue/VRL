@@ -13,7 +13,6 @@ from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.models.steps.denoise import DenoiseModelBase
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.batch.ops import move_training_batch_to_device
 from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
 from vrl.trajectory.builders import build_diffusion_trajectory
 
@@ -34,8 +33,7 @@ def test_diffusion_replay_slices_timestep_before_device_move(monkeypatch) -> Non
     model = _ReplayModel()
 
     assert evaluator.supports_deferred_replay_tensor_move is True
-    moved = move_training_batch_to_device(
-        batch,
+    moved = batch.to_device(
         torch.device("cpu"),
         defer_replay_tensors=True,
     )

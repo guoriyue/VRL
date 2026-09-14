@@ -33,11 +33,6 @@ from vrl.models.precision import (
     model_precision,
 )
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.batch.ops import (
-    move_training_batch_to_device,
-    nonzero_advantage_mask,
-    select_batch,
-)
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.orchestration import build_rollout_schedule
 from vrl.rollouts.stats import (
@@ -69,6 +64,16 @@ if TYPE_CHECKING:
     from vrl.algorithms.trajectory import AlgorithmAdapter
 
 logger = logging.getLogger(__name__)
+
+
+def _nonzero_advantage_mask(advantages: torch.Tensor) -> torch.Tensor:
+    """Flow-GRPO's mask for samples with non-zero total advantage."""
+
+    adv_abs = advantages.detach().abs()
+    if adv_abs.dim() <= 1:
+        return adv_abs != 0
+    reduce_dims = tuple(range(1, adv_abs.dim()))
+    return adv_abs.sum(dim=reduce_dims) != 0
 
 
 def _global_reward_stats(rewards: Any) -> tuple[float, float]:
@@ -353,7 +358,7 @@ class _TrainingMicrobatch:
             selector = torch.arange(start, stop, device=batch.rewards.device)
             batches.append(
                 cls(
-                    batch=select_batch(batch, selector),
+                    batch=batch.select(selector),
                     advantages=advantages[selector.to(advantages.device)],
                     loss_weight=float(stop - start) / float(batch_size),
                 ),
@@ -1040,11 +1045,11 @@ class OnlineTrainer:
         filtered_advs: list[torch.Tensor] = []
         if cfg.drop_zero_advantage:
             for b, adv_b in zip(all_batches, adv_split, strict=True):
-                mask = nonzero_advantage_mask(adv_b)
+                mask = _nonzero_advantage_mask(adv_b)
                 if not bool(mask.any()):
                     continue
                 if not bool(mask.all()):
-                    b = select_batch(b, mask)
+                    b = b.select(mask)
                     adv_b = adv_b[mask.to(adv_b.device)]
                 if b.rewards.shape[0] > 0:
                     filtered_batches.append(b)
@@ -1284,8 +1289,7 @@ class OnlineTrainer:
             training_microbatch_size,
             self._strategy,
         ):
-            group_batch = move_training_batch_to_device(
-                sample_batch.batch,
+            group_batch = sample_batch.batch.to_device(
                 self.device,
                 defer_replay_tensors=defer_replay_tensors,
             )
@@ -1543,8 +1547,7 @@ class OnlineTrainer:
             training_microbatch_size,
         )[0]
         if cfg.debug.first_step and self.state.step == 0 and uses_evaluator:
-            _dbg_batch = move_training_batch_to_device(
-                first_debug_batch.batch,
+            _dbg_batch = first_debug_batch.batch.to_device(
                 self.device,
                 defer_replay_tensors=defer_replay_tensor_move,
             )
@@ -1632,8 +1635,7 @@ class OnlineTrainer:
             # of hardcoding algorithm checks here.
             _invariant_check = getattr(self.algorithm, "first_step_invariant_check", None)
             if callable(_invariant_check):
-                _dbg_batch = move_training_batch_to_device(
-                    first_debug_batch.batch,
+                _dbg_batch = first_debug_batch.batch.to_device(
                     self.device,
                     defer_replay_tensors=defer_replay_tensor_move,
                 )
@@ -1858,8 +1860,7 @@ class OnlineTrainer:
             return None
         cfg = self.config
         precision_metadata = self._precision_metadata()
-        guard_batch = move_training_batch_to_device(
-            batch,
+        guard_batch = batch.to_device(
             self.device,
             defer_replay_tensors=bool(
                 getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),

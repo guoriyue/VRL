@@ -33,7 +33,6 @@ from vrl.models.families.registry import ModelFamilyEntry
 from vrl.rewards import RewardOutput, RewardRuntime
 from vrl.rewards.base import RewardCleanupError
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.batch.ops import remap_group_ids_, split_batch_by_group
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
@@ -658,8 +657,8 @@ class RolloutCollector:
 
         all_batches: list[RolloutBatch] = []
         for batch, group in zip(batches, generated_groups, strict=True):
-            remap_group_ids_(batch, group.prompt_indices)
-            all_batches.extend(split_batch_by_group(batch))
+            batch.remap_group_ids_(group.prompt_indices)
+            all_batches.extend(batch.split_by_group())
         return all_batches
 
 
