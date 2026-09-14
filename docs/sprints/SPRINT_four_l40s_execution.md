@@ -28,8 +28,25 @@ Full-size I2V prerequisites now pass on the locked runtime: real three-rank
 on GPU 3 with exact repeated scores. The initial missing VideoCon vendor import
 was resolved using the pinned clean source and an explicit experiment import
 path; original dirty submodules are untouched. No full native update has yet
-run on this candidate. Prepared launcher and evidence:
-docs/research/wan_full_physics_rebased_20260913.md. No GPU claim is active.
+completed on this candidate. Prepared launcher and evidence:
+docs/research/wan_full_physics_rebased_20260913.md.
+Full native attempt d2d01db8, supervisor PID 910531/session 21086, is terminal
+exit 1 after 1705.464s. All six full-size videos and both rewards completed,
+but every rollout worker failed the unchanged physical parking gate before
+training. No optimizer update or checkpoint; artifacts and failure audit:
+/mnt/nvme/outputs/wan_i2v_full_physics_rebased_local. All native processes exited.
+All parking diagnostics are terminal. The batch-local scheduler fix passes a
+real full-shape native one-step probe (session 49430): 542 MiB parked physical
+usage, 116 MiB over baseline, below the unchanged 256 MiB allowance. Its ten
+initialized output/conditioning tensors match the old probe exactly, including
+video; unwritten probe trajectory slots are explicitly excluded. Expanded CPU
+regression: 141 passed, two GPU deselections. No full update is claimed.
+Output: wan22_i2v_cache/wan_i2v_parking_batch_local_scheduler. GPUs are released.
+Next: original six-sample full-geometry native update, then replay/checkpoint/
+resume gates. Preserve failed roots; use a new output directory.
+Previous supervisor 909502/session 40899 exited 1 before policy weight loading:
+Diffusers requested shard metadata despite HF_HUB_OFFLINE. The new launch adds
+model.local_files_only=true without changing the pinned revision or workload.
 This does not close full-geometry, Cosmos/H3 requirements or the overall goal.
 
 ## Released claim: corrected four-GPU strict timing

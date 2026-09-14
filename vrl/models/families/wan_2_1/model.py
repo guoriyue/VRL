@@ -681,8 +681,10 @@ class WanT2VDiffusersModel(
         guidance_scale_2 = _resolve_guidance_scale_2(guidance_scale, self._boundary_ratio)
         do_cfg = _uses_cfg(guidance_scale, guidance_scale_2)
 
-        pipe.scheduler.set_timesteps(request.num_steps, device=device)
-        timesteps = pipe.scheduler.timesteps
+        # Multistep history belongs to this batch, not the resident pipeline.
+        scheduler = type(pipe.scheduler).from_config(pipe.scheduler.config)
+        scheduler.set_timesteps(request.num_steps, device=device)
+        timesteps = scheduler.timesteps
 
         num_channels_latents = pipe.transformer.config.in_channels
         batch_size = prompt_embeds.shape[0]
@@ -708,14 +710,14 @@ class WanT2VDiffusersModel(
         return WanT2VSamplingState(
             latents=latents,
             timesteps=timesteps,
-            scheduler=pipe.scheduler,
+            scheduler=scheduler,
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
             guidance_scale=guidance_scale,
             do_cfg=do_cfg,
             guidance_scale_2=guidance_scale_2,
             boundary_ratio=self._boundary_ratio,
-            num_train_timesteps=_scheduler_num_train_timesteps(pipe.scheduler),
+            num_train_timesteps=_scheduler_num_train_timesteps(scheduler),
         )
 
     # -- forward_step --------------------------------------------------
@@ -1086,8 +1088,10 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         guidance_scale_2 = _resolve_guidance_scale_2(guidance_scale, self._boundary_ratio)
         do_cfg = _uses_cfg(guidance_scale, guidance_scale_2)
 
-        pipe.scheduler.set_timesteps(request.num_steps, device=device)
-        timesteps = pipe.scheduler.timesteps
+        # Multistep history belongs to this batch, not the resident pipeline.
+        scheduler = type(pipe.scheduler).from_config(pipe.scheduler.config)
+        scheduler.set_timesteps(request.num_steps, device=device)
+        timesteps = scheduler.timesteps
 
         batch_size = prompt_embeds.shape[0]
         seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
@@ -1124,7 +1128,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         return WanI2VSamplingState(
             latents=latents,
             timesteps=timesteps,
-            scheduler=pipe.scheduler,
+            scheduler=scheduler,
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
             image_embeds=image_embeds,
@@ -1133,7 +1137,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             do_cfg=do_cfg,
             guidance_scale_2=guidance_scale_2,
             boundary_ratio=self._boundary_ratio,
-            num_train_timesteps=_scheduler_num_train_timesteps(pipe.scheduler),
+            num_train_timesteps=_scheduler_num_train_timesteps(scheduler),
         )
 
     def forward_step(

@@ -75,6 +75,80 @@ run exited 1 at its nonzero training return code (session 40100), as required.
 Scoped Ruff check/format passed for the three new/migrated external scripts;
 repository `git diff --check` passed. No native training process is active.
 
+## Native failure: retained scheduler history
+
+This section supersedes the prerequisite handoff's inactive-process statement.
+The first native attempt at `wan_i2v_full_physics_rebased` exited 1 before
+policy weight loading: Diffusers 0.40 queried Hub shard metadata despite the
+offline environment. Reward prewarm had succeeded. Supervisor 909502/session
+40899 and torchrun 910006 are terminal; wall time 63.219825s, no update or
+checkpoint. Both services exited 0 during cleanup. The observed GPU release
+was terminal service shutdown, not normal scoring-time parking.
+
+The launcher now explicitly sets the existing `model.local_files_only=true`
+option. This is passed through `ModelBuild.pretrained_kwargs` to both the
+component and pipeline loaders and preserves the pinned Hub identity/revision.
+No production source or model math was edited.
+
+The attempt at `/mnt/nvme/outputs/wan_i2v_full_physics_rebased_local` is terminal:
+supervisor 910531/session 21086 and torchrun 911014 exited 1 after 1705.464352s.
+All six full-size samples generated and received both real rewards, but all
+three workers failed physical parking before replay/backward. There is no
+optimizer update or checkpoint. Both reward services exited 0; GPUs released.
+`launch_fidelity_audit.json` establishes equality with the original workload
+after the documented config/path migration. Native source was d2d01db8.
+
+`failure_artifact_audit.json` verifies twelve MP4s, each 81 frames at
+480x832/8fps, six unique sample IDs, six finite receipts per reward and exact
+paired artifact hashes. The metrics file has only its header and no checkpoint
+exists. Minimum sampled host availability was 177,338,544,128 bytes; no Ray
+memory-pressure kill was recorded. This was not a host-memory failure.
+
+All workers had a 426 MiB physical baseline and the unchanged 256 MiB allowance.
+Their parked physical usage was 1000/988/1592 MiB, while Torch reserved
+424/412/1016 MiB. Only approximately 25 MiB of live tensors pinned those large
+allocator segments. Thresholds are not relaxed to admit this failure.
+
+A real 14B, full-geometry, one-step native probe reproduced it at
+`wan_i2v_parking_diagnostic_native` under the cache root: native parking retained
+979,369,984 physical bytes with 413,138,944 reserved. GC ownership identified
+UniPC `last_sample` and prediction history, each holding an 8,386,560-byte
+latent tensor. Moving module buffers alone did not release the segments.
+Replacing only `pipeline.scheduler` in the following diagnostic also failed,
+because that diagnostic retained the original scheduler via `RuntimeBundle`.
+Neither diagnostic is a full generation or training acceptance run.
+
+The candidate fix gives both Wan T2V and I2V sampling states a fresh scheduler
+via its public `from_config` API. Per-batch solver history no longer belongs to
+the resident pipeline or runtime bundle. It changes ownership, not the scheduler
+configuration, parking allowance, generation geometry or training objective.
+Focused CPU tests compare two complete UniPC trajectories against the old
+shared-scheduler behavior exactly and verify history is collectible afterward.
+The fixed real full-shape probe at `wan_i2v_parking_batch_local_scheduler`
+exited 0 (session 49430). Native parking, before any diagnostic intervention,
+uses 568,328,192 physical bytes (542 MiB), only 116 MiB over its 426 MiB baseline,
+with 2 MiB reserved. The unchanged 256 MiB allowance passes. No scheduler
+prediction/last-sample tensors remain. The probe itself took 133.920868s.
+
+`output_parity.json`, produced by `compare_wan_scheduler_probe.py`, verifies
+exact equality of ten tensors: initialized observation/action/log-prob/timestep/
+KL slots, full decoded video and all four conditioning tensors. Context also
+matches. The initial whole-buffer comparison failed because the one-step probe
+allocates twenty slots with `torch.empty` but only writes slot zero. The corrected
+audit explicitly excludes unwritten slots 1:20; it does not hide a sample mismatch.
+This proves only one native step at full geometry, not full-update acceptance.
+
+After `uv sync --frozen --group test --group lint --extra cosmos --extra reward`,
+the expanded regression passes: 141 tests, two GPU deselections. This includes
+Wan family tests, worker sleep, real tiny pipeline wiring and replay runtime
+wiring. Scoped Ruff and diff checks pass. The sync reinstalled locked decord
+0.6.0; its dry-run still proposes reinstall because the published py3 wheel's
+internal WHEEL tag says cp36-cp36m. Verbose uv identifies that metadata mismatch,
+not a version change. No dependency/source/lockfile edits were made to mask it.
+All diagnostic GPU processes are terminal and the GPU inventory is empty.
+The next required gate is the original six-sample, full-geometry native update,
+followed by checkpoint/replay/resume acceptance; that gate remains open.
+
 ## Artifacts and next command
 
 Cache root: `/mnt/nvme/outputs/wan22_i2v_cache`.
@@ -90,7 +164,7 @@ From `/home/ubuntu/VRL-review-all`, after rechecking hardware ownership:
 ```bash
 env -u PYTHONPATH /mnt/nvme/venvs/vrl-review-all/bin/python \
   /mnt/nvme/outputs/wan22_i2v_cache/launch_wan_full_physics_rebased.py \
-  --output-dir /mnt/nvme/outputs/wan_i2v_full_physics_rebased
+  --output-dir /mnt/nvme/outputs/wan_i2v_full_physics_batch_local_scheduler
 ```
 
 Preserve any existing output instead of overwriting or automatically restarting
