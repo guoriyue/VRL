@@ -1,6 +1,6 @@
 # Functional duplicate sweep
 
-Status: batch 1 landed (2026-09-13); one-liner audit added the same day. Scope is functional duplication — two
+Status: batch 1 landed (2026-09-13); one-liner and one-statement-class audits the same day; batch 2 ("A1 and A2 not merged") 2026-09-13. Scope is functional duplication — two
 places computing the same thing under different names or framings — not
 textual repetition. Every candidate was read at the source, its call sites
 and tests, before deciding; each verdict below cites the paths.
@@ -303,6 +303,57 @@ now name the shared class. `Emu3ARState` stays because it adds a field.
 - **Single-override subclasses** (`MiniMaxH3FlowScheduler.step`,
   `_SaturatedLinearAttnProcessor.__call__`, the `*ReplayModel.prepare_replay`
   overrides): the override is the family difference.
+
+## Batch 2: A1 and A2 that never used each other
+
+The first batch caught identical bodies. This pass looked for the softer
+case: two implementations of one operation that share a helper but each
+still carry the rest of the logic. Method: cluster every function of eight
+or more lines by the set of calls it makes (Jaccard >= 0.6 across different
+modules), then read each cluster. Landed, one commit each:
+
+- **Masked-prompt families** — `f3ebb5ff3`. SANA, PixArt-Sigma, Lumina2 and
+  Mochi shared `MaskedPromptCollectorMixin` for the trajectory boundary but
+  each still owned `encode_prompt`, `prepare_sampling` and `forward_step`
+  (4 x ~150 lines). `MaskedPromptModelMixin` now owns the three; a family
+  declares its encode kwargs/defaults and overrides at most three hooks
+  (`_sampling_scheduler`, `_latent_shape_args`, `_backbone_timestep`).
+  632 lines removed, 301 added. The four backbone-parity tests (numeric
+  comparison against the diffusers pipelines) pass unchanged.
+- **Fail-closed record parsers** — `512f2c143`. `GroundedOcrConfig`,
+  `OcrScoringPolicy`, `ImageSampling`, `GeneratorRuntimeIdentity` each
+  re-implemented "mapping whose keys are exactly my fields".
+  `vrl.utils.validation.require_exact_dataclass_fields`.
+- **Previous-adapter objectives** — `6080982b9`. DiffusionNFT and V-GRPO
+  shared the flow-time normalization (`/1000` + EDM guard), the seeded
+  double evaluation behind their lr=0 invariants, and the adapter refresh.
+  `vrl/algorithms/previous_adapter.py`.
+- **AR prompt tokenization** — Janus-Pro, LlamaGen, NextStep-1 each ran
+  the same tokenizer call → `ARRequestLayout.right_pad` → device move.
+  `ARRequestLayout.tokenize_right_padded`.
+- **Ray actor cleanup** — `32f1ac074`. `kill_actors` returned failures and
+  four owners re-wrote the same raise/`add_note`.
+  `raise_if_kill_failures` / `note_kill_failures`.
+- **Danbooru train/eval split** — anatomy and safety ran the same
+  group → proportional counts → interleave pipeline over different keys.
+  `manifest_rows.split_rows_proportionally`.
+- **Per-rank batch-result fold** — `76a69a70c`. Engine and executor
+  applied the same terminal-over-OOM-over-stale precedence.
+  `generation.execution.types.combine_rank_batch_results`.
+- **Canonical JSON digests** — `355d34a36`. Six sites spelled out
+  `json.dumps(sort_keys, compact)` + `sha256`. `json_files.canonical_json_sha256`
+  with `ensure_ascii`/`allow_nan` exposed so every existing digest is
+  minted exactly as before. The packaged aesthetic asset now goes through
+  `sha256_file` (`1ba3c45e6`, digest re-verified against the pin).
+
+Clusters read and left: the pooled-embedding families' `forward_step`
+(flux, hunyuan_*, sd3_5, qwen_image, cogvideox) already share
+`DiffusionBackboneCaller`; what remains per family is the transformer's
+kwargs, which is the family. `encode_video_to_latents` /`decode_latents`
+across wan/anima/predict2/mochi stays as in batch 1 (pipeline-faithful
+arithmetic order). `RewardInferenceConfig.from_mapping` is a different
+contract from the exact-fields parsers (None/instance pass-through, unknown
+keys only).
 
 ## Verification
 
