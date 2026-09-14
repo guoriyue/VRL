@@ -24,7 +24,9 @@ class SamplingSection(ConfigBase):
     """
 
     # Usually a per-prompt request override (paired rollouts/evals); a YAML value
-    # seeds every request identically.
+    # seeds every request identically. The online collector draws an unspecified
+    # seed from the checkpointed driver RNG (resume-stable); direct generation
+    # entrypoints own their own policy.
     seed: StrictInt | None = None
 
     @classmethod

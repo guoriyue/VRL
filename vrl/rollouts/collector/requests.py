@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import uuid
 from collections.abc import Mapping
 from dataclasses import fields, replace
@@ -69,6 +70,14 @@ class GenerationRequestBuilder:
             sampling.update(
                 sampling_section_class_for_family(self.entry.family).require_overrides(overrides)
             )
+
+        if sampling.get("seed") is None:
+            # The online checkpoint captures the driver's Python RNG, not the
+            # remote workers' RNGs. Drawing the request seed here makes a
+            # resumed run (fresh worker processes) reproduce the same rollout
+            # noise as the uninterrupted one; an explicit config or override
+            # seed is honored and consumes nothing.
+            sampling["seed"] = random.getrandbits(63)
 
         group_metadata = dict(metadata or {})
         if "fps" in sampling:
