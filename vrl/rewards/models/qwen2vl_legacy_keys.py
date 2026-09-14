@@ -1,4 +1,4 @@
-"""Qwen2-VL checkpoint key relocation shared by the reward models built on it.
+"""Relocate pre-4.52 Qwen2-VL state-dict keys for the reward models built on it.
 
 transformers 4.52 nested the Qwen2-VL modules: ``model.*`` (the language tower)
 moved under ``model.language_model.*`` and ``visual.*`` under ``model.visual.*``.

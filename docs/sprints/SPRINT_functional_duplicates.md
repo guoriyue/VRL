@@ -63,7 +63,7 @@ both encoded the transformers 4.52 rename (`model.*` →
 the PEFT `base_model.model.` prefix and the safety gate. The per-key
 idempotent form with the exact-key-set gate is strictly stronger (it also
 handles a live state dict mixed with legacy LoRA keys), so both now use
-`vrl/rewards/models/qwen2vl_checkpoint.py` with a `prefix` argument; the
+`vrl/rewards/models/qwen2vl_legacy_keys.py` with a `prefix` argument; the
 old private names are gone and the tests call the shared functions. The HPSv3 test's nested-key fixture was extended to the full key set the
 exact-set gate requires.
 
