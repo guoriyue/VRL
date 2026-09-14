@@ -252,3 +252,35 @@ full_cpu requirement came from the much larger 480x832/81-frame three-rank gate;
 passing a smaller-video GPU-resident checkpoint test cannot close that separate
 full-geometry requirement. No threshold increase or hidden workload reduction
 is authorized by this diagnostic.
+
+## Real Expert GPU Checkpoint Placement Gate
+
+`wan22_checkpoint_placement_probe.py` completed with four ranks, exit 0, against
+the pinned Wan 2.2 transformer and transformer_2 weights, tested sequentially.
+Each used rank-32 FP32 LoRA, BF16 frozen weights/autocast, four-rank FSDP with
+CPU offload and precision policy none. Synthetic conditioning used the current
+comparison's CFG tensor geometry: latent [4,16,5,40,40], text [4,256,4096].
+The squared-output loss is a capacity/numerical diagnostic, not GRPO replay.
+
+All four `wan22_checkpoint_placement_four/rank-*.json` reports verify exact
+outputs and all 640 local gradient tensors per expert between `full` and
+`full_cpu`. Each expert/rank had 320 nonzero gradient tensors; all gradients were
+finite. GPU peak allocated bytes were 8,147,722,752 and 8,146,674,176 for full,
+versus 4,963,328,512 and 4,962,279,936 for full_cpu. Full fits with substantial
+headroom at this geometry. The experts were not co-resident, and no rollout
+workers, reward, optimizer update or larger-video acceptance is established.
+
+RSS observations and elapsed times are retained in the reports but are not
+controlled throughput results: full ran first, and its CPU reference output and
+gradients remained alive during the subsequent comparison. All GPU processes
+exited and the compute inventory was empty after the probe.
+
+Prepared `wan22_rebased_gpu_checkpoint_{single,four}.yaml` using structured config
+loading. Both resolve through current `resolve_online_run`. Deep comparison
+against the original equal-work reload configs verifies only checkpoint mode
+and output/artifact paths changed. The native `wan22_gpu_checkpoint_launch.py`
+uses `torchrun -m vrl.scripts.train`, with no backward monkeypatch or pinned-cache
+intervention; it retains the 95% threshold and refuses occupied GPUs/output paths.
+It also returns a nonzero supervisor status on known Ray memory-kill or policy
+release-failure log markers, even when torchrun exits 0. Full runtime/checkpoint
+audits are still required. Neither newly prepared arm has run yet.
