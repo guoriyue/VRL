@@ -121,3 +121,29 @@ crossing, including the distinction between active and cached pinned memory.
 Do not promote optimizer-boundary trimming as a capacity fix or rerun this same
 failed intervention. Keep the matching single-card performance arm pending a
 complete four-card run.
+
+## Pinned Allocator Observation Gate
+
+The locked Torch 2.11.0+cu130 environment exposes
+`torch.cuda.memory.host_memory_stats()` and the private
+`torch._C._host_emptyCache()` used by its own CUDA graph implementation.
+`vrl/trainers/activation_checkpointing.py:cpu_checkpoint_func` uses
+`save_on_cpu(pin_memory=True)`, making this allocator relevant to replay.
+
+The bounded real-CUDA `pinned_host_allocator_probe.py` exited 0 and preserved its
+raw report in `pinned_host_allocator_probe.json`. After an asynchronous transfer
+from a 256 MiB pinned buffer, dropping that buffer and synchronizing, emptying
+the host cache reduced allocator-owned bytes from 269,484,040 to 1,048,576.
+A separately retained 1 MiB pinned tensor still contained the expected values.
+After releasing that tensor and emptying again, allocator-owned bytes were zero.
+This proves the local API can reclaim this synthetic unused allocation while
+preserving that live tensor, not that it fixes Wan or is a production contract.
+
+Crucially, the raw active counters were inconsistent: after emptying, reported
+active bytes exceeded allocator-owned bytes; the final active-byte count was
+269,484,041 with a cumulative freed count of -1 despite zero owned allocations.
+The probe's `passed` status concerns release and retained tensor contents only,
+not validity of every statistic. Do not subtract active bytes from owned bytes
+to diagnose a leak in this environment. Future replay traces must retain raw
+counters and pair them with process RSS/PSS and measured release deltas. Do not
+patch the installed Torch or assume its accounting anomaly explains Wan's OOM.
