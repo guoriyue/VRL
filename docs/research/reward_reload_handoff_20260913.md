@@ -284,3 +284,36 @@ intervention; it retains the 95% threshold and refuses occupied GPUs/output path
 It also returns a nonzero supervisor status on known Ray memory-kill or policy
 release-failure log markers, even when torchrun exits 0. Full runtime/checkpoint
 audits are still required. Neither newly prepared arm has run yet.
+
+## Native GPU Checkpoint Four-Rank Pilot Passed
+
+Candidate `29f3e5eb` completed `wan22_rebased_gpu_checkpoint_four` using the native
+training entrypoint, full checkpointing, native reload reward lifecycle and no
+per-backward diagnostic cleanup. Both updates collected eight global samples
+at the unchanged 320x320/17-frame geometry and nine replay steps. Supervisor and
+torchrun exited 0 after 727.229s, including startup, saving and shutdown.
+
+Independent `checkpoint_audit.json` passed for checkpoint-1 and checkpoint-2:
+1280 FP32 model/Adam/EMA entries, correct progress, four-rank RNG and all adapter
+tensors changed on the second update. Each update's maximum pre-update logprob
+difference and clip fraction were zero with positive gradient norm.
+`first_state_comparison.json` exactly matches the prior full_cpu first checkpoint
+across 6412 tensors, four arrays and 8962 scalar leaves. `final_state_comparison.json`
+likewise matches checkpoint-final to checkpoint-2, including RNG and optimizer.
+
+The supervisor's runtime log health check passed. All four Raylet logs from
+sessions 17:50:38/39 (trainer PIDs 878802-878805) were independently checked:
+no above-threshold memory report or worker memory-kill record. No policy-release
+cleanup warning occurred. All GPU processes exited; all three CPU audit commands
+exited 0. `run_acceptance.json` records this short four-rank pilot as passed.
+
+713 memory samples reached a minimum 25,095,458,816 bytes host available and a
+maximum 15,183,446,016 bytes GPU use. Per-rank phase totals were 311.337-311.569s
+for update 1 and 258.369-259.171s for update 2; these phase totals exclude some
+outer startup/checkpoint/shutdown work and are not an accepted speedup ratio.
+
+Next run the already prepared matching native single-card full-checkpoint arm,
+then compare exact workload, quality/correctness evidence and timing boundaries.
+Do not repeat the passing four-card pilot merely to wait for more evidence.
+This result does not establish long-run stability, single-card scaling, the
+separate full-video geometry gate, or completion of the overall multi-GPU goal.
