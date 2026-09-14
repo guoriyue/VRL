@@ -380,6 +380,76 @@ async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
     assert runtime._pool is None
 
 
+@pytest.mark.gpu
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.environ.get("WM_RUN_REAL_MODEL_TESTS") != "1", reason="explicit CUDA pool gate"
+)
+async def test_reward_pool_captures_noncurrent_cuda_device(monkeypatch) -> None:
+    """A reward pinned to cuda:1 must pool, park, and restore on cuda:1 while
+    the driver's current device stays cuda:0 throughout."""
+
+    import vrl.rewards.runtime as runtime_module
+
+    if torch.cuda.device_count() < 2:
+        pytest.skip("requires two CUDA devices")
+    original = torch.cuda.current_device()
+    torch.cuda.set_device(0)
+
+    class Model:
+        def __init__(self, config):
+            self.value = torch.full((1024 * 1024,), 3.0, device=config["device"])
+
+        def prepare_for_inference(self):
+            self.lazy = torch.full_like(self.value, 7.0)
+
+    monkeypatch.setattr(runtime_module, "import_from_path", lambda _: Model)
+    runtime = InProcessRewardScorer(
+        {
+            "device": "cuda:1",
+            "sleep_offload": True,
+            "model_factory": "test:factory",
+            "memory_parking_residual_bytes_limit": CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
+        }
+    )
+    try:
+        await runtime.activate()
+        assert torch.cuda.current_device() == 0
+        pool = runtime._pool
+        assert pool is not None
+        owned = [data for data in pool._allocator.pointer_to_data.values() if data.tag == pool.tag]
+        assert owned, "target-device model allocations escaped the CuMem pool"
+        await runtime.park_memory()
+        assert torch.cuda.current_device() == 0
+        await runtime.activate()
+        assert torch.equal(runtime._model.value.cpu(), torch.full((1024 * 1024,), 3.0))
+        assert torch.equal(runtime._model.lazy.cpu(), torch.full((1024 * 1024,), 7.0))
+    finally:
+        await runtime.shutdown()
+        assert torch.cuda.current_device() == 0
+        torch.cuda.set_device(original)
+
+
+def test_reward_device_scope_targets_the_configured_cuda_device(monkeypatch) -> None:
+    from contextlib import nullcontext
+
+    from vrl.rewards.runtime import _reward_device_scope
+
+    seen: list[object] = []
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device", lambda target: seen.append(target) or nullcontext())
+    with _reward_device_scope("cuda:1"):
+        pass
+    assert seen == [torch.device("cuda:1")]
+    with _reward_device_scope("cpu"), _reward_device_scope(""), _reward_device_scope(None):
+        pass
+    assert len(seen) == 1
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with _reward_device_scope("cuda:1"):
+        pass
+    assert len(seen) == 1
+
+
 def test_sleep_offload_rejects_injected_model() -> None:
     """An injected model was not built inside the runtime-owned CuMem pool."""
     with pytest.raises(ValueError, match="model_factory"):

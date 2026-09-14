@@ -21,6 +21,7 @@ import asyncio
 import time
 import traceback
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from typing import Any
 
 from vrl.config.reward_inference import (
@@ -221,6 +222,24 @@ class RewardFunctionRuntime:
             self.lifecycle.finish_shutdown()
 
 
+def _reward_device_scope(device: str | None) -> Any:
+    """Make the reward's configured CUDA device current for a CuMem pool call.
+
+    PyTorch's pluggable-allocator pool scope (``pool.building`` / ``sleep`` /
+    ``wake`` / ``close``) captures the CURRENT device, not whatever ``.to()``
+    target the model uses. A reward pinned to a non-current card (``cuda:1``
+    beside a trainer on ``cuda:0``) would otherwise tag or release pages on the
+    wrong device. An unset or CPU device is a no-op scope.
+    """
+
+    import torch
+
+    if not device or not torch.cuda.is_available():
+        return nullcontext()
+    target = torch.device(device)
+    return torch.cuda.device(target) if target.type == "cuda" else nullcontext()
+
+
 def _build_prepared_model_in_pool(
     pool: CumemPool,
     factory: Any,
@@ -234,7 +253,7 @@ def _build_prepared_model_in_pool(
     in the caller or traceback would leave its tensors live during cleanup.
     """
 
-    with pool.building():
+    with _reward_device_scope(worker_config.get("device")), pool.building():
         model = factory(worker_config)
         prepare = getattr(model, "prepare_for_inference", None)
         if callable(prepare):
@@ -298,7 +317,8 @@ class InProcessRewardScorer:
 
         self._ensure_model()
         if self._pool is not None:
-            self._pool.wake()
+            with _reward_device_scope(self._launch.device):
+                self._pool.wake()
 
     async def park_memory(self) -> None:
         """Park reward pages and release cached CUDA memory; safe to retry."""
@@ -315,7 +335,8 @@ class InProcessRewardScorer:
         if not pool.asleep:
             # CumemPool marks itself asleep only after allocator.sleep returns.
             # A failure therefore leaves this branch retryable on the next call.
-            pool.sleep()
+            with _reward_device_scope(self._launch.device):
+                pool.sleep()
         self._release_cuda_memory_for_parking()
 
     def _ensure_model(self) -> Any:
@@ -345,7 +366,8 @@ class InProcessRewardScorer:
                     traceback.clear_frames(load_error.__traceback__)
                     try:
                         self._release_cuda_memory_for_parking()
-                        pool.close()
+                        with _reward_device_scope(self._launch.device):
+                            pool.close()
                     except BaseException as cleanup_error:
                         raise RuntimeError(
                             "reward model preparation and CuMem cleanup both failed: "
@@ -366,7 +388,8 @@ class InProcessRewardScorer:
             return []
         model = self._ensure_model()
         if self._pool is not None:
-            self._pool.wake()
+            with _reward_device_scope(self._launch.device):
+                self._pool.wake()
         # CuMem's model-building scope is one-shot. Execution uses the normal
         # allocator; park_memory's physical baseline gate rejects any lazy
         # long-lived CUDA allocation that survives scoring.
@@ -426,11 +449,12 @@ class InProcessRewardScorer:
         # dropping the model so freeing the tensors actually returns the
         # pool's memory instead of leaking offloaded copies.
         pool = self._pool
-        if pool is not None:
-            pool.wake()
-        self._model = None
-        if pool is not None:
-            pool.close()
+        with _reward_device_scope(self._launch.device) if pool is not None else nullcontext():
+            if pool is not None:
+                pool.wake()
+            self._model = None
+            if pool is not None:
+                pool.close()
         # Dedicated CUDA rewards use torch's caching allocator rather than a
         # CuMem pool. Dropping the model alone leaves those physical pages
         # reserved in this long-lived driver process, so terminal cleanup must
