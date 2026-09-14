@@ -54,6 +54,11 @@ from typing import Any, ClassVar
 from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.config_contract import AlgorithmConfigContract
 from vrl.algorithms.diffusion_nft import normalized_mse
+from vrl.algorithms.previous_adapter import (
+    flipped_advantage_losses,
+    flow_time,
+    sync_previous_policy_adapter,
+)
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.models.precision import model_autocast
@@ -192,7 +197,7 @@ class VGRPO:
                 "(the forward-process transformer input hook)",
             )
 
-        t = _flow_time(t_raw, x0)
+        t = flow_time(t_raw, x0, owner="V-GRPO")
         t_expanded = t.view(-1, *([1] * (x0.ndim - 1)))
         noise = self._group_shared_noise(
             x0,
@@ -328,16 +333,13 @@ class VGRPO:
         protocol method.
         """
 
-        import torch
-
-        def _loss(adv: Any) -> float:
-            with torch.random.fork_rng():
-                torch.manual_seed(0)
-                loss, _ = self.compute_batch_timestep_loss(model, batch, timestep_index, adv)
-            return float(loss.detach().float().item())
-
-        loss = _loss(advantages)
-        flipped_loss = _loss(-advantages)
+        loss, flipped_loss = flipped_advantage_losses(
+            self,
+            model=model,
+            batch=batch,
+            advantages=advantages,
+            timestep_index=timestep_index,
+        )
         abs_sum = abs(loss + flipped_loss)
         return {
             "event": "first_step_v_grpo_invariant",
@@ -352,35 +354,8 @@ class VGRPO:
     def after_optimizer_step(self, model: Any, global_step: int) -> None:
         """Refresh the behaviour policy and advance the group-noise counter."""
 
-        sync = getattr(model, "sync_previous_policy_adapter", None)
-        if not callable(sync):
-            raise RuntimeError(
-                "V-GRPO model must expose sync_previous_policy_adapter(decay=...) "
-                "for behaviour-policy refresh",
-            )
-        sync(decay=float(self.config.weight_copy_decay))
+        sync_previous_policy_adapter(model, decay=self.config.weight_copy_decay, owner="V-GRPO")
         self._update_counter = int(global_step) + 1
-
-
-def _flow_time(t_raw: Any, x0: Any) -> Any:
-    """Normalize a rollout timestep grid into flow time ``t`` in ``[0, 1]``.
-
-    The same ``/1000`` heuristic and EDM guard as DiffusionNFT: a ``[0, 1000]``
-    grid (SD3, FLUX, Wan) divides down; an EDM-scale grid would leave ``[0, 1]``
-    and push ``x_t`` off the data manifold, so it fails loud.
-    """
-
-    import torch
-
-    t = t_raw.to(device=x0.device, dtype=torch.float32)
-    if bool((t > 1.0).any()):
-        t = t / 1000.0
-    if bool((t > 1.0).any()) or bool((t < 0.0).any()):
-        raise RuntimeError(
-            "V-GRPO timestep grid must normalize into [0, 1]; got "
-            f"min={float(t.min()):.4g}, max={float(t.max()):.4g} after the /1000 heuristic",
-        )
-    return t
 
 
 __all__ = ["VGRPO", "VGRPOConfig"]

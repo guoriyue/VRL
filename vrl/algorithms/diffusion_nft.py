@@ -7,6 +7,11 @@ from typing import Any, ClassVar
 
 from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.config_contract import AlgorithmConfigContract
+from vrl.algorithms.previous_adapter import (
+    flipped_advantage_losses,
+    flow_time,
+    sync_previous_policy_adapter,
+)
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.models.precision import model_autocast
@@ -108,28 +113,19 @@ class DiffusionNFT:
         Ratio-style parity is blind to NFT (it computes no log-prob ratio); the
         equivalent collection-time check is advantage antisymmetry — with the
         previous adapter freshly synced, the loss is invariant to flipping the
-        advantage signs. The RNG is forked and seeded so both evaluations draw
-        the same NFT noise when the trajectory carries none.
+        advantage signs.
 
         Called by the trainer's debug.first_step branch through this optional
         protocol method, keeping algorithm-specific checks out of the trainer.
         """
 
-        import torch
-
-        def _loss(adv: Any) -> float:
-            with torch.random.fork_rng():
-                torch.manual_seed(0)
-                loss, _ = self.compute_batch_timestep_loss(
-                    model,
-                    batch,
-                    timestep_index,
-                    adv,
-                )
-            return float(loss.detach().float().item())
-
-        loss = _loss(advantages)
-        flipped_loss = _loss(-advantages)
+        loss, flipped_loss = flipped_advantage_losses(
+            self,
+            model=model,
+            batch=batch,
+            advantages=advantages,
+            timestep_index=timestep_index,
+        )
         abs_diff = abs(loss - flipped_loss)
         return {
             "event": "first_step_nft_invariant",
@@ -207,21 +203,7 @@ class DiffusionNFT:
                 "DiffusionNFT model must expose diffusion_nft_prepare_transformer_input(...)",
             )
 
-        t = t_raw.to(device=x0.device, dtype=torch.float32)
-        if bool((t > 1.0).any()):
-            t = t / 1000.0
-        # The /1000 heuristic assumes a [0, 1] or [0, 1000] timestep grid.
-        # EDM-style grids (e.g. Cosmos Predict2 FlowMatch, timesteps up to
-        # 80000) would land far outside [0, 1] and silently push the
-        # xt = (1-t)*x0 + t*noise interpolation off the data manifold — the
-        # same failure shape as the predict2 sigma-domain incident. Fail loud.
-        if bool((t > 1.0).any()) or bool((t < 0.0).any()):
-            raise RuntimeError(
-                "DiffusionNFT timestep grid must normalize into [0, 1]; got "
-                f"min={float(t.min()):.4g}, max={float(t.max()):.4g} after "
-                "the /1000 heuristic. EDM-scale timestep grids are not "
-                "supported by this normalization.",
-            )
+        t = flow_time(t_raw, x0, owner="DiffusionNFT")
         t = t.to(dtype=x0.dtype)
         t_expanded = t.view(-1, *([1] * (x0.ndim - 1)))
         noise = replay_tensors.get("diffusion_nft_noise")
@@ -313,14 +295,9 @@ class DiffusionNFT:
         """Refresh the previous-policy adapter after an optimizer step."""
 
         del global_step
-        sync = getattr(model, "sync_previous_policy_adapter", None)
-        if not callable(sync):
-            raise RuntimeError(
-                "DiffusionNFT model must expose "
-                "sync_previous_policy_adapter(decay=...) "
-                "for previous-policy refresh",
-            )
-        sync(decay=float(self.config.weight_copy_decay))
+        sync_previous_policy_adapter(
+            model, decay=self.config.weight_copy_decay, owner="DiffusionNFT"
+        )
 
 
 __all__ = ["DiffusionNFT", "DiffusionNFTConfig"]
