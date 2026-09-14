@@ -2,6 +2,16 @@
 
 ## Current Handoff (2026-09-13)
 
+USER PAUSE: Wan was intentionally cancelled at the user's request on 2026-09-13
+around 22:16 UTC to release hardware for another agent's cleanup and SD3.5
+profiling. Do not automatically restart Wan or launch other GPU work from this
+thread until the user resumes it. Run: wan_i2v_full_physics_batch_local_scheduler.
+Its full generation and all three parking gates passed, but no optimizer
+checkpoint exists. All live claims below predate the cancellation. Preserve
+all artifacts; the ongoing update is not a resumable checkpoint.
+Release verified: session 9662 is terminal and all four GPUs have no compute
+processes. Cancellation provenance is recorded in the run's user_pause.json.
+
 This section supersedes historical live claims below. The rebased Wan 2.2
 320x320/17-frame native full-checkpoint comparison is complete: two updates,
 eight global samples per update, single-card 2185.404s versus four-card 727.229s
@@ -28,12 +38,25 @@ Full-size I2V prerequisites now pass on the locked runtime: real three-rank
 on GPU 3 with exact repeated scores. The initial missing VideoCon vendor import
 was resolved using the pinned clean source and an explicit experiment import
 path; original dirty submodules are untouched. No full native update has yet
-run on this candidate. Prepared launcher and evidence:
+completed on this candidate. Prepared launcher and evidence:
 docs/research/wan_full_physics_rebased_20260913.md in the review-all worktree.
-Active claim: GPUs 0-3 for one original-geometry native I2V physics update,
-candidate d2d01db8, supervisor PID 910531 / session 21086. Output:
-/mnt/nvme/outputs/wan_i2v_full_physics_rebased_local. GPU inventory was empty before
-launch. Do not start another GPU task while this exact supervisor is live.
+Full native attempt d2d01db8, supervisor PID 910531/session 21086, is terminal
+exit 1 after 1705.464s. All six full-size videos and both rewards completed,
+but every rollout worker failed the unchanged physical parking gate before
+training. No optimizer update or checkpoint; artifacts and failure audit:
+/mnt/nvme/outputs/wan_i2v_full_physics_rebased_local. All native processes exited.
+All parking diagnostics are terminal. The batch-local scheduler fix passes a
+real full-shape native one-step probe (session 49430): 542 MiB parked physical
+usage, 116 MiB over baseline, below the unchanged 256 MiB allowance. Its ten
+initialized output/conditioning tensors match the old probe exactly, including
+video; unwritten probe trajectory slots are explicitly excluded. Expanded CPU
+regression: 141 passed, two GPU deselections. No full update is claimed.
+Output: wan22_i2v_cache/wan_i2v_parking_batch_local_scheduler. GPUs are released.
+The full six-sample native retry is now active in exec session 9662, from
+clean commit 5dd2c74e, at /mnt/nvme/outputs/wan_i2v_full_physics_batch_local_scheduler.
+It owns GPUs 0-2 for policy and GPU 3 for real rewards; no concurrent hardware
+task. This supersedes the diagnostic's released claim. Replay/checkpoint/resume
+gates remain open; poll this handle rather than restarting on an observation timeout.
 Previous supervisor 909502/session 40899 exited 1 before policy weight loading:
 Diffusers requested shard metadata despite HF_HUB_OFFLINE. The new launch adds
 model.local_files_only=true without changing the pinned revision or workload.
@@ -4018,3 +4041,72 @@ RSS/PSS/USS before collection, after collection, after glibc trim, and after
 the original optimizer method. No training math/threshold change. Compare
 checkpoint-1 against the previous accepted first checkpoint if it completes.
 No concurrent GPU arm; monitor this exact live handle to terminal status.
+
+### GPU claim: prefetch-benefit profiling (vrl-74, 2026-09-13 22:30 PDT)
+
+The Codex Wan I2V full-physics run at
+`/mnt/nvme/outputs/wan_i2v_full_physics_batch_local_scheduler` was torn down
+at 22:16 PDT (torchrun SIGTERM/SIGKILL, no optimizer update, metrics.csv
+empty); GPU inventory is empty. vrl-74 now owns GPUs 0-3 for a ~2.5 h
+sequential queue under `outputs/sd3_5_ocr_prefetch_profile/`: five 3-epoch arms
+of the SD3.5 3x1 preset (strict / continuous, in-process vs HTTP OCR service,
+eager vs replay-compiled) with py-spy on the driver and dmon on GPU 0. Do not
+launch GPU work until `queue.log` says "queue done".
+
+### Prefetch benefit confirmed once OCR leaves the driver (vrl-74, 2026-09-13 23:40 PDT)
+
+`outputs/sd3_5_ocr_prefetch_profile/`, SD3.5 3x1 preset, 3 epochs per arm,
+epochs 1-2 averaged, py-spy on the driver main thread, dmon on GPU 0:
+
+| arm | epoch wall | evaluate | backward | GPU0 SM% in evaluate | PaddleOCR share of driver samples |
+|---|---|---|---|---|---|
+| strict, in-process OCR | 509 s | 253 s | 155 s | 44% | 29% (serial, in collect) |
+| continuous, in-process OCR | 469 s | 282 s | 187 s | 45% | 28% (concurrent with training) |
+| continuous, OCR via HTTP service (CPU process) | **398 s** | 248 s | 150 s | 52% | 0% |
+
+- The replay is launch-bound (GPU0 idle >50% of evaluate; 12-15% of driver
+  samples in nn.Linear.forward / diffusers norms / PEFT layers).
+- In-process PaddleOCR competes with kernel launch when prefetch overlaps it:
+  +61 s on evaluate+backward, halving the prefetch gain (509 -> 469 s).
+- Moving OCR to `vrl-reward-service` (`+reward=ocr_http`, commit 59857f2b)
+  restores evaluate/backward to the strict numbers and delivers the full
+  overlap: 509 -> 398 s per epoch, **1.28x**, above the 25% ceiling estimated
+  from the serial collect time because the driver also stops paying the
+  in-process scoring cost. Rewards stay in the same range (0.35/0.46/0.29 vs
+  0.36/0.51/0.22 on the same prompts).
+- Rule for continuous scheduling on launch-bound recipes: keep every reward out
+  of the driver process (HTTP service or a dedicated GPU), or the overlap is
+  paid back in slower training phases. Compile arms (replay-scoped
+  torch.compile) still running.
+
+### Prefetch / reward placement / compile: final five-arm table (vrl-74, 2026-09-14 00:30 PDT)
+
+`outputs/sd3_5_ocr_prefetch_profile/`, SD3.5 3x1 preset (batch 1), epochs 1-2
+averaged; `*_diag` arms ran with `trainer.replay_parity.max_abs_logprob_diff=0.05`
+because both compile scopes trip the 0.01 gate (replay-only 0.025, both roles
+0.014).
+
+| arm | epoch wall | evaluate | backward | GPU0 SM% (evaluate) | pre_update_clip_fraction | ratio_abs_dev_max |
+|---|---|---|---|---|---|---|
+| strict, in-process OCR (eager) | 509 s | 253 | 155 | 44% | 0.00 | 0 |
+| continuous, in-process OCR | 469 s | 282 | 187 | 45% | 0.16-0.18 | 0.02-0.03 |
+| continuous, OCR HTTP service | 398 s (1.28x) | 248 | 150 | 52% | 0.17 | 0.02-0.03 |
+| strict, compile scope=all (diag) | 270 s (1.89x) | 138 | 61 | 63% | 0.54 | 0.010-0.014 |
+| continuous, HTTP OCR, compile (diag) | **206 s (2.48x)** | 143 | 62 | 67% | 0.54-0.60 | 0.014-0.030 |
+
+Conclusions:
+1. The SD3.5 replay is launch-bound (GPU0 idle >50% of evaluate in eager).
+2. Prefetch pays its full ~25% only when no reward runs inside the driver
+   process; in-process CPU OCR competing with kernel launch cost 61 s/epoch.
+   `+reward=ocr_http` (commit 59857f2b) fixes that: 509 -> 398 s.
+3. torch.compile removes most of the launch overhead (1.89x strict, 2.48x
+   stacked) but is NOT a usable training configuration as-is: with
+   clip_ratio=1e-4 the compiled rollout/replay drift (max 0.014-0.030) clips
+   54-60% of samples before any update. Same root cause as the batch-16
+   parity failure: bf16 kernel paths differ between rollout and replay.
+   Enabling it in production requires lifting clip_ratio and the parity gate
+   above the measured drift (the Wan precedent, be6cbbe2), which is one
+   decision for compile and batch 16 together.
+4. The in-process-vs-HTTP rule is conditional: it matters only when reward is
+   CPU-bound, scheduling is continuous, and training is launch-bound. Strict
+   video recipes with GPU rewards (Wan + HPSv3) are unaffected.
