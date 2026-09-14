@@ -182,8 +182,8 @@ class NextStep1Model(ARModelBase):
         kv_uncond = (
             self._init_kv(uncond_embeds, uncond_mask) if uncond_embeds is not None else None
         )
-        c_cond = self._last_hidden(kv_cond)
-        c_uncond = self._last_hidden(kv_uncond) if kv_uncond is not None else None
+        c_cond = kv_cond["last_hidden"]
+        c_uncond = kv_uncond["last_hidden"] if kv_uncond is not None else None
 
         out = torch.zeros(B, L_img, device=tokens.device, dtype=torch.float32)
         for j in range(L_img):
@@ -332,10 +332,6 @@ class NextStep1Model(ARModelBase):
             "past_key_values": out.past_key_values,
             "last_hidden": out.hidden_states[-1][:, -1],  # [B, D_hidden]
         }
-
-    @staticmethod
-    def _last_hidden(kv: Any) -> torch.Tensor:
-        return kv["last_hidden"]
 
     def _step_llm(
         self,
