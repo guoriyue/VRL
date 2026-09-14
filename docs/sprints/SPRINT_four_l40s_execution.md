@@ -1,5 +1,44 @@
 # Four L40S hardware execution
 
+## Current Handoff (2026-09-13)
+
+This section supersedes historical live claims below. The rebased Wan 2.2
+320x320/17-frame native full-checkpoint comparison is complete: two updates,
+eight global samples per update, single-card 2185.404s versus four-card 727.229s
+whole-process elapsed (3.0051x). Both checkpoint audits and runtime health passed;
+all sixteen score maps match, with maximum cross-arm model difference 4.6566e-10.
+The initial full_cpu memory failures and their diagnostic claims are terminal,
+not jobs to resume. The old continuous queue remains disabled.
+
+Authoritative evidence is in the review-all worktree on
+feat/reward-reload-handoff, docs/research/reward_reload_handoff_20260913.md,
+through 2e46a5b1. The preserved review/all-mgpu-main-6b723075 branch remains
+at 4e2c1163; follow-up runtime work has not been pushed.
+
+Cold four-rank strict resume is now terminal and numerically verified. From
+checkpoint-1 it executed only update 2, eight samples, in 485.419s. All model,
+Adam, EMA and four-rank RNG values exactly match uninterrupted checkpoint-2;
+the only Python representation difference is Adam betas tuple versus list.
+All eight score maps match; final checkpoint matches resumed checkpoint-2.
+No Ray memory-kill or threshold report occurred. Supervisor session 87314 and
+torchrun 895679 exited 0, GPUs released. Output:
+/mnt/nvme/outputs/wan22_i2v_cache/wan22_rebased_gpu_checkpoint_resume_four.
+Full-size I2V prerequisites now pass on the locked runtime: real three-rank
+14B full-shape forward/backward with full_cpu, and both real HTTP physics rewards
+on GPU 3 with exact repeated scores. The initial missing VideoCon vendor import
+was resolved using the pinned clean source and an explicit experiment import
+path; original dirty submodules are untouched. No full native update has yet
+run on this candidate. Prepared launcher and evidence:
+docs/research/wan_full_physics_rebased_20260913.md in the review-all worktree.
+Active claim: GPUs 0-3 for one original-geometry native I2V physics update,
+candidate d2d01db8, supervisor PID 910531 / session 21086. Output:
+/mnt/nvme/outputs/wan_i2v_full_physics_rebased_local. GPU inventory was empty before
+launch. Do not start another GPU task while this exact supervisor is live.
+Previous supervisor 909502/session 40899 exited 1 before policy weight loading:
+Diffusers requested shard metadata despite HF_HUB_OFFLINE. The new launch adds
+model.local_files_only=true without changing the pinned revision or workload.
+This does not close full-geometry, Cosmos/H3 requirements or the overall goal.
+
 ## Released claim: corrected four-GPU strict timing
 
 User explicitly requested the missing synchronous arm after the two-arm short
@@ -3841,3 +3880,141 @@ terminated with exit 1 after 198.739 seconds following the requested SIGTERM;
 fresh compute inventory is empty. No completed update or accepted timing is
 claimed for this interrupted retry. Existing output and monitoring receipts
 are retained. Do not resume the experiment queue until requested by the user.
+
+User explicitly resumed hardware work after the review-branch push. Claim GPUs
+0-3 for the interrupted equal-work Wan mmap trial on clean candidate 9145b2af.
+Fresh inventory has no compute processes; host available memory is 367 GiB.
+New output four_mmap_resumed restarts from the original initialization (not a
+checkpoint), with only artifact paths changed: 2 updates x 8 global samples.
+Keep both previous failed/interrupted outputs. Acceptance still requires
+completed updates, checkpoint audit and the matched single-card comparison.
+
+Release GPUs 0-3. four_mmap_resumed exited 1 after 295.623 seconds. All eight
+initial samples were generated and scored, but the trainer's host budget gate
+rejected the collected batch at 97.1% used (95% limit, about 11 GiB available).
+No optimizer update or accepted timing. Fresh compute inventory is empty;
+retain complete logs/monitoring. mmap loading alone does not establish capacity.
+Claim GPU 0 for a bounded real Kling load/score/park host-memory diagnostic,
+including explicit allocator trim and identical-score validation after wake.
+
+Release GPU 0. Production-contract Kling host and pinned-host probes exited 0,
+with exact repeat scores across park/wake. libc trim recovered only ~110 MiB;
+pinned cache clearing during live parking recovered only 15 bytes. After model
+shutdown, pinned cache clearing recovered ~5.83 GiB. Two initial isolated
+attempts omitted the registry residual allowance and failed zero-limit checks;
+the corrected probes use the declared production allowance. Candidate unchanged.
+Fresh compute inventory empty. Details and receipts are in the Wan report.
+Next reduce cross-phase resident copies/owner lifetime, not memory thresholds
+or workload. Four-rank update capacity and fair speedup remain unaccepted.
+
+Post-integration continuation, 2026-09-13: review candidate 4e2c1163 passed
+791 affected CPU tests and 12 explicit tiny GPU tests. Previous goal turn made
+progress; no full experiment completion is claimed. GPU inventory was empty
+before and after the next bounded real Kling owner-lifetime probe on GPU 0.
+Review branch and its committed artifacts remain unchanged by this diagnostic.
+
+Evidence: /mnt/nvme/outputs/wan22_i2v_cache/kling_reload_lifetime_rebased/result.json
+and sibling kling_reload_lifetime_probe.py. Locked review environment uses
+Torch 2.11.0+cu130; local pinned Kling weights, fixed original MP4 SHA256,
+two independent runtime owners with two scores each. All four complete score
+maps are exactly equal (overall -0.6317654154646988). Initial load 40.167s,
+reload 37.685s; shutdown 0.274s/0.291s. GPU allocated memory after shutdown is
+9,568,256 bytes, reserved 41,943,040 bytes. RSS after first shutdown is
+2,008,236,032 bytes, after second 4,732,772,352 bytes. Thus ordinary runtime
+shutdown/reload is numerically repeatable here but does not prove bounded host
+residency or four-rank capacity. No production lifecycle option was changed.
+
+This unpooled diagnostic is not a direct comparison to the older pooled,
+re-encoded-media parking probe. Even the older original-MP4 direct probe used
+Torch 2.12 and returned a different overall score (-0.6489913727634578).
+Do not attribute this difference to a specific dependency without isolation;
+do not mix these environments as a fair throughput/learning baseline. Future
+single/four-rank arms must share the rebased commit, locked environment, exact
+artifact and numerical recipe. Next distinguish live ownership from allocator
+retention after repeated shutdown before integrating any reload policy.
+
+Follow-up retention isolation on GPU 0 completed on unchanged review candidate
+4e2c1163 and locked Torch 2.11. Evidence: kling_reload_retention_rebased/result.json
+and kling_reload_retention_rebased.log under the same NVMe experiment root.
+Each cycle tracked 1124 weak references to the reward wrapper, torch model and
+parameters; none survived shutdown/collection. Second shutdown RSS was
+4,726,161,408 bytes; gc did not change it, but malloc_trim reduced it to
+1,921,343,488 bytes. This identifies ~2.61 GiB of reclaimable libc retention,
+not surviving tracked model owners. The first-cycle trimmed RSS was
+1,900,134,400 bytes. This Torch version has no empty_host_cache API, so the
+host-cache-labelled snapshot is explicitly a no-op, not a successful clear.
+All four scores exactly match the previous rebased fixed-MP4 result.
+
+Then claimed GPUs 0-3 for a bounded four-process reward-only reproduction,
+one physical GPU per process, two independent loads and two scores per load.
+Supervisor kling_reload_four_probe.py completed exit 0 in 91.028s; result and
+per-rank logs: kling_reload_retention_four_rebased/. All 16 complete score maps
+are exactly equal. Both cycles on all ranks have zero surviving tracked model
+owners. Final per-rank RSS after shutdown/trim: 1,906,061,312; 1,913,630,720;
+1,919,094,784; 1,911,480,320 bytes. Reload times 37.76-37.97s, initial loads
+40.25-40.50s. Minimum sampled host available memory 369,606,246,400 bytes.
+Fresh GPU inventory empty after supervisor and all children exited.
+
+This establishes an explicit owner-release/trim candidate with repeatable
+reward scores on four GPUs, not a pooled-parking A/B, long-run leak bound, or
+combined Wan trainer capacity/throughput result. Production defaults and
+memory protection remain unchanged. Next implement an opt-in reward teardown
+handoff with failure cleanup and RNG invariants, then run both equal-work
+single/four-rank Wan arms on the same rebased runtime. Account for measured
+reload overhead; never compare new timings against old-environment scores.
+
+Implemented opt-in native reward reload parking on feat/reward-reload-handoff,
+candidate a6fc7356 (worktree /home/ubuntu/VRL-review-all). The review/all-mgpu-main-
+6b723075 ref stays at 4e2c1163. Default CuMem behavior unchanged. Explicit reload
+mode requires sleep_offload and glibc, destroys the scorer model and trims
+released CPU heap at handoff; next activation reloads under preserved RNG.
+115 focused inference/disk-reward/online-lifecycle tests passed. Native four-GPU
+Kling probe exited 0: all 16 score maps equal, reload 37.78-37.91s, final parked
+RSS 1.909-1.919 GB/rank. No script-side trim. Evidence:
+kling_native_reload_four_rebased/result.json and per-rank logs. GPUs released.
+Repository report: docs/research/reward_reload_handoff_20260913.md on new branch.
+
+Prepared fresh wan22_rebased_reload_single/four.yaml on the same locked runtime;
+CPU preflight passed global request equality and exact partitioned advantages,
+2 updates x 8 global samples, preserved prompt manifest and thresholds. The
+preparation script adapts old batch fields and manifest-loading API, not work.
+Next run full four-rank Wan capacity on this native candidate before the matched
+single-card arm; reward-only success does not establish combined capacity.
+
+Claim GPUs 0-3 for full Wan rebased native-reload capacity pilot, clean candidate
+76714903 (code a6fc7356), locked review venv, empty starting compute inventory.
+Supervisor wan22_rebased_reload_launch.py four, torchrun PID 846665, output
+wan22_rebased_reload_four, exclusive log/memory/process receipts. Two updates
+x eight global samples; no changed numerical gate or memory threshold. Both
+training experts load from the pinned local Wan2.2 checkpoint. Monitor through
+terminal status; do not launch another arm while this process remains live.
+
+Release GPUs 0-3. Native reload four-rank Wan pilot exited 1 after 541.036s.
+First optimizer update and checkpoint-1 completed: exact-zero replay difference
+and pre-update clip fraction, gradient norm 0.030143787340297008. Independent
+checkpoint_1_audit.json passed all 1280 FP32 parameters/Adam/EMA and four-rank RNG,
+progress and eight global samples. No second update: next rollout wake surfaced
+Ray's earlier worker kills for >95% host usage. Do not claim accepted timing or
+speedup from the 335.68-335.76s first-update phase totals.
+
+Memory: 523 samples, minimum available 7,638,007,808B, max GPU 11,983,126,528B.
+Raylet threshold crossing starts 16:45:31-32, optimizer runs 16:45:31.384-32.575,
+worker kills about 16:45:39, driver failure appears on next wake 16:45:52.
+At kill, rollout workers use ~55.6-56.4GiB each, trainers ~29GiB each, object
+store occupancy zero. Remaining pressure is at optimizer/update boundary;
+precise live allocations versus allocator retention not yet established.
+Fresh compute inventory empty, all handles terminal, failure artifacts retained.
+Next isolate optimizer/export/checkpoint CPU lifetimes without lowering work or
+raising thresholds. Single-card arm not yet run. Full report on follow-up branch:
+docs/research/reward_reload_handoff_20260913.md.
+
+Claim GPUs 0-3 for a diagnostic boundary-trim reproduction on unchanged code
+ffbebe7e. Valid first checkpoint contains 838,860,800B model, 1,677,726,720B
+optimizer and 838,860,800B EMA tensors (logical full-state sizes, not rank RSS).
+New output wan22_rebased_boundary_trim_four, torchrun PID 853437, supervisor
+wan22_boundary_trim_launch.py. Same two updates/eight global samples/config
+except artifact paths; entry wrapper wan22_boundary_trim_entry.py records
+RSS/PSS/USS before collection, after collection, after glibc trim, and after
+the original optimizer method. No training math/threshold change. Compare
+checkpoint-1 against the previous accepted first checkpoint if it completes.
+No concurrent GPU arm; monitor this exact live handle to terminal status.
