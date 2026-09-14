@@ -17,7 +17,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from vrl.ray.dependencies import kill_actors, require_ray
+from vrl.ray.dependencies import (
+    kill_actors,
+    note_kill_failures,
+    raise_if_kill_failures,
+    require_ray,
+)
 from vrl.ray.operation_deadline import get_ray_refs
 from vrl.ray.placement import actor_meta_get, actor_scheduling_strategy
 from vrl.utils.deadline import require_timeout
@@ -128,12 +133,7 @@ class RayActorGroup:
                 )
             ]
         except BaseException as error:
-            failures = kill_actors(ray, actors)
-            if failures:
-                error.add_note(
-                    "Ray actor-group startup cleanup incomplete: "
-                    f"{len(failures)} actor kill(s) failed",
-                )
+            note_kill_failures(error, kill_actors(ray, actors), what="Ray actor-group startup")
             raise
 
         return cls(handles=handles)
@@ -149,10 +149,7 @@ class RayActorGroup:
         self.handles[:] = [
             handle for handle in self.handles if id(handle.actor) in failed_actor_ids
         ]
-        if failures:
-            raise RuntimeError(
-                f"Ray actor-group cleanup incomplete: {len(failures)} actor kill(s) failed",
-            ) from failures[0][1]
+        raise_if_kill_failures(failures, what="Ray actor-group")
 
 
 __all__ = ["RayActorGroup", "RayActorHandle"]

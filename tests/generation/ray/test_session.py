@@ -203,7 +203,7 @@ async def test_close_retains_only_actor_handles_that_failed_to_die(
     monkeypatch.setattr(session_module, "require_ray", lambda: ray)
     session = _session(first, failed)
 
-    with pytest.raises(RuntimeError, match="1 rank actor kill") as caught:
+    with pytest.raises(RuntimeError, match="1 actor kill") as caught:
         await session.close(force=False)
 
     assert isinstance(caught.value.__cause__, RuntimeError)

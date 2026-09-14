@@ -96,10 +96,33 @@ def kill_actors(ray: Any, actors: list[Any]) -> list[tuple[Any, Exception]]:
     return failures
 
 
+def raise_if_kill_failures(failures: list[tuple[Any, Exception]], *, what: str) -> None:
+    """Refuse to report ``what``'s cleanup as complete when any kill failed."""
+
+    if failures:
+        raise RuntimeError(
+            f"{what} cleanup incomplete: {len(failures)} actor kill(s) failed",
+        ) from failures[0][1]
+
+
+def note_kill_failures(
+    error: BaseException,
+    failures: list[tuple[Any, Exception]],
+    *,
+    what: str,
+) -> None:
+    """Attach kill failures to an error already propagating out of ``what``."""
+
+    if failures:
+        error.add_note(f"{what} cleanup incomplete: {len(failures)} actor kill(s) failed")
+
+
 __all__ = [
     "ClusterTopology",
     "current_gpu_ids",
     "current_node_ip",
     "kill_actors",
+    "note_kill_failures",
+    "raise_if_kill_failures",
     "require_ray",
 ]
