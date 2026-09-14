@@ -153,6 +153,28 @@ class BatchMemoryReading:
 
         return self.reserved_start_bytes + self.free_start_bytes
 
+    @staticmethod
+    def cuda_occupancy_snapshot() -> dict[str, int] | None:
+        """Device occupancy at batch start, or None off CUDA.
+
+        The half of a reading that can only be measured before the denoise loop
+        starts; the executor completes the record with the two per-phase peaks
+        and the sample count, and ``from_metrics`` reassembles it. The values
+        must be captured before the loop changes allocator occupancy.
+        """
+
+        import torch
+
+        if not torch.cuda.is_available():
+            return None
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        return {
+            "baseline_allocated_bytes": int(torch.cuda.memory_allocated()),
+            "reserved_start_bytes": int(torch.cuda.memory_reserved()),
+            "free_start_bytes": int(free_bytes),
+            "total_bytes": int(total_bytes),
+        }
+
     @classmethod
     def from_metrics(cls, raw: Mapping[str, Any]) -> BatchMemoryReading | None:
         """Normalize the binding-owned memory mapping once at the worker boundary."""

@@ -7,7 +7,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.execution.batch_memory import cuda_occupancy_snapshot
+from vrl.generation.execution.types import BatchMemoryReading
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
 from vrl.generation.steps.denoise.teacache import TeaCacheState
 from vrl.math.denoise.flow_matching import SDEStepResult, sde_step_with_logprob
@@ -183,7 +183,7 @@ def run_denoise_loop(
     batch_rows = state.latents.shape[0]
     device = state.latents.device
     reset_cuda_peak()
-    occupancy = cuda_occupancy_snapshot()
+    occupancy = BatchMemoryReading.cuda_occupancy_snapshot()
     if config.seed is not None:
         generator = torch.Generator(device=device)
         generator.manual_seed(config.seed + config.sample_start)
