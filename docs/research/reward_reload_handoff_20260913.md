@@ -317,3 +317,61 @@ then compare exact workload, quality/correctness evidence and timing boundaries.
 Do not repeat the passing four-card pilot merely to wait for more evidence.
 This result does not establish long-run stability, single-card scaling, the
 separate full-video geometry gate, or completion of the overall multi-GPU goal.
+
+## Matched Single/Four-Card Comparison Completed
+
+Candidate `41a09f14` ran the unchanged prepared single-card arm through two
+updates, each with eight global samples. Native full checkpointing and reload
+rewards match the four-card arm; four sequential two-sample prompt collections
+feed each single-card optimizer update. The process exited 0 after 2185.404s.
+GPU inventory was empty after exit. Its Raylet log (session 18:06:34, trainer
+PID 886096) contained no above-threshold or memory-kill record, and the driver
+had no policy-release cleanup warning.
+
+Both single-card checkpoint audits passed (1280 model/Adam/EMA entries, one-rank
+RNG, correct progress, all adapters changed on step 2). Both updates had zero
+pre-update replay error and clipping, with positive gradient norms. The final
+checkpoint exactly matches checkpoint-2 including model, optimizer, EMA and RNG.
+All sixteen complete reward score maps exactly match the four-card receipts,
+compared as multisets separately for each update. Temporary videos are removed
+by their lifecycle; this is score-receipt equality, not a video-file hash claim.
+
+`wan22_gpu_checkpoint_cross_arm_state.json` measures cross-topology differences:
+
+| State | Step 1 Maximum Absolute Difference | Step 2 Maximum Absolute Difference |
+| --- | ---: | ---: |
+| Model | 2.2419e-10 | 4.6566e-10 |
+| Adam first moment | 3.6380e-12 | 3.6380e-12 |
+| Adam second moment | 2.0817e-17 | 2.7756e-17 |
+| EMA | 2.0145e-10 | 4.6566e-10 |
+
+These are very small measured differences, not bitwise cross-rank identity or
+a theorem about every future update. Model relative L2 error was 1.2602e-11
+and 1.9617e-11 respectively. Rank-local RNG intentionally differs by topology.
+
+The structured comparison verifies all numerical-work config fields match;
+only device count, per-rank prompt count and output paths differ. The prompt
+manifest SHA256 remains c7e11000d5cfe554ed1cc7665905d36467a0864844e806d9cdab01bf299bebfb.
+Actual rollout receipts independently establish eight samples per update in
+both arms. `wan22_gpu_checkpoint_timing_comparison.json` reports:
+
+| Timing Boundary | Single Card | Four Cards | Speedup |
+| --- | ---: | ---: | ---: |
+| Whole two-update process | 2185.404s | 727.229s | 3.0051x |
+| Update 1 phase total, slowest rank | 962.354s | 311.569s | |
+| Update 2 phase total, slowest rank | 941.884s | 259.171s | |
+| Sum of update phase totals | 1904.238s | 570.740s | 3.3364x |
+
+Whole-process elapsed time fell 66.723%. Phase totals are rounded log values
+and exclude outer startup/save/shutdown; they must not be mixed with the first
+row's boundary. Single-card memory sampling (2170 observations) reached a
+minimum 228,500,951,040 host-available bytes and maximum 12,484,345,856 GPU-used
+bytes. Four-card memory results remain in the preceding section.
+
+This closes the matched two-update Wan 2.2 320x320/17-frame pilot comparison.
+It is one run per arm, not statistical steady-state scaling or evidence of
+learning quality. It does not replace the separate SD3.5 128-sample timings or
+close larger-video, long-run, Cosmos or H3 requirements. Do not repeat this
+completed pilot; return to the remaining experiment gates. Evidence scripts
+and reports remain under `/mnt/nvme/outputs/wan22_i2v_cache`, with both raw runs
+preserved and no push performed.
