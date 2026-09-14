@@ -10,7 +10,7 @@ from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.generation.ray.engine import RayGenerationEngine, rank_handles
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.weight_sync import GenerationWeightSync
-from vrl.ray.dependencies import kill_actors, raise_if_kill_failures, require_ray
+from vrl.ray.dependencies import kill_actors, kill_failures_error, require_ray
 from vrl.utils.deadline import OperationDeadline
 
 logger = logging.getLogger(__name__)
@@ -184,7 +184,8 @@ class RayGenerationSession:
         # Once shutdown starts, engines are no longer executable. Retry cleanup
         # through the retained rank handles without rebuilding partial engines.
         self.engines.clear()
-        raise_if_kill_failures(failures, what="Ray generation session")
+        if cleanup := kill_failures_error(failures, what="Ray generation session"):
+            raise cleanup
 
     def force_close(self) -> None:
         """Upgrade current or future cleanup to skip graceful rank release."""

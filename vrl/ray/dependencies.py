@@ -96,25 +96,22 @@ def kill_actors(ray: Any, actors: list[Any]) -> list[tuple[Any, Exception]]:
     return failures
 
 
-def raise_if_kill_failures(failures: list[tuple[Any, Exception]], *, what: str) -> None:
-    """Refuse to report ``what``'s cleanup as complete when any kill failed."""
-
-    if failures:
-        raise RuntimeError(
-            f"{what} cleanup incomplete: {len(failures)} actor kill(s) failed",
-        ) from failures[0][1]
-
-
-def note_kill_failures(
-    error: BaseException,
+def kill_failures_error(
     failures: list[tuple[Any, Exception]],
     *,
     what: str,
-) -> None:
-    """Attach kill failures to an error already propagating out of ``what``."""
+) -> RuntimeError | None:
+    """The error that says ``what``'s cleanup is incomplete, or None when every kill landed.
 
-    if failures:
-        error.add_note(f"{what} cleanup incomplete: {len(failures)} actor kill(s) failed")
+    Owners either ``raise`` it (cleanup was the operation) or ``add_note`` its
+    text onto an error already propagating (cleanup ran on the way out).
+    """
+
+    if not failures:
+        return None
+    error = RuntimeError(f"{what} cleanup incomplete: {len(failures)} actor kill(s) failed")
+    error.__cause__ = failures[0][1]
+    return error
 
 
 __all__ = [
@@ -122,7 +119,6 @@ __all__ = [
     "current_gpu_ids",
     "current_node_ip",
     "kill_actors",
-    "note_kill_failures",
-    "raise_if_kill_failures",
+    "kill_failures_error",
     "require_ray",
 ]

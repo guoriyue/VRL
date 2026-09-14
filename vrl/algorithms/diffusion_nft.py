@@ -7,11 +7,7 @@ from typing import Any, ClassVar
 
 from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.config_contract import AlgorithmConfigContract
-from vrl.algorithms.previous_adapter import (
-    flipped_advantage_losses,
-    flow_time,
-    sync_previous_policy_adapter,
-)
+from vrl.algorithms.previous_adapter import PreviousAdapterObjective
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.models.precision import model_autocast
@@ -55,33 +51,20 @@ class DiffusionNFTConfig:
     weight_copy_decay: float = 0.0
 
 
-class DiffusionNFT:
+class DiffusionNFT(PreviousAdapterObjective):
     """DiffusionNFT-style GRPO objective.
 
     This objective does not consume evaluator log-prob signals. It trains from
     generated clean latents, prompt embeddings, sampled diffusion timesteps, and
     video-level rewards. This algorithm is diffusion-specific and owns its
-    model-forward objective assembly.
+    model-forward objective assembly. Likelihood-free: it computes no
+    importance-sampling ratio, and its positive/negative decomposition is taken
+    against the previous-policy adapter the parent refreshes every step.
     """
 
-    uses_evaluator = False
-    # Replay-branch contract (AlgorithmAdapter.validate_inputs): NFT trains the
-    # forward process from these rollout tensors only — no reverse-SDE
-    # trajectory, no log-probs. Declaring them lets the adapter fail fast with
-    # available-vs-missing diagnostics, replacing the old inline per-key check.
-    required_data_keys = ("latents_clean", "prompt_embeds", "timesteps")
-    required_signal_keys: tuple[str, ...] = ()
-    needs_kl_intermediates = False
-    requires_active_trust_region = False
-    # DiffusionNFT is likelihood-free: it computes no importance-sampling ratio
-    # to reweight off-policy samples, and its positive/negative decomposition is
-    # taken against a previous-policy adapter that ``after_optimizer_step``
-    # refreshes every step. Training on rollouts generated under a superseded
-    # policy is therefore silently biased, not just noisy. So unlike GRPO (whose
-    # IS ratio absorbs a bounded version lag), NFT requires strictly on-policy
-    # data — the continuous-rollout staleness window must be 0. Consumed by
-    # build_rollout_schedule to fail fast on an unsound max_stale>0 config.
-    tolerates_off_policy_staleness = False
+    name = "DiffusionNFT"
+    invariant_event = "first_step_nft_invariant"
+    invariant_name = "advantage_flip"
 
     def __init__(self, config: DiffusionNFTConfig | None = None) -> None:
         self.config = config or DiffusionNFTConfig()
@@ -100,43 +83,9 @@ class DiffusionNFT:
             global_std=cfg.global_std,
         )
 
-    def first_step_invariant_check(
-        self,
-        *,
-        model: Any,
-        batch: Any,
-        advantages: Any,
-        timestep_index: int = 0,
-        threshold: float = 1.0e-6,
-    ) -> dict[str, Any]:
-        """NFT's lr=0 invariant: flipping advantages must not change the loss.
-
-        Ratio-style parity is blind to NFT (it computes no log-prob ratio); the
-        equivalent collection-time check is advantage antisymmetry — with the
-        previous adapter freshly synced, the loss is invariant to flipping the
-        advantage signs.
-
-        Called by the trainer's debug.first_step branch through this optional
-        protocol method, keeping algorithm-specific checks out of the trainer.
-        """
-
-        loss, flipped_loss = flipped_advantage_losses(
-            self,
-            model=model,
-            batch=batch,
-            advantages=advantages,
-            timestep_index=timestep_index,
-        )
-        abs_diff = abs(loss - flipped_loss)
-        return {
-            "event": "first_step_nft_invariant",
-            "invariant": "advantage_flip",
-            "loss": loss,
-            "flipped_loss": flipped_loss,
-            "abs_diff": abs_diff,
-            "threshold": threshold,
-            "passed": abs_diff <= threshold,
-        }
+    def _invariant_residual(self, loss: float, flipped_loss: float) -> float:
+        # Flipping advantages must not change the loss.
+        return abs(loss - flipped_loss)
 
     def compute_loss(
         self,
@@ -194,7 +143,7 @@ class DiffusionNFT:
                 f"have leading dims {advantages.shape[0]} and {x0.shape[0]}",
             )
 
-        t = flow_time(t_raw, x0, owner="DiffusionNFT")
+        t = self.flow_time(t_raw, x0)
         t = t.to(dtype=x0.dtype)
         t_expanded = t.view(-1, *([1] * (x0.ndim - 1)))
         noise = replay_tensors.get("diffusion_nft_noise")
@@ -269,14 +218,6 @@ class DiffusionNFT:
             update=PolicyUpdateStats(
                 approx_kl=kl_value,
             ),
-        )
-
-    def after_optimizer_step(self, model: Any, global_step: int) -> None:
-        """Refresh the previous-policy adapter after an optimizer step."""
-
-        del global_step
-        sync_previous_policy_adapter(
-            model, decay=self.config.weight_copy_decay, owner="DiffusionNFT"
         )
 
 

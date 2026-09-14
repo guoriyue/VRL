@@ -32,8 +32,7 @@ from vrl.ray.dependencies import (
     ClusterTopology,
     current_gpu_ids,
     kill_actors,
-    note_kill_failures,
-    raise_if_kill_failures,
+    kill_failures_error,
     require_ray,
 )
 from vrl.ray.operation_deadline import get_ray_refs
@@ -617,9 +616,13 @@ class GlobalRayPlacementOwner:
                 context=f"bundles={gpu_bundles}",
             )
         except BaseException as error:
-            note_kill_failures(error, kill_actors(ray, actors), what="placement probe actor")
+            if cleanup := kill_failures_error(
+                kill_actors(ray, actors), what="placement probe actor"
+            ):
+                error.add_note(str(cleanup))
             raise
-        raise_if_kill_failures(kill_actors(ray, actors), what="placement probe actor")
+        if cleanup := kill_failures_error(kill_actors(ray, actors), what="placement probe actor"):
+            raise cleanup
         probed: dict[int, int] = {}
         for bundle_index, gpu_ids in zip(gpu_bundles, results, strict=True):
             if not gpu_ids:

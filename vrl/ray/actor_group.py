@@ -19,8 +19,7 @@ from typing import Any
 
 from vrl.ray.dependencies import (
     kill_actors,
-    note_kill_failures,
-    raise_if_kill_failures,
+    kill_failures_error,
     require_ray,
 )
 from vrl.ray.operation_deadline import get_ray_refs
@@ -133,7 +132,10 @@ class RayActorGroup:
                 )
             ]
         except BaseException as error:
-            note_kill_failures(error, kill_actors(ray, actors), what="Ray actor-group startup")
+            if cleanup := kill_failures_error(
+                kill_actors(ray, actors), what="Ray actor-group startup"
+            ):
+                error.add_note(str(cleanup))
             raise
 
         return cls(handles=handles)
@@ -149,7 +151,8 @@ class RayActorGroup:
         self.handles[:] = [
             handle for handle in self.handles if id(handle.actor) in failed_actor_ids
         ]
-        raise_if_kill_failures(failures, what="Ray actor-group")
+        if cleanup := kill_failures_error(failures, what="Ray actor-group"):
+            raise cleanup
 
 
 __all__ = ["RayActorGroup", "RayActorHandle"]

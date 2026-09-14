@@ -55,11 +55,7 @@ from typing import Any, ClassVar
 from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.config_contract import AlgorithmConfigContract
 from vrl.algorithms.diffusion_nft import normalized_mse
-from vrl.algorithms.previous_adapter import (
-    flipped_advantage_losses,
-    flow_time,
-    sync_previous_policy_adapter,
-)
+from vrl.algorithms.previous_adapter import PreviousAdapterObjective
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.models.precision import model_autocast
@@ -111,21 +107,17 @@ class VGRPOConfig:
             )
 
 
-class VGRPO:
-    """Variational GRPO objective on the forward-process replay branch."""
+class VGRPO(PreviousAdapterObjective):
+    """Variational GRPO objective on the forward-process replay branch.
 
-    uses_evaluator = False
-    required_data_keys = ("latents_clean", "prompt_embeds", "timesteps")
-    required_signal_keys: tuple[str, ...] = ()
-    needs_kl_intermediates = False
-    # The ratio is a real trust region only when a second gradient step runs on
-    # the same rollouts; at ppo_epochs=1 it is identically 1 and the objective
-    # is REINFORCE with a group baseline, which is the paper's Stage-1 recipe.
-    requires_active_trust_region = False
-    # The behaviour policy is the previous adapter refreshed every optimizer
-    # step, not the policy that generated a stale rollout: training on rollouts
-    # from a superseded policy would score them against the wrong theta_old.
-    tolerates_off_policy_staleness = False
+    The ratio is a real trust region only when a second gradient step runs on
+    the same rollouts; at ppo_epochs=1 it is identically 1 and the objective
+    is REINFORCE with a group baseline, which is the paper's Stage-1 recipe.
+    """
+
+    name = "V-GRPO"
+    invariant_event = "first_step_v_grpo_invariant"
+    invariant_name = "advantage_antisymmetry"
 
     def __init__(self, config: VGRPOConfig | None = None) -> None:
         self.config = config or VGRPOConfig()
@@ -189,7 +181,7 @@ class VGRPO:
                 "V-GRPO batch mismatch: latents_clean, prompt_embeds and advantages "
                 f"have leading dims {batch_size}, {prompt_embeds.shape[0]}, {advantages.shape[0]}",
             )
-        t = flow_time(t_raw, x0, owner="V-GRPO")
+        t = self.flow_time(t_raw, x0)
         t_expanded = t.view(-1, *([1] * (x0.ndim - 1)))
         noise = self._group_shared_noise(
             x0,
@@ -297,45 +289,14 @@ class VGRPO:
 
     # -- lifecycle ------------------------------------------------------------
 
-    def first_step_invariant_check(
-        self,
-        *,
-        model: Any,
-        batch: Any,
-        advantages: Any,
-        timestep_index: int = 0,
-        threshold: float = 1.0e-6,
-    ) -> dict[str, Any]:
-        """The lr=0 invariant: with ``previous == default`` the ratio is 1, so
-        the objective is linear in the advantage and the loss is antisymmetric
-        under flipping it (``loss(A) + loss(-A) == 2 * kl_term == 0``).
+    def _invariant_residual(self, loss: float, flipped_loss: float) -> float:
+        # With previous == default the ratio is 1, so the objective is linear
+        # in the advantage: loss(A) + loss(-A) == 2 * kl_term == 0.
+        return abs(loss + flipped_loss)
 
-        Called by the trainer's debug.first_step branch through this optional
-        protocol method.
-        """
-
-        loss, flipped_loss = flipped_advantage_losses(
-            self,
-            model=model,
-            batch=batch,
-            advantages=advantages,
-            timestep_index=timestep_index,
-        )
-        abs_sum = abs(loss + flipped_loss)
-        return {
-            "event": "first_step_v_grpo_invariant",
-            "invariant": "advantage_antisymmetry",
-            "loss": loss,
-            "flipped_loss": flipped_loss,
-            "abs_diff": abs_sum,
-            "threshold": threshold,
-            "passed": abs_sum <= threshold,
-        }
-
-    def after_optimizer_step(self, model: Any, global_step: int) -> None:
-        """Refresh the behaviour policy and advance the group-noise counter."""
-
-        sync_previous_policy_adapter(model, decay=self.config.weight_copy_decay, owner="V-GRPO")
+    def _after_previous_adapter_sync(self, global_step: int) -> None:
+        # Advance the group-noise counter so the shared noise changes across
+        # updates while staying fixed within one.
         self._update_counter = int(global_step) + 1
 
 

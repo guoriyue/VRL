@@ -23,10 +23,9 @@ from vrl.generation.execution.types import (
     GenerationBatchResult,
     PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
-    combine_rank_batch_results,
 )
 from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
-from vrl.generation.ray.engine import RayGenerationEngine
+from vrl.generation.ray.engine import RayGenerationEngine, combine_rank_batch_results
 from vrl.generation.ray.pipeline_protocol import (
     PipelinedProgressError,
     PipelinedRequestProgress,
