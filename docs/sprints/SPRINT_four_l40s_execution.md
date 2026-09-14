@@ -23,9 +23,14 @@ All eight score maps match; final checkpoint matches resumed checkpoint-2.
 No Ray memory-kill or threshold report occurred. Supervisor session 87314 and
 torchrun 895679 exited 0, GPUs released. Output:
 /mnt/nvme/outputs/wan22_i2v_cache/wan22_rebased_gpu_checkpoint_resume_four.
-Next inspect the remaining full-size I2V physics update gate on the locked
-runtime. No GPU claim is active. This does not close separate full-geometry,
-Cosmos/H3 requirements or the overall hardware goal.
+Full-size I2V prerequisites now pass on the locked runtime: real three-rank
+14B full-shape forward/backward with full_cpu, and both real HTTP physics rewards
+on GPU 3 with exact repeated scores. The initial missing VideoCon vendor import
+was resolved using the pinned clean source and an explicit experiment import
+path; original dirty submodules are untouched. No full native update has yet
+run on this candidate. Prepared launcher and evidence:
+docs/research/wan_full_physics_rebased_20260913.md. No GPU claim is active.
+This does not close full-geometry, Cosmos/H3 requirements or the overall goal.
 
 ## Released claim: corrected four-GPU strict timing
 
