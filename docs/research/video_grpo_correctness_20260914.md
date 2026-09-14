@@ -63,10 +63,51 @@ The existing decord 0.6.0 wheel metadata mismatch still makes uv dry-run propose
 the same-version reinstall after frozen sync; no lock or vendor patches hide it.
 All work in this continuation was CPU-only. GPU inventory was empty at entry.
 
-## Remaining VDN gate
+## VDN OnlineTrainer and CUDA gate completed
 
-Use the existing video GRPO contracts to add bounded native trainer and GPU
-coverage, including actual trainable placement, synchronization and checkpoint
-resume. Keep random-weight architectural tests explicitly separate from
-released-weight loading and quality. Do not restart the cancelled full-size
-Wan queue merely to answer whether the tested small-video RL framework works.
+`tests/trainers/online/test_vdn_grpo_composition.py` now passes on CPU and one
+L40S with real tiny VDN computation. The collector lifecycle and [0, 1] rewards
+are controlled doubles, while the batch executor, training-side replay model,
+DiffusionSDELogProbEvaluator, GRPO, OnlineTrainer.step, AdamW, EMA and checkpoint
+save/load/restore APIs are production implementations.
+
+It executes two distinct samples per update, three generation steps, replay
+microbatch width one and two updates. A separate rollout model receives CPU
+weight snapshots before subsequent sampling. Both updates have positive
+gradient norm and replay error below 1e-6. The runtime's recorded first-step
+CUDA replay error is exactly zero at its unchanged 0.01 gate.
+
+After checkpoint-1, an independently built trainer restores model, optimizer,
+EMA and RNG, then executes update two. The sampled actions, all model tensors,
+Adam state and EMA state exactly equal the uninterrupted update; gradient norms
+also match. This trains the hybrid output projection (256 FP32 parameters),
+not the released LoRA recipe or the whole model.
+
+The initial CUDA fixture correctly failed the framework's CPU-snapshot guard:
+the test getter returned CUDA tensors. Fixing the test getter to export detached
+CPU copies resolved it; no production guard, math or threshold was changed.
+
+Final results:
+
+- Related CPU regression: 113 passed, three GPU deselections, 4.98s.
+- CUDA gate: one passed, one CPU deselection, 8.96s in the persisted run.
+- Scoped Ruff check/format and git diff checks passed.
+- GPU compute inventory is empty after the test exits.
+
+Persisted artifacts under `/mnt/nvme/outputs/wan22_i2v_cache`:
+`vdn_grpo_cuda_20260914.xml` and `vdn_grpo_cuda_20260914/`, including the real
+checkpoint-1 and control/resume replay debug receipts.
+
+## Acceptance boundary
+
+The clarified short correctness objective has evidence at complementary levels:
+real-weight Wan native updates plus single/multi-GPU and resume agreement;
+VDN reward-signed gradient/optimizer checks; and VDN CPU/CUDA OnlineTrainer
+composition with strict state restoration. These support the tested video RL
+framework contracts, not universal correctness for every future configuration.
+
+Released-weight VDN loading, its LoRA/device-partitioned recipe, multi-GPU VDN,
+full-resolution throughput and held-out semantic quality remain unverified.
+They are distinct deployment/quality experiments, not claims made by these
+tests. Do not restart the cancelled full-size Wan queue merely to answer
+whether the tested small-video RL framework works.
