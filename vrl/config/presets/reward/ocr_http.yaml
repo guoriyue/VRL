@@ -1,0 +1,20 @@
+# OCR reward scored by the standalone PaddleOCR service instead of in the
+# trainer process. Compose ON TOP of an experiment that already includes
+# /reward/ocr (the scoring knobs there are the in-process defaults, which the
+# HTTP transport requires; the service's worker_config owns the real values):
+#
+#   python -m vrl.scripts.train --config experiment/sd3_5/online_grpo_ocr \
+#     +reward=ocr_http
+#
+# Service: vrl/config/reward_service/ocr_paddle.yaml (port 8312).
+reward:
+  kwargs:
+    ocr:
+      media_type: image
+      artifact_format: tensor
+      artifact_dir: ${trainer.output_dir}/reward_artifacts
+  inference:
+    ocr:
+      kind: http
+      endpoint: http://127.0.0.1:8312
+      expected_model: ocr-paddle

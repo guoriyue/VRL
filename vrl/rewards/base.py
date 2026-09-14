@@ -503,7 +503,10 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
     stay in pinned host RAM (the rollout/trainer own the GPU then), mirroring
     the rollout lease's sleep/wake. ``scorer`` injects a ready
     ``RewardScorer`` (HTTP components, tests); it wins over the factory-built
-    one. Disk files belong to this reward call and are deleted after terminal
+    one. ``artifact_store`` likewise injects a ready store: a reward that
+    scores in-process without a CUDA model (OCR) keeps its tensors in memory
+    and materializes to disk only when its scorer is remote. Disk files
+    belong to this reward call and are deleted after terminal
     success or failure; explicit ``retain_artifacts`` or an ambiguous remote
     state transfers them to the debug/output owner instead.
     """
@@ -535,6 +538,7 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
         retain_artifacts: bool = False,
         worker_config: Mapping[str, Any] | None = None,
         scorer: RewardScorer | None = None,
+        artifact_store: RewardArtifactStore | None = None,
     ) -> None:
         # Deferred: runtime.py imports this module (cycle guard).
         from vrl.rewards.runtime import build_reward_scorer
@@ -547,11 +551,12 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
         )
         media_type = self.default_media_type if media_type is None else media_type
 
-        artifact_store = DiskRewardArtifactStore(
-            artifact_dir,
-            media_type=str(media_type),
-            artifact_format=str(artifact_format),
-        )
+        if artifact_store is None:
+            artifact_store = DiskRewardArtifactStore(
+                artifact_dir,
+                media_type=str(media_type),
+                artifact_format=str(artifact_format),
+            )
 
         if scorer is None:
             worker_cfg = dict(worker_config or {})

@@ -444,6 +444,56 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
     assert reward.external_accelerator_isolation_verified is False
 
 
+def test_http_ocr_reward_uses_disk_tensors_and_the_remote_scorer(tmp_path) -> None:
+    from vrl.rewards.artifacts import DiskRewardArtifactStore
+
+    reward = MultiReward.from_dict(
+        {"ocr": 1.0},
+        device="cpu",
+        reward_kwargs={"ocr": {"artifact_dir": str(tmp_path), "score_key": "ocr_match"}},
+        inference_configs={
+            "ocr": RewardInferenceConfig(
+                kind="http",
+                endpoint="http://reward:8312",
+                expected_model="ocr-paddle",
+            ),
+        },
+    )
+
+    component = reward.rewards[0][2]
+    assert isinstance(component, DiskArtifactRewardFunction)
+    assert isinstance(component.scorer, HttpRewardScorer)
+    assert isinstance(component.artifact_store, DiskRewardArtifactStore)
+    assert component.score_key == "ocr_match"
+    with pytest.raises(AttributeError, match="remote reward service"):
+        component._engine = object()
+
+
+def test_http_ocr_reward_refuses_locally_set_engine_knobs() -> None:
+    with pytest.raises(ValueError, match="worker_config"):
+        MultiReward.from_dict(
+            {"ocr": 1.0},
+            device="cpu",
+            reward_kwargs={"ocr": {"substring_full_credit": False}},
+            inference_configs={
+                "ocr": RewardInferenceConfig(
+                    kind="http",
+                    endpoint="http://reward:8312",
+                    expected_model="ocr-paddle",
+                ),
+            },
+        )
+
+
+def test_in_process_ocr_reward_keeps_media_in_memory() -> None:
+    from vrl.rewards.artifacts import InMemoryRewardArtifactStore
+    from vrl.rewards.functions.ocr import OCRReward
+
+    reward = OCRReward(device="cpu")
+    assert isinstance(reward.artifact_store, InMemoryRewardArtifactStore)
+    assert reward.scoring_is_nonblocking is False
+
+
 def test_http_reward_rejects_inmemory_artifact_component() -> None:
     with pytest.raises(ValueError, match="in-memory artifacts"):
         MultiReward.from_dict(

@@ -176,3 +176,17 @@ two differently configured instances of the same component. If a future recipe
 needs both Kling `visual_quality` and `motion_quality`, add explicit registry
 aliases such as `kling_video_reward_vq` / `kling_video_reward_mq`, or change the schema to
 a list of component instances in a separate sprint.
+
+## OCR over the standalone PaddleOCR service
+
+`+reward=ocr_http` on top of any experiment that already includes `/reward/ocr`
+moves OCR scoring out of the trainer process: media is written as `.pt`
+tensors under `${trainer.output_dir}/reward_artifacts` and scored by the same
+`OCRRewardModel` in its own CPU process, so the launch-bound replay never
+shares its event loop with PaddleOCR. The scoring knobs then live in the
+service config, not `reward.kwargs.ocr`:
+
+```bash
+.venv/bin/python -m vrl.rewards.service.server \
+  --config vrl/config/reward_service/ocr_paddle.yaml
+```
