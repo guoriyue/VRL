@@ -10,7 +10,6 @@ schema owner.
 from __future__ import annotations
 
 import csv
-import hashlib
 import json
 import math
 import statistics
@@ -720,13 +719,9 @@ def _aesthetic_asset_record() -> dict[str, Any]:
     asset = resources.files("vrl.rewards.assets").joinpath(
         "sac+logos+ava1-l14-linearMSE.pth",
     )
-    digest = hashlib.sha256()
-    size = 0
-    with asset.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-            size += len(chunk)
-    sha256 = digest.hexdigest()
+    with resources.as_file(asset) as asset_path:
+        sha256 = sha256_file(asset_path)
+        size = asset_path.stat().st_size
     if sha256 != AESTHETIC_ASSET_SHA256 or size != AESTHETIC_ASSET_BYTES:
         raise ValueError(
             "packaged aesthetic MLP asset does not match the registered protocol: "
