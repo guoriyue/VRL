@@ -187,3 +187,30 @@ second reward-loading handoff's host footprint, accounting for post-update
 optimizer/checkpoint allocations, while retaining the replay release evidence.
 Do not rerun this same incomplete intervention or accept checkpoint-only/exit-code
 checks as an end-to-end gate.
+
+## Preload Heap Reclamation Candidate
+
+The explicit reload mode now collects garbage and trims the host heap before
+building a missing reward model, not only after destroying one. This shared
+process may have performed training, weight export and checkpoint saving since
+its previous reward shutdown. Live models are not trimmed on repeated activate
+calls, default CuMem behavior is unchanged, and no private pinned allocator API
+is added to production code. This candidate does not yet prove a Wan capacity fix.
+
+Preload cleanup failures propagate before the factory runs; retry and driver RNG
+preservation are covered. The locked reward inference suite passed 67 tests with
+four GPU tests deselected; scoped Ruff check/format and diff checks passed.
+
+`kling_preload_trim_four_rebased/result.json` records a real four-device,
+two-cycle reward-only run: 93.031s outer elapsed, all 16 complete score maps
+exact across workers/cycles and also exactly equal to the prior native reload
+run. Final parked RSS ranged from 1,896,611,840 to 1,906,302,976 bytes. Minimum
+sampled host availability was 367,623,798,784 bytes. All processes exited 0 and
+the GPU compute inventory was empty. This unloaded-host test establishes score
+and lifecycle regression coverage, not memory savings at Wan's loaded handoff.
+
+Next combine this candidate with the external per-backward pinned release
+diagnostic, recording immediately before and after reward preload reclamation.
+Retain the exact numerical workload and require no Ray OOM or cleanup warnings
+in addition to both checkpoint audits. Do not treat these reward-only timings
+as a single/four-card training comparison.

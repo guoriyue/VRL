@@ -53,7 +53,7 @@ async def test_reload_rebuilds_equal_scores_without_retaining_model(monkeypatch)
     finally:
         await scorer.shutdown()
     assert all(owner() is None for owner in owners)
-    assert len(trims) == 3
+    assert len(trims) == 5
 
 
 @pytest.mark.asyncio
@@ -83,7 +83,7 @@ async def test_failed_reload_preparation_releases_partial_model_and_can_retry(mo
     await scorer.activate()
     await scorer.shutdown()
     assert all(owner() is None for owner in owners)
-    assert len(trims) == 2
+    assert len(trims) == 4
 
 
 @pytest.mark.asyncio
@@ -92,7 +92,7 @@ async def test_failed_host_release_is_not_reported_as_success(monkeypatch):
 
     def trim():
         calls.append(True)
-        if len(calls) == 1:
+        if len(calls) == 2:
             raise RuntimeError("host release failed")
 
     monkeypatch.setattr(runtime, "import_from_path", lambda _: lambda config: object())
@@ -104,7 +104,40 @@ async def test_failed_host_release_is_not_reported_as_success(monkeypatch):
     with pytest.raises(RuntimeError, match="host release failed"):
         await scorer.park_memory()
     await scorer.park_memory()
-    assert len(calls) == 2
+    assert len(calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_reload_preload_release_failure_prevents_build_and_can_retry(monkeypatch):
+    events = []
+
+    def trim():
+        events.append("trim")
+        if len(events) == 1:
+            raise RuntimeError("preload release failed")
+
+    def factory(config):
+        events.append("build")
+        torch.rand(3)
+        return object()
+
+    monkeypatch.setattr(runtime, "import_from_path", lambda _: factory)
+    monkeypatch.setattr(runtime, "_host_memory_trim", lambda: trim)
+    scorer = runtime.InProcessRewardScorer(
+        {"model_factory": "test:model", "sleep_offload": True, "memory_parking_mode": "reload"}
+    )
+    before = torch.get_rng_state().clone()
+    with pytest.raises(RuntimeError, match="preload release failed"):
+        await scorer.activate()
+    assert events == ["trim"]
+    assert scorer._model is None
+    assert torch.equal(torch.get_rng_state(), before)
+    await scorer.activate()
+    assert events == ["trim", "trim", "build"]
+    await scorer.activate()
+    assert events == ["trim", "trim", "build"]
+    assert torch.equal(torch.get_rng_state(), before)
+    await scorer.shutdown()
 
 
 def test_reload_requires_explicit_parking_and_supported_mode():

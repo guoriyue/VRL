@@ -18,6 +18,7 @@ This module imports the CUDA parking utilities; the contract modules
 from __future__ import annotations
 
 import asyncio
+import gc
 import random
 import time
 import traceback
@@ -383,6 +384,11 @@ class InProcessRewardScorer:
                         "(import path to a RewardModel factory) or an explicit model",
                     )
                 factory = import_from_path(factory_path)
+                if self._trim_host_memory is not None:
+                    # Training and checkpoint export can retain freed host pages
+                    # between reward activations in this shared process.
+                    gc.collect()
+                    self._trim_host_memory()
                 if self._launch.sleep_offload:
                     pool = (
                         CumemPool.require()
