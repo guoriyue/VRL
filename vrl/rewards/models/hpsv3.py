@@ -42,8 +42,7 @@ from vrl.rewards.assets.hpsv3_prompts import (
     build_hpsv3_frame_prompt,
 )
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.hub import resolve_model_root
-from vrl.rewards.models.qwen2vl_legacy_keys import remap_legacy_qwen2vl_state_dict
+from vrl.rewards.models.hub import remap_legacy_qwen2vl_state_dict, resolve_model_root
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)

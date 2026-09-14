@@ -17,7 +17,7 @@ from vrl.rewards.assets.hpsv3_prompts import (
     build_hpsv3_frame_prompt,
 )
 from vrl.rewards.models.hpsv3 import _aggregate_frame_scores
-from vrl.rewards.models.qwen2vl_legacy_keys import remap_legacy_qwen2vl_state_dict
+from vrl.rewards.models.hub import remap_legacy_qwen2vl_state_dict
 
 
 class TestAggregateFrameScores:

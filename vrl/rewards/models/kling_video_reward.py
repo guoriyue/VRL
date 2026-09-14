@@ -23,8 +23,8 @@ from vrl.rewards.assets.kling_prompt_templates import (
     build_kling_video_reward_prompt,
 )
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.hub import HuggingFaceRepoRevision
-from vrl.rewards.models.qwen2vl_legacy_keys import (
+from vrl.rewards.models.hub import (
+    HuggingFaceRepoRevision,
     remap_legacy_qwen2vl_state_dict,
 )
 from vrl.utils.logging import init_logger, kv

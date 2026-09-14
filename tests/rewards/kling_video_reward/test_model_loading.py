@@ -270,13 +270,13 @@ def test_kling_video_reward_base_loader_honors_local_files_only(
     assert captured["model"][1]["revision"] == "main"
 
 
-def test_kling_video_reward_remaps_qwen2vl_legacy_keys_keys() -> None:
+def test_kling_video_reward_remaps_qwen2vl_checkpoint_keys() -> None:
     """Legacy Qwen2-VL keys remap into the transformers 5 layout: ``visual.*`` gains a ``model.``
     prefix, ``model.layers`` / ``embed_tokens`` move under ``model.language_model``, and
     ``lm_head`` is untouched.
     """
+    from vrl.rewards.models.hub import remap_legacy_qwen2vl_key
     from vrl.rewards.models.kling_video_reward import _PEFT_PREFIX
-    from vrl.rewards.models.qwen2vl_legacy_keys import remap_legacy_qwen2vl_key
 
     assert (
         remap_legacy_qwen2vl_key(
@@ -356,11 +356,11 @@ def test_checkpoint_loader_strict_loads_a_live_model_in_either_key_layout(tmp_pa
     """``remap_legacy_qwen2vl_state_dict`` compares against the LIVE model's keys and the
     loader then ``strict=True``-loads; both the current and the legacy layout must
     land on a fresh model bit-for-bit."""
+    from vrl.rewards.models.hub import remap_legacy_qwen2vl_state_dict
     from vrl.rewards.models.kling_video_reward import (
         _PEFT_PREFIX,
         load_kling_video_reward_checkpoint,
     )
-    from vrl.rewards.models.qwen2vl_legacy_keys import remap_legacy_qwen2vl_state_dict
 
     source = _lora_wrapped(seed=0)
     checkpoint = tmp_path / "checkpoint-11352"
