@@ -53,7 +53,7 @@ from vrl.scripts.families.cosmos.anima.generation_protocol import (
     AnimaGenerationArchive,
     AnimaGenerationCell,
 )
-from vrl.utils.json_files import write_json, write_jsonl
+from vrl.utils.json_files import canonical_json_sha256, write_json, write_jsonl
 
 # Persisted report protocol and its fixed blinding policy.
 REPORT_SCHEMA = "vrl.anima-exact-count-checkpoint-eval/v3"
@@ -348,11 +348,10 @@ def _build_reward_model(
         raise ValueError(
             "exact-person-count evaluation requires prompt_metadata_key='expected_people'",
         )
-    effective_json = json.dumps(worker_config, sort_keys=True, separators=(",", ":"))
     return model, {
         "backend": "codex",
         "config": str(config_source),
-        "effective_config_sha256": hashlib.sha256(effective_json.encode()).hexdigest(),
+        "effective_config_sha256": canonical_json_sha256(worker_config),
         "comparison_mode": model.comparison_mode,
         "expected_group_size": model.expected_group_size,
         "images_per_call": model.images_per_call,

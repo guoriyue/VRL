@@ -44,7 +44,7 @@ from vrl.trainers.checkpointing import (
 from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
 from vrl.utils.artifacts import resolve_artifact_path, sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
-from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
+from vrl.utils.json_files import canonical_json_sha256, read_jsonl, write_json, write_jsonl
 from vrl.utils.media import write_mp4
 
 logger = logging.getLogger(__name__)
@@ -719,8 +719,7 @@ def summarize_scores(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _json_sha256(value: Any) -> str:
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return canonical_json_sha256(value, ensure_ascii=False)
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:

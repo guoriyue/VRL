@@ -8,6 +8,7 @@ exceptions remove temporary files; abrupt process termination may leave one.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -33,6 +34,25 @@ def write_json(path: str | Path, value: Any, *, overwrite: bool = True) -> Path:
 
 def read_json(path: str | Path) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def canonical_json_sha256(value: Any, *, ensure_ascii: bool = True, allow_nan: bool = True) -> str:
+    """SHA-256 of ``value`` as compact, key-sorted JSON.
+
+    The one canonical form behind every persisted JSON digest (run evidence,
+    evaluation protocols, reward request fingerprints). ``ensure_ascii`` and
+    ``allow_nan`` are exposed because existing digests were minted with
+    specific settings; a producer and its verifier must pass the same ones.
+    """
+
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=ensure_ascii,
+        allow_nan=allow_nan,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def write_jsonl(

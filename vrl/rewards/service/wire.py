@@ -13,7 +13,6 @@ scoring requires disk-materialized artifacts.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, fields
@@ -31,6 +30,7 @@ from vrl.rewards.service.protocol import (
     RewardServiceInfo,
     RewardServiceProtocolError,
 )
+from vrl.utils.json_files import canonical_json_sha256
 
 
 def _wire_envelope(**payload: Any) -> dict[str, Any]:
@@ -175,13 +175,7 @@ def request_from_wire(payload: Any) -> RewardInferenceRequest:
 def request_fingerprint(request: RewardInferenceRequest) -> str:
     """Return a stable idempotency fingerprint for a normalized request."""
 
-    canonical = json.dumps(
-        request_to_wire(request),
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    return canonical_json_sha256(request_to_wire(request), allow_nan=False)
 
 
 def score_response_to_wire(

@@ -32,7 +32,7 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file
-from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
+from vrl.utils.json_files import canonical_json_sha256, read_jsonl, write_json, write_jsonl
 
 # Persisted protocol and asset identities. These constants are real schema
 # boundaries, not tunable experiment defaults or duplicated typed structures.
@@ -711,13 +711,7 @@ def _first_config_difference(actual: Any, expected: Any, path: str = "") -> str:
 
 
 def _semantic_digest(value: Any) -> str:
-    payload = json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+    return canonical_json_sha256(value, ensure_ascii=False)
 
 
 def _aesthetic_asset_record() -> dict[str, Any]:

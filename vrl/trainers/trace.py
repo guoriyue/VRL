@@ -24,7 +24,7 @@ from omegaconf import OmegaConf
 
 from vrl.models.checkpoint_identity import LocalCheckpointContent
 from vrl.models.precision import float32_precision_state
-from vrl.utils.json_files import write_json
+from vrl.utils.json_files import canonical_json_sha256, write_json
 
 if TYPE_CHECKING:
     from vrl.scripts.eval.image_checkpoint_eval import EvaluationArchive
@@ -88,7 +88,6 @@ class TrainingRunTrace:
         if not isinstance(model_identity, dict) or not model_identity:
             raise ValueError("run evidence requires the resolved model identity")
         config = OmegaConf.to_container(cfg, resolve=True)
-        canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), allow_nan=False)
         record = {
             "schema": RUN_EVIDENCE_SCHEMA,
             "launch_id": uuid.uuid4().hex,
@@ -96,7 +95,7 @@ class TrainingRunTrace:
             "phase": "before-training-loop",
             "resumed": bool(resumed),
             "config": config,
-            "config_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
+            "config_sha256": canonical_json_sha256(config, allow_nan=False),
             "model_identity": model_identity,
             "provided_examples": bool(provided_examples),
             "configured_data_files": cls._configured_data_files(config),
@@ -116,10 +115,7 @@ class TrainingRunTrace:
             raise ValueError(f"unsupported launch evidence: {path}")
         if record.get("launch_id") != path.stem:
             raise ValueError(f"launch identifier does not match evidence filename: {path}")
-        canonical = json.dumps(
-            record["config"], sort_keys=True, separators=(",", ":"), allow_nan=False
-        )
-        if hashlib.sha256(canonical.encode()).hexdigest() != record.get("config_sha256"):
+        if canonical_json_sha256(record["config"], allow_nan=False) != record.get("config_sha256"):
             raise ValueError(f"launch config digest mismatch: {path}")
         return record
 
@@ -276,12 +272,11 @@ class TrainingRunTrace:
         ]
         if not labels:
             raise ValueError("evaluation does not contain the final training checkpoint content")
-        canonical = json.dumps(protocol, sort_keys=True, separators=(",", ":"), allow_nan=False)
         return {
             "launch_id": launch["launch_id"],
             "checkpoint_sha256": digest,
             "checkpoint_labels": labels,
-            "evaluation_protocol_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
+            "evaluation_protocol_sha256": canonical_json_sha256(protocol, allow_nan=False),
             "evaluation_content": asdict(LocalCheckpointContent.from_path(archive.directory)),
         }
 
