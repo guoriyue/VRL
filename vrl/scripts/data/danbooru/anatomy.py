@@ -40,9 +40,8 @@ from vrl.scripts.data.danbooru.config import (
     TEMPLATE_ID,
 )
 from vrl.scripts.data.danbooru.manifest_rows import (
-    interleave_manifest_rows,
     metadata_counts,
-    proportional_group_counts,
+    split_rows_proportionally,
 )
 from vrl.scripts.data.danbooru.metadata import (
     iter_metadata,
@@ -323,30 +322,22 @@ def split_prompt_rows(
     train_limit: int,
     eval_limit: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    for row in rows:
+    """Eval is proportional per (bucket, prompt_style); ordering interleaves buckets."""
+
+    def group_key(row: Mapping[str, Any]) -> tuple[str, str]:
         metadata = row.get("metadata") or {}
-        key = (
+        return (
             str(metadata.get("bucket", "unknown")),
             str(metadata.get("prompt_style", "unknown")),
         )
-        groups[key].append(dict(row))
 
-    eval_counts = proportional_group_counts(
-        {key: len(value) for key, value in groups.items()},
-        limit=eval_limit,
+    return split_rows_proportionally(
+        rows,
+        group_key=group_key,
+        interleave_bucket=lambda key: key[0],
+        train_limit=train_limit,
+        eval_limit=eval_limit,
     )
-    train_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    eval_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for key, group_rows in groups.items():
-        eval_count = eval_counts.get(key, 0)
-        bucket = key[0]
-        eval_groups[bucket].extend(group_rows[:eval_count])
-        train_groups[bucket].extend(group_rows[eval_count:])
-
-    eval_rows = interleave_manifest_rows(eval_groups, limit=eval_limit)
-    train_rows = interleave_manifest_rows(train_groups, limit=train_limit)
-    return train_rows, eval_rows
 
 
 def write_prompt_report(

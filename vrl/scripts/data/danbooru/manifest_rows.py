@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections import Counter, defaultdict
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 
@@ -63,3 +63,38 @@ def interleave_manifest_rows(
         if not progressed:
             break
     return out
+
+
+def split_rows_proportionally[GroupKey](
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    group_key: Callable[[Mapping[str, Any]], GroupKey],
+    interleave_bucket: Callable[[GroupKey], str],
+    train_limit: int,
+    eval_limit: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split rows into (train, eval) with eval drawn proportionally from each group.
+
+    ``group_key`` decides the proportional-sampling groups; ``interleave_bucket``
+    maps a group to the bucket the final train/eval order round-robins over.
+    """
+
+    groups: dict[GroupKey, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        groups[group_key(row)].append(dict(row))
+
+    eval_counts = proportional_group_counts(
+        {key: len(value) for key, value in groups.items()},
+        limit=eval_limit,
+    )
+    train_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    eval_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for key, group_rows in groups.items():
+        eval_count = eval_counts.get(key, 0)
+        bucket = interleave_bucket(key)
+        eval_groups[bucket].extend(group_rows[:eval_count])
+        train_groups[bucket].extend(group_rows[eval_count:])
+    return (
+        interleave_manifest_rows(train_groups, limit=train_limit),
+        interleave_manifest_rows(eval_groups, limit=eval_limit),
+    )

@@ -34,7 +34,7 @@ from vrl.scripts.data.danbooru.config import (
 from vrl.scripts.data.danbooru.manifest_rows import (
     interleave_manifest_rows,
     metadata_counts,
-    proportional_group_counts,
+    split_rows_proportionally,
 )
 from vrl.scripts.data.danbooru.metadata import (
     iter_metadata,
@@ -198,25 +198,18 @@ def split_safety_prompt_rows(
     train_limit: int,
     eval_limit: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in rows:
-        metadata = row.get("metadata") or {}
-        key = str(metadata.get("rating") or metadata.get("category") or "unknown")
-        groups[key].append(dict(row))
+    """Eval is proportional per rating (or category); ordering interleaves the same key."""
 
-    eval_counts = proportional_group_counts(
-        {key: len(value) for key, value in groups.items()},
-        limit=eval_limit,
-    )
-    train_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    eval_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for key, group_rows in groups.items():
-        eval_count = eval_counts.get(key, 0)
-        eval_groups[key].extend(group_rows[:eval_count])
-        train_groups[key].extend(group_rows[eval_count:])
-    return (
-        interleave_manifest_rows(train_groups, limit=train_limit),
-        interleave_manifest_rows(eval_groups, limit=eval_limit),
+    def group_key(row: Mapping[str, Any]) -> str:
+        metadata = row.get("metadata") or {}
+        return str(metadata.get("rating") or metadata.get("category") or "unknown")
+
+    return split_rows_proportionally(
+        rows,
+        group_key=group_key,
+        interleave_bucket=lambda key: key,
+        train_limit=train_limit,
+        eval_limit=eval_limit,
     )
 
 
