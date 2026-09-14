@@ -1,12 +1,13 @@
-"""Sampling state, collector boundary and rollout steps for masked-prompt families.
+"""Base for the masked-prompt denoise families (sana, lumina2, mochi, pixart_sigma).
 
-sana, lumina2, mochi and pixart_sigma all condition on ONE sequence embedding
-plus its padding mask (no pooled vector), and carry the cond/uncond pair of
-both through the trajectory. Their sampling-state fields, the three
-collector-boundary methods, and the encode/prepare/forward rollout steps were
-the same code; what genuinely differs per family is declared on the class
-(pipeline encode kwargs, the transformer clock, the backbone output dtype,
-which scheduler the rollout standardizes onto) and lives in a short override.
+These families condition on ONE sequence embedding plus its padding mask (no
+pooled vector) and carry the cond/uncond pair of both through the trajectory.
+Their sampling-state fields, the branch mapping, the trajectory export/restore
+and the encode/prepare/forward rollout steps were the same code; what genuinely
+differs per family is declared on the class (pipeline encode kwargs, the
+transformer clock, the backbone output dtype, which scheduler the rollout
+standardizes onto) and lives in a short override. A family still names its
+own sampling-state subclass so its signatures read as the family's.
 """
 
 from __future__ import annotations
@@ -20,10 +21,15 @@ from typing import Any, ClassVar
 import torch
 
 from vrl.generation.types import DenoiseRequest
-from vrl.models.steps.denoise.base import GuidedDenoiseSamplingStateBase
+from vrl.models.steps.denoise.base import (
+    DiffusersPipelineModelBase,
+    GuidedDenoiseSamplingStateBase,
+)
 from vrl.models.steps.denoise.common.backbone import (
     DenoiseBackboneCaller,
     DenoiseBackboneInput,
+    DenoiseBackboneRunnerBase,
+    DenoiseBranch,
 )
 from vrl.models.steps.denoise.common.timestep import expand_batch_timestep, pack_eval_timestep
 
@@ -56,16 +62,55 @@ class TrainTimestepMaskedPromptSamplingState(MaskedPromptSamplingState):
     num_train_timesteps: int
 
 
-class MaskedPromptCollectorMixin:
-    """Trajectory projection shared by the masked-prompt families.
+class MaskedPromptDenoiseModel(
+    DiffusersPipelineModelBase, DenoiseBackboneRunnerBase
+):
+    """Denoise model conditioned on one sequence embedding + its padding mask.
 
-    ``sampling_state_cls`` is the only per-family knob: the mixin exports the
-    tensors the state declares and rebuilds that same class on the replay path.
-    Masks and negative embeds are exported only when present, so the no-CFG
-    path stays tensor-free and restore reads them back with ``.get``.
+    Owns the branch mapping (embeds as ``encoder_hidden_states``, mask as
+    ``encoder_attention_mask``), the trajectory export/restore, and the
+    ``encode_prompt`` / ``prepare_sampling`` / ``forward_step`` rollout steps.
+    A family declares ``sampling_state_cls`` (its own state subclass), the
+    pipeline-specific encode kwargs and defaults, and overrides the hooks
+    below where its checkpoint differs. Families whose decode is scale + shift
+    list ``VaeDecodeMixin`` before this class; the others own ``decode_latents``.
+
+    ``build_branch`` lives here rather than as a default on
+    ``DenoiseBackboneRunnerBase``: a family that forgets to map its own
+    transformer kwargs must fail loud, so that base declares none.
     """
 
     sampling_state_cls: ClassVar[type[MaskedPromptSamplingState]]
+    # Constant kwargs every branch of the family needs (pixart_sigma's
+    # ``added_cond_kwargs``). Both branches must carry the SAME value — the
+    # batched-CFG kwarg packer rejects branch-specific non-tensors.
+    branch_extra_kwargs: ClassVar[Mapping[str, Any]] = {}
+
+    # -- backbone branch mapping ---------------------------------------
+
+    def build_branch(
+        self,
+        request: DenoiseBackboneInput,
+        branch: str,
+    ) -> DenoiseBranch:
+        """Map the branch's prompt embeds and attention mask into a branch call."""
+
+        if branch == "cond":
+            embeds = request.prompt_embeds
+            mask = request.extra.get("encoder_attention_mask")
+        else:
+            embeds = request.negative_prompt_embeds
+            mask = request.extra.get("negative_encoder_attention_mask")
+        return DenoiseBranch(
+            hidden_states=request.hidden_states,
+            timestep=request.timestep,
+            encoder_hidden_states=embeds,
+            extra_kwargs={"encoder_attention_mask": mask, **self.branch_extra_kwargs},
+        )
+
+    # -- trajectory boundary -------------------------------------------
+    # Masks and negative embeds are exported only when present, so the no-CFG
+    # path stays tensor-free and restore reads them back with ``.get``.
 
     def export_batch_context(self, state: MaskedPromptSamplingState) -> dict[str, Any]:
         """Project sampling state into shared trajectory context."""
@@ -121,17 +166,7 @@ class MaskedPromptCollectorMixin:
             state_kwargs["num_train_timesteps"] = int(batch_context["num_train_timesteps"])
         return state_cls(**state_kwargs)
 
-
-class MaskedPromptModelMixin(MaskedPromptCollectorMixin):
-    """encode_prompt / prepare_sampling / forward_step for the masked-prompt families.
-
-    The pipeline encodes cond and (under CFG) uncond sequence embeds plus
-    masks; sampling draws the initial latents through ``pipe.prepare_latents``
-    on a seeded generator; the forward runs the transformer through
-    :class:`DenoiseBackboneCaller` with the masks as extra kwargs. A family
-    declares the pipeline-specific encode kwargs and defaults on the class and
-    overrides the small hooks below where its checkpoint differs.
-    """
+    # -- rollout steps -------------------------------------------------
 
     # ``encode_prompt`` defaults when the caller passes no sampling values.
     _default_max_sequence_length: ClassVar[int]
@@ -314,8 +349,7 @@ class MaskedPromptModelMixin(MaskedPromptCollectorMixin):
 
 
 __all__ = [
-    "MaskedPromptCollectorMixin",
-    "MaskedPromptModelMixin",
+    "MaskedPromptDenoiseModel",
     "MaskedPromptSamplingState",
     "TrainTimestepMaskedPromptSamplingState",
 ]

@@ -35,14 +35,12 @@ from typing import Any, ClassVar
 import torch
 
 from vrl.models.steps.denoise import (
-    DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
 )
 from vrl.models.steps.denoise.common import (
     DenoiseBackboneInput,
     DenoiseBranch,
-    EncoderAttentionMaskRunnerBase,
-    MaskedPromptModelMixin,
+    MaskedPromptDenoiseModel,
     TrainTimestepMaskedPromptSamplingState,
     VaeDecodeMixin,
 )
@@ -55,9 +53,7 @@ class Lumina2SamplingState(TrainTimestepMaskedPromptSamplingState):
 
 class Lumina2Model(
     VaeDecodeMixin,
-    MaskedPromptModelMixin,
-    DiffusersPipelineModelBase,
-    EncoderAttentionMaskRunnerBase,
+    MaskedPromptDenoiseModel,
 ):
     """Diffusers-backed Lumina-Image-2.0 t2i model."""
 

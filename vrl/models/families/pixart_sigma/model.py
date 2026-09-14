@@ -42,14 +42,12 @@ import torch
 from vrl.generation.types import DenoiseRequest
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
-    DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
 )
 from vrl.models.steps.denoise.common import (
     DenoiseBackboneInput,
     DenoiseBranch,
-    EncoderAttentionMaskRunnerBase,
-    MaskedPromptModelMixin,
+    MaskedPromptDenoiseModel,
     MaskedPromptSamplingState,
     VaeDecodeMixin,
 )
@@ -97,9 +95,7 @@ class PixArtSigmaSamplingState(MaskedPromptSamplingState):
 
 class PixArtSigmaModel(
     VaeDecodeMixin,
-    MaskedPromptModelMixin,
-    DiffusersPipelineModelBase,
-    EncoderAttentionMaskRunnerBase,
+    MaskedPromptDenoiseModel,
 ):
     """Diffusers-backed PixArt-Sigma t2i model (epsilon DDPM family).
 

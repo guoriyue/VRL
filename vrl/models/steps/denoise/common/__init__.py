@@ -4,7 +4,6 @@ from vrl.models.steps.denoise.common.backbone import (
     DenoiseBackboneCaller,
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
-    EncoderAttentionMaskRunnerBase,
 )
 from vrl.models.steps.denoise.common.cfg import DenoiseBranch
 from vrl.models.steps.denoise.common.latent_decode import (
@@ -13,8 +12,7 @@ from vrl.models.steps.denoise.common.latent_decode import (
     VaeDecodeMixin,
 )
 from vrl.models.steps.denoise.common.masked_prompt import (
-    MaskedPromptCollectorMixin,
-    MaskedPromptModelMixin,
+    MaskedPromptDenoiseModel,
     MaskedPromptSamplingState,
     TrainTimestepMaskedPromptSamplingState,
 )
@@ -36,10 +34,8 @@ __all__ = [
     "DenoiseBackboneInput",
     "DenoiseBackboneRunnerBase",
     "DenoiseBranch",
-    "EncoderAttentionMaskRunnerBase",
     "LatentDecodePlan",
-    "MaskedPromptCollectorMixin",
-    "MaskedPromptModelMixin",
+    "MaskedPromptDenoiseModel",
     "MaskedPromptSamplingState",
     "TrainTimestepMaskedPromptSamplingState",
     "VaeDecodeMixin",

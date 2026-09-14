@@ -36,16 +36,14 @@ import torch
 from vrl.generation.types import DenoiseRequest
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
-    DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
     DenoiseBackboneInput,
     DenoiseBranch,
-    EncoderAttentionMaskRunnerBase,
     LatentDecodePlan,
-    MaskedPromptModelMixin,
+    MaskedPromptDenoiseModel,
     TrainTimestepMaskedPromptSamplingState,
 )
 
@@ -76,9 +74,7 @@ class MochiSamplingState(TrainTimestepMaskedPromptSamplingState):
 
 
 class MochiModel(
-    MaskedPromptModelMixin,
-    DiffusersPipelineModelBase,
-    EncoderAttentionMaskRunnerBase,
+    MaskedPromptDenoiseModel,
 ):
     """Diffusers-backed Mochi-1 t2v model."""
 

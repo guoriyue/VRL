@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal, Protocol
+from typing import Any, Literal, Protocol
 
 import torch
 
@@ -132,45 +131,6 @@ class DenoiseBackboneRunnerBase:
     ) -> torch.Tensor:
         del request, cond, uncond
         return combined
-
-
-class EncoderAttentionMaskRunnerBase(DenoiseBackboneRunnerBase):
-    """``build_branch`` for families conditioned on embeds + an attention mask.
-
-    sana, lumina2, mochi and pixart_sigma mapped their branches identically:
-    the branch's sequence embeds as ``encoder_hidden_states`` and its padding
-    mask as ``encoder_attention_mask``, with pixart_sigma's constant
-    micro-conditioning dict the only addition.
-
-    This is a SIBLING opt-in, not a default on ``DenoiseBackboneRunnerBase``:
-    a family that forgets to map its own transformer kwargs must fail loud, so
-    the base deliberately declares no ``build_branch``.
-    """
-
-    # Constant kwargs every branch of the family needs (pixart_sigma's
-    # ``added_cond_kwargs``). Both branches must carry the SAME value — the
-    # batched-CFG kwarg packer rejects branch-specific non-tensors.
-    branch_extra_kwargs: ClassVar[Mapping[str, Any]] = {}
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map the branch's prompt embeds and attention mask into a branch call."""
-
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            mask = request.extra.get("encoder_attention_mask")
-        else:
-            embeds = request.negative_prompt_embeds
-            mask = request.extra.get("negative_encoder_attention_mask")
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs={"encoder_attention_mask": mask, **self.branch_extra_kwargs},
-        )
 
 
 class DenoiseBackboneCaller:

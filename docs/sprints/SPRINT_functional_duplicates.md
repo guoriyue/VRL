@@ -274,13 +274,16 @@ The same AST pass listed 96 classes whose body is at most one statement
 after the docstring (vendored code excluded). Grouped by what the class is
 for:
 
-### Removed
+### Removed, then restored
 
-Empty subclasses that neither added a member nor were dispatched on:
 `Lumina2SamplingState`, `MochiSamplingState`, `PixArtSigmaSamplingState`,
-`SanaSamplingState` (over the shared masked-prompt states) and
-`JanusProARState` (over `PagedCFGARState`). `sampling_state_cls` / `state_cls`
-now name the shared class. `Emu3ARState` stays because it adds a field.
+`SanaSamplingState` and `JanusProARState` are empty subclasses of the shared
+states. They were removed (`b00473cdf`) on the "no member, no dispatch"
+test and reverted (`6c045386a`) on review: the family-named state is what a
+reader sees in `forward_step(self, state: SanaSamplingState)` and in the
+parity tests, and it ties the family to its shared state without a detour
+through `sampling_state_cls`. Rule for next time: an empty subclass that
+names the family at the signature level is documentation, not duplication.
 
 ### Kept, by role
 
@@ -315,9 +318,14 @@ modules), then read each cluster. Landed, one commit each:
 - **Masked-prompt families** — `f3ebb5ff3`. SANA, PixArt-Sigma, Lumina2 and
   Mochi shared `MaskedPromptCollectorMixin` for the trajectory boundary but
   each still owned `encode_prompt`, `prepare_sampling` and `forward_step`
-  (4 x ~150 lines). `MaskedPromptModelMixin` now owns the three; a family
-  declares its encode kwargs/defaults and overrides at most three hooks
-  (`_sampling_scheduler`, `_latent_shape_args`, `_backbone_timestep`).
+  (4 x ~150 lines). Landed first as `MaskedPromptModelMixin`, then folded
+  with the collector mixin and `EncoderAttentionMaskRunnerBase` (the same
+  four families' branch mapping) into one base, `MaskedPromptDenoiseModel`:
+  three "mixins" that were only ever used together, by the same four
+  classes, are one class. A family lists it (after `VaeDecodeMixin` where
+  its decode is scale + shift), declares its encode kwargs/defaults and
+  overrides at most three hooks (`_sampling_scheduler`,
+  `_latent_shape_args`, `_backbone_timestep`).
   632 lines removed, 301 added. The four backbone-parity tests (numeric
   comparison against the diffusers pipelines) pass unchanged.
 - **Fail-closed record parsers** — `512f2c143`. `GroundedOcrConfig`,

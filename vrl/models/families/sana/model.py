@@ -33,12 +33,10 @@ import torch
 
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
-    DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
 )
 from vrl.models.steps.denoise.common import (
-    EncoderAttentionMaskRunnerBase,
-    MaskedPromptModelMixin,
+    MaskedPromptDenoiseModel,
     MaskedPromptSamplingState,
     VaeDecodeMixin,
 )
@@ -51,9 +49,7 @@ class SanaSamplingState(MaskedPromptSamplingState):
 
 class SanaModel(
     VaeDecodeMixin,
-    MaskedPromptModelMixin,
-    DiffusersPipelineModelBase,
-    EncoderAttentionMaskRunnerBase,
+    MaskedPromptDenoiseModel,
 ):
     """Diffusers-backed SANA t2i model.
 
