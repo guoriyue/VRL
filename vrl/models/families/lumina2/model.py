@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import random
 import sys
-from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -53,11 +52,6 @@ from vrl.models.steps.denoise.common import (
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
-@dataclass
-class Lumina2SamplingState(TrainTimestepMaskedPromptSamplingState):
-    """Private Lumina2 sampling state. Engine MUST NOT introspect."""
-
-
 class Lumina2Model(
     VaeDecodeMixin,
     MaskedPromptCollectorMixin,
@@ -72,7 +66,7 @@ class Lumina2Model(
     # Lumina's reference pipeline rescales the combined prediction back to the
     # conditional branch's norm on every CFG step.
     cfg_normalization = True
-    sampling_state_cls = Lumina2SamplingState
+    sampling_state_cls = TrainTimestepMaskedPromptSamplingState
 
     # -- backend ownership (called by runtime, not by collectors) -------
     _pipeline_classname = "Lumina2Pipeline"
@@ -152,7 +146,7 @@ class Lumina2Model(
         request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
-    ) -> Lumina2SamplingState:
+    ) -> TrainTimestepMaskedPromptSamplingState:
         """Build the per-request SamplingState for a denoise loop."""
         pipe = self.pipeline
         device = self.device
@@ -184,7 +178,7 @@ class Lumina2Model(
 
         do_cfg = request.guidance_scale > 1.0 and negative_prompt_embeds is not None
 
-        return Lumina2SamplingState(
+        return TrainTimestepMaskedPromptSamplingState(
             latents=latents,
             timesteps=timesteps,
             scheduler=pipe.scheduler,
@@ -201,7 +195,7 @@ class Lumina2Model(
 
     def forward_step(
         self,
-        state: Lumina2SamplingState,
+        state: TrainTimestepMaskedPromptSamplingState,
         step_idx: int,
     ) -> dict[str, Any]:
         """Lumina2 transformer forward on reversed normalized time."""
@@ -243,4 +237,4 @@ class Lumina2ReplayModel(DiffusersReplayModelBase, Lumina2Model):
     """Replay-only Lumina2 model that owns no prompt encoder, VAE, or pipeline."""
 
 
-__all__ = ["Lumina2Model", "Lumina2ReplayModel", "Lumina2SamplingState"]
+__all__ = ["Lumina2Model", "Lumina2ReplayModel"]

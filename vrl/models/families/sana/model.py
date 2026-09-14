@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import random
 import sys
-from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -50,11 +49,6 @@ from vrl.models.steps.denoise.common import (
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
-@dataclass
-class SanaSamplingState(MaskedPromptSamplingState):
-    """Private SANA sampling state. Engine MUST NOT introspect."""
-
-
 class SanaModel(
     VaeDecodeMixin,
     MaskedPromptCollectorMixin,
@@ -72,7 +66,7 @@ class SanaModel(
 
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
-    sampling_state_cls = SanaSamplingState
+    sampling_state_cls = MaskedPromptSamplingState
 
     _pipeline_classname = "SanaPipeline"
     _frozen_encoder_names = ("text_encoder",)
@@ -210,7 +204,7 @@ class SanaModel(
         request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
-    ) -> SanaSamplingState:
+    ) -> MaskedPromptSamplingState:
         """Build the per-request SamplingState for a denoise loop."""
         del kwargs
         pipe = self.pipeline
@@ -244,7 +238,7 @@ class SanaModel(
 
         do_cfg = request.guidance_scale > 1.0 and negative_prompt_embeds is not None
 
-        return SanaSamplingState(
+        return MaskedPromptSamplingState(
             latents=latents,
             timesteps=timesteps,
             scheduler=pipe.scheduler,
@@ -260,7 +254,7 @@ class SanaModel(
 
     def forward_step(
         self,
-        state: SanaSamplingState,
+        state: MaskedPromptSamplingState,
         step_idx: int,
     ) -> dict[str, Any]:
         """SANA transformer forward + optional batched CFG."""
@@ -308,4 +302,4 @@ class SanaReplayModel(DiffusersReplayModelBase, SanaModel):
     """Replay-only SANA model that owns no prompt encoder, VAE, or pipeline."""
 
 
-__all__ = ["SanaModel", "SanaReplayModel", "SanaSamplingState"]
+__all__ = ["SanaModel", "SanaReplayModel"]

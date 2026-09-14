@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import torch
 
 from vrl.generation.steps.token import TokenLoopInit
@@ -11,11 +9,6 @@ from vrl.models.steps.token.paged_attention_helpers import (
     PagedCFGARState,
     PagedCFGTokenRunner,
 )
-
-
-@dataclass(slots=True, kw_only=True)
-class JanusProARState(PagedCFGARState):
-    """Mutable Janus state owned by one scheduled AR token loop."""
 
 
 class JanusProARModelRunner(PagedCFGTokenRunner):
@@ -43,7 +36,7 @@ class JanusProARModelRunner(PagedCFGTokenRunner):
         if image_token_num < 1:
             raise ValueError("image_token_num must be >= 1")
         return self._init_paged_cfg(
-            state_cls=JanusProARState,
+            state_cls=PagedCFGARState,
             cond_inputs_embeds=cond_inputs_embeds,
             uncond_inputs_embeds=uncond_inputs_embeds,
             cond_attention_mask=cond_attention_mask,
@@ -79,5 +72,4 @@ class JanusProARModelRunner(PagedCFGTokenRunner):
 
 __all__ = [
     "JanusProARModelRunner",
-    "JanusProARState",
 ]

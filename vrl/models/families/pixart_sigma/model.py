@@ -36,7 +36,6 @@ from __future__ import annotations
 import random
 import sys
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any, ClassVar
 
 import torch
@@ -95,11 +94,6 @@ def pixart_ddim_scheduler(scheduler_config: Any, num_steps: int, device: Any) ->
     return scheduler
 
 
-@dataclass
-class PixArtSigmaSamplingState(MaskedPromptSamplingState):
-    """Private PixArt-Sigma sampling state. Engine MUST NOT introspect."""
-
-
 class PixArtSigmaModel(
     VaeDecodeMixin,
     MaskedPromptCollectorMixin,
@@ -120,7 +114,7 @@ class PixArtSigmaModel(
     branch_extra_kwargs: ClassVar[Mapping[str, Any]] = {
         "added_cond_kwargs": _ADDED_COND_KWARGS,
     }
-    sampling_state_cls = PixArtSigmaSamplingState
+    sampling_state_cls = MaskedPromptSamplingState
 
     # -- backend ownership (called by runtime, not by collectors) -------
     _pipeline_classname = "PixArtSigmaPipeline"
@@ -205,7 +199,7 @@ class PixArtSigmaModel(
         request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
-    ) -> PixArtSigmaSamplingState:
+    ) -> MaskedPromptSamplingState:
         """Build the per-request SamplingState for a denoise loop.
 
         The shipped DPM-Solver is NOT used: the RL scheduler is a DDIM built
@@ -249,7 +243,7 @@ class PixArtSigmaModel(
 
         do_cfg = request.guidance_scale > 1.0 and negative_prompt_embeds is not None
 
-        return PixArtSigmaSamplingState(
+        return MaskedPromptSamplingState(
             latents=latents,
             timesteps=timesteps,
             scheduler=scheduler,
@@ -265,7 +259,7 @@ class PixArtSigmaModel(
 
     def forward_step(
         self,
-        state: PixArtSigmaSamplingState,
+        state: MaskedPromptSamplingState,
         step_idx: int,
     ) -> dict[str, Any]:
         """PixArt-Sigma transformer forward + optional batched CFG."""
@@ -325,6 +319,5 @@ class PixArtSigmaReplayModel(DiffusersReplayModelBase, PixArtSigmaModel):
 __all__ = [
     "PixArtSigmaModel",
     "PixArtSigmaReplayModel",
-    "PixArtSigmaSamplingState",
     "pixart_ddim_scheduler",
 ]

@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import random
 import sys
-from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -74,11 +73,6 @@ def standard_mochi_scheduler(scheduler_config: Any, num_steps: int, device: Any)
     return scheduler
 
 
-@dataclass
-class MochiSamplingState(TrainTimestepMaskedPromptSamplingState):
-    """Private Mochi sampling state. Engine MUST NOT introspect."""
-
-
 class MochiModel(
     MaskedPromptCollectorMixin,
     LoraModelMixin,
@@ -89,7 +83,7 @@ class MochiModel(
 
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
-    sampling_state_cls = MochiSamplingState
+    sampling_state_cls = TrainTimestepMaskedPromptSamplingState
 
     # -- backend ownership (called by runtime, not by collectors) -------
     _pipeline_classname = "MochiPipeline"
@@ -162,7 +156,7 @@ class MochiModel(
         request: DenoiseRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
-    ) -> MochiSamplingState:
+    ) -> TrainTimestepMaskedPromptSamplingState:
         """Build the per-request 5D-latent SamplingState for a denoise loop."""
         del kwargs
         pipe = self.pipeline
@@ -200,7 +194,7 @@ class MochiModel(
 
         do_cfg = request.guidance_scale > 1.0 and negative_prompt_embeds is not None
 
-        return MochiSamplingState(
+        return TrainTimestepMaskedPromptSamplingState(
             latents=latents,
             timesteps=timesteps,
             scheduler=scheduler,
@@ -217,7 +211,7 @@ class MochiModel(
 
     def forward_step(
         self,
-        state: MochiSamplingState,
+        state: TrainTimestepMaskedPromptSamplingState,
         step_idx: int,
     ) -> dict[str, Any]:
         """Mochi transformer forward on its native (reversed) clock."""
@@ -305,6 +299,5 @@ class MochiReplayModel(DiffusersReplayModelBase, MochiModel):
 __all__ = [
     "MochiModel",
     "MochiReplayModel",
-    "MochiSamplingState",
     "standard_mochi_scheduler",
 ]
