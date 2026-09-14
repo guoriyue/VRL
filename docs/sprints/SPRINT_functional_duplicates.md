@@ -1,6 +1,6 @@
 # Functional duplicate sweep
 
-Status: batch 1 landed (2026-09-13). Scope is functional duplication — two
+Status: batch 1 landed (2026-09-13); one-liner audit added the same day. Scope is functional duplication — two
 places computing the same thing under different names or framings — not
 textual repetition. Every candidate was read at the source, its call sites
 and tests, before deciding; each verdict below cites the paths.
@@ -208,6 +208,65 @@ What remains different is protocol, not code:
 - `emu3._apply_lora` ≡ `glm_image._apply_lora`: both are two-line wrappers
   over `install_token_lora_adapter`; the shared function is the
   consolidation, the wrappers are the family binding.
+
+## One-line helpers: are they necessary?
+
+An AST pass over `vrl/**/*.py` found 296 functions whose body is a single
+`return` (dunder, `@property` and `@abstractmethod` excluded), 25 of them
+pure pass-throughs (the call forwards exactly the parameters it received).
+Each was read with its call sites. The test: does the name carry knowledge a
+reader would otherwise have to reconstruct, or is it only a second name for
+one expression at one call site?
+
+### Inlined — `ecdb9cff9`, `nextstep_1`
+
+Single-use helpers that only renamed a call; the docstring, where it
+carried a reason, became a comment at the call site:
+
+- `vrl/models/sequence_parallel.py::_group_info` → the two `dist` calls.
+- `vrl/models/families/wan_2_1/model.py::_defer_wan_trainable_device_move`
+  → a named bool where it was tested.
+- `vrl/models/families/emu3/model.py::_replay_grid_dims` →
+  `replay_context_image_size(...)` with its constant arguments.
+- `vrl/models/families/janus_pro/runtime.py::_format_t2i_prompt` → the
+  template f-string in the one comprehension that used it.
+- `vrl/models/steps/denoise/common/lora.py::_lora_transformer` →
+  `self.transformer` (no family overrode it; the docstring's reason is now
+  the comment).
+- `vrl/config/schema.py::_model_section_class_from_path` /
+  `_sampling_section_class_from_path` → `import_from_path`; the
+  `functools.cache` wrapped a function that is already cached by
+  `sys.modules`.
+- `vrl/models/families/nextstep_1/model.py::_last_hidden` →
+  `kv["last_hidden"]`.
+
+### Kept, with the reason
+
+- **Framework surface.** Ray actor methods in `vrl/generation/ray/worker.py`
+  (`sleep`, `execute_batch`, `probe_batch_size`, …) forward to `self.core`;
+  the actor must expose them by name. `nn.Module.forward` one-liners
+  (`denoise/base.py`, `aesthetic.py`), pydantic `field_validator`s
+  (`precision.py`, `schema.py`), `extra_repr`.
+- **Protocol implementations.** `Strategy.export_checkpoint_optimizer_state`
+  delegating to `export_optimizer_state` in the unsharded backend (the split
+  exists for the sharded backends; its docstring says why),
+  `Algorithm.compute_advantages_from_tensors`, `Executor.parse_sampling_params`,
+  `finalize_token`, `can_replace`, `_loss_weight`.
+- **Overridable hooks with a non-trivial default elsewhere.**
+  `_replay_forward_step_index` (Cosmos returns the real index, the base
+  returns 0), `_lora_dtype` (five family overrides), `_loads_vq`.
+- **Named predicates and records reused 3+ times.** `_is_auto`,
+  `_is_configured`, `_uses_cfg`, `_optional_path`, `_clamp_score`,
+  `_wire_envelope` and the `*_to_wire` family (the wire contract),
+  `to_report_record`, `_checkpoint_record`, `seed_for`.
+- **Adapters that change the callable's kind.** `actor_pool.wait_for_result`
+  turns an injected `Awaitable` factory into a coroutine so
+  `asyncio.create_task` accepts it.
+- **Vendored code** (`llamagen/vendor/*`: `GPT_7B` … `VQ_16`) stays as
+  upstream wrote it.
+- **Multi-line constructors** (`server._overloaded_error`) are not
+  one-liners; inlining a 12-line error into the admission branch would hurt
+  the branch more than the helper costs.
 
 ## Verification
 
