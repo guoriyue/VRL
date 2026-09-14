@@ -13,26 +13,27 @@ from typing import Any
 import pytest
 
 from vrl.generation.bindings.full_sequence_denoise.executor import DenoiseBatchResult
-from vrl.generation.execution.pipeline import (
-    _enqueue_cpu_copies,
-    forward_batches_pipelined,
-)
+from vrl.generation.execution.executor_base import BatchExecutorBase, _enqueue_cpu_copies
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import BatchProduceFence
 
 
 def _executor(produce):
-    return SimpleNamespace(
-        forward_batch=lambda _request, batch: produce(batch),
-    )
+    class _Executor(BatchExecutorBase):
+        family = "test"
+
+        def forward_batch(self, request, batch):
+            del request
+            return produce(batch)
+
+    return _Executor()
 
 
 def test_pipelined_results_equal_serial_in_chunk_order() -> None:
     def produce(batch):
         return ("denoised", batch)
 
-    pipelined = forward_batches_pipelined(
-        _executor(produce),
+    pipelined = _executor(produce).forward_batches_pipelined(
         "req",
         ["c0", "c1", "c2", "c3"],
     )
@@ -56,7 +57,7 @@ def test_every_chunk_produced_exactly_once() -> None:
         return ("r", batch)
 
     batches = [f"c{i}" for i in range(5)]
-    out = forward_batches_pipelined(_executor(produce), "req", batches)
+    out = _executor(produce).forward_batches_pipelined("req", batches)
 
     assert produced == batches  # produced in order, once each
     assert len(out) == len(batches)
@@ -70,8 +71,7 @@ def test_cpu_completion_fence_follows_each_successful_chunk(monkeypatch) -> None
     )
     fences: list[BatchProduceFence] = []
 
-    output = forward_batches_pipelined(
-        _executor(lambda batch: ("result", batch)),
+    output = _executor(lambda batch: ("result", batch)).forward_batches_pipelined(
         "req",
         ["c0", "c1", "c2"],
         completion_callback=fences.append,
@@ -117,10 +117,10 @@ def test_cuda_completion_fence_is_recorded_before_publication(monkeypatch) -> No
     )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
-    import vrl.generation.execution.pipeline as pipeline
+    import vrl.generation.execution.executor_base as executor_base
 
     monkeypatch.setattr(
-        pipeline,
+        executor_base,
         "_enqueue_cpu_copies",
         lambda result, _stream: result,
     )
@@ -132,8 +132,7 @@ def test_cuda_completion_fence_is_recorded_before_publication(monkeypatch) -> No
         operations.append(("publish", fence.event.index))
         published.append(fence)
 
-    assert forward_batches_pipelined(
-        _executor(lambda batch: ("result", batch)),
+    assert _executor(lambda batch: ("result", batch)).forward_batches_pipelined(
         "req",
         ["c0"],
         completion_callback=publish,
@@ -145,8 +144,7 @@ def test_cuda_completion_fence_is_recorded_before_publication(monkeypatch) -> No
 
 
 def test_single_chunk_still_produces_and_tears_down() -> None:
-    out = forward_batches_pipelined(
-        _executor(lambda batch: ("p", batch)),
+    out = _executor(lambda batch: ("p", batch)).forward_batches_pipelined(
         "req",
         ["only"],
     )
@@ -154,8 +152,7 @@ def test_single_chunk_still_produces_and_tears_down() -> None:
 
 
 def test_empty_chunks_returns_empty() -> None:
-    out = forward_batches_pipelined(
-        _executor(lambda batch: batch),
+    out = _executor(lambda batch: batch).forward_batches_pipelined(
         "req",
         [],
     )
@@ -210,13 +207,12 @@ def test_produce_error_joins_already_submitted_copy(monkeypatch) -> None:
         torn_down.append(result)
         return result
 
-    import vrl.generation.execution.pipeline as pipeline
+    import vrl.generation.execution.executor_base as executor_base
 
-    monkeypatch.setattr(pipeline, "_enqueue_cpu_copies", teardown)
+    monkeypatch.setattr(executor_base, "_enqueue_cpu_copies", teardown)
 
     with pytest.raises(RuntimeError, match="CUDA out of memory"):
-        forward_batches_pipelined(
-            _executor(produce),
+        _executor(produce).forward_batches_pipelined(
             "req",
             ["c0", "c1"],
         )

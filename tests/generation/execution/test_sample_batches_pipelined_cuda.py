@@ -7,8 +7,6 @@ value-mutating copy would diverge here."""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -16,9 +14,9 @@ torch = pytest.importorskip("torch")
 from vrl.generation.bindings.full_sequence_denoise.executor import (  # noqa: E402
     DenoiseBatchResult,
 )
-from vrl.generation.execution.pipeline import (  # noqa: E402
+from vrl.generation.execution.executor_base import (  # noqa: E402
+    BatchExecutorBase,
     _enqueue_cpu_copies,
-    forward_batches_pipelined,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch  # noqa: E402
 from vrl.generation.execution.types import BatchProduceFence  # noqa: E402
@@ -49,16 +47,21 @@ def _serial(batches):
 
 
 def _executor(produce):
-    return SimpleNamespace(
-        forward_batch=lambda _request, batch: produce(batch),
-    )
+    class _Executor(BatchExecutorBase):
+        family = "test"
+
+        def forward_batch(self, request, batch):
+            del request
+            return produce(batch)
+
+    return _Executor()
 
 
 def test_pipelined_bit_exact_vs_serial_real_cuda() -> None:
     batches = [0, 1, 2, 3, 4, 5]
 
     serial = _serial(batches)
-    pipelined = forward_batches_pipelined(_executor(_produce), "req", batches)
+    pipelined = _executor(_produce).forward_batches_pipelined("req", batches)
 
     assert len(pipelined) == len(serial)
     for idx, (sp, pp) in enumerate(zip(serial, pipelined, strict=True)):
@@ -71,7 +74,7 @@ def test_pipelined_preserves_chunk_order_real_cuda() -> None:
     # Distinct seeds => distinct values; the result list must stay in batch order
     # regardless of copy-completion order.
     batches = [10, 20, 30, 40]
-    pipelined = forward_batches_pipelined(_executor(_produce), "req", batches)
+    pipelined = _executor(_produce).forward_batches_pipelined("req", batches)
     expected = [_produce(c)["scalar"].cpu() for c in batches]
     for got, exp in zip(pipelined, expected, strict=True):
         assert torch.equal(got["scalar"], exp)
@@ -91,11 +94,7 @@ def test_pipelined_moves_real_slots_chunk_result_to_cpu() -> None:
             context={"batch": batch},
         )
 
-    results = forward_batches_pipelined(
-        _executor(_produce_chunk),
-        "req",
-        [0, 1],
-    )
+    results = _executor(_produce_chunk).forward_batches_pipelined("req", [0, 1])
 
     assert all(isinstance(result, DenoiseBatchResult) for result in results)
     assert all(result.latents.device.type == "cpu" for result in results)
@@ -106,12 +105,7 @@ def test_pipelined_moves_real_slots_chunk_result_to_cpu() -> None:
 def test_real_cuda_produce_fences_are_queryable_after_pipeline_completion() -> None:
     fences: list[BatchProduceFence] = []
 
-    forward_batches_pipelined(
-        _executor(_produce),
-        "req",
-        [0, 1],
-        completion_callback=fences.append,
-    )
+    _executor(_produce).forward_batches_pipelined("req", [0, 1], completion_callback=fences.append)
 
     assert [fence.completed_batches for fence in fences] == [1, 2]
     assert all(fence.event is not None and fence.query() for fence in fences)

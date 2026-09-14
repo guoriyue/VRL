@@ -15,16 +15,19 @@ torch = pytest.importorskip("torch")
 from vrl.generation.bindings.full_sequence_denoise.executor import (  # noqa: E402
     DenoiseBatchExecutorBase,
 )
+from vrl.generation.execution.executor_base import BatchExecutorBase  # noqa: E402
 from vrl.generation.execution.planner import EnginePlan  # noqa: E402
 from vrl.generation.types import GenerationRequest  # noqa: E402
 
 
-class _RealChunkExecutor:
+class _RealChunkExecutor(BatchExecutorBase):
     """Produces deterministic real tensors through one canonical batch method."""
 
+    family = "test"
     model = None  # no versioned slots
 
     def __init__(self, device: torch.device) -> None:
+        super().__init__()
         self.device = device
 
     def forward_batch(self, request, batch):

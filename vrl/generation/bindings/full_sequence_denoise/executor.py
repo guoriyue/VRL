@@ -235,10 +235,7 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         instead of dispatching one monolithic forward_batch per batch.
         """
 
-        from vrl.generation.execution.pipeline import forward_batches_pipelined
-
-        batches = forward_batches_pipelined(
-            self,
+        batches = self.forward_batches_pipelined(
             request,
             plan.sample_batches,
             completion_callback=completion_callback,
