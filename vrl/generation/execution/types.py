@@ -14,14 +14,14 @@ import.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, fields
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, fields, replace
 from typing import Any, Literal, Protocol, TypeAlias, get_args
 
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.protocols import BatchPayload
 from vrl.generation.types import GenerationRequest
-from vrl.utils.cuda_memory import validate_parking_residual
+from vrl.utils.cuda_memory import is_cuda_out_of_memory, validate_parking_residual
 from vrl.utils.validation import require_int
 
 
@@ -260,6 +260,50 @@ class GenerationBatchResult:
     stale_slot: bool = False
     # Driver-side engine aggregation; worker-local metrics remain in `metrics`.
     rank_metrics: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+def combine_rank_batch_results(
+    results: list[Any],
+    *,
+    expected_worker_ids: Sequence[str] | None = None,
+) -> GenerationBatchResult:
+    """Fold one generation batch's per-rank results into the result the driver acts on.
+
+    Every rank must return a ``GenerationBatchResult`` for the same request and
+    batch (and, when ``expected_worker_ids`` is given, its own worker id). A
+    terminal failure on any rank wins over another rank's retryable OOM or
+    graceful stale-slot discard, and keeps the reporting rank's identity, so
+    the executor's stale-slot and OOM handling still sees it; otherwise the
+    primary rank's payload carries every rank's metrics.
+    """
+
+    if not all(isinstance(result, GenerationBatchResult) for result in results):
+        raise TypeError("generation engine ranks must return GenerationBatchResult")
+    first = results[0]
+    if expected_worker_ids is not None:
+        for worker_id, result in zip(expected_worker_ids, results, strict=True):
+            if result.worker_id != worker_id:
+                raise RuntimeError(f"rank {worker_id!r} returned another worker's result")
+    for result in results[1:]:
+        if result.request_id != first.request_id or result.batch != first.batch:
+            raise RuntimeError(
+                "generation engine ranks returned different request/batch identities"
+            )
+    for result in results:
+        if result.error and not result.stale_slot and not is_cuda_out_of_memory(result.error):
+            return result
+    for result in results:
+        if result.stale_slot:
+            return result
+    for result in results:
+        if result.error:
+            return result
+    if any(result.policy_version != first.policy_version for result in results[1:]):
+        raise RuntimeError("generation engine ranks returned different policy versions")
+    return replace(
+        first,
+        rank_metrics={result.worker_id: result.metrics for result in results},
+    )
 
 
 @dataclass(frozen=True, slots=True)

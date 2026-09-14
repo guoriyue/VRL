@@ -23,6 +23,7 @@ from vrl.generation.execution.types import (
     GenerationBatchResult,
     PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
+    combine_rank_batch_results,
 )
 from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
 from vrl.generation.ray.engine import RayGenerationEngine
@@ -108,35 +109,7 @@ class RayGenerationExecutor:
         async with lock:
             return await self._execute(request)
 
-    @staticmethod
-    def _select_batch_rank_result(results: list[Any]) -> GenerationBatchResult:
-        """Retain any rank failure before selecting the primary rank's payload."""
-
-        if not all(isinstance(result, GenerationBatchResult) for result in results):
-            raise TypeError("generation engine ranks must return GenerationBatchResult")
-        first = results[0]
-        for result in results[1:]:
-            if result.request_id != first.request_id or result.batch != first.batch:
-                raise RuntimeError(
-                    "generation engine ranks returned different request/batch identities"
-                )
-        # A terminal failure must not be hidden by another rank's retryable OOM
-        # or graceful stale-slot discard. Preserve the reporting rank identity.
-        for result in results:
-            if result.error and not result.stale_slot and not is_cuda_out_of_memory(result.error):
-                return result
-        for result in results:
-            if result.stale_slot:
-                return result
-        for result in results:
-            if result.error:
-                return result
-        if any(result.policy_version != first.policy_version for result in results[1:]):
-            raise RuntimeError("generation engine ranks returned different policy versions")
-        return replace(
-            first,
-            rank_metrics={result.worker_id: result.metrics for result in results},
-        )
+    _select_batch_rank_result = staticmethod(combine_rank_batch_results)
 
     @staticmethod
     def _select_request_rank_result(
