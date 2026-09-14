@@ -177,32 +177,18 @@ class JanusProBatchExecutor(ARDiscreteBatchExecutorBase):
         contract: ``[B, max_text_length]`` ids + mask, right-padded with
         ``pad_token_id`` (or 0 if none), all on the model device.
         """
-        tokenizer = self.model.processor.tokenizer
-        device = self.model.device
-
         # Janus' T2I chat template (deepseek-ai/Janus/generation_inference.py):
         # a short chat-style header followed by the BOS image-generation tag.
         formatted = [
             f"<｜User｜>: {p}\n\n<｜Assistant｜>:<begin_of_image>"  # noqa: RUF001
             for p in prompts
         ]
-        enc = tokenizer(
+        return ARRequestLayout.tokenize_right_padded(
+            self.model.processor.tokenizer,
             formatted,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=max_text_length,
+            max_text_length=max_text_length,
+            device=self.model.device,
         )
-        ids = enc["input_ids"]
-        mask = enc["attention_mask"]
-
-        ids, mask = ARRequestLayout.right_pad(
-            ids,
-            mask,
-            target_length=max_text_length,
-            pad_id=getattr(tokenizer, "pad_token_id", None) or 0,
-        )
-        return ids.to(device), mask.to(device)
 
 
 @dataclass(slots=True)

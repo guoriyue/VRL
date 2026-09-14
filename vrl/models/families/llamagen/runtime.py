@@ -246,28 +246,12 @@ class LlamaGenBatchExecutor(ARDiscreteBatchExecutorBase):
         replicated — see ``model._load_t5_encoder``). Right-padded ids/mask;
         ``encode_caption`` performs the upstream left-pad flip.
         """
-        tokenizer = self.model.t5_tokenizer
-        device = self.model.device
-
-        texts = [prompt.lower().strip() for prompt in prompts]
-        enc = tokenizer(
-            texts,
-            max_length=max_text_length,
-            padding="max_length",
-            truncation=True,
-            return_attention_mask=True,
-            add_special_tokens=True,
-            return_tensors="pt",
+        return ARRequestLayout.tokenize_right_padded(
+            self.model.t5_tokenizer,
+            [prompt.lower().strip() for prompt in prompts],
+            max_text_length=max_text_length,
+            device=self.model.device,
         )
-        ids = enc["input_ids"]
-        mask = enc["attention_mask"]
-        ids, mask = ARRequestLayout.right_pad(
-            ids,
-            mask,
-            target_length=max_text_length,
-            pad_id=getattr(tokenizer, "pad_token_id", None) or 0,
-        )
-        return ids.to(device), mask.to(device)
 
 
 __all__ = [

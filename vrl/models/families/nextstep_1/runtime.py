@@ -198,25 +198,12 @@ class NextStep1BatchExecutor(ARBatchExecutorBase):
         old direct path and the engine path produce bitwise-identical
         ``input_ids``/``attention_mask`` pairs.
         """
-        tok = self.model.processor
-        device = self.model.device
-
-        enc = tok(
+        return ARRequestLayout.tokenize_right_padded(
+            self.model.processor,
             prompts,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=max_text_length,
+            max_text_length=max_text_length,
+            device=self.model.device,
         )
-        ids = enc["input_ids"]
-        mask = enc["attention_mask"]
-        ids, mask = ARRequestLayout.right_pad(
-            ids,
-            mask,
-            target_length=max_text_length,
-            pad_id=getattr(tok, "pad_token_id", None) or 0,
-        )
-        return ids.to(device), mask.to(device)
 
 
 class NextStep1GenerationBatchGatherer:

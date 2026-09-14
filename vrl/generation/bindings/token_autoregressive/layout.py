@@ -118,6 +118,37 @@ class ARRequestLayout:
             for field in fields
         }
 
+    @classmethod
+    def tokenize_right_padded(
+        cls,
+        tokenizer: Any,
+        texts: list[str],
+        *,
+        max_text_length: int,
+        device: Any,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """``[B, max_text_length]`` ids + mask for ``texts``, right-padded, on ``device``.
+
+        The tokenizer pads/truncates to ``max_text_length``; :meth:`right_pad`
+        then guarantees the width for tokenizers that return shorter rows,
+        using ``pad_token_id`` (or 0 when the tokenizer has none).
+        """
+
+        enc = tokenizer(
+            texts,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True,
+            max_length=max_text_length,
+        )
+        ids, mask = cls.right_pad(
+            enc["input_ids"],
+            enc["attention_mask"],
+            target_length=max_text_length,
+            pad_id=getattr(tokenizer, "pad_token_id", None) or 0,
+        )
+        return ids.to(device), mask.to(device)
+
     @staticmethod
     def right_pad(
         ids: torch.Tensor,
