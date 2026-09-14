@@ -87,3 +87,37 @@ the failed output, adjacent log/memory/process receipts, and the valid first
 checkpoint. Next isolate optimizer/export/checkpoint host lifetimes at this
 boundary, retaining samples, replay gates, and memory protection. The matching
 single-card arm remains unrun.
+
+## Optimizer-Boundary Trim Diagnostic
+
+Candidate `ffbebe7e` ran `wan22_rebased_boundary_trim_four` with the same
+two-update workload and unchanged 95% host-memory protection. An external entry
+wrapper measured each trainer immediately before `_clip_and_step`, after GC,
+after glibc `malloc_trim(0)`, and after the optimizer. It did not clear PyTorch's
+pinned host allocator cache or change training math. The supervisor exited 1
+after 532.850s; checkpoint-1 exists, but the second update failed.
+
+This attempt corrects the location inferred from the previous attempt: Raylet
+first reported threshold crossing at 16:58:27.701, during the fifth replay
+backward (epoch timestamp 1789343899.643-1789343908.254). Worker killing began
+around 16:58:35. The optimizer phase only started at 16:59:34.224. Therefore
+optimizer-boundary cleanup is too late for this run. The much higher available
+host memory measured at that boundary follows worker termination and must not
+be interpreted as successful memory reclamation by the wrapper.
+
+Rank 0 GC left RSS unchanged at 31,968,821,248 bytes; glibc trimming lowered it
+to 31,800,492,032 bytes, only 168,329,216 bytes reclaimed. This does not identify
+the earlier live-tensor or pinned-cache ownership responsible for pressure.
+
+The completed CPU comparison `first_state_comparison.json` establishes exact
+first-checkpoint equality against `wan22_rebased_reload_four`: 6,412 Torch
+tensors, four NumPy arrays, and 8,962 scalar leaves, including model, Adam, EMA,
+RNG, identity and progress. It does not establish second-update synchronization
+or throughput. All experiment processes exited and GPU compute inventory was
+empty. No numerical-work reduction or threshold increase was applied.
+
+Next inspect host allocation ownership during replay, before the first threshold
+crossing, including the distinction between active and cached pinned memory.
+Do not promote optimizer-boundary trimming as a capacity fix or rerun this same
+failed intervention. Keep the matching single-card performance arm pending a
+complete four-card run.
