@@ -7,7 +7,7 @@ import torch
 from torch import nn
 
 from tests.models.steps.denoise.fixtures import lora_test_build
-from vrl.models.steps.denoise import DiffusionModelBase
+from vrl.models.steps.denoise import DenoiseModelBase
 
 pytest.importorskip("peft")
 
@@ -18,7 +18,7 @@ class _TinyTransformer(nn.Module):
         self.proj = nn.Linear(2, 2, bias=False)
 
 
-class _Policy(DiffusionModelBase):
+class _Policy(DenoiseModelBase):
     """Smallest real base subclass: the attach path is the base's own."""
 
     def __init__(self) -> None:

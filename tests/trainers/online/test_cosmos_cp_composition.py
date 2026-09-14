@@ -31,7 +31,7 @@ from vrl.models.families.cosmos.predict2_5.model import (
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.models.precision import apply_float32_precision, fixed_row_linear_compute
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.denoise.sde_logprob import DiffusionSDELogProbEvaluator
+from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
 from vrl.rollouts.orchestration.strict_on_policy import ContextParallelStrictRolloutSchedule
 from vrl.trainers.checkpointing import (
     TrainingCheckpoint,
@@ -291,7 +291,7 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
         trainer = OnlineTrainer(
             algorithm=GRPO(GRPOConfig(kl_coef=0)),
             collector=collector,
-            evaluator=DiffusionSDELogProbEvaluator(scheduler, noise_level=0.7, sde_type="cps"),
+            evaluator=DenoiseSDELogProbEvaluator(scheduler, noise_level=0.7, sde_type="cps"),
             model=model,
             strategy=strategy,
             device=device,

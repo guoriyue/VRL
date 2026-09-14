@@ -1,4 +1,4 @@
-"""Shared diffusion model base for RL runtimes.
+"""Shared denoising model base for diffusion and flow-matching RL runtimes.
 
 The public trainer-facing replay interface is ``vrl.models.interfaces.ReplayModel``.
 This base class only factors shared diffusion model behavior: generation
@@ -41,7 +41,7 @@ from vrl.utils.validation import require_int
 
 
 @dataclass
-class DiffusionSamplingStateBase:
+class DenoiseSamplingStateBase:
     """Engine-contract fields shared by every family's private sampling state.
 
     The batch executor only ever touches ``latents`` (read/write),
@@ -56,7 +56,7 @@ class DiffusionSamplingStateBase:
 
 
 @dataclass
-class GuidedDiffusionSamplingStateBase(DiffusionSamplingStateBase):
+class GuidedDenoiseSamplingStateBase(DenoiseSamplingStateBase):
     """Private state shared by families whose forward/replay path reads guidance."""
 
     guidance_scale: float
@@ -74,8 +74,8 @@ def _forward_step_with_autocast(fn: Any) -> Any:
     return wrapped
 
 
-class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
-    """Shared model base for diffusion families on the RL path."""
+class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
+    """Shared denoising and replay operations for diffusion and flow-matching families."""
 
     replay_segments: ClassVar[tuple[str, ...]] = ("denoise",)
 
@@ -409,7 +409,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         self.verify_trainable_state(expected_state)
 
     @classmethod
-    def from_build(cls, build: ModelBuild) -> DiffusionModelBase:  # pragma: no cover (abstract)
+    def from_build(cls, build: ModelBuild) -> DenoiseModelBase:  # pragma: no cover (abstract)
         """Load the backend from a runtime build."""
         raise NotImplementedError
 
@@ -693,7 +693,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
                 module.to(device)
 
 
-class DiffusersPipelineModelBase(DiffusionModelBase):
+class DiffusersPipelineModelBase(DenoiseModelBase):
     """Shared shape for families backed by ONE diffusers pipeline + ONE
     trainable transformer (sd3_5, flux, qwen_image, cosmos, wan's primary).
 
@@ -705,7 +705,7 @@ class DiffusersPipelineModelBase(DiffusionModelBase):
     overrides only where it genuinely differs (FLUX's dual-encoder discovery,
     SANA's scheduler swap, wan's multi-transformer ``trainable_modules``/LoRA).
     Families NOT backed by a diffusers pipeline (echo's LTX wrapper, anima's
-    single-file checkpoint) stay on ``DiffusionModelBase`` directly.
+    single-file checkpoint) stay on ``DenoiseModelBase`` directly.
     """
 
     def __init__(self, *, pipeline: Any, device: Any = None) -> None:
@@ -883,7 +883,7 @@ class DiffusersReplayModelBase(ReplayRolloutStubs):
     """
 
     def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
-        DiffusionModelBase.__init__(self)
+        DenoiseModelBase.__init__(self)
         self.transformer = transformer
         self._scheduler = scheduler
         self._device = device
@@ -905,9 +905,9 @@ class DiffusersReplayModelBase(ReplayRolloutStubs):
 
 
 __all__ = [
+    "DenoiseModelBase",
+    "DenoiseSamplingStateBase",
     "DiffusersPipelineModelBase",
     "DiffusersReplayModelBase",
-    "DiffusionModelBase",
-    "DiffusionSamplingStateBase",
-    "GuidedDiffusionSamplingStateBase",
+    "GuidedDenoiseSamplingStateBase",
 ]

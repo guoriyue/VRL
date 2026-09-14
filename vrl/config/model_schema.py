@@ -91,7 +91,7 @@ class TorchCompileSection(ConfigBase):
 
 
 class ModelExecutorSection(ConfigBase):
-    """Shared ``GenericDiffusionBatchExecutor`` constructor inputs."""
+    """Shared ``GenericDenoiseBatchExecutor`` constructor inputs."""
 
     num_frames: int | None = None
     max_sequence_length: int | None = None
@@ -196,7 +196,7 @@ class ModelSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("value", default=False),
     )
-    # Shared GenericDiffusionBatchExecutor constructor values. The selected family
+    # Shared GenericDenoiseBatchExecutor constructor values. The selected family
     # validates this block at typed parse and again at launch projection.
     executor: ModelExecutorSection | None = Field(
         default=None,

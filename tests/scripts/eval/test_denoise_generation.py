@@ -8,7 +8,7 @@ import pytest
 import torch
 from diffusers import FlowMatchEulerDiscreteScheduler
 
-from vrl.models.steps.denoise.base import DiffusionSamplingStateBase
+from vrl.models.steps.denoise.base import DenoiseSamplingStateBase
 from vrl.scripts.eval import denoise_generation
 from vrl.scripts.eval.denoise_generation import (
     generate_images,
@@ -29,7 +29,7 @@ class _StepwiseModel:
         self.request = request
         scheduler = FlowMatchEulerDiscreteScheduler()
         scheduler.set_timesteps(request.num_steps)
-        self.state = DiffusionSamplingStateBase(
+        self.state = DenoiseSamplingStateBase(
             latents=torch.full((encoded["batch_size"], 3, 2, 2), 0.5, dtype=torch.bfloat16),
             timesteps=scheduler.timesteps,
             scheduler=scheduler,

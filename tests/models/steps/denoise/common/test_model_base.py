@@ -27,7 +27,7 @@ from vrl.models.families.sd3_5.model import SD3_5Model
 from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
 from vrl.models.interfaces import ReplayResult
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
-from vrl.models.steps.denoise import DiffusionModelBase
+from vrl.models.steps.denoise import DenoiseModelBase
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.builders import build_diffusion_trajectory
 
@@ -69,7 +69,7 @@ class _PluralAdapterTransformer(nn.Linear):
         self.adapters_enabled = True
 
 
-class _ModelBaseStub(DiffusionModelBase):
+class _ModelBaseStub(DenoiseModelBase):
     precision = RolePrecision(
         dtype="fp32",
         float32_precision="ieee",
@@ -371,7 +371,7 @@ def test_diffusion_model_base_registers_only_transformer_child() -> None:
     [SD3_5Model, WanT2VDiffusersModel, CosmosPredict2Model],
 )
 def test_concrete_diffusion_runtimes_register_only_transformer(
-    runtime_cls: type[DiffusionModelBase],
+    runtime_cls: type[DenoiseModelBase],
 ) -> None:
     """Every concrete diffusion runtime registers only the transformer; the pipeline's VAE and
     text encoders never enter ``named_children`` or ``state_dict``.
@@ -393,7 +393,7 @@ def test_concrete_diffusion_runtimes_register_only_transformer(
     [SD3_5Model, WanT2VDiffusersModel, CosmosPredict2Model],
 )
 def test_concrete_diffusion_runtimes_keep_pipeline_transformer_in_sync(
-    runtime_cls: type[DiffusionModelBase],
+    runtime_cls: type[DenoiseModelBase],
 ) -> None:
     """``_set_transformer`` swaps both the registered child and the pipeline's transformer, so the
     runtime and the pipeline can never point at different modules.

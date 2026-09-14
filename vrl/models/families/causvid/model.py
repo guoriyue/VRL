@@ -44,7 +44,7 @@ from vrl.models.interfaces import (
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.precision import model_autocast
 from vrl.models.source_integrity import runtime_source_tree_sha256
-from vrl.models.steps.denoise.base import DiffusionModelBase
+from vrl.models.steps.denoise.base import DenoiseModelBase
 from vrl.utils.artifacts import sha256_file
 
 # Immutable upstream/checkpoint identifiers are genuine external boundaries.
@@ -352,7 +352,7 @@ class _OfficialCausVidBackend:
         return (noisy.double() - sigma * flow.double()).to(flow.dtype)
 
 
-class _CausVidPolicyModel(DiffusionModelBase):
+class _CausVidPolicyModel(DenoiseModelBase):
     """Shared trainable causal transformer surface for rollout and replay."""
 
     # Grouped replay: every [chunk, transition] action is replayed in ONE call,

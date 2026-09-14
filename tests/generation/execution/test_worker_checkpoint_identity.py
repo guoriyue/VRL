@@ -18,7 +18,7 @@ from tests.scripts.eval.fixtures import (
     tiny_sana_online_config,
 )
 from vrl import run
-from vrl.generation.bindings.full_sequence_denoise.executor import GenericDiffusionBatchExecutor
+from vrl.generation.bindings.full_sequence_denoise.executor import GenericDenoiseBatchExecutor
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 
@@ -57,7 +57,7 @@ def test_worker_accepts_matching_identity_before_and_after_model_build(
 
     worker.load_policy()
 
-    assert isinstance(worker.executor, GenericDiffusionBatchExecutor)
+    assert isinstance(worker.executor, GenericDenoiseBatchExecutor)
     assert (worker.executor.family, worker.executor.task) == ("sana", "t2i")
     assert pipeline.loads == 1
 

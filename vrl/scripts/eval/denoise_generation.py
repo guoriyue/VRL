@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from PIL import Image
 
     from vrl.config.schema import RootConfig
-    from vrl.models.steps.denoise.base import DiffusionModelBase, DiffusionSamplingStateBase
+    from vrl.models.steps.denoise.base import DenoiseModelBase, DenoiseSamplingStateBase
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +172,7 @@ def seed_for(
 
 
 def generate_one_video(
-    model: DiffusionModelBase,
+    model: DenoiseModelBase,
     *,
     prompt: str,
     seed: int,
@@ -221,7 +221,7 @@ def generate_one_video(
 
 
 def generate_images(
-    model: DiffusionModelBase,
+    model: DenoiseModelBase,
     *,
     prompt: str,
     negative_prompt: str,
@@ -256,7 +256,7 @@ def generate_images(
     return [to_pil_image(image) for image in decoded]
 
 
-def _denoise_native(model: DiffusionModelBase, state: DiffusionSamplingStateBase) -> None:
+def _denoise_native(model: DenoiseModelBase, state: DenoiseSamplingStateBase) -> None:
     """Keep native scheduler arithmetic identical for image and video callers.
 
     The callers own their grad/decode contexts; models retain their configured

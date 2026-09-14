@@ -8,7 +8,7 @@ from vrl.rollouts.evaluators.base import Evaluator, ReplayEvaluatorBase
 from vrl.rollouts.evaluators.denoise.chunk_autoregressive_logprob import (
     ChunkAutoregressiveDenoiseLogProbEvaluator,
 )
-from vrl.rollouts.evaluators.denoise.sde_logprob import DiffusionSDELogProbEvaluator
+from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
 
 
 class _IncompleteReplayEvaluator(ReplayEvaluatorBase):
@@ -18,7 +18,7 @@ class _IncompleteReplayEvaluator(ReplayEvaluatorBase):
 def _evaluators() -> tuple[ReplayEvaluatorBase, ...]:
     return (
         ChunkAutoregressiveDenoiseLogProbEvaluator(),
-        DiffusionSDELogProbEvaluator(scheduler=object()),
+        DenoiseSDELogProbEvaluator(scheduler=object()),
     )
 
 

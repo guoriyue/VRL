@@ -153,12 +153,12 @@ class AlgorithmEvaluatorPair:
             math_dtype = resolve_torch_dtype(precision.diffusion_math)
             denoise = collector_config.denoise or DenoiseRequestOptions()
             from vrl.rollouts.evaluators.denoise.sde_logprob import (
-                DiffusionSDELogProbEvaluator,
+                DenoiseSDELogProbEvaluator,
             )
 
             return cls(
                 algorithm=algorithm,
-                evaluator=DiffusionSDELogProbEvaluator(
+                evaluator=DenoiseSDELogProbEvaluator(
                     scheduler,
                     noise_level=denoise.noise_level,
                     sde_type=denoise.sde_type or "flow_grpo",

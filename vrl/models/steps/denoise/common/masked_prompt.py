@@ -20,16 +20,16 @@ from typing import Any, ClassVar
 import torch
 
 from vrl.generation.types import DenoiseRequest
-from vrl.models.steps.denoise.base import GuidedDiffusionSamplingStateBase
+from vrl.models.steps.denoise.base import GuidedDenoiseSamplingStateBase
 from vrl.models.steps.denoise.common.backbone import (
-    DiffusionBackboneCaller,
-    DiffusionBackboneInput,
+    DenoiseBackboneCaller,
+    DenoiseBackboneInput,
 )
 from vrl.models.steps.denoise.common.timestep import expand_batch_timestep, pack_eval_timestep
 
 
 @dataclass
-class MaskedPromptSamplingState(GuidedDiffusionSamplingStateBase):
+class MaskedPromptSamplingState(GuidedDenoiseSamplingStateBase):
     """Private state for (sequence embeds, attention mask) conditioning.
 
     Engine MUST NOT introspect: ``latents`` / ``timesteps`` / ``scheduler`` are
@@ -128,7 +128,7 @@ class MaskedPromptModelMixin(MaskedPromptCollectorMixin):
     The pipeline encodes cond and (under CFG) uncond sequence embeds plus
     masks; sampling draws the initial latents through ``pipe.prepare_latents``
     on a seeded generator; the forward runs the transformer through
-    :class:`DiffusionBackboneCaller` with the masks as extra kwargs. A family
+    :class:`DenoiseBackboneCaller` with the masks as extra kwargs. A family
     declares the pipeline-specific encode kwargs and defaults on the class and
     overrides the small hooks below where its checkpoint differs.
     """
@@ -290,11 +290,11 @@ class MaskedPromptModelMixin(MaskedPromptCollectorMixin):
         negative_embeds = (
             None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
-        output = DiffusionBackboneCaller(
+        output = DenoiseBackboneCaller(
             self.transformer,
             self,
         )(
-            DiffusionBackboneInput(
+            DenoiseBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
                 prompt_embeds=state.prompt_embeds.to(td),

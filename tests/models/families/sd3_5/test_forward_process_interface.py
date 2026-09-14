@@ -6,7 +6,7 @@ classifier-free guidance forced off. So the things SD3.5 must get right are
 that this call reaches the real (tiny) ``SD3Transformer2DModel`` exactly as the
 conditional ``forward_step`` branch does even when the rollout ran CFG, that
 ``latents_clean`` is exported, and that the frozen ``previous`` adapter attaches
-and syncs through the shared ``DiffusionModelBase`` on a real PEFT transformer.
+and syncs through the shared ``DenoiseModelBase`` on a real PEFT transformer.
 """
 
 from __future__ import annotations
@@ -176,7 +176,7 @@ def _peft_default_only_replay_model() -> SD3_5ReplayModel:
 
 
 def test_previous_policy_adapter_attaches_frozen_and_syncs_through_the_shared_mixin() -> None:
-    """The replay model (no pipeline) reaches ``DiffusionModelBase``'s attach/sync:
+    """The replay model (no pipeline) reaches ``DenoiseModelBase``'s attach/sync:
     a frozen ``previous`` mirror seeded from ``default`` and refreshed on sync."""
     model = _peft_default_only_replay_model()
     model.attach_previous_policy_adapter()

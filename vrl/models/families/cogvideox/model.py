@@ -39,14 +39,14 @@ from vrl.generation.types import DenoiseRequest
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    GuidedDiffusionSamplingStateBase,
+    GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DiffusionBackboneCaller,
-    DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
-    DiffusionBranch,
+    DenoiseBackboneCaller,
+    DenoiseBackboneInput,
+    DenoiseBackboneRunnerBase,
+    DenoiseBranch,
     LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
@@ -109,7 +109,7 @@ def cogvideox_rotary_embeds(
 
 
 @dataclass
-class CogVideoXSamplingState(GuidedDiffusionSamplingStateBase):
+class CogVideoXSamplingState(GuidedDenoiseSamplingStateBase):
     """Private CogVideoX sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor
@@ -120,7 +120,7 @@ class CogVideoXSamplingState(GuidedDiffusionSamplingStateBase):
     vae_scale_factor_spatial: int
 
 
-class CogVideoXModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+class CogVideoXModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
     """Diffusers-backed CogVideoX t2v model (v-prediction DDPM family)."""
 
     cfg_mode = "batched_cfg"
@@ -134,12 +134,12 @@ class CogVideoXModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
 
     def build_branch(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         branch: str,
-    ) -> DiffusionBranch:
+    ) -> DenoiseBranch:
         """Map CogVideoX transformer kwargs into the shared backbone contract."""
         embeds = request.prompt_embeds if branch == "cond" else request.negative_prompt_embeds
-        return DiffusionBranch(
+        return DenoiseBranch(
             hidden_states=request.hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=embeds,
@@ -269,11 +269,11 @@ class CogVideoXModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
         negative_embeds = (
             None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
-        output = DiffusionBackboneCaller(
+        output = DenoiseBackboneCaller(
             self.transformer,
             self,
         )(
-            DiffusionBackboneInput(
+            DenoiseBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
                 prompt_embeds=state.prompt_embeds.to(td),

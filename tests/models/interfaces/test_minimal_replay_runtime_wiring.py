@@ -298,7 +298,7 @@ class _TinyRuntimeModel(nn.Module):
 
     @property
     def adapter_roots(self) -> dict[str, Any]:
-        # Mirrors ARModelBase: the checkpoint root is the wrapper, the adapter
+        # Mirrors AutoregressiveModelBase: the checkpoint root is the wrapper, the adapter
         # is one hop in on language_model.
         return {"model": self.language_model}
 

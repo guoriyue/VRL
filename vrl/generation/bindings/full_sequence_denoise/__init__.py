@@ -1,23 +1,23 @@
 """Concrete full-sequence denoise generation binding."""
 
 from vrl.generation.bindings.full_sequence_denoise.executor import (
-    DiffusionBatchExecutorBase,
-    DiffusionBatchResult,
-    GenericDiffusionBatchExecutor,
+    DenoiseBatchExecutorBase,
+    DenoiseBatchResult,
+    GenericDenoiseBatchExecutor,
     ReferenceConditionedBatches,
 )
-from vrl.generation.bindings.full_sequence_denoise.gather import DiffusionBatchGatherer
+from vrl.generation.bindings.full_sequence_denoise.gather import DenoiseBatchGatherer
 from vrl.generation.bindings.full_sequence_denoise.layout import (
-    DiffusionRequestLayout,
-    DiffusionSamplingParams,
+    DenoiseRequestLayout,
+    DenoiseSamplingParams,
 )
 
 __all__ = [
-    "DiffusionBatchExecutorBase",
-    "DiffusionBatchGatherer",
-    "DiffusionBatchResult",
-    "DiffusionRequestLayout",
-    "DiffusionSamplingParams",
-    "GenericDiffusionBatchExecutor",
+    "DenoiseBatchExecutorBase",
+    "DenoiseBatchGatherer",
+    "DenoiseBatchResult",
+    "DenoiseRequestLayout",
+    "DenoiseSamplingParams",
+    "GenericDenoiseBatchExecutor",
     "ReferenceConditionedBatches",
 ]

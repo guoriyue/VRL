@@ -39,8 +39,8 @@ from vrl.models.steps.denoise import (
     DiffusersReplayModelBase,
 )
 from vrl.models.steps.denoise.common import (
-    DiffusionBackboneInput,
-    DiffusionBranch,
+    DenoiseBackboneInput,
+    DenoiseBranch,
     EncoderAttentionMaskRunnerBase,
     MaskedPromptModelMixin,
     TrainTimestepMaskedPromptSamplingState,
@@ -93,8 +93,8 @@ class Lumina2Model(
 
     def postprocess_branch(
         self,
-        request: DiffusionBackboneInput,
-        branch: DiffusionBranch,
+        request: DenoiseBackboneInput,
+        branch: DenoiseBranch,
         raw_output: torch.Tensor,
     ) -> torch.Tensor:
         """Negate the raw prediction: Lumina predicts the reversed-time velocity.

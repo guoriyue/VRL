@@ -7,11 +7,11 @@ from typing import Any, Literal
 
 import torch
 
-DiffusionCFGBase = Literal["uncond", "cond"]
+DenoiseCFGBase = Literal["uncond", "cond"]
 
 
 @dataclass(slots=True)
-class DiffusionBranch:
+class DenoiseBranch:
     """One diffusion transformer branch call."""
 
     hidden_states: torch.Tensor
@@ -32,9 +32,9 @@ class DiffusionBranch:
 
 def pack_batched_cfg(
     *,
-    cond: DiffusionBranch,
-    uncond: DiffusionBranch,
-) -> DiffusionBranch:
+    cond: DenoiseBranch,
+    uncond: DenoiseBranch,
+) -> DenoiseBranch:
     """Pack uncond+cond branches for a single batched CFG transformer call.
 
     Uncond rows precede cond rows in the packed batch dimension; the batched
@@ -48,7 +48,7 @@ def pack_batched_cfg(
         cond.encoder_hidden_states,
         uncond.encoder_hidden_states,
     )
-    return DiffusionBranch(
+    return DenoiseBranch(
         hidden_states=torch.cat([uncond.hidden_states, cond.hidden_states], dim=0),
         timestep=torch.cat([uncond.timestep, cond.timestep], dim=0),
         encoder_hidden_states=torch.cat(
@@ -76,7 +76,7 @@ def combine_cfg(
     *,
     guidance_scale: float,
     do_cfg: bool,
-    base: DiffusionCFGBase = "uncond",
+    base: DenoiseCFGBase = "uncond",
     normalize: bool = False,
 ) -> torch.Tensor:
     """Combine conditional and unconditional branch predictions.

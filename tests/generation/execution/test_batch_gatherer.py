@@ -10,8 +10,8 @@ import pytest
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionBatchGatherer,
-    DiffusionBatchResult,
+    DenoiseBatchGatherer,
+    DenoiseBatchResult,
 )
 from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.sample_batches import (
@@ -66,7 +66,7 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
     """Checks diffusion batch gatherer gathers without model object."""
     request = _request(cfg=False)
     sample_rows = request.sample_rows()
-    gatherer = DiffusionBatchGatherer()
+    gatherer = DenoiseBatchGatherer()
     context = {
         "guidance_scale": 4.5,
         "cfg": False,
@@ -88,7 +88,7 @@ def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
     """Checks diffusion batch gatherer orders prompt major batches."""
     request = _request(cfg=False)
     sample_rows = request.sample_rows()
-    gatherer = DiffusionBatchGatherer()
+    gatherer = DenoiseBatchGatherer()
     context = {
         "guidance_scale": 4.5,
         "cfg": False,
@@ -108,7 +108,7 @@ def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
     """Checks diffusion batch gatherer keeps rollout context."""
     request = _request(family="cosmos", task="v2w", cfg=False)
     sample_rows = request.sample_rows()
-    gatherer = DiffusionBatchGatherer()
+    gatherer = DenoiseBatchGatherer()
     context = {
         "guidance_scale": 4.5,
         "cfg": True,
@@ -142,7 +142,7 @@ def test_diffusion_chunk_gatherer_strictly_merges_replay_values() -> None:
         "scheduler": "flow",
     }
 
-    output = DiffusionBatchGatherer().merge_generation_batches(
+    output = DenoiseBatchGatherer().merge_generation_batches(
         request,
         request.sample_rows(),
         batches,
@@ -217,7 +217,7 @@ def test_diffusion_chunk_gatherer_rejects_mixed_none_replay_values() -> None:
     batches[1].replay_tensors = {"prompt_embeds": torch.ones(1, 1)}
 
     with pytest.raises(ValueError, match="must be present on all results"):
-        DiffusionBatchGatherer().merge_generation_batches(
+        DenoiseBatchGatherer().merge_generation_batches(
             request,
             request.sample_rows(),
             batches,
@@ -231,7 +231,7 @@ def test_diffusion_chunk_gatherer_rejects_mismatched_static_replay_values() -> N
     batches[1].replay_tensors = {"scheduler": "ddim"}
 
     with pytest.raises(ValueError, match="non-batched replay value 'scheduler' must match"):
-        DiffusionBatchGatherer().merge_generation_batches(
+        DenoiseBatchGatherer().merge_generation_batches(
             request,
             request.sample_rows(),
             batches,
@@ -245,7 +245,7 @@ def test_diffusion_chunk_gatherer_rejects_mismatched_replay_keys() -> None:
     batches[1].replay_tensors = {"pooled_prompt_embeds": torch.ones(1, 1)}
 
     with pytest.raises(ValueError, match="replay_tensors keys must match"):
-        DiffusionBatchGatherer().merge_generation_batches(
+        DenoiseBatchGatherer().merge_generation_batches(
             request,
             request.sample_rows(),
             batches,
@@ -258,7 +258,7 @@ def test_diffusion_chunk_gatherer_rejects_mismatched_context() -> None:
     batches[1].context = {"model_family": "sd3_5", "cfg": True}
 
     with pytest.raises(ValueError, match="batch context at ordered index 1 does not match"):
-        DiffusionBatchGatherer().merge_generation_batches(
+        DenoiseBatchGatherer().merge_generation_batches(
             request,
             request.sample_rows(),
             batches,
@@ -286,7 +286,7 @@ def _request(
     )
 
 
-def _diffusion_batches(context: dict[str, Any]) -> list[DiffusionBatchResult]:
+def _diffusion_batches(context: dict[str, Any]) -> list[DenoiseBatchResult]:
     return [
         _diffusion_chunk(1.0, context, sample_start=0, peak_memory_mb=10.0),
         _diffusion_chunk(2.0, context, sample_start=1, peak_memory_mb=20.0),
@@ -299,8 +299,8 @@ def _diffusion_chunk(
     *,
     sample_start: int,
     peak_memory_mb: float,
-) -> DiffusionBatchResult:
-    return DiffusionBatchResult(
+) -> DenoiseBatchResult:
+    return DenoiseBatchResult(
         batch=GenerationSampleBatch(
             prompt_index=0,
             sample_start=sample_start,
@@ -362,7 +362,7 @@ def test_diffusion_gather_rejects_mixed_field_dtypes(field) -> None:
     setattr(batches[1], field, getattr(batches[1], field).double())
     error_field = "reward_media" if field == "video" else field
     with pytest.raises(ValueError, match=rf"{error_field!r}.*index 1.*dtypes must match"):
-        DiffusionBatchGatherer().merge_generation_batches(request, request.sample_rows(), batches)
+        DenoiseBatchGatherer().merge_generation_batches(request, request.sample_rows(), batches)
 
 
 def test_diffusion_gather_slices_observations_and_actions_from_one_latent_path() -> None:
@@ -375,7 +375,7 @@ def test_diffusion_gather_slices_observations_and_actions_from_one_latent_path()
     for batch in batches:
         batch.latents = batch.latents + torch.arange(3.0).view(1, 3, 1)
 
-    output = DiffusionBatchGatherer().merge_generation_batches(
+    output = DenoiseBatchGatherer().merge_generation_batches(
         request, request.sample_rows(), batches
     )
 
@@ -396,4 +396,4 @@ def test_diffusion_gather_rejects_latent_path_shorter_than_steps() -> None:
     for batch in batches:
         batch.latents = batch.latents[:, :2]
     with pytest.raises(ValueError, match="latents path has 2 rows per sample, expected 3"):
-        DiffusionBatchGatherer().merge_generation_batches(request, request.sample_rows(), batches)
+        DenoiseBatchGatherer().merge_generation_batches(request, request.sample_rows(), batches)

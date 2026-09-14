@@ -18,8 +18,8 @@ from typing import Any
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise.layout import (
-    DiffusionRequestLayout,
-    DiffusionSamplingParams,
+    DenoiseRequestLayout,
+    DenoiseSamplingParams,
 )
 from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.planner import EnginePlan
@@ -51,7 +51,7 @@ from vrl.utils.validation import require_int
 
 
 @dataclass(slots=True)
-class DiffusionBatchResult:
+class DenoiseBatchResult:
     """Output of one fused diffusion sample batch."""
 
     batch: GenerationSampleBatch
@@ -159,7 +159,7 @@ class ReferenceConditionedBatches:
             return image.convert("RGB")
 
 
-class DiffusionBatchExecutorBase(BatchExecutorBase):
+class DenoiseBatchExecutorBase(BatchExecutorBase):
     """Common GenerationRequest -> diffusion GenerationOutput execution path."""
 
     family: str
@@ -182,20 +182,20 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
     # -- protocol ------------------------------------------------------
 
     @property
-    def layout(self) -> DiffusionRequestLayout:
-        return DiffusionRequestLayout(
+    def layout(self) -> DenoiseRequestLayout:
+        return DenoiseRequestLayout(
             default_num_frames=self.default_num_frames,
             default_fps=self.default_fps,
             default_max_sequence_length=self.default_max_sequence_length,
             sde_type=self.sde_type,
         )
 
-    def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
+    def parse_sampling_params(self, request: GenerationRequest) -> DenoiseSamplingParams:
         return self.layout.parse_sampling_params(request)
 
     def build_denoise_config(
         self,
-        params: DiffusionSamplingParams,
+        params: DenoiseSamplingParams,
         batch: GenerationSampleBatch,
     ) -> DenoiseLoopConfig:
         """Build the SDE denoise config for one sample batch."""
@@ -249,7 +249,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         self,
         request: GenerationRequest,
         batch: GenerationSampleBatch,
-    ) -> DiffusionBatchResult:
+    ) -> DenoiseBatchResult:
         """Run the canonical diffusion batch flow and prepare its wire payload."""
 
         return self.apply_wire_storage_policy(
@@ -263,7 +263,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         batch: GenerationSampleBatch,
         *,
         execute_steps: int,
-    ) -> DiffusionBatchResult:
+    ) -> DenoiseBatchResult:
         """Run a truncated canonical batch for startup memory sizing."""
 
         require_int(execute_steps, path="execute_steps", minimum=1)
@@ -275,7 +275,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         batch: GenerationSampleBatch,
         *,
         execute_steps: int | None,
-    ) -> DiffusionBatchResult:
+    ) -> DenoiseBatchResult:
         from vrl.utils.profiling import profile_range
 
         stage_durations: dict[str, float] = {}
@@ -333,8 +333,8 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
     def apply_wire_storage_policy(
         self,
         request: GenerationRequest,
-        batch_result: DiffusionBatchResult,
-    ) -> DiffusionBatchResult:
+        batch_result: DenoiseBatchResult,
+    ) -> DenoiseBatchResult:
         """Apply rollout.trajectory_storage BEFORE tensors cross the wire.
 
         The same policy is re-applied driver-side when the trajectory batch is
@@ -401,7 +401,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         batch: GenerationSampleBatch,
         config: DenoiseLoopConfig,
         denoise_result: DenoiseLoopResult,
-    ) -> DiffusionBatchResult:
+    ) -> DenoiseBatchResult:
         """Decode the final latents and pack one diffusion batch result."""
 
         from vrl.utils.profiling import profile_range
@@ -463,7 +463,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
             memory = {**denoise_result.memory, "decode_peak_bytes": decode_peak_bytes}
             peak_memory_mb = max(memory["denoise_peak_bytes"], decode_peak_bytes) / (1024 * 1024)
 
-        return DiffusionBatchResult(
+        return DenoiseBatchResult(
             batch=batch,
             latents=denoise_result.latents,
             log_probs=denoise_result.log_probs,
@@ -488,7 +488,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         *,
         generation_request: GenerationRequest,
         model_request: DenoiseRequest,
-        params: DiffusionSamplingParams,
+        params: DenoiseSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         """Encode prompt conditioning for a single prompt batch."""
@@ -543,16 +543,16 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
 
 
 __all__ = [
-    "DiffusionBatchExecutorBase",
-    "DiffusionBatchResult",
-    "DiffusionRequestLayout",
-    "DiffusionSamplingParams",
-    "GenericDiffusionBatchExecutor",
+    "DenoiseBatchExecutorBase",
+    "DenoiseBatchResult",
+    "DenoiseRequestLayout",
+    "DenoiseSamplingParams",
+    "GenericDenoiseBatchExecutor",
     "ReferenceConditionedBatches",
 ]
 
 
-class GenericDiffusionBatchExecutor(DiffusionBatchExecutorBase):
+class GenericDenoiseBatchExecutor(DenoiseBatchExecutorBase):
     """Generic batch executor for pure-data diffusion families.
 
     A family whose executor overrides no method (no ``expand_conditioning_to_batch`` /

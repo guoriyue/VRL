@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 from torch import nn
 
-from vrl.models.steps.denoise.base import DiffusionModelBase
+from vrl.models.steps.denoise.base import DenoiseModelBase
 
 
 class _SingleRoot:
@@ -35,8 +35,8 @@ class _SingleRoot:
         self.transformer = transformer
         self.aliases.append(transformer)
 
-    # Borrow the base implementation without the rest of DiffusionModelBase.
-    set_module_root = DiffusionModelBase.set_module_root
+    # Borrow the base implementation without the rest of DenoiseModelBase.
+    set_module_root = DenoiseModelBase.set_module_root
 
 
 class _DualRoot(_SingleRoot):

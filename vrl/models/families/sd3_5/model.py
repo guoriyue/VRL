@@ -39,13 +39,13 @@ from vrl.generation.types import DenoiseRequest
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    GuidedDiffusionSamplingStateBase,
+    GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
-    DiffusionBackboneCaller,
-    DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
-    DiffusionBranch,
+    DenoiseBackboneCaller,
+    DenoiseBackboneInput,
+    DenoiseBackboneRunnerBase,
+    DenoiseBranch,
     VaeDecodeMixin,
     expand_batch_timestep,
     pack_eval_timestep,
@@ -53,7 +53,7 @@ from vrl.models.steps.denoise.common import (
 
 
 @dataclass
-class SD3SamplingState(GuidedDiffusionSamplingStateBase):
+class SD3SamplingState(GuidedDenoiseSamplingStateBase):
     """Private SD3 sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor
@@ -64,7 +64,7 @@ class SD3SamplingState(GuidedDiffusionSamplingStateBase):
 
     def __post_init__(self) -> None:
         # SD3.5 conditions on an embed AND a pooled embed, so the CFG
-        # invariant DiffusionBackboneInput proves for negative_prompt_embeds
+        # invariant DenoiseBackboneInput proves for negative_prompt_embeds
         # has a pooled twin that only this family knows about. Proving it here
         # is why the uncond branch reads the key directly, like its cond twin.
         if self.do_cfg and self.negative_pooled_prompt_embeds is None:
@@ -77,7 +77,7 @@ class SD3SamplingState(GuidedDiffusionSamplingStateBase):
 class SD3_5Model(
     VaeDecodeMixin,
     DiffusersPipelineModelBase,
-    DiffusionBackboneRunnerBase,
+    DenoiseBackboneRunnerBase,
 ):
     """Diffusers-backed SD 3.5 t2i model.
 
@@ -203,9 +203,9 @@ class SD3_5Model(
 
     def build_branch(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         branch: str,
-    ) -> DiffusionBranch:
+    ) -> DenoiseBranch:
         """Map SD3 transformer kwargs into the shared backbone contract."""
         if branch == "cond":
             embeds = request.prompt_embeds
@@ -213,7 +213,7 @@ class SD3_5Model(
         else:
             embeds = request.negative_prompt_embeds
             pooled = request.extra["negative_pooled_prompt_embeds"]
-        return DiffusionBranch(
+        return DenoiseBranch(
             hidden_states=request.hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=embeds,
@@ -251,11 +251,11 @@ class SD3_5Model(
             if state.negative_pooled_prompt_embeds is None
             else state.negative_pooled_prompt_embeds.to(td)
         )
-        output = DiffusionBackboneCaller(
+        output = DenoiseBackboneCaller(
             self.transformer,
             self,
         )(
-            DiffusionBackboneInput(
+            DenoiseBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
                 prompt_embeds=prompt_embeds,

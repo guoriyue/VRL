@@ -36,7 +36,7 @@ from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.config.precision import RolePrecision
 from vrl.generation.types import DenoiseRequest, GenerationRequest, GenerationSampleRow
-from vrl.models.steps.denoise import DiffusionModelBase
+from vrl.models.steps.denoise import DenoiseModelBase
 from vrl.models.steps.denoise.common.lora import copy_adapter_weights as _copy_adapter_weights
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.builders import build_diffusion_trajectory
@@ -82,7 +82,7 @@ def test_diffusion_nft_advantages_match_grpo_contract(global_std: bool) -> None:
     assert torch.allclose(grpo_advantages, expected, atol=1e-6)
 
 
-class _NFTModel(DiffusionModelBase):
+class _NFTModel(DenoiseModelBase):
     """Holds a real PEFT-wrapped Wan DiT behind the production adapter boundary.
 
     ``transformer`` is a genuine ``WanTransformer3DModel`` carrying real

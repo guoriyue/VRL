@@ -12,7 +12,7 @@ from omegaconf import OmegaConf
 from tests.generation.execution._helpers import launch_contract
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
-from vrl.generation.bindings.full_sequence_denoise import DiffusionBatchGatherer
+from vrl.generation.bindings.full_sequence_denoise import DenoiseBatchGatherer
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationBatchExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
@@ -104,17 +104,17 @@ def test_every_registry_entry_has_pickle_safe_ray_launch_inputs(
 @pytest.mark.parametrize(
     ("experiment", "family", "expected_gatherer", "overrides"),
     [
-        ("sd3_5/online_grpo_ocr", "sd3_5", DiffusionBatchGatherer, ()),
+        ("sd3_5/online_grpo_ocr", "sd3_5", DenoiseBatchGatherer, ()),
         (
             "wan_2_1/online_grpo_physics_i2v",
             "wan_2_1_i2v",
-            DiffusionBatchGatherer,
+            DenoiseBatchGatherer,
             (),
         ),
         (
             "anima_preview3/online_grpo",
             "cosmos-predict2-anima",
-            DiffusionBatchGatherer,
+            DenoiseBatchGatherer,
             (
                 "+reward=aesthetic",
                 "+dataset=drawbench_train_192",

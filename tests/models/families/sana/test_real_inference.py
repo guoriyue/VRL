@@ -109,7 +109,7 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
             )
 
             # RuntimeBundle stamps the resolved role policy on the model, and
-            # DiffusionModelBase owns the forward autocast boundary.
+            # DenoiseModelBase owns the forward autocast boundary.
             production_noise = model.forward_step(state, step_index)["noise_pred"]
             torch.testing.assert_close(
                 production_noise.float(),

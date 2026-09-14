@@ -30,14 +30,14 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    GuidedDiffusionSamplingStateBase,
+    GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DiffusionBackboneCaller,
-    DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
-    DiffusionBranch,
+    DenoiseBackboneCaller,
+    DenoiseBackboneInput,
+    DenoiseBackboneRunnerBase,
+    DenoiseBranch,
     LatentDecodePlan,
     broadcast_spatial_timestep,
     expand_tensor_to_batch,
@@ -47,7 +47,7 @@ from vrl.models.steps.denoise.common import (
 
 
 @dataclass(slots=True)
-class CosmosPredict2DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
+class CosmosPredict2DenoiseBackboneRunner(DenoiseBackboneRunnerBase):
     """Map Cosmos Predict2 transformer kwargs into the shared backbone contract."""
 
     cfg_mode = "separate_cfg"
@@ -62,9 +62,9 @@ class CosmosPredict2DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
 
     def build_branch(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         branch: Literal["cond", "uncond"],
-    ) -> DiffusionBranch:
+    ) -> DenoiseBranch:
         extra = request.extra
         if branch == "cond":
             embeds = request.prompt_embeds
@@ -80,7 +80,7 @@ class CosmosPredict2DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
             indicator=indicator,
             timestep=request.timestep,
         )
-        return DiffusionBranch(
+        return DenoiseBranch(
             hidden_states=hidden_states.to(extra["transformer_dtype"]),
             timestep=timestep.to(extra["transformer_dtype"]),
             encoder_hidden_states=embeds,
@@ -94,8 +94,8 @@ class CosmosPredict2DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
 
     def postprocess_branch(
         self,
-        request: DiffusionBackboneInput,
-        branch: DiffusionBranch,
+        request: DenoiseBackboneInput,
+        branch: DenoiseBranch,
         raw_output: torch.Tensor,
     ) -> torch.Tensor:
         return self._postprocess_branch(
@@ -108,7 +108,7 @@ class CosmosPredict2DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
 
     def finalize_noise_pred(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         combined: torch.Tensor,
         cond: torch.Tensor,
         uncond: torch.Tensor,
@@ -146,7 +146,7 @@ class CosmosPredict2DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
 
 
 @dataclass
-class CosmosPredict2SamplingState(GuidedDiffusionSamplingStateBase):
+class CosmosPredict2SamplingState(GuidedDenoiseSamplingStateBase):
     """Private Cosmos Predict2 sampling state. Collector MUST NOT introspect.
 
     Cosmos Predict2 Video2World needs the full conditioning bundle
@@ -169,7 +169,7 @@ class CosmosPredict2SamplingState(GuidedDiffusionSamplingStateBase):
 
     def __post_init__(self) -> None:
         # Cosmos conditions each branch on its own indicator tensor, so the
-        # CFG invariant DiffusionBackboneInput proves for negative_prompt_embeds
+        # CFG invariant DenoiseBackboneInput proves for negative_prompt_embeds
         # has an uncond-indicator twin that only this family knows about.
         # Proving it here is why the uncond branch reads the key directly,
         # like its cond twin one line above.
@@ -404,11 +404,11 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersPipelineModelBase):
             else None
         )
 
-        output = DiffusionBackboneCaller(
+        output = DenoiseBackboneCaller(
             self.transformer,
-            CosmosPredict2DiffusionBackboneRunner(current_sigma=current_sigma),
+            CosmosPredict2DenoiseBackboneRunner(current_sigma=current_sigma),
         )(
-            DiffusionBackboneInput(
+            DenoiseBackboneInput(
                 hidden_states=state.latents,
                 timestep=timestep,
                 prompt_embeds=state.prompt_embeds,

@@ -2,7 +2,7 @@
 
 NOTE — no ``runner.py``: the H3 transformer takes a packed-sequence layout
 (nine kwargs) and returns a ``(video, audio)`` pair, which does not fit
-``DiffusionBackboneInput``; the call and the audio side-stream update run
+``DenoiseBackboneInput``; the call and the audio side-stream update run
 inline in ``MiniMaxH3Model.forward_step``.
 
 NOTE — the replay bundle is a custom builder, not the generic recipe: replay
@@ -16,8 +16,8 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionBatchExecutorBase,
-    DiffusionSamplingParams,
+    DenoiseBatchExecutorBase,
+    DenoiseSamplingParams,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.protocols import GenerationBatchGatherer
@@ -103,7 +103,7 @@ def build_minimax_h3_replay_runtime_bundle(
     return assemble_replay_bundle(model, build)
 
 
-class MiniMaxH3BatchExecutor(DiffusionBatchExecutorBase):
+class MiniMaxH3BatchExecutor(DenoiseBatchExecutorBase):
     """Diffusion executor for MiniMax-H3 text-to-video rollouts.
 
     Strictly ``samples_per_generation_batch=1``: the transformer's batch axis is
@@ -132,7 +132,7 @@ class MiniMaxH3BatchExecutor(DiffusionBatchExecutorBase):
         *,
         generation_request: GenerationRequest,
         model_request: DenoiseRequest,
-        params: DiffusionSamplingParams,
+        params: DenoiseSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         del model_request  # distilled: no negative prompt

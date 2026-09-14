@@ -31,8 +31,8 @@ from vrl.generation.types import DenoiseRequest
 from vrl.models.families.echo.config import resolve_echo_video_dimensions
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise.base import (
-    DiffusionModelBase,
-    DiffusionSamplingStateBase,
+    DenoiseModelBase,
+    DenoiseSamplingStateBase,
     ReplayRolloutStubs,
 )
 
@@ -92,7 +92,7 @@ def _resolve_gemma_dir(
 
 
 @dataclass
-class EchoSamplingState(DiffusionSamplingStateBase):
+class EchoSamplingState(DenoiseSamplingStateBase):
     """Private Echo sampling state. Engine MUST NOT introspect beyond the
     documented ``latents`` / ``timesteps`` / ``scheduler`` contract.
 
@@ -107,7 +107,7 @@ class EchoSamplingState(DiffusionSamplingStateBase):
     num_train_timesteps: int  # sigma = t / num_train_timesteps
 
 
-class EchoModel(DiffusionModelBase):
+class EchoModel(DenoiseModelBase):
     """Diffusers-free JoyAI-Echo video flow-matching policy."""
 
     def __init__(
@@ -477,7 +477,7 @@ class EchoReplayModel(ReplayRolloutStubs, EchoModel):
         dtype: torch.dtype,
         device: Any = None,
     ) -> None:
-        DiffusionModelBase.__init__(self)
+        DenoiseModelBase.__init__(self)
         object.__setattr__(self, "_echo", echo)
         object.__setattr__(self, "_text_encoder", None)
         object.__setattr__(self, "_video_vae", None)

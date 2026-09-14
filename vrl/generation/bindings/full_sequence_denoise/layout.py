@@ -16,8 +16,8 @@ from vrl.utils.validation import require_int
 
 
 @dataclass(frozen=True, slots=True)
-class DiffusionSamplingParams:
-    """Parsed diffusion sampling fields for one generation request."""
+class DenoiseSamplingParams:
+    """Parsed denoising sampling fields for one generation request."""
 
     model_request: DenoiseRequest
     max_sequence_length: int | None
@@ -39,8 +39,8 @@ class DiffusionSamplingParams:
         return kwargs
 
 
-class DiffusionRequestLayout:
-    """Prompt-major request parser owned by a diffusion executor.
+class DenoiseRequestLayout:
+    """Prompt-major request parser owned by a denoising executor.
 
     The fallback values have NO defaults: the executor is their single source
     and always supplies its resolved values. A default here would be a silent
@@ -69,7 +69,7 @@ class DiffusionRequestLayout:
         self.default_max_sequence_length = default_max_sequence_length
         self.sde_type = sde_type
 
-    def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
+    def parse_sampling_params(self, request: GenerationRequest) -> DenoiseSamplingParams:
         """Parse shared diffusion sampling fields from GenerationRequest."""
 
         sampling = request.sampling
@@ -126,7 +126,7 @@ class DiffusionRequestLayout:
             start = rng.randint(lo, hi - window_size)
             sde_window = (start, start + window_size)
 
-        return DiffusionSamplingParams(
+        return DenoiseSamplingParams(
             model_request=model_request,
             max_sequence_length=max_sequence_length,
             sde=sde,
@@ -137,6 +137,6 @@ class DiffusionRequestLayout:
 
 
 __all__ = [
-    "DiffusionRequestLayout",
-    "DiffusionSamplingParams",
+    "DenoiseRequestLayout",
+    "DenoiseSamplingParams",
 ]

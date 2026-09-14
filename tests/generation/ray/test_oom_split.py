@@ -194,8 +194,8 @@ def _executor(
 @pytest.mark.asyncio
 async def test_failed_gather_rejects_misaligned_media_references() -> None:
     from vrl.generation.bindings.full_sequence_denoise import (
-        DiffusionBatchGatherer,
-        DiffusionBatchResult,
+        DenoiseBatchGatherer,
+        DenoiseBatchResult,
     )
 
     class MalformedMediaWorker(_CapacityWorker):
@@ -203,7 +203,7 @@ async def test_failed_gather_rejects_misaligned_media_references() -> None:
             # Boxed references must obey the same sample-count contract as tensors.
             media = [MediaReference("batch-ref", i) for i in range(2)]
             result = super().execute_batch(envelope)
-            result.output = DiffusionBatchResult(
+            result.output = DenoiseBatchResult(
                 batch=envelope.batch,
                 latents=torch.ones(1, 3, 3),
                 log_probs=torch.zeros(1, 2),
@@ -216,7 +216,7 @@ async def test_failed_gather_rejects_misaligned_media_references() -> None:
             return result
 
     executor, _ = _executor([GenerationSampleBatch(0, 0, 1)], [MalformedMediaWorker("w0", 1)])
-    executor.gatherer = DiffusionBatchGatherer()
+    executor.gatherer = DenoiseBatchGatherer()
     request = replace(_request(1), reward_media_refs=True)
     with pytest.raises(ValueError, match="has 2 rows, expected 1"):
         await executor.execute(request)

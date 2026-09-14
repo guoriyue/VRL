@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import pytest
 import torch
 
-from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionBatchExecutorBase
+from vrl.generation.bindings.full_sequence_denoise.executor import DenoiseBatchExecutorBase
 from vrl.generation.protocols import BatchSizeProbeExecutor
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
 from vrl.generation.types import DenoiseRequest
@@ -59,7 +59,7 @@ def test_initial_noise_uses_batch_offset_without_mutating_request(seed: int | No
 
 def test_diffusion_executor_base_satisfies_probe_protocol() -> None:
     """The probe's ``samples_per_generation_batch: auto`` diffusion-only gate keys off this."""
-    assert issubclass(DiffusionBatchExecutorBase, BatchSizeProbeExecutor)
+    assert issubclass(DenoiseBatchExecutorBase, BatchSizeProbeExecutor)
     assert isinstance(_Executor(_Model()), BatchSizeProbeExecutor)
     assert not isinstance(object(), BatchSizeProbeExecutor)
 
@@ -99,7 +99,7 @@ def test_native_denoise_mode_uses_scheduler_step() -> None:
     assert result.log_probs.shape == (1, 1)
 
 
-class _Executor(DiffusionBatchExecutorBase):
+class _Executor(DenoiseBatchExecutorBase):
     family = "fake"
     task = "t2i"
 

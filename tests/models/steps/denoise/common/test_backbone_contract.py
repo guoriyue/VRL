@@ -7,9 +7,9 @@ import torch
 import torch.nn as nn
 
 from vrl.models.steps.denoise.common import (
-    DiffusionBackboneCaller,
-    DiffusionBackboneInput,
-    DiffusionBranch,
+    DenoiseBackboneCaller,
+    DenoiseBackboneInput,
+    DenoiseBranch,
 )
 
 
@@ -36,14 +36,14 @@ class _Adapter:
 
     def build_branch(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         branch: Literal["cond", "uncond"],
-    ) -> DiffusionBranch:
+    ) -> DenoiseBranch:
         embeds = request.prompt_embeds
         if branch == "uncond":
             embeds = request.negative_prompt_embeds
         assert embeds is not None
-        return DiffusionBranch(
+        return DenoiseBranch(
             hidden_states=request.hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=embeds,
@@ -52,8 +52,8 @@ class _Adapter:
 
     def postprocess_branch(
         self,
-        request: DiffusionBackboneInput,
-        branch: DiffusionBranch,
+        request: DenoiseBackboneInput,
+        branch: DenoiseBranch,
         raw_output: torch.Tensor,
     ) -> torch.Tensor:
         del request, branch
@@ -61,7 +61,7 @@ class _Adapter:
 
     def finalize_noise_pred(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         combined: torch.Tensor,
         cond: torch.Tensor,
         uncond: torch.Tensor,
@@ -76,10 +76,10 @@ def test_backbone_batched_cfg_calls_transformer_once_and_returns_contract() -> N
     noise_pred / cond / uncond.
     """
     transformer = _RecordingTransformer()
-    module = DiffusionBackboneCaller(transformer, _Adapter(cfg_mode="batched_cfg"))
+    module = DenoiseBackboneCaller(transformer, _Adapter(cfg_mode="batched_cfg"))
 
     output = module(
-        DiffusionBackboneInput(
+        DenoiseBackboneInput(
             hidden_states=torch.ones(2, 1),
             timestep=torch.tensor([2.0, 3.0]),
             prompt_embeds=torch.ones(2, 4),
@@ -101,13 +101,13 @@ def test_backbone_batched_cfg_calls_transformer_once_and_returns_contract() -> N
 def test_backbone_separate_cfg_calls_transformer_twice() -> None:
     """Separate CFG issues two transformer calls (cond, uncond) and still returns B-row outputs."""
     transformer = _RecordingTransformer()
-    module = DiffusionBackboneCaller(
+    module = DenoiseBackboneCaller(
         transformer,
         _Adapter(cfg_mode="separate_cfg", cfg_base="cond"),
     )
 
     output = module(
-        DiffusionBackboneInput(
+        DenoiseBackboneInput(
             hidden_states=torch.ones(2, 1),
             timestep=torch.tensor([2.0, 3.0]),
             prompt_embeds=torch.ones(2, 4),
@@ -123,10 +123,10 @@ def test_backbone_separate_cfg_calls_transformer_twice() -> None:
 
 def test_backbone_single_branch_calls_transformer_once_without_cfg() -> None:
     transformer = _RecordingTransformer()
-    module = DiffusionBackboneCaller(transformer, _Adapter(cfg_mode="single_branch"))
+    module = DenoiseBackboneCaller(transformer, _Adapter(cfg_mode="single_branch"))
 
     output = module(
-        DiffusionBackboneInput(
+        DenoiseBackboneInput(
             hidden_states=torch.ones(2, 1),
             timestep=torch.tensor([2.0, 3.0]),
             prompt_embeds=torch.ones(2, 4),
@@ -142,11 +142,11 @@ def test_backbone_single_branch_calls_transformer_once_without_cfg() -> None:
 
 def test_backbone_single_branch_rejects_cfg() -> None:
     transformer = _RecordingTransformer()
-    module = DiffusionBackboneCaller(transformer, _Adapter(cfg_mode="single_branch"))
+    module = DenoiseBackboneCaller(transformer, _Adapter(cfg_mode="single_branch"))
 
     with pytest.raises(ValueError, match="single_branch runner cannot run CFG"):
         module(
-            DiffusionBackboneInput(
+            DenoiseBackboneInput(
                 hidden_states=torch.ones(2, 1),
                 timestep=torch.tensor([2.0, 3.0]),
                 prompt_embeds=torch.ones(2, 4),

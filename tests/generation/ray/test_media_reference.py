@@ -6,8 +6,8 @@ import pytest
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionBatchGatherer,
-    DiffusionBatchResult,
+    DenoiseBatchGatherer,
+    DenoiseBatchResult,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import GenerationBatchEnvelope, GenerationBatchResult
@@ -21,7 +21,7 @@ def _request(*, references=True, count=2):
 
 
 def _batch(start=0, count=2):
-    return DiffusionBatchResult(
+    return DenoiseBatchResult(
         batch=GenerationSampleBatch(0, start, count),
         latents=torch.ones(count, 3, 3),
         log_probs=torch.zeros(count, 2),
@@ -85,7 +85,7 @@ def test_gather_orders_refs_without_resolving_or_materializing(monkeypatch):
     first, second = _batch(0), _batch(2)
     first.video = [MediaReference("first", i) for i in range(2)]
     second.video = [MediaReference("second", i) for i in range(2)]
-    output = DiffusionBatchGatherer().merge_generation_batches(
+    output = DenoiseBatchGatherer().merge_generation_batches(
         request, request.sample_rows(), [second, first]
     )
     assert output.output == first.video + second.video
@@ -94,7 +94,7 @@ def test_gather_orders_refs_without_resolving_or_materializing(monkeypatch):
 def test_gathered_pipelined_output_uses_same_reference_adapter(monkeypatch):
     request = _request()
     batch = _batch()
-    output = DiffusionBatchGatherer().merge_generation_batches(
+    output = DenoiseBatchGatherer().merge_generation_batches(
         request, request.sample_rows(), [batch]
     )
     stored = []

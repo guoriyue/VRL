@@ -53,9 +53,9 @@ from vrl.generation.types import DenoiseRequest
 from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
+    DenoiseModelBase,
+    DenoiseSamplingStateBase,
     DiffusersPipelineModelBase,
-    DiffusionModelBase,
-    DiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.steps.denoise.common import ChunkedLatentDecoder, LatentDecodePlan
@@ -273,7 +273,7 @@ class MiniMaxH3Layout:
 
 
 @dataclass
-class MiniMaxH3SamplingState(DiffusionSamplingStateBase):
+class MiniMaxH3SamplingState(DenoiseSamplingStateBase):
     """Per-rollout state: the video latent is the engine-facing action, the rest is private.
 
     ``latents`` is the live video ``x_t`` ``[B, C, T, H, W]`` fp32; ``timesteps``
@@ -870,7 +870,7 @@ class MiniMaxH3ReplayModel(ReplayRolloutStubs, MiniMaxH3Model):
     def __init__(
         self, *, transformer: Any, scheduler: Any, audio_scheduler: Any, device: Any = None
     ) -> None:
-        DiffusionModelBase.__init__(self)
+        DenoiseModelBase.__init__(self)
         object.__setattr__(
             self,
             "_pipeline",

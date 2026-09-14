@@ -18,8 +18,8 @@ from typing import Any
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionBatchExecutorBase,
-    DiffusionSamplingParams,
+    DenoiseBatchExecutorBase,
+    DenoiseSamplingParams,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import DenoiseRequest, GenerationRequest
@@ -101,7 +101,7 @@ def build_echo_replay_runtime_bundle(
     return assemble_replay_bundle(model, build)
 
 
-class EchoBatchExecutor(DiffusionBatchExecutorBase):
+class EchoBatchExecutor(DenoiseBatchExecutorBase):
     """Diffusion executor for Echo text-to-video rollouts."""
 
     family: str = "echo"
@@ -111,7 +111,7 @@ class EchoBatchExecutor(DiffusionBatchExecutorBase):
     default_num_frames: int = 25
     default_fps: int | None = 24
 
-    def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
+    def parse_sampling_params(self, request: GenerationRequest) -> DenoiseSamplingParams:
         """Require requests to use the wrapper's fixed latent-grid dimensions."""
 
         params = super().parse_sampling_params(request)
@@ -129,7 +129,7 @@ class EchoBatchExecutor(DiffusionBatchExecutorBase):
         *,
         generation_request: GenerationRequest,
         model_request: DenoiseRequest,
-        params: DiffusionSamplingParams,
+        params: DenoiseSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         del params

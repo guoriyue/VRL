@@ -20,7 +20,7 @@ from vrl.models.families.vdn_h3.model import VDNH3Model, VDNH3ReplayModel
 from vrl.models.families.vdn_h3.runtime import VDNH3BatchExecutor
 from vrl.models.interfaces.runtime import RuntimeBundle
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.denoise.sde_logprob import DiffusionSDELogProbEvaluator
+from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
 from vrl.trainers.checkpointing import (
     TrainingCheckpoint,
     restore_rng_state,
@@ -147,7 +147,7 @@ def _build(root, *, device):
     trainer = OnlineTrainer(
         algorithm=GRPO(GRPOConfig(kl_coef=0.0)),
         collector=collector,
-        evaluator=DiffusionSDELogProbEvaluator(model.scheduler),
+        evaluator=DenoiseSDELogProbEvaluator(model.scheduler),
         model=model,
         strategy=SingleProcessStrategy(
             DistributedTrainingContext(

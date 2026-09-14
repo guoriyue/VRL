@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionBatchResult
+from vrl.generation.bindings.full_sequence_denoise.executor import DenoiseBatchResult
 from vrl.generation.execution.pipeline import (
     _enqueue_cpu_copies,
     forward_batches_pipelined,
@@ -273,7 +273,7 @@ def test_async_tree_move_preserves_slots_dataclass_and_records_source_stream(
     )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     sources = [_CudaTensor(name) for name in ("latents", "steps", "video", "replay")]
-    batch = DiffusionBatchResult(
+    batch = DenoiseBatchResult(
         batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1),
         latents=sources[0],
         log_probs=None,
@@ -287,7 +287,7 @@ def test_async_tree_move_preserves_slots_dataclass_and_records_source_stream(
     moved = _enqueue_cpu_copies(batch, copy_stream)
 
     assert not hasattr(batch, "__dict__")
-    assert isinstance(moved, DiffusionBatchResult)
+    assert isinstance(moved, DenoiseBatchResult)
     assert moved is not batch
     assert moved.latents.source is sources[0]
     assert moved.timesteps.source is sources[1]

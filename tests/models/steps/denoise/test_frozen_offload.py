@@ -1,4 +1,4 @@
-"""DiffusionModelBase frozen-component offload (SPRINT_frozen_component_preservation).
+"""DenoiseModelBase frozen-component offload (SPRINT_frozen_component_preservation).
 
 nn.Module.to moves only registered submodules — for diffusion families that is
 just the transformer; the diffusers pipeline (with its frozen VAE / text
@@ -24,10 +24,10 @@ from tests.models.steps.denoise.fixtures import (
     build_tiny_pipeline_shell,
     build_tiny_sd3_transformer,
 )
-from vrl.models.steps.denoise.base import DiffusersReplayModelBase, DiffusionModelBase
+from vrl.models.steps.denoise.base import DenoiseModelBase, DiffusersReplayModelBase
 
 
-class _TinyDiffusionModel(DiffusionModelBase):
+class _TinyDiffusionModel(DenoiseModelBase):
     """Minimal concrete family: registers only the transformer, like SD3.5."""
 
     def __init__(self, pipeline: Any) -> None:

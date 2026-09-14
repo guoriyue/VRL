@@ -37,14 +37,14 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    GuidedDiffusionSamplingStateBase,
+    GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DiffusionBackboneCaller,
-    DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
-    DiffusionBranch,
+    DenoiseBackboneCaller,
+    DenoiseBackboneInput,
+    DenoiseBackboneRunnerBase,
+    DenoiseBranch,
     LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
@@ -53,7 +53,7 @@ from vrl.models.steps.denoise.common import (
 
 
 @dataclass
-class FluxSamplingState(GuidedDiffusionSamplingStateBase):
+class FluxSamplingState(GuidedDenoiseSamplingStateBase):
     """Private FLUX sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor
@@ -65,7 +65,7 @@ class FluxSamplingState(GuidedDiffusionSamplingStateBase):
     width: int
 
 
-class FluxModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
     """Diffusers-backed FLUX.1 t2i model.
 
     Implements the backbone-runner protocol itself. FLUX.1-dev is
@@ -91,9 +91,9 @@ class FluxModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
 
     def build_branch(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         branch: str,
-    ) -> DiffusionBranch:
+    ) -> DenoiseBranch:
         """Map FLUX transformer kwargs (packed latents + rotary ids + pooled)."""
         if branch != "cond":
             raise ValueError("FLUX is guidance-distilled and has no uncond branch")
@@ -105,7 +105,7 @@ class FluxModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
         # ``guidance`` is None for non-distilled checkpoints (config.guidance_embeds
         # off); pass it through either way so the transformer's own None-check fires.
         extra_kwargs["guidance"] = request.extra.get("guidance")
-        return DiffusionBranch(
+        return DenoiseBranch(
             hidden_states=request.hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=request.prompt_embeds,
@@ -308,11 +308,11 @@ class FluxModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
                 device=latent_input.device,
                 dtype=td,
             )
-        output = DiffusionBackboneCaller(
+        output = DenoiseBackboneCaller(
             self.transformer,
             self,
         )(
-            DiffusionBackboneInput(
+            DenoiseBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
                 prompt_embeds=state.prompt_embeds.to(td),

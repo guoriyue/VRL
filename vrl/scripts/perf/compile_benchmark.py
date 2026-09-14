@@ -19,7 +19,7 @@ and peak memory.
 
 FAITHFULNESS: this compiles the bare diffusers transformer exactly as the runtime
 does -- ``torch.compile(transformer, mode=mode, fullgraph=False)`` (see
-``vrl/models/steps/denoise/base.py::DiffusionModelBase.torch_compile_transformer``).
+``vrl/models/steps/denoise/base.py::DenoiseModelBase.torch_compile_transformer``).
 Compile's fusion/guard decisions depend on
 the op graph and tensor shapes, both reproduced exactly by the config-init
 synthetic model (``build_synthetic_inputs``); weight VALUES never affect compile
@@ -88,7 +88,7 @@ def _maybe_compile(model: torch.nn.Module, *, compiled: bool, mode: str) -> torc
 
     if not compiled:
         return model
-    # Mirrors DiffusionModelBase.torch_compile_transformer (the runtime boundary).
+    # Mirrors DenoiseModelBase.torch_compile_transformer (the runtime boundary).
     return torch.compile(model, mode=mode, fullgraph=False)
 
 

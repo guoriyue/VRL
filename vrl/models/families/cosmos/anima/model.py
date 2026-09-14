@@ -23,8 +23,8 @@ from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.families.cosmos.anima.adapter import AnimaLLMAdapter
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
-    DiffusionModelBase,
-    GuidedDiffusionSamplingStateBase,
+    DenoiseModelBase,
+    GuidedDenoiseSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.steps.denoise.common import (
@@ -36,7 +36,7 @@ from vrl.models.steps.denoise.common import (
 
 
 @dataclass
-class AnimaSamplingState(GuidedDiffusionSamplingStateBase):
+class AnimaSamplingState(GuidedDenoiseSamplingStateBase):
     """Private Anima sampling state."""
 
     prompt_embeds: torch.Tensor
@@ -45,7 +45,7 @@ class AnimaSamplingState(GuidedDiffusionSamplingStateBase):
     padding_mask: torch.Tensor
 
 
-class AnimaModel(CosmosReplayForward, DiffusionModelBase):
+class AnimaModel(CosmosReplayForward, DenoiseModelBase):
     """Single-file Anima model on the shared diffusion RL path."""
 
     def __init__(
@@ -492,7 +492,7 @@ class AnimaReplayModel(ReplayRolloutStubs, AnimaModel):
         device: Any,
         dtype: torch.dtype,
     ) -> None:
-        DiffusionModelBase.__init__(self)
+        DenoiseModelBase.__init__(self)
         self.transformer = transformer
         self._scheduler = scheduler
         self._device = device

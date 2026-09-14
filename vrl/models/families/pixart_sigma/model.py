@@ -46,8 +46,8 @@ from vrl.models.steps.denoise import (
     DiffusersReplayModelBase,
 )
 from vrl.models.steps.denoise.common import (
-    DiffusionBackboneInput,
-    DiffusionBranch,
+    DenoiseBackboneInput,
+    DenoiseBranch,
     EncoderAttentionMaskRunnerBase,
     MaskedPromptModelMixin,
     MaskedPromptSamplingState,
@@ -140,8 +140,8 @@ class PixArtSigmaModel(
 
     def postprocess_branch(
         self,
-        request: DiffusionBackboneInput,
-        branch: DiffusionBranch,
+        request: DenoiseBackboneInput,
+        branch: DenoiseBranch,
         raw_output: torch.Tensor,
     ) -> torch.Tensor:
         """Batch the learned-sigma output down to the epsilon prediction.

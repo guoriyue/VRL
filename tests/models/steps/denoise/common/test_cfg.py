@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from vrl.models.steps.denoise.common.cfg import (
-    DiffusionBranch,
+    DenoiseBranch,
     combine_cfg,
     pack_batched_cfg,
     split_batched_cfg_output,
@@ -15,13 +15,13 @@ def test_pack_and_split_batched_cfg_preserves_uncond_cond_order() -> None:
     """Packing puts the uncond rows first and the cond rows second across hidden states,
     timesteps, encoder states and extra kwargs; splitting the output honors the same order.
     """
-    cond = DiffusionBranch(
+    cond = DenoiseBranch(
         hidden_states=torch.full((2, 1), 2.0),
         timestep=torch.tensor([10.0, 11.0]),
         encoder_hidden_states=torch.full((2, 3), 20.0),
         extra_kwargs={"pooled_projections": torch.full((2, 4), 200.0)},
     )
-    uncond = DiffusionBranch(
+    uncond = DenoiseBranch(
         hidden_states=torch.full((2, 1), -2.0),
         timestep=torch.tensor([1.0, 2.0]),
         encoder_hidden_states=torch.full((2, 3), -20.0),
@@ -73,13 +73,13 @@ def test_split_batched_cfg_requires_even_batch() -> None:
     "field", ["hidden_states", "timestep", "encoder_hidden_states", "pooled_projections"]
 )
 def test_pack_batched_cfg_rejects_unequal_branch_rows(field) -> None:
-    cond = DiffusionBranch(
+    cond = DenoiseBranch(
         hidden_states=torch.zeros(1, 2),
         timestep=torch.zeros(1),
         encoder_hidden_states=torch.zeros(1, 2),
         extra_kwargs={"pooled_projections": torch.zeros(1, 2)},
     )
-    uncond = DiffusionBranch(
+    uncond = DenoiseBranch(
         hidden_states=torch.zeros(1, 2),
         timestep=torch.zeros(1),
         encoder_hidden_states=torch.zeros(1, 2),

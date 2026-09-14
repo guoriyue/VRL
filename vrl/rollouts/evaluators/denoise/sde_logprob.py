@@ -13,7 +13,7 @@ from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 from vrl.trajectory.device import move_value_to_device
 
 
-class DiffusionSDELogProbEvaluator(ReplayEvaluatorBase):
+class DenoiseSDELogProbEvaluator(ReplayEvaluatorBase):
     """Signal extraction for flow-matching diffusion models.
 
     Uses ``sde_step_with_logprob`` to compute log-probabilities and

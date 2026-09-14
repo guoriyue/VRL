@@ -5,8 +5,8 @@ from __future__ import annotations
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionBatchGatherer,
-    DiffusionBatchResult,
+    DenoiseBatchGatherer,
+    DenoiseBatchResult,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
@@ -31,7 +31,7 @@ def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
         samples_per_prompt=1,
         sampling={"num_steps": 2},
     )
-    output = DiffusionBatchGatherer().merge_generation_batches(
+    output = DenoiseBatchGatherer().merge_generation_batches(
         request,
         request.sample_rows(),
         [_chunk()],
@@ -54,8 +54,8 @@ def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
     assert batch.trajectory is output.trajectory
 
 
-def _chunk() -> DiffusionBatchResult:
-    return DiffusionBatchResult(
+def _chunk() -> DenoiseBatchResult:
+    return DenoiseBatchResult(
         batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1),
         latents=torch.ones(1, 3, 3, dtype=torch.float32),
         log_probs=torch.ones(1, 2, dtype=torch.float32) * 3,

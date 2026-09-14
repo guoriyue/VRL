@@ -41,8 +41,8 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DiffusionBackboneInput,
-    DiffusionBranch,
+    DenoiseBackboneInput,
+    DenoiseBranch,
     EncoderAttentionMaskRunnerBase,
     LatentDecodePlan,
     MaskedPromptModelMixin,
@@ -117,8 +117,8 @@ class MochiModel(
 
     def postprocess_branch(
         self,
-        request: DiffusionBackboneInput,
-        branch: DiffusionBranch,
+        request: DenoiseBackboneInput,
+        branch: DenoiseBranch,
         raw_output: torch.Tensor,
     ) -> torch.Tensor:
         """Negate: a velocity in Mochi's reversed time axis is -v_standard."""

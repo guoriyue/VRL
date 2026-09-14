@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 
 from vrl.models.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild
-from vrl.models.steps.denoise import DiffusionModelBase
+from vrl.models.steps.denoise import DenoiseModelBase
 from vrl.models.steps.denoise.base import DiffusersPipelineModelBase
 from vrl.utils.config import import_from_path
 
@@ -76,7 +76,7 @@ def _replay_model_classes() -> list[Any]:
 
 @pytest.mark.parametrize("model_cls", _denoise_model_classes())
 def test_family_either_declares_its_pipeline_load_or_owns_from_build(
-    model_cls: type[DiffusionModelBase],
+    model_cls: type[DenoiseModelBase],
 ) -> None:
     """No family may fall through to the shared loader without declaring its inputs."""
 
@@ -135,6 +135,6 @@ def test_pipeline_less_replay_models_never_inherit_the_pipeline_sync(
         return
     assert _owner(replay_cls, "_set_transformer") is not DiffusersPipelineModelBase, (
         f"{replay_cls.__name__} owns no diffusers pipeline; it must keep (or "
-        "inherit from DiffusionModelBase/DiffusersReplayModelBase) a "
+        "inherit from DenoiseModelBase/DiffusersReplayModelBase) a "
         "_set_transformer that does not touch self.pipeline"
     )

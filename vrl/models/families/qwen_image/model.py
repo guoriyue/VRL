@@ -32,14 +32,14 @@ from vrl.generation.types import DenoiseRequest
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    GuidedDiffusionSamplingStateBase,
+    GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DiffusionBackboneCaller,
-    DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
-    DiffusionBranch,
+    DenoiseBackboneCaller,
+    DenoiseBackboneInput,
+    DenoiseBackboneRunnerBase,
+    DenoiseBranch,
     LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
@@ -48,7 +48,7 @@ from vrl.models.steps.denoise.common import (
 
 
 @dataclass
-class QwenImageSamplingState(GuidedDiffusionSamplingStateBase):
+class QwenImageSamplingState(GuidedDenoiseSamplingStateBase):
     """Private Qwen-Image sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor
@@ -62,7 +62,7 @@ class QwenImageSamplingState(GuidedDiffusionSamplingStateBase):
     vae_scale_factor: int
 
 
-class QwenImageModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+class QwenImageModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
     """Diffusers-backed Qwen-Image t2i model.
 
     Implements the backbone-runner protocol itself. Qwen-Image does TRUE
@@ -91,9 +91,9 @@ class QwenImageModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
 
     def build_branch(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         branch: str,
-    ) -> DiffusionBranch:
+    ) -> DenoiseBranch:
         """Map Qwen-Image transformer kwargs into the shared backbone contract."""
         if branch == "cond":
             embeds = request.prompt_embeds
@@ -107,7 +107,7 @@ class QwenImageModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
         }
         if request.extra.get("guidance") is not None:
             extra_kwargs["guidance"] = request.extra["guidance"]
-        return DiffusionBranch(
+        return DenoiseBranch(
             hidden_states=request.hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=embeds,
@@ -285,11 +285,11 @@ class QwenImageModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
         negative_embeds = (
             None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
-        output = DiffusionBackboneCaller(
+        output = DenoiseBackboneCaller(
             self.transformer,
             self,
         )(
-            DiffusionBackboneInput(
+            DenoiseBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
                 prompt_embeds=state.prompt_embeds.to(td),

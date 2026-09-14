@@ -8,7 +8,7 @@ from torch import nn
 
 from vrl.config.precision import RolePrecision
 from vrl.models.interfaces.runtime import RuntimeBundle, register_checkpoint_owned_state
-from vrl.models.steps.denoise.base import DiffusionModelBase
+from vrl.models.steps.denoise.base import DenoiseModelBase
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
     TrainingCheckpoint,
@@ -34,7 +34,7 @@ class _PublishableModule(nn.Linear):
         raise AssertionError("build_adapter_exports must not write anything")
 
 
-class _DenoisePolicy(DiffusionModelBase):
+class _DenoisePolicy(DenoiseModelBase):
     """Minimal real diffusion policy: only ``trainable_modules`` is family data."""
 
     def __init__(self, roots: dict[str, nn.Module]) -> None:

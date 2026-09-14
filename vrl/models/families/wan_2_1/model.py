@@ -48,17 +48,17 @@ from vrl.models.peft_adapter import (
     peel_peft,
 )
 from vrl.models.steps.denoise import (
+    DenoiseModelBase,
     DiffusersPipelineModelBase,
-    DiffusionModelBase,
-    GuidedDiffusionSamplingStateBase,
+    GuidedDenoiseSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DiffusionBackboneCaller,
-    DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
-    DiffusionBranch,
+    DenoiseBackboneCaller,
+    DenoiseBackboneInput,
+    DenoiseBackboneRunnerBase,
+    DenoiseBranch,
     LatentDecodePlan,
     expand_batch_timestep,
     expand_tensor_to_batch,
@@ -76,7 +76,7 @@ class _PipelineOffloadFailure(Enum):
 
 
 @dataclass
-class WanT2VSamplingState(GuidedDiffusionSamplingStateBase):
+class WanT2VSamplingState(GuidedDenoiseSamplingStateBase):
     """Private Wan T2V sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor
@@ -91,7 +91,7 @@ class WanT2VSamplingState(GuidedDiffusionSamplingStateBase):
 
 
 @dataclass
-class WanI2VSamplingState(GuidedDiffusionSamplingStateBase):
+class WanI2VSamplingState(GuidedDenoiseSamplingStateBase):
     """Private Wan I2V sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor
@@ -128,7 +128,7 @@ def _routing_timestep(
 
 class WanT2VDiffusersModel(
     DiffusersPipelineModelBase,
-    DiffusionBackboneRunnerBase,
+    DenoiseBackboneRunnerBase,
 ):
     """Diffusers-backed Wan 2.1 T2V model (1.3B variant).
 
@@ -142,14 +142,14 @@ class WanT2VDiffusersModel(
 
     def build_branch(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         branch: str,
-    ) -> DiffusionBranch:
+    ) -> DenoiseBranch:
         """Map Wan transformer kwargs into the shared backbone contract."""
         embeds = request.prompt_embeds
         if branch == "uncond":
             embeds = request.negative_prompt_embeds
-        return DiffusionBranch(
+        return DenoiseBranch(
             hidden_states=request.hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=embeds,
@@ -644,11 +644,11 @@ class WanT2VDiffusersModel(
             None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
         with self._expert_lifecycle_trace(expert_name, timestep):
-            output = DiffusionBackboneCaller(
+            output = DenoiseBackboneCaller(
                 transformer,
                 self,
             )(
-                DiffusionBackboneInput(
+                DenoiseBackboneInput(
                     hidden_states=latent_input,
                     timestep=timestep_batch,
                     prompt_embeds=prompt_embeds,
@@ -958,7 +958,7 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
         boundary_ratio: float | None = None,
         trainable_transformers: Any = None,
     ) -> None:
-        DiffusionModelBase.__init__(self)
+        DenoiseModelBase.__init__(self)
         self.transformer = transformer
         self.transformer_2 = transformer_2
         self._scheduler = scheduler
@@ -1018,9 +1018,9 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
 
     def build_branch(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         branch: str,
-    ) -> DiffusionBranch:
+    ) -> DenoiseBranch:
         """I2V branch: channel-wise conditioning concat + CLIP image embeds.
 
         - Hidden states are ``cat([noise_latents, condition], dim=1)`` so the
@@ -1061,7 +1061,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
                 request.hidden_states.shape[0],
             )
 
-        return DiffusionBranch(
+        return DenoiseBranch(
             hidden_states=hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=embeds,

@@ -3,9 +3,9 @@
 from vrl.rollouts.evaluators.denoise.chunk_autoregressive_logprob import (
     ChunkAutoregressiveDenoiseLogProbEvaluator,
 )
-from vrl.rollouts.evaluators.denoise.sde_logprob import DiffusionSDELogProbEvaluator
+from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
 
 __all__ = [
     "ChunkAutoregressiveDenoiseLogProbEvaluator",
-    "DiffusionSDELogProbEvaluator",
+    "DenoiseSDELogProbEvaluator",
 ]

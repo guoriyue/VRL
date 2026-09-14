@@ -12,8 +12,8 @@ import torch
 
 from tests.generation.execution._helpers import launch_contract
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionBatchGatherer,
-    DiffusionBatchResult,
+    DenoiseBatchGatherer,
+    DenoiseBatchResult,
 )
 from vrl.generation.execution.memory_parking import WorkerMemoryParking
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
@@ -128,7 +128,7 @@ def test_pipelined_core_keeps_media_tensor_for_ray_adapter():
         1,
         reward_media_refs=True,
     )
-    batch = DiffusionBatchResult(
+    batch = DenoiseBatchResult(
         batch=GenerationSampleBatch(0, 0, 1),
         latents=torch.ones(1, 3, 3),
         log_probs=torch.zeros(1, 2),
@@ -138,7 +138,7 @@ def test_pipelined_core_keeps_media_tensor_for_ray_adapter():
         replay_tensors={},
         context={"model_family": "sd3_5"},
     )
-    gathered = DiffusionBatchGatherer().merge_generation_batches(
+    gathered = DenoiseBatchGatherer().merge_generation_batches(
         request, request.sample_rows(), [batch]
     )
     executor = SimpleNamespace(forward_plan_pipelined=lambda *args, **kwargs: gathered)

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionBatchExecutorBase,
+    DenoiseBatchExecutorBase,
     ReferenceConditionedBatches,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
@@ -19,7 +19,7 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 
-class CosmosBatchExecutor(ReferenceConditionedBatches, DiffusionBatchExecutorBase):
+class CosmosBatchExecutor(ReferenceConditionedBatches, DenoiseBatchExecutorBase):
     """Diffusion executor for Cosmos Predict2 Video2World rollouts."""
 
     family: str = "cosmos-predict2"

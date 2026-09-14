@@ -49,7 +49,7 @@ class DenoiseRequest:
     """Backend-neutral parameters for one image or video generation call.
 
     Geometry and schedule have no defaults: the sampling config is their single
-    source (``DiffusionRequestLayout.parse_sampling_params`` and the eval
+    source (``DenoiseRequestLayout.parse_sampling_params`` and the eval
     scripts always pass them). ``fps`` is ``None`` for image families and for
     video families that resolve their own rate; models read ``request.fps or
     <family default>``.

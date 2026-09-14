@@ -52,13 +52,13 @@ from vrl.generation.types import DenoiseRequest
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    GuidedDiffusionSamplingStateBase,
+    GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
-    DiffusionBackboneCaller,
-    DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
-    DiffusionBranch,
+    DenoiseBackboneCaller,
+    DenoiseBackboneInput,
+    DenoiseBackboneRunnerBase,
+    DenoiseBranch,
     VaeDecodeMixin,
     expand_batch_timestep,
     pack_eval_timestep,
@@ -66,7 +66,7 @@ from vrl.models.steps.denoise.common import (
 
 
 @dataclass
-class HunyuanImageSamplingState(GuidedDiffusionSamplingStateBase):
+class HunyuanImageSamplingState(GuidedDenoiseSamplingStateBase):
     """Private HunyuanImage sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor
@@ -84,7 +84,7 @@ class HunyuanImageSamplingState(GuidedDiffusionSamplingStateBase):
 class HunyuanImageModel(
     VaeDecodeMixin,
     DiffusersPipelineModelBase,
-    DiffusionBackboneRunnerBase,
+    DenoiseBackboneRunnerBase,
 ):
     """Diffusers-backed HunyuanImage-2.1 t2i model (true CFG, dual text streams).
 
@@ -112,9 +112,9 @@ class HunyuanImageModel(
 
     def build_branch(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         branch: str,
-    ) -> DiffusionBranch:
+    ) -> DenoiseBranch:
         """Map HunyuanImage transformer kwargs into the shared backbone contract."""
         if branch == "cond":
             embeds = request.prompt_embeds
@@ -126,7 +126,7 @@ class HunyuanImageModel(
             mask = request.extra["negative_encoder_attention_mask"]
             embeds_2 = request.extra["negative_encoder_hidden_states_2"]
             mask_2 = request.extra["negative_encoder_attention_mask_2"]
-        return DiffusionBranch(
+        return DenoiseBranch(
             hidden_states=request.hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=embeds,
@@ -291,11 +291,11 @@ class HunyuanImageModel(
         negative_embeds = (
             None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
-        output = DiffusionBackboneCaller(
+        output = DenoiseBackboneCaller(
             self.transformer,
             self,
         )(
-            DiffusionBackboneInput(
+            DenoiseBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
                 prompt_embeds=state.prompt_embeds.to(td),

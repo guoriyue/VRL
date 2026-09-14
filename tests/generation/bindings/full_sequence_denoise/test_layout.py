@@ -8,8 +8,8 @@ import pytest
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionRequestLayout,
-    GenericDiffusionBatchExecutor,
+    DenoiseRequestLayout,
+    GenericDenoiseBatchExecutor,
 )
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.generation.types import DenoiseRequest, GenerationRequest
@@ -89,7 +89,7 @@ def test_denoise_options_reject_unknown_denoise_mode() -> None:
 def test_diffusion_encoded_batch_preserves_shared_values_and_expands_samples() -> None:
     from vrl.generation.execution.sample_batches import GenerationSampleBatch
 
-    executor = GenericDiffusionBatchExecutor(SimpleNamespace(), family="test", task="t2i")
+    executor = GenericDenoiseBatchExecutor(SimpleNamespace(), family="test", task="t2i")
     executor.batch_passthrough_keys = ("text_ids",)
     already_sized = torch.ones(3, 2)
     shared_ids = torch.ones(5, 3)
@@ -129,7 +129,7 @@ def test_diffusion_executor_only_projects_real_text_length(
     """An absent family/request value stays absent at both model boundaries."""
 
     model = SimpleNamespace()
-    executor = GenericDiffusionBatchExecutor(
+    executor = GenericDenoiseBatchExecutor(
         model,
         family="test",
         task="t2i",
@@ -180,9 +180,9 @@ def test_seeded_sde_window_is_deterministic_per_request() -> None:
     assert len(windows) > 1, "30 distinct seeds all drew the same window"
 
 
-def _layout() -> DiffusionRequestLayout:
+def _layout() -> DenoiseRequestLayout:
     """A layout with explicit fallbacks (the executor is the real source)."""
-    return DiffusionRequestLayout(
+    return DenoiseRequestLayout(
         default_num_frames=1,
         default_fps=None,
         default_max_sequence_length=512,
@@ -246,7 +246,7 @@ def test_direct_denoise_request_validates_geometry(field, value) -> None:
 @pytest.mark.parametrize("field", ["num_frames", "fps", "max_sequence_length"])
 @pytest.mark.parametrize("value", [True, 1.5, "2"])
 def test_generic_executor_preserves_invalid_defaults_for_request_validation(field, value) -> None:
-    executor = GenericDiffusionBatchExecutor(
+    executor = GenericDenoiseBatchExecutor(
         model=object(),
         family="test",
         task="t2i",

@@ -19,14 +19,14 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    GuidedDiffusionSamplingStateBase,
+    GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DiffusionBackboneCaller,
-    DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
-    DiffusionBranch,
+    DenoiseBackboneCaller,
+    DenoiseBackboneInput,
+    DenoiseBackboneRunnerBase,
+    DenoiseBranch,
     LatentDecodePlan,
     expand_tensor_to_batch,
     replay_tensor,
@@ -35,7 +35,7 @@ from vrl.models.steps.denoise.common import (
 
 
 @dataclass(slots=True)
-class CosmosPredict25DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
+class CosmosPredict25DenoiseBackboneRunner(DenoiseBackboneRunnerBase):
     """Map Cosmos Predict2.5 transformer kwargs into the shared backbone contract."""
 
     cfg_mode = "separate_cfg"
@@ -48,9 +48,9 @@ class CosmosPredict25DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
 
     def build_branch(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         branch: Literal["cond", "uncond"],
-    ) -> DiffusionBranch:
+    ) -> DenoiseBranch:
         extra = request.extra
         embeds = request.prompt_embeds
         if branch == "uncond":
@@ -61,7 +61,7 @@ class CosmosPredict25DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
             cond_mask=extra["cond_mask"],
             cond_indicator=extra["cond_indicator"],
         )
-        return DiffusionBranch(
+        return DenoiseBranch(
             hidden_states=hidden_states.to(extra["transformer_dtype"]),
             timestep=timestep.to(extra["transformer_dtype"]),
             encoder_hidden_states=embeds,
@@ -74,8 +74,8 @@ class CosmosPredict25DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
 
     def postprocess_branch(
         self,
-        request: DiffusionBackboneInput,
-        branch: DiffusionBranch,
+        request: DenoiseBackboneInput,
+        branch: DenoiseBranch,
         raw_output: torch.Tensor,
     ) -> torch.Tensor:
         return branch.metadata["gt_velocity"] + raw_output * (1 - request.extra["cond_mask"])
@@ -135,7 +135,7 @@ def _load_pipeline_without_text_encoder(
 
 
 @dataclass
-class CosmosPredict25SamplingState(GuidedDiffusionSamplingStateBase):
+class CosmosPredict25SamplingState(GuidedDenoiseSamplingStateBase):
     prompt_embeds: torch.Tensor
     negative_prompt_embeds: torch.Tensor | None
     do_cfg: bool
@@ -334,11 +334,11 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             .reshape(1)
             .to(device=state.latents.device, dtype=transformer_dtype)
         )
-        output = DiffusionBackboneCaller(
+        output = DenoiseBackboneCaller(
             self.transformer,
-            CosmosPredict25DiffusionBackboneRunner(sigma=sigma_t),
+            CosmosPredict25DenoiseBackboneRunner(sigma=sigma_t),
         )(
-            DiffusionBackboneInput(
+            DenoiseBackboneInput(
                 hidden_states=state.latents,
                 timestep=sigma_t,
                 prompt_embeds=state.prompt_embeds,
@@ -477,9 +477,9 @@ class CosmosPredict25ReplayModel(DiffusersReplayModelBase, CosmosPredict25Model)
         )
         self.synthetic_prompt_embeds = False
 
-    # apply_lora is inherited from DiffusionModelBase: it walks
+    # apply_lora is inherited from DenoiseModelBase: it walks
     # trainable_modules, which this replay model owns directly (no pipeline).
-    # torch_compile_transformer is inherited from DiffusionModelBase: it calls
+    # torch_compile_transformer is inherited from DenoiseModelBase: it calls
     # self._set_transformer, which the replay base owns.
 
     # set_num_steps is inherited from DiffusersPipelineModelBase: it reads

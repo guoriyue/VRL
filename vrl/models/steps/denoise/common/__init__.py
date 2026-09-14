@@ -1,12 +1,12 @@
 """Shared diffusion model call helpers used by family models."""
 
 from vrl.models.steps.denoise.common.backbone import (
-    DiffusionBackboneCaller,
-    DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
+    DenoiseBackboneCaller,
+    DenoiseBackboneInput,
+    DenoiseBackboneRunnerBase,
     EncoderAttentionMaskRunnerBase,
 )
-from vrl.models.steps.denoise.common.cfg import DiffusionBranch
+from vrl.models.steps.denoise.common.cfg import DenoiseBranch
 from vrl.models.steps.denoise.common.latent_decode import (
     ChunkedLatentDecoder,
     LatentDecodePlan,
@@ -32,10 +32,10 @@ from vrl.utils.tensors import expand_tensor_to_batch
 
 __all__ = [
     "ChunkedLatentDecoder",
-    "DiffusionBackboneCaller",
-    "DiffusionBackboneInput",
-    "DiffusionBackboneRunnerBase",
-    "DiffusionBranch",
+    "DenoiseBackboneCaller",
+    "DenoiseBackboneInput",
+    "DenoiseBackboneRunnerBase",
+    "DenoiseBranch",
     "EncoderAttentionMaskRunnerBase",
     "LatentDecodePlan",
     "MaskedPromptCollectorMixin",

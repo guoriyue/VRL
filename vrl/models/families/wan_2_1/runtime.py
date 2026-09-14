@@ -11,12 +11,12 @@ reference-conditioning batch logic.
 from __future__ import annotations
 
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionBatchExecutorBase,
+    DenoiseBatchExecutorBase,
     ReferenceConditionedBatches,
 )
 
 
-class Wan_2_1I2VBatchExecutor(ReferenceConditionedBatches, DiffusionBatchExecutorBase):
+class Wan_2_1I2VBatchExecutor(ReferenceConditionedBatches, DenoiseBatchExecutorBase):
     """Diffusion executor for Wan 2.1 image-to-video rollouts."""
 
     family: str = "wan_2_1_i2v"

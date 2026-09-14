@@ -19,7 +19,7 @@ from vrl.models.interfaces import (
     RuntimeBundle,
     RuntimeModel,
 )
-from vrl.models.steps.denoise import DiffusionModelBase
+from vrl.models.steps.denoise import DenoiseModelBase
 
 # RuntimeModel's required surface. Derived from the protocol's
 # ``__protocol_attrs__``, so a method add/rename auto-widens the contract check.
@@ -51,7 +51,7 @@ class _MinimalRuntimeModel:
         del state_dict
 
 
-class _DiffusionModelBaseStub(DiffusionModelBase):
+class _DiffusionModelBaseStub(DenoiseModelBase):
     def __init__(self) -> None:
         super().__init__()
         self.transformer = nn.Linear(2, 1, bias=True)

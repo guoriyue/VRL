@@ -14,7 +14,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from vrl.generation.bindings.full_sequence_denoise.executor import (  # noqa: E402
-    DiffusionBatchResult,
+    DenoiseBatchResult,
 )
 from vrl.generation.execution.pipeline import (  # noqa: E402
     _enqueue_cpu_copies,
@@ -78,9 +78,9 @@ def test_pipelined_preserves_chunk_order_real_cuda() -> None:
 
 
 def test_pipelined_moves_real_slots_chunk_result_to_cpu() -> None:
-    def _produce_chunk(batch: int) -> DiffusionBatchResult:
+    def _produce_chunk(batch: int) -> DenoiseBatchResult:
         tensors = _produce(batch)
-        return DiffusionBatchResult(
+        return DenoiseBatchResult(
             batch=GenerationSampleBatch(prompt_index=0, sample_start=batch, sample_count=1),
             latents=tensors["obs"],
             log_probs=None,
@@ -97,7 +97,7 @@ def test_pipelined_moves_real_slots_chunk_result_to_cpu() -> None:
         [0, 1],
     )
 
-    assert all(isinstance(result, DiffusionBatchResult) for result in results)
+    assert all(isinstance(result, DenoiseBatchResult) for result in results)
     assert all(result.latents.device.type == "cpu" for result in results)
     assert all(result.video.device.type == "cpu" for result in results)
     assert [result.context["batch"] for result in results] == [0, 1]

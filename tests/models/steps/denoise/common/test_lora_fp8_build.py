@@ -17,7 +17,7 @@ from torch import nn
 
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
-from vrl.models.steps.denoise import DiffusionModelBase
+from vrl.models.steps.denoise import DenoiseModelBase
 from vrl.models.steps.denoise.build import build_denoise_runtime_bundle
 
 
@@ -62,7 +62,7 @@ def _record_swap(monkeypatch, events: list[str], scheme_name: str = "Fp8Linear")
     )
 
 
-class _LoraPolicy(DiffusionModelBase):
+class _LoraPolicy(DenoiseModelBase):
     def __init__(self, events: list[str]) -> None:
         super().__init__()
         self.transformer = _TrackingTransformer(events)

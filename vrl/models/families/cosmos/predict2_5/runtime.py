@@ -11,14 +11,14 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionBatchExecutorBase,
-    DiffusionSamplingParams,
+    DenoiseBatchExecutorBase,
+    DenoiseSamplingParams,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import DenoiseRequest, GenerationRequest
 
 
-class CosmosPredict25BatchExecutor(DiffusionBatchExecutorBase):
+class CosmosPredict25BatchExecutor(DenoiseBatchExecutorBase):
     """Diffusion executor for Cosmos Predict2.5 text-to-world rollouts."""
 
     family: str = "cosmos-predict2.5"
@@ -32,7 +32,7 @@ class CosmosPredict25BatchExecutor(DiffusionBatchExecutorBase):
         *,
         generation_request: GenerationRequest,
         model_request: DenoiseRequest,
-        params: DiffusionSamplingParams,
+        params: DenoiseSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         return self.model.encode_prompt(

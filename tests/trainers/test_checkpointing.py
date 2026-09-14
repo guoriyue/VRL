@@ -18,7 +18,7 @@ from tests.trainers._checkpoint_helpers import (
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
 from vrl.models.interfaces.runtime import RuntimeBundle
-from vrl.models.steps.denoise.base import DiffusionModelBase
+from vrl.models.steps.denoise.base import DenoiseModelBase
 from vrl.trainers.checkpointing import (
     CHECKPOINT_META_NAME,
     CHECKPOINT_SCHEMA_VERSION,
@@ -717,7 +717,7 @@ class _PublishableModule(nn.Linear):
         raise AssertionError("build_adapter_exports must not write anything")
 
 
-class _DenoisePolicy(DiffusionModelBase):
+class _DenoisePolicy(DenoiseModelBase):
     """Minimal real diffusion policy: only ``trainable_modules`` is family data."""
 
     def __init__(self, roots: dict[str, nn.Module]) -> None:

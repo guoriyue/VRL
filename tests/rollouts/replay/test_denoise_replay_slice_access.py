@@ -11,10 +11,10 @@ import torch
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
-from vrl.models.steps.denoise import DiffusionModelBase
+from vrl.models.steps.denoise import DenoiseModelBase
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import move_training_batch_to_device
-from vrl.rollouts.evaluators.denoise.sde_logprob import DiffusionSDELogProbEvaluator
+from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
 from vrl.trajectory.builders import build_diffusion_trajectory
 
 _PRECISION = RolePrecision(
@@ -30,7 +30,7 @@ def test_diffusion_replay_slices_timestep_before_device_move(monkeypatch) -> Non
     """
 
     batch, sentinels = _batch_with_sentinel_timestep_tensors()
-    evaluator = DiffusionSDELogProbEvaluator(_Scheduler())
+    evaluator = DenoiseSDELogProbEvaluator(_Scheduler())
     model = _ReplayModel()
 
     assert evaluator.supports_deferred_replay_tensor_move is True
@@ -150,7 +150,7 @@ class _Scheduler:
         return int(timestep.item())
 
 
-class _ReplayModel(DiffusionModelBase):
+class _ReplayModel(DenoiseModelBase):
     precision = _PRECISION
     family = "test"
     device = torch.device("cpu")

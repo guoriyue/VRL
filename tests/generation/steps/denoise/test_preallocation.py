@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.generation.bindings.full_sequence_denoise import DiffusionBatchExecutorBase
+from vrl.generation.bindings.full_sequence_denoise import DenoiseBatchExecutorBase
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
 from vrl.generation.steps.denoise.loop import DenoiseTrajectoryBuffers
@@ -196,7 +196,7 @@ def test_decode_denoise_result_does_not_serialize_model_precision() -> None:
 def test_executor_adds_no_autocast_scope(monkeypatch: pytest.MonkeyPatch) -> None:
     """The model owns its forward contract; the executor must not add autocast.
 
-    ``DiffusionModelBase`` wraps ``forward_step`` with the stamped contract
+    ``DenoiseModelBase`` wraps ``forward_step`` with the stamped contract
     (covered in tests/models/steps/denoise/common/test_model_base.py); scheduler
     and SDE math always run outside any autocast scope.
     """
@@ -371,7 +371,7 @@ class _Model:
         return {"model_family": "test"}
 
 
-class _Executor(DiffusionBatchExecutorBase):
+class _Executor(DenoiseBatchExecutorBase):
     family = "test"
     task = "t2i"
 
@@ -379,7 +379,7 @@ class _Executor(DiffusionBatchExecutorBase):
         super().__init__(_Model())
 
 
-class _StageTrackingExecutor(DiffusionBatchExecutorBase):
+class _StageTrackingExecutor(DenoiseBatchExecutorBase):
     family = "test"
     task = "t2i"
 
@@ -445,7 +445,7 @@ def test_decode_denoise_result_packs_video_as_uint8() -> None:
             del latents
             return torch.linspace(0.0, 1.0, 16, dtype=torch.float32).view(1, 1, 4, 4)
 
-    class _UnitVideoExecutor(DiffusionBatchExecutorBase):
+    class _UnitVideoExecutor(DenoiseBatchExecutorBase):
         family = "test"
         task = "t2i"
 

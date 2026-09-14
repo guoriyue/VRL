@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 # Import-path protocol value shared by registry dispatch and generation workers.
 # Keeping it here avoids making the neutral family table import a runtime module.
 GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR = (
-    "vrl.generation.bindings.full_sequence_denoise.executor:GenericDiffusionBatchExecutor"
+    "vrl.generation.bindings.full_sequence_denoise.executor:GenericDenoiseBatchExecutor"
 )
 SHARED_MODEL_SECTION_CLS = "vrl.config.model_schema:ModelSection"
 # Lazy public-sampling schema protocol values. Families share a path only when
@@ -472,7 +472,7 @@ def _full_sequence_denoise_entry(
         task=task,
         policy_semantics=PolicySemantics(generation_regime="full_sequence"),
         executor_cls=executor_cls,
-        gatherer_cls="vrl.generation.bindings.full_sequence_denoise.gather:DiffusionBatchGatherer",
+        gatherer_cls="vrl.generation.bindings.full_sequence_denoise.gather:DenoiseBatchGatherer",
         model_section_cls=model_section_cls,
         sampling_section_cls=sampling_section_cls,
         family_build=build,

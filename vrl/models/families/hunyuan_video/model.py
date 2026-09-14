@@ -36,13 +36,13 @@ from vrl.generation.types import DenoiseRequest
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    GuidedDiffusionSamplingStateBase,
+    GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
-    DiffusionBackboneCaller,
-    DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
-    DiffusionBranch,
+    DenoiseBackboneCaller,
+    DenoiseBackboneInput,
+    DenoiseBackboneRunnerBase,
+    DenoiseBranch,
     VaeDecodeMixin,
     expand_batch_timestep,
     pack_eval_timestep,
@@ -50,7 +50,7 @@ from vrl.models.steps.denoise.common import (
 
 
 @dataclass
-class HunyuanVideoSamplingState(GuidedDiffusionSamplingStateBase):
+class HunyuanVideoSamplingState(GuidedDenoiseSamplingStateBase):
     """Private HunyuanVideo sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor
@@ -61,7 +61,7 @@ class HunyuanVideoSamplingState(GuidedDiffusionSamplingStateBase):
 class HunyuanVideoModel(
     VaeDecodeMixin,
     DiffusersPipelineModelBase,
-    DiffusionBackboneRunnerBase,
+    DenoiseBackboneRunnerBase,
 ):
     """Diffusers-backed HunyuanVideo t2v model (guidance-distilled)."""
 
@@ -83,13 +83,13 @@ class HunyuanVideoModel(
 
     def build_branch(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         branch: str,
-    ) -> DiffusionBranch:
+    ) -> DenoiseBranch:
         """Map HunyuanVideo transformer kwargs into the shared backbone contract."""
         if branch != "cond":
             raise ValueError("HunyuanVideo is guidance-distilled and has no uncond branch")
-        return DiffusionBranch(
+        return DenoiseBranch(
             hidden_states=request.hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=request.prompt_embeds,
@@ -210,11 +210,11 @@ class HunyuanVideoModel(
             device=latent_input.device,
             dtype=td,
         )
-        output = DiffusionBackboneCaller(
+        output = DenoiseBackboneCaller(
             self.transformer,
             self,
         )(
-            DiffusionBackboneInput(
+            DenoiseBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
                 prompt_embeds=state.prompt_embeds.to(td),

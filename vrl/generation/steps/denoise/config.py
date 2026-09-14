@@ -25,7 +25,7 @@ class DenoiseRequestOptions:
     YAML declares no defaults for them, so the effective defaults live here and
     nowhere else). ``sde_type=None`` defers to the executor family's default and
     ``sde_window_range=None`` means the whole schedule; both resolve against the
-    request's step count in ``DiffusionRequestLayout.parse_sampling_params``.
+    request's step count in ``DenoiseRequestLayout.parse_sampling_params``.
     """
 
     denoise_mode: DenoiseMode = "sde"

@@ -721,7 +721,7 @@ def build_adapter_exports(
     namespaced under it by root name so they cannot overwrite each other.
 
     Which modules are exportable is the bundle's decision, not this function's
-    — see ``DiffusionModelBase.adapter_roots`` for why that filter must not
+    — see ``DenoiseModelBase.adapter_roots`` for why that filter must not
     move here.
     """
 

@@ -1,7 +1,7 @@
 """Previous-policy updates and checkpoint ownership beyond PEFT's adapter API.
 
 Model construction and adapter installation use PEFT directly in
-``DiffusionModelBase``. These operations remain VRL-owned: PEFT does not define
+``DenoiseModelBase``. These operations remain VRL-owned: PEFT does not define
 the algorithms' copy/EMA schedule or checkpoint registration of mutable frozen
 parameters. The objectives that consume the frozen mirror live under
 ``vrl/algorithms``; nothing here depends on which one requested it.

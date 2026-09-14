@@ -19,7 +19,7 @@ import torch
 
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.generation.bindings.full_sequence_denoise.layout import DiffusionRequestLayout
+from vrl.generation.bindings.full_sequence_denoise.layout import DenoiseRequestLayout
 from vrl.generation.steps.denoise.config import (
     DenoiseLoopConfig,
     DenoiseRequestOptions,
@@ -27,9 +27,9 @@ from vrl.generation.steps.denoise.config import (
 )
 from vrl.generation.steps.denoise.loop import DenoiseTrajectoryBuffers
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
-from vrl.models.steps.denoise import DiffusionModelBase
+from vrl.models.steps.denoise import DenoiseModelBase
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.denoise.sde_logprob import DiffusionSDELogProbEvaluator
+from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
 from vrl.rollouts.evaluators.types import SignalRequest
 from vrl.trajectory.builders import build_diffusion_trajectory
 
@@ -85,7 +85,7 @@ def test_ref_buffer_is_none_by_default() -> None:
 
 
 def test_layout_parses_cache_ref_noise_pred_flag() -> None:
-    layout = DiffusionRequestLayout(
+    layout = DenoiseRequestLayout(
         default_num_frames=1,
         default_fps=None,
         default_max_sequence_length=512,
@@ -167,7 +167,7 @@ def _batch(
 def test_cached_ref_skips_the_ref_forward() -> None:
     """With a cached ref_noise_pred, evaluate never reruns the ref forward."""
     model = _CountingReplayModel()
-    evaluator = DiffusionSDELogProbEvaluator(_Scheduler())
+    evaluator = DenoiseSDELogProbEvaluator(_Scheduler())
     batch = _batch(ref_noise_pred=torch.full((2, 2, 3), 0.25))
 
     signals = evaluator.evaluate(
@@ -189,7 +189,7 @@ def test_cached_ref_matches_fresh_ref_forward() -> None:
     # The model's ref forward (disable_adapter) returns zeros_like; store zeros.
     cached = _CountingReplayModel()
     fresh = _CountingReplayModel()
-    evaluator = DiffusionSDELogProbEvaluator(_Scheduler())
+    evaluator = DenoiseSDELogProbEvaluator(_Scheduler())
 
     cached_signals = evaluator.evaluate(
         cached,
@@ -221,7 +221,7 @@ class _Scheduler:
         return int(timestep.item())
 
 
-class _CountingReplayModel(DiffusionModelBase):
+class _CountingReplayModel(DenoiseModelBase):
     family = "test"
     precision = _PRECISION
     device = torch.device("cpu")
@@ -289,7 +289,7 @@ class _CountingReplayModel(DiffusionModelBase):
 def test_replay_cache_requires_a_step_dimension(name: str) -> None:
     caches = {"ref_noise_pred": None, name: torch.zeros(2)}
     with pytest.raises(IndexError):
-        DiffusionSDELogProbEvaluator(_Scheduler()).evaluate(
+        DenoiseSDELogProbEvaluator(_Scheduler()).evaluate(
             _CountingReplayModel(),
             _batch(**caches),
             timestep_idx=1,
@@ -299,7 +299,7 @@ def test_replay_cache_requires_a_step_dimension(name: str) -> None:
 
 def test_replay_reads_requested_proposal_mean_step() -> None:
     stored = torch.arange(12, dtype=torch.float32).reshape(2, 2, 3)
-    signals = DiffusionSDELogProbEvaluator(_Scheduler()).evaluate(
+    signals = DenoiseSDELogProbEvaluator(_Scheduler()).evaluate(
         _CountingReplayModel(),
         _batch(ref_noise_pred=None, old_prev_sample_mean=stored),
         timestep_idx=1,

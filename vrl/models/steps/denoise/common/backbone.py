@@ -9,8 +9,8 @@ from typing import Any, ClassVar, Literal, Protocol
 import torch
 
 from vrl.models.steps.denoise.common.cfg import (
-    DiffusionBranch,
-    DiffusionCFGBase,
+    DenoiseBranch,
+    DenoiseCFGBase,
     combine_cfg,
     pack_batched_cfg,
     split_batched_cfg_output,
@@ -20,7 +20,7 @@ DiffusionCFGMode = Literal["batched_cfg", "separate_cfg", "single_branch"]
 
 
 @dataclass(slots=True)
-class DiffusionBackboneInput:
+class DenoiseBackboneInput:
     """Inputs for one denoise transformer call."""
 
     hidden_states: torch.Tensor
@@ -37,7 +37,7 @@ class DiffusionBackboneInput:
     def __post_init__(self) -> None:
         """One home for the CFG conditioning invariant.
 
-        ``DiffusionBackboneCaller`` builds the uncond branch if and only if
+        ``DenoiseBackboneCaller`` builds the uncond branch if and only if
         ``do_cfg``, so a CFG request without negative conditioning is
         unusable. It used to be re-proven per family: every uncond branch
         raised on its own while four producers silently dropped the negatives
@@ -52,7 +52,7 @@ class DiffusionBackboneInput:
 
 
 @dataclass(slots=True)
-class DiffusionBackboneOutput:
+class DenoiseBackboneOutput:
     """Canonical diffusion branch output contract."""
 
     noise_pred: torch.Tensor
@@ -67,36 +67,36 @@ class DiffusionBackboneOutput:
         }
 
 
-class DiffusionBackboneRunner(Protocol):
+class DenoiseBackboneRunner(Protocol):
     """Family-owned backbone call runner."""
 
     cfg_mode: DiffusionCFGMode
-    cfg_base: DiffusionCFGBase
+    cfg_base: DenoiseCFGBase
     cfg_normalization: bool
 
     def build_branch(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         branch: Literal["cond", "uncond"],
-    ) -> DiffusionBranch: ...
+    ) -> DenoiseBranch: ...
 
     def postprocess_branch(
         self,
-        request: DiffusionBackboneInput,
-        branch: DiffusionBranch,
+        request: DenoiseBackboneInput,
+        branch: DenoiseBranch,
         raw_output: torch.Tensor,
     ) -> torch.Tensor: ...
 
     def finalize_noise_pred(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         combined: torch.Tensor,
         cond: torch.Tensor,
         uncond: torch.Tensor,
     ) -> torch.Tensor: ...
 
 
-class DiffusionBackboneRunnerBase:
+class DenoiseBackboneRunnerBase:
     """No-op defaults for the two optional runner hooks.
 
     Every family runner must map kwargs in ``build_branch``, but most have
@@ -116,8 +116,8 @@ class DiffusionBackboneRunnerBase:
 
     def postprocess_branch(
         self,
-        request: DiffusionBackboneInput,
-        branch: DiffusionBranch,
+        request: DenoiseBackboneInput,
+        branch: DenoiseBranch,
         raw_output: torch.Tensor,
     ) -> torch.Tensor:
         del request, branch
@@ -125,7 +125,7 @@ class DiffusionBackboneRunnerBase:
 
     def finalize_noise_pred(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         combined: torch.Tensor,
         cond: torch.Tensor,
         uncond: torch.Tensor,
@@ -134,7 +134,7 @@ class DiffusionBackboneRunnerBase:
         return combined
 
 
-class EncoderAttentionMaskRunnerBase(DiffusionBackboneRunnerBase):
+class EncoderAttentionMaskRunnerBase(DenoiseBackboneRunnerBase):
     """``build_branch`` for families conditioned on embeds + an attention mask.
 
     sana, lumina2, mochi and pixart_sigma mapped their branches identically:
@@ -142,7 +142,7 @@ class EncoderAttentionMaskRunnerBase(DiffusionBackboneRunnerBase):
     mask as ``encoder_attention_mask``, with pixart_sigma's constant
     micro-conditioning dict the only addition.
 
-    This is a SIBLING opt-in, not a default on ``DiffusionBackboneRunnerBase``:
+    This is a SIBLING opt-in, not a default on ``DenoiseBackboneRunnerBase``:
     a family that forgets to map its own transformer kwargs must fail loud, so
     the base deliberately declares no ``build_branch``.
     """
@@ -154,9 +154,9 @@ class EncoderAttentionMaskRunnerBase(DiffusionBackboneRunnerBase):
 
     def build_branch(
         self,
-        request: DiffusionBackboneInput,
+        request: DenoiseBackboneInput,
         branch: str,
-    ) -> DiffusionBranch:
+    ) -> DenoiseBranch:
         """Map the branch's prompt embeds and attention mask into a branch call."""
 
         if branch == "cond":
@@ -165,7 +165,7 @@ class EncoderAttentionMaskRunnerBase(DiffusionBackboneRunnerBase):
         else:
             embeds = request.negative_prompt_embeds
             mask = request.extra.get("negative_encoder_attention_mask")
-        return DiffusionBranch(
+        return DenoiseBranch(
             hidden_states=request.hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=embeds,
@@ -173,14 +173,14 @@ class EncoderAttentionMaskRunnerBase(DiffusionBackboneRunnerBase):
         )
 
 
-class DiffusionBackboneCaller:
+class DenoiseBackboneCaller:
     """Run one diffusion transformer step with shared CFG orchestration."""
 
-    def __init__(self, transformer: Any, runner: DiffusionBackboneRunner) -> None:
+    def __init__(self, transformer: Any, runner: DenoiseBackboneRunner) -> None:
         self.transformer = transformer
         self.runner = runner
 
-    def __call__(self, request: DiffusionBackboneInput) -> DiffusionBackboneOutput:
+    def __call__(self, request: DenoiseBackboneInput) -> DenoiseBackboneOutput:
         cond_branch = self.runner.build_branch(request, "cond")
 
         if request.do_cfg:
@@ -225,13 +225,13 @@ class DiffusionBackboneCaller:
             noise_pred_cond,
             noise_pred_uncond,
         ).to(output_dtype)
-        return DiffusionBackboneOutput(
+        return DenoiseBackboneOutput(
             noise_pred=noise_pred,
             noise_pred_cond=noise_pred_cond,
             noise_pred_uncond=noise_pred_uncond,
         )
 
-    def _forward_branch(self, branch: DiffusionBranch) -> torch.Tensor:
+    def _forward_branch(self, branch: DenoiseBranch) -> torch.Tensor:
         """Invoke one prepared branch and extract its prediction tensor."""
 
         output = self.transformer(**branch.as_transformer_kwargs())

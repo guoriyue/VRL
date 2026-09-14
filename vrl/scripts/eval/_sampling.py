@@ -5,7 +5,7 @@ sections. This module owns no defaults: a key a script needs must be declared
 by the config (or supplied on the CLI), because an evaluation that silently ran
 with a hyper-parameter the training config never set would be measuring the
 wrong thing. The family keys fall back to ``model.executor`` exactly as the
-training runtime does (``GenericDiffusionBatchExecutor`` applies its
+training runtime does (``GenericDenoiseBatchExecutor`` applies its
 ``default_*`` values when a request carries none). The dict is intentionally untyped: it is a per-request runtime payload
 handed straight to the generation request, not a launch-time config object.
 
