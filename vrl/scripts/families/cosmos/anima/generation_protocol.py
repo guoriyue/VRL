@@ -15,6 +15,7 @@ from PIL import Image
 from vrl.models.checkpoint_identity import MODEL_IDENTITY_SCHEMA
 from vrl.scripts.eval.denoise_generation import GeneratorRuntimeIdentity, ImageSampling
 from vrl.utils.artifacts import PathOutsideRootsError, RootedPaths, sha256_file
+from vrl.utils.validation import require_mapping_keys
 
 ANIMA_GENERATION_SCHEMA = "vrl.anima-generation/v1"
 ANIMA_ANCHOR_MANIFEST_SCHEMA = "vrl.anima-anchor-manifest/v1"
@@ -317,15 +318,11 @@ def _load_cells(
         if not line.strip():
             continue
         raw = json.loads(line)
-        if not isinstance(raw, Mapping):
-            raise TypeError(f"{metadata_path}:{line_number} must contain a JSON object")
-        missing = sorted(persisted_fields - set(raw))
-        unknown = sorted(set(raw) - persisted_fields)
-        if missing or unknown:
-            raise ValueError(
-                f"invalid generation row at {metadata_path}:{line_number}: "
-                f"missing={missing} unknown={unknown}",
-            )
+        raw = require_mapping_keys(
+            raw,
+            persisted_fields,
+            what=f"generation row at {metadata_path}:{line_number}",
+        )
         prompt_index = _nonnegative_int(raw, "prompt_index", metadata_path, line_number)
         sample_index = _nonnegative_int(raw, "sample_index", metadata_path, line_number)
         seed = _nonnegative_int(raw, "seed", metadata_path, line_number)

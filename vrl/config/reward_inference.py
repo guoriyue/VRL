@@ -8,6 +8,7 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from vrl.utils.deadline import require_timeout
+from vrl.utils.validation import require_mapping_keys
 
 
 def require_http_origin(url: str, *, context: str) -> str:
@@ -103,13 +104,7 @@ class RewardInferenceConfig:
             return cls()
         if isinstance(value, RewardInferenceConfig):
             return value
-        if not isinstance(value, Mapping):
-            raise TypeError(f"{context} must be a mapping, got {type(value).__name__}")
-        payload = dict(value)
-        unknown = sorted(set(payload) - _INFERENCE_FIELDS)
-        if unknown:
-            raise ValueError(f"unsupported {context} keys: {unknown}")
-        return cls(**payload)
+        return cls(**require_mapping_keys(value, _INFERENCE_FIELDS, what=context, complete=False))
 
 
 _INFERENCE_FIELDS = frozenset(field.name for field in fields(RewardInferenceConfig))

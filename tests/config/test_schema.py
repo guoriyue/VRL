@@ -222,7 +222,7 @@ def test_reward_http_inference_config_is_typed_beside_open_component_kwargs() ->
 
 
 def test_reward_inference_rejects_unknown_field() -> None:
-    with pytest.raises(ValueError, match=r"unsupported reward\.inference\..* keys"):
+    with pytest.raises(ValueError, match=r"reward\.inference\..* fields: .*unknown="):
         RewardConfig.model_validate(
             {
                 "components": {"videoscore2": 1.0},

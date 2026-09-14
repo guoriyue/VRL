@@ -110,7 +110,7 @@ def test_robotics_reward_prepares_every_lazy_child_in_pool(
 def test_robotics_reward_weights_reject_unknown_or_non_finite_values() -> None:
     from vrl.rewards.models.robotics_video_reward import RoboticsRewardWeights
 
-    with pytest.raises(ValueError, match="unsupported"):
+    with pytest.raises(ValueError, match="unknown=\[.unknown.\]"):
         RoboticsRewardWeights.from_mapping({"unknown": 1.0})
     with pytest.raises(ValueError, match="finite and non-negative"):
         RoboticsRewardWeights.from_mapping({"motion_dynamics": float("nan")})

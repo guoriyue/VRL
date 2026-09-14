@@ -11,6 +11,7 @@ from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 from vrl.rewards.models.motion_dynamics import MotionDynamicsModel
 from vrl.rewards.models.target_dino_similarity import TargetDinoSimilarityModel
+from vrl.utils.validation import require_mapping_keys
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,13 +24,12 @@ class RoboticsRewardWeights:
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any] | None) -> RoboticsRewardWeights:
-        if value is not None and not isinstance(value, Mapping):
-            raise TypeError("robotics reward weights must be a mapping")
-        payload = {} if value is None else dict(value)
-        allowed = {item.name for item in fields(cls)}
-        unknown = sorted(set(payload) - allowed)
-        if unknown:
-            raise ValueError(f"unsupported robotics reward weights: {unknown}")
+        payload = require_mapping_keys(
+            {} if value is None else value,
+            (item.name for item in fields(cls)),
+            what="robotics reward weights",
+            complete=False,
+        )
         weights = cls(**{key: float(raw) for key, raw in payload.items()})
         observed = {item.name: float(getattr(weights, item.name)) for item in fields(cls)}
         if any(not math.isfinite(weight) or weight < 0.0 for weight in observed.values()):
