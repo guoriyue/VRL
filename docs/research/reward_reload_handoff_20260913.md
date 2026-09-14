@@ -214,3 +214,41 @@ diagnostic, recording immediately before and after reward preload reclamation.
 Retain the exact numerical workload and require no Ray OOM or cleanup warnings
 in addition to both checkpoint audits. Do not treat these reward-only timings
 as a single/four-card training comparison.
+
+## Combined Preload Candidate: First Replay Forward Still Exceeds RAM
+
+Candidate `7b083103` ran `wan22_rebased_handoff_trim_four`, preserving the full
+two-update/eight-global-sample workload and external per-backward pinned release.
+The entry wrapper additionally measured the native reward heap-trim callback.
+Rank 0's first preload trim reduced RSS from approximately 24.199 to 22.850 GiB;
+second preload trim reduced it from 29.481 to 24.368 GiB. Thus preload reclamation
+is real, but is not sufficient for this configuration.
+
+Second-round reward scoring finished around 17:37:40; its shutdown trim completed
+at epoch 1789346263.509 (17:37:43.509). Raylet first reported usage above threshold
+at 17:37:51.289, during the subsequent first replay forward. The wrapper's first
+second-update `before_backward` snapshot is 17:37:54.768, RSS 29.934 GiB. Raylet
+decided to kill a generation worker at 17:37:58.939. The driver only received
+the aggregated OOM messages around 17:38:24. Therefore absence of an immediate
+driver OOM message did not establish healthy worker lifetime. Backward-boundary
+release is too late for the preceding forward peak in this attempt.
+
+Both updates nevertheless saved valid checkpoints. `checkpoint_audit.json`
+passed for both steps (1280 model/Adam/EMA entries, four-rank RNG, eight samples,
+zero replay error and clipping; all 1280 adapters changed at step 2).
+`first_state_comparison.json` exactly matches the original first checkpoint.
+The supervisor exited 0 after 922.955s, with policy-release cleanup warnings.
+`run_acceptance.json` explicitly records failed runtime health and no accepted
+performance result. 908 samples reached 15,775,535,104 bytes host available;
+maximum sampled GPU usage was 11,983,126,528 bytes. All processes exited, GPU
+compute inventory was empty, and the comparison/audit CPU commands exited 0.
+
+Do not repeat this configuration as a presumed fix. For this 320x320/17-frame
+comparison, next test existing `full` checkpointing instead of `full_cpu` to
+move saved checkpoint inputs into the available GPU memory, keeping geometry,
+samples, replay and precision unchanged. Verify real forward/backward capacity
+and numerical results before adopting it in both comparison arms. The historical
+full_cpu requirement came from the much larger 480x832/81-frame three-rank gate;
+passing a smaller-video GPU-resident checkpoint test cannot close that separate
+full-geometry requirement. No threshold increase or hidden workload reduction
+is authorized by this diagnostic.
