@@ -1,0 +1,23 @@
+{
+  "source": {
+    "train": "/home/ubuntu/VRL-wan22/datasets/videophy/train.txt",
+    "eval": "/home/ubuntu/VRL-wan22/datasets/videophy/eval.txt"
+  },
+  "seed": 20260914,
+  "near_duplicate_jaccard_threshold": 0.6,
+  "counts": {
+    "train_small": 16,
+    "val": 24,
+    "test": 35
+  },
+  "rejected_val_near_duplicates": [],
+  "rejected_test_near_duplicates": [],
+  "max_cross_jaccard": {
+    "train_small->val": 0.2222222222222222,
+    "train_small->test": 0.25,
+    "val->train_small": 0.2222222222222222,
+    "val->test": 0.6666666666666666,
+    "test->train_small": 0.25,
+    "test->val": 0.6666666666666666
+  }
+}
