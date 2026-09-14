@@ -33,8 +33,6 @@ PixArt-Sigma specifics vs SANA (the reference single-encoder t2i family):
 
 from __future__ import annotations
 
-import random
-import sys
 from collections.abc import Mapping
 from typing import Any, ClassVar
 
@@ -47,14 +45,12 @@ from vrl.models.steps.denoise import (
     DiffusersReplayModelBase,
 )
 from vrl.models.steps.denoise.common import (
-    DiffusionBackboneCaller,
     DiffusionBackboneInput,
     DiffusionBranch,
     EncoderAttentionMaskRunnerBase,
-    MaskedPromptCollectorMixin,
+    MaskedPromptModelMixin,
     MaskedPromptSamplingState,
     VaeDecodeMixin,
-    expand_batch_timestep,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
@@ -96,7 +92,7 @@ def pixart_ddim_scheduler(scheduler_config: Any, num_steps: int, device: Any) ->
 
 class PixArtSigmaModel(
     VaeDecodeMixin,
-    MaskedPromptCollectorMixin,
+    MaskedPromptModelMixin,
     LoraModelMixin,
     DiffusersPipelineModelBase,
     EncoderAttentionMaskRunnerBase,
@@ -115,6 +111,22 @@ class PixArtSigmaModel(
         "added_cond_kwargs": _ADDED_COND_KWARGS,
     }
     sampling_state_cls = MaskedPromptSamplingState
+    _default_max_sequence_length = 300
+    _default_guidance_scale = 4.5
+    _pipeline_encode_kwargs: ClassVar[Mapping[str, Any]] = {
+        "num_images_per_prompt": 1,
+        # The True path imports bs4/ftfy, and RL datasets control their
+        # prompts anyway.
+        "clean_caption": False,
+    }
+
+    def _sampling_scheduler(self, request: DenoiseRequest) -> Any:
+        # The shipped DPM-Solver is NOT used: the RL scheduler is a DDIM built
+        # from the same beta config (see :func:`pixart_ddim_scheduler`), so the
+        # ddim eta-SDE's clip_sample=False requirement holds by construction.
+        return pixart_ddim_scheduler(
+            self.pipeline.scheduler.config, request.num_steps, self.device
+        )
 
     # -- backend ownership (called by runtime, not by collectors) -------
     _pipeline_classname = "PixArtSigmaPipeline"
@@ -139,161 +151,6 @@ class PixArtSigmaModel(
         if raw_output.shape[1] == 2 * latent_channels:
             return raw_output.chunk(2, dim=1)[0]
         return raw_output
-
-    # -- encode_prompt -------------------------------------------------
-
-    def encode_prompt(
-        self,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Encode prompt via T5-XXL (sequence embeds + attention mask, no pooled).
-
-        ``clean_caption=False``: the True path imports bs4/ftfy, and RL
-        datasets control their prompts anyway.
-        """
-        max_seq = kwargs.get("max_sequence_length", 300)
-        guidance_scale = kwargs.get("guidance_scale", 4.5)
-        do_cfg = guidance_scale > 1.0
-        neg = negative_prompt if negative_prompt is not None else ""
-
-        (
-            prompt_embeds,
-            prompt_attention_mask,
-            negative_prompt_embeds,
-            negative_prompt_attention_mask,
-        ) = self.pipeline.encode_prompt(
-            prompt=prompt,
-            do_classifier_free_guidance=do_cfg,
-            negative_prompt=neg,
-            num_images_per_prompt=1,
-            device=self._encoder_device(),
-            clean_caption=False,
-            max_sequence_length=max_seq,
-        )
-
-        td = self.transformer.dtype
-        result: dict[str, Any] = {
-            "prompt_embeds": prompt_embeds.to(self.device, dtype=td),
-            "prompt_attention_mask": (
-                None if prompt_attention_mask is None else prompt_attention_mask.to(self.device)
-            ),
-        }
-        if do_cfg and negative_prompt_embeds is not None:
-            result["negative_prompt_embeds"] = negative_prompt_embeds.to(
-                self.device,
-                dtype=td,
-            )
-            result["negative_prompt_attention_mask"] = (
-                None
-                if negative_prompt_attention_mask is None
-                else negative_prompt_attention_mask.to(self.device)
-            )
-        return result
-
-    # -- prepare_sampling ----------------------------------------------
-
-    def prepare_sampling(
-        self,
-        request: DenoiseRequest,
-        encoded: dict[str, Any],
-        **kwargs: Any,
-    ) -> MaskedPromptSamplingState:
-        """Build the per-request SamplingState for a denoise loop.
-
-        The shipped DPM-Solver is NOT used: the RL scheduler is a DDIM built
-        from the same beta config (see :func:`pixart_ddim_scheduler`), so the
-        ddim eta-SDE's clip_sample=False requirement holds by construction.
-        """
-        del kwargs
-        pipe = self.pipeline
-        device = self.device
-
-        prompt_embeds = encoded["prompt_embeds"]
-        prompt_attention_mask = encoded.get("prompt_attention_mask")
-        negative_prompt_embeds = encoded.get("negative_prompt_embeds")
-        negative_prompt_attention_mask = encoded.get("negative_prompt_attention_mask")
-
-        scheduler = pixart_ddim_scheduler(
-            pipe.scheduler.config,
-            request.num_steps,
-            device,
-        )
-        timesteps = scheduler.timesteps
-
-        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
-        generator = torch.Generator(device=device)
-        generator.manual_seed(seed)
-
-        num_channels_latents = pipe.transformer.config.in_channels
-        batch_size = prompt_embeds.shape[0]
-        latents = pipe.prepare_latents(
-            batch_size,
-            num_channels_latents,
-            request.height,
-            request.width,
-            torch.float32,
-            device,
-            generator,
-            None,
-        )
-        # No-op for DDIM (init_noise_sigma == 1.0); kept for pipeline parity.
-        latents = latents * scheduler.init_noise_sigma
-
-        do_cfg = request.guidance_scale > 1.0 and negative_prompt_embeds is not None
-
-        return MaskedPromptSamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=scheduler,
-            prompt_embeds=prompt_embeds,
-            prompt_attention_mask=prompt_attention_mask,
-            negative_prompt_embeds=negative_prompt_embeds,
-            negative_prompt_attention_mask=negative_prompt_attention_mask,
-            guidance_scale=request.guidance_scale,
-            do_cfg=do_cfg,
-        )
-
-    # -- forward_step --------------------------------------------------
-
-    def forward_step(
-        self,
-        state: MaskedPromptSamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """PixArt-Sigma transformer forward + optional batched CFG."""
-        t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        td = self._transformer_dtype()
-
-        latent_input = state.latents.to(td)
-        # Raw integer timestep — the sinusoidal proj consumes it directly.
-        timestep_batch = expand_batch_timestep(t, bsz).to(
-            device=latent_input.device,
-        )
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        output = DiffusionBackboneCaller(
-            self.transformer,
-            self,
-        )(
-            DiffusionBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "encoder_attention_mask": state.prompt_attention_mask,
-                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
-                },
-            ),
-        )
-        return output.as_dict()
 
 
 class PixArtSigmaReplayModel(DiffusersReplayModelBase, PixArtSigmaModel):

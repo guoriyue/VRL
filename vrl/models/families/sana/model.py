@@ -25,33 +25,28 @@ SANA specifics vs SD3 (the reference family):
 
 from __future__ import annotations
 
-import random
-import sys
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, ClassVar
 
 import torch
 
-from vrl.generation.types import DenoiseRequest
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
 )
 from vrl.models.steps.denoise.common import (
-    DiffusionBackboneCaller,
-    DiffusionBackboneInput,
     EncoderAttentionMaskRunnerBase,
-    MaskedPromptCollectorMixin,
+    MaskedPromptModelMixin,
     MaskedPromptSamplingState,
     VaeDecodeMixin,
-    expand_batch_timestep,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
 class SanaModel(
     VaeDecodeMixin,
-    MaskedPromptCollectorMixin,
+    MaskedPromptModelMixin,
     LoraModelMixin,
     DiffusersPipelineModelBase,
     EncoderAttentionMaskRunnerBase,
@@ -67,6 +62,29 @@ class SanaModel(
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
     sampling_state_cls = MaskedPromptSamplingState
+    _default_max_sequence_length = 300
+    _default_guidance_scale = 4.5
+    _pipeline_encode_kwargs: ClassVar[Mapping[str, Any]] = {
+        "num_images_per_prompt": 1,
+        # VRL intentionally disables SANA's CHI template so RL datasets own
+        # their prompts. Pin to None so an upstream default flip cannot
+        # silently re-enable it.
+        "complex_human_instruction": None,
+    }
+    # SanaPipeline promotes each transformer branch before CFG. Keeping this
+    # fp32 also feeds the protected scheduler/log-prob path without a lossy
+    # fp16 round trip.
+    _backbone_output_dtype = torch.float32
+
+    def _backbone_timestep(
+        self,
+        timestep: torch.Tensor,
+        state: MaskedPromptSamplingState,
+    ) -> torch.Tensor:
+        # SanaPipeline multiplies the raw timestep by config.timestep_scale and
+        # keeps it in fp32; the time embedding owns its internal conversion.
+        del state
+        return timestep * float(getattr(self.transformer.config, "timestep_scale", 1.0))
 
     _pipeline_classname = "SanaPipeline"
     _frozen_encoder_names = ("text_encoder",)
@@ -144,158 +162,6 @@ class SanaModel(
         """Replay forwards need the same non-fp16 saturation clamp as rollout."""
         if build.parameter_dtype != torch.float16:
             self._apply_fp16_saturation_clamp(self.transformer)
-
-    # -- encode_prompt -------------------------------------------------
-
-    def encode_prompt(
-        self,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Encode prompt via Gemma-2 (sequence embeds + attention mask, no pooled).
-
-        Returns the conditional embeds/mask and, when CFG is active, the
-        unconditional embeds/mask (SANA's uncond default is the empty string).
-        """
-        max_seq = kwargs.get("max_sequence_length", 300)
-        guidance_scale = kwargs.get("guidance_scale", 4.5)
-        do_cfg = guidance_scale > 1.0
-        neg = negative_prompt if negative_prompt is not None else ""
-
-        (
-            prompt_embeds,
-            prompt_attention_mask,
-            negative_prompt_embeds,
-            negative_prompt_attention_mask,
-        ) = self.pipeline.encode_prompt(
-            prompt=prompt,
-            do_classifier_free_guidance=do_cfg,
-            negative_prompt=neg,
-            num_images_per_prompt=1,
-            device=self.device,
-            max_sequence_length=max_seq,
-            # VRL intentionally disables SANA's CHI template so RL datasets own
-            # their prompts. Pin to None so an upstream default flip cannot
-            # silently re-enable it.
-            complex_human_instruction=None,
-        )
-
-        td = self.transformer.dtype
-        result: dict[str, Any] = {
-            "prompt_embeds": prompt_embeds.to(td),
-            "prompt_attention_mask": (
-                None if prompt_attention_mask is None else prompt_attention_mask.to(self.device)
-            ),
-        }
-        if do_cfg and negative_prompt_embeds is not None:
-            result["negative_prompt_embeds"] = negative_prompt_embeds.to(td)
-            result["negative_prompt_attention_mask"] = (
-                None
-                if negative_prompt_attention_mask is None
-                else negative_prompt_attention_mask.to(self.device)
-            )
-        return result
-
-    # -- prepare_sampling ----------------------------------------------
-
-    def prepare_sampling(
-        self,
-        request: DenoiseRequest,
-        encoded: dict[str, Any],
-        **kwargs: Any,
-    ) -> MaskedPromptSamplingState:
-        """Build the per-request SamplingState for a denoise loop."""
-        del kwargs
-        pipe = self.pipeline
-        device = self.device
-
-        prompt_embeds = encoded["prompt_embeds"]
-        prompt_attention_mask = encoded.get("prompt_attention_mask")
-        negative_prompt_embeds = encoded.get("negative_prompt_embeds")
-        negative_prompt_attention_mask = encoded.get("negative_prompt_attention_mask")
-
-        # Static flow-shift schedule (SANA has no dynamic shifting).
-        pipe.scheduler.set_timesteps(request.num_steps, device=device)
-        timesteps = pipe.scheduler.timesteps
-
-        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
-        generator = torch.Generator(device=device)
-        generator.manual_seed(seed)
-
-        num_channels_latents = pipe.transformer.config.in_channels
-        batch_size = prompt_embeds.shape[0]
-        latents = pipe.prepare_latents(
-            batch_size,
-            num_channels_latents,
-            request.height,
-            request.width,
-            torch.float32,
-            device,
-            generator,
-            None,
-        )
-
-        do_cfg = request.guidance_scale > 1.0 and negative_prompt_embeds is not None
-
-        return MaskedPromptSamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=pipe.scheduler,
-            prompt_embeds=prompt_embeds,
-            prompt_attention_mask=prompt_attention_mask,
-            negative_prompt_embeds=negative_prompt_embeds,
-            negative_prompt_attention_mask=negative_prompt_attention_mask,
-            guidance_scale=request.guidance_scale,
-            do_cfg=do_cfg,
-        )
-
-    # -- forward_step --------------------------------------------------
-
-    def forward_step(
-        self,
-        state: MaskedPromptSamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """SANA transformer forward + optional batched CFG."""
-        t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        td = self._transformer_dtype()
-
-        latent_input = state.latents.to(td)
-        # SanaPipeline multiplies the raw timestep by config.timestep_scale.
-        timestep_scale = float(
-            getattr(self.transformer.config, "timestep_scale", 1.0),
-        )
-        # Keep the scheduler timestep in fp32, exactly as SanaPipeline does.
-        # Transformer inputs/weights remain at the native FP16 role dtype;
-        # the time embedding owns its internal conversion.
-        timestep_batch = expand_batch_timestep(t, bsz).to(latent_input.device) * timestep_scale
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        output = DiffusionBackboneCaller(
-            self.transformer,
-            self,
-        )(
-            DiffusionBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                # SanaPipeline promotes each transformer branch before CFG.
-                # Keeping this fp32 also feeds the protected scheduler/log-prob
-                # path without a lossy fp16 round trip.
-                output_dtype=torch.float32,
-                extra={
-                    "encoder_attention_mask": state.prompt_attention_mask,
-                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
-                },
-            ),
-        )
-        return output.as_dict()
 
 
 class SanaReplayModel(DiffusersReplayModelBase, SanaModel):

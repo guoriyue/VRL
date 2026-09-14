@@ -14,6 +14,7 @@ from vrl.models.steps.denoise.common.latent_decode import (
 )
 from vrl.models.steps.denoise.common.masked_prompt import (
     MaskedPromptCollectorMixin,
+    MaskedPromptModelMixin,
     MaskedPromptSamplingState,
     TrainTimestepMaskedPromptSamplingState,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "EncoderAttentionMaskRunnerBase",
     "LatentDecodePlan",
     "MaskedPromptCollectorMixin",
+    "MaskedPromptModelMixin",
     "MaskedPromptSamplingState",
     "TrainTimestepMaskedPromptSamplingState",
     "VaeDecodeMixin",

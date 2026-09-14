@@ -27,9 +27,8 @@ Mochi specifics vs Wan (the reference video family):
 
 from __future__ import annotations
 
-import random
-import sys
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, ClassVar
 
 import torch
 
@@ -41,14 +40,12 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DiffusionBackboneCaller,
     DiffusionBackboneInput,
     DiffusionBranch,
     EncoderAttentionMaskRunnerBase,
     LatentDecodePlan,
-    MaskedPromptCollectorMixin,
+    MaskedPromptModelMixin,
     TrainTimestepMaskedPromptSamplingState,
-    expand_batch_timestep,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
@@ -74,7 +71,7 @@ def standard_mochi_scheduler(scheduler_config: Any, num_steps: int, device: Any)
 
 
 class MochiModel(
-    MaskedPromptCollectorMixin,
+    MaskedPromptModelMixin,
     LoraModelMixin,
     DiffusersPipelineModelBase,
     EncoderAttentionMaskRunnerBase,
@@ -84,6 +81,28 @@ class MochiModel(
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
     sampling_state_cls = TrainTimestepMaskedPromptSamplingState
+    _default_max_sequence_length = 256
+    _default_guidance_scale = 4.5
+    _pipeline_encode_kwargs: ClassVar[Mapping[str, Any]] = {"num_videos_per_prompt": 1}
+
+    def _sampling_scheduler(self, request: DenoiseRequest) -> Any:
+        return standard_mochi_scheduler(
+            self.pipeline.scheduler.config,
+            request.num_steps,
+            self.device,
+        )
+
+    def _latent_shape_args(self, request: DenoiseRequest) -> tuple[Any, ...]:
+        return (request.frame_count,)
+
+    def _backbone_timestep(
+        self,
+        timestep: torch.Tensor,
+        state: TrainTimestepMaskedPromptSamplingState,
+    ) -> torch.Tensor:
+        # Standard clock t descends 1000->0; Mochi's native clock ascends, so
+        # the transformer sees num_train_timesteps - t.
+        return float(state.num_train_timesteps) - timestep.to(self._transformer_dtype())
 
     # -- backend ownership (called by runtime, not by collectors) -------
     _pipeline_classname = "MochiPipeline"
@@ -101,152 +120,6 @@ class MochiModel(
         """Negate: a velocity in Mochi's reversed time axis is -v_standard."""
         del request, branch
         return -raw_output
-
-    # -- encode_prompt -------------------------------------------------
-
-    def encode_prompt(
-        self,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Encode prompt via T5-XXL (sequence embeds + bool mask, no pooled)."""
-        max_seq = kwargs.get("max_sequence_length", 256)
-        guidance_scale = kwargs.get("guidance_scale", 4.5)
-        do_cfg = guidance_scale > 1.0
-        neg = negative_prompt if negative_prompt is not None else ""
-
-        (
-            prompt_embeds,
-            prompt_attention_mask,
-            negative_prompt_embeds,
-            negative_prompt_attention_mask,
-        ) = self.pipeline.encode_prompt(
-            prompt=prompt,
-            negative_prompt=neg,
-            do_classifier_free_guidance=do_cfg,
-            num_videos_per_prompt=1,
-            max_sequence_length=max_seq,
-            device=self._encoder_device(),
-        )
-
-        td = self.transformer.dtype
-        result: dict[str, Any] = {
-            "prompt_embeds": prompt_embeds.to(self.device, dtype=td),
-            "prompt_attention_mask": (
-                None if prompt_attention_mask is None else prompt_attention_mask.to(self.device)
-            ),
-        }
-        if do_cfg and negative_prompt_embeds is not None:
-            result["negative_prompt_embeds"] = negative_prompt_embeds.to(
-                self.device,
-                dtype=td,
-            )
-            result["negative_prompt_attention_mask"] = (
-                None
-                if negative_prompt_attention_mask is None
-                else negative_prompt_attention_mask.to(self.device)
-            )
-        return result
-
-    # -- prepare_sampling ----------------------------------------------
-
-    def prepare_sampling(
-        self,
-        request: DenoiseRequest,
-        encoded: dict[str, Any],
-        **kwargs: Any,
-    ) -> TrainTimestepMaskedPromptSamplingState:
-        """Build the per-request 5D-latent SamplingState for a denoise loop."""
-        del kwargs
-        pipe = self.pipeline
-        device = self.device
-
-        prompt_embeds = encoded["prompt_embeds"]
-        prompt_attention_mask = encoded.get("prompt_attention_mask")
-        negative_prompt_embeds = encoded.get("negative_prompt_embeds")
-        negative_prompt_attention_mask = encoded.get("negative_prompt_attention_mask")
-
-        scheduler = standard_mochi_scheduler(
-            pipe.scheduler.config,
-            request.num_steps,
-            device,
-        )
-        timesteps = scheduler.timesteps
-
-        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
-        generator = torch.Generator(device=device)
-        generator.manual_seed(seed)
-
-        num_channels_latents = pipe.transformer.config.in_channels
-        batch_size = prompt_embeds.shape[0]
-        latents = pipe.prepare_latents(
-            batch_size,
-            num_channels_latents,
-            request.height,
-            request.width,
-            request.frame_count,
-            torch.float32,
-            device,
-            generator,
-            None,
-        )
-
-        do_cfg = request.guidance_scale > 1.0 and negative_prompt_embeds is not None
-
-        return TrainTimestepMaskedPromptSamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=scheduler,
-            prompt_embeds=prompt_embeds,
-            prompt_attention_mask=prompt_attention_mask,
-            negative_prompt_embeds=negative_prompt_embeds,
-            negative_prompt_attention_mask=negative_prompt_attention_mask,
-            guidance_scale=request.guidance_scale,
-            do_cfg=do_cfg,
-            num_train_timesteps=int(scheduler.config.num_train_timesteps),
-        )
-
-    # -- forward_step --------------------------------------------------
-
-    def forward_step(
-        self,
-        state: TrainTimestepMaskedPromptSamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """Mochi transformer forward on its native (reversed) clock."""
-        t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        td = self._transformer_dtype()
-
-        latent_input = state.latents.to(td)
-        # Standard clock t descends 1000->0; Mochi's native clock ascends, so
-        # the transformer sees num_train_timesteps - t.
-        timestep_batch = float(state.num_train_timesteps) - expand_batch_timestep(t, bsz).to(
-            device=latent_input.device, dtype=td
-        )
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        output = DiffusionBackboneCaller(
-            self.transformer,
-            self,
-        )(
-            DiffusionBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "encoder_attention_mask": state.prompt_attention_mask,
-                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
-                },
-            ),
-        )
-        return output.as_dict()
 
     # -- decode_latents ------------------------------------------------
 
