@@ -249,30 +249,28 @@ def test_uniform_ack_requires_matching_types(results) -> None:
 async def test_generation_combiner_retains_nonprimary_error_payload(failure):
     from vrl.generation.execution.sample_batches import GenerationSampleBatch
     from vrl.generation.execution.types import GenerationBatchResult
-    from vrl.generation.ray.executor import RayGenerationExecutor
 
     good = GenerationBatchResult("request", "r0", GenerationSampleBatch(0, 0, 2), output={})
     bad = GenerationBatchResult(
         "request", "r1", good.batch, output=None, error=failure, stale_slot=failure == "stale"
     )
     engine = _engine([], {"r0": ResolvedRef(good), "r1": ResolvedRef(bad)})
-    result = await engine.remote(
-        "execute_batch", combine=RayGenerationExecutor._select_batch_rank_result
-    )("payload")
+    result = await engine.remote("execute_batch", combine=GenerationBatchResult.from_rank_results)(
+        "payload"
+    )
     assert result is bad
 
 
 def test_generation_combiner_prioritizes_terminal_errors_over_retry_and_discard():
     from vrl.generation.execution.sample_batches import GenerationSampleBatch
     from vrl.generation.execution.types import GenerationBatchResult
-    from vrl.generation.ray.executor import RayGenerationExecutor
 
     batch = GenerationSampleBatch(0, 0, 2)
     oom = GenerationBatchResult("r", "r0", batch, None, error="CUDA out of memory")
     stale = GenerationBatchResult("r", "r1", batch, None, error="evicted", stale_slot=True)
     terminal = GenerationBatchResult("r", "r2", batch, None, error="decode failed")
-    assert RayGenerationExecutor._select_batch_rank_result([oom, stale, terminal]) is terminal
-    assert RayGenerationExecutor._select_batch_rank_result([oom, stale]) is stale
+    assert GenerationBatchResult.from_rank_results([oom, stale, terminal]) is terminal
+    assert GenerationBatchResult.from_rank_results([oom, stale]) is stale
 
 
 @pytest.mark.asyncio
@@ -309,15 +307,14 @@ def test_generation_combiner_rejects_rank_identity_disagreement(field):
 
     from vrl.generation.execution.sample_batches import GenerationSampleBatch
     from vrl.generation.execution.types import GenerationBatchResult
-    from vrl.generation.ray.executor import RayGenerationExecutor
 
     good = GenerationBatchResult("r", "r0", GenerationSampleBatch(0, 0, 1), {}, policy_version=1)
     values = {"request_id": "other", "batch": GenerationSampleBatch(0, 1, 1), "policy_version": 2}
     other = replace(good, worker_id="r1", **{field: values[field]})
     with pytest.raises(RuntimeError, match="engine ranks returned different"):
-        RayGenerationExecutor._select_batch_rank_result([good, other])
+        GenerationBatchResult.from_rank_results([good, other])
     other = replace(good, worker_id="r1", metrics={"peak_memory_mb": 20})
-    result = RayGenerationExecutor._select_batch_rank_result([good, other])
+    result = GenerationBatchResult.from_rank_results([good, other])
     assert result.worker_id == good.worker_id
     assert result.output is good.output
     assert result.rank_metrics == {"r0": good.metrics, "r1": other.metrics}

@@ -25,7 +25,7 @@ from vrl.generation.execution.types import (
     StaleSlotDiscard,
 )
 from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
-from vrl.generation.ray.engine import RayGenerationEngine, combine_rank_batch_results
+from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.pipeline_protocol import (
     PipelinedProgressError,
     PipelinedRequestProgress,
@@ -107,8 +107,6 @@ class RayGenerationExecutor:
             return await self._execute(request)
         async with lock:
             return await self._execute(request)
-
-    _select_batch_rank_result = staticmethod(combine_rank_batch_results)
 
     @staticmethod
     def _select_request_rank_result(
@@ -255,7 +253,7 @@ class RayGenerationExecutor:
                     job_index=job_index,
                     worker_id=engine.engine_id,
                     remote_method=engine.remote(
-                        "execute_batch", combine=self._select_batch_rank_result
+                        "execute_batch", combine=GenerationBatchResult.from_rank_results
                     ),
                     payload=assignment.envelope,
                 ),
@@ -661,7 +659,7 @@ class RayGenerationExecutor:
                             job_index=len(retry_jobs),
                             worker_id=engine.engine_id,
                             remote_method=engine.remote(
-                                "execute_batch", combine=self._select_batch_rank_result
+                                "execute_batch", combine=GenerationBatchResult.from_rank_results
                             ),
                             payload=child_envelope,
                         ),
@@ -711,7 +709,7 @@ class RayGenerationExecutor:
                     f"engine {engine.engine_id!r} has no remote execute_batch",
                 )
             methods[engine.engine_id] = engine.remote(
-                "execute_batch", combine=self._select_batch_rank_result
+                "execute_batch", combine=GenerationBatchResult.from_rank_results
             )
         return methods
 
