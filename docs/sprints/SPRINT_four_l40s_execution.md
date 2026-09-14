@@ -1,5 +1,32 @@
 # Four L40S hardware execution
 
+## Current Handoff (2026-09-13)
+
+This section supersedes historical live claims below. The rebased Wan 2.2
+320x320/17-frame native full-checkpoint comparison is complete: two updates,
+eight global samples per update, single-card 2185.404s versus four-card 727.229s
+whole-process elapsed (3.0051x). Both checkpoint audits and runtime health passed;
+all sixteen score maps match, with maximum cross-arm model difference 4.6566e-10.
+The initial full_cpu memory failures and their diagnostic claims are terminal,
+not jobs to resume. The old continuous queue remains disabled.
+
+Authoritative evidence is in the review-all worktree on
+feat/reward-reload-handoff, docs/research/reward_reload_handoff_20260913.md,
+through 2e46a5b1. The preserved review/all-mgpu-main-6b723075 branch remains
+at 4e2c1163; follow-up runtime work has not been pushed.
+
+Cold four-rank strict resume is now terminal and numerically verified. From
+checkpoint-1 it executed only update 2, eight samples, in 485.419s. All model,
+Adam, EMA and four-rank RNG values exactly match uninterrupted checkpoint-2;
+the only Python representation difference is Adam betas tuple versus list.
+All eight score maps match; final checkpoint matches resumed checkpoint-2.
+No Ray memory-kill or threshold report occurred. Supervisor session 87314 and
+torchrun 895679 exited 0, GPUs released. Output:
+/mnt/nvme/outputs/wan22_i2v_cache/wan22_rebased_gpu_checkpoint_resume_four.
+Next inspect the remaining full-size I2V physics update gate on the locked
+runtime. No GPU claim is active. This does not close separate full-geometry,
+Cosmos/H3 requirements or the overall hardware goal.
+
 ## Released claim: corrected four-GPU strict timing
 
 User explicitly requested the missing synchronous arm after the two-arm short

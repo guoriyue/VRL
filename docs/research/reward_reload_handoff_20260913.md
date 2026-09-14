@@ -375,3 +375,41 @@ close larger-video, long-run, Cosmos or H3 requirements. Do not repeat this
 completed pilot; return to the remaining experiment gates. Evidence scripts
 and reports remain under `/mnt/nvme/outputs/wan22_i2v_cache`, with both raw runs
 preserved and no push performed.
+
+## Cold Four-Rank Strict Resume Completed
+
+From candidate `2e46a5b1`, the native entrypoint resumed the passing four-card
+checkpoint-1 into a fresh output, `wan22_rebased_gpu_checkpoint_resume_four`.
+The CPU preflight verified strict mode, epoch/step 1, complete Adam/EMA state
+and four-rank RNG. Total epochs stayed 2, so only update 2 executed, with eight
+global samples and unchanged numerical work. All ranks logged start_epoch=1.
+
+Supervisor/torchrun exited 0 after 485.419s; runtime log health passed. All four
+Raylet logs from sessions 18:45:56/57 (trainer PIDs 895699-895702) had no
+above-threshold or worker memory-kill record. GPU inventory was empty after
+exit. The sole metrics row is epoch 1 with zero replay error and clipping,
+positive gradient norm, and four rollout receipts totaling eight samples.
+All eight complete score maps exactly match the uninterrupted second update.
+
+The first strict structural comparator correctly failed on optimizer
+param_groups[0].betas: baseline tuple, restored list. This failure is preserved,
+not relabeled as all-types-identical. A separate exhaustive comparison reports
+that this is the only sequence-type difference: all 6412 tensor leaves, four
+NumPy arrays and 8962 scalar leaves match exactly, including model, Adam moments,
+EMA, four-rank RNG, identity and progress. The actual resumed optimizer update
+therefore reproduced all numerical state despite that representation difference.
+No production coercion or tolerance relaxation was introduced. The resumed
+checkpoint-final also strictly matches its checkpoint-2, including container types.
+
+Evidence: `resume_state_differences.json`, `final_state_comparison.json`,
+`run_acceptance.json`, adjacent process/log/memory receipts and preflight JSON.
+472 memory samples reached 23,452,184,576 host-available bytes and maximum
+15,187,640,320 GPU-used bytes. All comparison commands except the documented
+initial structural-type comparison exited 0.
+
+This closes the short four-rank T2V strict-resume numerical/runtime gate. It
+does not close the larger I2V/physics update, separate original two-rank recipe,
+Wan 2.1 regression, long-run or other-family gates. Next return to the retained
+full-size I2V physics attempt, whose six videos/reward receipts exist but whose
+optimizer update was interrupted; inspect current locked-runtime compatibility
+and ownership before another expensive full-geometry launch.
