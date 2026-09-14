@@ -147,3 +147,43 @@ not validity of every statistic. Do not subtract active bytes from owned bytes
 to diagnose a leak in this environment. Future replay traces must retain raw
 counters and pair them with process RSS/PSS and measured release deltas. Do not
 patch the installed Torch or assume its accounting anomaly explains Wan's OOM.
+
+## Per-Backward Release: Two Checkpoints, Failed Runtime Health
+
+Candidate `9125fa42` ran `wan22_rebased_replay_trim_four` using an external
+diagnostic entry wrapper. After each backward it synchronized CUDA, collected
+garbage, emptied the pinned cache, then trimmed the glibc heap, with separate
+RSS/PSS and raw allocator snapshots. Samples, replay steps, precision, thresholds,
+and training math were unchanged. Each rank produced 72 snapshots across 18
+backward calls. This is not a production implementation or timing baseline.
+
+The first replay crossed the previous fifth-backward failure and the second
+rollout successfully generated its samples. Rank 0 at backward sequence 3
+dropped from approximately 29.45 GiB RSS to 23.82 GiB after pinned-cache clearing;
+subsequent glibc trimming did not materially change it. This establishes a large
+reclaimable allocation at that boundary, despite unreliable active counters.
+
+However, Ray killed the generation workers during second-round reward loading.
+One Raylet kill decision is timestamped 17:15:24.275, with host usage 95.3562%,
+four generation workers around 55.71-57.15 GiB, and trainer processes around
+28.38-29.71 GiB. The driver logged the kills around 17:15:41. Since generation
+had already completed, training could still finish its second update. Cleanup
+then logged `generation policy release wait failed; forcing actor cleanup`.
+The supervisor exited **0** after 909.560s, which is explicitly **not** runtime
+acceptance. `run_acceptance.json` records this failed health gate separately.
+
+Both checkpoints passed `checkpoint_audit.json`: each contains 1280 FP32 adapter,
+Adam, and EMA entries, correct progress and four-rank RNG. Every adapter tensor
+changed between steps. Both updates have eight global samples, zero maximum
+pre-update replay error, zero pre-update clipping and positive gradient norms.
+`first_state_comparison.json` verifies exact first-checkpoint equality against
+the earlier untrimmed run (6412 tensors, four arrays, 8962 scalar leaves).
+These checks do not certify subsequent rollout-worker availability.
+
+895 memory samples reached 16,869,380,096 bytes available; maximum sampled GPU
+usage was 11,983,192,064 bytes. All processes subsequently exited and GPUs were
+empty. No fair speedup is reported. The next intervention must address the
+second reward-loading handoff's host footprint, accounting for post-update
+optimizer/checkpoint allocations, while retaining the replay release evidence.
+Do not rerun this same incomplete intervention or accept checkpoint-only/exit-code
+checks as an end-to-end gate.
