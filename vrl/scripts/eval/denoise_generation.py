@@ -21,6 +21,7 @@ from vrl.generation.types import DenoiseRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.source_integrity import runtime_source_tree_sha256
 from vrl.utils.media import to_pil_image
+from vrl.utils.validation import require_exact_dataclass_fields
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -84,14 +85,7 @@ class ImageSampling:
     ) -> ImageSampling:
         """Build sampling values from one persisted record, rejecting missing or unknown keys."""
 
-        if not isinstance(value, Mapping):
-            raise TypeError(f"{what} must be a mapping")
-        expected = {field.name for field in fields(cls)}
-        missing = sorted(expected - set(value))
-        unknown = sorted(set(value) - expected)
-        if missing or unknown:
-            raise ValueError(f"invalid {what} fields: missing={missing} unknown={unknown}")
-        return cls(**{name: value[name] for name in expected})
+        return cls(**require_exact_dataclass_fields(cls, value, what=what))
 
     def to_record(self) -> dict[str, int | float]:
         """Serialize with keys derived from the typed source of truth."""
@@ -157,15 +151,8 @@ class GeneratorRuntimeIdentity:
     ) -> GeneratorRuntimeIdentity:
         """Parse one fail-closed persisted runtime record."""
 
-        if not isinstance(value, Mapping):
-            raise TypeError(f"{what} must be a mapping")
-        expected = {field.name for field in fields(cls)}
-        missing = sorted(expected - set(value))
-        unknown = sorted(set(value) - expected)
-        if missing or unknown:
-            raise ValueError(f"invalid {what} fields: missing={missing} unknown={unknown}")
         try:
-            return cls(**{name: value[name] for name in expected})
+            return cls(**require_exact_dataclass_fields(cls, value, what=what))
         except ValueError as error:
             raise ValueError(f"{what}: {error}") from error
 

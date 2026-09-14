@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
+
+from vrl.utils.validation import require_exact_dataclass_fields
 
 
 class OcrTextSelection(StrEnum):
@@ -102,13 +104,7 @@ class OcrScoringPolicy:
     ) -> OcrScoringPolicy:
         """Parse a fail-closed persisted or configuration policy."""
 
-        if not isinstance(value, Mapping):
-            raise TypeError(f"{what} must be a mapping")
-        expected = {field.name for field in fields(cls)}
-        missing = sorted(expected - set(value))
-        unknown = sorted(set(value) - expected)
-        if missing or unknown:
-            raise ValueError(f"invalid {what} fields: missing={missing} unknown={unknown}")
+        value = require_exact_dataclass_fields(cls, value, what=what)
         raw_selection = value["text_selection"]
         if not isinstance(raw_selection, str):
             raise TypeError(f"{what} text_selection must be a string")

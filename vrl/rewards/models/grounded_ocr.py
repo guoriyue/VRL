@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import Any
 
 from vrl.rewards.models.codex_image_qa import CodexImageQARewardModel
 from vrl.rewards.models.ocr import OCRRewardModel
+from vrl.utils.validation import require_exact_dataclass_fields
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,18 +20,9 @@ class GroundedOcrConfig:
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any] | Any) -> GroundedOcrConfig:
-        if not isinstance(value, Mapping):
-            raise TypeError("grounded_ocr configuration must be a mapping")
-        expected = {field.name for field in fields(cls)}
-        missing = sorted(expected - set(value))
-        unknown = sorted(set(value) - expected)
-        if missing or unknown:
-            raise ValueError(
-                f"invalid grounded_ocr configuration fields: missing={missing} unknown={unknown}",
-            )
+        payload = require_exact_dataclass_fields(cls, value, what="grounded_ocr configuration")
         nested: dict[str, dict[str, Any]] = {}
-        for name in sorted(expected):
-            raw = value[name]
+        for name, raw in sorted(payload.items()):
             if not isinstance(raw, Mapping):
                 raise TypeError(f"grounded_ocr.{name} must be a mapping")
             nested[name] = dict(raw)
