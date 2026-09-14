@@ -247,6 +247,7 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
         report["output_shape"] = list(tensor.shape)
         report["output_dtype"] = str(tensor.dtype)
         report["runtime_debug"] = output.runtime_debug
+        report["peak_memory_mb_by_rank"] = _peak_memory_by_rank(output.runtime_debug)
         args.output_dir.mkdir(parents=True, exist_ok=True)
         torch.save(
             {
@@ -265,6 +266,23 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
             await runtime.shutdown()
         placement_owner.shutdown()
         ray.shutdown()
+
+
+def _peak_memory_by_rank(runtime_debug: dict[str, Any] | None) -> dict[str, float]:
+    """Max ``peak_memory_mb`` per rank over the request's batches.
+
+    The P6 gate asks for peak memory per rank, and a multi-rank engine reports
+    one row per rank in ``ray_chunks`` (``GenerationBatchResult.rank_metrics``).
+    """
+
+    peaks: dict[str, float] = {}
+    for row in (runtime_debug or {}).get("ray_chunks", []):
+        value = row.get("peak_memory_mb")
+        if value is None:
+            continue
+        worker_id = str(row["worker_id"])
+        peaks[worker_id] = max(peaks.get(worker_id, 0.0), float(value))
+    return peaks
 
 
 def _as_unit_scale(tensor: torch.Tensor) -> torch.Tensor:
