@@ -55,6 +55,23 @@ class PreviousAdapterObjective:
     ) -> tuple[Any, Any]:
         raise NotImplementedError
 
+    # -- x0 regression --------------------------------------------------
+
+    @staticmethod
+    def normalized_mse(prediction: Any, target: Any) -> Any:
+        """Per-sample MSE normalized by the detached mean absolute error (NFT / V-GRPO Eq. 14)."""
+
+        import torch
+
+        reduce_dims = tuple(range(1, target.ndim))
+        with torch.no_grad():
+            weight = (
+                torch.abs(prediction.double() - target.double())
+                .mean(dim=reduce_dims, keepdim=True)
+                .clip(min=1e-5)
+            )
+        return ((prediction - target) ** 2 / weight).mean(dim=reduce_dims)
+
     # -- flow time -----------------------------------------------------
 
     def flow_time(self, t_raw: Any, x0: Any) -> Any:

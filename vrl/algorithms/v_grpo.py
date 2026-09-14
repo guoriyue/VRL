@@ -54,7 +54,6 @@ from typing import Any, ClassVar
 
 from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.config_contract import AlgorithmConfigContract
-from vrl.algorithms.diffusion_nft import normalized_mse
 from vrl.algorithms.previous_adapter import PreviousAdapterObjective
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
@@ -207,9 +206,9 @@ class VGRPO(PreviousAdapterObjective):
         x0_float = x0.float()
         x_pred = xt - t_expanded * prediction.float()
         x_old = xt - t_expanded * old_prediction.float()
-        surrogate = normalized_mse(x_pred, x0_float)  # [B], adaptive weighting
+        surrogate = self.normalized_mse(x_pred, x0_float)  # [B], adaptive weighting
         with torch.no_grad():
-            surrogate_old = normalized_mse(x_old, x0_float)
+            surrogate_old = self.normalized_mse(x_old, x0_float)
         log_ratio = surrogate_old - surrogate
         ratio = torch.exp(log_ratio)
 

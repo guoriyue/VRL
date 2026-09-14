@@ -13,24 +13,6 @@ from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.models.precision import model_autocast
 
 
-def normalized_mse(prediction: Any, target: Any) -> Any:
-    """Return per-sample MSE normalized by detached mean absolute error."""
-
-    import torch
-
-    reduce_dims = tuple(range(1, target.ndim))
-    with torch.no_grad():
-        weight = (
-            torch.abs(prediction.double() - target.double())
-            .mean(
-                dim=reduce_dims,
-                keepdim=True,
-            )
-            .clip(min=1e-5)
-        )
-    return ((prediction - target) ** 2 / weight).mean(dim=reduce_dims)
-
-
 @dataclass(slots=True)
 class DiffusionNFTConfig:
     """Hyper-parameters for the DiffusionNFT training objective."""
@@ -197,8 +179,8 @@ class DiffusionNFT(PreviousAdapterObjective):
         x0_float = x0.float()
         positive_x0 = xt - t_expanded * positive_prediction.float()
         negative_x0 = xt - t_expanded * negative_prediction.float()
-        positive_loss = normalized_mse(positive_x0, x0_float)
-        negative_loss = normalized_mse(negative_x0, x0_float)
+        positive_loss = self.normalized_mse(positive_x0, x0_float)
+        negative_loss = self.normalized_mse(negative_x0, x0_float)
 
         flat_mix = reward_mix.flatten(start_dim=1).mean(dim=1)
         original_policy_loss = (
