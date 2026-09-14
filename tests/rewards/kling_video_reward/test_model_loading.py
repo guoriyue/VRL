@@ -270,41 +270,6 @@ def test_kling_video_reward_base_loader_honors_local_files_only(
     assert captured["model"][1]["revision"] == "main"
 
 
-def test_kling_video_reward_remaps_qwen2vl_checkpoint_keys() -> None:
-    """Legacy Qwen2-VL keys remap into the transformers 5 layout: ``visual.*`` gains a ``model.``
-    prefix, ``model.layers`` / ``embed_tokens`` move under ``model.language_model``, and
-    ``lm_head`` is untouched.
-    """
-    from vrl.rewards.models.hub import remap_legacy_qwen2vl_key
-    from vrl.rewards.models.kling_video_reward import _PEFT_PREFIX
-
-    assert (
-        remap_legacy_qwen2vl_key(
-            "base_model.model.visual.patch_embed.proj.weight",
-            prefix=_PEFT_PREFIX,
-        )
-        == "base_model.model.model.visual.patch_embed.proj.weight"
-    )
-    assert remap_legacy_qwen2vl_key(
-        "base_model.model.model.layers.0.self_attn.q_proj.base_layer.weight",
-        prefix=_PEFT_PREFIX,
-    ) == ("base_model.model.model.language_model.layers.0.self_attn.q_proj.base_layer.weight")
-    assert (
-        remap_legacy_qwen2vl_key(
-            "base_model.model.model.embed_tokens.weight",
-            prefix=_PEFT_PREFIX,
-        )
-        == "base_model.model.model.language_model.embed_tokens.weight"
-    )
-    assert (
-        remap_legacy_qwen2vl_key(
-            "base_model.model.lm_head.weight",
-            prefix=_PEFT_PREFIX,
-        )
-        == "base_model.model.lm_head.weight"
-    )
-
-
 def test_kling_normalize_scores_renames_drops_missing_and_never_leaks() -> None:
     """_normalize_scores renames raw VQ/MQ/TA/Overall to public aliases, drops a
     public key when its raw source is absent, and never leaks raw/undocumented keys.
@@ -353,14 +318,11 @@ def _legacy_layout(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
 
 
 def test_checkpoint_loader_strict_loads_a_live_model_in_either_key_layout(tmp_path: Path) -> None:
-    """``remap_legacy_qwen2vl_state_dict`` compares against the LIVE model's keys and the
+    """``relocate_checkpoint_keys`` compares against the LIVE model's keys and the
     loader then ``strict=True``-loads; both the current and the legacy layout must
     land on a fresh model bit-for-bit."""
-    from vrl.rewards.models.hub import remap_legacy_qwen2vl_state_dict
-    from vrl.rewards.models.kling_video_reward import (
-        _PEFT_PREFIX,
-        load_kling_video_reward_checkpoint,
-    )
+    from vrl.rewards.models.hub import relocate_checkpoint_keys
+    from vrl.rewards.models.kling_video_reward import load_kling_video_reward_checkpoint
 
     source = _lora_wrapped(seed=0)
     checkpoint = tmp_path / "checkpoint-11352"
@@ -374,9 +336,7 @@ def test_checkpoint_loader_strict_loads_a_live_model_in_either_key_layout(tmp_pa
 
     legacy = _legacy_layout(source.state_dict())
     assert legacy.keys() != source.state_dict().keys()
-    assert set(
-        remap_legacy_qwen2vl_state_dict(legacy, source.state_dict(), prefix=_PEFT_PREFIX)
-    ) == set(source.state_dict())
+    assert set(relocate_checkpoint_keys(source, legacy)) == set(source.state_dict())
     torch.save(legacy, checkpoint / "model.pth")
     relocated, _ = load_kling_video_reward_checkpoint(_lora_wrapped(seed=2), tmp_path)
     for key, value in source.state_dict().items():

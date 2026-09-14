@@ -42,7 +42,7 @@ from vrl.rewards.assets.hpsv3_prompts import (
     build_hpsv3_frame_prompt,
 )
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.hub import remap_legacy_qwen2vl_state_dict, resolve_model_root
+from vrl.rewards.models.hub import relocate_checkpoint_keys, resolve_model_root
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -232,7 +232,7 @@ class HPSv3Model:
         import safetensors.torch
 
         state_dict = safetensors.torch.load_file(str(self.checkpoint_path), device="cpu")
-        state_dict = remap_legacy_qwen2vl_state_dict(state_dict, model.state_dict())
+        state_dict = relocate_checkpoint_keys(model, state_dict)
         model.load_state_dict(state_dict, strict=True)
 
     def __call__(self, artifact: RewardInferenceArtifact) -> dict[str, float]:

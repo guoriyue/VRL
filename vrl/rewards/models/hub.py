@@ -1,13 +1,14 @@
 """Shared helpers for locating and loading reward-model checkpoints.
 
-Model references (``repo_id@revision``, local roots) live here, and so does the
-Qwen2-VL key relocation: transformers 4.52 nested the Qwen2-VL modules
-(``model.*`` under ``model.language_model.*``, ``visual.*`` under
-``model.visual.*``), and the published HPSv3 and Kling VideoReward checkpoints
-predate that rename, so their keys are moved before a ``strict=True`` load.
-The relocation is per key and idempotent, so a state dict that already mixes
-both layouts (a live model's keys updated with a legacy LoRA/non-LoRA split)
-still lands on the nested layout.
+Model references (``repo_id@revision``, local roots) live here, and so does
+:func:`relocate_checkpoint_keys`: the reward loaders build a Qwen2-VL model
+with ``from_pretrained`` and then overlay a fine-tuned state dict with
+``load_state_dict(strict=True)`` (after resizing embeddings or wrapping in
+PEFT), which bypasses the key conversions ``from_pretrained`` would apply.
+The published HPSv3 and Kling VideoReward checkpoints predate the
+transformers 4.52 Qwen2-VL nesting (``model.*`` under
+``model.language_model.*``, ``visual.*`` under ``model.visual.*``), so the
+overlay runs their keys through the model's own conversion mapping first.
 """
 
 from __future__ import annotations
@@ -79,50 +80,61 @@ def resolve_model_root(
     ).resolve()
 
 
-_NESTED_MODULES = ("language_model.", "visual.")
+def relocate_checkpoint_keys(model: Any, state: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Rename ``state``'s keys the way ``from_pretrained`` would for ``model``.
 
-
-def remap_legacy_qwen2vl_key(key: str, *, prefix: str = "") -> str:
-    """Move one pre-4.52 key under the nested layout; nested keys pass through.
-
-    ``prefix`` is whatever wraps the Qwen2-VL model in the checkpoint (for a
-    PEFT-wrapped model ``"base_model.model."``); keys outside ``{prefix}model.``
-    and ``{prefix}visual.`` (``lm_head``, reward heads) are left untouched.
+    The conversion rules come from transformers itself (the same ones its
+    loader applies), so no Qwen2-VL layout knowledge lives here; a PEFT
+    wrapper is peeled to reach the pretrained model and its key prefix is
+    kept. The caller loads ``strict=True`` afterwards, so anything short of an
+    exact match with the live keys returns ``state`` unchanged and lets the
+    strict load report the real mismatch instead of a half-relocated one.
     """
 
-    visual_prefix = f"{prefix}visual."
-    model_prefix = f"{prefix}model."
-    if key.startswith(visual_prefix):
-        return f"{model_prefix}visual.{key[len(visual_prefix) :]}"
-    if key.startswith(model_prefix):
-        rest = key[len(model_prefix) :]
-        if not rest.startswith(_NESTED_MODULES):
-            return f"{model_prefix}language_model.{rest}"
-    return key
+    from transformers import PreTrainedModel
+    from transformers.conversion_mapping import get_checkpoint_conversion_mapping
 
+    prefix = ""
+    pretrained = model
+    if not isinstance(pretrained, PreTrainedModel):
+        from peft import PeftModel
 
-def remap_legacy_qwen2vl_state_dict(
-    state: Mapping[str, Any],
-    target_state: Mapping[str, Any],
-    *,
-    prefix: str = "",
-) -> Mapping[str, Any]:
-    """Relocate ``state`` onto the live model's layout when that yields its exact key set.
+        if not isinstance(pretrained, PeftModel):
+            raise TypeError(
+                f"relocate_checkpoint_keys expects a PreTrainedModel or PeftModel, got {type(model)!r}",
+            )
+        pretrained = model.get_base_model()
+        prefix = "base_model.model."
+    # transformers registers the Qwen2-VL rules under the ForConditionalGeneration
+    # class name; the reward heads subclass it, so walk the MRO the way a
+    # task-head override would, then fall back to the model type.
+    transforms = None
+    for cls in type(pretrained).__mro__:
+        transforms = get_checkpoint_conversion_mapping(cls.__name__)
+        if transforms is not None:
+            break
+    if transforms is None:
+        transforms = get_checkpoint_conversion_mapping(pretrained.config.model_type) or []
 
-    The caller loads ``strict=True`` afterwards, so anything short of an exact
-    match returns ``state`` unchanged and lets the strict load report the
-    real mismatch instead of a half-relocated one.
-    """
+    def relocate(key: str) -> str:
+        if not key.startswith(prefix):
+            return key
+        inner = key[len(prefix) :]
+        for transform in transforms:
+            inner, matched = transform.rename_source_key(inner)
+            if matched is not None:
+                break
+        return prefix + inner
 
-    remapped = {
-        remap_legacy_qwen2vl_key(str(key), prefix=prefix): value for key, value in state.items()
-    }
-    return remapped if set(remapped) == set(target_state) else state
+    live_keys = set(model.state_dict())
+    if set(state) == live_keys:
+        return state
+    remapped = {relocate(str(key)): value for key, value in state.items()}
+    return remapped if set(remapped) == live_keys else state
 
 
 __all__ = [
     "HuggingFaceRepoRevision",
-    "remap_legacy_qwen2vl_key",
-    "remap_legacy_qwen2vl_state_dict",
+    "relocate_checkpoint_keys",
     "resolve_model_root",
 ]

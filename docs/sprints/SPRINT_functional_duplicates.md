@@ -54,18 +54,30 @@ projection. The test stub in `tests/scripts/eval/test_anima_fixed_eval.py`
 was already broken by the registry-driven `parse_config` (it replaced the
 whole family entry); it now patches only `resolve_model_build`.
 
-### Legacy Qwen2-VL key relocation — `306cc32d1`
+### Legacy Qwen2-VL key relocation — `306cc32d1`, then `hub.py`
 
-`vrl/rewards/models/hpsv3.py::_remap_qwen2vl_state_dict` and
-`vrl/rewards/models/kling_video_reward.py::_remap_qwen2vl_key/_state_dict`
-both encoded the transformers 4.52 rename (`model.*` →
-`model.language_model.*`, `visual.*` → `model.visual.*`), differing only in
-the PEFT `base_model.model.` prefix and the safety gate. The per-key
-idempotent form with the exact-key-set gate is strictly stronger (it also
-handles a live state dict mixed with legacy LoRA keys), so both now use
-`vrl/rewards/models/hub.py` with a `prefix` argument; the
-old private names are gone and the tests call the shared functions. The HPSv3 test's nested-key fixture was extended to the full key set the
-exact-set gate requires.
+`vrl/rewards/models/hpsv3.py` and `vrl/rewards/models/kling_video_reward.py`
+both hand-coded the transformers 4.52 rename (`model.*` →
+`model.language_model.*`, `visual.*` → `model.visual.*`) because they overlay
+a fine-tuned state dict with `load_state_dict(strict=True)` after
+`from_pretrained` (HPSv3 resizes embeddings first, Kling wraps in PEFT
+first), which bypasses the conversions `from_pretrained` applies. The two
+copies were first merged into one hand-written rule; on review the rule
+itself was redundant: transformers registers exactly it under
+`Qwen2VLForConditionalGeneration` in `transformers.conversion_mapping`.
+`vrl/rewards/models/hub.py::relocate_checkpoint_keys(model, state)` now
+runs the checkpoint through the model's own registered transforms (walking
+the MRO, since the reward heads subclass the ForConditionalGeneration class
+and transformers looks the mapping up by class name), peeling a PEFT wrapper
+and keeping its prefix. No Qwen2-VL layout knowledge remains in VRL.
+Verified by strict-loading the real `MizzenAI/HPSv3` and
+`KlingTeam/VideoReward` checkpoints from the local HF cache on CPU.
+
+Observed while verifying, not changed: `HPSv3Qwen2VLRewardModel.from_pretrained`
+of the `Qwen/Qwen2-VL-7B-Instruct` base reports every text-tower key as
+MISSING/UNEXPECTED for the same class-name-lookup reason, then the HPSv3
+overlay strict-loads everything, so the result is correct but the base load
+is wasted work and noisy.
 
 ### Storage dtype table — `306cc32d1`
 

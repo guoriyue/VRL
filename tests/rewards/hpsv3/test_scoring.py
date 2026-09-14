@@ -7,7 +7,7 @@ checkpoint key remap, and the byte-exact upstream prompt build.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any
 
 import pytest
 import torch
@@ -17,7 +17,7 @@ from vrl.rewards.assets.hpsv3_prompts import (
     build_hpsv3_frame_prompt,
 )
 from vrl.rewards.models.hpsv3 import _aggregate_frame_scores
-from vrl.rewards.models.hub import remap_legacy_qwen2vl_state_dict
+from vrl.rewards.models.hub import relocate_checkpoint_keys
 
 
 class TestAggregateFrameScores:
@@ -45,44 +45,60 @@ class TestAggregateFrameScores:
             _aggregate_frame_scores([], 0.3)
 
 
-class TestStateDictRemap:
-    _NESTED_MODEL_KEYS: ClassVar[dict[str, None]] = {
-        "model.language_model.embed_tokens.weight": None,
-        "model.language_model.layers.0.self_attn.q_proj.weight": None,
-        "model.language_model.norm.weight": None,
-        "model.visual.patch_embed.proj.weight": None,
-        "lm_head.weight": None,
-        "rm_head.0.weight": None,
-    }
+class TestCheckpointKeyRelocation:
+    """The HPSv3 checkpoint predates the Qwen2-VL nesting; the overlay must land strict."""
 
-    def test_flat_checkpoint_remaps_to_nested_layout(self) -> None:
-        tensor = torch.zeros(1)
-        state = {
-            "model.embed_tokens.weight": tensor,
-            "model.layers.0.self_attn.q_proj.weight": tensor,
-            "model.norm.weight": tensor,
-            "visual.patch_embed.proj.weight": tensor,
-            "lm_head.weight": tensor,
-            "rm_head.0.weight": tensor,
+    @staticmethod
+    def _tiny_qwen2vl() -> Any:
+        from transformers import Qwen2VLConfig, Qwen2VLForConditionalGeneration
+
+        config = Qwen2VLConfig(
+            text_config={
+                "vocab_size": 64,
+                "hidden_size": 32,
+                "intermediate_size": 64,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 2,
+                "num_key_value_heads": 2,
+                "rope_scaling": {"type": "mrope", "mrope_section": [2, 2, 4]},
+                "bos_token_id": None,
+                "eos_token_id": None,
+            },
+            vision_config={
+                "depth": 1,
+                "embed_dim": 32,
+                "hidden_size": 32,
+                "num_heads": 2,
+                "in_channels": 3,
+                "patch_size": 14,
+                "spatial_merge_size": 2,
+                "temporal_patch_size": 2,
+            },
+            bos_token_id=None,
+            eos_token_id=None,
+        )
+        torch.manual_seed(0)
+        return Qwen2VLForConditionalGeneration(config)
+
+    def test_flat_checkpoint_strict_loads_after_relocation(self) -> None:
+        source = self._tiny_qwen2vl()
+        flat = {
+            key.replace("model.language_model.", "model.", 1).replace(
+                "model.visual.", "visual.", 1
+            ): value
+            for key, value in source.state_dict().items()
         }
-        remapped = remap_legacy_qwen2vl_state_dict(state, self._NESTED_MODEL_KEYS)
-        assert set(remapped) == {
-            "model.language_model.embed_tokens.weight",
-            "model.language_model.layers.0.self_attn.q_proj.weight",
-            "model.language_model.norm.weight",
-            "model.visual.patch_embed.proj.weight",
-            "lm_head.weight",
-            "rm_head.0.weight",
-        }
+        assert flat.keys() != source.state_dict().keys()
 
-    def test_already_nested_checkpoint_is_untouched(self) -> None:
-        state = {"model.language_model.embed_tokens.weight": torch.zeros(1)}
-        assert remap_legacy_qwen2vl_state_dict(state, self._NESTED_MODEL_KEYS) is state
+        target = self._tiny_qwen2vl()
+        target.load_state_dict(relocate_checkpoint_keys(target, flat), strict=True)
+        for key, value in source.state_dict().items():
+            assert torch.equal(target.state_dict()[key], value), key
 
-    def test_flat_target_model_is_untouched(self) -> None:
-        state = {"model.embed_tokens.weight": torch.zeros(1)}
-        flat_model_keys = {"model.embed_tokens.weight": None}
-        assert remap_legacy_qwen2vl_state_dict(state, flat_model_keys) is state
+    def test_nested_checkpoint_is_returned_unchanged(self) -> None:
+        model = self._tiny_qwen2vl()
+        state = model.state_dict()
+        assert relocate_checkpoint_keys(model, state) is state
 
 
 class TestPromptBuild:

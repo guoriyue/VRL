@@ -25,7 +25,7 @@ from vrl.rewards.assets.kling_prompt_templates import (
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.hub import (
     HuggingFaceRepoRevision,
-    remap_legacy_qwen2vl_state_dict,
+    relocate_checkpoint_keys,
 )
 from vrl.utils.logging import init_logger, kv
 
@@ -33,8 +33,6 @@ logger = init_logger(__name__)
 
 _SPECIAL_TOKENS = ["<|VQ_reward|>", "<|MQ_reward|>", "<|TA_reward|>"]
 _DEFAULT_REWARD_MODEL = "KlingTeam/VideoReward"
-# The published checkpoint is a PEFT-wrapped Qwen2-VL; its keys sit under this.
-_PEFT_PREFIX = "base_model.model."
 _SCORE_KEY_MAP = {
     "overall_reward": "Overall",
     "visual_quality": "VQ",
@@ -439,7 +437,7 @@ def load_kling_video_reward_checkpoint(
     if full_ckpt.exists():
         state = torch.load(full_ckpt, map_location="cpu")
         if isinstance(state, Mapping):
-            state = remap_legacy_qwen2vl_state_dict(state, model.state_dict(), prefix=_PEFT_PREFIX)
+            state = relocate_checkpoint_keys(model, state)
         model.load_state_dict(state, strict=True)
         return model, resolved_step
 
@@ -459,9 +457,7 @@ def load_kling_video_reward_checkpoint(
     model_state = model.state_dict()
     model_state.update(non_lora_state)
     model_state.update(lora_state)
-    model_state = remap_legacy_qwen2vl_state_dict(
-        model_state, model.state_dict(), prefix=_PEFT_PREFIX
-    )
+    model_state = relocate_checkpoint_keys(model, model_state)
     model.load_state_dict(model_state, strict=True)
     return model, resolved_step
 
