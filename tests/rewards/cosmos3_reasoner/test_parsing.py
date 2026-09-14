@@ -13,7 +13,7 @@ from vrl.rewards.assets.video_judge_prompts import (
     COSMOS3_SYSTEM_PROMPT,
     COSMOS3_USER_TEMPLATE,
 )
-from vrl.rewards.models.cosmos3_reasoner import _normalize_scores, _parse_integer_scores
+from vrl.rewards.models.cosmos3_reasoner import Cosmos3ReasonerRewardModel
 
 _FORMAT_HEADER = "Please output in this format:\n"
 
@@ -34,7 +34,7 @@ def test_parser_reads_the_exact_format_the_prompt_asks_for() -> None:
     digits = iter("2345")
     filled = re.sub(r"<[^>]+>", lambda _: next(digits), declared)
 
-    assert _parse_integer_scores(filled) == (2, 3, 4, 5)
+    assert Cosmos3ReasonerRewardModel.parse_integer_scores(filled) == (2, 3, 4, 5)
 
 
 def test_system_and_user_prompts_declare_one_output_format() -> None:
@@ -54,26 +54,26 @@ def test_parse_integer_scores_reads_four_axes() -> None:
         "task success: 4; contact realism: 3, temporal consistency: 5, "
         "physical plausibility: 2"
     )
-    assert _parse_integer_scores(text) == (4, 3, 5, 2)
+    assert Cosmos3ReasonerRewardModel.parse_integer_scores(text) == (4, 3, 5, 2)
 
 
 def test_parse_integer_scores_rejects_unparseable() -> None:
-    assert _parse_integer_scores("no scores here") is None
+    assert Cosmos3ReasonerRewardModel.parse_integer_scores("no scores here") is None
 
 
 def test_parse_integer_scores_rejects_partial() -> None:
     # Only three of the four axes present -> no full match.
     text = "task success: 4; contact realism: 3, temporal consistency: 5"
-    assert _parse_integer_scores(text) is None
+    assert Cosmos3ReasonerRewardModel.parse_integer_scores(text) is None
 
 
 def test_parse_integer_scores_rejects_out_of_range() -> None:
     text = "task success: 6; contact realism: 3, temporal consistency: 5, physical plausibility: 2"
-    assert _parse_integer_scores(text) is None
+    assert Cosmos3ReasonerRewardModel.parse_integer_scores(text) is None
 
 
 def test_normalize_scores_public_keys_and_mean() -> None:
-    scores = _normalize_scores(4.0, 2.0, 3.0, 5.0)
+    scores = Cosmos3ReasonerRewardModel.normalize_scores(4.0, 2.0, 3.0, 5.0)
     assert set(scores) == {
         "task_success",
         "contact_realism",

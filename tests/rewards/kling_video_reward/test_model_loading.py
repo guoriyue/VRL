@@ -275,26 +275,31 @@ def test_kling_video_reward_remaps_qwen2vl_checkpoint_keys() -> None:
     prefix, ``model.layers`` / ``embed_tokens`` move under ``model.language_model``, and
     ``lm_head`` is untouched.
     """
-    from vrl.rewards.models.kling_video_reward import _remap_qwen2vl_key
+    from vrl.rewards.models.kling_video_reward import _PEFT_PREFIX
+    from vrl.rewards.models.qwen2vl_checkpoint import remap_legacy_qwen2vl_key
 
     assert (
-        _remap_qwen2vl_key(
+        remap_legacy_qwen2vl_key(
             "base_model.model.visual.patch_embed.proj.weight",
+            prefix=_PEFT_PREFIX,
         )
         == "base_model.model.model.visual.patch_embed.proj.weight"
     )
-    assert _remap_qwen2vl_key(
+    assert remap_legacy_qwen2vl_key(
         "base_model.model.model.layers.0.self_attn.q_proj.base_layer.weight",
+        prefix=_PEFT_PREFIX,
     ) == ("base_model.model.model.language_model.layers.0.self_attn.q_proj.base_layer.weight")
     assert (
-        _remap_qwen2vl_key(
+        remap_legacy_qwen2vl_key(
             "base_model.model.model.embed_tokens.weight",
+            prefix=_PEFT_PREFIX,
         )
         == "base_model.model.model.language_model.embed_tokens.weight"
     )
     assert (
-        _remap_qwen2vl_key(
+        remap_legacy_qwen2vl_key(
             "base_model.model.lm_head.weight",
+            prefix=_PEFT_PREFIX,
         )
         == "base_model.model.lm_head.weight"
     )
@@ -348,13 +353,14 @@ def _legacy_layout(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
 
 
 def test_checkpoint_loader_strict_loads_a_live_model_in_either_key_layout(tmp_path: Path) -> None:
-    """``_remap_qwen2vl_state_dict`` compares against the LIVE model's keys and the
+    """``remap_legacy_qwen2vl_state_dict`` compares against the LIVE model's keys and the
     loader then ``strict=True``-loads; both the current and the legacy layout must
     land on a fresh model bit-for-bit."""
     from vrl.rewards.models.kling_video_reward import (
-        _remap_qwen2vl_state_dict,
+        _PEFT_PREFIX,
         load_kling_video_reward_checkpoint,
     )
+    from vrl.rewards.models.qwen2vl_checkpoint import remap_legacy_qwen2vl_state_dict
 
     source = _lora_wrapped(seed=0)
     checkpoint = tmp_path / "checkpoint-11352"
@@ -368,7 +374,9 @@ def test_checkpoint_loader_strict_loads_a_live_model_in_either_key_layout(tmp_pa
 
     legacy = _legacy_layout(source.state_dict())
     assert legacy.keys() != source.state_dict().keys()
-    assert set(_remap_qwen2vl_state_dict(legacy, source.state_dict())) == set(source.state_dict())
+    assert set(
+        remap_legacy_qwen2vl_state_dict(legacy, source.state_dict(), prefix=_PEFT_PREFIX)
+    ) == set(source.state_dict())
     torch.save(legacy, checkpoint / "model.pth")
     relocated, _ = load_kling_video_reward_checkpoint(_lora_wrapped(seed=2), tmp_path)
     for key, value in source.state_dict().items():

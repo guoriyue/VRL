@@ -26,7 +26,7 @@ Two scoring modes (``worker_config.soft_scores``):
   integer for that axis, so the reward never crashes on an odd generation.
 
 The public score keys are exactly ``visual_quality`` / ``text_alignment`` /
-``physical_common_sense`` / ``overall`` (see :func:`_normalize_scores`); the
+``physical_common_sense`` / ``overall`` (see :meth:`VideoScore2Model.normalize_scores`); the
 upstream free-text wording never leaks into the training config as a score key.
 """
 
@@ -283,9 +283,5 @@ def _expected_digit_value(logits: Any, digit_token_ids: Mapping[int, int]) -> fl
     values = torch.tensor([float(d) for d in digits], dtype=torch.float32)
     return float((probs * values).sum().item())
 
-
-# Kept as module-level names for the parsing tests and any external caller.
-_parse_integer_scores = VideoScore2Model.parse_integer_scores
-_normalize_scores = VideoScore2Model.normalize_scores
 
 __all__ = ["VideoScore2Model"]

@@ -35,8 +35,8 @@ axis names differed. `QwenVLVideoJudge` (`vrl/rewards/models/qwen_vl_judge.py`)
 now declares `system_prompt`, `user_template`, `score_regex`, `score_axes`
 and implements `_messages`, `_parse`, `parse_integer_scores`,
 `normalize_scores` once. VideoScore2 keeps only its soft-score merge
-override. Module aliases `_parse_integer_scores` / `_normalize_scores` remain
-for `tests/rewards/{videoscore2,cosmos3_reasoner}/test_parsing.py`.
+override. The parsing tests call the classmethods directly; no module-level
+compatibility aliases were kept.
 
 Kling's `_normalize_scores` (`vrl/rewards/models/kling_video_reward.py:548`)
 is a different contract (renames a raw `VQ/MQ/TA/Overall` dict, drops
@@ -63,8 +63,8 @@ both encoded the transformers 4.52 rename (`model.*` →
 the PEFT `base_model.model.` prefix and the safety gate. The per-key
 idempotent form with the exact-key-set gate is strictly stronger (it also
 handles a live state dict mixed with legacy LoRA keys), so both now use
-`vrl/rewards/models/qwen2vl_checkpoint.py` with a `prefix` argument.
-The HPSv3 test's nested-key fixture was extended to the full key set the
+`vrl/rewards/models/qwen2vl_checkpoint.py` with a `prefix` argument; the
+old private names are gone and the tests call the shared functions. The HPSv3 test's nested-key fixture was extended to the full key set the
 exact-set gate requires.
 
 ### Storage dtype table — `306cc32d1`

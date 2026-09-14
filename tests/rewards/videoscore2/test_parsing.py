@@ -22,10 +22,9 @@ from vrl.rewards.assets.video_judge_prompts import (
 )
 from vrl.rewards.models.videoscore2 import (
     _DIMENSION_MARKERS,
+    VideoScore2Model,
     _marker_token_ids,
     _merge_soft_with_hard,
-    _normalize_scores,
-    _parse_integer_scores,
     _resolve_digit_token_ids,
     _soft_scores_from_generation,
 )
@@ -47,7 +46,7 @@ def test_parser_reads_the_exact_format_the_prompt_asks_for() -> None:
     digits = iter("345")
     filled = re.sub(r"<[^>]+>", lambda _: next(digits), declared)
 
-    assert _parse_integer_scores(filled) == (3, 4, 5)
+    assert VideoScore2Model.parse_integer_scores(filled) == (3, 4, 5)
 
 
 def test_system_and_user_prompts_declare_one_output_format() -> None:
@@ -75,20 +74,20 @@ def test_parse_integer_scores_reads_three_axes() -> None:
         "visual quality: 4; text-to-video alignment: 3, "
         "physical/common-sense consistency: 5"
     )
-    assert _parse_integer_scores(text) == (4, 3, 5)
+    assert VideoScore2Model.parse_integer_scores(text) == (4, 3, 5)
 
 
 def test_parse_integer_scores_rejects_unparseable() -> None:
-    assert _parse_integer_scores("no scores here") is None
+    assert VideoScore2Model.parse_integer_scores("no scores here") is None
 
 
 def test_parse_integer_scores_rejects_out_of_range() -> None:
     text = "visual quality: 7; text-to-video alignment: 3, physical/common-sense consistency: 5"
-    assert _parse_integer_scores(text) is None
+    assert VideoScore2Model.parse_integer_scores(text) is None
 
 
 def test_normalize_scores_public_keys_and_mean() -> None:
-    scores = _normalize_scores(4.0, 2.0, 3.0)
+    scores = VideoScore2Model.normalize_scores(4.0, 2.0, 3.0)
     assert set(scores) == {
         "visual_quality",
         "text_alignment",

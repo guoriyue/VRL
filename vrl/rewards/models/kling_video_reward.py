@@ -25,7 +25,6 @@ from vrl.rewards.assets.kling_prompt_templates import (
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.hub import HuggingFaceRepoRevision
 from vrl.rewards.models.qwen2vl_checkpoint import (
-    remap_legacy_qwen2vl_key,
     remap_legacy_qwen2vl_state_dict,
 )
 from vrl.utils.logging import init_logger, kv
@@ -689,15 +688,6 @@ def _insert_adapter_name_into_state_dict(
             new_key = f"{prefix}.{adapter_name}.{leaf}" if separator else f"{key}.{adapter_name}"
         remapped[new_key] = value
     return remapped
-
-
-# Kept as module-level names for the checkpoint-loading tests.
-def _remap_qwen2vl_key(key: str) -> str:
-    return remap_legacy_qwen2vl_key(key, prefix=_PEFT_PREFIX)
-
-
-def _remap_qwen2vl_state_dict(state, target_state):
-    return remap_legacy_qwen2vl_state_dict(state, target_state, prefix=_PEFT_PREFIX)
 
 
 __all__ = [

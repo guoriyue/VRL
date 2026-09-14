@@ -101,8 +101,4 @@ class Cosmos3ReasonerRewardModel(QwenVLVideoJudge):
         return Qwen3VLForConditionalGeneration.from_pretrained(str(self.model_root), **load_kwargs)
 
 
-# Kept as module-level names for the parsing tests and any external caller.
-_parse_integer_scores = Cosmos3ReasonerRewardModel.parse_integer_scores
-_normalize_scores = Cosmos3ReasonerRewardModel.normalize_scores
-
 __all__ = ["Cosmos3ReasonerRewardModel"]
