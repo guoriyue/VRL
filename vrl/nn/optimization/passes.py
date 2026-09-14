@@ -362,15 +362,27 @@ class VaeDecodeMemoryPass:
         return getattr(memory, "vae_decode", None) is not None
 
     def apply(self, model: Any, build: Any) -> PassResult:
-        from vrl.models.steps.denoise.common.vae_decode_memory import (
-            apply_generation_memory_policy,
-        )
-
-        apply_generation_memory_policy(
-            model,
-            memory=build.generation_memory,
-            owner=f"{getattr(build, 'family', '?')} model",
-        )
+        # Family models declare WHAT can be configured (generation_memory_targets);
+        # this pass owns HOW and WHEN. Each policy field is dispatched explicitly
+        # so adding a resolved field also requires a real behavior consumer.
+        memory = build.generation_memory
+        targets = model.generation_memory_targets()
+        if "vae_decode" not in targets:
+            exposed = ", ".join(sorted(targets)) or "<none>"
+            raise ValueError(
+                f"{getattr(build, 'family', '?')} model configures unsupported "
+                "model.memory section(s) vae_decode; model exposes generation memory "
+                f"target(s): {exposed}",
+            )
+        # Tiling/slicing trade latency for peak decode memory; applying them
+        # executes on the concrete diffusers VAE, so it lives in a pass, not a
+        # config view (and never inline in a family model — see
+        # tests/architecture/test_memory_policy_boundaries.py).
+        vae = targets["vae_decode"]
+        if memory.vae_decode.tiling:
+            vae.enable_tiling()
+        if memory.vae_decode.slicing:
+            vae.enable_slicing()
         return PassResult(
             name=self.name,
             applied=True,

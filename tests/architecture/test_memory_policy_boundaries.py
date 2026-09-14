@@ -9,9 +9,9 @@ VRL_ROOT = ROOT / "vrl"
 
 
 def test_family_model_loaders_use_vae_decode_memory_boundary() -> None:
-    """VAE tiling/slicing must go through vrl.models.steps.denoise.common.vae_decode_memory."""
+    """VAE tiling/slicing is applied by the vae_decode_memory optimization pass, never inline."""
 
-    # Only VAE tiling/slicing has a policy boundary (vae_decode_memory). Diffusers
+    # Only VAE tiling/slicing has a policy boundary (the VaeDecodeMemory pass). Diffusers
     # pipeline-level offload through model.offload_mode is a legitimate single-GPU
     # inference strategy — e.g. Wan I2V 14B on a 32 GB card — so the underlying
     # accelerate calls are intentionally not forbidden here.

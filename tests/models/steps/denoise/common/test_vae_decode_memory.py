@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 from dataclasses import asdict
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -14,10 +15,16 @@ from vrl.models.interfaces.generation_memory import (
     VaeDecodeMemory,
 )
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
-from vrl.models.steps.denoise.common.vae_decode_memory import (
-    apply_generation_memory_policy,
-    configure_vae_decode_memory,
-)
+from vrl.nn.optimization.passes import VaeDecodeMemoryPass
+
+
+def _apply_memory_policy(model: Any, memory: GenerationMemoryPolicy | None) -> None:
+    """Run the vae_decode_memory pass the way the optimization sequence does."""
+
+    build = SimpleNamespace(generation_memory=memory, family="test VAE")
+    memory_pass = VaeDecodeMemoryPass()
+    if memory_pass.enabled(build):
+        memory_pass.apply(model, build)
 
 
 def test_configure_vae_decode_memory_flips_the_real_vae_state() -> None:
@@ -32,7 +39,10 @@ def test_configure_vae_decode_memory_flips_the_real_vae_state() -> None:
     vae = build_tiny_autoencoder_kl()
     assert (vae.use_tiling, vae.use_slicing) == (False, False)
 
-    configure_vae_decode_memory(vae, VaeDecodeMemory(tiling=True, slicing=True))
+    _apply_memory_policy(
+        _FakeModel(vae),
+        GenerationMemoryPolicy(vae_decode=VaeDecodeMemory(tiling=True, slicing=True)),
+    )
 
     assert (vae.use_tiling, vae.use_slicing) == (True, True)
 
@@ -47,7 +57,10 @@ def test_configure_vae_decode_memory_leaves_unrequested_knobs_alone() -> None:
 
     vae = build_tiny_autoencoder_kl()
 
-    configure_vae_decode_memory(vae, VaeDecodeMemory(tiling=False, slicing=True))
+    _apply_memory_policy(
+        _FakeModel(vae),
+        GenerationMemoryPolicy(vae_decode=VaeDecodeMemory(tiling=False, slicing=True)),
+    )
 
     assert (vae.use_tiling, vae.use_slicing) == (False, True)
 
@@ -161,12 +174,11 @@ def test_apply_generation_memory_policy_from_resolved_policy() -> None:
     """Policy resolves the model's vae_decode target and applies knobs."""
     vae = build_tiny_autoencoder_kl()
 
-    apply_generation_memory_policy(
+    _apply_memory_policy(
         _FakeModel(vae),
-        memory=GenerationMemoryPolicy(
+        GenerationMemoryPolicy(
             vae_decode=VaeDecodeMemory(tiling=True, slicing=False),
         ),
-        owner="test VAE",
     )
 
     assert (vae.use_tiling, vae.use_slicing) == (True, False)
@@ -177,10 +189,9 @@ def test_apply_generation_memory_policy_has_no_python_defaults() -> None:
 
     vae = build_tiny_autoencoder_kl()
 
-    apply_generation_memory_policy(
+    _apply_memory_policy(
         _FakeModel(vae),
-        memory=None,
-        owner="test VAE",
+        None,
     )
 
     assert (vae.use_tiling, vae.use_slicing) == (False, False)
@@ -345,20 +356,18 @@ def test_configured_section_without_target_fails() -> None:
         ValueError,
         match=r"unsupported model\.memory section\(s\) vae_decode.*<none>",
     ):
-        apply_generation_memory_policy(
+        _apply_memory_policy(
             _FakeModel(vae=None),
-            memory=GenerationMemoryPolicy(
+            GenerationMemoryPolicy(
                 vae_decode=VaeDecodeMemory(**vae_decode_config),
             ),
-            owner="test VAE",
         )
 
 
 def test_targetless_model_passes_when_nothing_configured() -> None:
-    apply_generation_memory_policy(
+    _apply_memory_policy(
         _FakeModel(vae=None),
-        memory=None,
-        owner="test VAE",
+        None,
     )
 
 
@@ -427,12 +436,11 @@ def test_unconfigured_future_target_does_not_change_current_policy() -> None:
             return {"vae_decode": self.vae, "image_encoder": self.encoder}
 
     model = _TwoTargetModel()
-    apply_generation_memory_policy(
+    _apply_memory_policy(
         model,
-        memory=GenerationMemoryPolicy(
+        GenerationMemoryPolicy(
             vae_decode=VaeDecodeMemory(tiling=True),
         ),
-        owner="test",
     )
 
     assert (model.vae.use_tiling, model.vae.use_slicing) == (True, False)
