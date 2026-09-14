@@ -1,9 +1,10 @@
 # Video GRPO correctness evidence
 
-The user clarified that the objective is RL/framework correctness on a video
-model, preferably VDN-H3 linear attention, not a long full-resolution quality
-experiment. The cancelled 81-frame Wan update is not a required proxy for every
-correctness question and is not automatically restarted.
+The objective is RL/framework correctness on a video model, preferably VDN-H3
+linear attention. The user subsequently clarified that this includes evidence
+that training helps the model learn, not only numerical update contracts.
+The tests below complete bounded mechanical checks, not that broader objective.
+The cancelled 81-frame Wan update is not automatically restarted.
 
 ## Wan real-weight evidence revalidated
 
@@ -100,7 +101,7 @@ checkpoint-1 and control/resume replay debug receipts.
 
 ## Acceptance boundary
 
-The clarified short correctness objective has evidence at complementary levels:
+The mechanical correctness checks have evidence at complementary levels:
 real-weight Wan native updates plus single/multi-GPU and resume agreement;
 VDN reward-signed gradient/optimizer checks; and VDN CPU/CUDA OnlineTrainer
 composition with strict state restoration. These support the tested video RL
@@ -111,3 +112,25 @@ full-resolution throughput and held-out semantic quality remain unverified.
 They are distinct deployment/quality experiments, not claims made by these
 tests. Do not restart the cancelled full-size Wan queue merely to answer
 whether the tested small-video RL framework works.
+
+## Learning validation remains open
+
+The user's clarification supersedes the earlier short-test completion claim.
+Two real-weight Wan updates and tiny random-weight VDN tests do not demonstrate
+useful learning. No long training run was launched by these checks.
+
+The next learning experiment must use pretrained weights and a real reward,
+retain an untrained baseline, and evaluate baseline and trained checkpoints on
+the same held-out prompts, input conditions, generation settings and seed set.
+Training rewards from changing samples are not a controlled comparison.
+Record paired reward changes and their uncertainty, retain inspectable videos,
+and check for quality degradation or reward exploitation. Keep training-set
+improvement separate from held-out generalization.
+
+Use a bounded initial training budget with periodic checkpoints and evaluation;
+extend only after inspecting learning and runtime evidence. More elapsed time
+alone is not an acceptance criterion. Existing Wan short-video timing is a
+planning reference, not a guarantee for a longer run. Released-weight VDN
+loading and its training recipe remain prerequisite gates before claiming a
+VDN learning experiment. Coordinate GPU ownership before launch and do not
+silently restart the cancelled full-size Wan queue.
