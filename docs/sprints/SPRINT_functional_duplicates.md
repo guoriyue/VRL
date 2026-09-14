@@ -268,6 +268,42 @@ carried a reason, became a comment at the call site:
   one-liners; inlining a 12-line error into the admission branch would hurt
   the branch more than the helper costs.
 
+## One-statement classes
+
+The same AST pass listed 96 classes whose body is at most one statement
+after the docstring (vendored code excluded). Grouped by what the class is
+for:
+
+### Removed
+
+Empty subclasses that neither added a member nor were dispatched on:
+`Lumina2SamplingState`, `MochiSamplingState`, `PixArtSigmaSamplingState`,
+`SanaSamplingState` (over the shared masked-prompt states) and
+`JanusProARState` (over `PagedCFGARState`). `sampling_state_cls` / `state_cls`
+now name the shared class. `Emu3ARState` stays because it adds a field.
+
+### Kept, by role
+
+- **Typed exceptions** (`TerminalRuntimeError`, `StaleSlotDiscard`,
+  `TrajectoryReaderError`, `_GroupProductionError`, …): the empty body is
+  the point — callers catch the type.
+- **Composition points.** The empty `<Family>ReplayModel(DiffusersReplayModelBase,
+  <Family>Model)` classes (sd3_5, qwen_image, sana, lumina2, hunyuan_*,
+  cogvideox, predict2, `WanI2VReplayModel`, `VDNH3ReplayModel`) are where
+  the shared replay base meets one family's forward; the registry names
+  them by path, tests instantiate them, and `test_family_mro.py` pins their
+  MRO. A factory that composed them at runtime would trade nine visible
+  declarations for one dynamic `type()` call.
+- **Capability markers checked with `issubclass`:** `CumemRewardFunction`
+  (the reward registry routes CuMem-pool allocation on it).
+- **One-method Protocols** (`StatsSink`, `QueryableCompletion`,
+  `GenerationWeightSync`, `RemoteReadyScorer`, …) and **single-field config
+  sections** (`DDPConfig`, `KlingVideoRewardProductionConfig`, the sampling
+  section ladder): schema, not logic.
+- **Single-override subclasses** (`MiniMaxH3FlowScheduler.step`,
+  `_SaturatedLinearAttnProcessor.__call__`, the `*ReplayModel.prepare_replay`
+  overrides): the override is the family difference.
+
 ## Verification
 
 Per change: ruff on touched files; the family's tests. Final sweep
