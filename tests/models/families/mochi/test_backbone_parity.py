@@ -23,7 +23,7 @@ from tests.models.steps.denoise.fixtures import (
 from vrl.models.families.mochi.model import (
     MochiModel,
     MochiReplayModel,
-    TrainTimestepMaskedPromptSamplingState,
+    MochiSamplingState,
     standard_mochi_scheduler,
 )
 
@@ -40,9 +40,9 @@ def _model(transformer: torch.nn.Module) -> MochiModel:
     return model
 
 
-def _state(*, do_cfg: bool) -> TrainTimestepMaskedPromptSamplingState:
+def _state(*, do_cfg: bool) -> MochiSamplingState:
     bsz = TINY_MOCHI_LATENT_SHAPE[0]
-    return TrainTimestepMaskedPromptSamplingState(
+    return MochiSamplingState(
         latents=torch.randn(TINY_MOCHI_LATENT_SHAPE),
         timesteps=torch.tensor([400.0]),
         scheduler=None,

@@ -29,6 +29,7 @@ Lumina2 specifics vs SD3 (the reference family):
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 import torch
@@ -48,6 +49,11 @@ from vrl.models.steps.denoise.common import (
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
+@dataclass
+class Lumina2SamplingState(TrainTimestepMaskedPromptSamplingState):
+    """Private Lumina2 sampling state. Engine MUST NOT introspect."""
+
+
 class Lumina2Model(
     VaeDecodeMixin,
     MaskedPromptModelMixin,
@@ -62,7 +68,7 @@ class Lumina2Model(
     # Lumina's reference pipeline rescales the combined prediction back to the
     # conditional branch's norm on every CFG step.
     cfg_normalization = True
-    sampling_state_cls = TrainTimestepMaskedPromptSamplingState
+    sampling_state_cls = Lumina2SamplingState
     _default_max_sequence_length = 256
     _default_guidance_scale = 4.0
     _pipeline_encode_kwargs: ClassVar[Mapping[str, Any]] = {
@@ -75,7 +81,7 @@ class Lumina2Model(
     def _backbone_timestep(
         self,
         timestep: torch.Tensor,
-        state: TrainTimestepMaskedPromptSamplingState,
+        state: Lumina2SamplingState,
     ) -> torch.Tensor:
         # Lumina uses t=0 as noise and t=1 as the image; the transformer sees
         # the reversed normalized time while the scheduler steps on raw t.
@@ -107,4 +113,4 @@ class Lumina2ReplayModel(DiffusersReplayModelBase, Lumina2Model):
     """Replay-only Lumina2 model that owns no prompt encoder, VAE, or pipeline."""
 
 
-__all__ = ["Lumina2Model", "Lumina2ReplayModel"]
+__all__ = ["Lumina2Model", "Lumina2ReplayModel", "Lumina2SamplingState"]

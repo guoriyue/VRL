@@ -22,8 +22,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from tests.models.steps.token.fixtures import StubVQ, build_stub_janus_model
-from vrl.models.families.janus_pro.runner import JanusProARModelRunner
-from vrl.models.steps.token.paged_attention_helpers import PagedCFGARState
+from vrl.models.families.janus_pro.runner import JanusProARModelRunner, JanusProARState
 
 
 class _FixedLogitsHead(nn.Module):
@@ -50,8 +49,8 @@ def _runner_with_fixed_logits(logits: torch.Tensor) -> JanusProARModelRunner:
     return JanusProARModelRunner(model, attention_backend=None)
 
 
-def _state(*, guidance_scale: float, temperature: float) -> PagedCFGARState:
-    return PagedCFGARState(
+def _state(*, guidance_scale: float, temperature: float) -> JanusProARState:
+    return JanusProARState(
         token_ids=torch.empty(1, 1, dtype=torch.long),
         logprobs=torch.empty(1, 1),
         guidance_scale=guidance_scale,

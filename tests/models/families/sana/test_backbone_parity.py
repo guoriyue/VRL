@@ -20,9 +20,9 @@ from tests.models.steps.denoise.fixtures import (
     stamp_model_precision,
 )
 from vrl.models.families.sana.model import (
-    MaskedPromptSamplingState,
     SanaModel,
     SanaReplayModel,
+    SanaSamplingState,
 )
 
 _TEXT_LEN = 5
@@ -37,9 +37,9 @@ def _model(transformer: torch.nn.Module) -> SanaModel:
     return model
 
 
-def _state(*, do_cfg: bool) -> MaskedPromptSamplingState:
+def _state(*, do_cfg: bool) -> SanaSamplingState:
     bsz = TINY_SANA_LATENT_SHAPE[0]
-    return MaskedPromptSamplingState(
+    return SanaSamplingState(
         latents=torch.randn(TINY_SANA_LATENT_SHAPE),
         timesteps=torch.tensor([5.0]),
         scheduler=None,

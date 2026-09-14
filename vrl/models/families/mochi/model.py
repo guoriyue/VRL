@@ -28,6 +28,7 @@ Mochi specifics vs Wan (the reference video family):
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 import torch
@@ -70,6 +71,11 @@ def standard_mochi_scheduler(scheduler_config: Any, num_steps: int, device: Any)
     return scheduler
 
 
+@dataclass
+class MochiSamplingState(TrainTimestepMaskedPromptSamplingState):
+    """Private Mochi sampling state. Engine MUST NOT introspect."""
+
+
 class MochiModel(
     MaskedPromptModelMixin,
     LoraModelMixin,
@@ -80,7 +86,7 @@ class MochiModel(
 
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
-    sampling_state_cls = TrainTimestepMaskedPromptSamplingState
+    sampling_state_cls = MochiSamplingState
     _default_max_sequence_length = 256
     _default_guidance_scale = 4.5
     _pipeline_encode_kwargs: ClassVar[Mapping[str, Any]] = {"num_videos_per_prompt": 1}
@@ -98,7 +104,7 @@ class MochiModel(
     def _backbone_timestep(
         self,
         timestep: torch.Tensor,
-        state: TrainTimestepMaskedPromptSamplingState,
+        state: MochiSamplingState,
     ) -> torch.Tensor:
         # Standard clock t descends 1000->0; Mochi's native clock ascends, so
         # the transformer sees num_train_timesteps - t.
@@ -172,5 +178,6 @@ class MochiReplayModel(DiffusersReplayModelBase, MochiModel):
 __all__ = [
     "MochiModel",
     "MochiReplayModel",
+    "MochiSamplingState",
     "standard_mochi_scheduler",
 ]

@@ -26,6 +26,7 @@ SANA specifics vs SD3 (the reference family):
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 import torch
@@ -42,6 +43,11 @@ from vrl.models.steps.denoise.common import (
     VaeDecodeMixin,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
+
+
+@dataclass
+class SanaSamplingState(MaskedPromptSamplingState):
+    """Private SANA sampling state. Engine MUST NOT introspect."""
 
 
 class SanaModel(
@@ -61,7 +67,7 @@ class SanaModel(
 
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
-    sampling_state_cls = MaskedPromptSamplingState
+    sampling_state_cls = SanaSamplingState
     _default_max_sequence_length = 300
     _default_guidance_scale = 4.5
     _pipeline_encode_kwargs: ClassVar[Mapping[str, Any]] = {
@@ -79,7 +85,7 @@ class SanaModel(
     def _backbone_timestep(
         self,
         timestep: torch.Tensor,
-        state: MaskedPromptSamplingState,
+        state: SanaSamplingState,
     ) -> torch.Tensor:
         # SanaPipeline multiplies the raw timestep by config.timestep_scale and
         # keeps it in fp32; the time embedding owns its internal conversion.
@@ -168,4 +174,4 @@ class SanaReplayModel(DiffusersReplayModelBase, SanaModel):
     """Replay-only SANA model that owns no prompt encoder, VAE, or pipeline."""
 
 
-__all__ = ["SanaModel", "SanaReplayModel"]
+__all__ = ["SanaModel", "SanaReplayModel", "SanaSamplingState"]

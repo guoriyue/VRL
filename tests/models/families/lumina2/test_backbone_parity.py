@@ -23,7 +23,7 @@ from tests.models.steps.denoise.fixtures import (
 from vrl.models.families.lumina2.model import (
     Lumina2Model,
     Lumina2ReplayModel,
-    TrainTimestepMaskedPromptSamplingState,
+    Lumina2SamplingState,
 )
 
 _TEXT_LEN = 5
@@ -39,9 +39,9 @@ def _model(transformer: torch.nn.Module) -> Lumina2Model:
     return model
 
 
-def _state(*, do_cfg: bool) -> TrainTimestepMaskedPromptSamplingState:
+def _state(*, do_cfg: bool) -> Lumina2SamplingState:
     bsz = TINY_LUMINA2_LATENT_SHAPE[0]
-    return TrainTimestepMaskedPromptSamplingState(
+    return Lumina2SamplingState(
         latents=torch.randn(TINY_LUMINA2_LATENT_SHAPE),
         timesteps=torch.tensor([400.0]),
         scheduler=None,

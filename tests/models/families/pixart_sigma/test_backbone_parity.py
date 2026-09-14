@@ -15,9 +15,9 @@ import torch
 
 from tests.models.steps.denoise.fixtures import record_forward_calls, stamp_model_precision
 from vrl.models.families.pixart_sigma.model import (
-    MaskedPromptSamplingState,
     PixArtSigmaModel,
     PixArtSigmaReplayModel,
+    PixArtSigmaSamplingState,
     pixart_ddim_scheduler,
 )
 
@@ -60,9 +60,9 @@ def _model(transformer: torch.nn.Module) -> PixArtSigmaModel:
     return model
 
 
-def _state(*, do_cfg: bool) -> MaskedPromptSamplingState:
+def _state(*, do_cfg: bool) -> PixArtSigmaSamplingState:
     bsz = TINY_PIXART_LATENT_SHAPE[0]
-    return MaskedPromptSamplingState(
+    return PixArtSigmaSamplingState(
         latents=torch.randn(TINY_PIXART_LATENT_SHAPE),
         timesteps=torch.tensor([499]),
         scheduler=None,

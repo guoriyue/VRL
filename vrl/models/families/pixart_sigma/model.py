@@ -34,6 +34,7 @@ PixArt-Sigma specifics vs SANA (the reference single-encoder t2i family):
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 import torch
@@ -90,6 +91,11 @@ def pixart_ddim_scheduler(scheduler_config: Any, num_steps: int, device: Any) ->
     return scheduler
 
 
+@dataclass
+class PixArtSigmaSamplingState(MaskedPromptSamplingState):
+    """Private PixArt-Sigma sampling state. Engine MUST NOT introspect."""
+
+
 class PixArtSigmaModel(
     VaeDecodeMixin,
     MaskedPromptModelMixin,
@@ -110,7 +116,7 @@ class PixArtSigmaModel(
     branch_extra_kwargs: ClassVar[Mapping[str, Any]] = {
         "added_cond_kwargs": _ADDED_COND_KWARGS,
     }
-    sampling_state_cls = MaskedPromptSamplingState
+    sampling_state_cls = PixArtSigmaSamplingState
     _default_max_sequence_length = 300
     _default_guidance_scale = 4.5
     _pipeline_encode_kwargs: ClassVar[Mapping[str, Any]] = {
@@ -176,5 +182,6 @@ class PixArtSigmaReplayModel(DiffusersReplayModelBase, PixArtSigmaModel):
 __all__ = [
     "PixArtSigmaModel",
     "PixArtSigmaReplayModel",
+    "PixArtSigmaSamplingState",
     "pixart_ddim_scheduler",
 ]
