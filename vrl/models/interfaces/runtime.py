@@ -404,6 +404,11 @@ class ModelBuild:
         )
 
     @property
+    def fused_rms_norm(self) -> bool:
+        """``model.fused_rms_norm``: both roles read it, so no scope."""
+        return bool((self.model_config or {}).get("fused_rms_norm", False))
+
+    @property
     def revision_kwargs(self) -> dict[str, str]:
         """The immutable model snapshot argument for every upstream loader."""
         return {"revision": str(self.revision)} if self.revision else {}

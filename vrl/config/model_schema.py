@@ -141,6 +141,14 @@ class ModelSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
+    # Run the policy's hand-written RMSNorm modules (diffusers ``RMSNorm``, the
+    # Q/K norms of Cosmos, SD3.5 and Qwen-Image) as one fused kernel. Applied
+    # to rollout AND replay so both roles share one rounding; kernel choice
+    # only, same weights, so identity-excluded like torch_compile.
+    fused_rms_norm: bool | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
     use_lora: Any = Field(
         default=None,
         json_schema_extra=checkpoint_identity_metadata("value", default=False),

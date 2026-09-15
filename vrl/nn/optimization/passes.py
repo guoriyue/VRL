@@ -124,6 +124,31 @@ class QuantizationPass:
 
 
 @dataclass(frozen=True, slots=True)
+class FusedRmsNormPass:
+    """Run each policy core's hand-written RMSNorms as one fused kernel.
+
+    Swaps norm modules only, so it has no ordering relation to the GEMM swap;
+    it runs first so both the quantized tree and inductor see the final norm
+    modules. The replay bundle applies the same swap from the same flag, which
+    keeps the two roles on one kernel -- the reason this is not a drift source.
+    """
+
+    name: str = "fused_rms_norm"
+    # Swaps norm modules inside the existing tree; the root object is unchanged.
+    replaces_modules: bool = False
+
+    def enabled(self, build: Any) -> bool:
+        return bool(getattr(build, "fused_rms_norm", False))
+
+    def apply(self, model: Any, build: Any) -> PassResult:
+        from vrl.nn.optimization.fused_rms_norm import fuse_rms_norms
+
+        del build
+        count = sum(fuse_rms_norms(core) for core in model.policy_cores.values())
+        return PassResult(name=self.name, applied=count > 0, detail=f"{count} norms")
+
+
+@dataclass(frozen=True, slots=True)
 class CompilePass:
     """torch.compile every policy core.
 
@@ -274,6 +299,7 @@ class VaeDecodeMemoryPass:
 # hooks must see the final tree; VAE memory is unordered (disjoint subtree) and
 # sits last only because nothing requires it earlier.
 ROLLOUT_PASSES: tuple[OptimizationPass, ...] = (
+    FusedRmsNormPass(),
     QuantizationPass(),
     CompilePass(),
     OffloadPass(),
@@ -364,6 +390,7 @@ __all__ = [
     "REQUEST_SCOPED_DRIFT_SOURCES",
     "ROLLOUT_PASSES",
     "CompilePass",
+    "FusedRmsNormPass",
     "OptimizationPass",
     "PassResult",
     "QuantizationPass",
