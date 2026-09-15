@@ -239,3 +239,24 @@ def test_config_passes_the_shipped_component_shape_through_unvalidated(case: _Ca
     parsed = RewardConfig.from_cfg(cfg)
 
     assert parsed.kwargs[case.reward_name]["worker_config"] == dict(case.worker_config)
+
+
+def test_as_media_normalizes_quantized_pt_files_to_unit_floats(tmp_path: Path) -> None:
+    """Every reward model reads unit-range floats; the file may hold the wire's uint8."""
+    from vrl.rewards.inference import RewardInferenceArtifact
+
+    frames = torch.tensor([[[0, 128], [255, 64]]], dtype=torch.uint8)
+    quantized = tmp_path / "q.pt"
+    torch.save(frames, quantized)
+    unit = tmp_path / "u.pt"
+    torch.save(frames.float() / 255.0, unit)
+
+    def _artifact(path: Path) -> RewardInferenceArtifact:
+        return RewardInferenceArtifact(artifact_id="a", sample_id="s", path=str(path))
+
+    loaded = _artifact(quantized).as_media()
+    assert loaded.dtype == torch.float32
+    assert torch.equal(loaded, frames.float() / 255.0)
+    assert torch.equal(_artifact(unit).as_media(), loaded)
+    in_memory = RewardInferenceArtifact(artifact_id="a", sample_id="s", path="", media=frames)
+    assert in_memory.as_media() is frames
