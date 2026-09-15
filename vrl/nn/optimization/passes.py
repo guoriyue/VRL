@@ -149,6 +149,36 @@ class FusedRmsNormPass:
 
 
 @dataclass(frozen=True, slots=True)
+class FusedGeluProjectionPass:
+    """Run each policy core's feed-forward up-projection and tanh-GELU as one GEMM.
+
+    Rollout only: the epilogue op has no autograd formula, so the replay bundle
+    keeps the reference kernel and this pass has no replay mirror. Swaps the
+    diffusers ``GELU`` modules in place, so it runs beside the norm swap, before
+    quantization (which then wraps the projection and switches the module back
+    to its reference path) and before compile (so inductor sees the final tree).
+    """
+
+    name: str = "fused_gelu_projection"
+    # Swaps activation modules inside the existing tree; the root object is unchanged.
+    replaces_modules: bool = False
+
+    def enabled(self, build: Any) -> bool:
+        return bool(getattr(build, "fused_gelu_projection", False))
+
+    def apply(self, model: Any, build: Any) -> PassResult:
+        from vrl.nn.optimization.fused_gelu_projection import fuse_gelu_projections
+
+        del build
+        count = sum(fuse_gelu_projections(core) for core in model.policy_cores.values())
+        return PassResult(
+            name=self.name,
+            applied=count > 0,
+            detail=f"{count} feed-forward projections",
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CompilePass:
     """torch.compile every policy core.
 
@@ -300,6 +330,7 @@ class VaeDecodeMemoryPass:
 # sits last only because nothing requires it earlier.
 ROLLOUT_PASSES: tuple[OptimizationPass, ...] = (
     FusedRmsNormPass(),
+    FusedGeluProjectionPass(),
     QuantizationPass(),
     CompilePass(),
     OffloadPass(),
@@ -390,6 +421,7 @@ __all__ = [
     "REQUEST_SCOPED_DRIFT_SOURCES",
     "ROLLOUT_PASSES",
     "CompilePass",
+    "FusedGeluProjectionPass",
     "FusedRmsNormPass",
     "OptimizationPass",
     "PassResult",
