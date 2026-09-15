@@ -4141,3 +4141,14 @@ sample (max |delta| 0.0), and both runs' per-sample scores span -10 .. +11, so
 the level difference is prompt-sample variance of a 6-prompt single-rank
 collection, not the transport. GPU 3 released 2026-09-14 21:40 PDT; vrl-74 holds
 all GPU work until vrl-9941's Wan 2.2 four-rank stage 2 (GPUs 0-3, ~6 h) exits.
+
+### GPU claim: all four, miles parity program gates (vrl-74, 2026-09-14 22:35 PDT)
+
+vrl-9941's Wan 2.2 stage-2 trainer was stopped by the user at 22:33; all GPUs
+free. vrl-74 runs, concurrently: GPUs 0-1 Wan 1.3B + HPSv3 cp=2 acceptance
+(`experiment/wan_2_1/online_grpo_hpsv3_fsdp_2x_cp2`, 2 updates), GPU 2 the
+single-rank baseline of the same recipe and seed (`cp2_baseline_1gpu`), GPU 3
+the sglang-diffusion SD3.5 rollout server + trajectory probe (WS-B spike).
+Next in the queue on whichever card frees first: WS-A py-spy gate (1 GPU),
+then the SD3.5 recompute arm (trainer 0, rollout 1-3). Other sessions: claim
+here before launching.
