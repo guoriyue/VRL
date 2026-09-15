@@ -149,9 +149,14 @@ class ManagedRewardScorer(HttpRewardScorer):
     @property
     def _file_tag(self) -> str:
         # reward_name may be a hub id (MizzenAI/HPSv3@main); keep file names flat.
+        # Under torchrun every rank launches its own service into the same run
+        # directory; without the rank in the name, rank 1's YAML overwrote rank
+        # 0's before rank 0's child read it, and both children served one port.
         import re
 
-        return re.sub(r"[^A-Za-z0-9_.-]+", "_", self.component_name) or "reward"
+        tag = re.sub(r"[^A-Za-z0-9_.-]+", "_", self.component_name) or "reward"
+        rank = os.environ.get("RANK")
+        return tag if rank is None else f"{tag}.rank{int(rank)}"
 
     # -- lifecycle -------------------------------------------------------------
 

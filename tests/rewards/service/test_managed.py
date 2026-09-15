@@ -56,6 +56,19 @@ def test_managed_scorer_writes_the_service_config_it_launches(tmp_path: Path) ->
     assert parking.service_config()["generation_overlap_safe"] is False
 
 
+def test_service_files_are_per_torchrun_rank(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every rank launches its own service into one run directory; a shared
+    YAML name let rank 1 overwrite rank 0's port before rank 0's child read it."""
+    monkeypatch.delenv("RANK", raising=False)
+    assert _scorer(tmp_path).config_path.name == "reward_service.fake.yaml"
+    monkeypatch.setenv("RANK", "1")
+    scorer = _scorer(tmp_path, reward_name="MizzenAI/HPSv3@main")
+    assert scorer.config_path.name == "reward_service.fake.rank1.yaml"
+    assert scorer.log_path.name == "reward_service.fake.rank1.log"
+
+
 @pytest.mark.slow_test
 @pytest.mark.asyncio
 async def test_managed_scorer_launches_scores_and_terminates_the_subprocess(
