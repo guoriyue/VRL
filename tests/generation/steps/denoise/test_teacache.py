@@ -115,6 +115,23 @@ def test_relative_l1_avoids_half_precision_overflow(previous, current, expected)
     assert relative_l1_change(current_signal, previous_signal) == pytest.approx(expected)
 
 
+def test_zero_previous_signal_reports_infinite_change():
+    previous = torch.zeros(16)
+    assert relative_l1_change(torch.ones(16), previous) == float("inf")
+    assert relative_l1_change(previous, previous) == float("inf")
+
+
+def test_zero_previous_signal_forces_run_after_warmup():
+    state = TeaCacheState(TeaCacheConfig(threshold=999.0, warmup_steps=1), num_steps=4)
+    zero = torch.zeros(1, 4)
+    assert state.should_run(zero, 0)
+    state.cache_noise_pred(torch.zeros_like(zero))
+    # A zero previous signal carries no evidence of stability: even an
+    # arbitrarily large threshold must not authorize reuse.
+    assert state.should_run(zero, 1)
+    assert state.skips == 0
+
+
 def test_half_precision_change_above_threshold_runs_forward():
     state = TeaCacheState(TeaCacheConfig(threshold=0.005, warmup_steps=1), num_steps=4)
     previous = torch.full((1024,), 100, dtype=torch.float16)
