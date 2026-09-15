@@ -152,13 +152,20 @@ class PrecisionCorrectionConfig:
     exposes one per-sample scalar for the current denoise timestep, so the two
     seq modes coincide there (there is no sequence axis to reduce).
 
-    **Bypass vs recompute** (``recompute_old_logprob``). This codebase already
-    uses the rollout-recorded ``old_log_prob`` directly as the PPO "old" (bypass:
-    the PPO ratio ``exp(replay - rollout)`` itself acts as the importance
-    weight), skipping a separate full-precision old-recompute forward. ``off``
-    (default) is that bypass and is the only implemented path. ``on`` is a
-    reserved interface for a decoupled recompute that this codebase does not
-    implement; constructing it raises rather than silently behaving like a no-op.
+    **Bypass vs recompute** (``recompute_old_logprob``). ``off`` (default) uses
+    the rollout-recorded ``old_log_prob`` directly as the PPO "old" (bypass: the
+    PPO ratio ``exp(replay - rollout)`` itself acts as the importance weight).
+    ``on`` takes the behavior log-prob from the trainer's own replay forward under
+    the pre-update weights instead — with one optimizer step per rollout that is
+    the very forward the loss is built on, so ``old = log_prob.detach()``, the
+    ratio is exactly 1, and rollout-vs-replay kernel drift (batch shape, compile,
+    fused norms) can no longer clip or scale the gradient. This is
+    miles_diffusion's ``--diffusion-recompute-old-log-prob`` on its zero-cost
+    first window. It is only sound when the behavior policy IS the pre-update
+    target policy: the trainer refuses it under ``ppo_epochs > 1`` (later epochs
+    would need the epoch-1 values) and under continuous staleness (the recorded
+    log-prob then carries a real off-policy correction). Parity metrics keep
+    measuring the rollout-recorded value, so the drift stays visible.
 
     **Combination contract.** Under fp8/bf16 rollout + bypass, drift must be
     bounded: run the drift guard (``auto``/``fail``, which checks parity before
@@ -221,13 +228,23 @@ class PrecisionCorrectionConfig:
                 "precision_correction.recompute_old_logprob must be off/on; "
                 f"got {self.recompute_old_logprob!r}",
             )
-        if self.recompute_old_logprob == "on":
-            raise NotImplementedError(
-                "precision_correction.recompute_old_logprob='on' (decoupled "
-                "full-precision old-recompute) is not implemented in this codebase: "
-                "old_log_prob is the rollout-recorded behavior logprob (bypass). "
-                "Keep 'off' (bypass) and bound drift with the drift guard + RS.",
-            )
+
+
+def behavior_log_prob(
+    new_log_prob: torch.Tensor,
+    old_log_prob: torch.Tensor,
+    config: PrecisionCorrectionConfig,
+) -> torch.Tensor:
+    """The "old" side of the importance ratio under the configured mode.
+
+    ``off``: the rollout-recorded behavior log-prob. ``on``: the replay
+    log-prob itself, detached — the trainer has already refused the schedules
+    where that would erase a genuine off-policy correction.
+    """
+
+    if config.recompute_old_logprob == "on":
+        return new_log_prob.detach()
+    return old_log_prob
 
 
 def apply_truncated_importance_weight(
@@ -337,5 +354,6 @@ __all__ = [
     "PrecisionCorrectionConfig",
     "apply_rejection_sample_mask",
     "apply_truncated_importance_weight",
+    "behavior_log_prob",
     "combine_keep_masks",
 ]

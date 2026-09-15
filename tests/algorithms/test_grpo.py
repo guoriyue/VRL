@@ -415,3 +415,26 @@ def _flow_signals(
         group_ids=torch.arange(log_prob.shape[0], device=log_prob.device),
         primary_segment="denoise",
     )
+
+
+class TestGRPORecomputeOldLogprob:
+    """``recompute_old_logprob=on``: the ratio is exactly 1 whatever the rollout
+    recorded, so kernel drift can neither clip nor scale the gradient, while the
+    policy gradient itself still flows through the replay log-prob."""
+
+    def test_drifted_rollout_log_prob_no_longer_clips_or_scales(self) -> None:
+        adv = torch.tensor([2.0, -3.0, 1.0])
+        log_prob = torch.tensor([1.0, 0.0, -0.5], requires_grad=True)
+        drifted = torch.tensor([0.9, 0.2, -0.4])  # far outside clip_ratio=1e-4
+
+        grpo = GRPO(GRPOConfig(kl_coef=0.0, clip_ratio=1e-4))
+        grpo.precision_correction = PrecisionCorrectionConfig(recompute_old_logprob="on")
+        loss, metrics = grpo.compute_loss(
+            AlgorithmInput(
+                signals=_flow_signals(log_prob=log_prob, old_log_prob=drifted), advantages=adv
+            )
+        )
+        assert loss.item() == pytest.approx(-adv.mean().item())
+        assert metrics.update.clip_fraction == pytest.approx(0.0)
+        loss.backward()
+        assert torch.allclose(log_prob.grad, -adv / 3)
