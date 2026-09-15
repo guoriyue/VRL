@@ -1,6 +1,6 @@
 # SPRINT：reward 全部走独立服务进程（GIL 隔离）
 
-状态：**planned（2026-09-14，用户决策：不论难度，reward 一律与 trainer 进程隔离）**。
+状态：**P1 已落地（7f21d66d，2026-09-14）；P2–P5 planned**。用户决策：不论难度，reward 一律与 trainer 进程隔离。
 来源实验：`docs/sprints/SPRINT_four_l40s_execution.md` "Prefetch / reward placement /
 compile: final five-arm table"。
 
@@ -46,7 +46,13 @@ GPU（独占，或与 trainer/rollout 时分：由租约通过 /park /wake 协�
 
 ## 3. 阶段
 
-### P1 托管服务传输（`kind: service`）
+### P1 托管服务传输（`kind: service`）— 已落地 7f21d66d
+实际形状与计划的差异：`port`/`artifact_root` 没有做成配置键——端口由 driver 选空闲回环端口，
+artifact 根固定为 `${trainer.output_dir}/reward_artifacts/<component>`（run 作用域，也是服务被
+允许读取的唯一目录；tmpfs 留给 P2 视频张量再定）。托管服务的 YAML/日志落在
+`${trainer.output_dir}/reward_artifacts/reward_service.<component>.{yaml,log}`。
+CPU 端到端验证过（preflight 1 s 拉起 PaddleOCR 服务，打分与进程内一致，shutdown 无残留进程）；
+GPU 验收（3x1 preset + `reward.inference.ocr.kind=service`，期望 ≈398 s/epoch）等 GPU 空闲。
 - `RewardInferenceConfig`：新增 `kind: service`，字段 `port: auto|int`、
   `artifact_root`（默认 tmpfs）。`http` 保持不变。
 - 新模块 `vrl/rewards/service/managed.py`：从 reward 组件的 `worker_config` +
