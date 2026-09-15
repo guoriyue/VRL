@@ -54,7 +54,6 @@ from vrl.trainers.checkpointing import (
     CheckpointTarget,
     TrainingCheckpoint,
     load_resolved_run_config,
-    restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
 from vrl.trainers.data.prompts import load_prompt_dataset_index
@@ -261,12 +260,18 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
             with model.disable_adapter():
                 videos += _generate_arm(model, BASE_LABEL, examples, sampling, args)
         for target in targets:
-            restore_model_checkpoint(
-                TrainingCheckpoint.load(target.path),
-                bundle=bundle,
-                family=entry.family,
-                expected_model_identity=identity,
-                strict=True,
+            checkpoint = TrainingCheckpoint.load(target.path)
+            # Install the adapters through the family's weight-sync path: the
+            # generic restore writes into rollout modules that sit behind Wan's
+            # sequential-offload hooks (meta tensors) and its strict readback
+            # cannot run there. load_trainable_state suspends the hooks,
+            # copies the bytes and reads them back before re-arming offload.
+            model.load_trainable_state(
+                {
+                    f"{expert}.{name}": value
+                    for expert, state in checkpoint.checkpoint_state.items()
+                    for name, value in state.items()
+                },
             )
             videos += _generate_arm(model, target.label, examples, sampling, args)
     finally:
