@@ -30,7 +30,7 @@ import logging
 import random
 import sys
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
@@ -85,6 +85,9 @@ class WanT2VSamplingState(GuidedDiffusionSamplingStateBase):
     guidance_scale_2: float | None = None
     boundary_ratio: float | None = None
     num_train_timesteps: int | None = None
+    # Host copy of ``timesteps``, filled on first expert routing; see
+    # ``_routing_timestep``.
+    host_timesteps: torch.Tensor | None = field(default=None, init=False, repr=False)
 
 
 @dataclass
@@ -99,6 +102,28 @@ class WanI2VSamplingState(GuidedDiffusionSamplingStateBase):
     guidance_scale_2: float | None = None
     boundary_ratio: float | None = None
     num_train_timesteps: int | None = None
+    # Host copy of ``timesteps``, filled on first expert routing; see
+    # ``_routing_timestep``.
+    host_timesteps: torch.Tensor | None = field(default=None, init=False, repr=False)
+
+
+def _routing_timestep(
+    state: WanT2VSamplingState | WanI2VSamplingState,
+    step_idx: int,
+) -> torch.Tensor:
+    """Return ``state.timesteps[step_idx]`` as a host tensor.
+
+    Choosing the expert is a Python-level decision (which module to call), so
+    the boundary test needs the timestep value on the host. Reading it from the
+    device schedule would synchronise the stream on every forward and stall the
+    launch queue behind the previous step's tail. The schedule is fixed for the
+    life of a sampling state, so it is copied to the host once and indexed
+    from there.
+    """
+
+    if state.host_timesteps is None:
+        state.host_timesteps = state.timesteps.detach().to(device="cpu", dtype=torch.float32)
+    return state.host_timesteps[step_idx]
 
 
 class WanT2VDiffusersModel(
@@ -528,15 +553,15 @@ class WanT2VDiffusersModel(
             return
         raise ValueError(f"unknown Wan transformer name: {name!r}")
 
-    def _transformer_for_timestep(
+    def _transformer_for_step(
         self,
         state: WanT2VSamplingState | WanI2VSamplingState,
-        timestep: torch.Tensor,
+        step_idx: int,
     ) -> tuple[str, Any, float]:
         if state.boundary_ratio is None:
             return "transformer", self.transformer, state.guidance_scale
         if _uses_low_noise_transformer(
-            timestep,
+            _routing_timestep(state, step_idx),
             boundary_ratio=state.boundary_ratio,
             num_train_timesteps=state.num_train_timesteps,
         ):
@@ -549,14 +574,15 @@ class WanT2VDiffusersModel(
     def _forward_wan_backbone(
         self,
         state: WanT2VSamplingState | WanI2VSamplingState,
-        timestep: torch.Tensor,
+        step_idx: int,
         *,
         extra_builder: Callable[[torch.dtype], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         bsz = state.latents.shape[0]
-        expert_name, transformer, guidance_scale = self._transformer_for_timestep(
+        timestep = state.timesteps[step_idx]
+        expert_name, transformer, guidance_scale = self._transformer_for_step(
             state,
-            timestep,
+            step_idx,
         )
         td = _module_dtype(transformer)
         latent_input = state.latents.to(td)
@@ -741,8 +767,7 @@ class WanT2VDiffusersModel(
         - rollouts: ``state.timesteps`` is 1-D ``[T]``; we expand a scalar to ``[B]``.
         - eval/training: collector packs per-sample timestep as ``[B]``; expand is a no-op.
         """
-        t = state.timesteps[step_idx]
-        return self._forward_wan_backbone(state, t)
+        return self._forward_wan_backbone(state, step_idx)
 
     # -- collector boundary --------------------------------------------
 
@@ -1152,10 +1177,9 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
     ) -> dict[str, Any]:
         """Wan I2V transformer forward + optional batched CFG."""
 
-        t = state.timesteps[step_idx]
         return self._forward_wan_backbone(
             state,
-            t,
+            step_idx,
             extra_builder=lambda td: {
                 "condition": state.condition.to(td),
                 "image_embeds": (
@@ -1373,6 +1397,8 @@ def _uses_low_noise_transformer(
     boundary_ratio: float,
     num_train_timesteps: int | None,
 ) -> bool:
+    """Route on a HOST timestep (``_routing_timestep``); the reads below are free there."""
+
     if num_train_timesteps is None:
         raise ValueError("Wan dual-stage routing requires scheduler.config.num_train_timesteps")
     boundary_timestep = float(boundary_ratio) * int(num_train_timesteps)

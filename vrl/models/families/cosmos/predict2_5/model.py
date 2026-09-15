@@ -401,9 +401,14 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
     ) -> dict[str, Any]:
         transformer_dtype = state.prompt_embeds.dtype
         state.scheduler.sigmas = state.scheduler.sigmas.to(state.latents.device)
+        # Slice the step's sigma on the device: a host round trip here would
+        # synchronise the stream once per denoise step for a value that is
+        # only ever consumed on the device.
         sigma_t = (
-            torch.tensor(state.scheduler.sigmas[step_idx].item())
-            .unsqueeze(0)
+            state.scheduler.sigmas[step_idx]
+            .detach()
+            .to(torch.float32)
+            .reshape(1)
             .to(device=state.latents.device, dtype=transformer_dtype)
         )
         output = DiffusionBackboneCaller(
