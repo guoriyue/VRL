@@ -253,17 +253,19 @@ def init_training_process_group(
     if context.device.type == "cuda":
         # ``context.device`` is the CUDA ordinal inside this rank's masked view.
         torch.cuda.set_device(context.device)
-    timeout = collective_timeout(context)
+    # Symmetric runs keep torch's default timeout and its exact call shape;
+    # only context-parallel runs lengthen it (see collective_timeout).
+    timeout_kwargs = {"timeout": collective_timeout(context)} if context.cp_size > 1 else {}
     dist.init_process_group(
         backend=backend,
         rank=context.rank,
         world_size=context.world_size,
-        timeout=timeout,
+        **timeout_kwargs,
     )
     if backend == "nccl":
         # Collective creation: every rank reaches this line inside the same
         # init call, so the subgroup handshake cannot mismatch.
-        _CPU_COORDINATION_GROUP = dist.new_group(backend="gloo", timeout=timeout)
+        _CPU_COORDINATION_GROUP = dist.new_group(backend="gloo", **timeout_kwargs)
 
 
 def collective_timeout(context: DistributedTrainingContext) -> timedelta:
