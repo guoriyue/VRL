@@ -109,6 +109,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 
 ### 已研究主题（避免重复）
 - 2026-09-14 23:40 — 并行状态记账：dp×sp 全体 rank 的微批计数守卫 / CP 同组样本一致性
+- 2026-09-15 00:50 — 生命周期握手与失败处理：子进程就绪等待、死亡检测、身份核对
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -132,3 +133,28 @@ all_gather 一个便宜的批身份指纹（每批样本数、group_ids、reward
 `RuntimeError`（`vrl/rollouts/orchestration/context_parallel.py`）。成本：每次迭代一次 gloo
 all_gather_object，字节量为 KB 级。风险：无（同组指纹恒等时零副作用）。门：cp=2 验收 run
 的两个 update 通过且日志无 fingerprint 错误。
+
+### hourly note 2026-09-15 00:50 — 子进程就绪握手：活着、健康，还要"是它"
+
+**问题**：driver 拉起的子服务（reward 服务、引擎）在"健康"之前有三种失败：子进程死了、
+永远不健康、以及**健康但不是我拉起的那个**。第三种最阴险：今天 cp=2 首次启动时两个 rank 把
+服务 YAML 写到同一路径，rank 0 的子进程读到 rank 1 的端口，`/ready` 在 rank 1 的端口上返回
+200，模型名和版本都一致，rank 0 却在自己的端口上等到超时。
+
+**参照实现**：miles_diffusion 的引擎启动只做前两种——循环 GET 健康端点，同时检查
+`process.is_alive()`，死了就抛（`miles/backends/sglang_diffusion_utils/sglang_diffusion_engine.py:87-104`），
+没有 deadline，也不核对身份。
+
+**VRL 今天**：`ManagedRewardScorer._wait_ready`（`vrl/rewards/service/managed.py`）已经有
+子进程死亡检测 + deadline 超时即终止，比参照更严；`HttpRewardScorer` 的 preflight 还核对
+`/info` 的 `expected_model` / `expected_model_version`（`client.py:270-282`）。缺的是"每次启动
+唯一"的身份：同名同版本的另一个服务能通过所有检查。
+
+**改动（已实现）**：`RewardServiceConfig.launch_token`（launcher 写入，随机 32 hex）→
+`RewardServiceInfo.launch_token`（服务在 `/info` 回显）→ `ManagedRewardScorer` 在 ready 后核对，
+不匹配抛 `LaunchTokenMismatch` 并终止自己的子进程。风险：外部 `http` 模式不受影响
+（token 为空时不核对）。门：端到端服务测试（真实子进程）通过；重放今天的双 rank 场景应在
+数秒内报错而非 30 分钟超时（已由 rank 后缀修复根因，token 是纵深防御）。
+
+**推广**：任何 driver 拥有的子进程（未来的引擎 provider、并行 reward 池）都应遵循同一三元组：
+死亡检测 + deadline + 每次启动的身份令牌；`/ready` 只回答"能服务"，"是谁"由 `/info` 回答。
