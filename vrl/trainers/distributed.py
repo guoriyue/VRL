@@ -483,7 +483,7 @@ def shutdown_training_process_group() -> None:
 
 
 @dataclass(frozen=True, slots=True)
-class ContextParallelGroups:
+class ContextParallelPeerGroup:
     """This rank's context-parallel group for CPU-side coordination.
 
     ``object_group`` is CPU-capable (gloo): it carries the peers' pickled
@@ -498,7 +498,9 @@ class ContextParallelGroups:
     cp_rank: int
 
 
-def create_context_parallel_groups(context: DistributedTrainingContext) -> ContextParallelGroups:
+def create_context_parallel_peer_group(
+    context: DistributedTrainingContext,
+) -> ContextParallelPeerGroup:
     """Collectively create every CP group; return this rank's.
 
     Every rank must call this in the same order (``dist.new_group`` is
@@ -519,7 +521,7 @@ def create_context_parallel_groups(context: DistributedTrainingContext) -> Conte
         if context.rank in members:
             mine = group
     assert mine is not None
-    return ContextParallelGroups(
+    return ContextParallelPeerGroup(
         object_group=mine,
         cp_size=context.cp_size,
         cp_rank=context.cp_rank,

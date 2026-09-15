@@ -7,7 +7,7 @@ from typing import Any
 from vrl.rollouts.orchestration.schedule import RolloutSchedule
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.rollouts.stats import RolloutStats
-from vrl.trainers.distributed import ContextParallelGroups
+from vrl.trainers.distributed import ContextParallelPeerGroup
 
 
 def batch_fingerprint(batches: list[Any]) -> list[tuple[int, list[int], float]]:
@@ -39,7 +39,7 @@ class ContextParallelRolloutSchedule:
     and syncs its engine, all of which are collectives every rank must join).
     """
 
-    def __init__(self, inner: RolloutSchedule, *, groups: ContextParallelGroups) -> None:
+    def __init__(self, inner: RolloutSchedule, *, groups: ContextParallelPeerGroup) -> None:
         self.inner = inner
         self.groups = groups
 
