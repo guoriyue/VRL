@@ -681,17 +681,28 @@ def test_service_ocr_reward_gets_a_managed_scorer_with_its_knobs(tmp_path) -> No
     assert scorer.pid is None  # launched lazily by preflight/scoring
 
 
-def test_service_kind_rejects_inmemory_rewards_and_shared_gpus() -> None:
+def test_service_kind_rejects_inmemory_rewards() -> None:
     with pytest.raises(ValueError, match="in-memory artifacts"):
         MultiReward.from_dict(
             {"aesthetic": 1.0},
             device="cpu",
             inference_configs={"aesthetic": RewardInferenceConfig(kind="service")},
         )
-    with pytest.raises(ValueError, match="park/wake over HTTP"):
-        MultiReward.from_dict(
-            {"videoscore2": 1.0},
-            device="cuda:0",
-            memory_parking_required=True,
-            inference_configs={"videoscore2": RewardInferenceConfig(kind="service")},
-        )
+
+
+def test_service_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:
+    from vrl.rewards.service.managed import ManagedRewardScorer
+
+    reward = MultiReward.from_dict(
+        {"videoscore2": 1.0},
+        device="cuda:0",
+        memory_parking_required=True,
+        reward_kwargs={"videoscore2": {"artifact_dir": str(tmp_path)}},
+        inference_configs={"videoscore2": RewardInferenceConfig(kind="service")},
+    )
+    scorer = reward.rewards[0][2].scorer
+    assert isinstance(scorer, ManagedRewardScorer)
+    assert scorer.worker_config["sleep_offload"] is True
+    assert scorer.worker_config["device"] == "cuda:0"
+    # Not advertised until the launched service reports it at preflight.
+    assert scorer.requires_memory_parking is False

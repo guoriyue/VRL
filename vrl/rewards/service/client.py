@@ -38,14 +38,19 @@ from vrl.rewards.service.protocol import (
 from vrl.rewards.service.wire import (
     error_from_wire,
     info_from_wire,
+    park_from_wire,
     request_to_wire,
     score_response_from_wire,
     status_from_wire,
 )
 from vrl.utils.deadline import require_timeout
+from vrl.utils.logging import init_logger
 
 if TYPE_CHECKING:
     from vrl.config.reward_inference import RewardInferenceConfig
+
+
+logger = init_logger(__name__)
 
 
 class HttpRewardScorer:
@@ -112,6 +117,7 @@ class HttpRewardScorer:
         self._identity_lock = asyncio.Lock()
         self._identity_checked = False
         self._external_accelerator_isolation_verified = False
+        self._memory_parking = False
         self._closed = False
 
     @property
@@ -288,7 +294,63 @@ class HttpRewardScorer:
                     },
                 )
             self._external_accelerator_isolation_verified = info.generation_overlap_safe
+            self._memory_parking = info.memory_parking
             self._identity_checked = True
+
+    # -- MemoryParkingScorer: the phase lease over HTTP ------------------------
+
+    @property
+    def requires_memory_parking(self) -> bool:
+        """Whether the service advertised the shared-GPU parking lease.
+
+        Known only after ``ensure_ready``/identity; the reward function calls
+        ``preflight`` before any handoff, so a parking service is never mistaken
+        for a resident one at lease time.
+        """
+
+        return self._memory_parking
+
+    async def activate(self) -> None:
+        """Wake (or first-build) the remote model at the reward GPU handoff."""
+
+        await self._ensure_identity()
+        if not self._memory_parking:
+            return
+        body, status = await self._request_json("POST", "/wake")
+        if status >= 400:
+            raise error_from_wire(body, status_code=status)
+        if self._parse_status(body, status_code=status) != "active":
+            raise RemoteRewardServiceError(
+                RewardServiceErrorCode.TRANSPORT_ERROR.value,
+                "reward service /wake did not report 'active'",
+                status_code=status,
+            )
+
+    async def park_memory(self) -> None:
+        """Ask the service to release its physical GPU pages; safe to retry."""
+
+        await self._ensure_identity()
+        if not self._memory_parking:
+            raise RuntimeError(
+                "reward service does not take the memory-parking lease; "
+                "park_memory must not be called on it",
+            )
+        body, status = await self._request_json("POST", "/park")
+        if status >= 400:
+            raise error_from_wire(body, status_code=status)
+        try:
+            residual = park_from_wire(body)
+        except RewardServiceProtocolError as error:
+            raise RemoteRewardServiceError(
+                RewardServiceErrorCode.TRANSPORT_ERROR.value,
+                f"invalid reward park response: {error}",
+                status_code=status,
+            ) from error
+        logger.info(
+            "reward service %s parked: residual_bytes=%d",
+            self._base_url,
+            residual,
+        )
 
     async def _get_session(self) -> aiohttp.ClientSession:
         current_loop = asyncio.get_running_loop()

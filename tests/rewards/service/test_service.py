@@ -1195,3 +1195,74 @@ async def test_cli_restores_signal_handlers_when_shutdown_fails(monkeypatch, fal
         await _run_cli(Service())
     assert handlers == previous
     assert removed == ([] if fallback else [signal.SIGTERM, signal.SIGINT])
+
+
+class _FakeParkingRuntime(_FakeRuntime):
+    """A scorer that takes the phase lease: parks and wakes on request."""
+
+    requires_memory_parking = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: list[str] = []
+
+    async def activate(self) -> None:
+        self.thread_ids.append(threading.get_ident())
+        self.events.append("wake")
+
+    async def park_memory(self) -> None:
+        self.thread_ids.append(threading.get_ident())
+        self.events.append("park")
+
+
+@pytest.mark.asyncio
+async def test_parking_service_takes_the_lease_over_http(tmp_path) -> None:
+    from vrl.rewards.protocols import MemoryParkingScorer
+
+    runtime = _FakeParkingRuntime()
+    main_thread = threading.get_ident()
+    async with _running_service(runtime, tmp_path) as (service, client):
+        info = await client.info()
+        assert info.memory_parking is True and info.generation_overlap_safe is False
+        # Unknown until preflight: the lease must not trust a default.
+        assert client.requires_memory_parking is False
+        await client.ensure_ready()
+        assert client.requires_memory_parking is True
+        assert isinstance(client, MemoryParkingScorer)
+        await client.activate()
+        await client.park_memory()
+        await client.park_memory()  # idempotent on the wire, retryable by the lease
+        await client.activate()
+        del service
+    assert runtime.events == ["wake", "park", "park", "wake"]
+    # Every runtime call ran on the owner thread, never the HTTP thread.
+    assert len(set(runtime.thread_ids)) == 1 and runtime.thread_ids[0] != main_thread
+
+
+@pytest.mark.asyncio
+async def test_parking_service_refuses_to_overlap_safe_and_resident_services_refuse_park(
+    tmp_path,
+) -> None:
+    from vrl.rewards.service.protocol import RewardServiceInfo
+
+    with pytest.raises(ValueError, match="cannot be generation_overlap_safe"):
+        RewardServiceInfo(
+            model_name="m",
+            model_version="v",
+            generation_overlap_safe=True,
+            max_concurrency=1,
+            max_pending_requests=1,
+            memory_parking=True,
+        )
+    async with _running_service(_FakeRuntime(), tmp_path) as (_service, client):
+        await client.ensure_ready()
+        assert client.requires_memory_parking is False
+        await client.activate()  # resident service: a no-op handoff
+        with pytest.raises(RuntimeError, match="does not take the memory-parking lease"):
+            await client.park_memory()
+        host, port = _service.address
+        async with (
+            aiohttp.ClientSession() as probe,
+            probe.post(f"http://{host}:{port}/park") as response,
+        ):
+            assert response.status == 405

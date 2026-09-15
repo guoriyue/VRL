@@ -242,13 +242,6 @@ class MultiReward(RewardFunction):
                     device=device,
                     kwargs=extra,
                 )
-                if memory_parking_required is True and component_device.startswith("cuda"):
-                    raise ValueError(
-                        f"reward {name!r}: a managed reward service cannot yet share "
-                        "a GPU with the trainer or rollout (park/wake over HTTP is "
-                        "not implemented). Give it a dedicated GPU "
-                        "(distributed.resources.reward.device=gpu) or run it on CPU.",
-                    )
                 extra["inference"] = inference
             elif inference.kind == "http":
                 local_only = sorted(
@@ -277,12 +270,14 @@ class MultiReward(RewardFunction):
             # the CPU-downgrade input.
             extra.pop("device", None)
             if (
-                inference.kind == "in_process"
+                inference.kind in {"in_process", "service"}
                 and memory_parking_required is True
                 and component_device.startswith("cuda")
             ):
                 # GPU ownership comes from topology. A shared reward cannot rely
-                # on every preset remembering an independent parking knob.
+                # on every preset remembering an independent parking knob. For a
+                # managed service the knob travels in its worker_config and the
+                # service takes the lease over HTTP (/park, /wake).
                 if not issubclass(reward_cls, CumemRewardFunction):
                     raise ValueError(
                         f"reward {name!r} has no complete memory-parking contract",
@@ -375,13 +370,6 @@ def validate_reward_memory_parking_components(
         )
         .startswith("cuda")
     ]
-    managed = [name for name in gpu_components if inference_configs[name].kind == "service"]
-    if managed:
-        raise ValueError(
-            f"managed reward services {managed} cannot share a GPU with the trainer or "
-            "rollout (park/wake over HTTP is not implemented); give them a dedicated "
-            "GPU (distributed.resources.reward.device=gpu) or run them on CPU",
-        )
     if not gpu_components:
         raise ValueError(
             "shared reward GPU topology has no configured GPU reward "

@@ -50,8 +50,10 @@ def test_managed_scorer_writes_the_service_config_it_launches(tmp_path: Path) ->
     assert scorer.deployment.expected_model == config["model_name"]
     assert scorer.config_path.parent == (tmp_path / "run").resolve()
     assert scorer.pid is None
-    with pytest.raises(ValueError, match="sleep_offload"):
-        _scorer(tmp_path, sleep_offload=True)
+    # A shared-GPU topology hands the parking contract to the service.
+    parking = _scorer(tmp_path, sleep_offload=True, device="cuda:0")
+    assert parking.service_config()["worker_config"]["sleep_offload"] is True
+    assert parking.service_config()["generation_overlap_safe"] is False
 
 
 @pytest.mark.slow_test

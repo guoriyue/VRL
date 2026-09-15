@@ -41,6 +41,7 @@ from vrl.rewards.service.protocol import (
 from vrl.rewards.service.wire import (
     error_to_wire,
     info_to_wire,
+    park_to_wire,
     request_fingerprint,
     request_from_wire,
     score_response_to_wire,
@@ -134,17 +135,17 @@ class RewardService:
             raise TypeError("reward service config must be a mapping")
         cfg = RewardServiceConfig.from_mapping(raw)
         launch = RewardRuntimeLaunchContract.from_component_config(cfg.worker_config)
-        if launch.sleep_offload:
-            raise ValueError(
-                "reward service owns its device for its whole lifetime; drop "
-                "worker_config.sleep_offload because parking is colocated-only",
-            )
+        # worker_config.sleep_offload makes this service a phase-lease
+        # participant: the trainer parks/wakes it over HTTP, so it shares its
+        # GPU and can never be overlap-safe (RewardServiceInfo enforces that).
         roots = [
             path if Path(path).is_absolute() else config_path.parent / path
             for path in cfg.artifact_roots
         ]
         configured_device = launch.device.strip().lower()
         runs_on_cpu = configured_device == "cpu" or configured_device.startswith("cpu:")
+        if launch.sleep_offload and runs_on_cpu:
+            raise ValueError("worker_config.sleep_offload requires a CUDA device")
         return cls(
             InProcessRewardScorer(launch.component_config),
             artifact_roots=roots,
@@ -208,13 +209,19 @@ class RewardService:
         self._host = host
         self._port = int(port)
         self._artifact_paths = RootedPaths(roots[0], *roots[1:])
+        # The service parks iff its runtime takes the parking contract. The
+        # in-service InProcessRewardScorer does so when worker_config.sleep_offload
+        # is set (the same contract the driver-side runtime used to fulfil).
+        memory_parking = bool(getattr(runtime, "requires_memory_parking", False))
         self._info = RewardServiceInfo(
             model_name=str(model_name).strip() or type(runtime).__name__,
             model_version=str(model_version).strip(),
             generation_overlap_safe=bool(generation_overlap_safe),
             max_concurrency=max_concurrency,
             max_pending_requests=max_pending_requests,
+            memory_parking=memory_parking,
         )
+        self._runtime_device = str(getattr(getattr(runtime, "_launch", None), "device", "") or "")
         self._max_cached_requests = max_cached_requests
         self._concurrency = asyncio.Semaphore(self._info.max_concurrency)
         self._records: OrderedDict[str, _RequestRecord] = OrderedDict()
@@ -279,6 +286,8 @@ class RewardService:
         self._app.router.add_get("/ready", self._handle_ready)
         self._app.router.add_get("/info", self._handle_info)
         self._app.router.add_post("/score", self._handle_score)
+        self._app.router.add_post("/park", self._handle_park)
+        self._app.router.add_post("/wake", self._handle_wake)
         self._app.router.add_delete(
             "/requests/{request_id:.*}",
             self._handle_cancel,
@@ -358,6 +367,58 @@ class RewardService:
     async def _handle_info(self, request: web.Request) -> web.Response:
         del request
         return self._json_response(200, info_to_wire(self._info))
+
+    async def _handle_park(self, request: web.Request) -> web.Response:
+        """Release this service's physical GPU pages for the phase handoff.
+
+        Idempotent and retryable: the runtime's park is a no-op once asleep and
+        a failed sleep leaves it retryable. Refused while a score is in flight,
+        because the trainer's lease serializes score -> park -> restore and a
+        concurrent request means the caller's ordering is already broken.
+        """
+
+        del request
+        await self._require_parking_participant("park")
+        await self._owner.run("park_memory")
+        residual = await self._owner.run_sync(self._service_gpu_bytes)
+        return self._json_response(200, park_to_wire(residual_bytes=residual))
+
+    async def _handle_wake(self, request: web.Request) -> web.Response:
+        """Restore the parked model (inverse of ``/park``); builds it on first use."""
+
+        del request
+        await self._require_parking_participant("wake")
+        await self._owner.run("activate")
+        return self._json_response(200, status_to_wire("active"))
+
+    async def _require_parking_participant(self, operation: str) -> None:
+        if not self._info.memory_parking:
+            raise RewardServiceProtocolError(
+                RewardServiceErrorCode.METHOD_NOT_ALLOWED,
+                f"reward service does not take the memory-parking lease; /{operation} "
+                "requires worker_config.sleep_offload on a CUDA device",
+                status_code=405,
+            )
+        if not self._accepting:
+            raise RewardServiceProtocolError(
+                RewardServiceErrorCode.SERVICE_SHUTTING_DOWN,
+                "reward service is shutting down",
+                status_code=503,
+                retryable=True,
+            )
+        async with self._records_lock:
+            if self._active_requests > 0:
+                raise RewardServiceProtocolError(
+                    RewardServiceErrorCode.IDEMPOTENCY_CONFLICT,
+                    f"cannot /{operation} while {self._active_requests} score request(s) "
+                    "are in flight; the phase lease must drain scoring first",
+                    status_code=409,
+                )
+
+    def _service_gpu_bytes(self) -> int:
+        from vrl.utils.cuda_memory import gpu_process_used_bytes
+
+        return int(gpu_process_used_bytes(self._runtime_device or None))
 
     async def _handle_score(self, request: web.Request) -> web.Response:
         if not self._accepting:

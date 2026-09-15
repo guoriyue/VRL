@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from vrl.rewards.inference import (
@@ -94,6 +94,42 @@ class RewardScoringThread:
                     continue
             completion.result()
             raise
+
+    async def run(self, method: str) -> Any:
+        """Await one zero-argument runtime coroutine on the owner loop.
+
+        Used for the parking handoff (``park_memory`` / ``activate``): CUDA
+        pool sleep/wake must happen on the thread that built the model, and
+        these calls are serialized by the trainer's reward lease, so no
+        cancellation machinery is needed here.
+        """
+
+        if not self.alive:
+            raise RuntimeError("reward runtime owner is shutting down")
+        future = asyncio.run_coroutine_threadsafe(
+            getattr(self._runtime, method)(),
+            self._loop,
+        )
+        return await asyncio.wrap_future(future)
+
+    async def run_sync(self, fn: Any) -> Any:
+        """Run one blocking callable on the owner loop's thread (CUDA-affine)."""
+
+        if not self.alive:
+            raise RuntimeError("reward runtime owner is shutting down")
+        loop = asyncio.get_running_loop()
+        done: asyncio.Future = loop.create_future()
+
+        def call() -> None:
+            try:
+                result = fn()
+            except BaseException as error:
+                loop.call_soon_threadsafe(done.set_exception, error)
+            else:
+                loop.call_soon_threadsafe(done.set_result, result)
+
+        self._loop.call_soon_threadsafe(call)
+        return await done
 
     async def close(self) -> None:
         """Shut the runtime down exactly once, then stop its owner loop."""

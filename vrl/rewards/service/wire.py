@@ -303,6 +303,28 @@ def status_to_wire(status: str) -> dict[str, Any]:
     return _wire_envelope(status=status)
 
 
+def park_to_wire(*, residual_bytes: int) -> dict[str, Any]:
+    """``POST /park`` reply: the service's own physical CUDA bytes after release."""
+
+    return _wire_envelope(status="parked", residual_bytes=int(residual_bytes))
+
+
+def park_from_wire(payload: Any) -> int:
+    envelope = _validate_envelope(payload, expected_keys={"status", "residual_bytes"})
+    if envelope.get("status") != "parked":
+        raise RewardServiceProtocolError(
+            RewardServiceErrorCode.BAD_REQUEST,
+            f"reward service park status must be 'parked', got {envelope.get('status')!r}",
+        )
+    residual = envelope.get("residual_bytes")
+    if isinstance(residual, bool) or not isinstance(residual, int) or residual < 0:
+        raise RewardServiceProtocolError(
+            RewardServiceErrorCode.BAD_REQUEST,
+            "reward service park residual_bytes must be a non-negative integer",
+        )
+    return residual
+
+
 def status_from_wire(payload: Any) -> str:
     envelope = _validate_envelope(payload, expected_keys={"status"})
     status = envelope.get("status")
@@ -319,6 +341,8 @@ __all__ = [
     "error_to_wire",
     "info_from_wire",
     "info_to_wire",
+    "park_from_wire",
+    "park_to_wire",
     "request_fingerprint",
     "request_from_wire",
     "request_to_wire",

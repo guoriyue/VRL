@@ -12,9 +12,12 @@ launch-bound replay for the GIL (measured: +61 s per epoch on SD3.5 under
 continuous scheduling); a separate process has its own interpreter and event
 loop, and the driver only awaits an HTTP response.
 
-Not in this module: GPU time-sharing with the trainer or rollout. A managed
-service owns its device for its whole life (the registry rejects a managed
-service on a shared GPU until park/wake exists over HTTP).
+GPU time-sharing: when the registry hands over ``worker_config.sleep_offload``
+(shared reward GPU topology), the child builds its model in a CuMem pool and
+takes the phase lease over HTTP — the driver's ``activate``/``park_memory``
+become ``POST /wake`` / ``POST /park``. The child inherits this process's
+environment, so under torchrun's rank-local ``CUDA_VISIBLE_DEVICES`` the
+resolved ``cuda:0`` names the same physical card in both processes.
 """
 
 from __future__ import annotations
@@ -81,11 +84,6 @@ class ManagedRewardScorer(HttpRewardScorer):
         if deployment.kind != "service":
             raise ValueError("ManagedRewardScorer requires inference.kind=service")
         worker_config = dict(worker_config)
-        if worker_config.get("sleep_offload"):
-            raise ValueError(
-                "a managed reward service owns its device for its whole life; it "
-                "cannot take the shared-GPU sleep_offload contract",
-            )
         model_name, model_version = _service_identity(worker_config, component_name)
         # The in-service scorer stamps results with worker_config's version, so
         # the launched identity and the stamped version are one value.
@@ -133,9 +131,9 @@ class ManagedRewardScorer(HttpRewardScorer):
             "max_concurrency": 1,
             "max_pending_requests": 16,
             "max_cached_requests": 1024,
-            # The service is not proven disjoint from the generation GPUs; the
-            # registry keeps managed services off shared GPUs, and the CPU case
-            # is inferred safe by the server itself.
+            # Never claimed: a parking service shares its GPU by definition, a
+            # dedicated-GPU one is not proven disjoint, and the CPU case is
+            # inferred safe by the server itself.
             "generation_overlap_safe": False,
             "worker_config": self.worker_config,
         }
