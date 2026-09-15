@@ -1,6 +1,6 @@
 # Loose functions: give each piece of logic an owner
 
-Status: pass 1 landed 2026-09-14. Scope is `vrl/` outside `vrl/scripts/**`
+Status: pass 1 and pass 2 landed 2026-09-14. Scope is `vrl/` outside `vrl/scripts/**`
 (scripts are entry points, not helpers).
 
 ## Rule applied
@@ -36,6 +36,9 @@ and tests; two importers needed a reason to stay.
 | `generation/execution/pipeline.forward_batches_pipelined(executor, ...)` | `BatchExecutorBase.forward_batches_pipelined` — it took the executor as its first argument and called its `forward_batch`; the D2H copy helper moved with it | `a7174c182` |
 | `generation/execution/batch_memory.cuda_occupancy_snapshot` | `BatchMemoryReading.cuda_occupancy_snapshot` — it produced half of that record | `4baad287e` |
 | `utils/validation.require_exact_dataclass_fields` (dataclass-only) | `require_mapping_keys(value, allowed, *, what, complete)`; the dataclass form is a one-line wrapper; three more sites adopted it | `05ccce80c` |
+| `models/loader.apply_rollout_quantization` + `validate_rollout_quantization_support` (one runtime caller: `QuantizationPass.apply`; five test files) | `QuantizationPass.quantize` / `QuantizationPass.validate_support`; `loader.py` is Diffusers loading only; the "no scheme → 0" early return is gone because `enabled` is the gate | pass 2 |
+| `trainers/online/ema.EMA._snapshot` (verbatim copy of `fsdp._full_cpu_tensor`, docstring said "mirrors") | `fsdp.full_cpu_tensor`, called by the EMA | pass 2 |
+| `fsdp.load_checkpoint_state_dict`'s DCP scatter (same call as `load_full_state_dict`) | calls `load_full_state_dict(module, compatible, strict=False)` after its owned-key checks | pass 2 |
 
 ## Stayed, with the reason
 
@@ -43,16 +46,12 @@ and tests; two importers needed a reason to stay.
   strategy is the trainer-facing adapter; this module is the FSDP2
   collective layer, imported lazily so `strategy.py` stays free of
   `torch.distributed` at import, and four test files exercise the gather /
-  load functions on tiny modules without a strategy. Both docstrings, `ema.py`
-  and `schema.py` name the split. Rule 4.
+  load functions on tiny modules without a strategy. Both docstrings and
+  `schema.py` name the split. Rule 4. Pass 2 removed the two duplicates
+  inside it (see below); the module itself stays.
 - **`trainers/diagnostics.py`** (4 functions, one importer: `OnlineTrainer`).
   The trainer's debug instrumentation; folding 200 lines into a 2,300-line
   class would cost more than the module. Rule 4.
-- **`models/loader.apply_rollout_quantization`** (one runtime caller,
-  `QuantizationPass`; five test files call it directly). `loader.py` is the
-  diffusers-component loading and rollout-quantization module with seven
-  importers; the pass is a thin adapter. Candidate for a later pass if the
-  tests move to the pass.
 - **`config/rules.py`** (one importer, `schema.py`). 128 lines of
   cross-section validation rules; `schema.py` is already 800 lines.
 - **`math/denoise/ddim.py`**, **`math/token/flow_matching.py`**: the math
@@ -73,6 +72,13 @@ and tests; two importers needed a reason to stay.
   each sits with the type or contract it validates.
 - **`config/lint.py`**: script support with a `main`; an entry point.
 
+## Not a loose function, done alongside
+
+`precision.diffusion_math` → `precision.denoise_math` and
+`DiffusionMathPrecisionConfig` → `DenoiseMathPrecisionConfig`: the YAML key
+that had kept the class out of the denoise rename. No preset set it;
+`docs/reference/generation_naming.md` records the break.
+
 ## Verification
 
 Per change: ruff on touched files and the touched packages' tests
@@ -81,3 +87,8 @@ Per change: ruff on touched files and the touched packages' tests
 `tests/nn`, `tests/models/steps`). `test_lifecycle_fsm::test_shutdown_kills_only_owned_actor`
 failed once inside a full `tests/generation` run and passed 3/3 in
 isolation; it is an actor-shutdown timing test not touched here.
+
+Pass 2: `tests/nn`, `tests/models/steps`, `tests/models/families/wan_2_1`,
+`tests/architecture` (minus the pre-existing public-floor failure),
+`tests/trainers` (646 passed), `tests/config` + the precision/factory/anima
+script tests (476 passed).
