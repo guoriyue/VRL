@@ -233,3 +233,19 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   该 run 的 pre-update clip 11–20%、parity 0.009–0.026 是 stale=1 的真实 off-policy 差异。
 - 2026-09-15 07:38：recompute arm（batch 16 + compile(all) + `recompute_old_logprob=on`，trainer 0、
   rollout 1-3，40 epoch）启动；对照 strict arm 的 reward 曲线、clip、epoch 墙钟。
+- 2026-09-15 08:10：**F 门（recompute arm）前 7 步**：epoch 墙钟 254–280 s（strict arm 517–524 s，
+  **1.9–2.0×**）；`pre_update_clip_fraction` 全部 0.0000（此前 compile/batch-16 下 54–60%）；
+  parity 0.018–0.023 仍可见（漂移被测量、不进梯度）。reward 前几步 0.11–0.20 vs strict 0.27–0.48，
+  样本方差量级，待 40 epoch 曲线对照后下结论。四卡占用至约 10:40。
+
+## 4. 七维对照的当前结论（2026-09-15 08:10）
+
+| 维度 | 结论 | 证据 |
+|---|---|---|
+| driver 控制平面 | 不拆。VRL 的 rank 进程没有可观的 GIL 争用来源；reward 已一律独立服务 | 三次 py-spy：反序列化 <2%，producer 线程 ~0 |
+| rollout 引擎 | 不替换。引擎作参照：eager 持平，compile 路径 1.7×；同样的收益在 VRL 自己的循环里通过 compile + recompute 兑现（1.9–2.0×） | B spike + recompute arm |
+| 反序列化 | 第 1 步（artifact 出 driver）已落地；actor 池不做 | py-spy |
+| train/rollout 一致性 | `recompute_old_logprob=on` 落地，clip 归零；引擎侧 patch 组不适用（不换引擎）；确定性模式已有 | recompute arm |
+| 训练并行 | Wan FSDP2 + Ulysses CP 落地：等价性门通过、全员生成、fp32 master + bf16 计算 | C 门三次 run |
+| 权重同步 | LoRA 配方 sync 0.68 s/epoch，非瓶颈；全参 IPC 留作全参配方的门 | rollout_stats |
+| 多节点 | 放置探测规则已写进报错；2 节点验证等硬件 | — |
