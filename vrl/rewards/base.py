@@ -24,6 +24,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
+from vrl.config.reward_inference import RewardInferenceConfig
+from vrl.generation.types import RewardArtifactSpec
 from vrl.rewards.artifacts import (
     ArtifactFormat,
     DiskRewardArtifactStore,
@@ -207,6 +209,33 @@ class RewardFunction:
         """Whether this scorer yields while scoring runs elsewhere."""
 
         return False
+
+    def bind_component(self, name: str) -> None:
+        """Tell this reward its registry component name.
+
+        Called by ``MultiReward`` after construction. A disk store keyed by that
+        name can then be served by the rollout worker (``artifact_specs``);
+        directly constructed rewards (tests, evaluation scripts) stay unbound
+        and keep materializing media themselves.
+        """
+
+        store = getattr(self, "artifact_store", None)
+        if isinstance(store, DiskRewardArtifactStore):
+            store.name = str(name)
+
+    def artifact_specs(self) -> tuple[RewardArtifactSpec, ...]:
+        """Reward files the rollout worker should write for this reward.
+
+        Empty for rewards that read media in memory or were never bound to a
+        component; a bound disk store returns its (name, root, media_type,
+        format) so the worker materializes the file and the driver never
+        touches the media (see ``vrl/generation/execution/reward_artifacts.py``).
+        """
+
+        store = getattr(self, "artifact_store", None)
+        if isinstance(store, DiskRewardArtifactStore) and store.name:
+            return (RewardArtifactSpec(**store.spec()),)
+        return ()
 
     @property
     def external_accelerator_isolation_verified(self) -> bool:
@@ -503,7 +532,10 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
     stay in pinned host RAM (the rollout/trainer own the GPU then), mirroring
     the rollout lease's sleep/wake. ``scorer`` injects a ready
     ``RewardScorer`` (HTTP components, tests); it wins over the factory-built
-    one. Disk files belong to this reward call and are deleted after terminal
+    one. ``artifact_store`` likewise injects a ready store: a reward that
+    scores in-process without a CUDA model (OCR) keeps its tensors in memory
+    and materializes to disk only when its scorer is remote. Disk files
+    belong to this reward call and are deleted after terminal
     success or failure; explicit ``retain_artifacts`` or an ambiguous remote
     state transfers them to the debug/output owner instead.
     """
@@ -520,6 +552,15 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
     default_score_key: ClassVar[str]
     default_artifact_format: ClassVar[str] = "mp4"
     default_media_type: ClassVar[MediaType] = "video"
+    # In-process transport only (a remote scorer always reads disk artifacts):
+    # "memory" keeps media on the request exactly as the former in-memory
+    # rewards did (any tensor layout, no file IO); "disk" materializes it.
+    in_process_media: ClassVar[str] = "disk"
+    # In-process transport only: build the model in the constructor so config
+    # validation fails at construction and tests can reach ``self._model``
+    # (e.g. to inject a fake engine). Skipped under sleep_offload, whose pooled
+    # model must be factory-built by the runtime itself.
+    eager_model: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -535,6 +576,8 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
         retain_artifacts: bool = False,
         worker_config: Mapping[str, Any] | None = None,
         scorer: RewardScorer | None = None,
+        artifact_store: RewardArtifactStore | None = None,
+        inference: RewardInferenceConfig | None = None,
     ) -> None:
         # Deferred: runtime.py imports this module (cycle guard).
         from vrl.rewards.runtime import build_reward_scorer
@@ -547,11 +590,21 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
         )
         media_type = self.default_media_type if media_type is None else media_type
 
-        artifact_store = DiskRewardArtifactStore(
-            artifact_dir,
-            media_type=str(media_type),
-            artifact_format=str(artifact_format),
-        )
+        # In-process transport keeps media on the request when the reward says
+        # so (the former in-memory rewards: any tensor layout, no file IO);
+        # every remote scorer reads disk artifacts.
+        in_process = scorer is None and (inference is None or inference.kind == "in_process")
+        if artifact_store is None and in_process and self.in_process_media == "memory":
+            artifact_store = InMemoryRewardArtifactStore()
+        if artifact_store is None:
+            artifact_store = DiskRewardArtifactStore(
+                artifact_dir,
+                media_type=str(media_type),
+                # Unnamed until MultiReward binds the registry component name
+                # (reward_name is not it: presets reuse reward_name as the hub
+                # model id, e.g. MizzenAI/HPSv3@main).
+                artifact_format=str(artifact_format),
+            )
 
         if scorer is None:
             worker_cfg = dict(worker_config or {})
@@ -593,7 +646,23 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
                 )
             if sleep_offload:
                 worker_cfg["sleep_offload"] = True
-            scorer = build_reward_scorer(worker_cfg)
+            # ``inference`` selects in-process (None/default) or a managed
+            # service subprocess that receives this same worker_cfg. External
+            # HTTP components never reach here: the registry injects their
+            # ready client as ``scorer``.
+            if in_process and self.eager_model and not worker_cfg.get("sleep_offload"):
+                from vrl.rewards.runtime import InProcessRewardScorer
+                from vrl.utils.config import import_from_path
+
+                self._model = import_from_path(str(worker_cfg["model_factory"]))(worker_cfg)
+                scorer = InProcessRewardScorer(model=self._model)
+            else:
+                scorer = build_reward_scorer(
+                    worker_cfg,
+                    inference=inference,
+                    artifact_dir=str(artifact_dir),
+                    component_name=str(reward_name),
+                )
 
         super().__init__(
             reward_name=str(reward_name),

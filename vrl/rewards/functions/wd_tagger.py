@@ -1,39 +1,69 @@
-"""WD tagger reward binding for requested general-tag adherence, on CPU.
-
-``score_key`` selects the reading that drives training. ``wd_tagger_dense`` is
-the default: the thresholded ``wd_tagger_recall`` takes at most a handful of
-values inside a prompt group, which measured as unable to move this policy,
-while the dense reading moved it (SPRINT_anima_geneval_spatial_rl 7.5, 8.2).
-"""
+"""WD tagger (onnxruntime, CPU) tag-adherence reward."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
-from vrl.rewards.base import InferenceRewardFunction
-from vrl.rewards.models.wd_tagger import WDTaggerRewardModel
-from vrl.rewards.runtime import InProcessRewardScorer
+from vrl.config.reward_inference import RewardInferenceConfig
+from vrl.rewards.artifacts import MediaType
+from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.protocols import RewardScorer
 
 WD_TAGGER_SCORE_KEYS = ("wd_tagger_dense", "wd_tagger_recall")
 
 
-class WDTaggerReward(InferenceRewardFunction):
-    """Requested general-tag adherence in ``[0, 1]`` from the WD tagger."""
+class WDTaggerReward(DiskArtifactRewardFunction):
+    """WD tagger (onnxruntime, CPU) tag-adherence reward.
 
-    def __init__(self, score_key: str = "wd_tagger_dense", **kwargs: Any) -> None:
+    In-process the model is built here and media rides the request in memory;
+    ``inference.kind=service`` hands the same kwargs to a driver-launched
+    service that scores this reward's ``.pt`` artifacts.
+    """
+
+    model_factory = "vrl.rewards.models.wd_tagger:WDTaggerRewardModel"
+    request_prefix = "wd_tagger"
+    debug_basename = "wd_tagger"
+    default_reward_name = "wd_tagger"
+    default_score_key = "wd_tagger_dense"
+    default_artifact_format = "tensor"
+    default_media_type = "image"
+    in_process_media = "memory"
+    eager_model = True
+
+    @classmethod
+    def resolve_execution_device(cls, *, device: str, kwargs: Mapping[str, Any]) -> str:
+        """CPU-only compute; never claim the resource-resolved GPU."""
+        return "cpu"
+
+    def __init__(
+        self,
+        device: str = "cpu",
+        *,
+        score_key: str = "wd_tagger_dense",
+        scorer: RewardScorer | None = None,
+        inference: RewardInferenceConfig | None = None,
+        artifact_format: str | None = None,
+        media_type: MediaType | None = None,
+        artifact_dir: str = "outputs/reward_artifacts",
+        retain_artifacts: bool = False,
+        **kwargs: Any,
+    ) -> None:
         if score_key not in WD_TAGGER_SCORE_KEYS:
             raise ValueError(
                 f"wd_tagger score_key must be one of {list(WD_TAGGER_SCORE_KEYS)}, got {score_key!r}"
             )
-        # onnxruntime CPU compute; ``device`` is accepted for a uniform factory
-        # signature but never used.
-        kwargs.pop("device", None)
-        # Build eagerly so config validation (threshold/metadata_key) fires now.
-        model = WDTaggerRewardModel(kwargs)
         super().__init__(
             reward_name="wd_tagger",
             score_key=score_key,
-            scorer=InProcessRewardScorer(model=model),
+            worker_config=kwargs,
+            device=device,
+            scorer=scorer,
+            inference=inference,
+            artifact_format=artifact_format,
+            media_type=media_type,
+            artifact_dir=artifact_dir,
+            retain_artifacts=retain_artifacts,
         )
 
 

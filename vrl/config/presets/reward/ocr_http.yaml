@@ -1,0 +1,34 @@
+# OCR reward scored by an operator-run PaddleOCR service instead of in the
+# trainer process. Self-contained: replaces /reward/ocr in an experiment's
+# defaults (`/reward=ocr_http`). Media is written as `.pt` image tensors under
+# `${trainer.output_dir}/reward_artifacts` and scored by the same
+# OCRRewardModel in its own CPU process, so the launch-bound replay never
+# shares its interpreter with PaddleOCR. The scoring knobs live in the service
+# config, not here (a non-default value here is refused); start the service
+# first:
+#
+#   .venv/bin/python -m vrl.rewards.service.server \
+#     --config vrl/config/reward_service/ocr_paddle.yaml
+#
+# Prefer `reward.inference.ocr.kind=service` on top of /reward/ocr when the
+# trainer may launch the service itself: same isolation, no manual start, and
+# the knobs travel with the recipe.
+distributed:
+  resources:
+    reward:
+      device: cpu
+
+reward:
+  components:
+    ocr: 1.0
+  kwargs:
+    ocr:
+      score_key: ocr
+      media_type: image
+      artifact_format: tensor
+      artifact_dir: ${trainer.output_dir}/reward_artifacts
+  inference:
+    ocr:
+      kind: http
+      endpoint: http://127.0.0.1:8312
+      expected_model: ocr-paddle

@@ -148,6 +148,12 @@ class ResolvedReward:
     config: RewardRuntimeConfig
     device: str
     memory_parking_required: bool
+    # Run-scoped root for disk reward artifacts (``<output_dir>/reward_artifacts``).
+    # A disk reward whose kwargs name no ``artifact_dir`` writes under
+    # ``<artifact_root>/<component>``; a managed reward service is granted read
+    # access to exactly that directory. Empty means "no run" (reward preflight
+    # scripts), where the reward's own default applies.
+    artifact_root: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,10 +306,15 @@ def resolve_reward_inputs(
         if reward.all_external_inference
         else bool(resources.lifecycle.release_reward_after_score)
     )
+    # Duck-typed: reward preflight scripts and tests hand in a bare reward-only
+    # ``built``; only a real trainer config scopes artifacts to a run.
+    trainer = getattr(built, "trainer", None)
+    artifact_root = "" if trainer is None else f"{trainer.output_dir}/reward_artifacts"
     return ResolvedReward(
         config=reward,
         device=device,
         memory_parking_required=memory_parking_required,
+        artifact_root=artifact_root,
     )
 
 

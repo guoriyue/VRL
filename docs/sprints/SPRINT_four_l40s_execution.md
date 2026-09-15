@@ -2,6 +2,15 @@
 
 ## Current Handoff (2026-09-13)
 
+USER PAUSE: Wan was intentionally cancelled at the user's request on 2026-09-13
+around 22:16 UTC to release hardware for another agent's cleanup and SD3.5
+profiling. Do not automatically restart Wan or launch other GPU work from this
+thread until the user resumes it. Run: wan_i2v_full_physics_batch_local_scheduler.
+Its full generation and all three parking gates passed, but no optimizer
+checkpoint exists. All live claims below predate the cancellation. Preserve
+all artifacts; the ongoing update is not a resumable checkpoint.
+Release verified: session 9662 is terminal and all four GPUs have no compute
+processes. Cancellation provenance is recorded in the run's user_pause.json.
 This section supersedes historical live claims below. The rebased Wan 2.2
 320x320/17-frame native full-checkpoint comparison is complete: two updates,
 eight global samples per update, single-card 2185.404s versus four-card 727.229s
@@ -29,7 +38,7 @@ on GPU 3 with exact repeated scores. The initial missing VideoCon vendor import
 was resolved using the pinned clean source and an explicit experiment import
 path; original dirty submodules are untouched. No full native update has yet
 completed on this candidate. Prepared launcher and evidence:
-docs/research/wan_full_physics_rebased_20260913.md.
+docs/research/wan_full_physics_rebased_20260913.md in the review-all worktree.
 Full native attempt d2d01db8, supervisor PID 910531/session 21086, is terminal
 exit 1 after 1705.464s. All six full-size videos and both rewards completed,
 but every rollout worker failed the unchanged physical parking gate before
@@ -42,8 +51,11 @@ initialized output/conditioning tensors match the old probe exactly, including
 video; unwritten probe trajectory slots are explicitly excluded. Expanded CPU
 regression: 141 passed, two GPU deselections. No full update is claimed.
 Output: wan22_i2v_cache/wan_i2v_parking_batch_local_scheduler. GPUs are released.
-Next: original six-sample full-geometry native update, then replay/checkpoint/
-resume gates. Preserve failed roots; use a new output directory.
+The full six-sample native retry is now active in exec session 9662, from
+clean commit 5dd2c74e, at /mnt/nvme/outputs/wan_i2v_full_physics_batch_local_scheduler.
+It owns GPUs 0-2 for policy and GPU 3 for real rewards; no concurrent hardware
+task. This supersedes the diagnostic's released claim. Replay/checkpoint/resume
+gates remain open; poll this handle rather than restarting on an observation timeout.
 Previous supervisor 909502/session 40899 exited 1 before policy weight loading:
 Diffusers requested shard metadata despite HF_HUB_OFFLINE. The new launch adds
 model.local_files_only=true without changing the pinned revision or workload.
@@ -3916,3 +3928,215 @@ the corrected probes use the declared production allowance. Candidate unchanged.
 Fresh compute inventory empty. Details and receipts are in the Wan report.
 Next reduce cross-phase resident copies/owner lifetime, not memory thresholds
 or workload. Four-rank update capacity and fair speedup remain unaccepted.
+
+Post-integration continuation, 2026-09-13: review candidate 4e2c1163 passed
+791 affected CPU tests and 12 explicit tiny GPU tests. Previous goal turn made
+progress; no full experiment completion is claimed. GPU inventory was empty
+before and after the next bounded real Kling owner-lifetime probe on GPU 0.
+Review branch and its committed artifacts remain unchanged by this diagnostic.
+
+Evidence: /mnt/nvme/outputs/wan22_i2v_cache/kling_reload_lifetime_rebased/result.json
+and sibling kling_reload_lifetime_probe.py. Locked review environment uses
+Torch 2.11.0+cu130; local pinned Kling weights, fixed original MP4 SHA256,
+two independent runtime owners with two scores each. All four complete score
+maps are exactly equal (overall -0.6317654154646988). Initial load 40.167s,
+reload 37.685s; shutdown 0.274s/0.291s. GPU allocated memory after shutdown is
+9,568,256 bytes, reserved 41,943,040 bytes. RSS after first shutdown is
+2,008,236,032 bytes, after second 4,732,772,352 bytes. Thus ordinary runtime
+shutdown/reload is numerically repeatable here but does not prove bounded host
+residency or four-rank capacity. No production lifecycle option was changed.
+
+This unpooled diagnostic is not a direct comparison to the older pooled,
+re-encoded-media parking probe. Even the older original-MP4 direct probe used
+Torch 2.12 and returned a different overall score (-0.6489913727634578).
+Do not attribute this difference to a specific dependency without isolation;
+do not mix these environments as a fair throughput/learning baseline. Future
+single/four-rank arms must share the rebased commit, locked environment, exact
+artifact and numerical recipe. Next distinguish live ownership from allocator
+retention after repeated shutdown before integrating any reload policy.
+
+Follow-up retention isolation on GPU 0 completed on unchanged review candidate
+4e2c1163 and locked Torch 2.11. Evidence: kling_reload_retention_rebased/result.json
+and kling_reload_retention_rebased.log under the same NVMe experiment root.
+Each cycle tracked 1124 weak references to the reward wrapper, torch model and
+parameters; none survived shutdown/collection. Second shutdown RSS was
+4,726,161,408 bytes; gc did not change it, but malloc_trim reduced it to
+1,921,343,488 bytes. This identifies ~2.61 GiB of reclaimable libc retention,
+not surviving tracked model owners. The first-cycle trimmed RSS was
+1,900,134,400 bytes. This Torch version has no empty_host_cache API, so the
+host-cache-labelled snapshot is explicitly a no-op, not a successful clear.
+All four scores exactly match the previous rebased fixed-MP4 result.
+
+Then claimed GPUs 0-3 for a bounded four-process reward-only reproduction,
+one physical GPU per process, two independent loads and two scores per load.
+Supervisor kling_reload_four_probe.py completed exit 0 in 91.028s; result and
+per-rank logs: kling_reload_retention_four_rebased/. All 16 complete score maps
+are exactly equal. Both cycles on all ranks have zero surviving tracked model
+owners. Final per-rank RSS after shutdown/trim: 1,906,061,312; 1,913,630,720;
+1,919,094,784; 1,911,480,320 bytes. Reload times 37.76-37.97s, initial loads
+40.25-40.50s. Minimum sampled host available memory 369,606,246,400 bytes.
+Fresh GPU inventory empty after supervisor and all children exited.
+
+This establishes an explicit owner-release/trim candidate with repeatable
+reward scores on four GPUs, not a pooled-parking A/B, long-run leak bound, or
+combined Wan trainer capacity/throughput result. Production defaults and
+memory protection remain unchanged. Next implement an opt-in reward teardown
+handoff with failure cleanup and RNG invariants, then run both equal-work
+single/four-rank Wan arms on the same rebased runtime. Account for measured
+reload overhead; never compare new timings against old-environment scores.
+
+Implemented opt-in native reward reload parking on feat/reward-reload-handoff,
+candidate a6fc7356 (worktree /home/ubuntu/VRL-review-all). The review/all-mgpu-main-
+6b723075 ref stays at 4e2c1163. Default CuMem behavior unchanged. Explicit reload
+mode requires sleep_offload and glibc, destroys the scorer model and trims
+released CPU heap at handoff; next activation reloads under preserved RNG.
+115 focused inference/disk-reward/online-lifecycle tests passed. Native four-GPU
+Kling probe exited 0: all 16 score maps equal, reload 37.78-37.91s, final parked
+RSS 1.909-1.919 GB/rank. No script-side trim. Evidence:
+kling_native_reload_four_rebased/result.json and per-rank logs. GPUs released.
+Repository report: docs/research/reward_reload_handoff_20260913.md on new branch.
+
+Prepared fresh wan22_rebased_reload_single/four.yaml on the same locked runtime;
+CPU preflight passed global request equality and exact partitioned advantages,
+2 updates x 8 global samples, preserved prompt manifest and thresholds. The
+preparation script adapts old batch fields and manifest-loading API, not work.
+Next run full four-rank Wan capacity on this native candidate before the matched
+single-card arm; reward-only success does not establish combined capacity.
+
+Claim GPUs 0-3 for full Wan rebased native-reload capacity pilot, clean candidate
+76714903 (code a6fc7356), locked review venv, empty starting compute inventory.
+Supervisor wan22_rebased_reload_launch.py four, torchrun PID 846665, output
+wan22_rebased_reload_four, exclusive log/memory/process receipts. Two updates
+x eight global samples; no changed numerical gate or memory threshold. Both
+training experts load from the pinned local Wan2.2 checkpoint. Monitor through
+terminal status; do not launch another arm while this process remains live.
+
+Release GPUs 0-3. Native reload four-rank Wan pilot exited 1 after 541.036s.
+First optimizer update and checkpoint-1 completed: exact-zero replay difference
+and pre-update clip fraction, gradient norm 0.030143787340297008. Independent
+checkpoint_1_audit.json passed all 1280 FP32 parameters/Adam/EMA and four-rank RNG,
+progress and eight global samples. No second update: next rollout wake surfaced
+Ray's earlier worker kills for >95% host usage. Do not claim accepted timing or
+speedup from the 335.68-335.76s first-update phase totals.
+
+Memory: 523 samples, minimum available 7,638,007,808B, max GPU 11,983,126,528B.
+Raylet threshold crossing starts 16:45:31-32, optimizer runs 16:45:31.384-32.575,
+worker kills about 16:45:39, driver failure appears on next wake 16:45:52.
+At kill, rollout workers use ~55.6-56.4GiB each, trainers ~29GiB each, object
+store occupancy zero. Remaining pressure is at optimizer/update boundary;
+precise live allocations versus allocator retention not yet established.
+Fresh compute inventory empty, all handles terminal, failure artifacts retained.
+Next isolate optimizer/export/checkpoint CPU lifetimes without lowering work or
+raising thresholds. Single-card arm not yet run. Full report on follow-up branch:
+docs/research/reward_reload_handoff_20260913.md.
+
+Claim GPUs 0-3 for a diagnostic boundary-trim reproduction on unchanged code
+ffbebe7e. Valid first checkpoint contains 838,860,800B model, 1,677,726,720B
+optimizer and 838,860,800B EMA tensors (logical full-state sizes, not rank RSS).
+New output wan22_rebased_boundary_trim_four, torchrun PID 853437, supervisor
+wan22_boundary_trim_launch.py. Same two updates/eight global samples/config
+except artifact paths; entry wrapper wan22_boundary_trim_entry.py records
+RSS/PSS/USS before collection, after collection, after glibc trim, and after
+the original optimizer method. No training math/threshold change. Compare
+checkpoint-1 against the previous accepted first checkpoint if it completes.
+No concurrent GPU arm; monitor this exact live handle to terminal status.
+
+### GPU claim: prefetch-benefit profiling (vrl-74, 2026-09-13 22:30 PDT)
+
+The Codex Wan I2V full-physics run at
+`/mnt/nvme/outputs/wan_i2v_full_physics_batch_local_scheduler` was torn down
+at 22:16 PDT (torchrun SIGTERM/SIGKILL, no optimizer update, metrics.csv
+empty); GPU inventory is empty. vrl-74 now owns GPUs 0-3 for a ~2.5 h
+sequential queue under `outputs/sd3_5_ocr_prefetch_profile/`: five 3-epoch arms
+of the SD3.5 3x1 preset (strict / continuous, in-process vs HTTP OCR service,
+eager vs replay-compiled) with py-spy on the driver and dmon on GPU 0. Do not
+launch GPU work until `queue.log` says "queue done".
+
+### Prefetch benefit confirmed once OCR leaves the driver (vrl-74, 2026-09-13 23:40 PDT)
+
+`outputs/sd3_5_ocr_prefetch_profile/`, SD3.5 3x1 preset, 3 epochs per arm,
+epochs 1-2 averaged, py-spy on the driver main thread, dmon on GPU 0:
+
+| arm | epoch wall | evaluate | backward | GPU0 SM% in evaluate | PaddleOCR share of driver samples |
+|---|---|---|---|---|---|
+| strict, in-process OCR | 509 s | 253 s | 155 s | 44% | 29% (serial, in collect) |
+| continuous, in-process OCR | 469 s | 282 s | 187 s | 45% | 28% (concurrent with training) |
+| continuous, OCR via HTTP service (CPU process) | **398 s** | 248 s | 150 s | 52% | 0% |
+
+- The replay is launch-bound (GPU0 idle >50% of evaluate; 12-15% of driver
+  samples in nn.Linear.forward / diffusers norms / PEFT layers).
+- In-process PaddleOCR competes with kernel launch when prefetch overlaps it:
+  +61 s on evaluate+backward, halving the prefetch gain (509 -> 469 s).
+- Moving OCR to `vrl-reward-service` (`+reward=ocr_http`, commit 59857f2b)
+  restores evaluate/backward to the strict numbers and delivers the full
+  overlap: 509 -> 398 s per epoch, **1.28x**, above the 25% ceiling estimated
+  from the serial collect time because the driver also stops paying the
+  in-process scoring cost. Rewards stay in the same range (0.35/0.46/0.29 vs
+  0.36/0.51/0.22 on the same prompts).
+- Rule for continuous scheduling on launch-bound recipes: keep every reward out
+  of the driver process (HTTP service or a dedicated GPU), or the overlap is
+  paid back in slower training phases. Compile arms (replay-scoped
+  torch.compile) still running.
+
+### Prefetch / reward placement / compile: final five-arm table (vrl-74, 2026-09-14 00:30 PDT)
+
+`outputs/sd3_5_ocr_prefetch_profile/`, SD3.5 3x1 preset (batch 1), epochs 1-2
+averaged; `*_diag` arms ran with `trainer.replay_parity.max_abs_logprob_diff=0.05`
+because both compile scopes trip the 0.01 gate (replay-only 0.025, both roles
+0.014).
+
+| arm | epoch wall | evaluate | backward | GPU0 SM% (evaluate) | pre_update_clip_fraction | ratio_abs_dev_max |
+|---|---|---|---|---|---|---|
+| strict, in-process OCR (eager) | 509 s | 253 | 155 | 44% | 0.00 | 0 |
+| continuous, in-process OCR | 469 s | 282 | 187 | 45% | 0.16-0.18 | 0.02-0.03 |
+| continuous, OCR HTTP service | 398 s (1.28x) | 248 | 150 | 52% | 0.17 | 0.02-0.03 |
+| strict, compile scope=all (diag) | 270 s (1.89x) | 138 | 61 | 63% | 0.54 | 0.010-0.014 |
+| continuous, HTTP OCR, compile (diag) | **206 s (2.48x)** | 143 | 62 | 67% | 0.54-0.60 | 0.014-0.030 |
+
+Conclusions:
+1. The SD3.5 replay is launch-bound (GPU0 idle >50% of evaluate in eager).
+2. Prefetch pays its full ~25% only when no reward runs inside the driver
+   process; in-process CPU OCR competing with kernel launch cost 61 s/epoch.
+   `+reward=ocr_http` (commit 59857f2b) fixes that: 509 -> 398 s.
+3. torch.compile removes most of the launch overhead (1.89x strict, 2.48x
+   stacked) but is NOT a usable training configuration as-is: with
+   clip_ratio=1e-4 the compiled rollout/replay drift (max 0.014-0.030) clips
+   54-60% of samples before any update. Same root cause as the batch-16
+   parity failure: bf16 kernel paths differ between rollout and replay.
+   Enabling it in production requires lifting clip_ratio and the parity gate
+   above the measured drift (the Wan precedent, be6cbbe2), which is one
+   decision for compile and batch 16 together.
+4. The in-process-vs-HTTP rule is conditional: it matters only when reward is
+   CPU-bound, scheduling is continuous, and training is launch-bound. Strict
+   video recipes with GPU rewards (Wan + HPSv3) are unaffected.
+
+## Coordination (session vrl-9941, 2026-09-14 12:30 PDT): Wan 2.2 T2V-A14B GRPO learning experiment
+
+- Claim: GPUs 0-1 for the two-rank native FP32-LoRA Wan 2.2 T2V trainer
+  (the accepted `wan22_fp32_native_baseline` configuration), GPU 2 for the
+  fixed-prompt baseline/checkpoint evaluation and the Kling reward probes,
+  starting now. GPU 3 is left free. Host RAM budget is the constraint: the
+  two-rank trainer alone reached ~228 GiB; do not start another 14B pipeline.
+- Code: isolated worktree `/home/ubuntu/VRL-wan22`, branch `exp/wan22-t2v-grpo`
+  from `feat/cosmos-cp-runtime@9145b2af`. No edits to this checkout's Python.
+- Outputs: `/mnt/nvme/outputs/wan22_t2v_grpo/` (NVMe, not root).
+- Not touched: the paused Wan 2.1 heavy queue, the SD3.5 queue, the Codex I2V
+  work. Message session vrl-9941 (socket 9941.sock) before claiming GPUs 0-2.
+
+### GPU claim: GPU 3 only, reward-service park/wake acceptance (vrl-74, 2026-09-14)
+
+Single-rank phase-cycled Wan 2.1 1.3B + HPSv3 (`online_grpo_hpsv3_fsdp_4x_l40s`
+with `gpus_per_node=1`, `reward.inference.hpsv3.kind=service`), 2 updates on
+GPU 3 while vrl-9941 holds GPUs 0-2. Output
+`outputs/wan_hpsv3_flash_grpo/service_park_smoke_1gpu`. Validates P2 of
+`planned/SPRINT_reward_service_isolation.md`: the HPSv3 model lives in a child
+process that time-shares the card through POST /park and /wake.
+
+Result (2026-09-14): status success, 2 updates, replay parity 0.00197 / 0.00204,
+clip 0, no Xid, HPSv3 child parked/woke every phase. `reward_mean` was -4.5 /
+-5.7 versus +3.0 / +3.5 in `fsdp_smoke_main`; scoring the smoke's own mp4s with
+the in-process HPSv3 and the managed service gave identical numbers on every
+sample (max |delta| 0.0), and both runs' per-sample scores span -10 .. +11, so
+the level difference is prompt-sample variance of a 6-prompt single-rank
+collection, not the transport. GPU 3 released 2026-09-14 21:40 PDT; vrl-74 holds
+all GPU work until vrl-9941's Wan 2.2 four-rank stage 2 (GPUs 0-3, ~6 h) exits.

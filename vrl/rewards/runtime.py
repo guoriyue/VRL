@@ -75,6 +75,12 @@ class RewardFunctionRuntime:
         reward_function = self._reward_function
         return bool(reward_function is not None and reward_function.scoring_is_nonblocking)
 
+    def artifact_specs(self) -> tuple[Any, ...]:
+        """Reward files the rollout worker writes for the configured components."""
+
+        reward_function = self._reward_function
+        return () if reward_function is None else tuple(reward_function.artifact_specs())
+
     @property
     def external_accelerator_isolation_verified(self) -> bool:
         """Whether out-of-plan reward accelerator work is isolated."""
@@ -241,16 +247,13 @@ def _preserve_driver_rng_during_model_build():
         np.random.set_state(numpy_state)
 
 
-def _reward_device_scope(worker_config: Mapping[str, Any]) -> Any:
+def _reward_device_scope(device: str | None) -> Any:
     import torch
 
-    configured_device = worker_config.get("device")
-    device = torch.device(configured_device) if configured_device is not None else None
-    return (
-        torch.cuda.device(device)
-        if device is not None and device.type == "cuda"
-        else nullcontext()
-    )
+    if not device or not torch.cuda.is_available():
+        return nullcontext()
+    target = torch.device(device)
+    return torch.cuda.device(target) if target.type == "cuda" else nullcontext()
 
 
 def _host_memory_trim() -> Any:
@@ -280,7 +283,10 @@ def _build_prepared_model_in_pool(
     """
 
     # PyTorch's pool scope captures the current device, not arbitrary .to() targets.
-    with _reward_device_scope(worker_config), pool.building() if pool else nullcontext():
+    with (
+        _reward_device_scope(worker_config.get("device")),
+        pool.building() if pool else nullcontext(),
+    ):
         model = factory(worker_config)
         prepare = getattr(model, "prepare_for_inference", None)
         if callable(prepare):
@@ -349,7 +355,7 @@ class InProcessRewardScorer:
 
         self._ensure_model()
         if self._pool is not None:
-            with _reward_device_scope(self._launch.component_config):
+            with _reward_device_scope(self._launch.device):
                 self._pool.wake()
 
     async def park_memory(self) -> None:
@@ -370,7 +376,7 @@ class InProcessRewardScorer:
         if not pool.asleep:
             # CumemPool marks itself asleep only after allocator.sleep returns.
             # A failure therefore leaves this branch retryable on the next call.
-            with _reward_device_scope(self._launch.component_config):
+            with _reward_device_scope(self._launch.device):
                 pool.sleep()
         self._release_cuda_memory_for_parking()
 
@@ -412,7 +418,7 @@ class InProcessRewardScorer:
                         try:
                             self._release_cuda_memory_for_parking()
                             if pool is not None:
-                                with _reward_device_scope(self._launch.component_config):
+                                with _reward_device_scope(self._launch.device):
                                     pool.close()
                             if self._trim_host_memory is not None:
                                 self._trim_host_memory()
@@ -436,7 +442,7 @@ class InProcessRewardScorer:
             return []
         model = self._ensure_model()
         if self._pool is not None:
-            with _reward_device_scope(self._launch.component_config):
+            with _reward_device_scope(self._launch.device):
                 self._pool.wake()
         # CuMem's model-building scope is one-shot. Execution uses the normal
         # allocator; park_memory's physical baseline gate rejects any lazy
@@ -497,11 +503,7 @@ class InProcessRewardScorer:
         # dropping the model so freeing the tensors actually returns the
         # pool's memory instead of leaking offloaded copies.
         pool = self._pool
-        with (
-            _reward_device_scope(self._launch.component_config)
-            if pool is not None
-            else nullcontext()
-        ):
+        with _reward_device_scope(self._launch.device) if pool is not None else nullcontext():
             if pool is not None:
                 pool.wake()
             self._model = None
@@ -524,8 +526,15 @@ def build_reward_scorer(
     worker_config: Mapping[str, Any] | None = None,
     *,
     inference: Mapping[str, Any] | RewardInferenceConfig | None = None,
+    artifact_dir: str | None = None,
+    component_name: str = "",
 ) -> RewardScorer:
-    """Build the runtime selected by the typed inference deployment config."""
+    """Build the runtime selected by the typed inference deployment config.
+
+    ``artifact_dir`` and ``component_name`` matter only to ``kind=service``: the
+    managed subprocess must be allowed to read the artifacts this reward writes,
+    and its config/log files are named after the component.
+    """
 
     if worker_config is not None and not isinstance(worker_config, Mapping):
         raise TypeError("reward worker_config must be a mapping or None")
@@ -535,12 +544,30 @@ def build_reward_scorer(
             "worker_config.service_url was removed; configure "
             "reward.inference.<component>.kind=http and its endpoint",
         )
+    if inference is None:
+        # Direct construction (evaluation scripts, tests): no deployment was
+        # resolved from YAML, so the model scores in this process.
+        return InProcessRewardScorer(cfg)
     deployment = RewardInferenceConfig.from_mapping(
         inference,
         context="reward inference",
     )
     if deployment.kind == "in_process":
         return InProcessRewardScorer(cfg)
+    if deployment.kind == "service":
+        from vrl.rewards.service.managed import ManagedRewardScorer
+
+        if artifact_dir is None:
+            raise ValueError(
+                "a managed reward service needs the reward's artifact_dir so the "
+                "subprocess may read the artifacts written for it",
+            )
+        return ManagedRewardScorer(
+            deployment,
+            worker_config=cfg,
+            artifact_dir=artifact_dir,
+            component_name=component_name,
+        )
     if cfg:
         raise ValueError(
             "HTTP reward runtime cannot consume local worker_config; model and "

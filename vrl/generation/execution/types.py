@@ -258,7 +258,13 @@ class GenerationBatchResult:
     # real generation failure so the caller counts it as a stale discard, not an
     # error — see SPRINT_shadow_model_weight_sync.md.
     stale_slot: bool = False
-    # Driver-side engine aggregation; worker-local metrics remain in `metrics`.
+    # display/provenance-only: per-rank worker metrics of a multi-rank engine,
+    # keyed by worker_id and filled by the driver-side engine combine (a
+    # single-rank result leaves it empty and ``metrics`` is the whole story).
+    # Read only by runtime_debug telemetry: the executor's per-rank debug rows
+    # and the sequence-parallel acceptance report's per-rank peak memory. No
+    # control flow keys off it; behaviour (failure priority, policy version)
+    # is decided in the combine itself.
     rank_metrics: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 

@@ -511,6 +511,152 @@ async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
     assert runtime._pool is None
 
 
+@pytest.mark.gpu
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.environ.get("WM_RUN_REAL_MODEL_TESTS") != "1", reason="explicit CUDA pool gate"
+)
+async def test_reward_pool_captures_noncurrent_cuda_device(monkeypatch) -> None:
+    """A reward pinned to cuda:1 must pool, park, and restore on cuda:1 while
+    the driver's current device stays cuda:0 throughout."""
+
+    import vrl.rewards.runtime as runtime_module
+
+    if torch.cuda.device_count() < 2:
+        pytest.skip("requires two CUDA devices")
+    original = torch.cuda.current_device()
+    torch.cuda.set_device(0)
+
+    class Model:
+        def __init__(self, config):
+            self.value = torch.full((1024 * 1024,), 3.0, device=config["device"])
+
+        def prepare_for_inference(self):
+            self.lazy = torch.full_like(self.value, 7.0)
+
+    monkeypatch.setattr(runtime_module, "import_from_path", lambda _: Model)
+    runtime = InProcessRewardScorer(
+        {
+            "device": "cuda:1",
+            "sleep_offload": True,
+            "model_factory": "test:factory",
+            "memory_parking_residual_bytes_limit": CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
+        }
+    )
+    try:
+        await runtime.activate()
+        assert torch.cuda.current_device() == 0
+        pool = runtime._pool
+        assert pool is not None
+        owned = [data for data in pool._allocator.pointer_to_data.values() if data.tag == pool.tag]
+        assert owned, "target-device model allocations escaped the CuMem pool"
+        await runtime.park_memory()
+        assert torch.cuda.current_device() == 0
+        await runtime.activate()
+        assert torch.equal(runtime._model.value.cpu(), torch.full((1024 * 1024,), 3.0))
+        assert torch.equal(runtime._model.lazy.cpu(), torch.full((1024 * 1024,), 7.0))
+    finally:
+        await runtime.shutdown()
+        assert torch.cuda.current_device() == 0
+        torch.cuda.set_device(original)
+
+
+def test_reward_device_scope_targets_the_configured_cuda_device(monkeypatch) -> None:
+    from contextlib import nullcontext
+
+    from vrl.rewards.runtime import _reward_device_scope
+
+    seen: list[object] = []
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device", lambda target: seen.append(target) or nullcontext())
+    with _reward_device_scope("cuda:1"):
+        pass
+    assert seen == [torch.device("cuda:1")]
+    with _reward_device_scope("cpu"), _reward_device_scope(""), _reward_device_scope(None):
+        pass
+    assert len(seen) == 1
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with _reward_device_scope("cuda:1"):
+        pass
+    assert len(seen) == 1
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(
+    os.environ.get("WM_RUN_REAL_MODEL_TESTS") != "1", reason="explicit CUDA RNG gate"
+)
+@pytest.mark.parametrize("raises", [False, True])
+def test_reward_build_scope_preserves_all_initialized_cuda_rngs(raises) -> None:
+    from vrl.rewards.runtime import _preserve_driver_rng_during_model_build
+
+    assert torch.cuda.is_available()
+    for device in range(torch.cuda.device_count()):
+        torch.rand(8, device=f"cuda:{device}")
+    before = torch.cuda.get_rng_state_all()
+    try:
+        with _preserve_driver_rng_during_model_build():
+            for device in range(torch.cuda.device_count()):
+                torch.rand(16, device=f"cuda:{device}")
+            if raises:
+                raise RuntimeError("construction failed")
+    except RuntimeError as error:
+        assert raises and str(error) == "construction failed"
+    after = torch.cuda.get_rng_state_all()
+    assert len(before) == len(after) == torch.cuda.device_count()
+    assert all(torch.equal(a, b) for a, b in zip(before, after, strict=True))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("pooled", "failure"),
+    [(False, None), (False, "factory"), (True, None), (True, "factory"), (True, "prepare")],
+)
+async def test_reward_construction_preserves_driver_rng(monkeypatch, pooled, failure) -> None:
+    import vrl.models.parking as parking_mod
+    import vrl.rewards.runtime as runtime_mod
+
+    def consume():
+        random.random()
+        np.random.random()
+        torch.rand(3)
+
+    class Model:
+        def prepare_for_inference(self):
+            consume()
+            if failure == "prepare":
+                raise RuntimeError("prepare failed")
+
+    def factory(config):
+        consume()
+        if failure == "factory":
+            raise RuntimeError("factory failed")
+        return Model()
+
+    monkeypatch.setattr(runtime_mod, "import_from_path", lambda _: factory)
+    if pooled:
+        allocator = _FakeCumemAllocator()
+        monkeypatch.setattr(parking_mod, "cumem_allocator", lambda: allocator)
+    runtime = InProcessRewardScorer({"model_factory": "test:factory", "sleep_offload": pooled})
+    before = (random.getstate(), np.random.get_state(), torch.get_rng_state().clone())
+    try:
+        if failure:
+            with pytest.raises(RuntimeError, match=f"{failure} failed"):
+                await runtime.activate()
+        else:
+            await runtime.activate()
+            await runtime.activate()
+        assert random.getstate() == before[0]
+        after_np = np.random.get_state()
+        assert after_np[0] == before[1][0] and after_np[2:] == before[1][2:]
+        assert np.array_equal(after_np[1], before[1][1])
+        assert torch.equal(torch.get_rng_state(), before[2])
+    finally:
+        await runtime.shutdown()
+        random.setstate(before[0])
+        np.random.set_state(before[1])
+        torch.set_rng_state(before[2])
+
+
 def test_sleep_offload_rejects_injected_model() -> None:
     """An injected model was not built inside the runtime-owned CuMem pool."""
     with pytest.raises(ValueError, match="model_factory"):

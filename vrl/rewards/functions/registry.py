@@ -141,6 +141,20 @@ class MultiReward(RewardFunction):
             reward.scoring_is_nonblocking for _, _, reward in self.rewards
         )
 
+    def artifact_specs(self) -> tuple[Any, ...]:
+        """Every component's worker-materialized artifact request, name-unique."""
+
+        specs: list[Any] = []
+        for name, _, reward in self.rewards:
+            for spec in reward.artifact_specs():
+                if spec.name != name:
+                    raise ValueError(
+                        f"reward component {name!r} declares an artifact spec named "
+                        f"{spec.name!r}; specs are keyed by component name",
+                    )
+                specs.append(spec)
+        return tuple(specs)
+
     @property
     def external_accelerator_isolation_verified(self) -> bool:
         """Whether every external component proved accelerator isolation."""
@@ -188,15 +202,16 @@ class MultiReward(RewardFunction):
         ``reward_kwargs`` allows passing per-reward init kwargs, keyed by name,
         e.g. ``{"ocr": {"debug_dir": "out/ocr_debug"}}``.
 
-        Config-driven callers pass their already-resolved ``inference_configs``.
-        Direct callers may omit it; every component then executes in-process.
+        Config-driven callers pass their already-resolved ``inference_configs``
+        (YAML defaults to a managed service). Direct callers may omit it; every
+        component then executes in-process, the evaluation/test shape.
         """
         _register_builtins()
         reward_kwargs = reward_kwargs or {}
         configured_weights = {name: float(weight) for name, weight in score_dict.items()}
         reward_classes = {name: get_reward(name) for name in configured_weights}
         resolved_inference_configs: Mapping[str, RewardInferenceConfig] = (
-            {name: RewardInferenceConfig() for name in configured_weights}
+            {name: RewardInferenceConfig(kind="in_process") for name in configured_weights}
             if inference_configs is None
             else inference_configs
         )
@@ -228,11 +243,22 @@ class MultiReward(RewardFunction):
                     "Drop the key; shared-GPU parking is derived from distributed "
                     "resource topology.",
                 )
-            if inference.kind == "http":
-                if not issubclass(reward_cls, DiskArtifactRewardFunction):
-                    raise ValueError(
-                        f"reward {name!r} uses in-memory artifacts and cannot use HTTP inference",
-                    )
+            if inference.kind in {"http", "service"} and not issubclass(
+                reward_cls, DiskArtifactRewardFunction
+            ):
+                raise ValueError(
+                    f"reward {name!r} uses in-memory artifacts and cannot use "
+                    f"{inference.kind} inference",
+                )
+            if inference.kind == "service":
+                # The managed subprocess receives the component's resolved device
+                # and worker_config; only the transport differs from in-process.
+                component_device = reward_cls.resolve_execution_device(
+                    device=device,
+                    kwargs=extra,
+                )
+                extra["inference"] = inference
+            elif inference.kind == "http":
                 local_only = sorted(
                     set(extra)
                     & {
@@ -258,9 +284,15 @@ class MultiReward(RewardFunction):
             # device argument; remove a component override after it has served as
             # the CPU-downgrade input.
             extra.pop("device", None)
-            if memory_parking_required is True and component_device.startswith("cuda"):
+            if (
+                inference.kind in {"in_process", "service"}
+                and memory_parking_required is True
+                and component_device.startswith("cuda")
+            ):
                 # GPU ownership comes from topology. A shared reward cannot rely
-                # on every preset remembering an independent parking knob.
+                # on every preset remembering an independent parking knob. For a
+                # managed service the knob travels in its worker_config and the
+                # service takes the lease over HTTP (/park, /wake).
                 if not issubclass(reward_cls, CumemRewardFunction):
                     raise ValueError(
                         f"reward {name!r} has no complete memory-parking contract",
@@ -271,13 +303,9 @@ class MultiReward(RewardFunction):
                 # an inherited reward preset carried the old shared-phase knob.
                 # CPU-only components also never receive a GPU parking knob.
                 extra.pop("sleep_offload", None)
-            triples.append(
-                (
-                    name,
-                    weight,
-                    reward_cls(device=component_device, **extra),
-                ),
-            )
+            component = reward_cls(device=component_device, **extra)
+            component.bind_component(name)
+            triples.append((name, weight, component))
         return cls(triples)
 
     async def score(self, sample: RewardSample) -> float:
@@ -340,11 +368,12 @@ def validate_reward_memory_parking_components(
     _register_builtins()
     kwargs_by_name = reward_kwargs or {}
     if inference_configs is None:
-        inference_configs = {name: RewardInferenceConfig() for name in names}
+        inference_configs = {name: RewardInferenceConfig(kind="in_process") for name in names}
+    local_kinds = {"in_process", "service"}
     gpu_components = [
         name
         for name in names
-        if inference_configs[name].kind == "in_process"
+        if inference_configs[name].kind in local_kinds
         if get_reward(name)
         .resolve_execution_device(
             device=device,

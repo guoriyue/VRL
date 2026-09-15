@@ -1,0 +1,110 @@
+# SPRINT 总纲：把 VRL 的执行层提到 miles_diffusion 的水平
+
+状态：**active（2026-09-14）**。用户目标：基础设施层追平 miles_diffusion；算法、reward、
+配置层保持 VRL 的领先（对照见 `reading/SPRINT_miles_diffusion_comparison.md`）。
+本文是总纲：七条工作流各自的现状证据、目标形态、KILL-RISK 门、首个可执行步骤；
+每条落地后把执行记录写回对应 sprint 文件。
+
+## 0. 已知事实（本仓库 + 本机实测）
+
+- SD3.5 512px replay 发射绑定：eager 下 evaluate 阶段 GPU SM 44%；compile 后 63–67%，
+  epoch 1.89–2.48×，但 rollout/replay 漂移 0.014–0.030 使 `clip_ratio=1e-4` 下 54–60% 样本被
+  clip（`SPRINT_four_l40s_execution.md`）。
+- 进程内 reward 与训练争 GIL：+61 s/epoch；已用托管服务 + park/wake 租约解决
+  （`planned/SPRINT_reward_service_isolation.md` P1–P4）。
+- 序列并行只在 rollout 侧手写了 SD3 Ulysses，512px 图像上无收益；训练侧无 CP。
+  diffusers 0.38 自带 `ContextParallelConfig`（ulysses_degree/ring_degree）和 Wan 的
+  `_cp_plan`，SD3/Cosmos 没有 plan。
+- FSDP mesh 只允许 `["dp_shard"]`（`vrl/trainers/fsdp.py:46`）。
+- 权重同步：Ray 快照 / bucket（`RayGenerationWeightSync`）；LoRA 不走 IPC。
+- sglang-diffusion 的 RL API（`/rollout/generate`、rollout log-prob、`[T+1]` latent
+  trajectory）在 2026-07 已核对（`parked/SPRINT_sglang_diffusion_execution_provider.md`）；
+  miles_diffusion 用它跑通 SD3.5 / Qwen-Image / Wan2.2 / LTX-2.3 / Cosmos3，引擎从
+  `sgl-project/sglang` 的 `sglang-miles-h3` 分支构建，并用 monkey patch 把引擎算子对齐到训练侧
+  前向（`miles/backends/sglang_diffusion_utils/monkey_patches/`）。
+
+## 1. 七条工作流与顺序
+
+顺序由依赖和收益决定，不是由表格顺序决定：
+
+| # | 工作流 | 解决表格哪一行 | 依赖 | 首个门 |
+|---|---|---|---|---|
+| A | 反序列化与 artifact 出 driver | 反序列化 | 无 | Wan HPSv3 continuous 下 py-spy 无 driver 侧 pickle/mp4 热点 |
+| B | sglang-diffusion 作为 rollout provider | rollout 引擎、train/rollout 一致性、LoRA IPC 的前提 | 无（spike 独立） | 引擎在 L40S 上能装能跑 SD3.5 `/rollout/generate`，trajectory 可回放 |
+| C | 训练侧 USP（diffusers CP） | 训练并行 | 无 | Wan 1.3B 2-GPU CP 与 1-GPU 梯度逐位/容差一致 |
+| D | driver 拆成控制 + 训练 actor | driver | A（把 driver 侧重活先搬走，剩下的才值得拆） | 单卡 recipe 指标不变、epoch 墙钟不劣化 |
+| E | LoRA 经 IPC 同步到 colocated 引擎 | 权重同步 | B | 同步时长与 bucket 传输对比 |
+| F | 引擎侧一致性（deterministic 模式 + patch） | train/rollout 一致性 | B | compile/batch>1 下 parity 门通过或按实测重定 |
+| G | 多节点验证 | 多节点 | 第二台机器 | 2 节点 Wan 配方 2 update + resume |
+
+A、B、C 三条互不依赖，可以并行推进；D、E、F 在其后；G 等硬件。
+
+## 2. 各工作流
+
+### A. 反序列化与 artifact 出 driver（对应 miles 的 parser actor 池）
+
+现状：Ray worker → driver 的 GenerationOutput 走 pickle 进 driver；reward artifact
+（`DiskRewardArtifactStore._write_one`，视频是 libx264 编码）在 driver 线程里落盘。
+目标：
+1. rollout worker 直接产出 reward artifact 文件（它已持有张量），driver 只传路径 + sha256；
+   `RewardSample.output` 对磁盘型 reward 变成引用。
+2. trajectory 以 Ray object ref 交给 trainer 侧的 batch builder，在 collector 线程外的
+   CPU actor 里做切 batch 与校验（parser actor 池），driver 拿到即用的 batch。
+门：Wan 1.3B + HPSv3 continuous 的 py-spy 采样里 driver 侧 pickle/mp4 帧 < 2%，且
+epoch 墙钟不劣化。
+非目标：跨节点对象传输策略。
+
+### B. sglang-diffusion rollout provider（KILL-RISK spike 先行）
+
+Spike（本机 GPU 3，一天内）：
+1. 在 `/mnt/nvme/venvs/sglang-diff` 从 `sglang-miles-h3` 分支安装（miles_diffusion 的
+   Dockerfile 配方：`pip install -e python[diffusion]` + `sglang-kernel 0.4.5+cu129` +
+   `torch_memory_saver`），验证 `sglang.multimodal_gen` 可导入。
+2. 起 SD3.5-medium 服务，`POST /rollout/generate` 拿 `[T+1]` latent trajectory 与
+   rollout log-prob；用 VRL 的 replay evaluator 对同一 trajectory 算 log-prob，量漂移。
+   漂移可接受（或用 `precision_correction.recompute_old_logprob=on` 由训练侧重算）即过门。
+3. 记录 L40S 上每 16 样本组的生成墙钟，对比我们 eager loop 的 13.1 s（batch 16）。
+落地形状沿用 2026-07 的设计：`GenerationWorkerCore` 内的 chunk executor 持有一个子服务进程，
+response 转 native trajectory；native runtime 仍拥有 admission、policy version、lease。
+KILL 条件：引擎装不上（CUDA/驱动/内核 wheel 不兼容）、SD3.5 rollout mixin 缺失、或
+trajectory 不能被 VRL replay 回放。
+
+### C. 训练侧 USP
+
+现状：`build_fsdp_mesh` 拒绝非 1D mesh。diffusers 0.38 提供 `ContextParallelConfig` 与
+Wan 的 `_cp_plan`（`transformer_wan.py:552`）。
+目标：`distributed.training.fsdp.mesh: ["dp_shard", "cp"]` + `context_parallel:
+{ulysses_degree, ring_degree}`；trainer 对 transformer 调 diffusers 的
+`enable_parallelism(ContextParallelConfig)`，replay 的 logprob 归约按 CP 切分做 all-reduce。
+门：Wan 1.3B、2 GPU、cp=2 与单 GPU 的 loss / grad-norm 在容差内一致；峰值激活显存下降。
+没有 `_cp_plan` 的家族（SD3、Cosmos）先不做，需要时自写 plan。
+
+### D. driver 控制平面化
+
+在 A 之后评估：把训练步移进 `TrainActor`（torchrun rank 进程只留控制、producer、Ray 通信）。
+这是最大的结构改动，只有 A 完成后 py-spy 仍显示 driver 侧残留争用时才启动。
+
+### E. LoRA IPC 权重同步（依赖 B）
+
+miles_diffusion 的 `--lora-ipc-weight-sync` 只传 `lora_A/lora_B` 并在引擎侧合并。VRL 的
+`RayGenerationWeightSync` 已按可训练状态扁平化传输；引擎落地后，colocated 情形改走 CUDA IPC。
+
+### F. 引擎侧一致性（依赖 B）
+
+复用 miles 的 patch 组（Wan norm/residual fp32 站点、Qwen-Image 逐位对齐）；引擎的
+deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `clip_ratio` 按实测漂移重定
+（batch 16、compile 同一个决定，见 `SPRINT_four_l40s_execution.md`）。
+
+### G. 多节点
+
+仓库已有 `ray_rollout_cross_node` 与双节点 FSDP 记录（2026-06-21）。需要第二台机器时再排。
+
+## 3. 本轮执行记录
+
+- 2026-09-14：程序立项；B 的 spike 安装启动（`/mnt/nvme/venvs/sglang-diff`）；
+  A 的设计阅读开始。
+- 2026-09-14：A 第 1 步落地（cb92c573）：`RewardArtifactSpec` 随 GenerationRequest 下发，
+  rollout worker 在前向后直接写 `.pt`/mp4（uuid 名 + sha256 + size），driver 只收
+  `MaterializedArtifact` 引用，`GenerationOutput.video` 对磁盘型 reward 置空；driver 侧
+  store `_adopt` 接管文件并保留 release 归属。A 的门（py-spy < 2% driver 侧 pickle/mp4）
+  等 GPU 空出后测。托管服务的文件名 bug（hub id 含 `/`）修于 986b5c25。

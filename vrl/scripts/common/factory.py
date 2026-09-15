@@ -213,6 +213,20 @@ def build_reward_function(reward: ResolvedReward) -> RewardFunction:
     config = reward.config
     if not any(weight > 0 for weight in config.weights.values()):
         raise ValueError("At least one reward component must have weight > 0.")
+    in_process = sorted(
+        name
+        for name, inference in config.inference_configs.items()
+        if inference.kind == "in_process"
+    )
+    if in_process:
+        # A reward scoring inside the driver competes with the launch-bound
+        # replay for the interpreter (measured +61 s/epoch on SD3.5); online
+        # training isolates every reward in its own process.
+        raise ValueError(
+            f"reward.inference.{{{', '.join(in_process)}}}.kind=in_process is not admitted "
+            "for online training; drop the key (managed service, the default) or "
+            "point it at an operator-run service with kind=http",
+        )
     from vrl.rewards.functions.registry import MultiReward
 
     if reward.memory_parking_required and not config.all_external_inference:
@@ -227,10 +241,27 @@ def build_reward_function(reward: ResolvedReward) -> RewardFunction:
             inference_configs=config.inference_configs,
         )
 
+    reward_kwargs = config.kwargs
+    if reward.artifact_root:
+        from vrl.rewards.base import DiskArtifactRewardFunction
+        from vrl.rewards.functions.registry import get_reward
+
+        # Disk artifacts belong to the run, not to a repo-relative default:
+        # they must survive the run for audits and a managed service is only
+        # allowed to read this run's directory.
+        reward_kwargs = {
+            name: (
+                {**kwargs, "artifact_dir": f"{reward.artifact_root}/{name}"}
+                if issubclass(get_reward(name), DiskArtifactRewardFunction)
+                and not str(kwargs.get("artifact_dir") or "").strip()
+                else dict(kwargs)
+            )
+            for name, kwargs in config.kwargs.items()
+        }
     return MultiReward.from_dict(
         config.weights,
         device=reward.device,
-        reward_kwargs=config.kwargs,
+        reward_kwargs=reward_kwargs,
         memory_parking_required=reward.memory_parking_required,
         inference_configs=config.inference_configs,
     )

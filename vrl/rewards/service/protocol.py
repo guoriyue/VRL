@@ -56,8 +56,20 @@ class RewardServiceInfo:
     generation_overlap_safe: bool
     max_concurrency: int
     max_pending_requests: int
+    # Whether this service takes the shared-GPU phase lease: its model is built
+    # in a CuMem pool and POST /park releases the physical pages while the
+    # trainer/rollout own the card, POST /wake restores them. A service that
+    # parks is by construction NOT generation_overlap_safe.
+    memory_parking: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.memory_parking, bool):
+            raise ValueError("reward service memory_parking must be a boolean")
+        if self.memory_parking and self.generation_overlap_safe:
+            raise ValueError(
+                "a reward service that parks its GPU memory shares that GPU and cannot "
+                "be generation_overlap_safe",
+            )
         if not isinstance(self.model_name, str) or not self.model_name:
             raise ValueError("reward service model_name must be a non-empty string")
         if not isinstance(self.model_version, str):

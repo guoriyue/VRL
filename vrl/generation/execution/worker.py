@@ -372,6 +372,7 @@ class GenerationWorkerCore:
             if self._uses_versioned_slots and expected_version is not None:
                 model.activate_trainable_state(expected_version)
             output = self._profile_forward_batch(envelope)
+            self._materialize_reward_artifacts(output, request)
             memory = self._batch_memory_reading(output)
             return GenerationBatchResult(
                 request_id=request.request_id,
@@ -669,6 +670,23 @@ class GenerationWorkerCore:
         except Exception as error:
             self._memory_parking.recover_after_execution_error(model, error)
             raise
+
+    @staticmethod
+    def _materialize_reward_artifacts(output: Any, request: GenerationRequest) -> None:
+        """Write the request's reward files here and keep the media off the wire."""
+
+        specs = request.reward_artifacts
+        if not specs:
+            return
+        if not hasattr(output, "video") or not hasattr(output, "artifacts"):
+            raise TypeError(
+                f"{type(output).__name__} cannot materialize reward artifacts: the "
+                "family binding must expose decoded media as `video`",
+            )
+        from vrl.generation.execution.reward_artifacts import materialize_reward_artifacts
+
+        output.artifacts = materialize_reward_artifacts(output.video, specs)
+        output.video = None
 
     def _profile_forward_batch(
         self,

@@ -4,6 +4,13 @@
 # computes, then idles after every requested prompt group succeeds once.
 #
 # Continuous is the bounded-staleness path (default window: one policy version).
+# Measured on 4x L40S with SD3.5 OCR (2026-09-14): the overlap pays its full
+# ~25% only when no reward scores inside the driver process. A CPU reward
+# (PaddleOCR) running in-process competed with kernel launch during the
+# launch-bound replay and cost 61 s/epoch, halving the gain; the same reward
+# behind vrl-reward-service (+reward=ocr_http) gave 509 -> 398 s per epoch.
+# Staleness=1 under GRPO showed no measurable reward difference over 11 paired
+# epochs but clips 11-18% of every stale batch at clip_ratio=1e-4.
 # Use strict_on_policy for a zero-staleness serial run. The primary deployment is
 # cross-node (trainer GPU on the head node, rollout GPU on a remote Ray worker):
 #

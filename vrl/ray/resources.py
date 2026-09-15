@@ -398,8 +398,11 @@ class ResolvedDistributedResources:
                 from vrl.config.builders import RewardRuntimeConfig
 
                 reward_inference = RewardRuntimeConfig.from_cfg(root.reward).inference_configs
+        # in_process and managed-service components both execute on THIS host's
+        # resources (a managed service is a subprocess the driver launches);
+        # only operator-owned HTTP services are external.
         local_reward_configured = any(
-            inference.kind == "in_process" for inference in reward_inference.values()
+            inference.kind in {"in_process", "service"} for inference in reward_inference.values()
         )
         if reward_inference and not local_reward_configured:
             # External services own their accelerator and process placement. Ignore

@@ -20,14 +20,42 @@ from typing import Any
 REWARD_GROUP_ID_METADATA_KEY = "reward_group_id"
 
 
+@dataclass(frozen=True, slots=True)
+class MaterializedArtifact:
+    """A reward media file already written for one sample by the rollout worker.
+
+    Carries exactly what the reward service needs to admit the file (path +
+    integrity); the driver never decodes or re-encodes the media it refers to.
+    """
+
+    path: str
+    size_bytes: int
+    sha256: str
+
+    def __post_init__(self) -> None:
+        if not self.path:
+            raise ValueError("MaterializedArtifact.path must be non-empty")
+        if isinstance(self.size_bytes, bool) or int(self.size_bytes) < 0:
+            raise ValueError("MaterializedArtifact.size_bytes must be >= 0")
+        if len(self.sha256) != 64:
+            raise ValueError("MaterializedArtifact.sha256 must be a hex digest")
+
+
 @dataclass(slots=True)
 class RewardSample:
-    """One generated sample at the reward-domain boundary."""
+    """One generated sample at the reward-domain boundary.
+
+    ``output`` is the in-memory media (frames / latents) for rewards that read
+    tensors; ``artifacts`` are worker-materialized files keyed by the reward
+    component that asked for them. Online training ships only artifacts for
+    disk rewards, so ``output`` may be None there.
+    """
 
     prompt: str
-    output: Any  # Final generated media (frames / latents)
+    output: Any  # Final generated media (frames / latents), or None
     sample_id: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    artifacts: dict[str, MaterializedArtifact] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.sample_id:

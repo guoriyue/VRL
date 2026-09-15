@@ -121,3 +121,16 @@ def test_compare_rejects_empty_outputs(tmp_path: Path) -> None:
     candidate = _dump(tmp_path / "n2", torch.empty(0), gpus_per_engine=2)
     with pytest.raises(ValueError, match="nonempty and finite"):
         sp._compare(_compare_args(reference, candidate))
+
+
+def test_peak_memory_by_rank_takes_the_max_per_rank() -> None:
+    debug = {
+        "ray_chunks": [
+            {"worker_id": "rollout-0.r0", "peak_memory_mb": 100.0},
+            {"worker_id": "rollout-0.r1", "peak_memory_mb": 120.0},
+            {"worker_id": "rollout-0.r0", "peak_memory_mb": 130.0},
+            {"worker_id": "rollout-0.r1"},
+        ]
+    }
+    assert sp._peak_memory_by_rank(debug) == {"rollout-0.r0": 130.0, "rollout-0.r1": 120.0}
+    assert sp._peak_memory_by_rank(None) == {}

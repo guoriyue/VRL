@@ -1,0 +1,40 @@
+# Operator-owned CPU PaddleOCR service: the same OCRRewardModel the in-process
+# `ocr` reward builds, moved into its own process so OCR scoring does not share
+# the trainer driver's event loop and CPU (the SD3.5 512px replay is
+# launch-bound; in-process OCR measured +50 s per evaluate phase when it
+# overlapped training under continuous scheduling).
+#
+# Pair with the trainer-side overlay `/reward/ocr_http` and launch from the
+# repo root before training:
+#
+#   .venv/bin/python -m vrl.rewards.service.server \
+#     --config vrl/config/reward_service/ocr_paddle.yaml
+#
+# The service advertises generation_overlap_safe automatically for a CPU device.
+host: 127.0.0.1
+port: 8312
+model_name: ocr-paddle
+model_version: paddleocr@flow_grpo_compat
+
+# Tensor artifacts (.pt) written by the trainer under ${trainer.output_dir}/
+# reward_artifacts; relative roots resolve against this file.
+artifact_roots:
+  - ../../../outputs
+
+max_concurrency: 1
+max_pending_requests: 16
+max_cached_requests: 1024
+generation_overlap_safe: false
+
+worker_config:
+  model_factory: vrl.rewards.models.ocr:OCRRewardModel
+  reward_model_version: paddleocr@flow_grpo_compat
+  device: cpu
+  # Scoring policy: identical to presets/reward/ocr.yaml's in-process defaults.
+  engine_profile: flow_grpo_compat
+  text_selection: all_text
+  substring_full_credit: true
+  exclusive_alphanumeric_lines: false
+  extra_line_min_confidence: 0.5
+  near_duplicate_min_similarity: null
+  debug_dir: null

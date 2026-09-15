@@ -12,9 +12,15 @@ signal than the base reward default.
 
 ## Inference Deployment
 
-Reward execution is selected per component. `in_process` is the default and is
-the only supported heavy-reward mode when trainer, rollout, and reward share one
-GPU. An operator-owned service uses typed transport config in the
+Reward execution is selected per component and always runs outside the
+trainer process: a reward scoring in the driver competes with the launch-bound
+replay for the interpreter (measured +61 s per epoch on SD3.5 under continuous
+scheduling). The default, `service`, makes the trainer launch
+`vrl-reward-service` itself for each component: the component's
+`reward.kwargs` become the service's `worker_config`, config and log land under
+`${trainer.output_dir}/reward_artifacts/`, and a shared-GPU topology hands the
+service the phase lease (`POST /park`, `POST /wake`). `kind: http` connects to
+an operator-owned service instead, with typed transport config in the
 `reward.inference` section, keyed by component name:
 
 ```yaml
@@ -176,3 +182,20 @@ two differently configured instances of the same component. If a future recipe
 needs both Kling `visual_quality` and `motion_quality`, add explicit registry
 aliases such as `kling_video_reward_vq` / `kling_video_reward_mq`, or change the schema to
 a list of component instances in a separate sprint.
+
+## OCR over the standalone PaddleOCR service
+
+Two ways to keep PaddleOCR out of the trainer process (measured: in-process
+OCR under continuous scheduling cost 61 s per epoch of launch-bound replay):
+
+- `reward.inference.ocr.kind=service` on top of `/reward/ocr`: the trainer
+  launches `vrl-reward-service` itself for this component, hands it the
+  recipe's `reward.kwargs.ocr`, and scores over loopback HTTP. Nothing to
+  start by hand; the service config and log land in the run's output dir.
+- `/reward=ocr_http` (self-contained preset): an operator-run service owns the
+  scoring knobs (`vrl/config/reward_service/ocr_paddle.yaml`):
+
+```bash
+.venv/bin/python -m vrl.rewards.service.server \
+  --config vrl/config/reward_service/ocr_paddle.yaml
+```
