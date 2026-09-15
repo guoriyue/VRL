@@ -8,7 +8,7 @@ tables that follow it, and the projection whose output is all-gathered
 prediction and the log-prob / loss math runs unchanged on the whole sample.
 Both the split and the gather are autograd functions: each rank's backward
 carries its own token shard. Parameters shard over the whole world (CP peers
-sit inside FSDP's shard axis, the miles_diffusion layout), so FSDP's
+sit inside FSDP's shard axis), so FSDP's
 reduce-scatter already sums the shards' contributions; ``FSDPStrategy.backward``
 scales the loss by the CP size to undo the extra 1/cp in that mean.
 """

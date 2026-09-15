@@ -159,9 +159,8 @@ class PrecisionCorrectionConfig:
     the pre-update weights instead — with one optimizer step per rollout that is
     the very forward the loss is built on, so ``old = log_prob.detach()``, the
     ratio is exactly 1, and rollout-vs-replay kernel drift (batch shape, compile,
-    fused norms) can no longer clip or scale the gradient. This is
-    miles_diffusion's ``--diffusion-recompute-old-log-prob`` on its zero-cost
-    first window. It is only sound when the behavior policy IS the pre-update
+    fused norms) can no longer clip or scale the gradient, at no extra forward
+    cost. It is only sound when the behavior policy IS the pre-update
     target policy: the trainer refuses it under ``ppo_epochs > 1`` (later epochs
     would need the epoch-1 values) and under continuous staleness (the recorded
     log-prob then carries a real off-policy correction). Parity metrics keep

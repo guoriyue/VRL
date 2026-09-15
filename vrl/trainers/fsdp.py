@@ -36,8 +36,8 @@ def build_fsdp_mesh(context: DistributedTrainingContext, mesh_dims: list[str]) -
 
     ``["dp_shard"]`` is plain ZeRO-3 across the whole world — the single-node
     start point (sprint §3). ``["dp_shard", "cp"]`` shards parameters over the
-    same whole world: context-parallel peers are *inside* the shard axis (the
-    miles_diffusion layout), so parameter memory keeps scaling with every rank
+    same whole world: context-parallel peers are *inside* the shard axis, so
+    parameter memory keeps scaling with every rank
     and FSDP's reduce-scatter is the only gradient collective; the CP mesh is a
     separate object (``build_context_parallel_mesh``). 2D HSDP
     (``["dp_replicate", "dp_shard"]``) needs ``num_nodes`` * ``gpus_per_node``

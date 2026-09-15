@@ -2,8 +2,8 @@
 # parity gate re-enabled — generation batch 16 against single-sample replay
 # (measured logprob drift 0.015-0.017) and torch.compile on both scopes
 # (0.014-0.030) — but with the ratio's "old" side taken from the trainer's own
-# pre-update replay forward (precision_correction.recompute_old_logprob=on, the
-# miles_diffusion --diffusion-recompute-old-log-prob shape). ppo_epochs=1 makes
+# pre-update replay forward (precision_correction.recompute_old_logprob=on).
+# ppo_epochs=1 makes
 # that the loss forward itself, so the ratio is exactly 1: the drift stays
 # visible in the parity metrics but can no longer clip 54-60% of the samples
 # under clip_ratio=1e-4, and the 1.89-2.48x compile speed-up becomes usable.
