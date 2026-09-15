@@ -121,6 +121,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 09:50 — reward 的媒体契约：生成输出到 reward 模型之间只允许一处归一化
 - 2026-09-15 10:45 — 训练样本的构造：扁平 (sample, step) 对 vs 带轴的轨迹 + 重放时切片
 - 2026-09-15 11:45 — 零优势组的处理：采集期动态过滤/补采 vs 训练期丢弃
+- 2026-09-15 12:45 — reward 吞吐：actor 池（多副本、分数 GPU、轮询）vs 每组件单服务
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -410,3 +411,26 @@ update 少 1/8 的信号；Wan HPSv3（连续 reward）几乎为 0。
 与训练期 `drop_zero_advantage` 互补而非替代（后者仍处理 rank 间不均衡）。风险：采集时间上界
 变为 (1+max_extra) 倍；门：OCR 配方下有效组数恒等于 `prompts_per_batch`，epoch 墙钟增幅
 ≤ adv_zero_rate。本小时不改代码。
+
+### hourly note 2026-09-15 12:45 — reward 吞吐：一个服务还是一池副本
+
+**问题**：reward 打分是采集阶段的第二大成本。今天 SD3.5 recompute arm 的相位时间里，
+`collect.engine_generate` 56 s 而 `collect.reward_score` 45–70 s（PaddleOCR，CPU 托管服务，
+`max_concurrency 1`），reward 已经与生成同量级，而且是串行瓶颈。
+
+**参照实现**（`miles/rollout/rm_hub/core.py:82-140`）：每种 reward 是一个 `AsyncRewardActorPool`：
+`num_workers` 个 Ray actor，按 `num_gpus_per_worker`（可为分数）调度——colocated 时占 rollout
+bundle 的一个槽位，standalone 时落在放置组之外的卡；请求按 `batch_size` 轮询分发并记录 in-flight，
+输入是浮点 `generated_output`、actor 自己量化（媒体契约单点，见 09:50 笔记）。
+
+**VRL 今天**（`vrl/rewards/service/managed.py`，`vrl/rollouts/collector/core.py:383-412`）：每个
+reward 组件每个 rank 一个托管服务进程（`max_concurrency 1`、`max_pending_requests 16`），
+`HttpRewardScorer` 单端点；是否与生成重叠由"加速器隔离已证明 + scoring 非阻塞"决定
+（`supports_reward_generation_overlap`），流式打分 `PER_GROUP_STREAMING` 已能把 reward N 与生成
+N+1 重叠。缺的是**横向副本**：CPU OCR 完全可以并行 N 份，GPU reward 也可以按分数 GPU 放多份。
+
+**VRL 该改什么（后续）**：`reward.inference.<name>.replicas: N`——托管启动器拉起 N 个服务
+（各自端口、各自 launch_token），`HttpRewardScorer` 侧做轮询 + in-flight 计数，artifact 根共享；
+资源解析把 GPU reward 的副本数与 `reward.device` 的槽位数对账。风险：CPU 服务副本会放大主机
+内存（每个 PaddleOCR 进程约 2 GB）；门：SD3.5 OCR 配方 `collect.reward_score` 随副本数近线性下降
+（N=3 时 ≤ 25 s），流式模式下 reward 完全隐藏在生成之后。本小时不改代码。
