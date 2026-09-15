@@ -245,7 +245,7 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
 | driver 控制平面 | 不拆。VRL 的 rank 进程没有可观的 GIL 争用来源；reward 已一律独立服务 | 三次 py-spy：反序列化 <2%，producer 线程 ~0 |
 | rollout 引擎 | 不替换。引擎作参照：eager 持平，compile 路径 1.7×；同样的收益在 VRL 自己的循环里通过 compile + recompute 兑现（1.9–2.0×） | B spike + recompute arm |
 | 反序列化 | 第 1 步（artifact 出 driver）已落地；actor 池不做 | py-spy |
-| train/rollout 一致性 | `recompute_old_logprob=on` 落地，clip 归零；引擎侧 patch 组不适用（不换引擎）；确定性模式已有 | recompute arm |
+| train/rollout 一致性 | `recompute_old_logprob=on` 落地，clip 归零、epoch 1.9×；但该 arm 的 reward 在 40 epoch 内退化（strict 平坦），学习等价性待三组消融判定 | recompute arm 40 epoch |
 | 训练并行 | Wan FSDP2 + Ulysses CP 落地：等价性门通过、全员生成、fp32 master + bf16 计算 | C 门三次 run |
 | 权重同步 | LoRA 配方 sync 0.68 s/epoch，非瓶颈；全参 IPC 留作全参配方的门 | rollout_stats |
 | 多节点 | 放置探测规则已写进报错；2 节点验证等硬件 | — |
@@ -272,3 +272,9 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   `run_recompute_ablations.sh`）：A batch16+recompute 无 compile；B batch1+compile+recompute；
   C batch16+compile、recompute 关（bypass，parity 门放宽到 0.05）。GPU 在本 arm 结束后先按约定
   交还 vrl-9941（其 stage-2 任务约 3.5 h），消融排在其后。
+- 2026-09-15 13:40：**recompute arm 40 epoch 完成（12:57）**：reward 按 10 epoch 分段 0.402 / 0.354 /
+  0.310 / 0.324，strict arm 0.468 / 0.424 / 0.458 / 0.441。速度与 clip 结论成立（255–305 s vs 517 s，
+  clip 0），但**该配置下策略在退化**而 strict 平坦——F 的第一步只解决了"clip 吃掉样本"，没有证明
+  batch-16 + compile + ratio≡1 的组合在学习上等价。三组 20 epoch 消融（A 去 compile、B 去 batch-16、
+  C 去 recompute）排在 vrl-9941 的 GPU 任务之后；GPU 于 13:36 交还。§4 表格的"一致性"一行据此
+  改为"clip 归零已达成，学习等价性待消融"。

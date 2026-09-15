@@ -122,6 +122,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 10:45 — 训练样本的构造：扁平 (sample, step) 对 vs 带轴的轨迹 + 重放时切片
 - 2026-09-15 11:45 — 零优势组的处理：采集期动态过滤/补采 vs 训练期丢弃
 - 2026-09-15 12:45 — reward 吞吐：actor 池（多副本、分数 GPU、轮询）vs 每组件单服务
+- 2026-09-15 13:45 — 运行证据与可复现性：源码/环境/数据快照 vs 实验跟踪服务
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -434,3 +435,24 @@ N+1 重叠。缺的是**横向副本**：CPU OCR 完全可以并行 N 份，GPU 
 资源解析把 GPU reward 的副本数与 `reward.device` 的槽位数对账。风险：CPU 服务副本会放大主机
 内存（每个 PaddleOCR 进程约 2 GB）；门：SD3.5 OCR 配方 `collect.reward_score` 随副本数近线性下降
 （N=3 时 ≤ 25 s），流式模式下 reward 完全隐藏在生成之后。本小时不改代码。
+
+### hourly note 2026-09-15 13:45 — 一次运行能不能被复现：证据放在哪
+
+**问题**：今天两次"结论反转"（reward 塌陷归因于 artifact dtype、recompute arm 退化归因未定）都
+依赖回答"这次 run 到底跑的是什么代码、什么配置、什么数据"。能不能从输出目录本身回答，
+决定了事后归因是几分钟还是几小时。
+
+**参照实现**（`miles/utils/wandb_utils.py:25-98`）：以实验跟踪服务为中心——`wandb.init` 生成
+`run_id` 并回写到 args，resume 用同一 id 续写；代码/配置的快照依赖跟踪服务的采集，本地输出目录
+没有独立的证据文件。
+
+**VRL 今天**（`vrl/trainers/trace.py:55-368`）：`TrainingRunTrace` 在每个 run 的 `run_evidence/`
+里写下 git 提交 + dirty 标记 + 被跟踪改动的 sha256（明确不假装 dirty 可复现）、运行时快照
+（驱动版本、环境变量、WORLD_SIZE）、配置的数据文件清单，并有 `seal_artifacts` /
+`verify_artifacts` / `verify_completion` / `verify_evaluation` 的校验入口——不依赖外部服务，
+输出目录自证。今天正是靠 `run_evidence/*.json` 的 `commit` 字段确认 recompute arm 跑在 WS-A
+之后、又靠 `resolved_config.yaml` 对比 smoke 与基线只差三个键。
+
+**VRL 可补的两项（后续）**：(1) 证据里加"每个 reward 服务子进程的 launch_token、pid、
+`/info` 回执"（今天的端口串号若有它可秒判）；(2) 加"放置探测结果"（每 bundle 的节点/GPU id，
+见 06:45 笔记）。风险：只增字段；门：`verify_artifacts` 对这些字段做存在性校验。本小时不改代码。
